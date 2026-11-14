@@ -1,0 +1,28 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-p0-history-budget-trim",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "66574262",
+  "plan_section": "12",
+  "priority": "P0",
+  "docs": "docs/development/p0-history-budget-trim-2026-11-14.md",
+  "code": [
+    "crates/neomind-agent/src/agent/history_select.rs",
+    "crates/neomind-agent/src/llm.rs",
+    "crates/neomind-agent/src/agent/streaming/context.rs"
+  ],
+  "replay": "eval/fixtures/history-budget-p0/t4-shaped-zero-budget-replay.json",
+  "gates": {
+    "history_select_unit": "6/6",
+    "streaming_context_unit": "4/4",
+    "zh_en_paired_32x2": "deferred_next"
+  },
+  "claim": "Inner LLM history trim keeps recent tool-call/result groups atomic; available_tokens==0 keeps empty history (no early-user-only stub). Outer builder selects/evicts by group. Deterministic tests + T4-shaped before/after replay. No live Spark claim; zh/en pairing next.",
+  "avoided": {
+    "eval_138": { "pid": 89912, "llama_port": 29431, "touched": false }
+  },
+  "next": "§12 G0 fuller request capture if available; zh/en paired 32/arm weather→EK410; then G2/G3"
+}

@@ -1,0 +1,53 @@
+{
+  "schema": "neomind-history-budget-replay/v1",
+  "slice": "1.3.0-p0-context-trim",
+  "production_ref": {
+    "session": "6621a013-0d12-43c7-ad39-6dbf6e9cb156",
+    "product": "1.2.11 T4",
+    "note": "Full wire request bodies were not retained; this fixture reconstructs the reported 9→1 / available_tokens=0 / message_count=3 shape for deterministic comparison."
+  },
+  "fixture_history_roles": [
+    "user",
+    "assistant",
+    "user",
+    "assistant",
+    "user",
+    "user",
+    "assistant",
+    "user",
+    "assistant"
+  ],
+  "fixture_tool_bytes": [
+    7925,
+    449
+  ],
+  "before": {
+    "label": "legacy_preserve_first_user",
+    "available_tokens": 0,
+    "history_len": 9,
+    "kept_roles": [
+      "user"
+    ],
+    "kept_preview": [
+      "把天气写到 EK410 屏幕"
+    ],
+    "effective_prompt_message_count_with_system_and_current_user": 3,
+    "bug": "message_count≈3 then model re-queries tools already returned"
+  },
+  "after": {
+    "label": "group_aware_zero_budget",
+    "available_tokens": 0,
+    "history_len": 9,
+    "kept_roles": [],
+    "kept_preview": [],
+    "effective_prompt_message_count_with_system_and_current_user": 2,
+    "behavior": "empty history; history_truncated=true; no early-user-only stub; no silent tool-feedback drop while pretending context remains"
+  },
+  "assertions": [
+    "legacy_kept_len == 1 and early user text retained",
+    "new_kept_len == 0",
+    "new prompt does not include early user without recent tool groups",
+    "unit tests in agent::history_select cover pairing/compress/chinese"
+  ],
+  "zh_en_paired_acceptance": "deferred_next"
+}

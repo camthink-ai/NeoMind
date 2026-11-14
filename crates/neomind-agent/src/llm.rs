@@ -726,6 +726,40 @@ impl LlmInterface {
         (available_tokens, prompt_budget)
     }
 
+    /// Apply the shared history-budget selector and mark truncation when needed.
+    ///
+    /// Recent tool-call/result groups are kept atomically. A zero soft budget
+    /// yields an empty kept set (never a lone early user message).
+    fn select_history_for_prompt(
+        &self,
+        history_msgs: &[&Message],
+        available_tokens: usize,
+        log_label: &str,
+    ) -> Vec<Message> {
+        let owned: Vec<Message> = history_msgs.iter().map(|m| (*m).clone()).collect();
+        let selected = crate::agent::history_select::select_messages_for_history_budget(
+            &owned,
+            available_tokens,
+        );
+        if selected.truncated {
+            tracing::info!(
+                total_history_tokens = owned
+                    .iter()
+                    .map(|m| estimate_tokens(&m.content.as_text()))
+                    .sum::<usize>(),
+                kept_messages = selected.messages.len(),
+                total_messages = owned.len(),
+                available_tokens,
+                used_tokens = selected.used_tokens,
+                reason = ?selected.reason,
+                "{log_label}"
+            );
+            self.history_truncated
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        selected.messages
+    }
+
     /// Get effective generation parameters.
     /// Bound backend defaults take precedence over the global active instance.
     /// Explicit session temperature overrides win; unbound direct runtimes use ChatConfig.
@@ -1463,42 +1497,11 @@ impl LlmInterface {
                 )
                 .await;
 
-            let total_history_tokens: usize = history_msgs
-                .iter()
-                .map(|m| {
-                    let text = m.content.as_text();
-                    estimate_tokens(&text)
-                })
-                .sum();
-
-            if total_history_tokens <= available_tokens {
-                for msg in &history_msgs {
-                    msgs.push((*msg).clone());
-                }
-            } else {
-                let mut used = 0usize;
-                let mut kept = Vec::new();
-                for msg in history_msgs.iter().rev() {
-                    let text = msg.content.as_text();
-                    let tokens = estimate_tokens(&text);
-                    if used + tokens > available_tokens {
-                        break;
-                    }
-                    used += tokens;
-                    kept.push((*msg).clone());
-                }
-                kept.reverse();
-                tracing::info!(
-                    total_history_tokens,
-                    kept_messages = kept.len(),
-                    total_messages = history_msgs.len(),
-                    available_tokens,
-                    "Truncated conversation history to fit context window"
-                );
-                self.history_truncated
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
-                msgs.extend(kept);
-            }
+            msgs.extend(self.select_history_for_prompt(
+                &history_msgs,
+                available_tokens,
+                "Truncated conversation history to fit context window",
+            ));
 
             msgs.push(user_msg);
             msgs
@@ -1659,42 +1662,11 @@ impl LlmInterface {
                 )
                 .await;
 
-            let total_history_tokens: usize = history_msgs
-                .iter()
-                .map(|m| {
-                    let text = m.content.as_text();
-                    estimate_tokens(&text)
-                })
-                .sum();
-
-            if total_history_tokens <= available_tokens {
-                for msg in &history_msgs {
-                    msgs.push((*msg).clone());
-                }
-            } else {
-                let mut used = 0usize;
-                let mut kept = Vec::new();
-                for msg in history_msgs.iter().rev() {
-                    let text = msg.content.as_text();
-                    let tokens = estimate_tokens(&text);
-                    if used + tokens > available_tokens {
-                        break;
-                    }
-                    used += tokens;
-                    kept.push((*msg).clone());
-                }
-                kept.reverse();
-                tracing::info!(
-                    total_history_tokens,
-                    kept_messages = kept.len(),
-                    total_messages = history_msgs.len(),
-                    available_tokens,
-                    "Truncated conversation history to fit context window"
-                );
-                self.history_truncated
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
-                msgs.extend(kept);
-            }
+            msgs.extend(self.select_history_for_prompt(
+                &history_msgs,
+                available_tokens,
+                "Truncated conversation history to fit context window",
+            ));
 
             if !is_message_empty(&user_message) {
                 msgs.push(user_message);
@@ -1988,42 +1960,11 @@ impl LlmInterface {
                 )
                 .await;
 
-            let total_history_tokens: usize = history_msgs
-                .iter()
-                .map(|m| {
-                    let text = m.content.as_text();
-                    estimate_tokens(&text)
-                })
-                .sum();
-
-            if total_history_tokens <= available_tokens {
-                for msg in &history_msgs {
-                    msgs.push((*msg).clone());
-                }
-            } else {
-                let mut used = 0usize;
-                let mut kept = Vec::new();
-                for msg in history_msgs.iter().rev() {
-                    let text = msg.content.as_text();
-                    let tokens = estimate_tokens(&text);
-                    if used + tokens > available_tokens {
-                        break;
-                    }
-                    used += tokens;
-                    kept.push((*msg).clone());
-                }
-                kept.reverse();
-                tracing::info!(
-                    total_history_tokens,
-                    kept_messages = kept.len(),
-                    total_messages = history_msgs.len(),
-                    available_tokens,
-                    "Truncated conversation history to fit context window (multimodal stream)"
-                );
-                self.history_truncated
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
-                msgs.extend(kept);
-            }
+            msgs.extend(self.select_history_for_prompt(
+                &history_msgs,
+                available_tokens,
+                "Truncated conversation history to fit context window (multimodal stream)",
+            ));
 
             if !is_message_empty(&user_message) {
                 msgs.push(user_message);
@@ -2340,73 +2281,15 @@ impl LlmInterface {
                 )
                 .await;
 
-            let total_history_tokens: usize = history_msgs
-                .iter()
-                .map(|m| {
-                    let text = m.content.as_text();
-                    estimate_tokens(&text)
-                })
-                .sum();
-
-            if total_history_tokens <= available_tokens {
-                for msg in &history_msgs {
-                    msgs.push((*msg).clone());
-                }
-            } else {
-                // Preserve-the-first-question is a SINGLE-TASK heuristic: it
-                // serves focused runs where the opening message is the task
-                // charter. In a long multi-task chat the oldest message is
-                // usually unrelated to whatever the user is doing now, and
-                // pinning it steals budget the recent context needs. Apply it
-                // only when the history is short enough to plausibly be one
-                // task (~12 messages ≈ 6 turns).
-                let preserve_original_user = history_msgs.len() <= 12;
-                let original_user_idx = if preserve_original_user {
-                    history_msgs
-                        .iter()
-                        .position(|m| m.role == neomind_core::MessageRole::User)
-                } else {
-                    None
-                };
-                let user_msg_tokens = original_user_idx
-                    .map(|idx| estimate_tokens(&history_msgs[idx].content.as_text()))
-                    .unwrap_or(0);
-                let budget_for_others = available_tokens.saturating_sub(user_msg_tokens);
-
-                // Keep most recent messages that fit within remaining budget
-                let mut used = 0usize;
-                let mut kept = Vec::new();
-                for (i, msg) in history_msgs.iter().enumerate().rev() {
-                    // Skip the original user message — we'll add it separately
-                    if original_user_idx == Some(i) {
-                        continue;
-                    }
-                    let text = msg.content.as_text();
-                    let tokens = estimate_tokens(&text);
-                    if used + tokens > budget_for_others {
-                        break;
-                    }
-                    used += tokens;
-                    kept.push((*msg).clone());
-                }
-                kept.reverse();
-
-                // Always prepend the original user message
-                if let Some(idx) = original_user_idx {
-                    kept.insert(0, history_msgs[idx].clone());
-                }
-
-                tracing::info!(
-                    total_history_tokens,
-                    kept_messages = kept.len(),
-                    total_messages = history_msgs.len(),
-                    available_tokens,
-                    "Truncated conversation history to fit context window (original user message preserved)"
-                );
-                self.history_truncated
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
-                msgs.extend(kept);
-            }
+            // Group-aware selection: recent tool-call/result units stay
+            // atomic; available_tokens==0 keeps nothing (never force-insert
+            // the earliest user message — that produced message_count=3
+            // re-query loops after large tool returns ate the soft budget).
+            msgs.extend(self.select_history_for_prompt(
+                &history_msgs,
+                available_tokens,
+                "Truncated conversation history to fit context window (group-aware)",
+            ));
 
             msgs.push(user_msg);
             msgs

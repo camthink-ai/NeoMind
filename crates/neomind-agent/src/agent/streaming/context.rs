@@ -125,39 +125,45 @@ pub fn build_context_window_with_config(
         messages.to_vec()
     };
 
-    let mut selected_messages = Vec::new();
+    // Select newest groups first so an assistant tool-call and its tool
+    // results are kept or dropped together (never an orphan tool return).
+    let groups = partition_agent_groups(&working);
+    let mut selected_groups: Vec<Vec<AgentMessage>> = Vec::new();
     let mut current_tokens = 0;
+    let mut kept_message_count = 0usize;
 
-    for msg in working.iter().rev() {
-        let msg_tokens = estimate_message_tokens(msg);
+    for group in groups.into_iter().rev() {
+        let mut finalized: Vec<AgentMessage> = group
+            .into_iter()
+            .map(|msg| {
+                let msg_tokens = estimate_message_tokens(&msg);
+                if total_tokens > max_tokens && msg_tokens > config.max_message_length {
+                    truncate_agent_message(&msg, config.max_message_length)
+                } else {
+                    msg
+                }
+            })
+            .collect();
+        let group_tokens: usize = finalized.iter().map(estimate_message_tokens).sum();
+        let group_priority = finalized
+            .iter()
+            .map(|m| message_priority(&m.role))
+            .max()
+            .unwrap_or(MessagePriority::Tool);
+        let is_recent = kept_message_count < config.min_recent_messages;
+        let should_keep = group_priority >= MessagePriority::User || is_recent;
 
-        // Calculate priority for this message
-        let priority = message_priority(&msg.role);
-        let is_recent = selected_messages.len() < config.min_recent_messages;
-
-        // Keep messages by priority:
-        // - System: always keep
-        // - User: always keep (represents conversation intent, critical for context)
-        // - Recent: always keep (ensures continuity)
-        let should_keep = priority >= MessagePriority::User || is_recent;
-
-        if !should_keep && current_tokens + msg_tokens > max_tokens {
-            // Budget exceeded, skip this message
+        if !should_keep && current_tokens + group_tokens > max_tokens {
             continue;
         }
 
-        // Truncate long messages only if we're near budget
-        let final_msg = if total_tokens > max_tokens && msg_tokens > config.max_message_length {
-            truncate_agent_message(msg, config.max_message_length)
-        } else {
-            msg.clone()
-        };
-
-        current_tokens += estimate_message_tokens(&final_msg);
-        selected_messages.push(final_msg);
+        current_tokens += group_tokens;
+        kept_message_count += finalized.len();
+        selected_groups.push(std::mem::take(&mut finalized));
     }
 
-    selected_messages.reverse();
+    selected_groups.reverse();
+    let mut selected_messages: Vec<AgentMessage> = selected_groups.into_iter().flatten().collect();
 
     // [hard budget] System/user messages bypass the per-message budget check
     // by design (priority keep) — but on very long sessions the kept set
@@ -190,8 +196,40 @@ fn message_priority(role: &str) -> MessagePriority {
     }
 }
 
+/// Partition AgentMessages into atomic groups: an assistant tool-call turn
+/// plus its contiguous tool results, or a single non-tool message.
+fn partition_agent_groups(messages: &[AgentMessage]) -> Vec<Vec<AgentMessage>> {
+    let mut groups: Vec<Vec<AgentMessage>> = Vec::new();
+    let mut i = messages.len();
+    while i > 0 {
+        let end = i - 1;
+        if messages[end].role == "tool" {
+            let mut start = end;
+            while start > 0 && messages[start - 1].role == "tool" {
+                start -= 1;
+            }
+            if start > 0 && messages[start - 1].role == "assistant" {
+                start -= 1;
+            }
+            groups.push(messages[start..=end].to_vec());
+            i = start;
+        } else {
+            groups.push(vec![messages[end].clone()]);
+            i = end;
+        }
+    }
+    groups.reverse();
+    groups
+}
+
 /// Evict oldest-first the messages matching `evictable` until `total` fits
 /// `max_tokens`, or nothing matching remains. Updates `total` in place.
+///
+/// Eviction is **group-aware**: dropping a tool result also drops its
+/// preceding assistant tool-call turn (and sibling tool results); dropping an
+/// assistant-with-tools drops the contiguous tool results that follow. This
+/// prevents the outer builder from protecting a window that the inner LLM
+/// trim later orphans or replaces with an early-user-only stub.
 fn evict_until_fits(
     messages: &mut Vec<AgentMessage>,
     total: &mut usize,
@@ -204,9 +242,15 @@ fn evict_until_fits(
         match candidate {
             Some(offset) => {
                 let idx = evict_from + offset;
-                *total -= estimate_message_tokens(&messages[idx]);
-                messages.remove(idx);
-                evict_from = idx;
+                let before = messages.len();
+                crate::agent::history_select::evict_agent_message_group_at(messages, idx);
+                let removed = before.saturating_sub(messages.len());
+                if removed == 0 {
+                    break;
+                }
+                // Recompute — group eviction may remove several messages.
+                *total = messages.iter().map(estimate_message_tokens).sum();
+                evict_from = idx.min(messages.len());
             }
             None => break,
         }
