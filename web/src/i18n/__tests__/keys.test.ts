@@ -99,6 +99,12 @@ const DYNAMIC_KEY_FAMILIES: Array<{ ns: string; keys: string[] }> = [
       'testVerdict.no_output',
       'testVerdict.failed',
       'testVerdict.unverifiedHint',
+      // Rule explain panel — dynamic outcome / unknown_reason leaves
+      'ruleExplain.outcome.true',
+      'ruleExplain.outcome.false',
+      'ruleExplain.outcome.unknown',
+      'ruleExplain.unknownReason.no_value_cached',
+      'ruleExplain.unknownReason.value_not_numeric',
     ],
   },
   {

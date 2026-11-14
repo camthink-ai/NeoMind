@@ -81,3 +81,76 @@ export interface RuleExecutionResult {
   duration_ms: number
   triggered_at: string
 }
+
+// ========== Rule explain (GET /rules/:id/explain) ==========
+// Mirrors crates/neomind-rules/src/explain.rs — read-only snapshot.
+
+/** Kleene outcome; serde snake_case of EvalOutcome. */
+export type EvalOutcome = 'true' | 'false' | 'unknown'
+
+/** Live condition tree node (recursive for logical AND/OR/NOT). */
+export interface ConditionExplanation {
+  kind: string
+  result: EvalOutcome
+  source?: string
+  operator?: string
+  /** Untagged RuleValue: number | string */
+  value?: number | string
+  /** Age of the platform-cached value in seconds (not device measure time). */
+  value_age_secs?: number
+  threshold?: number
+  threshold_value?: string
+  min?: number
+  max?: number
+  /** Machine reason when result is unknown (e.g. no_value_cached). */
+  unknown_reason?: string
+  conditions?: ConditionExplanation[]
+}
+
+export interface ForDurationExplanation {
+  configured_secs: number
+  condition_since?: string
+  elapsed_secs?: number
+  satisfied: boolean
+}
+
+export interface CooldownExplanation {
+  configured_secs: number
+  in_cooldown: boolean
+  remaining_secs?: number
+}
+
+export interface ActionExplanation {
+  action_type: string
+  target?: string
+  command?: string
+  message?: string
+  severity?: string
+}
+
+export interface LastExecutionEvidence {
+  triggered_at: string
+  success: boolean
+  duration_ms: number
+  actions_executed: string[]
+  error?: string
+}
+
+/** Full read-only explanation from GET /rules/:id/explain. */
+export interface RuleExplanation {
+  rule_id: string
+  rule_name: string
+  enabled: boolean
+  snapshot_at: string
+  dsl_preview: string
+  condition?: ConditionExplanation
+  /** Absent when the rule has no condition. */
+  condition_met?: EvalOutcome
+  for_duration?: ForDurationExplanation
+  cooldown: CooldownExplanation
+  trigger_count: number
+  last_triggered?: string
+  actions: ActionExplanation[]
+  last_execution?: LastExecutionEvidence
+  notes: string[]
+}

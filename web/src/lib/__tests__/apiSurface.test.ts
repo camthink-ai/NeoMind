@@ -72,8 +72,10 @@ describe('api surface (post-split composition)', () => {
   // uploadBuiltinModel) — all consumed by the LLM tab / runtime dialog.
   // 282 -> 283 when the deliberate engine stop added `stopBuiltinLlm`
   // (POST /api/builtin-llm/stop, backed by the persisted stop flag).
-  it('member count grows only by deliberate additions (283)', () => {
+  // 283 -> 284 when Rule detail gained `getRuleExplain`
+  // (GET /api/rules/:id/explain, why-not-triggered UI).
+  it('member count grows only by deliberate additions (284)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(283)
+    expect(keys.length).toBe(284)
   })
 })

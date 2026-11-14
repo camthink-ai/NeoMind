@@ -1,5 +1,5 @@
 /** automation api — split from api.ts 2026-09. */
-import type { Rule } from '@/types'
+import type { Rule, RuleExplanation } from '@/types'
 import { fetchAPI } from "./client"
 
 export const automationApi = {
@@ -82,6 +82,9 @@ export const automationApi = {
       duration_ms: number
       triggered_at: string
     }> }>(`/rules/${id}/history`),
+  /** Read-only "why not triggered" snapshot (no side effects). */
+  getRuleExplain: (id: string) =>
+    fetchAPI<RuleExplanation>(`/rules/${id}/explain`),
 
   // ========== Unified Automations API ==========
   // Matches backend: crates/api/src/handlers/automations.rs

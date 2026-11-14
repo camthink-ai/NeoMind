@@ -1,0 +1,23 @@
+{
+  "slice": "1.3-iter-d-rule-why-not-triggered",
+  "date": "2026-11-14",
+  "branch": "cursor/rule-why-not-triggered-0c2e",
+  "base": "1.3.0",
+  "version": "1.2.11",
+  "pushed": false,
+  "version_bumped": false,
+  "head_at_start": "975b0105",
+  "avoided": {
+    "eval_138": { "pid": 89912, "touched": false }
+  },
+  "gates": {
+    "vitest_ruleExplain": "8/8",
+    "vitest_RuleWhyNotTriggeredPanel": "4/4",
+    "vitest_apiSurface": "3/3 (284)",
+    "vitest_i18n_keys": "4/4",
+    "tsc": "clean",
+    "i18n_soft_ratchet": "247 (unchanged)"
+  },
+  "docs": "docs/development/rule-why-not-triggered-2026-11-14.md",
+  "next": "D：命令 ACK 阶梯 / Agent 执行证据面板"
+}
