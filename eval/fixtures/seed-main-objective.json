@@ -16,7 +16,7 @@
         {
           "name": "detections",
           "display_name": "Detections",
-          "data_type": "Json",
+          "data_type": "Array",
           "unit": ""
         }
       ]
