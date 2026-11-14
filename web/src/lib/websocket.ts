@@ -1,5 +1,5 @@
 // WebSocket Manager for Chat
-import type { ServerMessage, ClientChatMessage, ChatImage } from '@/types'
+import type { ServerMessage, ClientChatMessage, ChatImage, ChatReference } from '@/types'
 import { tokenManager } from './auth'
 import { storage } from './utils/storage'
 import { getApiKey } from './api'
@@ -317,7 +317,13 @@ export class ChatWebSocket {
     }
   }
 
-  sendMessage(content: string, images?: ChatImage[], selectedSkills?: string[], pageContext?: string) {
+  sendMessage(
+    content: string,
+    images?: ChatImage[],
+    selectedSkills?: string[],
+    pageContext?: string,
+    references?: ChatReference[],
+  ) {
     this.sendRequest({
       message: content,
       images: images,
@@ -325,6 +331,7 @@ export class ChatWebSocket {
       backendId: this.activeBackendId || undefined,
       selectedSkills: selectedSkills && selectedSkills.length > 0 ? selectedSkills : undefined,
       pageContext: pageContext || undefined,
+      references: references && references.length > 0 ? references : undefined,
     })
   }
 

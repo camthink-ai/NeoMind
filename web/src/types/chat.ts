@@ -158,6 +158,14 @@ export interface ChatImage {
   mimeType?: string  // e.g., "image/png", "image/jpeg"
 }
 
+/// A structured object reference attached by the composer (@-mention).
+/// The id is authoritative; the label is display-only and may go stale.
+export interface ChatReference {
+  type: 'device' | 'rule' | 'transform' | 'agent'
+  id: string
+  label?: string
+}
+
 // Client WebSocket message types
 export interface ClientChatMessage {
   message: string
@@ -166,6 +174,7 @@ export interface ClientChatMessage {
   backendId?: string  // Optional LLM backend ID to use for this message
   selectedSkills?: string[]  // Skill IDs pinned by user for this session
   pageContext?: string  // Short neutral page context, sent only on first message
+  references?: ChatReference[]  // Structured @-mentions, resolved server-side at send time
 }
 
 // ========== Chat Input Types ==========

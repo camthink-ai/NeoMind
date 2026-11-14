@@ -71,6 +71,7 @@ impl JsTransformExecutor {
         device_id: &str,
         timestamp: i64,
         extension_registry: Option<&Arc<ExtensionRegistry>>,
+        mode: crate::automation::transform::TransformExecutionMode,
     ) -> Result<Vec<TransformedMetric>> {
         use boa_engine::{
             context::Context, js_string, object::FunctionObjectBuilder, JsValue, Source,
@@ -176,13 +177,38 @@ impl JsTransformExecutor {
                 })?;
         }
 
+        // DRY-RUN: extensions must NOT execute — an extension may perform
+        // HTTP calls, device writes, message sends or file writes, which
+        // would make a "test" side-effecting. Install a stub so explicit
+        // `extensions.invoke()` calls throw a catchable marker; the engine
+        // converts that marker into an "unverified" result instead of
+        // pretending the test succeeded.
+        if matches!(
+            mode,
+            crate::automation::transform::TransformExecutionMode::DryRun
+        ) {
+            context
+                .eval(Source::from_bytes(
+                    b"const extensions = { invoke: function() { throw new Error('NEOMIND_DRYRUN_EXTENSION_BLOCKED: extension invocation is blocked in dry-run') } };",
+                ))
+                .map_err(|e| AutomationError::TransformError {
+                    operation: "JsTransform".to_string(),
+                    message: format!("Failed to install dry-run extension stub: {}", e),
+                })?;
+        }
+
         // Pre-execute extension calls if registry is provided
         // We parse the code for extensions.invoke() calls, execute them asynchronously,
         // and inject the results into the JS context before running user code
         let mut extension_results: std::collections::HashMap<String, Value> =
             std::collections::HashMap::new();
 
-        if let Some(registry) = extension_registry {
+        if let Some(registry) = extension_registry.filter(|_| {
+            !matches!(
+                mode,
+                crate::automation::transform::TransformExecutionMode::DryRun
+            )
+        }) {
             // Try to get current tokio runtime handle
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
                 // Parse code for extension invocations using simple string matching
@@ -608,7 +634,10 @@ impl JsTransformExecutor {
                 for (key, val) in obj.iter() {
                     let metric_name = format!("{}.{}", output_prefix, key);
 
-                    // Convert value to MetricValue, preserving JSON types for arrays/objects
+                    // Convert value to MetricValue, preserving JSON types for arrays/objects.
+                    // Null fields emit NO metric: a fake 0 here would read as a
+                    // real reading downstream (the rule value cache keeps raw
+                    // f64s and ignores quality).
                     let metric_value = match val {
                         Value::Number(n) => {
                             if let Some(f) = n.as_f64() {
@@ -625,7 +654,7 @@ impl JsTransformExecutor {
                             // Preserve arrays and objects as JSON
                             MetricValue::Json(val.clone())
                         }
-                        Value::Null => MetricValue::Integer(0),
+                        Value::Null => continue,
                     };
 
                     tracing::debug!(
@@ -674,7 +703,7 @@ impl JsTransformExecutor {
                         Value::String(s) => MetricValue::String(s.clone()),
                         Value::Bool(b) => MetricValue::Boolean(*b),
                         Value::Array(_) | Value::Object(_) => MetricValue::Json(val.clone()),
-                        Value::Null => MetricValue::Integer(0),
+                        Value::Null => continue,
                     };
 
                     metrics.push(TransformedMetric {
@@ -732,27 +761,11 @@ impl JsTransformExecutor {
                 });
             }
 
-            Value::Null => {
-                metrics.push(TransformedMetric {
-                    device_id: device_id.to_string(),
-                    transform_id: None,
-                    metric: output_prefix.to_string(),
-                    value: MetricValue::Integer(0),
-                    timestamp,
-                    quality: Some(0.0),
-                });
-            }
-        }
-
-        if metrics.is_empty() {
-            metrics.push(TransformedMetric {
-                device_id: device_id.to_string(),
-                transform_id: None,
-                metric: output_prefix.to_string(),
-                value: 0.0.into(),
-                timestamp,
-                quality: Some(0.0),
-            });
+            // Top-level null/undefined (js_value_to_json maps JS undefined to
+            // Null): the transform produced NO output. A placeholder 0/quality-0
+            // metric here wrote a false zero into telemetry and the rule value
+            // cache; the caller records an explicit "no output" warning instead.
+            Value::Null => {}
         }
 
         Ok(metrics)

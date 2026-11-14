@@ -1,0 +1,34 @@
+{
+  "id": "main-objective-notify-channel-config",
+  "lang": "zh",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Structured notification channel config + local receiver test",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "帮我配置一个 webhook 通知渠道,地址 http://127.0.0.1:39999/hook,名字叫 local-sink,然后发一条测试消息过去看看通不通。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "帮我配置一个 webhook 通知渠道,地址 http://127.0.0.1:39999/hook,名字叫 local-sink,然后发一条测试消息过去看看通不通。"
+    ],
+    "overall": "Structured notification channel config + local receiver test"
+  },
+  "state_queries": [
+    {
+      "type": "message_count",
+      "params": {},
+      "expected_min": 1
+    }
+  ]
+}

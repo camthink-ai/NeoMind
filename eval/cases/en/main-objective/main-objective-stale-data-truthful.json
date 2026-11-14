@@ -1,0 +1,40 @@
+{
+  "id": "main-objective-stale-data-truthful",
+  "lang": "en",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "multi_turn",
+  "description": "Stale data must not be laundered as current readings",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create device type greenhouse-temp (numeric temperature) and register device green-01."
+    },
+    {
+      "user": "What is green-01's temperature right now? What is its status? Only state what you can verify."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Create device type greenhouse-temp (numeric temperature) and register device green-01.",
+      "What is green-01's temperature right now? What is its status? Only state what you can verify."
+    ],
+    "overall": "Stale data must not be laundered as current readings"
+  },
+  "state_queries": [
+    {
+      "type": "device_exists",
+      "params": {
+        "name": "green-01"
+      },
+      "expected": true
+    }
+  ]
+}

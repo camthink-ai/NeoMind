@@ -608,6 +608,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/rules/:id/history",
             get(rules::get_rule_history_handler),
         )
+        .route(
+            "/api/rules/:id/explain",
+            get(rules::get_rule_explain_handler),
+        )
         // Messages API
         .route("/api/messages", get(messages::list_messages_handler))
         .route("/api/messages", post(messages::create_message_handler))

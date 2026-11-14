@@ -1,0 +1,39 @@
+{
+  "id": "main-objective-e2e-detection-chain",
+  "lang": "zh",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Cross-domain chain: transform + rule + notification (main objective)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "模拟摄像头 green-01 会发 {\"detections\": [{\"cls\": \"person\"}, {\"cls\": \"person\"}, {\"cls\": \"cat\"}]} 这样的数据。帮我搭一条链路:统计其中 person 的数量,超过 2 就通知我。搭完解释每个环节的状态。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "模拟摄像头 green-01 会发 {\"detections\": [{\"cls\": \"person\"}, {\"cls\": \"person\"}, {\"cls\": \"cat\"}]} 这样的数据。帮我搭一条链路:统计其中 person 的数量,超过 2 就通知我。搭完解释每个环节的状态。"
+    ],
+    "overall": "Cross-domain chain: transform + rule + notification (main objective)"
+  },
+  "state_queries": [
+    {
+      "type": "transform_count",
+      "params": {},
+      "expected_min": 1
+    },
+    {
+      "type": "rule_count",
+      "params": {},
+      "expected_min": 1
+    }
+  ]
+}

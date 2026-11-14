@@ -531,6 +531,9 @@ impl TransformTool {
                         "test_device",
                         chrono::Utc::now().timestamp(),
                         None,
+                        // Chat-side code preview: dry-run — no real
+                        // extension invocations from a test execution.
+                        crate::automation::transform::TransformExecutionMode::DryRun,
                     )
                     .map_err(|e| {
                         ToolError::Execution(format!("Transform execution failed: {}", e))

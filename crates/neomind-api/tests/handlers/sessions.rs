@@ -138,6 +138,7 @@ mod tests {
             backend_id: None,
             selected_skills: None,
             page_context: None,
+            references: None,
             session_config: None,
         };
         let result = chat_handler(
@@ -177,6 +178,7 @@ mod tests {
             backend_id: None,
             selected_skills: None,
             page_context: None,
+            references: None,
             session_config: None,
         };
         let result = chat_handler(State(state), Path(session_id.clone()), Json(req)).await;
@@ -233,6 +235,7 @@ mod tests {
             backend_id: None,
             selected_skills: None,
             page_context: None,
+            references: None,
             session_config: None,
         };
         assert_eq!(req.message, "Test message");

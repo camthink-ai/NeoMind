@@ -1,0 +1,52 @@
+{
+  "id": "main-objective-dashboard-card-config",
+  "lang": "en",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Standard dashboard card config bound to a device metric",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a dashboard named Greenhouse Overview with one card showing green-01's temperature live value."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Create a dashboard named Greenhouse Overview with one card showing green-01's temperature live value."
+    ],
+    "overall": "Standard dashboard card config bound to a device metric"
+  },
+  "state_queries": [
+    {
+      "type": "dashboard_exists",
+      "params": {
+        "name": "Greenhouse Overview"
+      },
+      "expected": true
+    },
+    {
+      "type": "dashboard_component_count",
+      "params": {
+        "name": "Greenhouse Overview"
+      },
+      "expected_min": 1
+    },
+    {
+      "type": "dashboard_component_bound",
+      "params": {
+        "name": "Greenhouse Overview",
+        "device_id": "green-01",
+        "metric": "temperature"
+      },
+      "expected": true
+    }
+  ]
+}

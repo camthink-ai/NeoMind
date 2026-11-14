@@ -1264,15 +1264,19 @@ pub async fn chat_handler(
     // + selected_skills, which the old handler dropped on the floor.
     // Prepend page context if provided (mirrors the WS path; the old single-round
     // HTTP handler dropped this).
-    let final_message = if let Some(ref ctx) = req.page_context {
-        if !ctx.is_empty() {
-            format!("{}\n\n{}", ctx, req.message)
-        } else {
-            req.message.clone()
+    // Structured references (@-mentions) resolve to a bounded preamble that
+    // is prepended here — same slot page_context uses, HTTP and WS parity.
+    let refs_preamble = match req.references.as_deref() {
+        Some(refs) if !refs.is_empty() => {
+            Some(super::chat_refs::reference_preamble(&state, refs).await)
         }
-    } else {
-        req.message.clone()
+        _ => None,
     };
+    let final_message = super::chat_refs::compose_chat_message(
+        &req.message,
+        req.page_context.as_deref(),
+        refs_preamble,
+    );
 
     // Branch on multimodal input for REST parity with WS. The old HTTP handler
     // dropped req.images entirely, so a REST vision client silently degraded to
@@ -1946,15 +1950,17 @@ async fn handle_ws_socket(
                                         }
 
                                         // Prepend page context if provided
-                                        let final_message = if let Some(ref ctx) = chat_req.page_context {
-                                            if !ctx.is_empty() {
-                                                format!("{}\n\n{}", ctx, chat_req.message)
-                                            } else {
-                                                chat_req.message.clone()
+                                        let refs_preamble = match chat_req.references.as_deref() {
+                                            Some(refs) if !refs.is_empty() => {
+                                                Some(super::chat_refs::reference_preamble(&task_state, refs).await)
                                             }
-                                        } else {
-                                            chat_req.message.clone()
+                                            _ => None,
                                         };
+                                        let final_message = super::chat_refs::compose_chat_message(
+                                            &chat_req.message,
+                                            chat_req.page_context.as_deref(),
+                                            refs_preamble,
+                                        );
 
                                         // Use streaming for multimodal messages.
                                         // The clone here is the ONE deliberate copy:
@@ -2037,15 +2043,17 @@ async fn handle_ws_socket(
                                         // Regular text-only message - use streaming
                                         let selected_skills = chat_req.selected_skills.clone();
                                         // Prepend page context if provided (only on first message per session)
-                                        let final_message = if let Some(ref ctx) = chat_req.page_context {
-                                            if !ctx.is_empty() {
-                                                format!("{}\n\n{}", ctx, chat_req.message)
-                                            } else {
-                                                chat_req.message.clone()
+                                        let refs_preamble = match chat_req.references.as_deref() {
+                                            Some(refs) if !refs.is_empty() => {
+                                                Some(super::chat_refs::reference_preamble(&state, refs).await)
                                             }
-                                        } else {
-                                            chat_req.message.clone()
+                                            _ => None,
                                         };
+                                        let final_message = super::chat_refs::compose_chat_message(
+                                            &chat_req.message,
+                                            chat_req.page_context.as_deref(),
+                                            refs_preamble,
+                                        );
                                         // Set session ID on memory tool for session-scoped operations
                                         // (now handled inside Agent::process to avoid cross-session races)
                                         // [non-blocking stream creation] Stream creation used to

@@ -917,7 +917,7 @@ pub async fn process_data_handler(
     ),
     request_body = ProcessDataRequest,
     responses(
-        (status = 200, description = "Saved transform dry-run against sample input"),
+        (status = 200, description = "Dry-run of the saved transform against sample input (no execution history, no output registration)"),
         (status = 404, description = "Not found"),
     )
 )]
@@ -952,9 +952,12 @@ pub async fn test_transform_handler(
         }
     };
 
-    // Process data through this specific transform
+    // Dry-run: no execution-history row and no output registration. The
+    // production path (process_device_data) does both — a preview calling
+    // it polluted the execution history and registered outputs from
+    // sample data.
     let result = transform_engine
-        .process_device_data(
+        .process_device_data_dry(
             &[transform],
             &req.device_id,
             req.device_type.as_deref(),
@@ -968,6 +971,10 @@ pub async fn test_transform_handler(
             "metrics": transform_result.metrics,
             "count": transform_result.metrics.len(),
             "warnings": transform_result.warnings,
+            // Non-empty = parts of this preview are UNVERIFIED (extension
+            // behavior the dry-run refused to execute). Never read as a
+            // clean success.
+            "unverified": transform_result.unverified,
         })),
         Err(e) => Err(ErrorResponse::internal(format!(
             "Transform test failed: {}",
@@ -1238,6 +1245,9 @@ pub async fn test_transform_code_handler(
         "test_device",
         timestamp,
         None, // No extension registry for test
+        // Code preview path: dry-run semantics — extension invocations are
+        // blocked (unverified) rather than really executed.
+        crate::automation::transform::TransformExecutionMode::DryRun,
     ) {
         Ok(metrics) => {
             // Convert metrics to a more readable format

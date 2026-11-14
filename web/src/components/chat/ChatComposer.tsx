@@ -8,9 +8,9 @@
  * file→compressed-image upload pipeline.
  */
 
-import { useRef, useState, type RefObject } from "react"
+import { useEffect, useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { Archive, ArrowUp, Check, Eye, Image as ImageIcon, Loader2, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react"
+import { Archive, ArrowUp, AtSign, Check, Eye, Image as ImageIcon, Loader2, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/use-confirm"
 import {
@@ -23,8 +23,10 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/useMobile"
-import type { ChatImage, LlmBackendInstance } from "@/types"
+import type { ChatImage, ChatReference, LlmBackendInstance } from "@/types"
 import { cn } from "@/lib/utils"
+import { searchMentionOptions, type MentionOption } from "@/lib/api/mentions"
+import { MAX_REFERENCES } from "@/lib/api/mentions"
 import { compressImage, MAX_ORIGINAL_IMAGE_MB, COMPRESSED_IMAGE_MB } from "@/lib/image"
 
 interface ChatComposerProps {
@@ -44,6 +46,11 @@ interface ChatComposerProps {
   // Attachments — pass onAttachmentsChange to enable the upload button.
   attachments?: ChatImage[]
   onAttachmentsChange?: (images: ChatImage[]) => void
+  // Structured @-references — pass onReferencesChange to enable mentions.
+  // Chips render above the textarea; the ids ride along with the next send
+  // and are re-resolved server-side (labels are display-only).
+  references?: ChatReference[]
+  onReferencesChange?: (refs: ChatReference[]) => void
   supportsMultimodal?: boolean
   /** Image support comes from the vision companion, not the active model. */
   visionDelegate?: boolean
@@ -89,6 +96,8 @@ export function ChatComposer({
   onCancel,
   attachments = [],
   onAttachmentsChange,
+  references = [],
+  onReferencesChange,
   supportsMultimodal = false,
   visionDelegate,
   backends,
@@ -111,6 +120,150 @@ export function ChatComposer({
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [modelSheetOpen, setModelSheetOpen] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
+
+  // ---- @-mention picker ----
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionOptions, setMentionOptions] = useState<MentionOption[]>([])
+  const [mentionActive, setMentionActive] = useState(0)
+  const [mentionLoading, setMentionLoading] = useState(false)
+  const mentionTrigger = useRef<{ start: number } | null>(null)
+  const canMention = !!onReferencesChange
+  // IME composition (Chinese/Japanese input): intermediate text must not
+  // open the picker — only post-composition changes count.
+  const isComposing = useRef(false)
+
+  useEffect(() => {
+    if (mentionQuery === null) return
+    let cancelled = false
+    setMentionLoading(true)
+    const timer = setTimeout(async () => {
+      try {
+        const opts = canMention ? await searchMentionOptions(mentionQuery) : []
+        if (!cancelled) {
+          setMentionOptions(opts)
+          setMentionActive(0)
+        }
+      } catch {
+        if (!cancelled) setMentionOptions([])
+      } finally {
+        if (!cancelled) setMentionLoading(false)
+      }
+    }, 180)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [mentionQuery, canMention])
+
+  const closeMention = () => {
+    mentionTrigger.current = null
+    setMentionQuery(null)
+  }
+
+  const handleChange = (next: string) => {
+    onChange(next)
+    // While an IME composition is in flight the text is intermediate —
+    // detection waits for compositionend.
+    if (!canMention || inputDisabled || isComposing.current) {
+      return
+    }
+    if (references.length >= MAX_REFERENCES) {
+      return
+    }
+    const ta = activeTextareaRef.current
+    const caret = ta ? ta.selectionStart : next.length
+    const before = next.slice(0, caret)
+    // '@' must start a token (string start, or after a non-word character)
+    // so ordinary emails like a@b.com do not open the picker.
+    const m = /(^|[^@\w])@([^@\n]{0,40})$/.exec(before)
+    if (m) {
+      mentionTrigger.current = { start: caret - m[2].length - 1 }
+      setMentionQuery(m[2])
+    } else {
+      closeMention()
+    }
+  }
+
+  const selectMention = (opt: MentionOption) => {
+    const trig = mentionTrigger.current
+    const ta = activeTextareaRef.current
+    if (!trig) return
+    const caret = ta ? ta.selectionStart : value.length
+    const next = value.slice(0, trig.start) + value.slice(caret)
+    onChange(next)
+    // Dedupe by type+id (chips are keyed that way) and enforce the cap —
+    // selecting an existing reference again is a no-op, not a duplicate.
+    if (references.some((r) => r.type === opt.type && r.id === opt.id)) {
+      closeMention()
+      requestAnimationFrame(() => {
+        ta?.focus()
+        try {
+          ta?.setSelectionRange(trig.start, trig.start)
+        } catch {
+          // selection restore is best-effort
+        }
+      })
+      return
+    }
+    if (references.length >= MAX_REFERENCES) {
+      closeMention()
+      return
+    }
+    onReferencesChange?.([
+      ...references,
+      { type: opt.type, id: opt.id, label: opt.label },
+    ])
+    closeMention()
+    requestAnimationFrame(() => {
+      ta?.focus()
+      try {
+        ta?.setSelectionRange(trig.start, trig.start)
+      } catch {
+        // selection restore is best-effort
+      }
+    })
+  }
+
+  const removeReference = (index: number) => {
+    onReferencesChange?.(references.filter((_, i) => i !== index))
+  }
+
+  const handleKeyDownInternal = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionQuery !== null) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        setMentionActive((i) => Math.min(i + 1, Math.max(mentionOptions.length - 1, 0)))
+        return
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        setMentionActive((i) => Math.max(i - 1, 0))
+        return
+      }
+      if ((e.key === "Enter" || e.key === "Tab") && mentionOptions[mentionActive]) {
+        e.preventDefault()
+        selectMention(mentionOptions[mentionActive])
+        return
+      }
+      if (e.key === "Escape") {
+        e.preventDefault()
+        closeMention()
+        return
+      }
+    } else if (
+      e.key === "Backspace" &&
+      value === "" &&
+      references.length > 0 &&
+      canMention
+    ) {
+      // Delete the last chip when backspacing on an empty input — the
+      // standard chips interaction users expect.
+      e.preventDefault()
+      removeReference(references.length - 1)
+      return
+    }
+    onKeyDown?.(e)
+  }
 
   const canAttach = !!onAttachmentsChange
   const inputDisabled = disabled || isStreaming
@@ -187,7 +340,7 @@ export function ChatComposer({
   // Single root: hosts apply `space-y-*` to their direct children, which
   // would otherwise insert a gap between the preview strip and the box.
   return (
-    <div data-chat-composer>
+    <div data-chat-composer className="relative">
       {/* Image previews */}
       {hasAttachments && (
         <div className="flex flex-wrap gap-1.5 mb-1">
@@ -216,10 +369,75 @@ export function ChatComposer({
         </div>
       )}
 
+      {/* Structured @-reference chips */}
+      {references.length > 0 && (
+        <div className="mb-1 flex flex-wrap gap-1.5" aria-label={t("chat:mention.referencesLabel", "引用的对象")}>
+          {references.map((ref, i) => (
+            <span
+              key={`${ref.type}:${ref.id}`}
+              className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs"
+            >
+              <AtSign className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="shrink-0 text-muted-foreground">{t(`chat:mention.${ref.type}`, ref.type)}</span>
+              <span className="max-w-40 truncate">{ref.label || ref.id}</span>
+              <button
+                type="button"
+                aria-label={t("chat:mention.remove", { defaultValue: "移除引用" })}
+                className="rounded-full p-0.5 text-muted-foreground hover:text-foreground"
+                onClick={() => removeReference(i)}
+              >
+                <X className="h-3 w-3" aria-hidden="true" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Single unified input box — everything inside one container.
           Mobile: radius + shadow live on this same node; avoid overflow:hidden
           here (it squares the soft shadow). Prefer an upward-biased shadow so
           ancestors that clip the bottom edge don't leave hard corner ledges. */}
+      {/* @-mention picker — anchored above the input, listbox semantics */}
+      {mentionQuery !== null && (
+        <div
+          role="listbox"
+          aria-label={t("chat:mention.title", "选择要引用的对象")}
+          data-mention-menu
+          className="absolute bottom-full left-0 right-0 z-50 mb-2 max-h-64 overflow-y-auto rounded-lg border border-border bg-popover shadow-md"
+        >
+          {mentionLoading ? (
+            <div className="flex items-center gap-2 px-3 py-2.5 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              {t("chat:mention.searching", "搜索中…")}
+            </div>
+          ) : mentionOptions.length === 0 ? (
+            <div className="px-3 py-2.5 text-xs text-muted-foreground">
+              {t("chat:mention.noResults", "没有匹配的对象")}
+            </div>
+          ) : (
+            mentionOptions.map((opt, i) => (
+              <button
+                key={`${opt.type}:${opt.id}`}
+                type="button"
+                role="option"
+                aria-selected={i === mentionActive}
+                onMouseEnter={() => setMentionActive(i)}
+                onClick={() => selectMention(opt)}
+                className={cn(
+                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm",
+                  i === mentionActive && "bg-muted",
+                )}
+              >
+                <span className="shrink-0 rounded bg-muted px-1 py-px text-nano text-muted-foreground">
+                  {t(`chat:mention.${opt.type}`, opt.type)}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+                <span className="max-w-32 shrink-0 truncate text-mini text-muted-foreground">{opt.id}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
       <div className={cn(
         "rounded-lg border border-input bg-card shadow-sm transition-colors",
         isMobile && "rounded-[1.4rem] border-glass-border bg-card p-1.5 shadow-[0_-1px_2px_oklch(0_0_0/4%),0_2px_8px_-2px_oklch(0_0_0/10%)]",
@@ -241,9 +459,11 @@ export function ChatComposer({
         <textarea
           ref={activeTextareaRef}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => handleChange(e.target.value)}
+          onCompositionStart={() => { isComposing.current = true }}
+          onCompositionEnd={() => { isComposing.current = false }}
           onFocus={() => { if (isMobile) setMobileExpanded(true) }}
-          onKeyDown={onKeyDown}
+          onKeyDown={handleKeyDownInternal}
           placeholder={isStreaming && streamingPlaceholder ? streamingPlaceholder : placeholder}
           rows={1}
           disabled={inputDisabled}

@@ -85,6 +85,27 @@ impl UnifiedValueProvider {
         self
     }
 
+    /// When the cached value for this source was last written (epoch ms).
+    ///
+    /// Read-only observability for rule explanation; does not apply TTL
+    /// expiry (callers pair it with `get_by_source`, which does).
+    pub fn value_cached_at_ms(&self, source: &DataSourceId) -> Option<i64> {
+        let source_type = match source.source_type {
+            DataSourceType::Device => "device",
+            DataSourceType::Extension => "extension",
+            DataSourceType::Transform => "transform",
+            DataSourceType::Ai => "ai",
+        };
+        let cache = self.cache.read();
+        cache
+            .get(&(
+                source_type.to_string(),
+                source.source_id.clone(),
+                source.field_path.clone(),
+            ))
+            .map(|e| e.timestamp)
+    }
+
     /// Update a cached numeric metric value.
     pub async fn update_value(&self, source_type: &str, source_id: &str, metric: &str, value: f64) {
         self.update_rule_value(source_type, source_id, metric, RuleValue::Number(value))

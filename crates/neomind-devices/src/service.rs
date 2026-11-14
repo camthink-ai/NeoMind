@@ -329,6 +329,44 @@ pub struct DeviceService {
     extension_command_router: Arc<RwLock<Option<ExtensionCommandRouterFn>>>,
 }
 
+/// What a successful [`DeviceService::send_command`] actually proves about
+/// the physical world. A ~2B agent (and the user) must not read "broker
+/// publish" as "the device did it" — the plan's truthfulness contract
+/// requires the delivery level to travel WITH the success.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandDelivery {
+    /// Payload was accepted by N adapter(s) (e.g. published to the MQTT
+    /// broker). The DEVICE has not acknowledged; physical effect unverified.
+    AdapterAccepted { adapters: u32 },
+    /// The extension command router returned Ok — the extension ACCEPTED and
+    /// processed the request. That is NOT a device acknowledgment: unless an
+    /// explicit, verifiable device ACK is surfaced (as
+    /// [`CommandDelivery::DeviceAcknowledged`]), the device has not confirmed
+    /// and the physical effect is unverified.
+    ExtensionAccepted,
+    /// The device explicitly acknowledged receipt (verifiable ACK surfaced by
+    /// the transport/extension). Physical effect still unverified.
+    DeviceAcknowledged,
+    /// Physical effect verified through state feedback (reserved — no
+    /// current path claims this).
+    PhysicalEffectVerified,
+}
+
+impl CommandDelivery {
+    /// Honest one-line description for user/agent-facing surfaces.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::AdapterAccepted { adapters } => format!(
+                "delivered to {adapters} adapter(s) (broker publish); device acknowledgment: none; physical effect unverified"
+            ),
+            Self::ExtensionAccepted => "extension accepted the command; device acknowledgment: none (extension Ok is not a device ACK); physical effect unverified".to_string(),
+            Self::DeviceAcknowledged => "device acknowledged receipt; physical effect unverified".to_string(),
+            Self::PhysicalEffectVerified => "physical effect verified via state feedback".to_string(),
+        }
+    }
+}
+
 impl DeviceService {
     /// Create a new device service
     pub fn new(registry: Arc<DeviceRegistry>, event_bus: EventBus) -> Self {
@@ -1447,6 +1485,19 @@ impl DeviceService {
         command_name: &str,
         params: HashMap<String, serde_json::Value>,
     ) -> Result<Option<MetricValue>, DeviceError> {
+        self.send_command_reported(device_id, command_name, params)
+            .await
+            .map(|(value, _report)| value)
+    }
+
+    /// [`send_command`] plus an honest report of what the Ok actually
+    /// proves: broker publish ≠ device acknowledgment ≠ physical effect.
+    pub async fn send_command_reported(
+        &self,
+        device_id: &str,
+        command_name: &str,
+        params: HashMap<String, serde_json::Value>,
+    ) -> Result<(Option<MetricValue>, CommandDelivery), DeviceError> {
         // Get device config and template
         let (config, template) = self.get_device_with_template(device_id).await?;
 
@@ -1502,7 +1553,7 @@ impl DeviceService {
                             None,
                         )
                         .await;
-                        return Ok(None);
+                        return Ok((None, CommandDelivery::ExtensionAccepted));
                     }
                     Err(e) => {
                         self.update_command_status(
@@ -1610,7 +1661,12 @@ impl DeviceService {
                 None,
             )
             .await;
-            Ok(None)
+            Ok((
+                None,
+                CommandDelivery::AdapterAccepted {
+                    adapters: success_count,
+                },
+            ))
         } else {
             let err_msg =
                 last_error.unwrap_or_else(|| "Failed to send command on any adapter".to_string());
@@ -2267,6 +2323,195 @@ impl DeviceService {
 
 #[cfg(test)]
 mod tests {
+    mod command_delivery_tests {
+        use super::*;
+        use crate::adapter::{DeviceAdapter, DeviceEvent};
+        use crate::registry::{ConnectionConfig, DeviceConfig, DeviceTypeTemplate};
+        use crate::AdapterResult;
+        use futures::Stream;
+        use std::pin::Pin;
+
+        struct StubAdapter;
+        #[async_trait::async_trait]
+        impl DeviceAdapter for StubAdapter {
+            fn name(&self) -> &str {
+                "stub"
+            }
+            fn adapter_type(&self) -> &'static str {
+                "stub-mqtt"
+            }
+            fn is_running(&self) -> bool {
+                true
+            }
+            async fn start(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn stop(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            fn subscribe(&self) -> Pin<Box<dyn Stream<Item = DeviceEvent> + Send + '_>> {
+                Box::pin(futures::stream::empty())
+            }
+            fn device_count(&self) -> usize {
+                0
+            }
+            fn list_devices(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            async fn send_command(
+                &self,
+                _device_id: &str,
+                _command_name: &str,
+                _payload: String,
+                _topic: Option<String>,
+            ) -> AdapterResult<()> {
+                // Broker-style publish: accepted, no device acknowledgment.
+                Ok(())
+            }
+            fn connection_status(&self) -> crate::adapter::ConnectionStatus {
+                crate::adapter::ConnectionStatus::Connected
+            }
+            async fn subscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn unsubscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                Ok(())
+            }
+        }
+
+        fn service() -> Arc<DeviceService> {
+            Arc::new(DeviceService::new(
+                Arc::new(DeviceRegistry::new()),
+                EventBus::new(),
+            ))
+        }
+
+        async fn seed_template(svc: &DeviceService) {
+            let tpl: DeviceTypeTemplate = serde_json::from_value(serde_json::json!({
+                "device_type": "actuator_x",
+                "name": "Actuator X",
+                "commands": [
+                    {"name": "open_valve", "parameters": []}
+                ]
+            }))
+            .unwrap();
+            svc.register_template(tpl).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn describe_levels_do_not_claim_physical_completion() {
+            let broker = CommandDelivery::AdapterAccepted { adapters: 2 };
+            assert!(broker.describe().contains("broker publish"));
+            assert!(broker.describe().contains("device acknowledgment: none"));
+            assert!(broker.describe().contains("physical effect unverified"));
+            let ext = CommandDelivery::ExtensionAccepted;
+            assert!(ext.describe().contains("extension accepted"));
+            assert!(ext.describe().contains("physical effect unverified"));
+        }
+
+        #[tokio::test]
+        async fn mqtt_style_command_reports_adapter_accepted_not_confirmed() {
+            let svc = service();
+            seed_template(&svc).await;
+            svc.register_device(DeviceConfig {
+                device_id: "act-1".into(),
+                name: "Act 1".into(),
+                device_type: "actuator_x".into(),
+                adapter_type: "stub-mqtt".into(),
+                connection_config: ConnectionConfig::new(),
+                adapter_id: None,
+                last_seen: 0,
+                offline_timeout_secs: None,
+            })
+            .await
+            .unwrap();
+            svc.register_adapter("stub-1".into(), Arc::new(StubAdapter))
+                .await;
+
+            let (_v, delivery) = svc
+                .send_command_reported("act-1", "open_valve", HashMap::new())
+                .await
+                .unwrap();
+            assert_eq!(delivery, CommandDelivery::AdapterAccepted { adapters: 1 });
+        }
+
+        #[tokio::test]
+        async fn extension_command_reports_extension_confirmed() {
+            let svc = service();
+            seed_template(&svc).await;
+            svc.register_device(DeviceConfig {
+                device_id: "act-ext".into(),
+                name: "Act ext".into(),
+                device_type: "actuator_x".into(),
+                adapter_type: "extension".into(),
+                connection_config: ConnectionConfig::new(),
+                adapter_id: Some("ext-9".into()),
+                last_seen: 0,
+                offline_timeout_secs: None,
+            })
+            .await
+            .unwrap();
+            svc.set_extension_command_router(Arc::new(move |_ext, _dev, _cmd, _params| {
+                Box::pin(async { Ok(()) })
+            }))
+            .await;
+
+            let (_v, delivery) = svc
+                .send_command_reported("act-ext", "open_valve", HashMap::new())
+                .await
+                .unwrap();
+            // Extension router Ok = ACCEPTED, not device-acknowledged.
+            assert_eq!(delivery, CommandDelivery::ExtensionAccepted);
+            assert!(delivery.describe().contains("extension accepted"));
+            assert!(
+                delivery.describe().contains("not a device ACK"),
+                "the wording must not overclaim: {}",
+                delivery.describe()
+            );
+        }
+
+        #[tokio::test]
+        async fn higher_delivery_levels_are_never_overclaimed() {
+            // DeviceAcknowledged keeps physical-effect honesty; nothing below
+            // a real ACK path may report it (no current path produces it).
+            assert!(CommandDelivery::DeviceAcknowledged
+                .describe()
+                .contains("physical effect unverified"));
+            assert!(CommandDelivery::PhysicalEffectVerified
+                .describe()
+                .contains("verified via state feedback"));
+            assert!(CommandDelivery::AdapterAccepted { adapters: 1 }
+                .describe()
+                .contains("device acknowledgment: none"));
+        }
+
+        #[tokio::test]
+        async fn no_adapter_is_explicit_failure_not_silent_send() {
+            let svc = service();
+            seed_template(&svc).await;
+            svc.register_device(DeviceConfig {
+                device_id: "act-2".into(),
+                name: "Act 2".into(),
+                device_type: "actuator_x".into(),
+                adapter_type: "stub-mqtt".into(),
+                connection_config: ConnectionConfig::new(),
+                adapter_id: None,
+                last_seen: 0,
+                offline_timeout_secs: None,
+            })
+            .await
+            .unwrap();
+            // No adapter registered → Err, never "sent".
+            assert!(svc
+                .send_command_reported("act-2", "open_valve", HashMap::new())
+                .await
+                .is_err());
+        }
+    }
+
     use super::*;
     use crate::registry::ConnectionConfig;
 

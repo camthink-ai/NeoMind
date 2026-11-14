@@ -1,0 +1,39 @@
+{
+  "id": "main-objective-e2e-detection-chain",
+  "lang": "en",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Cross-domain chain: transform + rule + notification (main objective)",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "A simulated camera green-01 sends {\"detections\": [{\"cls\": \"person\"}, {\"cls\": \"person\"}, {\"cls\": \"cat\"}]}. Build the chain: count person occurrences, notify me when above 2. Then explain each link's state."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "A simulated camera green-01 sends {\"detections\": [{\"cls\": \"person\"}, {\"cls\": \"person\"}, {\"cls\": \"cat\"}]}. Build the chain: count person occurrences, notify me when above 2. Then explain each link's state."
+    ],
+    "overall": "Cross-domain chain: transform + rule + notification (main objective)"
+  },
+  "state_queries": [
+    {
+      "type": "transform_count",
+      "params": {},
+      "expected_min": 1
+    },
+    {
+      "type": "rule_count",
+      "params": {},
+      "expected_min": 1
+    }
+  ]
+}

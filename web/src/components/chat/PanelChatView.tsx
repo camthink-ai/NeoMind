@@ -29,6 +29,7 @@ import { pickPageAssistant, panelSessionKey, profileFingerprint, readStoredPanel
 import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
+import type { ChatReference } from "@/types"
 import { ChatScrollPill } from "./ChatScrollPill"
 import { X, Minimize2, Bot, Plus, Settings, Cpu, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -189,6 +190,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   })
 
   const [input, setInput] = useState("")
+  const [panelReferences, setPanelReferences] = useState<ChatReference[]>([])
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [sendPhase, setSendPhase] = useState<"idle" | "preparing" | "waiting">("idle")
   const [sendElapsedSeconds, setSendElapsedSeconds] = useState(0)
@@ -613,6 +615,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
     setAttachedImages([])
     setInput("")
+    const sentReferences = panelReferences.length > 0 ? panelReferences : undefined
+    setPanelReferences([])
     if (inputRef.current) inputRef.current.style.height = "auto"
 
     // Ensure we have a session before sending. This await used to happen
@@ -635,9 +639,9 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // Page-matched skills ride every send (backend pins them per message);
     // the page's system focus already lives in the session's system prompt.
     const skillIds = matchedSkillIdsRef.current.length > 0 ? [...matchedSkillIdsRef.current] : undefined
-    ws.sendMessage(text, sentImages, skillIds, undefined)
+    ws.sendMessage(text, sentImages, skillIds, undefined, sentReferences)
     requestAnimationFrame(() => inputRef.current?.focus())
-  }, [input, attachedImages, isStreaming, isHistoryLoading, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn])
+  }, [input, attachedImages, panelReferences, isStreaming, isHistoryLoading, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn])
 
   const filteredMessages = useMemo(() => filterPartialMessages(panelMessages), [panelMessages])
 
@@ -903,6 +907,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           onCancel={handleCancelRequest}
           attachments={attachedImages}
           onAttachmentsChange={setAttachedImages}
+          references={panelReferences}
+          onReferencesChange={setPanelReferences}
           supportsMultimodal={imagesAllowed}
           visionDelegate={visionDelegate}
           backends={llmBackends}

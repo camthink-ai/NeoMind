@@ -360,6 +360,7 @@
     "--format",
     "--help",
     "--status",
+    "--summary",
     "--verbose"
    ],
    "types": [
@@ -704,6 +705,11 @@
     "--verbose"
    ],
    "enable": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
+   "explain": [
     "--format",
     "--help",
     "--verbose"

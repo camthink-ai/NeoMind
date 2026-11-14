@@ -1,0 +1,36 @@
+{
+  "id": "main-objective-transform-test-honest",
+  "lang": "zh",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Transform create + sample test; must report no production writes",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个叫 temp-f 的转换:读取 green-01 的 temperature 乘以 1.8 加 32 转成华氏度。创建后用样例数据 {\"temperature\": 25} 测试一下,并告诉我测试结果和它有没有影响正式数据。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "创建一个叫 temp-f 的转换:读取 green-01 的 temperature 乘以 1.8 加 32 转成华氏度。创建后用样例数据 {\"temperature\": 25} 测试一下,并告诉我测试结果和它有没有影响正式数据。"
+    ],
+    "overall": "Transform create + sample test; must report no production writes"
+  },
+  "state_queries": [
+    {
+      "type": "transform_exists",
+      "params": {
+        "name": "temp-f"
+      },
+      "expected": true
+    }
+  ]
+}

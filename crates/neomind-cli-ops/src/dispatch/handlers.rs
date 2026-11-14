@@ -570,6 +570,7 @@ pub async fn run_rule_cmd(cmd: RuleCommand) -> Result<(CliResponse, OutputFormat
             test_rule(&client, &id, input_json).await?
         }
         RuleCommand::History { id } => get_rule_history(&client, &id).await?,
+        RuleCommand::Explain { id } => explain_rule(&client, &id).await?,
     };
 
     // Format and print output

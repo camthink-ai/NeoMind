@@ -1455,6 +1455,45 @@ pub async fn get_rule_history_handler(
     }))
 }
 
+/// Explain a rule's current state (read-only).
+///
+/// GET /api/rules/:id/explain
+#[utoipa::path(
+    get,
+    path = "/api/rules/:id/explain",
+    tag = "rules",
+    params(
+        ("id" = String, Path, description = "Rule id"),
+    ),
+    responses(
+        (status = 200, description = "Read-only explanation: per-condition source/value/age/result (unknown when no value), for_duration progress, cooldown status, last execution evidence; executes nothing"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn get_rule_explain_handler(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> HandlerResult<serde_json::Value> {
+    let rule_id = RuleId::from_string(&id)
+        .map_err(|_| ErrorResponse::bad_request(format!("Invalid rule ID: {}", id)))?;
+
+    state
+        .automation
+        .rule_engine
+        .get_rule(&rule_id)
+        .await
+        .ok_or_else(|| ErrorResponse::not_found("Rule"))?;
+
+    let explanation = state
+        .automation
+        .rule_engine
+        .explain_rule(&rule_id)
+        .await
+        .ok_or_else(|| ErrorResponse::not_found("Rule"))?;
+
+    ok(serde_json::to_value(explanation).unwrap_or(json!({})))
+}
+
 /// Export all rules as JSON.
 ///
 /// GET /api/rules/export

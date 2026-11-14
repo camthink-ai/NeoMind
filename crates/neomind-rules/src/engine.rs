@@ -106,26 +106,26 @@ pub struct RuleEngine {
     // tokio lock forced try_read in the sync rebuild path, which silently
     // SKIPPED the rebuild under trigger-path contention — a rule added in
     // that window never entered subscription_index until the next CRUD.
-    rules: Arc<StdRwLock<HashMap<RuleId, CompiledRule>>>,
+    pub(crate) rules: Arc<StdRwLock<HashMap<RuleId, CompiledRule>>>,
     /// Subscription index: DataSourceId → Vec<RuleId>
     subscription_index: Arc<StdRwLock<HashMap<String, Arc<Vec<RuleId>>>>>,
     /// Cooldown tracking: RuleId → last trigger Instant
-    cooldowns: Arc<StdRwLock<HashMap<RuleId, Instant>>>,
+    pub(crate) cooldowns: Arc<StdRwLock<HashMap<RuleId, Instant>>>,
     /// Consecutive all-actions-failed count per rule. Gates the cooldown
     /// refund so a persistently-failing rule paces itself instead of re-firing
     /// on every matching data point.
     consecutive_action_failures: Arc<StdRwLock<HashMap<RuleId, u32>>>,
     /// Value provider for condition evaluation.
-    value_provider: Arc<dyn ValueProvider>,
+    pub(crate) value_provider: Arc<dyn ValueProvider>,
     /// In-memory execution history.
-    history: Arc<RwLock<VecDeque<RuleExecutionResult>>>,
+    pub(crate) history: Arc<RwLock<VecDeque<RuleExecutionResult>>>,
     // Optional executors
     message_manager: OptionMessageManager,
     device_action_executor: OptionDeviceActionExecutor,
     extension_action_executor: OptionExtensionActionExecutor,
     agent_trigger: OptionAgentTriggerCallback,
     /// Persistent rule store.
-    rule_store: Arc<StdRwLock<Option<Arc<RuleStore>>>>,
+    pub(crate) rule_store: Arc<StdRwLock<Option<Arc<RuleStore>>>>,
     /// Optional EventBus — publishes RuleEvaluated/RuleTriggered/RuleExecuted
     /// so the frontend / extension subscriptions / agents can react in real
     /// time instead of polling the history API. Wired at construction; the

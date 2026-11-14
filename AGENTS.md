@@ -289,3 +289,124 @@ run-lost/ + run-lost-base/. Also folded into 1.2.8 (user request): the
 extensions page status filter pills removed (search kept; orphaned locale
 keys cleaned, i18n frozen baseline 250→249, lint ratchet still 470, vitest
 351/351, tsc 0). All Mac eval controllers/llama-servers exited clean.
+
+## Edge-AI iteration plan rounds (2026-11-13, user-approved plan)
+
+Governing plan: the 2026-11-13 edge-AI iteration & acceptance plan (~2B local
+models). Baseline recorded as product v1.2.10 / review base main@089ca6ee.
+Iteration 0 (baseline & reproduction) done: artifacts + frozen hashes under
+/tmp/neomind-iter0-20261113-1/ (BASELINE-REPORT.md; Spark model sha 7abd9859…,
+runtime b12024 manifest, gate 69x2=138 digests). Confirmed at runtime: JS
+throw/syntax error recorded as Completed+error=None; undefined/empty JS returns
+produced a FAKE zero metric (rule value cache ignores quality — false-zero
+trigger channel); /transforms/:id/test wrote production history + registered
+outputs; rule history carries no evidence fields, cooldown is in-memory only,
+__last_seen_age_secs covers rule-referenced devices only. Stale eval serves
+cleaned (6 SIGTERM, user-approved); disk 30Gi→110Gi via target-dir cleanup
+(138build release binary preserved at /tmp/neomind-138build/preserved-bin/).
+
+Iteration 1 (transform result truthfulness + dry-run isolation) implemented,
+UNCOMMITTED: pipeline.rs JS errors hard-propagate (Failed+error), all-ops-failed
+→ Failed, MultiOutput captures sub-failures as warnings, extension failures
+return Err (no more quality-0 zero placeholders), execution record always
+writes output{metric_count,warning_count} on success; js_executor drops fake
+zero metrics for null/undefined/empty returns and nested null fields; new
+process_device_data_dry backs POST /transforms/:id/test (no history, no output
+registration). 14 new tests (11 engine + 3 handler). Gates: api lib 493/0,
+integration 121/0, api_docs 3/0, clippy -D warnings clean, fmt clean, full
+workspace gate EXIT=0 with 96 groups / 3868 tests 0 failed. Behavior changes:
+failing extension transforms stop emitting 0-value placeholders; /test no
+longer records. Report + preregistered screening draft (transform-affected
+4x2 + controls 4x2, NOT yet run) under /tmp/neomind-iter1-20261113-1/. No
+commit/push/publish; model-visible impact unmeasured (deterministic fix
+retained on correctness per protocol).
+
+## Plan iterations 2-6 implemented (2026-11-13, uncommitted; user: finish all planned features then validate on the main objective)
+
+On top of iteration 1 (transform truthfulness). All under /tmp/neomind-iter-main-20261113/
+(MAIN-ROUND-REPORT.md, all-changes.patch, case set copy). Rust gates: fmt clean, clippy
+workspace -D warnings clean, full workspace gate rerun after fixing the shell DOMAIN_INDEX
+(`rule explain` addition — the index test caught it). Web: vitest 378/378, tsc 0, eslint
+470 = baseline. NO commit/push/publish; 138 gate NOT run (user: validate the main
+objective instead).
+
+- Iteration 2 rule explain: neomind-rules/src/explain.rs — three-valued per-leaf
+  condition explanation (missing value = unknown + reason, never fake false),
+  value age from a new UnifiedValueProvider::value_cached_at_ms, for_duration
+  progress, in-memory cooldown status (+restart caveat), last-execution
+  evidence, dsl preview, read-only (pinned by test). GET /api/rules/:id/explain
+  (router+api_docs ROUTES) + `neomind rule explain <id>` (cli manifest regen
+  pending binary build). 6 engine + 3 handler tests.
+- Iteration 3 structured @-references: ChatRequest.references (HTTP+WS one type,
+  three compose sites unified); handlers/chat_refs.rs resolves {type,id,label}
+  at send time into a bounded preamble (cap 20 + explicit truncation line);
+  not-found / wrong-type / unknown-type references render an explicit
+  DO-NOT-SUBSTITUTE miss; legacy no-ref messages byte-identical (pinned).
+  Frontend: composer @-mention picker (zh substring search over four entity
+  lists, keyboard nav, chips, backspace-delete, i18n, a11y listbox), refs
+  threaded chat page + panel → ws.sendMessage. References resolve per turn,
+  are NOT persisted as message metadata (design decision). 7 backend + 3
+  compose + 7 vitest tests.
+- Iteration 4 onboarding: audit found drafts/approve/suggest-types + rate
+  limiting already implemented; added the missing state-distinction tests
+  (registered-no-data vs online-with-data; device>template>global offline
+  timeout; migrate_last_seen sentinel lift; needs telemetry flush() — writes
+  are buffered, list_metrics only sees flushed data) and the draft chain test
+  (unknown device → draft NOT a registration; approve-with-existing-type
+  registers + consumes draft; 404 on consumed; data readable after approve).
+- Iteration 5 honest command delivery: CommandDelivery (AdapterAccepted{n} /
+  ExtensionConfirmed) + describe() naming "broker publish / no device ack /
+  physical effect unverified"; send_command_reported (send_command now a thin
+  wrapper); agent command executor and POST device-command response carry the
+  delivery level. 4 tests incl. adapter-less explicit failure.
+- Iteration 6: deterministic e2e scenarios (tests/handlers/e2e_scenarios.rs)
+  — A detections→transform→(production VirtualMetricPublisher)→rule→captured
+  notification with per-node evidence + cooldown dedup; B sensor→rule→
+  simulated command (broker-level history label) + spawned-outcome correction
+  to FAILED on ghost adapter. Business validation set: eval/cases/{zh,en}/
+  main-objective/ 10 scenarios ×2 (onboarding, transform test honesty,
+  broken-transform truthfulness, rule explain, no-refire diagnosis, notify
+  channel + local sink, dashboard card, cross-domain chain, stale-data
+  truthfulness (multi-turn), command delivery levels (multi-turn)); NOT in the
+  69-id gate; 380-case schema validation + mirror + CLI drift all green.
+- Model validation (main-objective, Spark): prepared, NOT yet run — plan:
+  release build, cli_manifest regen, own llama-server (32K/1 slot, not the
+  production instance), local webhook capture on :39999, run_eval run
+  --workflow main-objective --lang both (no external judge; hard signals +
+  local truthfulness review only).
+
+## Main-objective model validation result (2026-11-13 night)
+
+Spark-1.7B (frozen sha/params, dedicated llama-server :29431, no external judge,
+hard signals + local trajectory review) over the new 20-case main-objective set,
+candidate binary fc0c554e…: **hard pass 10/17 asserted (3 timeouts, wrong_tool=0)**.
+Round 1 scored 2/20 because 15 cases used wrong state_query param names (case-set
+defect, fixed: id/name contract); round 2 (eval-main/) is the reading of record;
+round 1 kept at eval-main-r1/. Truthfulness review of 12 trajectories: ZERO false
+claims — command delivery levels (sent/not-acknowledged/unverified) correctly
+restated (iteration 5), stale-data three-way split correct, broken JS quoted raw,
+incomplete chains explicitly declared "not verified". Failures are honest
+incompletions: dashboard/rule cases where green-01 does not exist in the fixture
+and the model correctly ASKS instead of guessing; e2e chain built the rule but not
+the transform (declared); command-honesty zh reply is exemplary but its assertion
+still had a param defect (recorded FAIL per preregistration, no re-run to chase
+score). Next-round candidates: multi-step pacing/timeout compression; case-set
+maintenance (pre-seed green-01 or use fixture devices). No baseline arm was run —
+absolute reading only, no comparative claim. Reports: VALIDATION-REPORT.md +
+MAIN-ROUND-REPORT.md under /tmp/neomind-iter-main-20261113/. Eval llama-server and
+webhook sink exited clean. No commit/push/publish.
+
+## 138 gate regression verdict (2026-11-14, user-ordered)
+
+Candidate fc0c554e (iterations 1-6) ran the frozen 138 gate, 2 rounds = 276
+trials, 10.0h, same frozen Spark params as the 1.2.10 FINAL baseline.
+r0 107/138 (77.5%), r1 109/138 (79.0%) vs FINAL 97/138 (70.3%); runner
+per-lang en 108 / zh 108. Paired vs FINAL: r0 +10 net (21 gained / 11 lost,
+exact McNemar p=0.110), r1 +12 net (18/6, p=0.023). 9 timeouts (same heavy
+family as FINAL's 9), median 102s/variant, 26/138 case-level round flips
+(single-case readings unreliable; per-pair verdicts hold). VERDICT: NO
+REGRESSION, consistent positive lean (+7~9pp both rounds) — stated as
+"strongly indicative of improvement", not separately confirmed (baseline is
+single-round). Truthfulness fixes cost nothing on the historical gate.
+GATE138-VERDICT.md + eval-138/ under /tmp/neomind-iter-main-20261113/.
+llama-server auto-cleaned. Still no commit/push/publish.

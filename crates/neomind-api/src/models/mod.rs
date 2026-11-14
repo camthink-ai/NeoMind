@@ -27,6 +27,19 @@ pub struct ChatImage {
     pub mime_type: Option<String>,
 }
 
+/// A structured object reference attached to a chat message (@-mention).
+#[derive(utoipa::ToSchema, Debug, Clone, Deserialize, serde::Serialize)]
+pub struct ChatReference {
+    /// One of: device | rule | transform | agent.
+    #[serde(rename = "type")]
+    pub r#type: String,
+    /// Authoritative object id.
+    pub id: String,
+    /// Display-only label at selection time; may be stale after renames.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 /// Chat request from the web client.
 #[derive(utoipa::ToSchema, Debug, Clone, Deserialize)]
 pub struct ChatRequest {
@@ -51,6 +64,11 @@ pub struct ChatRequest {
     /// Optional page context for first message (short neutral description of current page).
     #[serde(rename = "pageContext", default)]
     pub page_context: Option<String>,
+    /// Structured object references attached by the composer (@-mentions).
+    /// Resolved server-side at send time into a bounded preamble; the label
+    /// is display-only, the id is authoritative.
+    #[serde(rename = "references", default)]
+    pub references: Option<Vec<ChatReference>>,
     /// Optional per-session config overrides. Honored **only** when this
     /// request triggers creation of a new session (no `sessionId`, or
     /// `sessionId` not found). For an existing session this field is

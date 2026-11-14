@@ -373,3 +373,80 @@ mod tests {
         assert_eq!(rule["changed"], true);
     }
 }
+
+#[cfg(test)]
+mod explain_tests {
+    use super::*;
+    use axum::extract::Path;
+    use neomind_core::datasource::DataSourceId;
+    use neomind_rules::models::*;
+
+    async fn seed_rule_with_value(state: &ServerState, value: Option<f64>) -> RuleId {
+        let engine = &state.automation.rule_engine;
+        // Feed the value cache the condition reads.
+        let provider = state.automation.value_provider.clone();
+        if let Some(v) = value {
+            provider
+                .update_value("device", "sensor-explain", "temperature", v)
+                .await;
+        }
+        let mut rule = CompiledRule::new("Explain handler rule");
+        rule.condition = Some(RuleCondition::Comparison {
+            source: DataSourceId::device("sensor-explain", "temperature"),
+            operator: ComparisonOperator::GreaterThan,
+            threshold: 30.0,
+            threshold_value: None,
+        });
+        rule.trigger = RuleTrigger::Manual;
+        rule.actions = vec![RuleAction::Notify {
+            message: "hot".into(),
+            severity: NotifySeverity::Warning,
+        }];
+        rule.finalize();
+        let id = rule.id.clone();
+        engine.add_rule(rule).await.unwrap();
+        id
+    }
+
+    #[tokio::test]
+    async fn explain_handler_returns_unknown_for_missing_value() {
+        let state = create_test_server_state().await;
+        let id = seed_rule_with_value(&state, None).await;
+        let result = get_rule_explain_handler(State(state), Path(id.to_string())).await;
+        assert!(result.is_ok());
+        let value = result.unwrap().0.data.unwrap();
+        assert_eq!(value["condition"]["result"], "unknown");
+        assert_eq!(value["condition"]["unknown_reason"], "no_value_cached");
+        assert!(value["notes"].as_array().unwrap().iter().any(|n| n
+            .as_str()
+            .unwrap_or_default()
+            .contains("cooldown state is engine memory")));
+    }
+
+    #[tokio::test]
+    async fn explain_handler_returns_true_with_fresh_value() {
+        let state = create_test_server_state().await;
+        let id = seed_rule_with_value(&state, Some(35.0)).await;
+        let result = get_rule_explain_handler(State(state), Path(id.to_string())).await;
+        assert!(result.is_ok());
+        let value = result.unwrap().0.data.unwrap();
+        assert_eq!(value["condition"]["result"], "true");
+        assert_eq!(
+            value["condition"]["source"],
+            "device:sensor-explain:temperature"
+        );
+    }
+
+    #[tokio::test]
+    async fn explain_handler_invalid_and_missing_ids() {
+        let state = create_test_server_state().await;
+        let bad = get_rule_explain_handler(State(state.clone()), Path("not-a-uuid".into())).await;
+        assert!(bad.is_err());
+        let ghost = get_rule_explain_handler(
+            State(state),
+            Path("00000000-0000-4000-8000-000000000000".into()),
+        )
+        .await;
+        assert!(ghost.is_err());
+    }
+}

@@ -1,0 +1,365 @@
+//! Execution-recording truthfulness tests (iteration 1, 2026-11-13).
+//!
+//! Contract under test — `execute_transform` + the ExecutionRecord it writes:
+//! - hard failure (JS error, all operations failed) → `Failed` + error text;
+//! - partial failure (some sub-operations failed) → `Completed` +
+//!   `warning_count > 0` in output;
+//! - no output (JS returned null/undefined/empty) → `Completed` +
+//!   `metric_count == 0` + warning — never a fake zero metric;
+//! - success → `Completed` + exact counts; output is ALWAYS written on
+//!   success so the four states are distinguishable from the record alone.
+use super::*;
+use crate::automation::error::Result;
+use crate::automation::store::SharedAutomationStore;
+use crate::automation::types::{
+    AutomationType, ExecutionRecord, ExecutionStatus, TransformAutomation, TransformOperation,
+    TransformScope,
+};
+use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+fn engine_with_store() -> (TransformEngine, Arc<SharedAutomationStore>) {
+    let store = Arc::new(SharedAutomationStore::memory().unwrap());
+    let engine = TransformEngine::new().with_automation_store(store.clone());
+    (engine, store)
+}
+
+fn js_transform(id: &str, code: &str) -> TransformAutomation {
+    let mut t = TransformAutomation::new(id, id, TransformScope::Global);
+    t.js_code = Some(code.to_string());
+    t
+}
+
+async fn run_and_fetch(
+    engine: &TransformEngine,
+    store: &SharedAutomationStore,
+    t: &TransformAutomation,
+) -> (Result<TransformResult>, Vec<ExecutionRecord>) {
+    let result = engine
+        .execute_transform(t, "sensor-1", &json!({"temperature": 25.5}))
+        .await;
+    let records = store.get_executions(&t.metadata.id, 10).await.unwrap();
+    (result, records)
+}
+
+fn counts(rec: &ExecutionRecord) -> (u64, u64) {
+    let out = rec
+        .output
+        .as_ref()
+        .expect("output always written on success");
+    (
+        out.get("metric_count").and_then(|v| v.as_u64()).unwrap(),
+        out.get("warning_count").and_then(|v| v.as_u64()).unwrap(),
+    )
+}
+
+// ---------- hard failures are recorded as Failed ----------
+
+#[tokio::test]
+async fn js_throw_is_recorded_failed() {
+    let (engine, store) = engine_with_store();
+    let t = js_transform("t1", "throw new Error('boom: missing field')");
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+    assert!(result.is_err(), "JS throw must fail the transform");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, ExecutionStatus::Failed);
+    let err = records[0].error.as_deref().unwrap_or_default();
+    assert!(
+        err.contains("boom"),
+        "error text must carry the JS error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn js_syntax_error_is_recorded_failed() {
+    let (engine, store) = engine_with_store();
+    let t = js_transform("t2", "const x = {{{{");
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+    assert!(result.is_err());
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, ExecutionStatus::Failed);
+    assert!(records[0].error.is_some());
+}
+
+#[tokio::test]
+async fn all_operations_failed_is_recorded_failed() {
+    let (engine, store) = engine_with_store();
+    let mut t = TransformAutomation::new("t3", "t3", TransformScope::Global);
+    t.operations = Some(vec![TransformOperation::Single {
+        json_path: "$.missing_field".to_string(),
+        output_metric: "m".to_string(),
+    }]);
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+    assert!(result.is_err(), "the only operation failed → hard failure");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, ExecutionStatus::Failed);
+    let err = records[0].error.as_deref().unwrap_or_default();
+    assert!(
+        err.contains("all 1 operations failed"),
+        "error names the cause: {err}"
+    );
+}
+
+#[tokio::test]
+async fn extension_without_registry_is_recorded_failed() {
+    let (engine, store) = engine_with_store();
+    let mut t = TransformAutomation::new("t4", "t4", TransformScope::Global);
+    t.operations = Some(vec![TransformOperation::Extension {
+        extension_id: "ext-x".to_string(),
+        command: "analyze".to_string(),
+        parameters: HashMap::new(),
+        output_metrics: vec!["out".to_string()],
+        output_mapping: None,
+    }]);
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+    assert!(
+        result.is_err(),
+        "extension failure is a failed operation, not placeholder metrics"
+    );
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, ExecutionStatus::Failed);
+    let err = records[0].error.as_deref().unwrap_or_default();
+    assert!(
+        err.contains("no extension registry configured"),
+        "error names the cause: {err}"
+    );
+    match result {
+        Err(e) => assert!(e.to_string().contains("no extension registry configured")),
+        Ok(_) => panic!("expected the extension operation to fail"),
+    }
+}
+
+// ---------- no output is explicit, never a fake zero metric ----------
+
+#[tokio::test]
+async fn js_undefined_return_is_completed_with_zero_metrics_and_warning() {
+    let (engine, store) = engine_with_store();
+    let t = js_transform("t5", "return undefined");
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+    let r = result.expect("undefined return is not an error");
+    assert!(r.metrics.is_empty(), "no fake zero metric");
+    assert_eq!(r.warnings.len(), 1, "explicit no-output warning");
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].status, ExecutionStatus::Completed);
+    assert_eq!(counts(&records[0]), (0, 1));
+}
+
+#[tokio::test]
+async fn js_empty_object_return_is_zero_metrics_with_warning() {
+    let (engine, store) = engine_with_store();
+    let t = js_transform("t6", "return {}");
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+    let r = result.expect("empty object return is not an error");
+    assert!(r.metrics.is_empty());
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(counts(&records[0]), (0, 1));
+}
+
+#[tokio::test]
+async fn js_null_field_does_not_become_fake_zero_metric() {
+    let (engine, store) = engine_with_store();
+    let t = js_transform("t7", "return {a: 1, b: null}");
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+    let r = result.expect("partial nulls are not an error");
+    assert_eq!(r.metrics.len(), 1, "only the non-null field emits a metric");
+    // Empty output_prefix on a Global transform defaults to "transform".
+    assert_eq!(r.metrics[0].metric, "transform.a");
+    assert_eq!(r.metrics[0].value, MetricValue::Float(1.0));
+    assert_eq!(counts(&records[0]), (1, 0));
+}
+
+// ---------- success and partial failure keep exact counts ----------
+
+#[tokio::test]
+async fn js_multi_field_success_has_exact_counts() {
+    let (engine, store) = engine_with_store();
+    let t = js_transform("t8", "return {temp: 25.5, hum: 60}");
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+    let r = result.expect("valid output");
+    assert_eq!(r.metrics.len(), 2);
+    assert!(r.warnings.is_empty());
+    assert_eq!(records[0].status, ExecutionStatus::Completed);
+    assert_eq!(counts(&records[0]), (2, 0));
+}
+
+#[tokio::test]
+async fn multioutput_partial_failure_is_completed_with_warning() {
+    let (engine, store) = engine_with_store();
+    let mut t = TransformAutomation::new("t9", "t9", TransformScope::Global);
+    t.operations = Some(vec![TransformOperation::MultiOutput {
+        operations: vec![
+            TransformOperation::Single {
+                json_path: "$.temperature".to_string(),
+                output_metric: "temp".to_string(),
+            },
+            TransformOperation::Single {
+                json_path: "$.missing".to_string(),
+                output_metric: "bad".to_string(),
+            },
+        ],
+    }]);
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+    let r = result.expect("partial MultiOutput success is not a hard failure");
+    assert_eq!(
+        r.metrics.len(),
+        1,
+        "the good branch still produced its metric"
+    );
+    assert!(
+        r.warnings
+            .iter()
+            .any(|w| w.contains("sub-operation failed")),
+        "the failed branch is visible as a warning: {:?}",
+        r.warnings
+    );
+    assert_eq!(records[0].status, ExecutionStatus::Completed);
+    assert_eq!(counts(&records[0]), (1, 1));
+}
+
+// ---------- dry-run writes nothing; production path unchanged ----------
+
+#[tokio::test]
+async fn dry_run_returns_metrics_without_history_or_registration() {
+    let (engine, store) = engine_with_store();
+    let t = js_transform("dry1", "return {count: 1}");
+    let data = json!({"temperature": 25.5});
+
+    let dry = engine
+        .process_device_data_dry(std::slice::from_ref(&t), "sensor-1", None, &data)
+        .await
+        .expect("dry-run computes");
+    assert_eq!(dry.metrics.len(), 1);
+    assert!(
+        dry.unverified.is_empty(),
+        "pure JS dry-run has nothing unverified: {:?}",
+        dry.unverified
+    );
+
+    assert!(
+        store.get_executions("dry1", 10).await.unwrap().is_empty(),
+        "dry-run must not write execution history"
+    );
+    assert!(
+        engine
+            .output_registry()
+            .get_transform_outputs("dry1")
+            .await
+            .is_empty(),
+        "dry-run must not register outputs"
+    );
+
+    // Control: the production path on the same engine still records + registers.
+    let prod = engine
+        .process_device_data(&[t], "sensor-1", None, &data)
+        .await
+        .expect("production run");
+    assert_eq!(prod.metrics.len(), 1);
+    let records = store.get_executions("dry1", 10).await.unwrap();
+    assert_eq!(records.len(), 1, "production run records history");
+    assert_eq!(records[0].status, ExecutionStatus::Completed);
+    assert_eq!(counts(&records[0]), (1, 0));
+    assert!(
+        !engine
+            .output_registry()
+            .get_transform_outputs("dry1")
+            .await
+            .is_empty(),
+        "production run registers outputs"
+    );
+}
+
+// ---------- dry-run never executes extensions ----------
+
+#[tokio::test]
+async fn dry_run_blocks_extension_invocation_as_unverified() {
+    let (engine, store) = engine_with_store();
+    let t = js_transform(
+        "dry-ext",
+        "const r = extensions.invoke('weather', 'get', {}); return {v: 1}",
+    );
+    let result = engine
+        .process_device_data_dry(
+            std::slice::from_ref(&t),
+            "sensor-1",
+            None,
+            &json!({"temperature": 25.5}),
+        )
+        .await
+        .expect("dry-run returns a result, not an error");
+
+    // Refused ≠ failed ≠ clean success: explicitly unverified.
+    assert!(
+        result
+            .unverified
+            .iter()
+            .any(|u| u.contains("blocked in dry-run")),
+        "blocked invocation surfaces as unverified: {:?}",
+        result.unverified
+    );
+    assert!(
+        result.metrics.is_empty(),
+        "no metrics from a blocked preview"
+    );
+    // And nothing was recorded (dry-run invariant still holds).
+    assert!(store
+        .get_executions("dry-ext", 10)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn production_mode_still_runs_extension_path_as_before() {
+    // Production keeps the original semantics: no stub is installed and the
+    // registry-less invoke fails as an ordinary JS error (ReferenceError),
+    // recorded as a FAILED execution — NOT as an unverified marker.
+    let (engine, store) = engine_with_store();
+    let t = js_transform(
+        "prod-ext",
+        "const r = extensions.invoke('weather', 'get', {}); return {v: 1}",
+    );
+    let result = engine
+        .execute_transform(&t, "sensor-1", &json!({"temperature": 25.5}))
+        .await;
+    assert!(
+        result.is_err(),
+        "no registry in this engine -> extensions undefined -> JS error"
+    );
+    let records = store.get_executions("prod-ext", 10).await.unwrap();
+    assert_eq!(records[0].status, ExecutionStatus::Failed);
+}
+
+#[test]
+fn dry_run_policy_is_default_deny_with_explicit_pure_allowlist() {
+    use crate::automation::transform::extension_allowed_in_dry_run;
+    // Default-deny: empty allow-list blocks everything.
+    assert!(!extension_allowed_in_dry_run("weather", ""));
+    assert!(!extension_allowed_in_dry_run("weather", "  "));
+    // Explicit entries, trimmed, exact-match only.
+    assert!(extension_allowed_in_dry_run("weather", "weather"));
+    assert!(extension_allowed_in_dry_run("weather", "ocr, weather ,x"));
+    assert!(!extension_allowed_in_dry_run("weather2", "weather"));
+    assert!(!extension_allowed_in_dry_run("wea", "weather"));
+}
+
+// ---------- old records stay deserializable ----------
+
+#[tokio::test]
+async fn legacy_record_without_output_roundtrips() {
+    // Records written before iteration 1 have output: None (and no
+    // warning_count key when present) — they must keep parsing.
+    let legacy = json!({
+        "id": "old-1",
+        "automation_id": "t-old",
+        "automation_type": "transform",
+        "started_at": 1700000000000i64,
+        "ended_at": 1700000000001i64,
+        "status": "completed",
+        "error": null
+    });
+    let rec: ExecutionRecord = serde_json::from_value(legacy).expect("legacy record parses");
+    assert_eq!(rec.status, ExecutionStatus::Completed);
+    assert!(rec.output.is_none());
+    assert_eq!(rec.automation_type, AutomationType::Transform);
+}

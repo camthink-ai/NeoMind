@@ -1,0 +1,44 @@
+{
+  "id": "main-objective-rule-create-explain",
+  "lang": "zh",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Rule create + read-only explanation of current state",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建规则 high-temp-green:当 green-01 的 temperature 大于 30 就通知我。建好后解释一下这条规则现在的状态:条件值是多少、结果如何。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "创建规则 high-temp-green:当 green-01 的 temperature 大于 30 就通知我。建好后解释一下这条规则现在的状态:条件值是多少、结果如何。"
+    ],
+    "overall": "Rule create + read-only explanation of current state"
+  },
+  "state_queries": [
+    {
+      "type": "rule_exists",
+      "params": {
+        "name": "high-temp-green"
+      },
+      "expected": true
+    },
+    {
+      "type": "rule_action_type",
+      "params": {
+        "name": "high-temp-green",
+        "action_type": "notify"
+      },
+      "expected": true
+    }
+  ]
+}

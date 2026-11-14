@@ -3,8 +3,9 @@
 //! `pipeline` — split from the former transform.rs monolith.
 
 use super::*;
-use crate::automation::error::Result;
+use crate::automation::error::{AutomationError, Result};
 
+use crate::automation::transform::TransformExecutionMode;
 use crate::automation::types::{
     AutomationType, ExecutionRecord, ExecutionStatus, TransformAutomation, TransformOperation,
 };
@@ -122,6 +123,7 @@ impl TransformEngine {
             return Ok(TransformResult {
                 metrics: Vec::new(),
                 warnings: Vec::new(),
+                unverified: Vec::new(),
             });
         }
 
@@ -166,6 +168,114 @@ impl TransformEngine {
         Ok(TransformResult {
             metrics: all_metrics,
             warnings: all_warnings,
+            unverified: Vec::new(),
+        })
+    }
+}
+impl TransformEngine {
+    /// Dry-run transforms against sample data with NO production writes:
+    /// no execution-history rows, no output-registry registration.
+    ///
+    /// Used by `POST /api/automations/transforms/:id/test`. The production
+    /// path (`process_device_data`) records history and auto-registers
+    /// outputs — a preview must mutate neither. Extension invocations
+    /// (preprocess + `extensions.invoke`) still run: testing an
+    /// extension-backed transform IS the feature; this dry-run boundary
+    /// removes the platform-state side effects, not the computation.
+    pub async fn process_device_data_dry(
+        &self,
+        transforms: &[TransformAutomation],
+        device_id: &str,
+        device_type: Option<&str>,
+        raw_data: &Value,
+    ) -> Result<TransformResult> {
+        // Dry-run NEVER executes preprocess extensions unless they are
+        // explicitly allow-listed as pure. Non-pure preprocessors are
+        // skipped WITH an unverified marker — the preview reports what it
+        // refused instead of silently pretending raw data == preprocessed.
+        let allow_list = super::dry_run_pure_extensions();
+        let (processed_data, mut all_warnings, mut unverified) = match self
+            .extension_registry
+            .as_ref()
+        {
+            Some(registry) => {
+                let mut preprocessors = Vec::new();
+                for info in registry.list().await {
+                    if info.commands.iter().any(|cmd| cmd.name == "preprocess") {
+                        preprocessors.push(info.metadata.id.clone());
+                    }
+                }
+                let blocked: Vec<String> = preprocessors
+                    .iter()
+                    .filter(|id| !super::extension_allowed_in_dry_run(id, &allow_list))
+                    .cloned()
+                    .collect();
+                if blocked.is_empty() {
+                    (
+                        self.preprocess_with_extensions(device_id, device_type, raw_data)
+                            .await,
+                        Vec::new(),
+                        Vec::new(),
+                    )
+                } else {
+                    let mut unverified = Vec::new();
+                    for id in &blocked {
+                        unverified.push(format!(
+                            "preprocess extension '{id}' not invoked in dry-run (side-effecting); raw data used; preprocessed behavior unverified"
+                        ));
+                    }
+                    // Raw data — no extension executed.
+                    (raw_data.clone(), Vec::new(), unverified)
+                }
+            }
+            None => (raw_data.clone(), Vec::new(), Vec::new()),
+        };
+
+        let mut all_metrics = Vec::new();
+
+        let applicable_transforms: Vec<_> = transforms
+            .iter()
+            .filter(|t| t.applies_to_device(device_id, device_type))
+            .collect();
+
+        if applicable_transforms.is_empty() {
+            return Ok(TransformResult {
+                metrics: Vec::new(),
+                warnings: Vec::new(),
+                unverified: Vec::new(),
+            });
+        }
+
+        for transform in applicable_transforms {
+            // execute_transform_inner only computes; recording happens in
+            // the execute_transform wrapper, which we deliberately skip.
+            match self
+                .execute_transform_inner(
+                    transform,
+                    device_id,
+                    &processed_data,
+                    TransformExecutionMode::DryRun,
+                )
+                .await
+            {
+                Ok(result) => {
+                    all_metrics.extend(result.metrics);
+                    all_warnings.extend(result.warnings);
+                    unverified.extend(result.unverified);
+                }
+                Err(e) => {
+                    all_warnings.push(format!(
+                        "Transform '{}' failed: {}",
+                        transform.metadata.name, e
+                    ));
+                }
+            }
+        }
+
+        Ok(TransformResult {
+            metrics: all_metrics,
+            warnings: all_warnings,
+            unverified,
         })
     }
 }
@@ -181,22 +291,26 @@ impl TransformEngine {
 
         // Execute and capture result for execution recording
         let result = self
-            .execute_transform_inner(transform, device_id, raw_data)
+            .execute_transform_inner(
+                transform,
+                device_id,
+                raw_data,
+                TransformExecutionMode::Production,
+            )
             .await;
 
         // Record execution history
         if let Some(ref store) = self.automation_store {
             let (status, error, output) = match &result {
                 Ok(r) => {
-                    let output = if r.metrics.is_empty() {
-                        None
-                    } else {
-                        Some(serde_json::json!({
-                            "metric_count": r.metrics.len(),
-                            "warning_count": r.warnings.len(),
-                        }))
-                    };
-                    (ExecutionStatus::Completed, None, output)
+                    // Output is ALWAYS written on success: metric_count 0
+                    // makes "no output" explicit instead of collapsing into
+                    // the same output=None a swallowed failure used to leave.
+                    let output = serde_json::json!({
+                        "metric_count": r.metrics.len(),
+                        "warning_count": r.warnings.len(),
+                    });
+                    (ExecutionStatus::Completed, None, Some(output))
                 }
                 Err(e) => (ExecutionStatus::Failed, Some(e.to_string()), None),
             };
@@ -227,9 +341,11 @@ impl TransformEngine {
         transform: &TransformAutomation,
         device_id: &str,
         raw_data: &Value,
+        mode: TransformExecutionMode,
     ) -> Result<TransformResult> {
         let mut metrics = Vec::new();
         let mut warnings = Vec::new();
+        let mut unverified: Vec<String> = Vec::new();
         // Use seconds (not milliseconds) for consistency with device metrics storage
         // Device metrics use timestamp.timestamp() which returns seconds since epoch
         let timestamp = Utc::now().timestamp();
@@ -285,6 +401,7 @@ impl TransformEngine {
                     device_id,
                     timestamp,
                     ext_ref,
+                    mode,
                 ) {
                     Ok(js_metrics) => {
                         // Set transform_id on each metric
@@ -292,46 +409,107 @@ impl TransformEngine {
                             m.transform_id = Some(transform.metadata.id.clone());
                             metrics.push(m);
                         }
+                        if metrics.is_empty() {
+                            warnings.push(
+                            "JS transform produced no output metrics (returned null/undefined or an empty result)"
+                                .to_string(),
+                        );
+                        }
                     }
-                    Err(e) => {
-                        warnings.push(format!("JS execution failed: {}", e));
+                    // Dry-run extension blocking is NOT a failure and NOT a
+                    // success: the tested behavior depends on an extension
+                    // that was refused, so the result is explicitly unverified.
+                    Err(e)
+                        if mode == TransformExecutionMode::DryRun
+                            && e.to_string().contains("NEOMIND_DRYRUN_EXTENSION_BLOCKED") =>
+                    {
+                        unverified.push(
+                            "extension invocation blocked in dry-run; extension-dependent behavior unverified"
+                                .to_string(),
+                        );
+                        return Ok(TransformResult {
+                            metrics,
+                            warnings,
+                            unverified,
+                        });
                     }
+                    // A JS error IS the transform failing. It used to be
+                    // downgraded to a warning, so the execution history showed a
+                    // clean "Completed" with no error for a broken transform.
+                    Err(e) => return Err(e),
                 }
-                return Ok(TransformResult { metrics, warnings });
+                return Ok(TransformResult {
+                    metrics,
+                    warnings,
+                    unverified,
+                });
             }
         }
 
         // Fall back to legacy operations
         if let Some(ref operations) = transform.operations {
             let transform_id = transform.metadata.id.clone();
+            let total_ops = operations.len();
+            let mut failed_ops = 0usize;
             for operation in operations {
+                let mut op_warnings = Vec::new();
                 match self
-                    .execute_operation(operation, device_id, timestamp, raw_data)
+                    .execute_operation(operation, device_id, timestamp, raw_data, &mut op_warnings)
                     .await
                 {
                     Ok(op_metrics) => {
+                        warnings.extend(op_warnings);
                         // Set transform_id on each metric from legacy operations
                         for mut m in op_metrics {
                             m.transform_id = Some(transform_id.clone());
                             metrics.push(m);
                         }
                     }
-                    Err(e) => warnings.push(format!("Operation failed: {}", e)),
+                    Err(e) => {
+                        failed_ops += 1;
+                        warnings.push(format!("Operation failed: {}", e));
+                    }
                 }
+            }
+            // Every operation failed → the transform produced nothing: that
+            // is a failed execution, not a silent success with warnings.
+            if total_ops > 0 && failed_ops == total_ops {
+                let last_error = warnings
+                    .iter()
+                    .rev()
+                    .find_map(|w| w.strip_prefix("Operation failed: "))
+                    .unwrap_or("unknown error")
+                    .to_string();
+                return Err(AutomationError::TransformError {
+                    operation: "Operations".to_string(),
+                    message: format!(
+                        "all {} operations failed; last error: {}",
+                        total_ops, last_error
+                    ),
+                });
             }
         }
 
-        Ok(TransformResult { metrics, warnings })
+        Ok(TransformResult {
+            metrics,
+            warnings,
+            unverified,
+        })
     }
 }
 impl TransformEngine {
-    /// Execute a single transform operation
+    /// Execute a single transform operation.
+    ///
+    /// `warnings` collects soft signals from operations that partially
+    /// failed (e.g. individual MultiOutput sub-operations); hard failures
+    /// still return `Err`.
     pub(crate) async fn execute_operation(
         &self,
         operation: &TransformOperation,
         device_id: &str,
         timestamp: i64,
         raw_data: &Value,
+        warnings: &mut Vec<String>,
     ) -> Result<Vec<TransformedMetric>> {
         // Use a match with explicit async blocks to avoid recursion
         match operation {
@@ -401,14 +579,10 @@ impl TransformEngine {
                 output_metrics,
                 output_mapping,
             } => {
-                // Determine which metric names to use for error/placeholder paths
-                let error_metric_names: Vec<String> = output_mapping
-                    .as_ref()
-                    .filter(|m| !m.is_empty())
-                    .map(|m| m.keys().cloned().collect())
-                    .unwrap_or_else(|| output_metrics.clone());
-
-                // Phase 4.2: Execute extension-based transform
+                // Phase 4.2: Execute extension-based transform.
+                // Extension failures return Err: the previous zero-valued
+                // placeholder metrics (quality 0.0) were recorded as
+                // Completed and fed fake 0s into the rule value cache.
                 if let Some(ref registry) = self.extension_registry {
                     if let Some(ext) = registry.get(extension_id).await {
                         // 1. Resolve input mappings (e.g., url_to_base64)
@@ -474,52 +648,39 @@ impl TransformEngine {
                             }
                             Err(e) => {
                                 tracing::error!("Extension transform failed: {:?}", e);
-                                Ok(error_metric_names
-                                    .iter()
-                                    .map(|m| TransformedMetric {
-                                        device_id: device_id.to_string(),
-                                        transform_id: None,
-                                        metric: m.clone(),
-                                        value: 0.0.into(),
-                                        timestamp,
-                                        quality: Some(0.0),
-                                    })
-                                    .collect())
+                                Err(AutomationError::TransformError {
+                                    operation: "Extension".to_string(),
+                                    message: format!(
+                                        "extension '{}' command '{}' failed: {:?}",
+                                        extension_id, command, e
+                                    ),
+                                })
                             }
                         }
                     } else {
                         tracing::warn!("Extension not found: {}", extension_id);
-                        Ok(error_metric_names
-                            .iter()
-                            .map(|m| TransformedMetric {
-                                device_id: device_id.to_string(),
-                                transform_id: None,
-                                metric: m.clone(),
-                                value: 0.0.into(),
-                                timestamp,
-                                quality: None,
-                            })
-                            .collect())
+                        Err(AutomationError::TransformError {
+                            operation: "Extension".to_string(),
+                            message: format!("extension '{}' not found", extension_id),
+                        })
                     }
                 } else {
                     tracing::warn!("No extension registry configured");
-                    Ok(error_metric_names
-                        .iter()
-                        .map(|m| TransformedMetric {
-                            device_id: device_id.to_string(),
-                            transform_id: None,
-                            metric: m.clone(),
-                            value: 0.0.into(),
-                            timestamp,
-                            quality: None,
-                        })
-                        .collect())
+                    Err(AutomationError::TransformError {
+                        operation: "Extension".to_string(),
+                        message: "no extension registry configured".to_string(),
+                    })
                 }
             }
 
             TransformOperation::MultiOutput { operations } => {
-                // Inline the multioutput logic to avoid recursion
+                // Inline the multioutput logic to avoid recursion.
+                // Sub-operation failures are captured as warnings (partial
+                // success); only ALL sub-operations failing fails the op —
+                // failures used to be dropped silently (`Err(_) => continue`).
                 let mut all_metrics = Vec::new();
+                let sub_total = operations.len();
+                let mut sub_failed = 0usize;
                 for op in operations {
                     let result = match op {
                         TransformOperation::Single {
@@ -585,8 +746,17 @@ impl TransformEngine {
                     };
                     match result {
                         Ok(mut m) => all_metrics.append(&mut m),
-                        Err(_) => continue,
+                        Err(e) => {
+                            sub_failed += 1;
+                            warnings.push(format!("MultiOutput sub-operation failed: {}", e));
+                        }
                     }
+                }
+                if sub_total > 0 && sub_failed == sub_total {
+                    return Err(AutomationError::TransformError {
+                        operation: "MultiOutput".to_string(),
+                        message: format!("all {} sub-operations failed", sub_total),
+                    });
                 }
                 Ok(all_metrics)
             }

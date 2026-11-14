@@ -1,0 +1,52 @@
+{
+  "id": "main-objective-dashboard-card-config",
+  "lang": "zh",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Standard dashboard card config bound to a device metric",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "创建一个仪表盘叫 温室概览,里面放一张卡片显示 green-01 的 temperature 实时值,标题用中文。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "创建一个仪表盘叫 温室概览,里面放一张卡片显示 green-01 的 temperature 实时值,标题用中文。"
+    ],
+    "overall": "Standard dashboard card config bound to a device metric"
+  },
+  "state_queries": [
+    {
+      "type": "dashboard_exists",
+      "params": {
+        "name": "温室概览"
+      },
+      "expected": true
+    },
+    {
+      "type": "dashboard_component_count",
+      "params": {
+        "name": "温室概览"
+      },
+      "expected_min": 1
+    },
+    {
+      "type": "dashboard_component_bound",
+      "params": {
+        "name": "温室概览",
+        "device_id": "green-01",
+        "metric": "temperature"
+      },
+      "expected": true
+    }
+  ]
+}

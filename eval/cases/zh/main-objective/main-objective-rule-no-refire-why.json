@@ -1,0 +1,40 @@
+{
+  "id": "main-objective-rule-no-refire-why",
+  "lang": "zh",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "multi_turn",
+  "description": "Cooldown diagnosis; must identify cooldown without mutating state",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "帮我创建设备类型 greenhouse-temp(上报 temperature 数字),注册设备 green-01,再创建规则 high-temp-green:当 green-01 的 temperature 大于 30 就通知我。"
+    },
+    {
+      "user": "现在这条规则触发过几次了?如果没触发过,说清楚为什么;不要改任何东西。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "帮我创建设备类型 greenhouse-temp(上报 temperature 数字),注册设备 green-01,再创建规则 high-temp-green:当 green-01 的 temperature 大于 30 就通知我。",
+      "现在这条规则触发过几次了?如果没触发过,说清楚为什么;不要改任何东西。"
+    ],
+    "overall": "Cooldown diagnosis; must identify cooldown without mutating state"
+  },
+  "state_queries": [
+    {
+      "type": "rule_enabled",
+      "params": {
+        "name": "high-temp-green"
+      },
+      "expected": true
+    }
+  ]
+}

@@ -40,10 +40,10 @@ pub async fn send_command_handler(
     Json(req): Json<SendCommandRequest>,
 ) -> HandlerResult<serde_json::Value> {
     // Use DeviceService.send_command which accepts HashMap<String, serde_json::Value>
-    state
+    let (_value, delivery) = state
         .devices
         .service
-        .send_command(&device_id, &command, req.params)
+        .send_command_reported(&device_id, &command, req.params)
         .await
         .map_err(|e| ErrorResponse::bad_request(format!("Failed to send command: {:?}", e)))?;
 
@@ -51,6 +51,8 @@ pub async fn send_command_handler(
         "device_id": device_id,
         "command": command,
         "sent": true,
+        "delivery": serde_json::to_value(&delivery).unwrap_or(serde_json::Value::Null),
+        "delivery_note": delivery.describe(),
     }))
 }
 

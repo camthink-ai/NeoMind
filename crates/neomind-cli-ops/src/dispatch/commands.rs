@@ -1315,6 +1315,19 @@ pub enum RuleCommand {
         #[arg(required = true)]
         id: String,
     },
+    /// Explain a rule's current state (read-only diagnosis).
+    ///
+    /// Shows, right now, without executing anything: each condition's source,
+    /// current value, value age and result (unknown when no data was received),
+    /// for_duration progress, cooldown remaining, trigger count and the last
+    /// execution result. Use this to answer "why did/didn't my rule fire".
+    ///
+    /// Example: `neomind rule explain rule-001`
+    Explain {
+        /// Rule ID.
+        #[arg(required = true)]
+        id: String,
+    },
 }
 
 /// Transform subcommands.

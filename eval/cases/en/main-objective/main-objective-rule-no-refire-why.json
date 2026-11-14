@@ -1,0 +1,40 @@
+{
+  "id": "main-objective-rule-no-refire-why",
+  "lang": "en",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "multi_turn",
+  "description": "Cooldown diagnosis; must identify cooldown without mutating state",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create device type greenhouse-temp (numeric temperature), register device green-01, then create rule high-temp-green: notify me when green-01's temperature exceeds 30."
+    },
+    {
+      "user": "How many times has this rule fired so far? If never, explain exactly why — do not change anything."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Create device type greenhouse-temp (numeric temperature), register device green-01, then create rule high-temp-green: notify me when green-01's temperature exceeds 30.",
+      "How many times has this rule fired so far? If never, explain exactly why — do not change anything."
+    ],
+    "overall": "Cooldown diagnosis; must identify cooldown without mutating state"
+  },
+  "state_queries": [
+    {
+      "type": "rule_enabled",
+      "params": {
+        "name": "high-temp-green"
+      },
+      "expected": true
+    }
+  ]
+}

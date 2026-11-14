@@ -1,0 +1,36 @@
+{
+  "id": "main-objective-transform-test-honest",
+  "lang": "en",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Transform create + sample test; must report no production writes",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Create a transform temp-f: read green-01's temperature, multiply by 1.8 and add 32. Then test it with sample {\"temperature\": 25} and tell me the result and whether the test affected production data."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Create a transform temp-f: read green-01's temperature, multiply by 1.8 and add 32. Then test it with sample {\"temperature\": 25} and tell me the result and whether the test affected production data."
+    ],
+    "overall": "Transform create + sample test; must report no production writes"
+  },
+  "state_queries": [
+    {
+      "type": "transform_exists",
+      "params": {
+        "name": "temp-f"
+      },
+      "expected": true
+    }
+  ]
+}

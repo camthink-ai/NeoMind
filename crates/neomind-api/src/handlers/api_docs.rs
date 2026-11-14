@@ -836,6 +836,11 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "GET",
+        path: "/api/rules/:id/explain",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "GET",
         path: "/api/messages",
         auth: "jwt-or-api-key",
     },

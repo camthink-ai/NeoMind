@@ -205,5 +205,16 @@
   "loadEarlierLoading": "加载中…",
   "suggestions": {
     "badge": "推荐"
+  },
+  "mention": {
+    "title": "选择要引用的对象",
+    "searching": "搜索中…",
+    "noResults": "没有匹配的对象",
+    "referencesLabel": "引用的对象",
+    "remove": "移除引用",
+    "device": "设备",
+    "rule": "规则",
+    "transform": "转换",
+    "agent": "代理"
   }
 }

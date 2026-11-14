@@ -1,0 +1,40 @@
+{
+  "id": "main-objective-stale-data-truthful",
+  "lang": "zh",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "multi_turn",
+  "description": "Stale data must not be laundered as current readings",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "帮我创建设备类型 greenhouse-temp(上报 temperature 数字),注册设备 green-01。"
+    },
+    {
+      "user": "green-01 现在温度是多少?状态怎么样?只说你能确证的。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "帮我创建设备类型 greenhouse-temp(上报 temperature 数字),注册设备 green-01。",
+      "green-01 现在温度是多少?状态怎么样?只说你能确证的。"
+    ],
+    "overall": "Stale data must not be laundered as current readings"
+  },
+  "state_queries": [
+    {
+      "type": "device_exists",
+      "params": {
+        "name": "green-01"
+      },
+      "expected": true
+    }
+  ]
+}

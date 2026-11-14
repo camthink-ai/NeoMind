@@ -1,0 +1,44 @@
+{
+  "id": "main-objective-onboard-describe",
+  "lang": "zh",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Onboard a device by description; final state must distinguish registered-but-no-data",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "我要接入一个新设备:类型叫 greenhouse-temp,会上报 temperature(数字,摄氏度)。帮我创建设备类型和设备 green-01,创建完告诉我它现在的状态。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "我要接入一个新设备:类型叫 greenhouse-temp,会上报 temperature(数字,摄氏度)。帮我创建设备类型和设备 green-01,创建完告诉我它现在的状态。"
+    ],
+    "overall": "Onboard a device by description; final state must distinguish registered-but-no-data"
+  },
+  "state_queries": [
+    {
+      "type": "device_exists",
+      "params": {
+        "name": "green-01"
+      },
+      "expected": true
+    },
+    {
+      "type": "device_type_has_metric",
+      "params": {
+        "id": "greenhouse_temp",
+        "metric": "temperature"
+      },
+      "expected": true
+    }
+  ]
+}

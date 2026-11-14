@@ -56,11 +56,13 @@ impl AgentExecutor {
 
         // Execute the command via DeviceService
         let execution_result = device_service
-            .send_command(device_id, command_name, params_map)
+            .send_command_reported(device_id, command_name, params_map)
             .await;
 
+        // The delivery level travels with the success so the agent (and the
+        // user) cannot read a broker publish as physical completion.
         let (success, result) = match execution_result {
-            Ok(_) => (true, Some("Command sent successfully".to_string())),
+            Ok((_value, delivery)) => (true, Some(delivery.describe())),
             Err(e) => {
                 tracing::warn!(
                     agent_id = %agent.id,

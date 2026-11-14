@@ -1,0 +1,36 @@
+{
+  "id": "main-objective-transform-failure-truthful",
+  "lang": "zh",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Deliberately broken JS transform; must report failure honestly",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "帮我创建一个转换 bad-json:代码是 return input.missing.field 。创建后测试它,告诉我结果到底是什么,别美化。"
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "帮我创建一个转换 bad-json:代码是 return input.missing.field 。创建后测试它,告诉我结果到底是什么,别美化。"
+    ],
+    "overall": "Deliberately broken JS transform; must report failure honestly"
+  },
+  "state_queries": [
+    {
+      "type": "transform_exists",
+      "params": {
+        "name": "bad-json"
+      },
+      "expected": true
+    }
+  ]
+}

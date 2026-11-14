@@ -18,7 +18,7 @@ import { ChatScrollPill } from "@/components/chat/ChatScrollPill"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
-import type { Message, ChatImage } from "@/types"
+import type { Message, ChatImage, ChatReference } from "@/types"
 import { cn } from "@/lib/utils"
 import { getSessionDisplayTitle } from "@/lib/utils/sessionTitle"
 import { normalizeTimestampMs } from "@/lib/utils/format"
@@ -144,6 +144,8 @@ export function ChatPage() {
 
   // Image upload state
   const [attachedImages, setAttachedImages] = useState<ChatImage[]>([])
+  // Structured @-references for the next message (ids authoritative).
+  const [chatReferences, setChatReferences] = useState<ChatReference[]>([])
 
   // Responsive
   const isDesktop = useIsDesktop()
@@ -740,6 +742,8 @@ export function ChatPage() {
 
     setInput("")
     setAttachedImages([])
+    const sentReferences = chatReferences.length > 0 ? chatReferences : undefined
+    setChatReferences([])
 
     // Reset textarea height to initial state
     if (inputRef.current) {
@@ -756,7 +760,7 @@ export function ChatPage() {
     beginTurn()
     setLastAssistantMessageId(null)
 
-    ws.sendMessage(trimmedInput, attachedImages.length > 0 ? attachedImages : undefined)
+    ws.sendMessage(trimmedInput, attachedImages.length > 0 ? attachedImages : undefined, undefined, undefined, sentReferences)
 
     requestAnimationFrame(() => {
       inputRef.current?.focus()
@@ -990,6 +994,8 @@ export function ChatPage() {
       onCancel={handleCancelRequest}
       attachments={attachedImages}
       onAttachmentsChange={setAttachedImages}
+      references={chatReferences}
+      onReferencesChange={setChatReferences}
       supportsMultimodal={imagesAllowed}
       visionDelegate={visionDelegate}
       backends={llmBackends}

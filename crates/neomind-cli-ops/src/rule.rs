@@ -252,6 +252,11 @@ pub async fn get_rule_history(client: &ApiClient, id: &str) -> Result<CliRespons
     Ok(CliResponse::success(data, "Rule history retrieved"))
 }
 
+pub async fn explain_rule(client: &ApiClient, id: &str) -> Result<CliResponse> {
+    let data = client.get(&format!("/rules/{}/explain", id)).await?;
+    Ok(CliResponse::success(data, "Rule explanation retrieved"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

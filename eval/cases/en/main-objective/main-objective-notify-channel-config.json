@@ -1,0 +1,34 @@
+{
+  "id": "main-objective-notify-channel-config",
+  "lang": "en",
+  "category": "main-objective",
+  "workflow": "main-objective",
+  "scenario_type": "single_turn",
+  "description": "Structured notification channel config + local receiver test",
+  "setup": {
+    "fixture": "seed-default"
+  },
+  "turns": [
+    {
+      "user": "Configure a webhook notification channel named local-sink at http://127.0.0.1:39999/hook, then send a test message and check delivery."
+    }
+  ],
+  "applies": [
+    "tool_accuracy",
+    "task_completion",
+    "language_adherence"
+  ],
+  "expectations": {
+    "per_turn": [
+      "Configure a webhook notification channel named local-sink at http://127.0.0.1:39999/hook, then send a test message and check delivery."
+    ],
+    "overall": "Structured notification channel config + local receiver test"
+  },
+  "state_queries": [
+    {
+      "type": "message_count",
+      "params": {},
+      "expected_min": 1
+    }
+  ]
+}

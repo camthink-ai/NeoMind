@@ -40,6 +40,41 @@ pub struct TransformResult {
     pub metrics: Vec<TransformedMetric>,
     /// Any warnings generated during transformation
     pub warnings: Vec<String>,
+    /// Parts of this result that are UNVERIFIED — e.g. extension behavior
+    /// that a dry-run refused to execute. A non-empty list means the result
+    /// must not be presented as a clean success.
+    pub unverified: Vec<String>,
+}
+
+/// Execution mode for transform runs.
+///
+/// `DryRun` NEVER executes extensions (preprocess commands or
+/// `extensions.invoke`): extension side effects would make a "test" real.
+/// Extension involvement under dry-run surfaces as `unverified` markers,
+/// never as a silent skip reported as success. Capability policy lives
+/// server-side (`NEOMIND_DRYRUN_PURE_EXTENSIONS` allow-list, default none —
+/// everything is treated as side-effecting; a Mockable tier with simulators
+/// is future work and deliberately not faked here).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransformExecutionMode {
+    Production,
+    DryRun,
+}
+
+/// Whether an extension is allow-listed as pure (safe to execute in a
+/// dry-run). Default-deny: anything not explicitly listed is treated as
+/// side-effecting.
+pub fn extension_allowed_in_dry_run(extension_id: &str, allow_list: &str) -> bool {
+    allow_list
+        .split(',')
+        .map(|s| s.trim())
+        .any(|entry| !entry.is_empty() && entry == extension_id)
+}
+
+/// The configured pure-extension allow-list for dry-runs (comma-separated
+/// ids). Empty by default — every extension is treated as side-effecting.
+pub fn dry_run_pure_extensions() -> String {
+    std::env::var("NEOMIND_DRYRUN_PURE_EXTENSIONS").unwrap_or_default()
 }
 
 /// A transformed metric ready for storage/publication
@@ -256,5 +291,7 @@ pub(crate) use image::*;
 pub use js_executor::*;
 pub(crate) use value::*;
 
+#[cfg(test)]
+mod recording_tests;
 #[cfg(test)]
 mod tests;

@@ -210,5 +210,16 @@
   "loadEarlierLoading": "Loading…",
   "suggestions": {
     "badge": "Suggested"
+  },
+  "mention": {
+    "title": "Pick an object to reference",
+    "searching": "Searching…",
+    "noResults": "No matching objects",
+    "referencesLabel": "Referenced objects",
+    "remove": "Remove reference",
+    "device": "device",
+    "rule": "rule",
+    "transform": "transform",
+    "agent": "agent"
   }
 }
