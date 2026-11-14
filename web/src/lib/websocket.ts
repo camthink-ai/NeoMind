@@ -323,6 +323,7 @@ export class ChatWebSocket {
     selectedSkills?: string[],
     pageContext?: string,
     references?: ChatReference[],
+    contentNodes?: import("@/types").ChatContentNode[],
   ) {
     this.sendRequest({
       message: content,
@@ -332,6 +333,12 @@ export class ChatWebSocket {
       selectedSkills: selectedSkills && selectedSkills.length > 0 ? selectedSkills : undefined,
       pageContext: pageContext || undefined,
       references: references && references.length > 0 ? references : undefined,
+      contentVersion:
+        contentNodes && contentNodes.length > 0
+          ? (1 as const)
+          : undefined,
+      contentNodes:
+        contentNodes && contentNodes.length > 0 ? contentNodes : undefined,
     })
   }
 

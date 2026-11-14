@@ -40,6 +40,28 @@ pub struct ChatReference {
     pub label: Option<String>,
 }
 
+/// Ordered content node for the v1 inline-@ protocol (plan 1.3 iter C).
+///
+/// `kind` is `"text"` or `"reference"`. Text nodes carry `text`; reference
+/// nodes carry `type`/`id`/`labelSnapshot`. Unknown kinds are rejected.
+#[derive(utoipa::ToSchema, Debug, Clone, Deserialize, serde::Serialize)]
+pub struct ChatContentNode {
+    /// `"text"` | `"reference"`.
+    pub kind: String,
+    /// Plain text for `kind=text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Entity type for `kind=reference` (device|rule|transform|agent).
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub r#type: Option<String>,
+    /// Authoritative object id for `kind=reference`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Display-only name snapshot at selection time (never trusted for auth).
+    #[serde(rename = "labelSnapshot", default, skip_serializing_if = "Option::is_none")]
+    pub label_snapshot: Option<String>,
+}
+
 /// Chat request from the web client.
 #[derive(utoipa::ToSchema, Debug, Clone, Deserialize)]
 pub struct ChatRequest {
@@ -65,10 +87,19 @@ pub struct ChatRequest {
     #[serde(rename = "pageContext", default)]
     pub page_context: Option<String>,
     /// Structured object references attached by the composer (@-mentions).
-    /// Resolved server-side at send time into a bounded preamble; the label
-    /// is display-only, the id is authoritative.
+    /// Legacy attachment-chip path: resolved into a bounded preamble.
+    /// Prefer `contentNodes` for in-sentence position.
     #[serde(rename = "references", default)]
     pub references: Option<Vec<ChatReference>>,
+    /// Protocol version for `contentNodes` (currently only `1`). Omitted with
+    /// no nodes = legacy plain/`references` path.
+    #[serde(rename = "contentVersion", default)]
+    pub content_version: Option<u32>,
+    /// Ordered text/reference nodes (inline @). When present and non-empty,
+    /// the server renders references **in place** into the model message
+    /// (ids + server-resolved names). Caps are hard errors (no silent drop).
+    #[serde(rename = "contentNodes", default)]
+    pub content_nodes: Option<Vec<ChatContentNode>>,
     /// Optional per-session config overrides. Honored **only** when this
     /// request triggers creation of a new session (no `sessionId`, or
     /// `sessionId` not found). For an existing session this field is

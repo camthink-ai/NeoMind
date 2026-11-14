@@ -1,0 +1,32 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-iter-C-content-nodes-protocol",
+  "product_version": "1.2.11",
+  "pushed": false,
+  "deliverables": {
+    "protocol_doc": "docs/development/content-nodes-protocol-2026-11-14.md",
+    "backend": "crates/neomind-api/src/handlers/chat_refs.rs + models ChatContentNode",
+    "paths": ["HTTP chat_handler", "WS text", "WS multimodal"],
+    "frontend": "web/src/lib/chat/contentProtocol.ts + types + websocket contentNodes"
+  },
+  "tests": {
+    "cargo_integration_chat_refs": "14/14",
+    "cargo_lib_chat_refs_unit": "5/5",
+    "vitest_contentProtocol": "3/3",
+    "vitest_inline_at_regression": "12/12",
+    "tsc": "0 errors"
+  },
+  "acceptance_vs_plan": {
+    "ordered_nodes": true,
+    "in_place_render": true,
+    "label_not_trusted": true,
+    "duplicate_in_sentence": true,
+    "legacy_compat": true,
+    "hard_caps_no_silent_drop": true,
+    "http_ws_image_parity": true,
+    "session_draft": true,
+    "server_history_nodes_persist": false,
+    "production_composer_inline": false
+  },
+  "next_slice": "C: server mention search/pagination + duplicate-name disambiguation + invalid-ref UX"
+}

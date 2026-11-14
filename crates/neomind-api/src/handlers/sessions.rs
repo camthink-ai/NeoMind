@@ -1301,19 +1301,34 @@ pub async fn chat_handler(
     // + selected_skills, which the old handler dropped on the floor.
     // Prepend page context if provided (mirrors the WS path; the old single-round
     // HTTP handler dropped this).
-    // Structured references (@-mentions) resolve to a bounded preamble that
-    // is prepended here — same slot page_context uses, HTTP and WS parity.
-    let refs_preamble = match req.references.as_deref() {
-        Some(refs) if !refs.is_empty() => {
-            Some(super::chat_refs::reference_preamble(&state, refs).await)
-        }
-        _ => None,
-    };
-    let final_message = super::chat_refs::compose_chat_message(
+    // Structured references: contentNodes (v1 in-place) preferred; legacy
+    // `references` preamble otherwise. Caps on the nodes path are hard 400s.
+    let prepared = match super::chat_refs::prepare_chat_input(
+        &state,
         &req.message,
         req.page_context.as_deref(),
-        refs_preamble,
-    );
+        req.references.as_deref(),
+        req.content_version,
+        req.content_nodes.as_deref(),
+    )
+    .await
+    {
+        Ok(p) => p,
+        Err(err) => {
+            return Err(crate::models::error::ErrorResponse::new(
+                err.code.clone(),
+                err.message.clone(),
+                axum::http::StatusCode::BAD_REQUEST,
+            )
+            .with_hint(format!(
+                "contentNodes caps: nodes≤{}, refs≤{}, textChars≤{}; legacy references path still truncates with a note",
+                super::chat_refs::MAX_CONTENT_NODES,
+                super::chat_refs::MAX_REFERENCES,
+                super::chat_refs::MAX_CONTENT_TEXT_CHARS
+            )));
+        }
+    };
+    let final_message = prepared.model_message;
 
     // Branch on multimodal input for REST parity with WS. The old HTTP handler
     // dropped req.images entirely, so a REST vision client silently degraded to
@@ -1986,18 +2001,32 @@ async fn handle_ws_socket(
                                             }
                                         }
 
-                                        // Prepend page context if provided
-                                        let refs_preamble = match chat_req.references.as_deref() {
-                                            Some(refs) if !refs.is_empty() => {
-                                                Some(super::chat_refs::reference_preamble(&task_state, refs).await)
-                                            }
-                                            _ => None,
-                                        };
-                                        let final_message = super::chat_refs::compose_chat_message(
+                                        // contentNodes (in-place) or legacy references preamble
+                                        let prepared = match super::chat_refs::prepare_chat_input(
+                                            &task_state,
                                             &chat_req.message,
                                             chat_req.page_context.as_deref(),
-                                            refs_preamble,
-                                        );
+                                            chat_req.references.as_deref(),
+                                            chat_req.content_version,
+                                            chat_req.content_nodes.as_deref(),
+                                        )
+                                        .await
+                                        {
+                                            Ok(p) => p,
+                                            Err(err) => {
+                                                let err_frame = json!({
+                                                    "type": "Error",
+                                                    "code": err.code,
+                                                    "message": err.message,
+                                                    "limit": err.limit,
+                                                    "actual": err.actual,
+                                                })
+                                                .to_string();
+                                                let _ = socket.send(AxumMessage::Text(err_frame)).await;
+                                                continue;
+                                            }
+                                        };
+                                        let final_message = prepared.model_message;
 
                                         // Use streaming for multimodal messages.
                                         // The clone here is the ONE deliberate copy:
@@ -2079,18 +2108,31 @@ async fn handle_ws_socket(
                                     } else {
                                         // Regular text-only message - use streaming
                                         let selected_skills = chat_req.selected_skills.clone();
-                                        // Prepend page context if provided (only on first message per session)
-                                        let refs_preamble = match chat_req.references.as_deref() {
-                                            Some(refs) if !refs.is_empty() => {
-                                                Some(super::chat_refs::reference_preamble(&state, refs).await)
-                                            }
-                                            _ => None,
-                                        };
-                                        let final_message = super::chat_refs::compose_chat_message(
+                                        let prepared = match super::chat_refs::prepare_chat_input(
+                                            &state,
                                             &chat_req.message,
                                             chat_req.page_context.as_deref(),
-                                            refs_preamble,
-                                        );
+                                            chat_req.references.as_deref(),
+                                            chat_req.content_version,
+                                            chat_req.content_nodes.as_deref(),
+                                        )
+                                        .await
+                                        {
+                                            Ok(p) => p,
+                                            Err(err) => {
+                                                let err_frame = json!({
+                                                    "type": "Error",
+                                                    "code": err.code,
+                                                    "message": err.message,
+                                                    "limit": err.limit,
+                                                    "actual": err.actual,
+                                                })
+                                                .to_string();
+                                                let _ = socket.send(AxumMessage::Text(err_frame)).await;
+                                                continue;
+                                            }
+                                        };
+                                        let final_message = prepared.model_message;
                                         // Set session ID on memory tool for session-scoped operations
                                         // (now handled inside Agent::process to avoid cross-session races)
                                         // [non-blocking stream creation] Stream creation used to

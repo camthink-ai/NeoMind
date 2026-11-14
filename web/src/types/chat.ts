@@ -1,5 +1,17 @@
 // ========== Chat Types ==========
 
+/** Ordered content node for the v1 inline-@ protocol (plan 1.3 iter C). */
+export type ChatContentNode =
+  | { kind: 'text'; text: string }
+  | {
+      kind: 'reference'
+      type: 'device' | 'rule' | 'transform' | 'agent'
+      id: string
+      labelSnapshot: string
+    }
+
+export const CHAT_CONTENT_VERSION_V1 = 1 as const
+
 export interface Message {
   id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
@@ -20,6 +32,8 @@ export interface Message {
   // spent, …) — rendered as a system callout below the content, never
   // merged into it.
   systemNotes?: string[]
+  /** Inline-@ nodes for history display (client optimistic + future server). */
+  contentNodes?: ChatContentNode[]
 }
 
 /**
@@ -179,7 +193,11 @@ export interface ClientChatMessage {
   backendId?: string  // Optional LLM backend ID to use for this message
   selectedSkills?: string[]  // Skill IDs pinned by user for this session
   pageContext?: string  // Short neutral page context, sent only on first message
-  references?: ChatReference[]  // Structured @-mentions, resolved server-side at send time
+  references?: ChatReference[]  // Legacy chip path — preamble on the server
+  /** Protocol version for contentNodes (currently 1). */
+  contentVersion?: typeof CHAT_CONTENT_VERSION_V1
+  /** Ordered text/reference nodes — preferred over references when present. */
+  contentNodes?: ChatContentNode[]
 }
 
 // ========== Chat Input Types ==========

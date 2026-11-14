@@ -2,9 +2,12 @@
 //! server-side resolution, honest not-found/wrong-type reporting, the
 //! reference cap, and legacy (no-reference) compatibility.
 
-use neomind_api::handlers::chat_refs::{compose_chat_message, reference_preamble, MAX_REFERENCES};
+use neomind_api::handlers::chat_refs::{
+    compose_chat_message, prepare_chat_input, reference_preamble, MAX_CONTENT_NODES,
+    MAX_REFERENCES, CONTENT_VERSION_V1,
+};
 use neomind_api::handlers::ServerState;
-use neomind_api::models::ChatReference;
+use neomind_api::models::{ChatContentNode, ChatReference};
 use neomind_rules::models::*;
 
 async fn state() -> ServerState {
@@ -243,4 +246,162 @@ fn legacy_composition_is_byte_identical() {
     assert_eq!(compose_chat_message("m", Some("ctx"), None), "ctx\n\nm");
     // No references + no context → plain message.
     assert_eq!(compose_chat_message("m", None, None), "m");
+}
+
+fn text_node(text: &str) -> ChatContentNode {
+    ChatContentNode {
+        kind: "text".into(),
+        text: Some(text.into()),
+        r#type: None,
+        id: None,
+        label_snapshot: None,
+    }
+}
+
+fn ref_node(r#type: &str, id: &str, label: &str) -> ChatContentNode {
+    ChatContentNode {
+        kind: "reference".into(),
+        text: None,
+        r#type: Some(r#type.into()),
+        id: Some(id.into()),
+        label_snapshot: Some(label.into()),
+    }
+}
+
+#[tokio::test]
+async fn content_nodes_render_in_place_with_server_names_not_client_labels() {
+    let state = state().await;
+    let (rule_id, _) = seed_rule_and_transform(&state).await;
+    let nodes = vec![
+        text_node("检查 "),
+        ref_node("rule", &rule_id, "客户端旧名"),
+        text_node(" 是否启用"),
+    ];
+    let prepared = prepare_chat_input(
+        &state,
+        "ignored when nodes present",
+        None,
+        None,
+        Some(CONTENT_VERSION_V1),
+        Some(&nodes),
+    )
+    .await
+    .unwrap();
+    assert!(prepared.used_content_nodes);
+    assert!(
+        prepared.model_message.contains(&format!("【rule `{rule_id}` \"机房高温\"】")),
+        "{}",
+        prepared.model_message
+    );
+    assert!(prepared.model_message.starts_with("检查 "));
+    assert!(prepared.model_message.ends_with(" 是否启用"));
+    assert!(
+        !prepared.model_message.contains("客户端旧名"),
+        "client labelSnapshot must not reach the model"
+    );
+    assert!(prepared.resolutions.len() == 1 && prepared.resolutions[0].ok);
+}
+
+#[tokio::test]
+async fn content_nodes_keep_duplicate_entities_in_sentence() {
+    let state = state().await;
+    let config = neomind_devices::registry::DeviceConfig {
+        device_id: "dup-dev".to_string(),
+        name: "Sensor A".to_string(),
+        device_type: "t".to_string(),
+        adapter_type: "mqtt".to_string(),
+        connection_config: neomind_devices::registry::ConnectionConfig::new(),
+        adapter_id: None,
+        last_seen: 0,
+        offline_timeout_secs: None,
+    };
+    let template: neomind_devices::registry::DeviceTypeTemplate =
+        serde_json::from_value(serde_json::json!({"device_type": "t", "name": "T"})).unwrap();
+    state
+        .devices
+        .registry
+        .register_template(template)
+        .await
+        .unwrap();
+    state.devices.service.register_device(config).await.unwrap();
+
+    let nodes = vec![
+        text_node("compare "),
+        ref_node("device", "dup-dev", "A"),
+        text_node(" vs "),
+        ref_node("device", "dup-dev", "A"),
+    ];
+    let prepared = prepare_chat_input(
+        &state,
+        "",
+        None,
+        None,
+        Some(CONTENT_VERSION_V1),
+        Some(&nodes),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        prepared.model_message.matches("【device `dup-dev`").count(),
+        2
+    );
+    assert_eq!(prepared.resolutions.len(), 2);
+}
+
+#[tokio::test]
+async fn content_nodes_cap_is_hard_error_not_silent_truncate() {
+    let state = state().await;
+    let mut nodes = Vec::new();
+    for i in 0..(MAX_CONTENT_NODES + 1) {
+        nodes.push(text_node(&format!("x{i}")));
+    }
+    let err = prepare_chat_input(
+        &state,
+        "",
+        None,
+        None,
+        Some(CONTENT_VERSION_V1),
+        Some(&nodes),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, "content_nodes_cap");
+    assert_eq!(err.limit, Some(MAX_CONTENT_NODES));
+}
+
+#[tokio::test]
+async fn legacy_references_still_compose_when_nodes_absent() {
+    let state = state().await;
+    let (rule_id, _) = seed_rule_and_transform(&state).await;
+    let refs = vec![reference("rule", &rule_id, Some("旧"))];
+    let prepared = prepare_chat_input(
+        &state,
+        "hello",
+        Some("PAGE"),
+        Some(&refs),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(!prepared.used_content_nodes);
+    assert!(prepared.model_message.contains("SYSTEM-RESOLVED DATA"));
+    assert!(prepared.model_message.contains("PAGE"));
+    assert!(prepared.model_message.ends_with("hello"));
+}
+
+#[tokio::test]
+async fn unsupported_content_version_is_rejected() {
+    let state = state().await;
+    let err = prepare_chat_input(
+        &state,
+        "",
+        None,
+        None,
+        Some(99),
+        Some(&[text_node("hi")]),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, "unsupported_content_version");
 }
