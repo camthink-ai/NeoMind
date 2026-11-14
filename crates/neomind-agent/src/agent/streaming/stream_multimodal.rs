@@ -42,8 +42,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
     use neomind_core::ContentPart;
 
-    // Clear before the first model request, not when its stream is consumed.
-    llm_interface.clear_skill_context().await;
+    // New user turn: clear transient skills, then push user (G2 directives)
+    // BEFORE the first model request — same contract as the text stream path.
+    super::super::task_continuity::begin_user_turn_clear_transient_skills(&llm_interface).await;
     let turn_context =
         super::context::TurnContext::new(conversation_summary.clone(), summary_up_to_index);
     let user_message = user_message.to_string();
@@ -58,10 +59,47 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         }
     }
 
+    // Cache + persist the user turn (directives via push_message) before LLM.
+    if !images.is_empty() {
+        let mut state = internal_state.write().await;
+        for (i, url) in images.iter().enumerate() {
+            let cache_key = if i == 0 {
+                "user_image".to_string()
+            } else {
+                format!("user_image_{}", i)
+            };
+            state.large_data_cache.store_user_image(&cache_key, url);
+        }
+    }
+    let user_images: Vec<AgentMessageImage> = images
+        .iter()
+        .map(|data_url| {
+            let mime_type =
+                crate::image_utils::parse_image_data(data_url).map(|p| p.mime_type.to_string());
+            AgentMessageImage {
+                data: data_url.clone(),
+                mime_type,
+            }
+        })
+        .collect();
+    {
+        let user_msg = AgentMessage::user_with_images(&user_message, user_images);
+        internal_state.write().await.push_message(user_msg);
+    }
+
     // Get conversation history
     let state_guard = internal_state.read().await;
     let mut history_messages = state_guard.memory.clone();
     drop(state_guard);
+
+    // [dup-fix] Current user is in memory and also passed as multimodal_user_msg.
+    if history_messages
+        .last()
+        .map(|m| m.role == "user" && m.content.as_ref() == user_message)
+        .unwrap_or(false)
+    {
+        history_messages.pop();
+    }
 
     // === CHAT HISTORY DEPTH — same cap as the text-streaming path ===
     let drained = crate::agent::apply_chat_history_depth(&mut history_messages);
@@ -132,48 +170,8 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
     let stream = stream_result.map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
-    // Check if images are present (before moving images)
+    // Check if images are present (user turn already pushed above).
     let has_images = !images.is_empty();
-
-    // [copy-avoidance] Cache the images from a BORROW first, then move
-    // them into the history message. The old order (clone the whole Vec to
-    // keep a copy alive across the move, push, then cache from the clone)
-    // duplicated every image's full base64 payload once per turn.
-    //
-    // Cache user-uploaded images so tools can reference them via
-    // $cached:user_image (or the auto-inject on image-shaped args). MUST use
-    // store_user_image — the regular store() passes anything under 32KB
-    // through uncached, which silently killed tool access to compressed
-    // user images (2026-08-18).
-    if !images.is_empty() {
-        let mut state = internal_state.write().await;
-        for (i, url) in images.iter().enumerate() {
-            let cache_key = if i == 0 {
-                "user_image".to_string()
-            } else {
-                format!("user_image_{}", i)
-            };
-            state.large_data_cache.store_user_image(&cache_key, url);
-        }
-    }
-
-    // Convert the image strings to AgentMessageImage (mime parsed with the
-    // shared parse_image_data helper — non-standard data URLs handled
-    // consistently) and store the user message in history with them.
-    let user_images: Vec<AgentMessageImage> = images
-        .into_iter()
-        .map(|data_url| {
-            let mime_type =
-                crate::image_utils::parse_image_data(&data_url).map(|p| p.mime_type.to_string());
-            AgentMessageImage {
-                data: data_url,
-                mime_type,
-            }
-        })
-        .collect();
-
-    let user_msg = AgentMessage::user_with_images(&user_message, user_images);
-    internal_state.write().await.push_message(user_msg);
 
     Ok(Box::pin(async_stream::stream! {
         let mut stream = stream;

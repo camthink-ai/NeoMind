@@ -1,0 +1,30 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-p1-skill-clear-turn-continuity",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "1161e482",
+  "plan_section": "12",
+  "item": "P1 new-user-turn clear transient skills + Continue/Correct/Cancel/write recovery",
+  "docs": "docs/development/p1-skill-clear-turn-continuity-2026-11-14.md",
+  "code": [
+    "crates/neomind-agent/src/agent/task_continuity.rs",
+    "crates/neomind-agent/src/agent/streaming/stream_core.rs",
+    "crates/neomind-agent/src/agent/streaming/stream_multimodal.rs"
+  ],
+  "gates": {
+    "neomind_agent_lib_task_continuity": "14/14",
+    "live_spark": "not_run_138_busy"
+  },
+  "eval_138": {
+    "controller_pid": 89912,
+    "llama_port": 29431,
+    "status": "still_running",
+    "touched": false
+  },
+  "claim": "New user turns clear transient skills; TaskState continue/correct/cancel/write-gate survive; multimodal directives before first LLM. No live score.",
+  "next": "Live G2/G3+skill probes after 138; D/E/F; human C UX",
+  "head_at_end": "PENDING_COMMIT"
+}

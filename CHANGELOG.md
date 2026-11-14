@@ -28,6 +28,7 @@ Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through conten
 - History / optimistic user bubbles redraw inline mention chips from persisted `contentNodes`; pencil “reuse in composer” restores ordered nodes for fix-and-resend (invalid-send also saves the draft).
 - Headed Playwright mention a11y suite (`mention-a11y.spec.ts`): prototype+chat listbox/ARIA/axe, history chips, touch-emulated mobile taps (mocked API; physical touch / VoiceOver / 5-person still open).
 - Chat skill bodies (transient tool loads + pinned) share a total estimated-token budget (`ctx/8` clamped 2k–6k); later guides truncate or skip instead of zeroing history.
+- Each new user turn clears transient skills while G2 `TaskState` (Continue / Correct / Cancel / write fingerprints) survives; multimodal applies directives before the first LLM call.
 - G2 mutating write gate at chat tool dispatch (`may_execute_write` / `record_successful_write` for shell mutations + `run_now`/`file_write`/`file_edit`/`image_edit`).
 - Rule explain API/UI (`GET /rules/:id/explain` surface in Rule detail).
 - Command delivery ladder UI + Agent execution evidence panel (`stop_reason` / `tokens_used` DTO plumbing + `deriveAgentExecutionEvidence`).
@@ -44,6 +45,7 @@ Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through conten
 - History contentNodes chip redraw + reuse + normalize aliases: ChatMessages / contentProtocol / messageUtils vitest (54 in the TipTap+history suite).
 - Headed Playwright mention-a11y 6/6 (`npm run test:e2e:mention-a11y`); 5×4 usability not executed.
 - Skill total-body budget unit tests (scale/clamp, append plan, 15-guide cap) 4/4.
+- Skill-clear + TaskState continuity tests (continue/correct/cancel/write recovery) — `task_continuity` 14/14.
 - Offline only for E live 10-run and F tip-138 / Appliance — not claimed in this release entry.
 
 ---

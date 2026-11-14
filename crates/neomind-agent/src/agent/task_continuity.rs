@@ -10,6 +10,16 @@
 //! - **Continue** resumes without replaying fingerprints of writes that already
 //!   succeeded with evidence.
 //!
+//! ## Transient skills vs TaskState (plan §12 P1)
+//! Each **new user turn** clears temporary skill bodies on the LLM interface
+//! ([`begin_user_turn_clear_transient_skills`]) so 15+ guides cannot ride into
+//! the next turn. [`TaskState`] is **not** cleared by that call — it lives on
+//! `AgentInternalState` and is updated only via [`TaskDirective`] when the user
+//! message is pushed. Order of operations:
+//! 1. `push_message(user)` → parse Continue/Correct/Cancel onto TaskState
+//! 2. Stream entry → clear transient skills
+//! 3. Within the turn, the skill tool may reload guides under the total body budget
+//!
 //! ## G3 — loop halt ≠ success
 //! Classifies rounds as progress vs no-progress repeat (identical tool result
 //! sets). A forced stop after repeated no-progress rounds is recorded as a
@@ -248,6 +258,16 @@ impl TaskState {
             source: source.into(),
         });
     }
+}
+
+/// Clear temporary skill bodies at the start of a user turn.
+///
+/// Call from stream entry points only (not mid-turn guide-recovery clears).
+/// Does **not** touch [`TaskState`] — Continue / Correct / Cancel / write-gate
+/// fingerprints must survive so multi-turn tasks stay coherent without keeping
+/// every skill guide forever.
+pub async fn begin_user_turn_clear_transient_skills(llm: &crate::llm::LlmInterface) {
+    llm.clear_skill_context().await;
 }
 
 /// Parse a user utterance into a directive when the intent is clear.
@@ -604,5 +624,135 @@ mod tests {
         s.confirm_step_from_tool("shell", &fp, "queued-only", "queued, no physical ACK");
         assert_eq!(s.status, TaskStatus::Active);
         assert!(!matches!(s.status, TaskStatus::Completed { .. }));
+    }
+
+    /// New-user-turn contract: skills clear; TaskState + write gate survive.
+    #[tokio::test]
+    async fn continue_after_write_clears_skills_keeps_write_gate() {
+        use crate::agent::types::{AgentInternalState, AgentMessage};
+        use crate::llm::{ChatConfig, LlmInterface};
+
+        let llm = LlmInterface::new(ChatConfig::default());
+        let mut state = AgentInternalState::new("s-continue-skill".into());
+        state.task_state.apply_directive(TaskDirective::SetGoal {
+            goal: "写天气到 EK410".into(),
+            object: Some("EK410".into()),
+            content: None,
+        });
+        let fp = write_fingerprint("shell", "render_text EK410");
+        state.task_state.record_successful_write(fp.clone());
+        state
+            .task_state
+            .confirm_step_from_tool("shell", &fp, "queued-1", "render queued");
+        llm.set_skill_context("weather-guide".into(), "FULL WEATHER SKILL BODY".into())
+            .await;
+        assert!(llm.get_skill_context().await.is_some());
+
+        // New user turn (stream entry order): clear skills, then Continue.
+        begin_user_turn_clear_transient_skills(&llm).await;
+        state.push_message(AgentMessage::user("继续"));
+
+        assert!(
+            llm.get_skill_context().await.is_none(),
+            "transient skills must not survive into the next user turn"
+        );
+        assert_eq!(state.task_state.status, TaskStatus::Active);
+        assert_eq!(state.task_state.goal.as_deref(), Some("写天气到 EK410"));
+        assert_eq!(state.task_state.confirmed_steps.len(), 1);
+        assert!(
+            !state.task_state.may_execute_write(&fp),
+            "Continue must still refuse replaying the successful write"
+        );
+    }
+
+    #[tokio::test]
+    async fn correct_clears_skills_and_overwrites_goal() {
+        use crate::agent::types::{AgentInternalState, AgentMessage};
+        use crate::llm::{ChatConfig, LlmInterface};
+
+        let llm = LlmInterface::new(ChatConfig::default());
+        let mut state = AgentInternalState::new("s-correct-skill".into());
+        state.task_state.apply_directive(TaskDirective::SetGoal {
+            goal: "写到墨水屏".into(),
+            object: Some("screen-a".into()),
+            content: Some("晴".into()),
+        });
+        state.task_state.set_next_action("render old", "planner");
+        llm.set_skill_context("eink-old".into(), "OLD SCREEN SKILL".into())
+            .await;
+
+        begin_user_turn_clear_transient_skills(&llm).await;
+        state.push_message(AgentMessage::user("改成 eink 屏 EK410"));
+
+        assert!(llm.get_skill_context().await.is_none());
+        assert!(state.task_state.goal.as_deref().unwrap().contains("eink"));
+        assert_eq!(state.task_state.object.as_deref(), Some("EK410"));
+        assert!(state.task_state.next_action.is_none());
+        assert_eq!(state.task_state.status, TaskStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn cancel_clears_skills_and_blocks_writes() {
+        use crate::agent::types::{AgentInternalState, AgentMessage};
+        use crate::llm::{ChatConfig, LlmInterface};
+
+        let llm = LlmInterface::new(ChatConfig::default());
+        let mut state = AgentInternalState::new("s-cancel-skill".into());
+        state.task_state.apply_directive(TaskDirective::SetGoal {
+            goal: "render".into(),
+            object: Some("EK410".into()),
+            content: None,
+        });
+        let fp = write_fingerprint("shell", "neomind ext invoke render");
+        llm.set_skill_context("render-guide".into(), "RENDER SKILL".into())
+            .await;
+
+        begin_user_turn_clear_transient_skills(&llm).await;
+        state.push_message(AgentMessage::user("取消"));
+
+        assert!(llm.get_skill_context().await.is_none());
+        assert_eq!(state.task_state.status, TaskStatus::Cancelled);
+        assert!(!state.task_state.may_execute_write(&fp));
+        assert_eq!(
+            state.task_state.apply_directive(TaskDirective::Continue),
+            ApplyOutcome::Ignored {
+                reason: "cancelled"
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_write_recovery_reload_skill_ok_write_still_gated() {
+        use crate::agent::types::{AgentInternalState, AgentMessage};
+        use crate::llm::{ChatConfig, LlmInterface};
+
+        let llm = LlmInterface::new(ChatConfig::default());
+        let mut state = AgentInternalState::new("s-recover-skill".into());
+        state.task_state.apply_directive(TaskDirective::SetGoal {
+            goal: "写天气".into(),
+            object: Some("EK410".into()),
+            content: None,
+        });
+        let fp = write_fingerprint("shell", "render_text EK410");
+        state.task_state.record_successful_write(fp.clone());
+
+        // Turn N ends with a skill still loaded; turn N+1 clears then Continues.
+        llm.set_skill_context("weather".into(), "GUIDE".into())
+            .await;
+        begin_user_turn_clear_transient_skills(&llm).await;
+        state.push_message(AgentMessage::user("继续"));
+        assert!(llm.get_skill_context().await.is_none());
+
+        // Model may reload a skill within the new turn — that must not reopen
+        // the completed write gate.
+        llm.set_skill_context("weather".into(), "GUIDE RELOADED".into())
+            .await;
+        assert!(llm
+            .get_skill_context()
+            .await
+            .unwrap()
+            .contains("GUIDE RELOADED"));
+        assert!(!state.task_state.may_execute_write(&fp));
+        assert_eq!(state.task_state.status, TaskStatus::Active);
     }
 }

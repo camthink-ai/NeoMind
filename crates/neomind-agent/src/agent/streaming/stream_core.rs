@@ -152,9 +152,10 @@ pub async fn process_stream_events_with_safeguards(
     conversation_summary: Option<String>,
     summary_up_to_index: Option<u64>,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-    // Clear before building even the first request/overhead estimate. Later
-    // ReAct rounds must retain skills loaded during THIS user turn.
-    llm_interface.clear_skill_context().await;
+    // New user turn: drop transient skill bodies; TaskState (goal / writes)
+    // survives on AgentInternalState (push_message already applied directives).
+    // Later ReAct rounds in THIS turn may reload skills under the total budget.
+    super::super::task_continuity::begin_user_turn_clear_transient_skills(&llm_interface).await;
     let turn_context =
         super::context::TurnContext::new(conversation_summary.clone(), summary_up_to_index);
     let user_message = user_message.to_string();
