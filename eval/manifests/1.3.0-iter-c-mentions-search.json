@@ -1,0 +1,31 @@
+{
+  "slice": "1.3-iter-c-mentions-search",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "version": "1.2.11",
+  "pushed": false,
+  "version_bumped": false,
+  "head_at_start": "d9abca291a3325230b2f39365f378d7c1f104663",
+  "avoided": {
+    "eval_138": {
+      "pid": 89912,
+      "cmd": "eval/run_eval.py regression --lang both --case-timeout 600 --run-dir /tmp/neomind-iter-main-20261113/eval-138",
+      "touched": false
+    }
+  },
+  "gates": {
+    "cargo_test_mentions_integration": "4/4",
+    "cargo_test_mentions_unit": "3/3",
+    "cargo_test_chat_refs_integration": "14/14",
+    "cargo_test_api_docs": "3/3",
+    "clippy_neomind_api": "ok -D warnings",
+    "vitest_mentions_and_composer": "18/18",
+    "tsc": "clean"
+  },
+  "endpoints": [
+    "GET /api/mentions/search",
+    "POST /api/mentions/resolve"
+  ],
+  "docs": "docs/development/mentions-search-2026-11-14.md",
+  "next": "C：浏览器/触屏/IME/无障碍测试与5人可用性验证"
+}

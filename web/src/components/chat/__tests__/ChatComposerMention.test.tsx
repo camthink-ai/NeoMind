@@ -14,15 +14,34 @@ const MENTION_HITS = [
   { type: 'agent' as const, id: 'a-1', label: '巡检代理' },
 ]
 
-vi.mock('@/lib/api/mentions', () => ({
-  searchMentionOptions: vi.fn(async (q: string) =>
-    q ? MENTION_HITS.filter((o) => o.label.includes(q) || o.id.includes(q)) : MENTION_HITS,
-  ),
-  MAX_REFERENCES: 20,
-}))
+vi.mock('@/lib/api/mentions', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api/mentions')>('@/lib/api/mentions')
+  return {
+    ...actual,
+    searchMentions: vi.fn(async (params: { query?: string }) => {
+      const q = params.query ?? ''
+      const items = q
+        ? MENTION_HITS.filter((o) => o.label.includes(q) || o.id.includes(q))
+        : MENTION_HITS
+      return {
+        items,
+        total: items.length,
+        limit: 20,
+        offset: 0,
+        hasMore: false,
+        nextOffset: null,
+        typeErrors: {},
+      }
+    }),
+    searchMentionOptions: vi.fn(async (q: string) =>
+      q ? MENTION_HITS.filter((o) => o.label.includes(q) || o.id.includes(q)) : MENTION_HITS,
+    ),
+    MAX_REFERENCES: 20,
+  }
+})
 
-import { searchMentionOptions } from '@/lib/api/mentions'
-const searchMock = vi.mocked(searchMentionOptions)
+import { searchMentions } from '@/lib/api/mentions'
+const searchMock = vi.mocked(searchMentions)
 
 function setup(overrides: Partial<React.ComponentProps<typeof ChatComposer>> = {}) {
   const onChange = vi.fn()
@@ -104,7 +123,11 @@ describe('ChatComposer @-mentions', () => {
     setup()
     const ta = getTextarea()
     fireEvent.change(ta, { target: { value: '检查 @温湿度' } })
-    await waitFor(() => expect(searchMock).toHaveBeenCalledWith('温湿度'))
+    await waitFor(() =>
+      expect(searchMock).toHaveBeenCalledWith(
+        expect.objectContaining({ query: '温湿度', offset: 0 }),
+      ),
+    )
     const options = await screen.findAllByRole('option')
     expect(options.length).toBe(2)
     expect(options[0].textContent).toContain('温湿度传感器')

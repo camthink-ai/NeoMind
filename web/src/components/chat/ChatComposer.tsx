@@ -25,8 +25,13 @@ import { useToast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/useMobile"
 import type { ChatImage, ChatReference, LlmBackendInstance } from "@/types"
 import { cn } from "@/lib/utils"
-import { searchMentionOptions, type MentionOption } from "@/lib/api/mentions"
-import { MAX_REFERENCES } from "@/lib/api/mentions"
+import {
+  MAX_REFERENCES,
+  mentionKey,
+  searchMentions,
+  type MentionOption,
+  type MentionType,
+} from "@/lib/api/mentions"
 import { compressImage, MAX_ORIGINAL_IMAGE_MB, COMPRESSED_IMAGE_MB } from "@/lib/image"
 
 interface ChatComposerProps {
@@ -51,6 +56,8 @@ interface ChatComposerProps {
   // and are re-resolved server-side (labels are display-only).
   references?: ChatReference[]
   onReferencesChange?: (refs: ChatReference[]) => void
+  /** `type:id` → error detail for invalid/stale references (preflight). */
+  invalidRefs?: Record<string, string>
   supportsMultimodal?: boolean
   /** Image support comes from the vision companion, not the active model. */
   visionDelegate?: boolean
@@ -98,6 +105,7 @@ export function ChatComposer({
   onAttachmentsChange,
   references = [],
   onReferencesChange,
+  invalidRefs = {},
   supportsMultimodal = false,
   visionDelegate,
   backends,
@@ -121,11 +129,16 @@ export function ChatComposer({
   const [modelSheetOpen, setModelSheetOpen] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
 
-  // ---- @-mention picker ----
+  // ---- @-mention picker (server search + pagination) ----
   const [mentionQuery, setMentionQuery] = useState<string | null>(null)
+  const [mentionTypeFilter, setMentionTypeFilter] = useState<MentionType | "all">("all")
   const [mentionOptions, setMentionOptions] = useState<MentionOption[]>([])
   const [mentionActive, setMentionActive] = useState(0)
   const [mentionLoading, setMentionLoading] = useState(false)
+  const [mentionHasMore, setMentionHasMore] = useState(false)
+  const [mentionNextOffset, setMentionNextOffset] = useState<number | null>(null)
+  const [mentionTypeErrors, setMentionTypeErrors] = useState<string[]>([])
+  const [mentionSearchFailed, setMentionSearchFailed] = useState(false)
   const mentionTrigger = useRef<{ start: number } | null>(null)
   const canMention = !!onReferencesChange
   // IME composition (Chinese/Japanese input): intermediate text must not
@@ -134,30 +147,89 @@ export function ChatComposer({
 
   useEffect(() => {
     if (mentionQuery === null) return
-    let cancelled = false
+    const ac = new AbortController()
     setMentionLoading(true)
+    setMentionSearchFailed(false)
     const timer = setTimeout(async () => {
       try {
-        const opts = canMention ? await searchMentionOptions(mentionQuery) : []
-        if (!cancelled) {
-          setMentionOptions(opts)
-          setMentionActive(0)
+        if (!canMention) {
+          setMentionOptions([])
+          setMentionHasMore(false)
+          setMentionNextOffset(null)
+          setMentionTypeErrors([])
+          return
         }
-      } catch {
-        if (!cancelled) setMentionOptions([])
+        const result = await searchMentions({
+          query: mentionQuery,
+          types: mentionTypeFilter === "all" ? "all" : [mentionTypeFilter],
+          limit: 20,
+          offset: 0,
+          signal: ac.signal,
+        })
+        setMentionOptions(result.items)
+        setMentionActive(0)
+        setMentionHasMore(result.hasMore)
+        setMentionNextOffset(result.nextOffset)
+        setMentionTypeErrors(
+          Object.entries(result.typeErrors)
+            .filter(([, msg]) => !!msg)
+            .map(([type, msg]) => `${type}: ${msg}`),
+        )
+      } catch (err) {
+        if (ac.signal.aborted) return
+        setMentionOptions([])
+        setMentionHasMore(false)
+        setMentionNextOffset(null)
+        setMentionSearchFailed(true)
       } finally {
-        if (!cancelled) setMentionLoading(false)
+        if (!ac.signal.aborted) setMentionLoading(false)
       }
     }, 180)
     return () => {
-      cancelled = true
+      ac.abort()
       clearTimeout(timer)
     }
-  }, [mentionQuery, canMention])
+  }, [mentionQuery, canMention, mentionTypeFilter])
+
+  const loadMoreMentions = async () => {
+    if (mentionQuery === null || mentionNextOffset == null || mentionLoading) return
+    setMentionLoading(true)
+    try {
+      const result = await searchMentions({
+        query: mentionQuery,
+        types: mentionTypeFilter === "all" ? "all" : [mentionTypeFilter],
+        limit: 20,
+        offset: mentionNextOffset,
+      })
+      setMentionOptions((prev) => {
+        const seen = new Set(prev.map((o) => mentionKey(o.type, o.id)))
+        const merged = [...prev]
+        for (const item of result.items) {
+          const k = mentionKey(item.type, item.id)
+          if (!seen.has(k)) {
+            seen.add(k)
+            merged.push(item)
+          }
+        }
+        return merged
+      })
+      setMentionHasMore(result.hasMore)
+      setMentionNextOffset(result.nextOffset)
+    } catch {
+      // keep existing page
+    } finally {
+      setMentionLoading(false)
+    }
+  }
 
   const closeMention = () => {
     mentionTrigger.current = null
     setMentionQuery(null)
+    setMentionOptions([])
+    setMentionHasMore(false)
+    setMentionNextOffset(null)
+    setMentionTypeErrors([])
+    setMentionSearchFailed(false)
   }
 
   const handleChange = (next: string) => {
@@ -372,24 +444,40 @@ export function ChatComposer({
       {/* Structured @-reference chips */}
       {references.length > 0 && (
         <div className="mb-1 flex flex-wrap gap-1.5" aria-label={t("chat:mention.referencesLabel", "引用的对象")}>
-          {references.map((ref, i) => (
-            <span
-              key={`${ref.type}:${ref.id}`}
-              className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs"
-            >
-              <AtSign className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <span className="shrink-0 text-muted-foreground">{t(`chat:mention.${ref.type}`, ref.type)}</span>
-              <span className="max-w-40 truncate">{ref.label || ref.id}</span>
-              <button
-                type="button"
-                aria-label={t("chat:mention.remove", { defaultValue: "移除引用" })}
-                className="rounded-full p-0.5 text-muted-foreground hover:text-foreground"
-                onClick={() => removeReference(i)}
+          {references.map((ref, i) => {
+            const key = mentionKey(ref.type, ref.id)
+            const invalidDetail = invalidRefs[key]
+            return (
+              <span
+                key={key}
+                title={invalidDetail || undefined}
+                className={cn(
+                  "inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-0.5 text-xs",
+                  invalidDetail
+                    ? "border-error bg-error-light text-error"
+                    : "border-border bg-muted",
+                )}
+                data-invalid={invalidDetail ? "true" : undefined}
               >
-                <X className="h-3 w-3" aria-hidden="true" />
-              </button>
-            </span>
-          ))}
+                <AtSign className="h-3 w-3 shrink-0 opacity-70" aria-hidden="true" />
+                <span className="shrink-0 opacity-80">{t(`chat:mention.${ref.type}`, ref.type)}</span>
+                <span className="max-w-40 truncate">{ref.label || ref.id}</span>
+                {invalidDetail && (
+                  <span className="sr-only">
+                    {t("chat:mention.invalid", "引用无效")}: {invalidDetail}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  aria-label={t("chat:mention.remove", { defaultValue: "移除引用" })}
+                  className="rounded-full p-0.5 opacity-70 hover:opacity-100"
+                  onClick={() => removeReference(i)}
+                >
+                  <X className="h-3 w-3" aria-hidden="true" />
+                </button>
+              </span>
+            )
+          })}
         </div>
       )}
 
@@ -403,38 +491,98 @@ export function ChatComposer({
           role="listbox"
           aria-label={t("chat:mention.title", "选择要引用的对象")}
           data-mention-menu
-          className="absolute bottom-full left-0 right-0 z-50 mb-2 max-h-64 overflow-y-auto rounded-lg border border-border bg-popover shadow-md"
+          className="absolute bottom-full left-0 right-0 z-50 mb-2 max-h-72 overflow-y-auto rounded-lg border border-border bg-popover shadow-md"
         >
-          {mentionLoading ? (
+          <div className="flex flex-wrap gap-1 border-b border-border px-2 py-1.5" role="tablist">
+            {(["all", "device", "rule", "transform", "agent"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={mentionTypeFilter === tab}
+                className={cn(
+                  "rounded px-1.5 py-0.5 text-nano",
+                  mentionTypeFilter === tab
+                    ? "bg-muted text-foreground"
+                    : "text-muted-foreground hover:bg-muted-30",
+                )}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => setMentionTypeFilter(tab)}
+              >
+                {tab === "all"
+                  ? t("chat:mention.filterAll", "全部")
+                  : t(`chat:mention.${tab}`, tab)}
+              </button>
+            ))}
+          </div>
+          {mentionTypeErrors.length > 0 && (
+            <div className="border-b border-border px-3 py-1.5 text-nano text-warning" role="status">
+              {t("chat:mention.partialFailure", "部分类型加载失败")}
+              {": "}
+              {mentionTypeErrors.join("; ")}
+            </div>
+          )}
+          {mentionLoading && mentionOptions.length === 0 ? (
             <div className="flex items-center gap-2 px-3 py-2.5 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
               {t("chat:mention.searching", "搜索中…")}
+            </div>
+          ) : mentionSearchFailed ? (
+            <div className="px-3 py-2.5 text-xs text-error">
+              {t("chat:mention.searchFailed", "搜索失败，请重试")}
             </div>
           ) : mentionOptions.length === 0 ? (
             <div className="px-3 py-2.5 text-xs text-muted-foreground">
               {t("chat:mention.noResults", "没有匹配的对象")}
             </div>
           ) : (
-            mentionOptions.map((opt, i) => (
-              <button
-                key={`${opt.type}:${opt.id}`}
-                type="button"
-                role="option"
-                aria-selected={i === mentionActive}
-                onMouseEnter={() => setMentionActive(i)}
-                onClick={() => selectMention(opt)}
-                className={cn(
-                  "flex w-full items-center gap-2 px-3 py-2 text-left text-sm",
-                  i === mentionActive && "bg-muted",
-                )}
-              >
-                <span className="shrink-0 rounded bg-muted px-1 py-px text-nano text-muted-foreground">
-                  {t(`chat:mention.${opt.type}`, opt.type)}
-                </span>
-                <span className="min-w-0 flex-1 truncate">{opt.label}</span>
-                <span className="max-w-32 shrink-0 truncate text-mini text-muted-foreground">{opt.id}</span>
-              </button>
-            ))
+            <>
+              {mentionOptions.map((opt, i) => (
+                <button
+                  key={mentionKey(opt.type, opt.id)}
+                  type="button"
+                  role="option"
+                  aria-selected={i === mentionActive}
+                  onMouseEnter={() => setMentionActive(i)}
+                  onClick={() => selectMention(opt)}
+                  className={cn(
+                    "flex w-full items-start gap-2 px-3 py-2 text-left text-sm",
+                    i === mentionActive && "bg-muted",
+                  )}
+                >
+                  <span className="mt-0.5 shrink-0 rounded bg-muted px-1 py-px text-nano text-muted-foreground">
+                    {t(`chat:mention.${opt.type}`, opt.type)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{opt.label}</span>
+                    {(opt.duplicateName || opt.hint) && (
+                      <span className="mt-0.5 block truncate text-mini text-muted-foreground">
+                        {[opt.shortId || opt.id.slice(0, 8), opt.hint].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                  </span>
+                  {!opt.duplicateName && !opt.hint && (
+                    <span className="max-w-32 shrink-0 truncate text-mini text-muted-foreground">
+                      {opt.shortId || opt.id}
+                    </span>
+                  )}
+                </button>
+              ))}
+              {mentionHasMore && (
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-center gap-1 border-t border-border px-3 py-2 text-xs text-muted-foreground hover:bg-muted-30"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => void loadMoreMentions()}
+                  disabled={mentionLoading}
+                >
+                  {mentionLoading && (
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                  )}
+                  {t("chat:mention.loadMore", "加载更多")}
+                </button>
+              )}
+            </>
           )}
         </div>
       )}

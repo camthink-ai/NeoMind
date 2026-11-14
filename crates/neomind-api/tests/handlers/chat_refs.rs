@@ -3,8 +3,8 @@
 //! reference cap, and legacy (no-reference) compatibility.
 
 use neomind_api::handlers::chat_refs::{
-    compose_chat_message, prepare_chat_input, reference_preamble, MAX_CONTENT_NODES,
-    MAX_REFERENCES, CONTENT_VERSION_V1,
+    compose_chat_message, prepare_chat_input, reference_preamble, CONTENT_VERSION_V1,
+    MAX_CONTENT_NODES, MAX_REFERENCES,
 };
 use neomind_api::handlers::ServerState;
 use neomind_api::models::{ChatContentNode, ChatReference};
@@ -289,7 +289,9 @@ async fn content_nodes_render_in_place_with_server_names_not_client_labels() {
     .unwrap();
     assert!(prepared.used_content_nodes);
     assert!(
-        prepared.model_message.contains(&format!("【rule `{rule_id}` \"机房高温\"】")),
+        prepared
+            .model_message
+            .contains(&format!("【rule `{rule_id}` \"机房高温\"】")),
         "{}",
         prepared.model_message
     );
@@ -374,16 +376,9 @@ async fn legacy_references_still_compose_when_nodes_absent() {
     let state = state().await;
     let (rule_id, _) = seed_rule_and_transform(&state).await;
     let refs = vec![reference("rule", &rule_id, Some("旧"))];
-    let prepared = prepare_chat_input(
-        &state,
-        "hello",
-        Some("PAGE"),
-        Some(&refs),
-        None,
-        None,
-    )
-    .await
-    .unwrap();
+    let prepared = prepare_chat_input(&state, "hello", Some("PAGE"), Some(&refs), None, None)
+        .await
+        .unwrap();
     assert!(!prepared.used_content_nodes);
     assert!(prepared.model_message.contains("SYSTEM-RESOLVED DATA"));
     assert!(prepared.model_message.contains("PAGE"));
@@ -393,15 +388,8 @@ async fn legacy_references_still_compose_when_nodes_absent() {
 #[tokio::test]
 async fn unsupported_content_version_is_rejected() {
     let state = state().await;
-    let err = prepare_chat_input(
-        &state,
-        "",
-        None,
-        None,
-        Some(99),
-        Some(&[text_node("hi")]),
-    )
-    .await
-    .unwrap_err();
+    let err = prepare_chat_input(&state, "", None, None, Some(99), Some(&[text_node("hi")]))
+        .await
+        .unwrap_err();
     assert_eq!(err.code, "unsupported_content_version");
 }

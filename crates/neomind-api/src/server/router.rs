@@ -456,6 +456,15 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             post(sessions::clear_session_history_handler),
         )
         .route("/api/sessions/:id/chat", post(sessions::chat_handler))
+        // @-mention search + reference preflight (1.3 iter C)
+        .route(
+            "/api/mentions/search",
+            get(crate::handlers::mentions::search_mentions_handler),
+        )
+        .route(
+            "/api/mentions/resolve",
+            post(crate::handlers::mentions::resolve_mentions_handler),
+        )
         // Skills API (protected - write operations)
         .route("/api/skills", post(skills::create_skill_handler))
         .route("/api/skills/reload", post(skills::reload_skills_handler))

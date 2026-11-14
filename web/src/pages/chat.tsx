@@ -18,6 +18,7 @@ import { ChatScrollPill } from "@/components/chat/ChatScrollPill"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
+import { mentionKey, resolveMentions } from "@/lib/api/mentions"
 import type { Message, ChatImage, ChatReference } from "@/types"
 import { cn } from "@/lib/utils"
 import { getSessionDisplayTitle } from "@/lib/utils/sessionTitle"
@@ -146,6 +147,8 @@ export function ChatPage() {
   const [attachedImages, setAttachedImages] = useState<ChatImage[]>([])
   // Structured @-references for the next message (ids authoritative).
   const [chatReferences, setChatReferences] = useState<ChatReference[]>([])
+  /** Preflight failures: `type:id` → detail. Cleared on successful resolve / chip edit. */
+  const [invalidRefs, setInvalidRefs] = useState<Record<string, string>>({})
 
   // Responsive
   const isDesktop = useIsDesktop()
@@ -706,6 +709,32 @@ export function ChatPage() {
       return
     }
 
+    // Preflight invalid/stale references — keep draft, mark chips, do not send.
+    if (chatReferences.length > 0) {
+      try {
+        const resolved = await resolveMentions(chatReferences)
+        if (!resolved.ok) {
+          const next: Record<string, string> = {}
+          for (const r of resolved.resolutions) {
+            if (!r.ok) next[mentionKey(r.type, r.id)] = r.detail
+          }
+          setInvalidRefs(next)
+          toast({
+            title: t('chat:mention.invalidSend', '部分引用无效，请修正后重发'),
+            variant: "destructive",
+          })
+          return
+        }
+        setInvalidRefs({})
+      } catch {
+        // Network failure on preflight must not block send — server still
+        // re-resolves and spells NOT FOUND into the model context.
+        setInvalidRefs({})
+      }
+    } else {
+      setInvalidRefs({})
+    }
+
     // In welcome mode, create session first, then send message
     let targetSessionId = sessionId
     if (isWelcomeMode) {
@@ -744,6 +773,7 @@ export function ChatPage() {
     setAttachedImages([])
     const sentReferences = chatReferences.length > 0 ? chatReferences : undefined
     setChatReferences([])
+    setInvalidRefs({})
 
     // Reset textarea height to initial state
     if (inputRef.current) {
@@ -1001,7 +1031,19 @@ export function ChatPage() {
       attachments={attachedImages}
       onAttachmentsChange={setAttachedImages}
       references={chatReferences}
-      onReferencesChange={setChatReferences}
+      onReferencesChange={(refs) => {
+        setChatReferences(refs)
+        // Drop invalid marks for removed chips; keep marks that still apply.
+        setInvalidRefs((prev) => {
+          const keep: Record<string, string> = {}
+          for (const r of refs) {
+            const k = mentionKey(r.type, r.id)
+            if (prev[k]) keep[k] = prev[k]
+          }
+          return keep
+        })
+      }}
+      invalidRefs={invalidRefs}
       supportsMultimodal={imagesAllowed}
       visionDelegate={visionDelegate}
       backends={llmBackends}

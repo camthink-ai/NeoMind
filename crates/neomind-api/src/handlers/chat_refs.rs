@@ -8,7 +8,7 @@
 //! 2. **Ordered content nodes (v1)** — `contentNodes` + `contentVersion: 1`.
 //!    Server renders each reference **in place** with type + authoritative id
 //!    + server-resolved name. Caps are **hard errors** (no silent drop).
-//!    Duplicate entities in-sentence are preserved; lookup may dedupe.
+//!      Duplicate entities in-sentence are preserved; lookup may dedupe.
 //!
 //! Guarantees shared by both paths:
 //! - references are resolved on the request path under the session's
@@ -208,15 +208,44 @@ pub async fn prepare_chat_input(
         }
     }
 
-    let refs_preamble = match references {
-        Some(refs) if !refs.is_empty() => Some(reference_preamble(state, refs).await),
-        _ => None,
+    let (refs_preamble, resolutions) = match references {
+        Some(refs) if !refs.is_empty() => (
+            Some(reference_preamble(state, refs).await),
+            resolve_references(state, refs).await,
+        ),
+        _ => (None, Vec::new()),
     };
     Ok(PreparedChatInput {
         model_message: compose_chat_message(message, page_context, refs_preamble),
-        resolutions: Vec::new(),
+        resolutions,
         used_content_nodes: false,
     })
+}
+
+/// Resolve each reference against current state (auth already applied on the
+/// request path). Shared by send-time prepare and `POST /api/mentions/resolve`.
+pub async fn resolve_references(state: &ServerState, refs: &[ChatReference]) -> Vec<RefResolution> {
+    let mut out = Vec::with_capacity(refs.len());
+    let mut cache: std::collections::HashMap<String, (bool, String, String)> =
+        std::collections::HashMap::new();
+    for (index, r) in refs.iter().enumerate() {
+        let key = format!("{}:{}", r.r#type, r.id);
+        let (ok, detail, _) = if let Some(hit) = cache.get(&key) {
+            hit.clone()
+        } else {
+            let resolved = resolve_one_inline(state, r).await;
+            cache.insert(key, resolved.clone());
+            resolved
+        };
+        out.push(RefResolution {
+            index,
+            r#type: r.r#type.clone(),
+            id: r.id.clone(),
+            ok,
+            detail,
+        });
+    }
+    out
 }
 
 async fn prepare_from_content_nodes(

@@ -58,7 +58,11 @@ pub struct ChatContentNode {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     /// Display-only name snapshot at selection time (never trusted for auth).
-    #[serde(rename = "labelSnapshot", default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "labelSnapshot",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
     pub label_snapshot: Option<String>,
 }
 

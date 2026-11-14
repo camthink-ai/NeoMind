@@ -575,6 +575,16 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "GET",
+        path: "/api/mentions/search",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/mentions/resolve",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "POST",
         path: "/api/skills",
         auth: "jwt-or-api-key",

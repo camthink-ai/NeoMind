@@ -84,6 +84,7 @@ export function InlineAtEditor({
       }
     }, 120)
     return () => {
+      // Stale-request guard: ignore results after a newer query starts.
       cancelled = true
       clearTimeout(timer)
     }
@@ -249,10 +250,19 @@ export function InlineAtEditor({
             <span className="shrink-0 text-muted-foreground">
               {t(`chat:mention.${opt.type}`, opt.type)}
             </span>
-            <span className="min-w-0 flex-1 truncate">{opt.label}</span>
-            <span className="shrink-0 font-mono text-xs text-muted-foreground">
-              {opt.id.slice(0, 8)}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{opt.label}</span>
+              {(opt.duplicateName || opt.hint) && (
+                <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                  {[opt.shortId || opt.id.slice(0, 8), opt.hint].filter(Boolean).join(" · ")}
+                </span>
+              )}
             </span>
+            {!opt.duplicateName && !opt.hint && (
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                {opt.shortId || opt.id.slice(0, 8)}
+              </span>
+            )}
           </button>
         ))
       )}

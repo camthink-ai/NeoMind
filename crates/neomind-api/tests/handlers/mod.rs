@@ -5,6 +5,7 @@ pub mod auth_users;
 pub mod automations;
 pub mod basic;
 pub mod chat_refs;
+pub mod mentions;
 // llm_backends.rs deprecated - API changed significantly
 pub mod devices;
 pub mod extensions;

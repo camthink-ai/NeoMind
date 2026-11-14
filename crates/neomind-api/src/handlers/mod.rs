@@ -24,6 +24,7 @@ pub mod instances;
 pub mod llm_backends;
 pub mod logs;
 pub mod memory;
+pub mod mentions;
 pub mod message_channels;
 pub mod messages;
 pub mod mqtt;

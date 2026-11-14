@@ -11,13 +11,27 @@ import type { InlineDoc } from "./model"
 import { toContentNodes, toPlainText } from "./model"
 
 const MOCK_OPTIONS: MentionOption[] = [
-  { type: "device", id: "green-01", label: "green-01" },
-  { type: "device", id: "sensor-001", label: "Living Room Sensor" },
-  { type: "device", id: "sensor-002", label: "Bedroom Sensor" },
-  { type: "rule", id: "rule-battery-low", label: "rule-battery-low" },
-  { type: "rule", id: "high-temp-green", label: "high-temp-green" },
-  { type: "transform", id: "temp-f", label: "temp-f" },
-  { type: "agent", id: "agent-watch", label: "Watcher" },
+  { type: "device", id: "green-01", label: "green-01", shortId: "green-01", hint: "camera · mqtt" },
+  {
+    type: "device",
+    id: "sensor-001",
+    label: "温湿度传感器",
+    shortId: "sensor-0",
+    hint: "temp_humidity · mqtt",
+    duplicateName: true,
+  },
+  {
+    type: "device",
+    id: "sensor-002",
+    label: "温湿度传感器",
+    shortId: "sensor-0",
+    hint: "temp_humidity · mqtt",
+    duplicateName: true,
+  },
+  { type: "rule", id: "rule-battery-low", label: "rule-battery-low", shortId: "rule-bat", hint: "enabled" },
+  { type: "rule", id: "high-temp-green", label: "high-temp-green", shortId: "high-tem", hint: "enabled" },
+  { type: "transform", id: "temp-f", label: "temp-f", shortId: "temp-f", hint: "enabled · global" },
+  { type: "agent", id: "agent-watch", label: "Watcher", shortId: "agent-wa", hint: "active" },
 ]
 
 function mockSearch(query: string): Promise<MentionOption[]> {

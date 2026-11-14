@@ -200,7 +200,8 @@ timeout和判定来源。
   （2026-11-14 切片：`/dev/inline-at` 分段编辑器原型 + `InlineDoc` 模型；取舍推荐 C 片用 TipTap；vitest 12/12；生产 ChatComposer 未改。触屏真机未验证。）
 - [x] C：有序节点协议、后端原位解析、草稿历史、失败恢复和兼容。
   （2026-11-14 切片：`contentNodes` v1 + HTTP/WS/图片路径原位渲染；旧 `references` preamble 兼容；超限硬 400/Error；会话草稿 localStorage；生产 Chip 未换行内编辑器。SessionMessage 持久化 nodes 未做。）
-- [ ] C：全量可访问对象搜索/分页、重名辨识、无效引用处理。
+- [x] C：全量可访问对象搜索/分页、重名辨识、无效引用处理。
+  （2026-11-14 切片：`GET /api/mentions/search` 全量服务端搜索+分页+`duplicateName`/`shortId`/`hint`+`typeErrors`；`POST /api/mentions/resolve` 发送前预检；ChatComposer 类型筛选/加载更多/无效芯片标错并保留草稿。证据 `eval/manifests/1.3.0-iter-c-mentions-search.json`。未换 TipTap；浏览器/触屏/5人未做。）
 - [ ] C：浏览器/触屏/IME/无障碍测试与5人可用性验证。
 - [ ] D：Transform/Rule/命令/Agent状态界面闭环。
 - [ ] E：首个可运行方案10次预注册验收。
