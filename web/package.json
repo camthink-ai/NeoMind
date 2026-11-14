@@ -16,6 +16,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
+    "test:e2e:mention-a11y": "HEADED=1 playwright test e2e/specs/mention-a11y.spec.ts --project=chrome",
+    "test:e2e:mention-a11y:headless": "playwright test e2e/specs/mention-a11y.spec.ts --project=chrome",
     "clean": "rm -rf dist src-tauri/target",
     "clean:all": "rm -rf dist node_modules src-tauri/target",
     "tauri": "tauri",

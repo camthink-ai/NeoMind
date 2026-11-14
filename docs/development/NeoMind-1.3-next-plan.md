@@ -250,8 +250,10 @@ timeout和判定来源。
   （2026-11-14：ChatComposer 在 `onReferencesChange` 时用 TipTap Mention；同实体可句内重复；toolbar `@`；contentNodes 原位发送；无 mention 宿主仍走 textarea。vitest TipTap+docBridge+Composer 35/35。证据 `eval/manifests/1.3.0-c-tiptap-inline-mention.json`。**未做**：真浏览器/触屏/VoiceOver/5人、历史消息 inline chip 重绘。）
 - [x] C 历史消息按 `contentNodes` 重绘行内 chip + 重发/回显。
   （2026-11-14：`UserMessageContent` 按有序 nodes 画 `.nm-mention`；`mergeMessagesForDisplay` 归一化 camel/snake；Chat/Panel「填回输入框」恢复 nodes+草稿；无效发送也落盘草稿。vitest TipTap+history 54/54。证据 `eval/manifests/1.3.0-c-history-content-nodes.json`。**未做**：真浏览器/触屏/VoiceOver/5人。）
-- [ ] C 真浏览器/触屏/IME/读屏与5人×4任务>=18/20。
+- [x] C 真浏览器 headed Playwright（触屏模拟 + axe）；5人仍人工缺口。
+  （2026-11-14：`e2e/specs/mention-a11y.spec.ts` headed Chrome **6/6**；历史 chip/reuse、listbox ARIA、mobile `hasTouch` tap、axe serious/critical。证据 `eval/manifests/1.3.0-c-mention-headed-a11y.json`。**明确未通过**：物理触屏、VoiceOver/TalkBack 实听、5×4（**0/20**，禁止宣称 18/20）。138 PID 89912 / `:29431` 仍占用、未触碰、未开新长跑。）
+- [ ] C 人工：真机触屏 + VoiceOver/TalkBack + 5人×4任务>=18/20（未执行）。
 - [ ] D 桌面/移动代表流程。
 - [ ] E Spark实际10次>=9/10，多轮/故障/取消探针。
 - [ ] F 48场景可执行化、tip138与Appliance验收。
-G0–G3 离线项（含 write 闸门）、C TipTap 生产行内与历史 chip 重绘已勾；**中英配对 live、C 真人 UX/5人、D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。
+G0–G3 离线项、C TipTap/历史 chip/headed Playwright 已勾；**C 真人 UX/5人、中英配对 live、D/E/F** 仍为缺口。最终发布准备文档必须引用本节剩余项。

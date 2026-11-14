@@ -1,13 +1,13 @@
 # @ 引用：IME / 无障碍自动化 + 人工可用性清单（1.3 iter C）
 
-日期：2026-11-14。Tip：本切片提交（基于 `57e01a38`）。版本未升；未推送。
+日期：2026-11-14。持续更新。Tip（headed 切片）：见 `c-mention-headed-a11y-2026-11-14.md`。版本未升；未推送。
 
-## 1. 本切片自动化覆盖（已落地）
+## 1. 组件级自动化（vitest — 已落地）
 
 | 场景 | 位置 | 状态 |
 |------|------|------|
 | IME composition 中不打开选择器 | ChatComposerMention + InlineAtEditor | 自动化 |
-| compositionend 后无需额外按键即可查询 | ChatComposerMention + InlineAtEditor | 自动化（本片修复） |
+| compositionend 后无需额外按键即可查询 | ChatComposerMention + InlineAtEditor | 自动化 |
 | IME Enter / keyCode 229 不选中、不转发发送 | ChatComposerMention + InlineAtEditor + imeSendGuard | 自动化 |
 | 邮件式 `a@b.com` 不触发 | ChatComposerMention + model.test | 自动化 |
 | 中文/标点边界触发 | ChatComposerMention | 自动化 |
@@ -17,8 +17,6 @@
 | 无效引用 data-invalid + 读屏文案 | ChatComposerMention | 自动化 |
 | 移动端 Sheet 路径打开 | InlineAtEditor forceMobile | 组件级自动化 |
 
-复现：
-
 ```bash
 cd web && npx vitest run \
   src/components/chat/__tests__/ChatComposerMention.test.tsx \
@@ -27,16 +25,35 @@ cd web && npx vitest run \
   src/prototypes/inline-at/model.test.ts
 ```
 
-## 2. 明确未验证 / 人工缺口（本机无法完成）
+## 2. 真浏览器 / 触屏模拟 / axe（Playwright headed — 2026-11-14 落地）
+
+| 场景 | 位置 | 状态 |
+|------|------|------|
+| Chrome headed：原型 toolbar → listbox ARIA + 键盘选中插芯片 | `e2e/specs/mention-a11y.spec.ts` | **pass** |
+| Chrome headed：原型页 axe wcag2a/aa serious/critical | 同上 | **pass**（`color-contrast` 规则关闭） |
+| Chrome headed：生产 chat 历史 `contentNodes` 行内 chip + 填回输入框 | 同上 | **pass** |
+| Chrome headed：生产 chat toolbar `@` 开 listbox；Escape 关 | 同上 | **pass** |
+| 触屏模拟（390×844 `hasTouch`）：原型 mobile 面板 tap 选中 | 同上 | **pass**（**非**物理触屏） |
+| 触屏模拟：历史 chip 可见且高度 ≥16px | 同上 | **pass** |
+
+```bash
+cd web && npm run test:e2e:mention-a11y
+# headless smoke: npm run test:e2e:mention-a11y:headless
+```
+
+证据：`docs/development/c-mention-headed-a11y-2026-11-14.md`、`work/mention-a11y/playwright-headed-final.log`、`eval/manifests/1.3.0-c-mention-headed-a11y.json`。
+
+API 全部 route-mock（同 mobile-audit）；**不**起评测 LLM、**不**占用 `:29431`。
+
+## 3. 明确未验证 / 人工缺口（不得标为通过）
 
 | 项 | 原因 | 计划门槛引用 |
 |----|------|--------------|
-| **真实浏览器**（Chrome/Safari 手工或 Playwright headed 全链路） | 本切片未起登录态+API 的 e2e 长跑；避免干扰 138 评测进程 | §4.7「组件测试之外必须真实浏览器验证」 |
-| **真实触屏设备**（软键盘、返回键先关面板、横竖屏） | 本环境无物理触屏；仅 `forceMobile` 组件路径 | §4.5 / §4.7 |
-| **读屏实机**（VoiceOver / TalkBack 通读类型·名称·搜索状态） | 需人工听读；自动化只断言 ARIA 属性 | §4.5 |
+| **物理触屏设备**（软键盘、系统返回先关面板、横竖屏） | 本环境无真机；仅 Playwright `hasTouch` + 窄视口 | §4.5 / §4.7 |
+| **读屏实机**（VoiceOver / TalkBack 通读类型·名称·搜索状态） | 需人工听读；自动化只断言 ARIA + axe | §4.5 |
 | **5 名目标用户 × 4 任务** | 需招募与主持；本机代理无法代劳 | §4.7 门槛 18/20 |
 
-### 5 人可用性协议（待人工执行）
+### 5 人可用性协议（待人工执行 — 当前 **0/20**）
 
 任务（每人 4 个，记录协助次数与误操作原因，**不用平均时间掩盖失败**）：
 
@@ -49,15 +66,18 @@ cd web && npx vitest run \
 
 记录表模板：`participant_id / task / assisted(y/n) / wrong_object(y/n) / data_loss(y/n) / blocked(y/n) / notes / duration_s`。
 
-## 3. 建议的下一步人工步骤（不阻塞本切片合入）
+**宣称规则：** 未跑满 20 次任务前，**禁止**把 §4.7「18/20」写成已通过。
 
-1. 在隔离端口起 API + `web`，对 `/chat` 与 `/dev/inline-at` 做 headed Playwright + axe（现有 `e2e/specs/a11y.spec.ts` 可扩 mention 场景）。
-2. 一台真机（iOS/Android）走 Soft keyboard + 返回键关面板。
-3. VoiceOver 通读选择器：加载中 / 空结果 / 重名项 / 无效芯片。
-4. 招募 5 人跑上表 4 任务，归档原始记录后再宣称 §4.7 门槛。
+## 4. 138 占用快照（本切片核对）
 
-## 4. Next（计划清单）
+| 项 | 值 |
+|----|-----|
+| Controller | PID **89912** — `eval/run_eval.py` … `/tmp/neomind-iter-main-20261113/eval-138` |
+| llama | PID **89904** — `127.0.0.1:29431` LISTEN |
+| 本切片 | **未触碰**；未开新长跑 |
 
-本 C 段（浏览器/触屏/IME/无障碍自动化 + 缺口说明）完成后，计划下一项：
+## 5. Next
 
-**D：Transform/Rule/命令/Agent 状态界面闭环**
+1. 人工：真机触屏 + VoiceOver + 5×4（归档原始记录后再宣称门槛）。
+2. **等 138 结束后**再开 live Spark 配对（端口空闲前禁止）。
+3. 计划 D/E/F 剩余项。

@@ -1,0 +1,41 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-c-mention-headed-a11y",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "cc39e862",
+  "plan_section": "12",
+  "item": "C headed Playwright a11y / touch-emulation / axe",
+  "docs": [
+    "docs/development/c-mention-headed-a11y-2026-11-14.md",
+    "docs/development/mention-a11y-usability-checklist-2026-11-14.md"
+  ],
+  "code": [
+    "web/e2e/specs/mention-a11y.spec.ts",
+    "web/e2e/fixtures/mentionMockApi.ts",
+    "web/playwright.config.ts",
+    "web/package.json"
+  ],
+  "gates": {
+    "playwright_mention_a11y_headed": "6/6",
+    "live_spark": "not_run_138_busy"
+  },
+  "eval_138": {
+    "controller_pid": 89912,
+    "llama_pid": 89904,
+    "llama_port": 29431,
+    "status": "still_running",
+    "touched": false,
+    "new_long_run_started": false
+  },
+  "claim": "Headed Chrome Playwright covers prototype+chat mention ARIA/axe/history chips and touch-emulated mobile taps with mocked API. Does NOT claim physical touch, VoiceOver/TalkBack live, or 5x4 usability (0/20).",
+  "human_gaps": [
+    "physical touch + soft keyboard + OS back-dismiss",
+    "VoiceOver/TalkBack live read-through",
+    "5 users x 4 tasks (0/20 executed; 18/20 threshold not claimed)"
+  ],
+  "next": "Human phone+VoiceOver+5x4 when available; live after 138 frees :29431; D/E/F",
+  "head_at_end": "PENDING_COMMIT"
+}

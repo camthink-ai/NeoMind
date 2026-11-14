@@ -26,6 +26,7 @@ Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through conten
 - Production chip composer sends `contentNodes` (text + trailing refs); SessionMessage/AgentMessage persist `contentNodes`/`contentVersion` for history reload (legacy chips synthesize nodes when nodes omitted).
 - Production ChatComposer uses TipTap Mention for true in-sentence `@` (duplicates allowed); hosts without mention handlers keep the textarea path.
 - History / optimistic user bubbles redraw inline mention chips from persisted `contentNodes`; pencil “reuse in composer” restores ordered nodes for fix-and-resend (invalid-send also saves the draft).
+- Headed Playwright mention a11y suite (`mention-a11y.spec.ts`): prototype+chat listbox/ARIA/axe, history chips, touch-emulated mobile taps (mocked API; physical touch / VoiceOver / 5-person still open).
 - G2 mutating write gate at chat tool dispatch (`may_execute_write` / `record_successful_write` for shell mutations + `run_now`/`file_write`/`file_edit`/`image_edit`).
 - Rule explain API/UI (`GET /rules/:id/explain` surface in Rule detail).
 - Command delivery ladder UI + Agent execution evidence panel (`stop_reason` / `tokens_used` DTO plumbing + `deriveAgentExecutionEvidence`).
@@ -40,6 +41,7 @@ Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through conten
 - contentNodes persistence + chip→nodes vitest; SessionMessage camelCase round-trip; pending-node attach; mutating write fingerprint + task_continuity 10/10.
 - TipTap inline-mention docBridge + ChatComposer TipTap vitest (35 in the TipTap/protocol/inline-at suite).
 - History contentNodes chip redraw + reuse + normalize aliases: ChatMessages / contentProtocol / messageUtils vitest (54 in the TipTap+history suite).
+- Headed Playwright mention-a11y 6/6 (`npm run test:e2e:mention-a11y`); 5×4 usability not executed.
 - Offline only for E live 10-run and F tip-138 / Appliance — not claimed in this release entry.
 
 ---
