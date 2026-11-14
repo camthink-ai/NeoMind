@@ -393,22 +393,28 @@ def run_query(q: dict, base: str, key: str, response: str | None = None) -> dict
         # params.command? Downlink assertion. The platform records every
         # command in history BEFORE routing (service.rs send_command), so this
         # works even for offline simulated devices.
-        want_id = _sid(params, "id")
-        v = _get_json(base, key, f"/devices/{want_id}/commands")
-        records = []
-        if isinstance(v, list):
-            records = v
-        elif isinstance(v, dict):
-            for k in ("commands", "data", "history", "items"):
-                arr = v.get(k)
-                if isinstance(arr, list):
-                    records = arr
-                    break
-        names = [
-            str(c.get("command_name") or c.get("command") or c.get("name") or "").lower()
-            for c in records if isinstance(c, dict)
-        ]
-        actual = str(params.get("command", "")).lower() in names
+        # Accept `id` or `name` (same contract as *_exists): agents often
+        # create devices under a display name while the case asserts by that
+        # name rather than a predictable UUID.
+        resolved = _resolve_id_or_name(base, key, "/devices", "devices", params)
+        if not resolved:
+            actual = False
+        else:
+            v = _get_json(base, key, f"/devices/{resolved}/commands")
+            records = []
+            if isinstance(v, list):
+                records = v
+            elif isinstance(v, dict):
+                for k in ("commands", "data", "history", "items"):
+                    arr = v.get(k)
+                    if isinstance(arr, list):
+                        records = arr
+                        break
+            names = [
+                str(c.get("command_name") or c.get("command") or c.get("name") or "").lower()
+                for c in records if isinstance(c, dict)
+            ]
+            actual = str(params.get("command", "")).lower() in names
     elif t == "rule_references_source":
         # Depth assertion: does a rule's condition reference the expected data
         # source (e.g. a transform output, or a specific device metric)?

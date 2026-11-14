@@ -122,7 +122,11 @@ def test_device_command_sent_found():
     body = {"success": True, "data": [
         {"command_name": "set_speed", "status": "success"},
         {"command_name": "stop", "status": "failed"}]}
-    with _Patch({"/devices/pump-A/commands": FakeResp(200, body)}):
+    # Resolve probes GET /devices/:id before reading command history.
+    with _Patch({
+        "/devices/pump-A": FakeResp(200, {"success": True, "data": {"id": "pump-A"}}),
+        "/devices/pump-A/commands": FakeResp(200, body),
+    }):
         r = sq.run_query(
             {"type": "device_command_sent",
              "params": {"id": "pump-A", "command": "set_speed"}, "expected": True},
@@ -130,9 +134,32 @@ def test_device_command_sent_found():
     assert r["actual"] is True and r["passed"] is True
 
 
+def test_device_command_sent_by_name_fallback():
+    # Main-objective scar: cases assert by display name; runner must resolve
+    # name → id before reading command history (previously required `id` only).
+    listing = {"success": True, "data": {"devices": [
+        {"id": "uuid-valve", "name": "valve-01"}]}}
+    history = {"success": True, "data": [
+        {"command_name": "open_valve", "status": "accepted"}]}
+    with _Patch({
+        "/devices/valve-01": FakeResp(404, {}),
+        "/devices": FakeResp(200, listing),
+        "/devices/uuid-valve/commands": FakeResp(200, history),
+    }):
+        r = sq.run_query(
+            {"type": "device_command_sent",
+             "params": {"name": "valve-01", "command": "open_valve"},
+             "expected": True},
+            "http://b", "k")
+    assert r["actual"] is True and r["passed"] is True, r
+
+
 def test_device_command_sent_absent():
     body = {"success": True, "data": [{"command_name": "stop"}]}
-    with _Patch({"/devices/pump-A/commands": FakeResp(200, body)}):
+    with _Patch({
+        "/devices/pump-A": FakeResp(200, {"success": True, "data": {"id": "pump-A"}}),
+        "/devices/pump-A/commands": FakeResp(200, body),
+    }):
         r = sq.run_query(
             {"type": "device_command_sent",
              "params": {"id": "pump-A", "command": "set_speed"}, "expected": True},

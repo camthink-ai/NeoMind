@@ -6,7 +6,7 @@
   "scenario_type": "single_turn",
   "description": "Rule create + read-only explanation of current state",
   "setup": {
-    "fixture": "seed-default"
+    "fixture": "seed-main-objective"
   },
   "turns": [
     {

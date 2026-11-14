@@ -87,6 +87,8 @@ pip install -r eval/requirements.txt
 cargo build -p neomind-cli --release
 
 # 2. Validate every case (no server, no LLM)
+# Shape checks + fixture existence + state_query param contracts
+# (eval/lib/case_precheck.py); main-objective also checks assumed devices.
 python3 eval/run_eval.py validate-all --root eval/cases
 
 # 3. Run a single case (requires AGENT_LLM_*)

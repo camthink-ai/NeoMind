@@ -1,0 +1,91 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-iter-A-foundation",
+  "created_at": "2026-11-14T10:18:15.853156+00:00",
+  "tip": {
+    "branch": "1.3.0",
+    "head": "9af1f46fd1154ec44681f9b005fcd4e2c0ffea3c",
+    "workspace_porcelain": [
+      "M eval/cases/en/main-objective/main-objective-dashboard-card-config.json",
+      " M eval/cases/en/main-objective/main-objective-e2e-detection-chain.json",
+      " M eval/cases/en/main-objective/main-objective-rule-create-explain.json",
+      " M eval/cases/en/main-objective/main-objective-transform-test-honest.json",
+      " M eval/cases/zh/main-objective/main-objective-dashboard-card-config.json",
+      " M eval/cases/zh/main-objective/main-objective-e2e-detection-chain.json",
+      " M eval/cases/zh/main-objective/main-objective-rule-create-explain.json",
+      " M eval/cases/zh/main-objective/main-objective-transform-test-honest.json",
+      " M eval/lib/state_query.py",
+      " M eval/lib/test_state_query.py",
+      " M eval/lib/validate.py",
+      "?? docs/development/NeoMind-1.3-next-plan.md",
+      "?? eval/fixtures/seed-main-objective.json",
+      "?? eval/lib/case_precheck.py",
+      "?? eval/lib/test_case_precheck.py"
+    ],
+    "product_version_cargo": "1.2.11 (not bumped)",
+    "release_binary_at_tip": null,
+    "note": "No tip target/release/neomind at freeze; do not invent a tip-binary SHA."
+  },
+  "model": {
+    "path": "/Users/shenmingming/Library/Application Support/com.neomind.neomind/data/models/sparkx2.6-1.7b/sparkx2.6-1.7b-q4_k_m.gguf",
+    "sha256": "7abd9859c10924be3c583945456fa9b25d0569484876105a7b7376f7938fffb7",
+    "quant": "q4_k_m",
+    "alias": "sparkx2.6-1.7b"
+  },
+  "runtime": {
+    "path": "/Users/shenmingming/Library/Application Support/com.neomind.neomind/data/llama-server/b12024/llama-b12024/llama-server",
+    "sha256": "3d81b7997317e5ffd13ed3ba32436658e0f4067172cea3674b4215b39d4635be",
+    "build": "b12024"
+  },
+  "sampling_contract_for_future_runs": {
+    "context": 32768,
+    "parallel_slots": 1,
+    "temperature": 0.3,
+    "top_p": 0.75,
+    "top_k": 20,
+    "repeat_penalty": 1.0,
+    "thinking": true,
+    "case_timeout_secs": 600,
+    "concurrency_note": "Do not overlap with running 138 job on same llama port 29431"
+  },
+  "hardware": {
+    "os": "macOS-15.7.3-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M4 Pro"
+  },
+  "hashes": {
+    "main_objective_cases_sha256": "6f1fdffbd92549144c7a291149b02ebd849b1f0770477786c81adaba5077d16c",
+    "fixtures_sha256": "075c2451cefdd69bde7b0d12c066001435153f644632d0c512d42ba2401d7dfc",
+    "grader_bundle_sha256": "3fcd1e33df193667f9d03a89feb27e3b0d0433f40e21037a858a2fb98f0d8f8d",
+    "seed_main_objective_sha256": "0cb7584dc3cd1bbb4c3225b01dacdf643325f64d85274ebdca4078948933eb30"
+  },
+  "case_fixes": {
+    "new_fixture": "eval/fixtures/seed-main-objective.json",
+    "switched_to_seed_main_objective": [
+      "main-objective-rule-create-explain",
+      "main-objective-dashboard-card-config",
+      "main-objective-transform-test-honest",
+      "main-objective-e2e-detection-chain"
+    ],
+    "device_command_sent": "accepts id or name via resolve fallback",
+    "precheck": "eval/lib/case_precheck.py wired into validate.validate_case",
+    "withdrawn_old_results": "VALIDATION-REPORT.md round-1 failures from assert-param/fixture defects remain archived under /tmp/neomind-iter-main-20261113/; corrected cases supersede them for future baseline/candidate pairs"
+  },
+  "running_138_job": {
+    "pid": 89912,
+    "command": "eval/run_eval.py regression --lang both --case-timeout 600 --run-dir /tmp/neomind-iter-main-20261113/eval-138",
+    "launcher": "/tmp/neomind-iter-main-20261113/run-138-gate.sh",
+    "repo_path": "/Users/shenmingming/.zcode/worktrees/8ef0/NeoMind",
+    "git_head": "830b54c189817cf7d76216f7f1bb810571648381",
+    "binary_sha256": "a7c553958f8b3c071fdd0bdf27f6b018a777c8f3a050582b9d39f1502c58d12a",
+    "scores_jsonl_lines_at_freeze": 98,
+    "verdict": "NOT tip 1.3.0@9af1f46f \u2014 old candidate only; do not treat as tip acceptance"
+  },
+  "acceptance_gates_this_slice": {
+    "fixture_assert_precheck": "PASS validate-all 380/0; main-objective 20/0",
+    "score_recompute_from_raw": "not re-run this slice (no new model trials)",
+    "timeout_preserve": "not exercised this slice",
+    "ci_workspace_tests": "deferred \u2014 harness-only change; targeted python tests PASS",
+    "tip_vs_138_binary": "MISMATCH documented \u2014 running 138 is 8ef0@830b54c1 bin a7c55395\u2026, not tip 9af1f46f"
+  }
+}

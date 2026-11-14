@@ -6,7 +6,7 @@
   "scenario_type": "single_turn",
   "description": "Cross-domain chain: transform + rule + notification (main objective)",
   "setup": {
-    "fixture": "seed-default"
+    "fixture": "seed-main-objective"
   },
   "turns": [
     {

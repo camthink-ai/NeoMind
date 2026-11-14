@@ -1,0 +1,98 @@
+{
+  "name": "seed-main-objective",
+  "description": "Main-objective cases that assume green-01 / valve-01 already exist (rule/dashboard/transform/e2e). green-01 exposes temperature + detections; valve-01 exposes open_valve. Keeps seed-default cameras/rules for ambient inventory.",
+  "device_types": [
+    {
+      "device_type": "greenhouse_node",
+      "name": "Greenhouse Node",
+      "categories": ["agriculture"],
+      "metrics": [
+        {
+          "name": "temperature",
+          "display_name": "Temperature",
+          "data_type": "Float",
+          "unit": "°C"
+        },
+        {
+          "name": "detections",
+          "display_name": "Detections",
+          "data_type": "Json",
+          "unit": ""
+        }
+      ]
+    },
+    {
+      "device_type": "valve_ctl",
+      "name": "Valve Controller",
+      "categories": ["general"],
+      "metrics": [],
+      "commands": [
+        {
+          "name": "open_valve",
+          "display_name": "Open Valve",
+          "description": "Open the valve (no params)"
+        }
+      ]
+    }
+  ],
+  "devices": [
+    {
+      "device_id": "sensor-001",
+      "name": "Living Room Sensor",
+      "device_type": "ne101_camera",
+      "adapter_type": "mqtt",
+      "connection_config": {}
+    },
+    {
+      "device_id": "sensor-002",
+      "name": "Bedroom Sensor",
+      "device_type": "ne101_camera",
+      "adapter_type": "mqtt",
+      "connection_config": {}
+    },
+    {
+      "device_id": "camera-001",
+      "name": "Front Door Camera",
+      "device_type": "ne101_camera",
+      "adapter_type": "mqtt",
+      "connection_config": {}
+    },
+    {
+      "device_id": "green-01",
+      "name": "green-01",
+      "device_type": "greenhouse_node",
+      "adapter_type": "mqtt",
+      "connection_config": {}
+    },
+    {
+      "device_id": "valve-01",
+      "name": "valve-01",
+      "device_type": "valve_ctl",
+      "adapter_type": "mqtt",
+      "connection_config": {}
+    }
+  ],
+  "metrics": [
+    { "device_id": "sensor-001", "metric": "values.battery", "value": 75 },
+    { "device_id": "sensor-002", "metric": "values.battery", "value": 82 },
+    { "device_id": "green-01", "metric": "temperature", "value": 24.5 }
+  ],
+  "rules": [
+    {
+      "name": "rule-battery-low",
+      "description": "Low-battery alert — fires when sensor-001 reports values.battery < 20.",
+      "enabled": true,
+      "trigger": { "trigger_type": "data_change" },
+      "condition": {
+        "condition_type": "comparison",
+        "source": "device:sensor-001:values.battery",
+        "operator": "less_than",
+        "threshold": 20.0
+      },
+      "actions": [
+        { "type": "notify", "message": "sensor-001 battery low: {value}%", "severity": "warning" }
+      ],
+      "cooldown": 60000
+    }
+  ]
+}

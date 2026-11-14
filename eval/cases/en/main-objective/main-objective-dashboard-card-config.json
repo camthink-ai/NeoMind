@@ -6,7 +6,7 @@
   "scenario_type": "single_turn",
   "description": "Standard dashboard card config bound to a device metric",
   "setup": {
-    "fixture": "seed-default"
+    "fixture": "seed-main-objective"
   },
   "turns": [
     {
