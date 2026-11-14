@@ -39,6 +39,6 @@
     "touched": false
   },
   "claim": "Production gaps closed: concurrent lease + new-op entry; details_ref LargeDataCache round-trip; capability unify + stop halt on text/image. Offline unit only; no push; 138 untouched.",
-  "commit": "PENDING",
-  "head_at_end": "PENDING"
+  "commit": "7e230445740c55c6c12ef5caac1132e84d2b8af4",
+  "head_at_end": "7e230445740c55c6c12ef5caac1132e84d2b8af4"
 }
