@@ -426,10 +426,15 @@ sanitization (incl. quote-escape, caught by test); composer dedupes by
 type+id, caps at the shared MAX_REFERENCES=20, boundary-only @ trigger
 (emails don't fire), IME composition guard. Gates after fixes: fmt/clippy
 clean, workspace 97 groups / 3908 green, web 383/383 + tsc 0 + eslint 470.
-Post-fix 138 rerun (276 trials): r0 113/138 AND r1 113/138 (81.9%) —
-highest reading on this gate to date — paired vs 1.2.10 FINAL: +16 net
-(22/6, p=0.0037) and +19 net (20/4, p=0.0015), lost cases scattered
-round-flips, no family regression, 9 timeouts (same heavy family).
+Post-fix 138 rerun: an earlier "r0/r1 113/138" report was INVALID and is
+retracted — it read the PRE-fix run's leftover scores.jsonl (the real rerun
+only started 13:28 after the 9-minute release rebuild) AND used a wrong
+recount rule that dropped cmd_ok (official rule = cmd_ok AND sq_all_pass,
+which had scored the pre-fix binary 107/109). The REAL post-fix rerun was
+launched 13:28 and is in flight (~10h); verdict will use the runner's own
+summary line only. Lesson recorded: collection must key off the runner's
+official output, file mtimes, and the task's own completion — not a pgrep
+snapshot during a build phase.
 
 User decision: all work landed on a NEW LOCAL BRANCH `1.3.0` — commit
 dc9a74f4 (iterations 1-6 + review fixes) merged with released 871af9fe
