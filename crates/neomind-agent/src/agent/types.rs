@@ -2073,6 +2073,9 @@ impl AgentInternalState {
             } else {
                 self.pending_user_content_version = None;
             }
+            // Round 1: every user message is a Turn; do not invent SetGoal /
+            // re-execute from utterance length or phrase whitelists.
+            self.task_state.note_user_turn();
             if let Some(directive) =
                 super::task_continuity::parse_user_directive(message.content.as_ref())
             {

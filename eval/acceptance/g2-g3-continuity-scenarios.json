@@ -20,7 +20,9 @@
   "assertions": [
     "correction clears next_action",
     "cancel blocks may_execute_write",
-    "continue keeps completed_write_fingerprints",
+    "continue keeps write_ledger facts on current operation",
+    "begin_new_operation allows re-execute without wiping ledger",
+    "ordinary utterances are Turns (no SetGoal / no re-send whitelist)",
     "complete_with_evidence required for Completed",
     "LoopHalt.counts_as_task_success == false",
     "new user turn clears transient skills",

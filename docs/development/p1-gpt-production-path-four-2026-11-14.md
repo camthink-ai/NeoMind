@@ -15,9 +15,9 @@ cargo test --locked -p neomind-agent --features test-utils --lib zero_budget_his
 ```
 
 ## 2. Write fingerprint scope
-- `Continue` keeps `completed_write_fingerprints` (resume ≠ replay).
-- `SetGoal` / `Correct` clear write scope (new / corrected goal boundary).
-- `AuthorizeRerun` (「再发送一次」 / `send again`) clears fingerprints only — authorized re-run of the same goal.
+- Superseded by **execution-state Round 1**: ledger kept; anti-replay scoped by
+  `current_operation_id`; `begin_new_operation` for re-execute (no phrase
+  whitelist / no wipe). See `docs/development/exec-state-round1-2026-11-14.md`.
 
 ## 3. TaskState on production path
 - Ordinary substantive requests → `SetGoal` via `parse_user_directive` (greetings/acks skipped).

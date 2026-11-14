@@ -1,0 +1,41 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-exec-state-round1",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "468134a9",
+  "docs": "docs/development/exec-state-round1-2026-11-14.md",
+  "spec": "internal/exec-state-round1.md",
+  "code": [
+    "crates/neomind-agent/src/agent/task_continuity.rs",
+    "crates/neomind-agent/src/agent/types.rs"
+  ],
+  "removed": [
+    "utterance SetGoal (>=4 chars)",
+    "AuthorizeRerun phrase whitelist",
+    "clearing write fingerprints to authorize re-run"
+  ],
+  "kept_added": [
+    "write_ledger WriteFact",
+    "current_operation_id anti-replay scope",
+    "note_user_turn",
+    "begin_new_operation",
+    "Continue/Cancel/Correct parse only"
+  ],
+  "gates": {
+    "task_continuity": "19/19"
+  },
+  "eval_138": {
+    "controller_pid": 89912,
+    "llama_port": 29431,
+    "touched": false
+  },
+  "round2_hooks": [
+    "Operation ID replaces numeric current_operation_id",
+    "structured tool results",
+    "tool/model path calls begin_new_operation"
+  ],
+  "claim": "Round 1 only: no utterance-guessed boundaries; ledger kept; operation-scoped anti-replay; explicit re-execute via begin_new_operation."
+}
