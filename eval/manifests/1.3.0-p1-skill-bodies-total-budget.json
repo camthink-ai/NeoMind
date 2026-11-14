@@ -33,5 +33,6 @@
   },
   "claim": "Transient and pinned skill bodies share a total estimated-token cap; 15 oversized loads stay near budget. No live A/B claim; does not alone cure production loops.",
   "next": "Optional T4 skill A/B after 138 frees :29431; stream_core skill-clear P1; D/E/F; human C UX",
-  "head_at_end": "PENDING_COMMIT"
+  "head_at_end": "94360a4fc16e2ce84806273587a6c48ef075d92c",
+  "commit": "94360a4fc16e2ce84806273587a6c48ef075d92c"
 }
