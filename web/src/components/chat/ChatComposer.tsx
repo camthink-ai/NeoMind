@@ -232,18 +232,18 @@ export function ChatComposer({
     setMentionSearchFailed(false)
   }
 
-  const handleChange = (next: string) => {
-    onChange(next)
-    // While an IME composition is in flight the text is intermediate —
-    // detection waits for compositionend.
-    if (!canMention || inputDisabled || isComposing.current) {
-      return
-    }
-    if (references.length >= MAX_REFERENCES) {
-      return
-    }
+  /** Scan caret-left text for an @ trigger. Used after ordinary edits and
+   *  after IME compositionend (intermediate composition must not open). */
+  const scanMentionTrigger = (next: string, caretOverride?: number) => {
+    if (!canMention || inputDisabled) return
+    if (references.length >= MAX_REFERENCES) return
     const ta = activeTextareaRef.current
-    const caret = ta ? ta.selectionStart : next.length
+    const caret =
+      typeof caretOverride === "number"
+        ? caretOverride
+        : ta && typeof ta.selectionStart === "number"
+          ? ta.selectionStart
+          : next.length
     const before = next.slice(0, caret)
     // '@' must start a token (string start, or after a non-word character)
     // so ordinary emails like a@b.com do not open the picker.
@@ -254,6 +254,14 @@ export function ChatComposer({
     } else {
       closeMention()
     }
+  }
+
+  const handleChange = (next: string) => {
+    onChange(next)
+    // While an IME composition is in flight the text is intermediate —
+    // detection waits for compositionend.
+    if (isComposing.current) return
+    scanMentionTrigger(next)
   }
 
   const selectMention = (opt: MentionOption) => {
@@ -301,6 +309,15 @@ export function ChatComposer({
   }
 
   const handleKeyDownInternal = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // IME confirmation (Enter/数字键) reports keyCode 229 / isComposing —
+    // never select a mention or forward to send handlers mid-composition.
+    const ime =
+      isComposing.current ||
+      e.nativeEvent.isComposing ||
+      (e.nativeEvent as KeyboardEvent).keyCode === 229
+    if (ime) {
+      return
+    }
     if (mentionQuery !== null) {
       if (e.key === "ArrowDown") {
         e.preventDefault()
@@ -489,11 +506,22 @@ export function ChatComposer({
       {mentionQuery !== null && (
         <div
           role="listbox"
+          id="chat-mention-listbox"
           aria-label={t("chat:mention.title", "选择要引用的对象")}
+          aria-busy={mentionLoading || undefined}
+          aria-activedescendant={
+            mentionOptions[mentionActive]
+              ? `chat-mention-opt-${mentionActive}`
+              : undefined
+          }
           data-mention-menu
           className="absolute bottom-full left-0 right-0 z-50 mb-2 max-h-72 overflow-y-auto rounded-lg border border-border bg-popover shadow-md"
         >
-          <div className="flex flex-wrap gap-1 border-b border-border px-2 py-1.5" role="tablist">
+          <div
+            className="flex flex-wrap gap-1 border-b border-border px-2 py-1.5"
+            role="tablist"
+            aria-label={t("chat:mention.filterTypes", "按类型筛选")}
+          >
             {(["all", "device", "rule", "transform", "agent"] as const).map((tab) => (
               <button
                 key={tab}
@@ -523,16 +551,16 @@ export function ChatComposer({
             </div>
           )}
           {mentionLoading && mentionOptions.length === 0 ? (
-            <div className="flex items-center gap-2 px-3 py-2.5 text-xs text-muted-foreground">
+            <div className="flex items-center gap-2 px-3 py-2.5 text-xs text-muted-foreground" role="status">
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
               {t("chat:mention.searching", "搜索中…")}
             </div>
           ) : mentionSearchFailed ? (
-            <div className="px-3 py-2.5 text-xs text-error">
+            <div className="px-3 py-2.5 text-xs text-error" role="alert">
               {t("chat:mention.searchFailed", "搜索失败，请重试")}
             </div>
           ) : mentionOptions.length === 0 ? (
-            <div className="px-3 py-2.5 text-xs text-muted-foreground">
+            <div className="px-3 py-2.5 text-xs text-muted-foreground" role="status">
               {t("chat:mention.noResults", "没有匹配的对象")}
             </div>
           ) : (
@@ -540,9 +568,18 @@ export function ChatComposer({
               {mentionOptions.map((opt, i) => (
                 <button
                   key={mentionKey(opt.type, opt.id)}
+                  id={`chat-mention-opt-${i}`}
                   type="button"
                   role="option"
                   aria-selected={i === mentionActive}
+                  aria-label={[
+                    t(`chat:mention.${opt.type}`, opt.type),
+                    opt.label,
+                    opt.duplicateName ? opt.shortId || opt.id.slice(0, 8) : "",
+                    opt.hint || "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
                   onMouseEnter={() => setMentionActive(i)}
                   onClick={() => selectMention(opt)}
                   className={cn(
@@ -609,9 +646,26 @@ export function ChatComposer({
           value={value}
           onChange={(e) => handleChange(e.target.value)}
           onCompositionStart={() => { isComposing.current = true }}
-          onCompositionEnd={() => { isComposing.current = false }}
+          onCompositionEnd={(e) => {
+            isComposing.current = false
+            // Plan §4.4: after IME commits, open/update the picker without
+            // requiring another keystroke. IME places the caret at the end of
+            // the committed text; jsdom often reports selectionStart=0, so
+            // prefer an explicit end caret when the DOM reports 0 on a
+            // non-empty value.
+            const el = e.currentTarget
+            const caret =
+              typeof el.selectionStart === "number" && el.selectionStart > 0
+                ? el.selectionStart
+                : el.value.length
+            scanMentionTrigger(el.value, caret)
+          }}
           onFocus={() => { if (isMobile) setMobileExpanded(true) }}
           onKeyDown={handleKeyDownInternal}
+          aria-controls={mentionQuery !== null ? "chat-mention-listbox" : undefined}
+          aria-expanded={mentionQuery !== null ? true : undefined}
+          aria-autocomplete={canMention ? "list" : undefined}
+          role="textbox"
           placeholder={isStreaming && streamingPlaceholder ? streamingPlaceholder : placeholder}
           rows={1}
           disabled={inputDisabled}

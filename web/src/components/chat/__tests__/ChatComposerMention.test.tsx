@@ -274,6 +274,141 @@ describe('ChatComposer @-mentions', () => {
     await waitFor(() => expect(screen.getByRole('listbox')).toBeTruthy())
   })
 
+  it('opens the picker on compositionend alone (no extra keystroke)', async () => {
+    // Controlled host so composition-time change updates the value prop;
+    // compositionend must open without a follow-up change event.
+    let value = ''
+    const refs: import('@/types').ChatReference[] = []
+    const view = render(
+      <ChatComposer
+        value={value}
+        onChange={() => {}}
+        onSend={vi.fn()}
+        references={refs}
+        onReferencesChange={vi.fn()}
+      />,
+    )
+    const rerender = () =>
+      view.rerender(
+        <ChatComposer
+          value={value}
+          onChange={(v) => {
+            value = v
+            rerender()
+          }}
+          onSend={vi.fn()}
+          references={refs}
+          onReferencesChange={vi.fn()}
+        />,
+      )
+    rerender()
+    const ta = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.compositionStart(ta)
+    fireEvent.change(ta, { target: { value: '确认 @温湿度' } })
+    expect(screen.queryByRole('listbox')).toBeNull()
+    fireEvent.compositionEnd(ta)
+    await waitFor(() => expect(screen.getByRole('listbox')).toBeTruthy())
+    await waitFor(() => expect(searchMock).toHaveBeenCalled())
+  })
+
+  it('ArrowDown/ArrowUp move aria-selected and Enter selects', async () => {
+    const onReferencesChange = vi.fn()
+    setup({ onReferencesChange })
+    const ta = getTextarea()
+    fireEvent.change(ta, { target: { value: '@' } })
+    const options = await screen.findAllByRole('option')
+    expect(options[0]).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(ta, { key: 'ArrowDown' })
+    await waitFor(() => {
+      expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true')
+    })
+    fireEvent.keyDown(ta, { key: 'ArrowUp' })
+    await waitFor(() => {
+      expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'true')
+    })
+    fireEvent.keyDown(ta, { key: 'Enter' })
+    expect(onReferencesChange).toHaveBeenCalledWith([
+      expect.objectContaining({ type: 'device', id: 'sensor-001' }),
+    ])
+  })
+
+  it('IME Enter (keyCode 229) does not select or forward to onKeyDown', async () => {
+    const onKeyDown = vi.fn()
+    const onReferencesChange = vi.fn()
+    setup({ onKeyDown, onReferencesChange })
+    const ta = getTextarea()
+    fireEvent.change(ta, { target: { value: '@' } })
+    await screen.findAllByRole('option')
+    fireEvent.keyDown(ta, { key: 'Enter', keyCode: 229, isComposing: true })
+    expect(onReferencesChange).not.toHaveBeenCalled()
+    expect(onKeyDown).not.toHaveBeenCalled()
+  })
+
+  it('exposes listbox a11y: aria-busy/status/activedescendant and filter tabs', async () => {
+    setup()
+    const ta = getTextarea()
+    fireEvent.change(ta, { target: { value: '@' } })
+    const listbox = await screen.findByRole('listbox')
+    await screen.findAllByRole('option')
+    expect(listbox).toHaveAttribute('aria-activedescendant', 'chat-mention-opt-0')
+    expect(screen.getByRole('tablist')).toBeTruthy()
+    expect(screen.getAllByRole('tab').length).toBe(5)
+    const first = screen.getAllByRole('option')[0]
+    expect(first.getAttribute('aria-label') || '').toMatch(/device|chat:mention.device/)
+  })
+
+  it('invalidRefs mark chips with data-invalid and screen-reader detail', () => {
+    render(
+      <ChatComposer
+        value=""
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        references={[{ type: 'device', id: 'ghost', label: '幽灵' }]}
+        onReferencesChange={vi.fn()}
+        invalidRefs={{ 'device:ghost': 'no device with this id' }}
+      />,
+    )
+    const chip = document.querySelector('[data-invalid="true"]')
+    expect(chip).toBeTruthy()
+    // Global i18n mock returns keys; assert key + detail (not color-only).
+    expect(chip?.textContent).toMatch(/invalid|引用无效/)
+    expect(chip?.textContent).toContain('no device with this id')
+  })
+
+  it('shows shortId/hint for duplicateName options (not color-only)', async () => {
+    searchMock.mockResolvedValueOnce({
+      items: [
+        {
+          type: 'device',
+          id: 'sensor-001',
+          label: '温湿度传感器',
+          shortId: 'sensor-0',
+          hint: 'temp_humidity · mqtt',
+          duplicateName: true,
+        },
+        {
+          type: 'device',
+          id: 'sensor-002',
+          label: '温湿度传感器',
+          shortId: 'sensor-0',
+          hint: 'temp_humidity · mqtt',
+          duplicateName: true,
+        },
+      ],
+      total: 2,
+      limit: 20,
+      offset: 0,
+      hasMore: false,
+      nextOffset: null,
+      typeErrors: {},
+    })
+    setup()
+    fireEvent.change(getTextarea(), { target: { value: '@温湿度' } })
+    const options = await screen.findAllByRole('option')
+    expect(options[0].textContent).toContain('sensor-0')
+    expect(options[0].textContent).toContain('temp_humidity')
+  })
+
   it('legacy mode (no reference handlers) never opens the picker', async () => {
     const { onChange } = setup({ references: undefined, onReferencesChange: undefined })
     const ta = getTextarea()

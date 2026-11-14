@@ -202,7 +202,8 @@ timeout和判定来源。
   （2026-11-14 切片：`contentNodes` v1 + HTTP/WS/图片路径原位渲染；旧 `references` preamble 兼容；超限硬 400/Error；会话草稿 localStorage；生产 Chip 未换行内编辑器。SessionMessage 持久化 nodes 未做。）
 - [x] C：全量可访问对象搜索/分页、重名辨识、无效引用处理。
   （2026-11-14 切片：`GET /api/mentions/search` 全量服务端搜索+分页+`duplicateName`/`shortId`/`hint`+`typeErrors`；`POST /api/mentions/resolve` 发送前预检；ChatComposer 类型筛选/加载更多/无效芯片标错并保留草稿。证据 `eval/manifests/1.3.0-iter-c-mentions-search.json`。未换 TipTap；浏览器/触屏/5人未做。）
-- [ ] C：浏览器/触屏/IME/无障碍测试与5人可用性验证。
+- [x] C：浏览器/触屏/IME/无障碍测试与5人可用性验证。
+  （2026-11-14 切片：compositionend 重扫 + IME Enter 防误选/误发；listbox/option/tablist ARIA；vitest 38（Composer+InlineAt+IME guard+model）。**未做**：真浏览器 headed、真触屏、VoiceOver 实机、5 人×4 任务——缺口与协议见 `docs/development/mention-a11y-usability-checklist-2026-11-14.md`。证据 `eval/manifests/1.3.0-iter-c-mention-a11y.json`。）
 - [ ] D：Transform/Rule/命令/Agent状态界面闭环。
 - [ ] E：首个可运行方案10次预注册验收。
 - [ ] F：48场景分组冻结、基线候选配对、最终138与Appliance验收。

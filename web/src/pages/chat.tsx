@@ -901,8 +901,15 @@ export function ChatPage() {
   // Handle keyboard shortcuts
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
+      // IME confirmation must not send (Chinese/Japanese Enter / keyCode 229).
+      if (
+        e.nativeEvent.isComposing ||
+        (e.nativeEvent as KeyboardEvent).keyCode === 229
+      ) {
+        return
+      }
       e.preventDefault()
-      handleSend()
+      void handleSend()
     }
   }
 

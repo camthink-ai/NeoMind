@@ -181,6 +181,11 @@ export function InlineAtEditor({
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>, nodeIndex: number) => {
+    const ime =
+      composing.current ||
+      e.nativeEvent.isComposing ||
+      (e.nativeEvent as KeyboardEvent).keyCode === 229
+    if (ime) return
     if (mentionQuery !== null) {
       if (e.key === "ArrowDown") {
         e.preventDefault()
@@ -218,7 +223,10 @@ export function InlineAtEditor({
   const pickerBody = (
     <div
       role="listbox"
+      id="inline-at-listbox"
       aria-label={t("chat:mention.title", "选择要引用的对象")}
+      aria-busy={loading || undefined}
+      aria-activedescendant={options[active] ? `inline-at-opt-${active}` : undefined}
       data-inline-at-picker
       className={cn(
         "overflow-auto rounded-md border border-border bg-popover text-sm shadow-lg",
@@ -226,20 +234,29 @@ export function InlineAtEditor({
       )}
     >
       {loading ? (
-        <div className="px-3 py-2 text-muted-foreground">
+        <div className="px-3 py-2 text-muted-foreground" role="status">
           {t("chat:mention.searching", "搜索中…")}
         </div>
       ) : options.length === 0 ? (
-        <div className="px-3 py-2 text-muted-foreground">
+        <div className="px-3 py-2 text-muted-foreground" role="status">
           {t("chat:mention.noResults", "没有匹配的对象")}
         </div>
       ) : (
         options.map((opt, i) => (
           <button
             key={`${opt.type}:${opt.id}`}
+            id={`inline-at-opt-${i}`}
             type="button"
             role="option"
             aria-selected={i === active}
+            aria-label={[
+              t(`chat:mention.${opt.type}`, opt.type),
+              opt.label,
+              opt.duplicateName ? opt.shortId || opt.id.slice(0, 8) : "",
+              opt.hint || "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             className={cn(
               "flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted",
               i === active && "bg-muted",
