@@ -38,11 +38,30 @@ pub struct HistorySelectResult {
     pub used_tokens: usize,
 }
 
+/// Whether the production assemble path may still attach tools after history
+/// selection. Zero soft budget with a non-empty prior history must **not**
+/// continue as a tool-enabled request (that is the re-query loop shape).
+pub fn tools_allowed_after_history_select(
+    reason: HistorySelectReason,
+    history_was_nonempty: bool,
+    requested_tools: bool,
+) -> bool {
+    if !requested_tools {
+        return false;
+    }
+    if history_was_nonempty && reason == HistorySelectReason::ZeroBudget {
+        return false;
+    }
+    true
+}
+
 /// Select history messages to fit `available_tokens`.
 ///
 /// `available_tokens == 0` → empty `messages`, `truncated = true`, reason
 /// [`HistorySelectReason::ZeroBudget`]. The caller still appends the current
-/// user turn; it must not invent an early-user-only history.
+/// user turn; it must not invent an early-user-only history, and must not
+/// keep assembling a tool-enabled request (see
+/// [`tools_allowed_after_history_select`]).
 pub fn select_messages_for_history_budget(
     history: &[Message],
     available_tokens: usize,
@@ -432,6 +451,30 @@ mod tests {
         assert!(got.messages.is_empty());
         assert!(got.truncated);
         assert_eq!(got.reason, HistorySelectReason::ZeroBudget);
+    }
+
+    #[test]
+    fn zero_budget_must_not_keep_tools_on_assemble() {
+        assert!(!tools_allowed_after_history_select(
+            HistorySelectReason::ZeroBudget,
+            true,
+            true
+        ));
+        assert!(tools_allowed_after_history_select(
+            HistorySelectReason::Fits,
+            true,
+            true
+        ));
+        assert!(tools_allowed_after_history_select(
+            HistorySelectReason::ZeroBudget,
+            false,
+            true
+        ));
+        assert!(!tools_allowed_after_history_select(
+            HistorySelectReason::Fits,
+            true,
+            false
+        ));
     }
 
     #[test]

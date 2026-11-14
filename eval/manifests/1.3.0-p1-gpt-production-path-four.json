@@ -1,0 +1,35 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-p1-gpt-production-path-four",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "2a7a2a6f",
+  "plan_section": "12",
+  "item": "GPT P1 four production-path fixes (zero-budget degrade, write-fp scope, TaskState inject/confirm/SetGoal, shell fp case)",
+  "docs": "docs/development/p1-gpt-production-path-four-2026-11-14.md",
+  "code": [
+    "crates/neomind-agent/src/agent/history_select.rs",
+    "crates/neomind-agent/src/llm.rs",
+    "crates/neomind-agent/src/llm_request_tests.rs",
+    "crates/neomind-agent/src/agent/task_continuity.rs",
+    "crates/neomind-agent/src/agent/streaming/intent.rs",
+    "crates/neomind-agent/src/agent/streaming/stream_core.rs",
+    "crates/neomind-agent/src/agent/streaming/stream_multimodal.rs"
+  ],
+  "gates": {
+    "zero_budget_must_not_keep_tools": "pass",
+    "zero_budget_history_strips_tools_request_path": "pass_test_utils",
+    "task_continuity": "16/16",
+    "shell_write_fingerprint_preserves_case": "pass",
+    "task_state_prompt_injected_request_path": "pass_test_utils"
+  },
+  "eval_138": {
+    "controller_pid": 89912,
+    "llama_port": 29431,
+    "touched": false
+  },
+  "claim": "Four GPT P1 production-path items implemented with deterministic + request-path tests. No live A/B claim. Skill-budget tip retained separately.",
+  "note": "Earlier tip 2a7a2a6f (skill budget share) is NOT these four items; kept but not counted as GPT P1 completion."
+}

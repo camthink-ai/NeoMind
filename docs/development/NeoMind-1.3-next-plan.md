@@ -220,7 +220,8 @@ timeout和判定来源。
 - P0 llm.rs:2330–2415：内层按单消息逆序裁剪，超预算立即break，短历史无条件插回首个user，即使预算为0；无法保证最近完整工具交互。外层context.rs保护后仍可能被二次裁剪。
 - P1 llm.rs Skill 全文累积：~~无总量上限~~ → **已修**（`skill_bodies_token_budget` = ctx/8∈[2k,6k]；transient + pinned；证据 `eval/manifests/1.3.0-p1-skill-bodies-total-budget.json`）。Live A/B 仍待 138 释放。
 - P1 stream_core 新用户轮清 Skill：~~待验证~~ → **已对齐**（`begin_user_turn_clear_transient_skills` + Continue/Correct/Cancel/写入后恢复单测；multimodal 改为 LLM 前 push）。证据 `eval/manifests/1.3.0-p1-skill-clear-turn-continuity.json`。
-- P1 生产路径预算缺口：~~pin/transient 各用满额 + executor 无上限~~ → **已修**（`build_skill_injection_block` 真共享；executor `skill_reference` 同 cap）。证据 `eval/manifests/1.3.0-p1-skill-budget-production-path.json`。
+- P1 生产路径预算缺口：~~pin/transient 各用满额 + executor 无上限~~ → **已修**（`build_skill_injection_block` 真共享；executor `skill_reference` 同 cap）。证据 `eval/manifests/1.3.0-p1-skill-budget-production-path.json`。（保留；**不是** GPT 点名的四项。）
+- P1 GPT 生产路径四项：~~零预算仍挂 tools / 写入指纹不换界 / TaskState 未进生产 / shell 指纹全小写~~ → **已修**（zero-budget degrade；SetGoal/Correct/AuthorizeRerun 清写门；Continue 保留；`confirm_step`+prompt 注入+普通请求 SetGoal；shell 保留参数大小写）。证据 `eval/manifests/1.3.0-p1-gpt-production-path-four.json`。
 - P1 真人UX、E live、tip138尚未完成，不能因计划打勾宣称发布验收通过。
 生产证据：T4 1.2.11会话6621a013-0d12-43c7-ad39-6dbf6e9cb156，北京时间19:46:18/:29/:38，两项list成功返回7925/449字节；历史9→1、9→1、10→1，available_tokens=0；实际Spark请求message_count=3后重复查询。证明裁剪与循环同时发生，完整请求正文未留存，唯一根因仍需复现。DeepSeek关联成功会话仅确认render_text回执queued，非屏幕物理刷新，非受控A/B。
 ### 执行计划
@@ -258,7 +259,9 @@ timeout和判定来源。
 - [x] P1 stream_core 新轮清 Skill 与「继续」/纠正/取消/写入后恢复衔接。
   （2026-11-14：`begin_user_turn_clear_transient_skills`；TaskState 跨轮保留；multimodal 指令先于首轮 LLM；`task_continuity` **14/14**。证据 `eval/manifests/1.3.0-p1-skill-clear-turn-continuity.json`。Live 仍被 138 阻塞。）
 - [x] P1 Skill 预算接到生产路径（pin+transient 真共享；executor `skill_reference`）。
-  （2026-11-14：`build_skill_injection_block` 单预算；`set_skill_context` 预留 pin；`process_tool_results` 同 cap。单测 assemble/block/executor。证据 `eval/manifests/1.3.0-p1-skill-budget-production-path.json`。Live 仍被 138 阻塞。）
+  （2026-11-14：`build_skill_injection_block` 单预算；`set_skill_context` 预留 pin；`process_tool_results` 同 cap。单测 assemble/block/executor。证据 `eval/manifests/1.3.0-p1-skill-budget-production-path.json`。Live 仍被 138 阻塞。**非** GPT 四项。）
+- [x] P1 GPT 生产路径四项（零预算降级 / 写指纹换界 / TaskState 生产注入 / shell 指纹大小写）。
+  （2026-11-14：见 `docs/development/p1-gpt-production-path-four-2026-11-14.md`；`task_continuity` 16/16 + request-path `zero_budget_history_strips` / `task_state_prompt_injected`（test-utils）。证据 `eval/manifests/1.3.0-p1-gpt-production-path-four.json`。Live 仍被 138 阻塞。）
 - [ ] C 人工：真机触屏 + VoiceOver/TalkBack + 5人×4任务>=18/20（挂起）。
 - [ ] D 桌面/移动代表流程。
 - [ ] E Spark实际10次>=9/10，多轮/故障/取消探针。

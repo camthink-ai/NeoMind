@@ -156,6 +156,10 @@ pub async fn process_stream_events_with_safeguards(
     // survives on AgentInternalState (push_message already applied directives).
     // Later ReAct rounds in THIS turn may reload skills under the total budget.
     super::super::task_continuity::begin_user_turn_clear_transient_skills(&llm_interface).await;
+    {
+        let section = internal_state.read().await.task_state.to_prompt_section();
+        llm_interface.set_task_state_prompt(section).await;
+    }
     let turn_context =
         super::context::TurnContext::new(conversation_summary.clone(), summary_up_to_index);
     let user_message = user_message.to_string();
@@ -1632,23 +1636,48 @@ pub async fn process_stream_events_with_safeguards(
                                 }
                             }
                         }
-                        // Record successful mutating writes into TaskState so a
-                        // later "继续"/Continue cannot replay them.
+                        // Record successful tool evidence + mutating write gates
+                        // into TaskState (production path for confirm_step_from_tool).
                         if matches!(
                             &execution.result,
                             Ok(out) if crate::toolkit::tool::effective_success(
                                 &crate::tools::resolve_tool_name(&name), out
                             )
                         ) {
+                            let args_canon =
+                                serde_json::to_string(&exec_arguments).unwrap_or_default();
+                            let call_fp = super::intent::mutating_write_fingerprint(
+                                &name,
+                                &exec_arguments,
+                            )
+                            .unwrap_or_else(|| {
+                                super::super::task_continuity::write_fingerprint(
+                                    &crate::tools::resolve_tool_name(&name),
+                                    &args_canon,
+                                )
+                            });
+                            let result_body = match &execution.result {
+                                Ok(out) => out.data.to_string(),
+                                Err(e) => e.to_string(),
+                            };
+                            let result_fp =
+                                super::super::task_continuity::result_fingerprint(&result_body);
+                            let summary = {
+                                let brief = result_body.chars().take(120).collect::<String>();
+                                format!("{name}: {brief}")
+                            };
+                            let mut state = internal_state.write().await;
+                            state.task_state.confirm_step_from_tool(
+                                &crate::tools::resolve_tool_name(&name),
+                                &call_fp,
+                                &result_fp,
+                                summary,
+                            );
                             if let Some(fp) = super::intent::mutating_write_fingerprint(
                                 &name,
                                 &exec_arguments,
                             ) {
-                                internal_state
-                                    .write()
-                                    .await
-                                    .task_state
-                                    .record_successful_write(fp);
+                                state.task_state.record_successful_write(fp);
                             }
                         }
 

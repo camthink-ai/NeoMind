@@ -86,6 +86,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         let user_msg = AgentMessage::user_with_images(&user_message, user_images);
         internal_state.write().await.push_message(user_msg);
     }
+    {
+        let section = internal_state.read().await.task_state.to_prompt_section();
+        llm_interface.set_task_state_prompt(section).await;
+    }
 
     // Get conversation history
     let state_guard = internal_state.read().await;
@@ -418,15 +422,37 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             &crate::tools::resolve_tool_name(&name),
                             &output,
                         ) {
+                            let args_canon =
+                                serde_json::to_string(&exec_arguments).unwrap_or_default();
+                            let call_fp = super::intent::mutating_write_fingerprint(
+                                &name,
+                                &exec_arguments,
+                            )
+                            .unwrap_or_else(|| {
+                                super::super::task_continuity::write_fingerprint(
+                                    &crate::tools::resolve_tool_name(&name),
+                                    &args_canon,
+                                )
+                            });
+                            let result_body = output.data.to_string();
+                            let result_fp =
+                                super::super::task_continuity::result_fingerprint(&result_body);
+                            let summary = {
+                                let brief = result_body.chars().take(120).collect::<String>();
+                                format!("{name}: {brief}")
+                            };
+                            let mut state = internal_state.write().await;
+                            state.task_state.confirm_step_from_tool(
+                                &crate::tools::resolve_tool_name(&name),
+                                &call_fp,
+                                &result_fp,
+                                summary,
+                            );
                             if let Some(fp) = super::intent::mutating_write_fingerprint(
                                 &name,
                                 &exec_arguments,
                             ) {
-                                internal_state
-                                    .write()
-                                    .await
-                                    .task_state
-                                    .record_successful_write(fp);
+                                state.task_state.record_successful_write(fp);
                             }
                         }
                         let result_value = output.prompt_value();

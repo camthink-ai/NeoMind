@@ -563,8 +563,15 @@ pub(crate) const MUTATION_COMMAND_PATTERNS: &[&str] = &[
 ];
 
 /// Does this shell command look like a mutation?
+///
+/// Detection is case-insensitive; callers that need a write fingerprint must
+/// pass the **original** command (arg values keep their case) to
+/// [`mutating_write_fingerprint`], not a lowercased copy.
 pub(crate) fn is_mutation_command(cmd: &str) -> bool {
-    MUTATION_COMMAND_PATTERNS.iter().any(|p| cmd.contains(p))
+    let lower = cmd.to_lowercase();
+    MUTATION_COMMAND_PATTERNS
+        .iter()
+        .any(|p| lower.contains(p))
 }
 
 /// Fingerprint for a mutating tool call, if this call is a write.
@@ -572,6 +579,9 @@ pub(crate) fn is_mutation_command(cmd: &str) -> bool {
 /// Used by the G2 `may_execute_write` gate at tool dispatch: shell mutation
 /// commands plus direct write tools (`run_now` / `file_write` / `file_edit` /
 /// `image_edit`). Read-only tools return `None` (never gated).
+///
+/// Shell fingerprints keep the original command string (arg values are not
+/// lowercased) so `DeviceA` and `devicea` do not collapse into one gate key.
 pub(crate) fn mutating_write_fingerprint(
     tool_name: &str,
     arguments: &serde_json::Value,
@@ -580,10 +590,9 @@ pub(crate) fn mutating_write_fingerprint(
     match real.as_str() {
         "shell" => {
             let cmd = arguments.get("command").and_then(|v| v.as_str())?;
-            let lower = cmd.to_lowercase();
-            if is_mutation_command(&lower) {
+            if is_mutation_command(cmd) {
                 Some(super::super::task_continuity::write_fingerprint(
-                    "shell", &lower,
+                    "shell", cmd,
                 ))
             } else {
                 None
@@ -1323,6 +1332,31 @@ mod tests {
         assert!(fp2.starts_with("file_write|"));
 
         assert!(mutating_write_fingerprint("skill", &serde_json::json!({"name": "x"})).is_none());
+    }
+
+    #[test]
+    fn shell_write_fingerprint_preserves_command_case_and_arg_values() {
+        let mixed = serde_json::json!({
+            "command": "neomind device control DeviceA --action Reboot --note 'KeepCASE'"
+        });
+        let fp = mutating_write_fingerprint("shell", &mixed).expect("mutation");
+        assert!(
+            fp.contains("DeviceA"),
+            "device id case must survive: {fp}"
+        );
+        assert!(
+            fp.contains("Reboot") || fp.contains("KeepCASE"),
+            "arg values must not be lowercased away: {fp}"
+        );
+        assert!(
+            !fp.contains("devicea --action reboot"),
+            "must not fingerprint the fully-lowercased command: {fp}"
+        );
+        // Detection still case-insensitive.
+        let upper = serde_json::json!({
+            "command": "NEOMIND DEVICE CONTROL sensor-001 --action reboot"
+        });
+        assert!(mutating_write_fingerprint("shell", &upper).is_some());
     }
 
     #[test]

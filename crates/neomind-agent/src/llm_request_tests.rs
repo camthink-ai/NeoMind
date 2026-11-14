@@ -9,6 +9,9 @@ struct CaptureRuntime {
     inner: MockLlmRuntime,
     requests: Arc<Mutex<Vec<serde_json::Value>>>,
     overflow_once: std::sync::atomic::AtomicBool,
+    /// Override reported context window (default 32768). Tiny values force
+    /// ZeroBudget history_select on the real assemble path.
+    max_context: usize,
 }
 
 impl CaptureRuntime {
@@ -36,13 +39,13 @@ impl LlmRuntime for CaptureRuntime {
     }
     fn capabilities(&self) -> BackendCapabilities {
         let mut caps = self.inner.capabilities();
-        caps.max_context = Some(32768);
+        caps.max_context = Some(self.max_context);
         caps.multimodal = true;
         caps.supports_images = true;
         caps
     }
     fn max_context_length(&self) -> usize {
-        32768
+        self.max_context
     }
     async fn generate(&self, input: LlmInput) -> std::result::Result<LlmOutput, LlmError> {
         self.capture(&input);
@@ -71,6 +74,13 @@ impl LlmRuntime for CaptureRuntime {
 type Requests = Arc<Mutex<Vec<serde_json::Value>>>;
 
 async fn harness(script: Vec<MockResponse>) -> (Arc<LlmInterface>, Requests) {
+    harness_with_ctx(script, 32768).await
+}
+
+async fn harness_with_ctx(
+    script: Vec<MockResponse>,
+    max_context: usize,
+) -> (Arc<LlmInterface>, Requests) {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let iface = Arc::new(LlmInterface::new(ChatConfig::default()));
     iface
@@ -78,6 +88,7 @@ async fn harness(script: Vec<MockResponse>) -> (Arc<LlmInterface>, Requests) {
             inner: MockLlmRuntime::new(script),
             requests: requests.clone(),
             overflow_once: std::sync::atomic::AtomicBool::new(false),
+            max_context,
         }))
         .await;
     (iface, requests)
@@ -879,6 +890,7 @@ async fn dynamic_thinking_overflow_retry_explicitly_disables_when_supported() {
                 inner: MockLlmRuntime::new(vec![MockResponse::text("recovered")]),
                 requests: requests.clone(),
                 overflow_once: std::sync::atomic::AtomicBool::new(true),
+                max_context: 32768,
             }))
             .await;
         iface
@@ -989,6 +1001,7 @@ async fn memory_on_demand_isolated_child() {
             inner: MockLlmRuntime::new(script),
             requests: requests.clone(),
             overflow_once: std::sync::atomic::AtomicBool::new(false),
+            max_context: 32768,
         })
     };
     agent
@@ -1097,4 +1110,69 @@ async fn memory_on_demand_isolated_child() {
             .contains("disabled")));
     }
     assert_eq!(store.read().await.read_file("user").await.unwrap(), OLD);
+}
+
+#[tokio::test]
+async fn zero_budget_history_strips_tools_on_real_stream_request() {
+    // Tiny window + fat system/tools + non-empty history → ZeroBudget select.
+    // Production assemble must degrade: tools_count == 0 on the captured request.
+    let (iface, requests) = harness_with_ctx(vec![MockResponse::text("ok")], 1024).await;
+    // Oversized tool schema so reserved tokens eat the prompt budget.
+    let fat_desc = "TOOLDESC ".repeat(400);
+    iface
+        .set_tool_definitions(vec![neomind_core::llm::backend::ToolDefinition {
+            name: "shell".into(),
+            description: fat_desc,
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": { "command": { "type": "string" } },
+            }),
+        }])
+        .await;
+    let history = vec![
+        Message::user("把天气写到 EK410"),
+        Message::assistant("calling shell"),
+        Message::user(format!(
+            "[Tool: shell returned]\n{}",
+            "RESULT ".repeat(200)
+        )),
+    ];
+    drain(
+        iface
+            .chat_stream_with_history("继续查询设备列表", &history)
+            .await
+            .unwrap(),
+    )
+    .await;
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(
+        captured[0]["tools_count"], 0,
+        "ZeroBudget history_select must not assemble a tool-enabled request: {:?}",
+        captured[0]["tool_names"]
+    );
+}
+
+#[tokio::test]
+async fn task_state_prompt_injected_into_system_on_stream_request() {
+    let (iface, requests) = harness(vec![MockResponse::text("ok")]).await;
+    iface
+        .set_task_state_prompt(Some(
+            "## Active Task State\n- Goal: 写天气到 EK410\n- Next: render (source: planner)\n"
+                .into(),
+        ))
+        .await;
+    drain(
+        iface
+            .chat_stream_with_history("继续", &[])
+            .await
+            .unwrap(),
+    )
+    .await;
+    let captured = requests.lock().unwrap();
+    let system = captured[0]["messages"].as_array().unwrap()[0].to_string();
+    assert!(
+        system.contains("Active Task State") && system.contains("写天气到 EK410"),
+        "TaskState must reach the model context: {system}"
+    );
 }

@@ -88,7 +88,7 @@ pub struct TaskState {
 /// User / system directives that mutate [`TaskState`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskDirective {
-    /// Establish or replace the working goal.
+    /// Establish or replace the working goal (new task boundary).
     SetGoal {
         goal: String,
         object: Option<String>,
@@ -101,7 +101,11 @@ pub enum TaskDirective {
         content: Option<String>,
     },
     Cancel,
+    /// Resume without replaying completed writes (fingerprints kept).
     Continue,
+    /// Authorized re-run of the same goal (e.g. 「再发送一次」) — clears write
+    /// fingerprints so the gate allows the write again. Distinct from Continue.
+    AuthorizeRerun,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,6 +115,13 @@ pub enum ApplyOutcome {
 }
 
 impl TaskState {
+    /// New goal / corrected goal / explicit re-run: clear write fingerprints so
+    /// an authorized re-send is not blocked as a Continue replay.
+    fn clear_write_scope_for_new_boundary(&mut self) {
+        self.completed_write_fingerprints.clear();
+        self.confirmed_steps.clear();
+    }
+
     pub fn apply_directive(&mut self, directive: TaskDirective) -> ApplyOutcome {
         match directive {
             TaskDirective::SetGoal {
@@ -118,13 +129,10 @@ impl TaskState {
                 object,
                 content,
             } => {
+                self.clear_write_scope_for_new_boundary();
                 self.goal = Some(goal);
-                if object.is_some() {
-                    self.object = object;
-                }
-                if content.is_some() {
-                    self.content = content;
-                }
+                self.object = object;
+                self.content = content;
                 self.next_action = None;
                 self.status = TaskStatus::Active;
                 ApplyOutcome::Applied
@@ -135,8 +143,9 @@ impl TaskState {
                 content,
             } => {
                 // Correction always replaces the goal; prior unconfirmed next
-                // actions are dropped so the model cannot keep executing the
-                // old charter.
+                // actions and write gates from the old charter are dropped so
+                // the model can execute the corrected plan (authorized re-run).
+                self.clear_write_scope_for_new_boundary();
                 self.goal = Some(goal);
                 if let Some(o) = object {
                     self.object = Some(o);
@@ -173,7 +182,70 @@ impl TaskState {
                 }
                 ApplyOutcome::Applied
             }
+            TaskDirective::AuthorizeRerun => {
+                if matches!(self.status, TaskStatus::Cancelled) {
+                    return ApplyOutcome::Ignored {
+                        reason: "cancelled",
+                    };
+                }
+                // Same goal, authorized write again (「再发送一次」).
+                self.completed_write_fingerprints.clear();
+                if self.goal.is_some() {
+                    self.status = TaskStatus::Active;
+                }
+                ApplyOutcome::Applied
+            }
         }
+    }
+
+    /// Prompt block for the production assemble path (goal / done / next).
+    /// Returns `None` when there is nothing useful to inject.
+    pub fn to_prompt_section(&self) -> Option<String> {
+        if matches!(self.status, TaskStatus::Idle | TaskStatus::Cancelled)
+            && self.goal.is_none()
+        {
+            return None;
+        }
+        if self.goal.is_none()
+            && self.confirmed_steps.is_empty()
+            && self.next_action.is_none()
+            && !matches!(
+                self.status,
+                TaskStatus::Halted { .. } | TaskStatus::Completed { .. }
+            )
+        {
+            return None;
+        }
+        let mut out = String::from("## Active Task State\n");
+        out.push_str(&format!("- Status: {:?}\n", self.status));
+        if let Some(g) = &self.goal {
+            out.push_str(&format!("- Goal: {g}\n"));
+        }
+        if let Some(o) = &self.object {
+            out.push_str(&format!("- Object: {o}\n"));
+        }
+        if let Some(c) = &self.content {
+            out.push_str(&format!("- Content: {c}\n"));
+        }
+        if !self.confirmed_steps.is_empty() {
+            out.push_str("- Confirmed steps (tool evidence):\n");
+            for step in self.confirmed_steps.iter().rev().take(8) {
+                out.push_str(&format!("  - {}\n", step.summary));
+            }
+        }
+        if let Some(next) = &self.next_action {
+            out.push_str(&format!(
+                "- Next: {} (source: {})\n",
+                next.description, next.source
+            ));
+        }
+        if !self.completed_write_fingerprints.is_empty() {
+            out.push_str(&format!(
+                "- Completed writes gated: {} (Continue must not replay)\n",
+                self.completed_write_fingerprints.len()
+            ));
+        }
+        Some(out)
     }
 
     /// Confirm a step only from a tool result fingerprint (not narration).
@@ -271,9 +343,13 @@ pub async fn begin_user_turn_clear_transient_skills(llm: &crate::llm::LlmInterfa
 }
 
 /// Parse a user utterance into a directive when the intent is clear.
-/// Ambiguous text returns `None` (do not guess a cancel/correct).
+/// Ambiguous short acks / greetings return `None`. Substantive ordinary
+/// requests become [`TaskDirective::SetGoal`] (new task boundary).
 pub fn parse_user_directive(text: &str) -> Option<TaskDirective> {
     let t = text.trim();
+    if t.is_empty() {
+        return None;
+    }
     let lower = t.to_lowercase();
 
     // Cancel (zh/en)
@@ -286,12 +362,27 @@ pub fn parse_user_directive(text: &str) -> Option<TaskDirective> {
         return Some(TaskDirective::Cancel);
     }
 
-    // Continue
+    // Continue — resume; write fingerprints stay (no replay).
     if matches!(
         lower.as_str(),
         "继续" | "继续吧" | "请继续" | "continue" | "go on" | "keep going" | "please continue"
     ) {
         return Some(TaskDirective::Continue);
+    }
+
+    // Authorized re-run of the same write (distinct from Continue).
+    if matches!(
+        lower.as_str(),
+        "再发送一次"
+            | "再发一次"
+            | "重新发送"
+            | "再发一遍"
+            | "send again"
+            | "resend"
+            | "send it again"
+            | "retry send"
+    ) {
+        return Some(TaskDirective::AuthorizeRerun);
     }
 
     // Correction: 改成X / 不是A是B / instead use X / change to X
@@ -328,7 +419,46 @@ pub fn parse_user_directive(text: &str) -> Option<TaskDirective> {
         });
     }
 
+    // Ordinary substantive request → SetGoal (new task boundary).
+    if looks_like_new_task_request(t) {
+        return Some(TaskDirective::SetGoal {
+            goal: t.to_string(),
+            object: extract_object(t),
+            content: None,
+        });
+    }
+
     None
+}
+
+fn looks_like_new_task_request(text: &str) -> bool {
+    if crate::agent::is_simple_greeting(text) {
+        return false;
+    }
+    let t = text.trim();
+    let lower = t.to_lowercase();
+    if matches!(
+        lower.as_str(),
+        "好"
+            | "好的"
+            | "嗯"
+            | "哦"
+            | "ok"
+            | "okay"
+            | "thanks"
+            | "thank you"
+            | "谢谢"
+            | "收到"
+            | "明白"
+            | "yes"
+            | "no"
+            | "否"
+            | "是"
+    ) {
+        return false;
+    }
+    // Substantive enough to be a goal (CJK/latin).
+    t.chars().count() >= 4
 }
 
 fn extract_object(text: &str) -> Option<String> {
@@ -536,7 +666,75 @@ mod tests {
             }
             other => panic!("expected Correct, got {other:?}"),
         }
-        assert!(parse_user_directive("把天气写到屏幕").is_none());
+        match parse_user_directive("把天气写到屏幕") {
+            Some(TaskDirective::SetGoal { goal, .. }) => {
+                assert!(goal.contains("天气"));
+            }
+            other => panic!("ordinary request must SetGoal, got {other:?}"),
+        }
+        assert_eq!(
+            parse_user_directive("再发送一次"),
+            Some(TaskDirective::AuthorizeRerun)
+        );
+        assert!(parse_user_directive("好的").is_none());
+        assert!(parse_user_directive("你好").is_none());
+    }
+
+    #[test]
+    fn new_goal_and_authorize_rerun_clear_write_gate_continue_keeps_it() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "写天气到 EK410".into(),
+            object: Some("EK410".into()),
+            content: None,
+        });
+        let fp = write_fingerprint("shell", "neomind ext invoke render --device EK410");
+        s.record_successful_write(fp.clone());
+        assert!(!s.may_execute_write(&fp));
+
+        // Continue = resume replay blocked.
+        s.apply_directive(TaskDirective::Continue);
+        assert!(!s.may_execute_write(&fp));
+
+        // 「再发送一次」 = authorized re-run.
+        s.apply_directive(TaskDirective::AuthorizeRerun);
+        assert!(
+            s.may_execute_write(&fp),
+            "AuthorizeRerun must clear write fingerprints"
+        );
+        s.record_successful_write(fp.clone());
+        assert!(!s.may_execute_write(&fp));
+
+        // New / corrected goal = new task boundary.
+        s.apply_directive(TaskDirective::Correct {
+            goal: "改写到 DeviceB".into(),
+            object: Some("DeviceB".into()),
+            content: None,
+        });
+        assert!(
+            s.may_execute_write(&fp),
+            "Correct must clear write scope for authorized re-run"
+        );
+        assert!(s.confirmed_steps.is_empty());
+    }
+
+    #[test]
+    fn continue_uses_prompt_section_with_goal_and_gated_writes() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "写天气到 EK410".into(),
+            object: Some("EK410".into()),
+            content: None,
+        });
+        let fp = write_fingerprint("shell", "render");
+        s.record_successful_write(fp);
+        s.confirm_step_from_tool("shell", "shell|render", "abc", "render queued");
+        s.apply_directive(TaskDirective::Continue);
+        let section = s.to_prompt_section().expect("active task section");
+        assert!(section.contains("写天气到 EK410"));
+        assert!(section.contains("EK410"));
+        assert!(section.contains("render queued"));
+        assert!(section.contains("Completed writes gated"));
     }
 
     #[test]

@@ -491,6 +491,9 @@ pub struct LlmInterface {
     /// Pinned skill IDs selected by the user for this session.
     /// These skills are injected as full guides (not just hints) into the system prompt.
     pinned_skills: Arc<RwLock<Vec<String>>>,
+    /// Cross-turn TaskState prompt section (goal / confirmed / next). Set by
+    /// stream entry from `AgentInternalState.task_state.to_prompt_section()`.
+    task_state_prompt: Arc<RwLock<Option<String>>>,
 }
 
 impl LlmInterface {
@@ -607,6 +610,7 @@ impl LlmInterface {
             skill_context: Arc::new(RwLock::new(TransientSkillContext::default())),
             image_delegation_prompt: Arc::new(RwLock::new(None)),
             pinned_skills: Arc::new(RwLock::new(Vec::new())),
+            task_state_prompt: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -644,6 +648,7 @@ impl LlmInterface {
             skill_context: Arc::new(RwLock::new(TransientSkillContext::default())),
             image_delegation_prompt: Arc::new(RwLock::new(None)),
             pinned_skills: Arc::new(RwLock::new(Vec::new())),
+            task_state_prompt: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -861,13 +866,16 @@ impl LlmInterface {
     /// Apply the shared history-budget selector and mark truncation when needed.
     ///
     /// Recent tool-call/result groups are kept atomically. A zero soft budget
-    /// yields an empty kept set (never a lone early user message).
+    /// yields an empty kept set (never a lone early user message). Callers must
+    /// pass [`selected.reason`] through
+    /// [`crate::agent::history_select::tools_allowed_after_history_select`]
+    /// before attaching tools.
     fn select_history_for_prompt(
         &self,
         history_msgs: &[&Message],
         available_tokens: usize,
         log_label: &str,
-    ) -> Vec<Message> {
+    ) -> crate::agent::history_select::HistorySelectResult {
         let owned: Vec<Message> = history_msgs.iter().map(|m| (*m).clone()).collect();
         let selected = crate::agent::history_select::select_messages_for_history_budget(
             &owned,
@@ -889,7 +897,7 @@ impl LlmInterface {
             self.history_truncated
                 .store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        selected.messages
+        selected
     }
 
     /// Get effective generation parameters.
@@ -1252,6 +1260,11 @@ impl LlmInterface {
         self.pinned_skills.read().await.clone()
     }
 
+    /// Inject / clear the TaskState prompt section for the next assemble.
+    pub async fn set_task_state_prompt(&self, section: Option<String>) {
+        *self.task_state_prompt.write().await = section;
+    }
+
     /// Estimated tokens already committed to pinned skill chunks (same shape
     /// as the production assemble path). Used to reserve shared budget for
     /// mid-turn [`set_skill_context`] loads.
@@ -1405,6 +1418,15 @@ impl LlmInterface {
             prompt.push('\n');
             prompt.push_str(&skill_block);
             prompt.push('\n');
+        }
+
+        // G2 TaskState (goal / confirmed steps / next) — production path.
+        if let Some(section) = self.task_state_prompt.read().await.clone() {
+            if !section.trim().is_empty() {
+                prompt.push('\n');
+                prompt.push_str(section.trim());
+                prompt.push('\n');
+            }
         }
 
         // Add intent-specific addon if we can classify the user's message
@@ -1677,6 +1699,8 @@ impl LlmInterface {
         let user_msg = Message::user(&user_message);
 
         // Build messages with history if provided, truncated to fit context window
+        let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
+        let mut history_was_nonempty = false;
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -1684,6 +1708,7 @@ impl LlmInterface {
                 .iter()
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
+            history_was_nonempty = !history_msgs.is_empty();
 
             let (available_tokens, _prompt_budget) = self
                 .compute_history_budget(
@@ -1695,11 +1720,13 @@ impl LlmInterface {
                 )
                 .await;
 
-            msgs.extend(self.select_history_for_prompt(
+            let selected = self.select_history_for_prompt(
                 &history_msgs,
                 available_tokens,
                 "Truncated conversation history to fit context window",
-            ));
+            );
+            history_reason = selected.reason;
+            msgs.extend(selected.messages);
 
             msgs.push(user_msg);
             msgs
@@ -1707,9 +1734,21 @@ impl LlmInterface {
             vec![system_msg, user_msg]
         };
 
+        let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
+            history_reason,
+            history_was_nonempty,
+            has_tools,
+        );
+        if has_tools && !attach_tools {
+            tracing::warn!(
+                reason = ?history_reason,
+                "zero_budget_degrade_no_tools: refusing tool-enabled assemble after empty history_select"
+            );
+        }
+
         // Get tool definitions — no vision filtering here (chat_internal is
         // text-only; chat_internal_message handles image filtering separately).
-        let tools_input = if has_tools {
+        let tools_input = if attach_tools {
             let tools = self.tool_definitions.read().await;
             let result = if tools.is_empty() {
                 None
@@ -1841,6 +1880,8 @@ impl LlmInterface {
         }
 
         // Build messages with history if provided, truncated to fit context window
+        let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
+        let mut history_was_nonempty = false;
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -1848,6 +1889,7 @@ impl LlmInterface {
                 .iter()
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
+            history_was_nonempty = !history_msgs.is_empty();
 
             let user_text = user_message.content.as_text();
             let (available_tokens, _prompt_budget) = self
@@ -1860,11 +1902,13 @@ impl LlmInterface {
                 )
                 .await;
 
-            msgs.extend(self.select_history_for_prompt(
+            let selected = self.select_history_for_prompt(
                 &history_msgs,
                 available_tokens,
                 "Truncated conversation history to fit context window",
-            ));
+            );
+            history_reason = selected.reason;
+            msgs.extend(selected.messages);
 
             if !is_message_empty(&user_message) {
                 msgs.push(user_message);
@@ -1873,6 +1917,18 @@ impl LlmInterface {
         } else {
             vec![system_msg, user_message]
         };
+
+        let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
+            history_reason,
+            history_was_nonempty,
+            has_tools,
+        );
+        if has_tools && !attach_tools {
+            tracing::warn!(
+                reason = ?history_reason,
+                "zero_budget_degrade_no_tools: refusing tool-enabled assemble after empty history_select"
+            );
+        }
 
         // Get tool definitions — filter out "vision" when the user message
         // already contains images.  The model is multimodal and can analyse
@@ -1884,7 +1940,7 @@ impl LlmInterface {
         // are pushed before it); it is `None` only when the user message is
         // empty, in which case there are no images anyway.
         let has_user_images = messages.last().is_some_and(|m| m.has_images());
-        let tools_input = if has_tools {
+        let tools_input = if attach_tools {
             let tools = self.tool_definitions.read().await;
             let result = if tools.is_empty() {
                 None
@@ -2139,6 +2195,8 @@ impl LlmInterface {
         }
 
         // Build messages with history if provided, truncated to fit context window
+        let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
+        let mut history_was_nonempty = false;
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -2146,6 +2204,7 @@ impl LlmInterface {
                 .iter()
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
+            history_was_nonempty = !history_msgs.is_empty();
 
             let user_text = user_message.content.as_text();
             let (available_tokens, _prompt_budget) = self
@@ -2158,11 +2217,13 @@ impl LlmInterface {
                 )
                 .await;
 
-            msgs.extend(self.select_history_for_prompt(
+            let selected = self.select_history_for_prompt(
                 &history_msgs,
                 available_tokens,
                 "Truncated conversation history to fit context window (multimodal stream)",
-            ));
+            );
+            history_reason = selected.reason;
+            msgs.extend(selected.messages);
 
             if !is_message_empty(&user_message) {
                 msgs.push(user_message);
@@ -2172,11 +2233,23 @@ impl LlmInterface {
             vec![system_msg, user_message]
         };
 
+        let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
+            history_reason,
+            history_was_nonempty,
+            include_tools,
+        );
+        if include_tools && !attach_tools {
+            tracing::warn!(
+                reason = ?history_reason,
+                "zero_budget_degrade_no_tools: refusing tool-enabled assemble after empty history_select"
+            );
+        }
+
         // Get tool definitions — filter out "vision" when the user message already
         // contains images.  The model is multimodal and can analyse them directly;
         // the vision tool is only needed for fetching images from URLs/files.
         let tools = self.tool_definitions.read().await;
-        let tools_input = if !include_tools || tools.is_empty() {
+        let tools_input = if !attach_tools || tools.is_empty() {
             None
         } else if has_user_images {
             let filtered: Vec<_> = tools
@@ -2459,6 +2532,8 @@ impl LlmInterface {
         ];
 
         // Build messages with history if provided, truncated to fit context window
+        let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
+        let mut history_was_nonempty = false;
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -2467,6 +2542,7 @@ impl LlmInterface {
                 .iter()
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
+            history_was_nonempty = !history_msgs.is_empty();
 
             // Use token-based budget calculation accounting for tools and template overhead
             let (available_tokens, _prompt_budget) = self
@@ -2483,11 +2559,13 @@ impl LlmInterface {
             // atomic; available_tokens==0 keeps nothing (never force-insert
             // the earliest user message — that produced message_count=3
             // re-query loops after large tool returns ate the soft budget).
-            msgs.extend(self.select_history_for_prompt(
+            let selected = self.select_history_for_prompt(
                 &history_msgs,
                 available_tokens,
                 "Truncated conversation history to fit context window (group-aware)",
-            ));
+            );
+            history_reason = selected.reason;
+            msgs.extend(selected.messages);
 
             msgs.push(user_msg);
             msgs
@@ -2495,9 +2573,21 @@ impl LlmInterface {
             vec![system_msg, user_msg]
         };
 
+        let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
+            history_reason,
+            history_was_nonempty,
+            include_tools,
+        );
+        if include_tools && !attach_tools {
+            tracing::warn!(
+                reason = ?history_reason,
+                "zero_budget_degrade_no_tools: refusing tool-enabled assemble after empty history_select"
+            );
+        }
+
         // Get tool definitions
         let tools = self.tool_definitions.read().await;
-        let tools_input = if !include_tools {
+        let tools_input = if !attach_tools {
             None
         } else {
             let available: Vec<_> = tools
