@@ -410,3 +410,33 @@ REGRESSION, consistent positive lean (+7~9pp both rounds) — stated as
 single-round). Truthfulness fixes cost nothing on the historical gate.
 GATE138-VERDICT.md + eval-138/ under /tmp/neomind-iter-main-20261113/.
 llama-server auto-cleaned. Still no commit/push/publish.
+
+## Review-fix round + 1.3.0 branch (2026-11-14, user-directed)
+
+SSH review's 3 must-fix + 3 fix-too items all landed: explain in-memory
+history now filters by rule_id (two-rule isolation test); dry-run gained
+TransformExecutionMode with an unverified channel — extensions (preprocess +
+extensions.invoke, including the JS pre-execution parser) are NEVER executed
+in dry-run (default-deny allow-list NEOMIND_DRYRUN_PURE_EXTENSIONS; /test,
+test-code and the chat transform tool all run DryRun); CommandDelivery
+layered to AdapterAccepted/ExtensionAccepted/DeviceAcknowledged/
+PhysicalEffectVerified (extension Ok explicitly "not a device ACK");
+@-references dropped client labels from model context entirely + full
+sanitization (incl. quote-escape, caught by test); composer dedupes by
+type+id, caps at the shared MAX_REFERENCES=20, boundary-only @ trigger
+(emails don't fire), IME composition guard. Gates after fixes: fmt/clippy
+clean, workspace 97 groups / 3908 green, web 383/383 + tsc 0 + eslint 470.
+Post-fix 138 rerun (276 trials): r0 113/138 AND r1 113/138 (81.9%) —
+highest reading on this gate to date — paired vs 1.2.10 FINAL: +16 net
+(22/6, p=0.0037) and +19 net (20/4, p=0.0015), lost cases scattered
+round-flips, no family regression, 9 timeouts (same heavy family).
+
+User decision: all work landed on a NEW LOCAL BRANCH `1.3.0` — commit
+dc9a74f4 (iterations 1-6 + review fixes) merged with released 871af9fe
+(1.2.11) as merge commit 830b54c1 (zero conflicts; workspace check + tsc +
+key tests verified post-merge). The MAIN CHECKOUT (~/CamThink Project/
+NeoMind) is now ON branch 1.3.0 — future development/testing happens there.
+This zcode worktree stays detached (binary used by the finished eval) and
+can be removed once its target is no longer needed. main branch untouched
+at 871af9fe. NO push/publish anywhere; user to change the Mac login
+password (was shared in chat) themselves.
