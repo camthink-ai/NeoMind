@@ -220,6 +220,20 @@
     "device": "device",
     "rule": "rule",
     "transform": "transform",
-    "agent": "agent"
+    "agent": "agent",
+    "protoTitle": "Inline @ prototype",
+    "protoDesc": "Standalone editor prototype for in-sentence references; not wired into production ChatComposer.",
+    "protoHint": "Inline @ prototype: type @ or use the toolbar; the same object may appear twice; chips delete atomically.",
+    "protoText": "Message text",
+    "protoMobile": "Mobile mention picker sheet",
+    "insertAt": "Insert @ mention",
+    "protoPlain": "Plain text",
+    "protoLegacy": "Legacy chip projection",
+    "protoHistory": "Post-send history preview (inline tags)",
+    "protoHistoryEmpty": "Type and insert references to preview here",
+    "protoTradeoffLink": "Trade-off notes: docs/development/inline-at-editor-tradeoff-2026-11-14.md",
+    "protoViewportAuto": "Follow viewport",
+    "protoViewportDesktop": "Desktop popover",
+    "protoViewportMobile": "Mobile sheet"
   }
 }

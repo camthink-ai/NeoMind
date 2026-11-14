@@ -1,0 +1,39 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-iter-B-inline-at-prototype",
+  "created_at": "2026-11-14T10:28:00+00:00",
+  "tip_at_commit_message": "see git log for iter-B commit on branch 1.3.0",
+  "product_version": "1.2.11",
+  "pushed": false,
+  "deliverables": {
+    "prototype_route": "/dev/inline-at",
+    "code": "web/src/prototypes/inline-at/",
+    "tradeoff": "docs/development/inline-at-editor-tradeoff-2026-11-14.md",
+    "recommendation": "Keep production ChatComposer chips for now; adopt TipTap Mention in iter C for production inline editor; do not hand-roll contentEditable; do not add Lexical/Slate."
+  },
+  "tests": {
+    "commands": [
+      "cd web && npx vitest run src/prototypes/inline-at",
+      "cd web && npx vitest run src/components/chat/__tests__/ChatComposerMention.test.tsx src/i18n/__tests__/keys.test.ts",
+      "cd web && npx tsc --noEmit"
+    ],
+    "results": {
+      "inline_at_vitest": "12/12",
+      "composer_mention_regression": "12/12",
+      "i18n_keys": "4/4",
+      "tsc": "0 errors"
+    }
+  },
+  "visual_evidence": {
+    "desktop_static_html": "Project store media/inline-at-proto-desktop.html",
+    "mobile_static_html": "Project store media/inline-at-proto-mobile.html",
+    "live_screenshot": "not captured — Playwright browser binary missing; touch device unverified"
+  },
+  "non_goals_this_slice": [
+    "Wire prototype into production ChatComposer",
+    "Backend content-node protocol (iter C)",
+    "Server-side mention search pagination (iter C)",
+    "5-user usability gate",
+    "Disturb running 138 eval job"
+  ]
+}

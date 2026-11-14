@@ -54,6 +54,12 @@ const ExtensionsPage = lazy(() => import('@/pages/extensions').then(m => ({ defa
 const SystemPage = lazy(() => import('@/pages/SystemPage'))
 const SharedDashboardPage = lazy(() => import('@/pages/share/SharedDashboard'))
 const NotFound = lazy(() => import('@/pages/NotFound'))
+// Plan iter-B prototype — not in primary nav; keep lazy so it stays out of the main chunk.
+const InlineAtPrototypePage = lazy(() =>
+  import('@/prototypes/inline-at/InlineAtPrototypePage').then((m) => ({
+    default: m.InlineAtPrototypePage,
+  })),
+)
 // Suppress only the specific Radix UI Portal cleanup error during fast page transitions
 // Known issue: React 18 + Radix UI race condition where removeChild fails on unmounted portals
 const originalError = console.error
@@ -647,6 +653,8 @@ function App() {
                       <Route path="/plugins" element={<Navigate to="/extensions" replace />} />
                       {/* System container page (mobile primary nav target) */}
                       <Route path="/system" element={<SystemPage />} />
+                      {/* Dev prototype: inline @ editor (plan 1.3 iter B) */}
+                      <Route path="/dev/inline-at" element={<InlineAtPrototypePage />} />
                       {/* Extension-contributed pages (manifest frontend.pages) */}
                       {extensionPages.map((page: ExtensionPage) => (
                         <Route

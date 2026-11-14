@@ -196,7 +196,8 @@ timeout和判定来源。
 
 - [x] A：核对tip与运行作业、冻结manifest、修复用例基础、确认当前138二进制。
   （2026-11-14 切片：tip `9af1f46f`；运行中 138 属 8ef0@`830b54c1` 旧候选 bin `a7c55395…`，≠ tip，不作 tip 验收；`seed-main-objective` + `device_command_sent` name 回退 + `case_precheck`；证据 `eval/manifests/1.3.0-iter-a-foundation.json`。未跑新 138 / 未宣称模型增益。）
-- [ ] B：提交行内@桌面/移动原型及编辑器取舍。
+- [x] B：提交行内@桌面/移动原型及编辑器取舍。
+  （2026-11-14 切片：`/dev/inline-at` 分段编辑器原型 + `InlineDoc` 模型；取舍推荐 C 片用 TipTap；vitest 12/12；生产 ChatComposer 未改。触屏真机未验证。）
 - [ ] C：有序节点协议、后端原位解析、草稿历史、失败恢复和兼容。
 - [ ] C：全量可访问对象搜索/分页、重名辨识、无效引用处理。
 - [ ] C：浏览器/触屏/IME/无障碍测试与5人可用性验证。

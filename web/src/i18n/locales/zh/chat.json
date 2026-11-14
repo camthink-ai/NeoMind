@@ -215,6 +215,20 @@
     "device": "设备",
     "rule": "规则",
     "transform": "转换",
-    "agent": "代理"
+    "agent": "代理",
+    "protoTitle": "行内 @ 原型",
+    "protoDesc": "独立编辑器原型：评估行内引用交互；不写入生产 ChatComposer。",
+    "protoHint": "行内引用原型：@ 或工具栏插入；同一对象可出现多次；芯片整块删除。",
+    "protoText": "消息文本",
+    "protoMobile": "移动端引用选择面板",
+    "insertAt": "插入 @ 引用",
+    "protoPlain": "明文",
+    "protoLegacy": "旧芯片投影",
+    "protoHistory": "发送后历史预览（行内标签）",
+    "protoHistoryEmpty": "输入并插入引用后在此预览",
+    "protoTradeoffLink": "依赖取舍见 docs/development/inline-at-editor-tradeoff-2026-11-14.md",
+    "protoViewportAuto": "跟随窗口",
+    "protoViewportDesktop": "桌面浮层",
+    "protoViewportMobile": "移动面板"
   }
 }
