@@ -209,5 +209,6 @@ timeout和判定来源。
 - [x] E：首个可运行方案10次预注册验收。
   （2026-11-14 切片：**预注册完成** — `eval/acceptance/iter-e-detection-chain.json` 冻结 5×zh+5×en、采样 .3/.75/20、≥9/10；硬化 `main-objective-e2e-detection-chain`（transform≥1、rule≥2、保留 `rule-battery-low`）；平台 `scenario_a_detections…` PASS。**未做**：Spark 10 次 live（PID 89912 占 `:29431`，争用风险已记）；多轮测试/改阈值/故障/取消/中断与行为探针 deferred。证据 `eval/manifests/1.3.0-iter-e-detection-chain-preregister.json`。）
 - [ ] F：48场景分组冻结、基线候选配对、最终138与Appliance验收。
+  （进行中 — 2026-11-14 离线片：48 ID 目录 + 分层 24/12/12 + holdout 仅 ID；配对门禁文档；`test_business_capability_48` 7/7。证据 `eval/manifests/1.3.0-iter-f-48-freeze-pairing.json`。**未做**：tip 上 live 138、Appliance 六任务、E live 9/10、stub 用例全量编写。）
 - [ ] 发布前：版本统一、证据归档、未解决问题、人工复现步骤。
 

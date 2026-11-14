@@ -1,0 +1,52 @@
+# Plan F freeze — split membership (see business-capability-48.json)
+# development (24)
+DEV01
+DEV02
+DEV03
+DEV04
+TR01
+TR02
+TR03
+TR04
+RULE01
+RULE02
+RULE03
+RULE04
+AG01
+AG02
+AG03
+AUX01
+AUX02
+AUX03
+E2E01
+E2E02
+E2E03
+E2E04
+E2E05
+E2E06
+# daily_regression (12)
+DEV05
+DEV06
+TR05
+TR06
+RULE05
+RULE06
+AG04
+AUX04
+E2E07
+E2E08
+E2E09
+E2E10
+# independent_holdout (12) — maintainer-only prompts
+DEV07
+DEV08
+TR07
+TR08
+RULE07
+RULE08
+AG05
+AG06
+AUX05
+AUX06
+E2E11
+E2E12

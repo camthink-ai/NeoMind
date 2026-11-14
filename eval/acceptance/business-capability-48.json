@@ -1,0 +1,494 @@
+{
+  "schema": "neomind-business-capability-48/v1",
+  "slice": "1.3.0-iter-F-48-freeze-pairing",
+  "plan_ref": "docs/development/NeoMind-1.3-next-plan.md §7.1 + §9",
+  "frozen_at": "2026-11-14",
+  "counts": {
+    "scenarios": 48,
+    "language_mirrors_planned": 96,
+    "split": { "development": 24, "daily_regression": 12, "independent_holdout": 12 },
+    "families": {
+      "device": 8,
+      "transform": 8,
+      "rule": 8,
+      "agent": 6,
+      "aux": 6,
+      "e2e": 12
+    }
+  },
+  "rules": {
+    "unit": "One original scenario id is one cluster; zh/en mirrors are NOT independent customer scenarios.",
+    "split_stratification": "Assigned within each family so holdout/daily/dev stay stratified — mirrors must not cross splits.",
+    "holdout": "independent_holdout prompts are maintainer-only; development agents must not author or train on holdout prompt text. This freeze lists IDs + intent only for holdout.",
+    "case_status": "stub = no chat case yet; provisional_map = existing case partially covers intent; case_ready = dedicated case exists and is the canonical link.",
+    "runner_note": "Plan §7.3 fields (behavior_probe, forbidden_effects, …) are catalog metadata until mapped into runner-native schema."
+  },
+  "sampling_contract_shared_with_e": {
+    "temperature": 0.3,
+    "top_p": 0.75,
+    "top_k": 20,
+    "thinking": true,
+    "case_timeout_secs": 600,
+    "context": 32768,
+    "parallel_slots": 1
+  },
+  "scenarios": [
+    {
+      "id": "DEV01",
+      "family": "device",
+      "split": "development",
+      "intent": "Known device-type onboarding",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["device-create-camera", "guided-webhook-onboarding", "main-objective-onboard-describe"]
+    },
+    {
+      "id": "DEV02",
+      "family": "device",
+      "split": "development",
+      "intent": "Unknown payload → draft confirmation",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["device-draft-approval", "device-drafts-list"]
+    },
+    {
+      "id": "DEV03",
+      "family": "device",
+      "split": "development",
+      "intent": "Unit-scale ambiguity clarification",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "DEV04",
+      "family": "device",
+      "split": "development",
+      "intent": "Register with no data yet",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "DEV05",
+      "family": "device",
+      "split": "daily_regression",
+      "intent": "Credential / connection error",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "DEV06",
+      "family": "device",
+      "split": "daily_regression",
+      "intent": "Duplicate onboarding",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "DEV07",
+      "family": "device",
+      "split": "independent_holdout",
+      "intent": "Same-name devices disambiguation",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "DEV08",
+      "family": "device",
+      "split": "independent_holdout",
+      "intent": "Disconnect / reconnect recovery",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": []
+    },
+
+    {
+      "id": "TR01",
+      "family": "transform",
+      "split": "development",
+      "intent": "Scalar transform",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["transform-create-avg", "main-objective-transform-test-honest"]
+    },
+    {
+      "id": "TR02",
+      "family": "transform",
+      "split": "development",
+      "intent": "Nested-array transform",
+      "case_status": "stub",
+      "provisional_case_ids": ["main-objective-e2e-detection-chain"]
+    },
+    {
+      "id": "TR03",
+      "family": "transform",
+      "split": "development",
+      "intent": "JS error honesty",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["main-objective-transform-failure-truthful"]
+    },
+    {
+      "id": "TR04",
+      "family": "transform",
+      "split": "development",
+      "intent": "null/undefined empty output",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "TR05",
+      "family": "transform",
+      "split": "daily_regression",
+      "intent": "Side-effect extension isolation (unverified)",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["main-objective-transform-test-honest"]
+    },
+    {
+      "id": "TR06",
+      "family": "transform",
+      "split": "daily_regression",
+      "intent": "catch path still unverified",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "TR07",
+      "family": "transform",
+      "split": "independent_holdout",
+      "intent": "MultiOutput partial failure",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "TR08",
+      "family": "transform",
+      "split": "independent_holdout",
+      "intent": "Targeted edit; test must not pollute production",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": []
+    },
+
+    {
+      "id": "RULE01",
+      "family": "rule",
+      "split": "development",
+      "intent": "Threshold rule",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["main-objective-rule-create-explain"]
+    },
+    {
+      "id": "RULE02",
+      "family": "rule",
+      "split": "development",
+      "intent": "AND/OR logical condition",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "RULE03",
+      "family": "rule",
+      "split": "development",
+      "intent": "for_duration hold",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "RULE04",
+      "family": "rule",
+      "split": "development",
+      "intent": "Cooldown / no re-fire",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["main-objective-rule-no-refire-why"]
+    },
+    {
+      "id": "RULE05",
+      "family": "rule",
+      "split": "daily_regression",
+      "intent": "Missing / stale inputs",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["main-objective-stale-data-truthful"]
+    },
+    {
+      "id": "RULE06",
+      "family": "rule",
+      "split": "daily_regression",
+      "intent": "Two-rule history isolation",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "RULE07",
+      "family": "rule",
+      "split": "independent_holdout",
+      "intent": "Update one field without rewriting the rest",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": ["multi-turn-threshold-change"]
+    },
+    {
+      "id": "RULE08",
+      "family": "rule",
+      "split": "independent_holdout",
+      "intent": "History without evidence must not invent a fire",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": []
+    },
+
+    {
+      "id": "AG01",
+      "family": "agent",
+      "split": "development",
+      "intent": "Single-goal agent configuration",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["agent-full-lifecycle", "agent-focused-default"]
+    },
+    {
+      "id": "AG02",
+      "family": "agent",
+      "split": "development",
+      "intent": "Rule-triggered agent",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["agent-event-trigger"]
+    },
+    {
+      "id": "AG03",
+      "family": "agent",
+      "split": "development",
+      "intent": "Missing / stale agent inputs",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["main-objective-stale-data-truthful"]
+    },
+    {
+      "id": "AG04",
+      "family": "agent",
+      "split": "daily_regression",
+      "intent": "Tool failure / timeout",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "AG05",
+      "family": "agent",
+      "split": "independent_holdout",
+      "intent": "No-ACK delivery honesty ladder",
+      "case_status": "provisional_map",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": ["main-objective-command-honesty"]
+    },
+    {
+      "id": "AG06",
+      "family": "agent",
+      "split": "independent_holdout",
+      "intent": "Non-idempotent repeat follows real policy",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": []
+    },
+
+    {
+      "id": "AUX01",
+      "family": "aux",
+      "split": "development",
+      "intent": "Local webhook actually received",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["main-objective-notify-channel-config", "push-create-webhook"]
+    },
+    {
+      "id": "AUX02",
+      "family": "aux",
+      "split": "development",
+      "intent": "Receiver failure",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "AUX03",
+      "family": "aux",
+      "split": "development",
+      "intent": "Edit channel without duplicate",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["message-channel-lifecycle"]
+    },
+    {
+      "id": "AUX04",
+      "family": "aux",
+      "split": "daily_regression",
+      "intent": "Standard dashboard card binding",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["main-objective-dashboard-card-config"]
+    },
+    {
+      "id": "AUX05",
+      "family": "aux",
+      "split": "independent_holdout",
+      "intent": "Same-name metric provenance",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "AUX06",
+      "family": "aux",
+      "split": "independent_holdout",
+      "intent": "Data source deletion impact",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": []
+    },
+
+    {
+      "id": "E2E01",
+      "family": "e2e",
+      "split": "development",
+      "intent": "Detection → transform → rule → notify chain",
+      "case_status": "case_ready",
+      "provisional_case_ids": ["main-objective-e2e-detection-chain"],
+      "acceptance_ref": "eval/acceptance/iter-e-detection-chain.json"
+    },
+    {
+      "id": "E2E02",
+      "family": "e2e",
+      "split": "development",
+      "intent": "Sensor → agent → simulated command (honest delivery)",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["main-objective-command-honesty"],
+      "platform_ref": "crates/neomind-api/tests/handlers/e2e_scenarios.rs::scenario_b_…"
+    },
+    {
+      "id": "E2E03",
+      "family": "e2e",
+      "split": "development",
+      "intent": "New device then create rule",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "E2E04",
+      "family": "e2e",
+      "split": "development",
+      "intent": "Mid-flight requirement change",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["multi-turn-correction", "multi-turn-threshold-change"]
+    },
+    {
+      "id": "E2E05",
+      "family": "e2e",
+      "split": "development",
+      "intent": "Cancel before enable",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "E2E06",
+      "family": "e2e",
+      "split": "development",
+      "intent": "Duplicate scheme handling",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "E2E07",
+      "family": "e2e",
+      "split": "daily_regression",
+      "intent": "Transform fault diagnosis",
+      "case_status": "provisional_map",
+      "provisional_case_ids": ["main-objective-transform-failure-truthful"]
+    },
+    {
+      "id": "E2E08",
+      "family": "e2e",
+      "split": "daily_regression",
+      "intent": "Notification fault localization",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "E2E09",
+      "family": "e2e",
+      "split": "daily_regression",
+      "intent": "Restart recovery query",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "E2E10",
+      "family": "e2e",
+      "split": "daily_regression",
+      "intent": "Rename/delete referenced object",
+      "case_status": "stub",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "E2E11",
+      "family": "e2e",
+      "split": "independent_holdout",
+      "intent": "Multi-turn clarification keeps parameters",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": []
+    },
+    {
+      "id": "E2E12",
+      "family": "e2e",
+      "split": "independent_holdout",
+      "intent": "Interrupt and resume build",
+      "case_status": "stub",
+      "prompt_status": "maintainer_only",
+      "provisional_case_ids": []
+    }
+  ],
+  "split_lists": {
+    "development": [
+      "DEV01", "DEV02", "DEV03", "DEV04",
+      "TR01", "TR02", "TR03", "TR04",
+      "RULE01", "RULE02", "RULE03", "RULE04",
+      "AG01", "AG02", "AG03",
+      "AUX01", "AUX02", "AUX03",
+      "E2E01", "E2E02", "E2E03", "E2E04", "E2E05", "E2E06"
+    ],
+    "daily_regression": [
+      "DEV05", "DEV06",
+      "TR05", "TR06",
+      "RULE05", "RULE06",
+      "AG04",
+      "AUX04",
+      "E2E07", "E2E08", "E2E09", "E2E10"
+    ],
+    "independent_holdout": [
+      "DEV07", "DEV08",
+      "TR07", "TR08",
+      "RULE07", "RULE08",
+      "AG05", "AG06",
+      "AUX05", "AUX06",
+      "E2E11", "E2E12"
+    ]
+  },
+  "pairing_protocol": {
+    "arms": ["baseline", "candidate"],
+    "constraints": [
+      "Identical model / runtime / sampling / timeout / fixture / grader / hardware",
+      "Interleave arms; freeze repetition count before launch",
+      "Report both-pass / gained / lost / both-fail + absolute counts + scenario-cluster intervals + each lost trail",
+      "Insufficient n → write 证据不足; never treat net gain or correlated p-values as proven uplift",
+      "Historical 138 stays cmd_ok AND sq_all_pass; business-48 reported separately — no blended score"
+    ],
+    "baseline_placeholder": {
+      "note": "Fill after tip release binary is built for a paired screen. Running 138 PID 89912 is 8ef0@830b54c1 — NOT tip baseline.",
+      "tip_at_freeze": "842d298f",
+      "product_version": "1.2.11"
+    },
+    "deferred": [
+      "Live paired runs on tip",
+      "Final 138 on tip",
+      "Appliance 6-task hardware gate",
+      "Plan E live 9/10 (after 138 frees :29431)"
+    ]
+  },
+  "contention": {
+    "eval_138": {
+      "pid": 89912,
+      "llama_port": 29431,
+      "touched": false
+    }
+  }
+}
