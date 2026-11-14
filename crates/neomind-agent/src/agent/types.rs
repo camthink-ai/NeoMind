@@ -401,6 +401,22 @@ pub struct AgentMessage {
     /// spent, …) — rendered as callouts, never merged into `content`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_notes: Option<Vec<String>>,
+    /// Ordered content nodes (v1) — opaque JSON matching API ChatContentNode.
+    /// Persisted via SessionMessage; not injected into the LLM prompt
+    /// (model sees the prepared plain/`【type `id`】` text instead).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "contentNodes"
+    )]
+    pub content_nodes: Option<Vec<Value>>,
+    /// Protocol version for `content_nodes` (currently `1`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "contentVersion"
+    )]
+    pub content_version: Option<u32>,
     /// Timestamp
     pub timestamp: i64,
 }
@@ -472,6 +488,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -489,6 +507,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -506,6 +526,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -526,6 +548,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -543,6 +567,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -560,6 +586,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -577,6 +605,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -598,6 +628,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -746,6 +778,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -1960,6 +1994,11 @@ pub struct AgentInternalState {
     /// Cross-turn task continuity (G2): goal/object/evidence steps; Continue
     /// must not replay completed writes. Loop halts (G3) mark Halted, never Completed.
     pub task_state: super::task_continuity::TaskState,
+    /// Content nodes to attach to the next pushed user message (set by API
+    /// before process; consumed once in `push_message`).
+    pub pending_user_content_nodes: Option<Vec<Value>>,
+    /// Protocol version paired with `pending_user_content_nodes`.
+    pub pending_user_content_version: Option<u32>,
 }
 
 impl AgentInternalState {
@@ -1978,6 +2017,8 @@ impl AgentInternalState {
             )),
             compaction_cache: None,
             task_state: super::task_continuity::TaskState::default(),
+            pending_user_content_nodes: None,
+            pending_user_content_version: None,
         }
     }
 
@@ -2024,7 +2065,14 @@ impl AgentInternalState {
 
     /// Push a message to the memory.
     pub fn push_message(&mut self, message: AgentMessage) {
+        let mut message = message;
         if message.role == "user" {
+            if let Some(nodes) = self.pending_user_content_nodes.take() {
+                message.content_nodes = Some(nodes);
+                message.content_version = self.pending_user_content_version.take();
+            } else {
+                self.pending_user_content_version = None;
+            }
             if let Some(directive) =
                 super::task_continuity::parse_user_directive(message.content.as_ref())
             {

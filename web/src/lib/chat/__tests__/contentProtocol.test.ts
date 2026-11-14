@@ -2,7 +2,9 @@ import { describe, expect, it, beforeEach } from "vitest"
 import {
   ContentProtocolError,
   MAX_CONTENT_NODES,
+  buildChatRequestFromChips,
   buildChatRequestFromDoc,
+  chipsAndTextToContentNodes,
   clearSessionDraft,
   loadSessionDraft,
   markDraftForRetry,
@@ -51,6 +53,27 @@ describe("contentProtocol", () => {
       expect(e).toBeInstanceOf(ContentProtocolError)
       expect((e as ContentProtocolError).code).toBe("content_nodes_cap")
     }
+  })
+
+  it("builds production chip+text nodes for persistence and send", () => {
+    const nodes = chipsAndTextToContentNodes("检查设备", [
+      { type: "device", id: "sensor-001", label: "温湿度" },
+    ])
+    expect(nodes).toEqual([
+      { kind: "text", text: "检查设备" },
+      {
+        kind: "reference",
+        type: "device",
+        id: "sensor-001",
+        labelSnapshot: "温湿度",
+      },
+    ])
+    const req = buildChatRequestFromChips("检查设备", [
+      { type: "device", id: "sensor-001", label: "温湿度" },
+    ])
+    expect(req.contentVersion).toBe(CHAT_CONTENT_VERSION_V1)
+    expect(req.contentNodes).toEqual(nodes)
+    expect(req.references).toHaveLength(1)
   })
 
   it("keeps drafts isolated per session and restores after failed send", () => {

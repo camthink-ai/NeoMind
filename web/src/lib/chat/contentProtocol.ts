@@ -123,6 +123,49 @@ export function buildChatRequestFromDoc(
   }
 }
 
+/**
+ * Production chip composer → contentNodes (text + trailing reference nodes).
+ * Not true in-sentence position yet (TipTap slice deferred); still persists
+ * structured mentions for history reload / resend.
+ */
+export function chipsAndTextToContentNodes(
+  message: string,
+  references: ChatReference[],
+): ChatContentNode[] {
+  const nodes: ChatContentNode[] = []
+  if (message) {
+    nodes.push({ kind: "text", text: message })
+  }
+  for (const r of references) {
+    nodes.push({
+      kind: "reference",
+      type: r.type,
+      id: r.id,
+      labelSnapshot: (r.label ?? "").slice(0, MAX_LABEL_CHARS),
+    })
+  }
+  return nodes
+}
+
+/** Build WS/HTTP payload from production chip + plain-text composer. */
+export function buildChatRequestFromChips(
+  message: string,
+  references: ChatReference[],
+  extras: Omit<ClientChatMessage, "message" | "contentNodes" | "contentVersion" | "references"> = {},
+): ClientChatMessage {
+  const nodes = chipsAndTextToContentNodes(message, references)
+  if (nodes.length > 0) {
+    validateContentNodes(nodes)
+  }
+  return {
+    ...extras,
+    message,
+    contentVersion: nodes.length > 0 ? CHAT_CONTENT_VERSION_V1 : undefined,
+    contentNodes: nodes.length > 0 ? nodes : undefined,
+    references: references.length > 0 ? references : undefined,
+  }
+}
+
 // ---- Per-session draft (refresh / switch / failed send recovery) ----
 
 export interface SessionChatDraft {

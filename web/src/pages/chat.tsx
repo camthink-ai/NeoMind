@@ -19,6 +19,7 @@ import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
 import { mentionKey, resolveMentions } from "@/lib/api/mentions"
+import { chipsAndTextToContentNodes } from "@/lib/chat/contentProtocol"
 import type { Message, ChatImage, ChatReference } from "@/types"
 import { cn } from "@/lib/utils"
 import { getSessionDisplayTitle } from "@/lib/utils/sessionTitle"
@@ -754,12 +755,18 @@ export function ChatPage() {
 
     // Prepare message content
     const messageContent = trimmedInput || (attachedImages.length > 0 ? "[Image]" : "")
+    const sentReferences = chatReferences.length > 0 ? [...chatReferences] : undefined
+    const sentContentNodes =
+      sentReferences && sentReferences.length > 0
+        ? chipsAndTextToContentNodes(trimmedInput, sentReferences)
+        : undefined
     const userMessage: Message = {
       id: generateId(),
       role: "user",
       content: messageContent,
       timestamp: Date.now(),
       images: attachedImages.length > 0 ? [...attachedImages] : undefined,
+      contentNodes: sentContentNodes,
     }
     addMessage(userMessage)
 
@@ -771,7 +778,6 @@ export function ChatPage() {
 
     setInput("")
     setAttachedImages([])
-    const sentReferences = chatReferences.length > 0 ? chatReferences : undefined
     setChatReferences([])
     setInvalidRefs({})
 
@@ -790,7 +796,14 @@ export function ChatPage() {
     beginTurn()
     setLastAssistantMessageId(null)
 
-    ws.sendMessage(trimmedInput, attachedImages.length > 0 ? attachedImages : undefined, undefined, undefined, sentReferences)
+    ws.sendMessage(
+      trimmedInput,
+      attachedImages.length > 0 ? attachedImages : undefined,
+      undefined,
+      undefined,
+      sentReferences,
+      sentContentNodes,
+    )
 
     requestAnimationFrame(() => {
       inputRef.current?.focus()

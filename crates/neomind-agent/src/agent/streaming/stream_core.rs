@@ -1398,11 +1398,13 @@ pub async fn process_stream_events_with_safeguards(
 
                     let reuse_map = executed_tool_signatures.clone();
                     let failed_map = failed_tool_signatures.clone();
+                    let state_for_write_gate = internal_state.clone();
                     let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments, cached_read)| {
                         let tools_clone = tools.clone();
                         let cache_clone = cache.clone();
                         let reuse_map = reuse_map.clone();
                         let failed_map = failed_map.clone();
+                        let state_for_write_gate = state_for_write_gate.clone();
 
                         async move {
                             // `$cached:` read-back: served from the cache in
@@ -1438,6 +1440,30 @@ pub async fn process_stream_events_with_safeguards(
                                             )),
                                         });
                                     }
+                                }
+                            }
+                            // G2 write gate: Continue / cancel must not replay
+                            // a mutating tool that already succeeded for this task.
+                            if let Some(fp) =
+                                super::intent::mutating_write_fingerprint(&name, &arguments)
+                            {
+                                let allowed = {
+                                    let state = state_for_write_gate.read().await;
+                                    state.task_state.may_execute_write(&fp)
+                                };
+                                if !allowed {
+                                    tracing::info!(
+                                        tool = %name,
+                                        fingerprint = %fp,
+                                        "Write gate blocked mutating tool (already succeeded or task cancelled)"
+                                    );
+                                    return (i, name.clone(), ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments: arguments.clone(),
+                                        result: Err(crate::toolkit::error::ToolError::Execution(
+                                            "Write blocked: this mutation already succeeded earlier in the task (or the task was cancelled). Do not replay it; report status or wait for evidence.".to_string(),
+                                        )),
+                                    });
                                 }
                             }
                             // Identical-call reuse for deterministic tools.
@@ -1603,6 +1629,25 @@ pub async fn process_stream_events_with_safeguards(
                                 {
                                     successful_mutations.push(cmd.to_string());
                                 }
+                            }
+                        }
+                        // Record successful mutating writes into TaskState so a
+                        // later "继续"/Continue cannot replay them.
+                        if matches!(
+                            &execution.result,
+                            Ok(out) if crate::toolkit::tool::effective_success(
+                                &crate::tools::resolve_tool_name(&name), out
+                            )
+                        ) {
+                            if let Some(fp) = super::intent::mutating_write_fingerprint(
+                                &name,
+                                &exec_arguments,
+                            ) {
+                                internal_state
+                                    .write()
+                                    .await
+                                    .task_state
+                                    .record_successful_write(fp);
                             }
                         }
 

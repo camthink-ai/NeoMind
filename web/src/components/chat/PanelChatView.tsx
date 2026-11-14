@@ -30,6 +30,7 @@ import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
 import type { ChatReference } from "@/types"
+import { chipsAndTextToContentNodes } from "@/lib/chat/contentProtocol"
 import { ChatScrollPill } from "./ChatScrollPill"
 import { X, Minimize2, Bot, Plus, Settings, Cpu, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -605,17 +606,22 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     sendStartedAtRef.current = Date.now()
     setSendElapsedSeconds(0)
     setSendPhase("preparing")
+    const sentReferences = panelReferences.length > 0 ? [...panelReferences] : undefined
+    const sentContentNodes =
+      sentReferences && sentReferences.length > 0
+        ? chipsAndTextToContentNodes(text, sentReferences)
+        : undefined
     addPanelMessage({
       id: pendingUserMessageId,
       role: "user",
       content: text || "[Image]",
       timestamp: Math.floor(Date.now() / 1000),
       images: sentImages,
+      contentNodes: sentContentNodes,
     })
 
     setAttachedImages([])
     setInput("")
-    const sentReferences = panelReferences.length > 0 ? panelReferences : undefined
     setPanelReferences([])
     if (inputRef.current) inputRef.current.style.height = "auto"
 
@@ -639,7 +645,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // Page-matched skills ride every send (backend pins them per message);
     // the page's system focus already lives in the session's system prompt.
     const skillIds = matchedSkillIdsRef.current.length > 0 ? [...matchedSkillIdsRef.current] : undefined
-    ws.sendMessage(text, sentImages, skillIds, undefined, sentReferences)
+    ws.sendMessage(text, sentImages, skillIds, undefined, sentReferences, sentContentNodes)
     requestAnimationFrame(() => inputRef.current?.focus())
   }, [input, attachedImages, panelReferences, isStreaming, isHistoryLoading, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn])
 

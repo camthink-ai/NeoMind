@@ -103,6 +103,22 @@ pub struct SessionMessage {
     /// `content`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_notes: Option<Vec<String>>,
+    /// Ordered content nodes (v1 inline-@ protocol). Opaque JSON matching
+    /// the API `ChatContentNode` shape; camelCase on the wire for the
+    /// history client (`contentNodes`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "contentNodes"
+    )]
+    pub content_nodes: Option<Vec<serde_json::Value>>,
+    /// Protocol version for `content_nodes` (currently `1`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "contentVersion"
+    )]
+    pub content_version: Option<u32>,
     /// Message timestamp.
     pub timestamp: i64,
 }
@@ -131,6 +147,8 @@ impl SessionMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -148,6 +166,8 @@ impl SessionMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -165,6 +185,8 @@ impl SessionMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -182,6 +204,8 @@ impl SessionMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -199,6 +223,8 @@ impl SessionMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -1186,6 +1212,8 @@ mod tests {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         };
         let msg2 = SessionMessage {
@@ -1199,6 +1227,8 @@ mod tests {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
         };
         let messages = vec![msg1, msg2];
@@ -1290,6 +1320,8 @@ mod tests {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            content_nodes: None,
+            content_version: None,
             timestamp: 12345,
         };
 
@@ -1298,6 +1330,46 @@ mod tests {
         assert_eq!(deserialized.role, "user");
         assert_eq!(deserialized.content, "Hello");
         assert_eq!(deserialized.timestamp, 12345);
+    }
+
+    #[test]
+    fn session_message_content_nodes_round_trip_camel_case() {
+        let msg = SessionMessage {
+            role: "user".to_string(),
+            content: "检查".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_call_name: None,
+            thinking: None,
+            images: None,
+            round_contents: None,
+            round_thinking: None,
+            system_notes: None,
+            content_nodes: Some(vec![
+                serde_json::json!({"kind":"text","text":"检查"}),
+                serde_json::json!({
+                    "kind":"reference",
+                    "type":"device",
+                    "id":"sensor-001",
+                    "labelSnapshot":"温湿度"
+                }),
+            ]),
+            content_version: Some(1),
+            timestamp: 99,
+        };
+        let v: serde_json::Value =
+            serde_json::from_slice(&serde_json::to_vec(&msg).unwrap()).unwrap();
+        assert!(
+            v.get("contentNodes").is_some(),
+            "wire key must be camelCase"
+        );
+        assert!(v.get("contentVersion").is_some());
+        assert!(v.get("content_nodes").is_none());
+
+        let back: SessionMessage = serde_json::from_value(v).unwrap();
+        assert_eq!(back.content_version, Some(1));
+        assert_eq!(back.content_nodes.as_ref().unwrap().len(), 2);
+        assert_eq!(back.content_nodes.as_ref().unwrap()[1]["id"], "sensor-001");
     }
 
     #[test]

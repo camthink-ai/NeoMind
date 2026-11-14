@@ -1,0 +1,41 @@
+{
+  "schema": "neomind-eval-freeze-manifest/v1",
+  "slice": "1.3.0-c-nodes-persist-write-gate",
+  "date": "2026-11-14",
+  "branch": "1.3.0",
+  "product_version": "1.3.0",
+  "pushed": false,
+  "head_at_start": "1b17cec3",
+  "plan_section": "12",
+  "item": "C nodes persist + may_execute_write dispatch",
+  "docs": "docs/development/c-nodes-persist-write-gate-2026-11-14.md",
+  "code": [
+    "crates/neomind-storage/src/session.rs",
+    "crates/neomind-agent/src/agent/types.rs",
+    "crates/neomind-agent/src/agent/mod.rs",
+    "crates/neomind-agent/src/session.rs",
+    "crates/neomind-agent/src/agent/streaming/intent.rs",
+    "crates/neomind-agent/src/agent/streaming/stream_core.rs",
+    "crates/neomind-agent/src/agent/streaming/stream_multimodal.rs",
+    "crates/neomind-agent/src/agent/task_continuity.rs",
+    "crates/neomind-api/src/handlers/chat_refs.rs",
+    "crates/neomind-api/src/handlers/sessions.rs",
+    "web/src/lib/chat/contentProtocol.ts",
+    "web/src/pages/chat.tsx",
+    "web/src/components/chat/PanelChatView.tsx"
+  ],
+  "gates": {
+    "storage_content_nodes_round_trip": "pass",
+    "api_nodes_for_persistence": "pass",
+    "task_continuity_unit": "10/10",
+    "mutating_write_fingerprint": "pass",
+    "vitest_contentProtocol": "4/4",
+    "clippy_agent_api_storage_lib": "pass",
+    "live_spark": "blocked_by_138"
+  },
+  "claim": "Production chips send contentNodes; SessionMessage persists contentNodes/contentVersion; may_execute_write gates mutating tool dispatch in stream_core+multimodal and records successful writes. No TipTap swap; no live score.",
+  "avoided": {
+    "eval_138": { "pid": 89912, "llama_port": 29431, "touched": false }
+  },
+  "next": "TipTap true inline editor; history chip rebuild from nodes; live pairing after 138; C a11y 5-person; D/E/F"
+}

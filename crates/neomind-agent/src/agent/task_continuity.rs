@@ -569,6 +569,27 @@ mod tests {
     }
 
     #[test]
+    fn push_message_consumes_pending_content_nodes_once() {
+        use crate::agent::types::{AgentInternalState, AgentMessage};
+        let mut state = AgentInternalState::new("s-nodes".into());
+        state.pending_user_content_nodes = Some(vec![serde_json::json!({
+            "kind": "reference",
+            "type": "device",
+            "id": "d1",
+            "labelSnapshot": "D"
+        })]);
+        state.pending_user_content_version = Some(1);
+        state.push_message(AgentMessage::user("check"));
+        let last = state.memory.last().expect("user msg");
+        assert_eq!(last.content_version, Some(1));
+        assert_eq!(last.content_nodes.as_ref().unwrap()[0]["id"], "d1");
+        assert!(state.pending_user_content_nodes.is_none());
+        // Second push without pending keeps None.
+        state.push_message(AgentMessage::user("again"));
+        assert!(state.memory.last().unwrap().content_nodes.is_none());
+    }
+
+    #[test]
     fn unknown_receipt_does_not_complete() {
         // Write succeeded at queue layer but physical receipt unknown —
         // confirm the step, do NOT complete without device evidence.

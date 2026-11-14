@@ -377,6 +377,8 @@ fn compact_tool_results_stream_with_config(
                     round_contents: None,
                     round_thinking: None,
                     system_notes: None,
+                    content_nodes: None,
+                    content_version: None,
                     timestamp: msg.timestamp,
                 };
                 result.push(summary_msg);

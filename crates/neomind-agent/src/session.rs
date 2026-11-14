@@ -669,6 +669,8 @@ impl SessionManager {
                     round_contents: msg.round_contents.clone(),
                     round_thinking: msg.round_thinking.clone(),
                     system_notes: msg.system_notes.clone(),
+                    content_nodes: msg.content_nodes.clone(),
+                    content_version: msg.content_version,
                     timestamp: msg.timestamp,
                 }
             })
@@ -757,6 +759,8 @@ impl SessionManager {
                     round_contents: sm.round_contents,
                     round_thinking: sm.round_thinking,
                     system_notes: sm.system_notes,
+                    content_nodes: sm.content_nodes,
+                    content_version: sm.content_version,
                     timestamp: sm.timestamp,
                 }
             })

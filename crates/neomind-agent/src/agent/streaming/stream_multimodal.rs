@@ -334,18 +334,39 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     })
                     .collect();
 
+            let state_for_write_gate = internal_state.clone();
             let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(name, arguments, cached_read)| {
                 let tools_clone = tools.clone();
                 let cache_clone = cache.clone();
+                let state_for_write_gate = state_for_write_gate.clone();
 
                 async move {
+                    let result = match cached_read {
+                        Some(output) => Ok(output),
+                        None => {
+                            if let Some(fp) =
+                                super::intent::mutating_write_fingerprint(&name, &arguments)
+                            {
+                                let allowed = {
+                                    let state = state_for_write_gate.read().await;
+                                    state.task_state.may_execute_write(&fp)
+                                };
+                                if !allowed {
+                                    Err(crate::toolkit::error::ToolError::Execution(
+                                        "Write blocked: this mutation already succeeded earlier in the task (or the task was cancelled). Do not replay it; report status or wait for evidence.".to_string(),
+                                    ))
+                                } else {
+                                    execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await
+                                }
+                            } else {
+                                execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await
+                            }
+                        }
+                    };
                     (name.clone(), ToolExecutionResult {
                         _name: name.clone(),
                         arguments: arguments.clone(),
-                        result: match cached_read {
-                            Some(output) => Ok(output),
-                            None => execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
-                        },
+                        result,
                     })
                 }
             })).buffer_unordered(6);
@@ -395,6 +416,21 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
                 match execution.result {
                     Ok(output) => {
+                        if crate::toolkit::tool::effective_success(
+                            &crate::tools::resolve_tool_name(&name),
+                            &output,
+                        ) {
+                            if let Some(fp) = super::intent::mutating_write_fingerprint(
+                                &name,
+                                &exec_arguments,
+                            ) {
+                                internal_state
+                                    .write()
+                                    .await
+                                    .task_state
+                                    .record_successful_write(fp);
+                            }
+                        }
                         let result_value = output.prompt_value();
                         let result_str = output.prompt_value().to_string();
 
@@ -571,17 +607,38 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                     )
                                 })
                                 .collect();
+                        let state_for_write_gate = internal_state.clone();
                         let cont_futures = futures::stream::iter(cont_inputs.into_iter().map(|(name, arguments, cached_read)| {
                             let tools_clone = tools.clone();
                             let cache_clone = cache_cont.clone();
+                            let state_for_write_gate = state_for_write_gate.clone();
                             async move {
+                                let result = match cached_read {
+                                    Some(output) => Ok(output),
+                                    None => {
+                                        if let Some(fp) =
+                                            super::intent::mutating_write_fingerprint(&name, &arguments)
+                                        {
+                                            let allowed = {
+                                                let state = state_for_write_gate.read().await;
+                                                state.task_state.may_execute_write(&fp)
+                                            };
+                                            if !allowed {
+                                                Err(crate::toolkit::error::ToolError::Execution(
+                                                    "Write blocked: this mutation already succeeded earlier in the task (or the task was cancelled). Do not replay it; report status or wait for evidence.".to_string(),
+                                                ))
+                                            } else {
+                                                execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await
+                                            }
+                                        } else {
+                                            execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await
+                                        }
+                                    }
+                                };
                                 (name.clone(), ToolExecutionResult {
                                     _name: name.clone(),
                                     arguments: arguments.clone(),
-                                    result: match cached_read {
-                                        Some(output) => Ok(output),
-                                        None => execute_tool_with_retry(&tools_clone, &cache_clone, &name, arguments.clone()).await,
-                                    },
+                                    result,
                                 })
                             }
                         })).buffer_unordered(6);
@@ -868,19 +925,29 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             )
                         })
                         .collect();
+                    let state_for_write_gate = internal_state.clone();
                     let nudge_futures = futures::stream::iter(nudge_inputs.into_iter().map(
                         |(name, arguments, cached_read)| {
                             let tools_clone = tools.clone();
                             let cache_clone = cache_n.clone();
+                            let state_for_write_gate = state_for_write_gate.clone();
                             async move {
-                                (
-                                    name.clone(),
-                                    ToolExecutionResult {
-                                        _name: name.clone(),
-                                        arguments: arguments.clone(),
-                                        result: match cached_read {
-                                            Some(output) => Ok(output),
-                                            None => {
+                                let result = match cached_read {
+                                    Some(output) => Ok(output),
+                                    None => {
+                                        if let Some(fp) = super::intent::mutating_write_fingerprint(
+                                            &name,
+                                            &arguments,
+                                        ) {
+                                            let allowed = {
+                                                let state = state_for_write_gate.read().await;
+                                                state.task_state.may_execute_write(&fp)
+                                            };
+                                            if !allowed {
+                                                Err(crate::toolkit::error::ToolError::Execution(
+                                                    "Write blocked: this mutation already succeeded earlier in the task (or the task was cancelled). Do not replay it; report status or wait for evidence.".to_string(),
+                                                ))
+                                            } else {
                                                 execute_tool_with_retry(
                                                     &tools_clone,
                                                     &cache_clone,
@@ -889,7 +956,23 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                                 )
                                                 .await
                                             }
-                                        },
+                                        } else {
+                                            execute_tool_with_retry(
+                                                &tools_clone,
+                                                &cache_clone,
+                                                &name,
+                                                arguments.clone(),
+                                            )
+                                            .await
+                                        }
+                                    }
+                                };
+                                (
+                                    name.clone(),
+                                    ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments: arguments.clone(),
+                                        result,
                                     },
                                 )
                             }

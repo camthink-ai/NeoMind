@@ -157,6 +157,68 @@ pub struct PreparedChatInput {
     pub used_content_nodes: bool,
 }
 
+/// Build JSON nodes to persist on the next user `SessionMessage`.
+///
+/// Prefers client `contentNodes`; otherwise synthesizes text + reference
+/// nodes from the legacy chip path so history still carries structured
+/// mentions. Returns `None` when neither is present.
+pub fn nodes_for_persistence(
+    message: &str,
+    content_nodes: Option<&[ChatContentNode]>,
+    content_version: Option<u32>,
+    references: Option<&[ChatReference]>,
+) -> Option<(Vec<serde_json::Value>, u32)> {
+    if let Some(nodes) = content_nodes {
+        if !nodes.is_empty() {
+            let values: Vec<serde_json::Value> = nodes
+                .iter()
+                .filter_map(|n| serde_json::to_value(n).ok())
+                .collect();
+            if !values.is_empty() {
+                return Some((values, content_version.unwrap_or(CONTENT_VERSION_V1)));
+            }
+        }
+    }
+    let refs = references.filter(|r| !r.is_empty())?;
+    let mut values = Vec::new();
+    if !message.is_empty() {
+        values.push(serde_json::json!({ "kind": "text", "text": message }));
+    }
+    for r in refs {
+        values.push(serde_json::json!({
+            "kind": "reference",
+            "type": r.r#type,
+            "id": r.id,
+            "labelSnapshot": r.label.clone().unwrap_or_default(),
+        }));
+    }
+    if values.is_empty() {
+        return None;
+    }
+    Some((values, CONTENT_VERSION_V1))
+}
+
+/// Attach persistable content nodes to the session agent before process.
+pub async fn attach_pending_content_nodes(
+    state: &ServerState,
+    session_id: &str,
+    message: &str,
+    content_nodes: Option<&[ChatContentNode]>,
+    content_version: Option<u32>,
+    references: Option<&[ChatReference]>,
+) {
+    let Some((nodes, ver)) =
+        nodes_for_persistence(message, content_nodes, content_version, references)
+    else {
+        return;
+    };
+    if let Ok(agent) = state.agents.session_manager.get_session(session_id).await {
+        agent
+            .set_pending_user_content_nodes(Some(nodes), Some(ver))
+            .await;
+    }
+}
+
 /// Hard-fail errors for the content-nodes protocol (never silent).
 #[derive(Debug, Clone, Serialize)]
 pub struct PrepareError {
@@ -590,6 +652,36 @@ mod tests {
     fn compose_page_context_only_matches_legacy_format() {
         let out = compose_chat_message("msg", Some("ctx"), None);
         assert_eq!(out, "ctx\n\nmsg");
+    }
+
+    #[test]
+    fn nodes_for_persistence_prefers_content_nodes_then_synthesizes_chips() {
+        let nodes = vec![ChatContentNode {
+            kind: "text".into(),
+            text: Some("检查".into()),
+            r#type: None,
+            id: None,
+            label_snapshot: None,
+        }];
+        let (vals, ver) =
+            nodes_for_persistence("ignored", Some(&nodes), Some(1), None).expect("nodes");
+        assert_eq!(ver, 1);
+        assert_eq!(vals[0]["kind"], "text");
+        assert_eq!(vals[0]["text"], "检查");
+
+        let refs = vec![ChatReference {
+            r#type: "device".into(),
+            id: "sensor-001".into(),
+            label: Some("温湿度".into()),
+        }];
+        let (vals, ver) = nodes_for_persistence("hello", None, None, Some(&refs)).expect("synth");
+        assert_eq!(ver, CONTENT_VERSION_V1);
+        assert_eq!(vals.len(), 2);
+        assert_eq!(vals[0]["text"], "hello");
+        assert_eq!(vals[1]["id"], "sensor-001");
+        assert_eq!(vals[1]["labelSnapshot"], "温湿度");
+
+        assert!(nodes_for_persistence("plain", None, None, None).is_none());
     }
 
     #[test]

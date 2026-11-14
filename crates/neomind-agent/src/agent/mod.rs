@@ -289,6 +289,19 @@ impl Agent {
     pub async fn set_pinned_skills(&self, skills: Vec<String>) {
         self.llm_interface.set_pinned_skills(skills).await;
     }
+
+    /// Attach v1 content nodes to the next user message pushed into memory.
+    /// Call from the HTTP/WS chat handlers after `prepare_chat_input`, before
+    /// `process_message_*`. Consumed once by `AgentInternalState::push_message`.
+    pub async fn set_pending_user_content_nodes(
+        &self,
+        nodes: Option<Vec<serde_json::Value>>,
+        version: Option<u32>,
+    ) {
+        let mut state = self.internal_state.write().await;
+        state.pending_user_content_nodes = nodes;
+        state.pending_user_content_version = version;
+    }
 }
 impl Agent {
     /// Create a new agent with empty tool registry.

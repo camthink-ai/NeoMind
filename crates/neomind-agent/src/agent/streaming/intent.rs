@@ -567,6 +567,39 @@ pub(crate) fn is_mutation_command(cmd: &str) -> bool {
     MUTATION_COMMAND_PATTERNS.iter().any(|p| cmd.contains(p))
 }
 
+/// Fingerprint for a mutating tool call, if this call is a write.
+///
+/// Used by the G2 `may_execute_write` gate at tool dispatch: shell mutation
+/// commands plus direct write tools (`run_now` / `file_write` / `file_edit` /
+/// `image_edit`). Read-only tools return `None` (never gated).
+pub(crate) fn mutating_write_fingerprint(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> Option<String> {
+    let real = crate::tools::resolve_tool_name(tool_name);
+    match real.as_str() {
+        "shell" => {
+            let cmd = arguments.get("command").and_then(|v| v.as_str())?;
+            let lower = cmd.to_lowercase();
+            if is_mutation_command(&lower) {
+                Some(super::super::task_continuity::write_fingerprint(
+                    "shell", &lower,
+                ))
+            } else {
+                None
+            }
+        }
+        "run_now" | "file_write" | "file_edit" | "image_edit" => {
+            let args = serde_json::to_string(arguments).unwrap_or_default();
+            Some(super::super::task_continuity::write_fingerprint(
+                real.as_str(),
+                &args,
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// Mutation-pattern → action class (the same vocabulary ACTION_CLASSES
 /// uses for hints). Order matters: " uninstall " must classify before
 /// " install " matches inside it. Patterns with no class
@@ -1273,6 +1306,25 @@ mod tests {
     /// to match `neomind push list`, killing dead-end detection for the
     /// whole push domain, while market-install / push start / llm
     /// activate / draft approve successes went entirely untracked.
+    #[test]
+    fn mutating_write_fingerprint_covers_shell_and_direct_writes() {
+        let shell_mut = serde_json::json!({
+            "command": "neomind device control sensor-001 --action reboot"
+        });
+        let fp = mutating_write_fingerprint("shell", &shell_mut).expect("shell mutation");
+        assert!(fp.starts_with("shell|"));
+        assert!(fp.contains("control"));
+
+        let shell_ro = serde_json::json!({"command": "neomind device list"});
+        assert!(mutating_write_fingerprint("shell", &shell_ro).is_none());
+
+        let fw = serde_json::json!({"path": "/tmp/a", "content": "x"});
+        let fp2 = mutating_write_fingerprint("file_write", &fw).expect("file_write");
+        assert!(fp2.starts_with("file_write|"));
+
+        assert!(mutating_write_fingerprint("skill", &serde_json::json!({"name": "x"})).is_none());
+    }
+
     #[test]
     fn mutation_patterns_cover_the_live_surface() {
         // Mutations the old table missed.

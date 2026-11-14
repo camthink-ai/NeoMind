@@ -1330,6 +1330,18 @@ pub async fn chat_handler(
     };
     let final_message = prepared.model_message;
 
+    // Persist client contentNodes (or synthesized chip nodes) on the next
+    // user SessionMessage — prepare only shapes the model text.
+    super::chat_refs::attach_pending_content_nodes(
+        &state,
+        &id,
+        &req.message,
+        req.content_nodes.as_deref(),
+        req.content_version,
+        req.references.as_deref(),
+    )
+    .await;
+
     // Branch on multimodal input for REST parity with WS. The old HTTP handler
     // dropped req.images entirely, so a REST vision client silently degraded to
     // text-only analysis.
@@ -2028,6 +2040,16 @@ async fn handle_ws_socket(
                                         };
                                         let final_message = prepared.model_message;
 
+                                        super::chat_refs::attach_pending_content_nodes(
+                                            &task_state,
+                                            &task_session_id,
+                                            &chat_req.message,
+                                            chat_req.content_nodes.as_deref(),
+                                            chat_req.content_version,
+                                            chat_req.references.as_deref(),
+                                        )
+                                        .await;
+
                                         // Use streaming for multimodal messages.
                                         // The clone here is the ONE deliberate copy:
                                         // `images` must stay alive for the
@@ -2153,6 +2175,9 @@ async fn handle_ws_socket(
                                             let task_skills = selected_skills.clone();
                                             let task_final_message = final_message;
                                             let task_req_backend = chat_req.backend_id.clone();
+                                            let task_content_nodes = chat_req.content_nodes.clone();
+                                            let task_content_version = chat_req.content_version;
+                                            let task_references = chat_req.references.clone();
                                             // Decision-layer cascade (shadow → short-circuit →
                                             // guidance → prefill) now lives INSIDE
                                             // SessionManager's message chokepoint
@@ -2165,6 +2190,15 @@ async fn handle_ws_socket(
                                                 // awaited stream creation below — see
                                                 // create_initial_pending_snapshot.
                                                 create_initial_pending_snapshot(&task_state, &task_session_id, &task_user_message);
+                                                super::chat_refs::attach_pending_content_nodes(
+                                                    &task_state,
+                                                    &task_session_id,
+                                                    &task_user_message,
+                                                    task_content_nodes.as_deref(),
+                                                    task_content_version,
+                                                    task_references.as_deref(),
+                                                )
+                                                .await;
                                                 match task_state
                                                     .agents
                                                     .session_manager
