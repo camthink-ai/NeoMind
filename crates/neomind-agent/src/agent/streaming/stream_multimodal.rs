@@ -209,6 +209,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 .unwrap_or(false);
             if is_interrupted {
                 tracing::info!("Multimodal stream interrupted by user");
+                {
+                    let mut state = internal_state.write().await;
+                    state
+                        .task_state
+                        .abandon_running_operations_on_interrupt("user interrupt");
+                }
                 yield AgentEvent::content("\n\n[Interrupted]");
                 yield AgentEvent::end();
                 return;
@@ -438,6 +444,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             .unwrap_or(false);
                         if interrupted {
                             tracing::info!("Multimodal stream interrupted during tool batch");
+                            {
+                                let mut state = internal_state.write().await;
+                                state.task_state.abandon_running_operations_on_interrupt(
+                                    "user interrupt during multimodal tool batch",
+                                );
+                            }
                             yield AgentEvent::content("\n\n[Interrupted]");
                             yield AgentEvent::end();
                             return;

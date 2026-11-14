@@ -106,6 +106,34 @@ pub fn effective_success(name: &str, out: &ToolOutput) -> bool {
     if !out.success {
         return false;
     }
+    // Operation-gate envelopes nest the real outcome under data.success.
+    // Pending / failed-resume must not count as confirmed success steps
+    // even if a caller mistakenly wrapped them in ToolOutput::success.
+    if out.data.get("_operation_in_progress").and_then(|v| v.as_bool()) == Some(true) {
+        return false;
+    }
+    if out.data.get("_operation_resume").and_then(|v| v.as_bool()) == Some(true) {
+        if out.data.get("success").and_then(|v| v.as_bool()) == Some(false) {
+            return false;
+        }
+        // Nested shell body may carry exit_code under data.data.
+        if name == "shell" {
+            if let Some(inner) = out.data.get("data") {
+                if inner
+                    .get("timed_out")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    return false;
+                }
+                if let Some(code) = inner.get("exit_code").and_then(|v| v.as_i64()) {
+                    if code != 0 {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
     if name == "shell" {
         if out
             .data
@@ -157,6 +185,34 @@ mod effective_success_tests {
         assert!(effective_success("file_write", &w));
         let e = ToolOutput::error("nope");
         assert!(!effective_success("web_fetch", &e));
+    }
+
+    #[test]
+    fn operation_envelopes_are_not_effective_success_when_pending_or_failed() {
+        // Mistaken outer success=true with pending/failed inner must still fail.
+        let pending = ToolOutput::success(serde_json::json!({
+            "_operation_in_progress": true,
+            "operation_id": "op-1",
+            "success": false,
+            "summary": "already running"
+        }));
+        assert!(!effective_success("run_now", &pending));
+        let failed_resume = ToolOutput::success(serde_json::json!({
+            "_operation_resume": true,
+            "operation_id": "op-2",
+            "success": false,
+            "summary": "failed",
+            "data": {"exit_code": 1}
+        }));
+        assert!(!effective_success("shell", &failed_resume));
+        let ok_resume = ToolOutput::success(serde_json::json!({
+            "_operation_resume": true,
+            "operation_id": "op-3",
+            "success": true,
+            "summary": "ok",
+            "data": {"exit_code": 0, "stdout": "fine"}
+        }));
+        assert!(effective_success("shell", &ok_resume));
     }
 
     #[test]

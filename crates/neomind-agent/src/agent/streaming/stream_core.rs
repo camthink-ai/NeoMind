@@ -900,6 +900,12 @@ pub async fn process_stream_events_with_safeguards(
                         StreamWait::Chunk(None) => break,
                         StreamWait::Interrupted => {
                             tracing::info!("Stream interrupted by user");
+                            {
+                                let mut state = internal_state.write().await;
+                                state.task_state.abandon_running_operations_on_interrupt(
+                                    "user interrupt during stream wait",
+                                );
+                            }
                             yield AgentEvent::content("\n\n[Interrupted]");
                             yield AgentEvent::end();
                             return;
@@ -952,6 +958,12 @@ pub async fn process_stream_events_with_safeguards(
                     let is_interrupted = safeguards.interrupt_signal.as_ref().map(|rx| *rx.borrow()).unwrap_or(false);
                     if is_interrupted {
                         tracing::info!("Stream interrupted by user");
+                        {
+                            let mut state = internal_state.write().await;
+                            state
+                                .task_state
+                                .abandon_running_operations_on_interrupt("user interrupt");
+                        }
                         yield AgentEvent::content("\n\n[Interrupted]");
                         yield AgentEvent::end();
                         return;
@@ -1476,6 +1488,76 @@ pub async fn process_stream_events_with_safeguards(
                                     }
                                 }
                             }
+                            // Identical-call reuse for deterministic tools.
+                            // Checked BEFORE the write gate so a same-turn
+                            // image_edit/vision re-call keeps the `_reused`
+                            // marker instead of short-circuiting on PreferKnown.
+                            let reusable = REUSABLE_TOOLS.contains(&name.as_str());
+                            let sig = format!(
+                                "{}|{}",
+                                name,
+                                serde_json::to_string(&arguments).unwrap_or_default()
+                            );
+
+                            // === LOOP BREAK (see failed_tool_signatures) ===
+                            if let Some((failures, last_err)) =
+                                failed_map.lock().unwrap().get(&sig).cloned()
+                            {
+                                if let Some(msg) = loop_break_message(failures, &last_err) {
+                                    tracing::warn!(
+                                        tool = %name,
+                                        failures,
+                                        "Loop break: identical call already failed {}× this turn — refusing to re-execute",
+                                        failures
+                                    );
+                                    return (
+                                        i,
+                                        name.clone(),
+                                        ToolExecutionResult {
+                                            _name: name.clone(),
+                                            arguments: arguments.clone(),
+                                            result: Err(
+                                                crate::toolkit::error::ToolError::Execution(msg),
+                                            ),
+                                            operation_id: None,
+                                        },
+                                    );
+                                }
+                            }
+
+                            if reusable {
+                                if let Some(prev) = reuse_map.lock().unwrap().get(&sig).cloned() {
+                                    if let Ok(mut v) =
+                                        serde_json::from_str::<serde_json::Value>(&prev)
+                                    {
+                                        if let Some(obj) = v.as_object_mut() {
+                                            obj.insert(
+                                                "_reused".into(),
+                                                serde_json::json!(
+                                                    "identical call already executed this turn — result reused, do NOT call again with the same arguments"
+                                                ),
+                                            );
+                                        }
+                                        tracing::info!(
+                                            tool = %name,
+                                            "Reusing identical tool call from earlier this turn"
+                                        );
+                                        return (
+                                            i,
+                                            name.clone(),
+                                            ToolExecutionResult {
+                                                _name: name.clone(),
+                                                arguments: arguments.clone(),
+                                                result: Ok(
+                                                    crate::toolkit::tool::ToolOutput::success(v),
+                                                ),
+                                                operation_id: None,
+                                            },
+                                        );
+                                    }
+                                }
+                            }
+
                             // Round 2 write gate / Operation lifecycle: same-op
                             // resume prefers known result; Unknown → inquire
                             // (no auto-replay); first attempt calls
@@ -1556,72 +1638,6 @@ pub async fn process_stream_events_with_safeguards(
                                                     ),
                                                 ),
                                                 operation_id: None,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                            // Identical-call reuse for deterministic tools.
-                            let reusable = REUSABLE_TOOLS.contains(&name.as_str());
-                            let sig = format!(
-                                "{}|{}",
-                                name,
-                                serde_json::to_string(&arguments).unwrap_or_default()
-                            );
-
-                            // === LOOP BREAK (see failed_tool_signatures) ===
-                            if let Some((failures, last_err)) =
-                                failed_map.lock().unwrap().get(&sig).cloned()
-                            {
-                                if let Some(msg) = loop_break_message(failures, &last_err) {
-                                    tracing::warn!(
-                                        tool = %name,
-                                        failures,
-                                        "Loop break: identical call already failed {}× this turn — refusing to re-execute",
-                                        failures
-                                    );
-                                    return (
-                                        i,
-                                        name.clone(),
-                                        ToolExecutionResult {
-                                            _name: name.clone(),
-                                            arguments: arguments.clone(),
-                                            result: Err(
-                                                crate::toolkit::error::ToolError::Execution(msg),
-                                            ),
-                                            operation_id: tracked_operation_id,
-                                        },
-                                    );
-                                }
-                            }
-
-                            if reusable {
-                                if let Some(prev) = reuse_map.lock().unwrap().get(&sig).cloned() {
-                                    if let Ok(mut v) =
-                                        serde_json::from_str::<serde_json::Value>(&prev)
-                                    {
-                                        if let Some(obj) = v.as_object_mut() {
-                                            obj.insert(
-                                                "_reused".into(),
-                                                serde_json::json!(
-                                                    "identical call already executed this turn — result reused, do NOT call again with the same arguments"
-                                                ),
-                                            );
-                                        }
-                                        tracing::info!(
-                                            tool = %name,
-                                            "Reusing identical tool call from earlier this turn"
-                                        );
-                                        return (
-                                            i,
-                                            name.clone(),
-                                            ToolExecutionResult {
-                                                _name: name.clone(),
-                                                arguments: arguments.clone(),
-                                                result: Ok(
-                                                    crate::toolkit::tool::ToolOutput::success(v),
-                                                ),
-                                                operation_id: tracked_operation_id,
                                             },
                                         );
                                     }
@@ -1710,6 +1726,23 @@ pub async fn process_stream_events_with_safeguards(
                     let mut tool_results_executed: Vec<_> = loop {
                         tokio::select! {
                             _ = tool_heartbeat.tick() => {
+                                let interrupted = safeguards
+                                    .interrupt_signal
+                                    .as_ref()
+                                    .map(|rx| *rx.borrow())
+                                    .unwrap_or(false);
+                                if interrupted {
+                                    tracing::info!("Stream interrupted during tool batch");
+                                    {
+                                        let mut state = internal_state.write().await;
+                                        state.task_state.abandon_running_operations_on_interrupt(
+                                            "user interrupt during tool batch",
+                                        );
+                                    }
+                                    yield AgentEvent::content("\n\n[Interrupted]");
+                                    yield AgentEvent::end();
+                                    return;
+                                }
                                 yield AgentEvent::heartbeat();
                             }
                             done = &mut collect_fut => break done,

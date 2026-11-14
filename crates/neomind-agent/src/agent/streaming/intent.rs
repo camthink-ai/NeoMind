@@ -578,8 +578,11 @@ pub(crate) fn is_mutation_command(cmd: &str) -> bool {
 /// Fingerprint for a mutating tool call, if this call is a write.
 ///
 /// **Single source of truth:** [`crate::agent::task_continuity::derive_tool_capability`]
-/// (parsed CLI for shell + tool-name table). Read-only capability → `None`
-/// (never gated). Parallel name-tables must not diverge from this gate.
+/// on **canonical** args (CLI mapping applied; lifecycle-only
+/// `_new_operation` stripped so the flag cannot bypass the concurrent lease).
+/// Read-only capability → `None` (never gated). Unknown tools stay
+/// fail-closed on retry policy but do **not** enter the write-lease path
+/// (avoids false Operation / `op:` cache entries for custom tools).
 ///
 /// Shell fingerprints keep the original command string (arg values are not
 /// lowercased) so `DeviceA` and `devicea` do not collapse into one gate key.
@@ -587,24 +590,34 @@ pub(crate) fn mutating_write_fingerprint(
     tool_name: &str,
     arguments: &serde_json::Value,
 ) -> Option<String> {
-    let cap = crate::agent::task_continuity::derive_tool_capability(tool_name, arguments);
+    let mut canonical =
+        crate::agent::task_continuity::canonicalize_tool_arguments(tool_name, arguments);
+    crate::agent::task_continuity::strip_new_operation_flag(&mut canonical);
+    let cap = crate::agent::task_continuity::derive_tool_capability(tool_name, &canonical);
     if cap.read_only {
         return None;
     }
     let real = crate::tools::resolve_tool_name(tool_name);
     match real.as_str() {
         "shell" => {
-            let cmd = arguments.get("command").and_then(|v| v.as_str())?;
+            let cmd = canonical.get("command").and_then(|v| v.as_str())?;
+            if cmd.trim().is_empty() {
+                return None;
+            }
             Some(super::super::task_continuity::write_fingerprint(
                 "shell", cmd,
             ))
         }
-        other => {
-            let args = serde_json::to_string(arguments).unwrap_or_default();
+        // Proven direct writes only — unknown tools use Never retry without
+        // a business fingerprint / lease.
+        "file_write" | "file_edit" | "image_edit" | "run_now" => {
+            let args = serde_json::to_string(&canonical).unwrap_or_default();
             Some(super::super::task_continuity::write_fingerprint(
-                other, &args,
+                real.as_str(),
+                &args,
             ))
         }
+        _ => None,
     }
 }
 
@@ -1331,6 +1344,32 @@ mod tests {
         assert!(fp2.starts_with("file_write|"));
 
         assert!(mutating_write_fingerprint("skill", &serde_json::json!({"name": "x"})).is_none());
+    }
+
+    #[test]
+    fn new_operation_flag_excluded_from_business_fingerprint() {
+        let base = serde_json::json!({"agent_id": "A"});
+        let mut with_flag = base.clone();
+        with_flag.as_object_mut().unwrap().insert(
+            crate::agent::task_continuity::NEW_OPERATION_ARG.into(),
+            serde_json::json!(true),
+        );
+        let fp1 = mutating_write_fingerprint("run_now", &base).expect("run_now");
+        let fp2 = mutating_write_fingerprint("run_now", &with_flag).expect("run_now+flag");
+        assert_eq!(
+            fp1, fp2,
+            "_new_operation must not enter the business fingerprint"
+        );
+
+        // Structured device control maps before fingerprinting.
+        let alias = serde_json::json!({
+            "action": "control",
+            "device_id": "D",
+            "command": "render_text",
+            "param": "text=weather"
+        });
+        let fp = mutating_write_fingerprint("device", &alias).expect("device control is a write");
+        assert!(fp.contains("control"), "fp={fp}");
     }
 
     #[test]

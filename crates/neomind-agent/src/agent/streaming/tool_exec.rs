@@ -57,37 +57,30 @@ pub(crate) async fn execute_with_retry_impl(
 ) -> std::result::Result<crate::toolkit::ToolOutput, crate::toolkit::ToolError> {
     // Map simplified tool name to real tool name
     let real_tool_name = resolve_tool_name(name);
-    // Capability unify: ToolCapability (CLI/name table) drives retry — not a
-    // parallel ReplaySafety-only path. Registry Safe still wins when present.
-    let cap = crate::agent::task_continuity::derive_tool_capability(name, &arguments);
-    let registry_safe =
-        tools.replay_safety(&real_tool_name) == crate::toolkit::tool::ReplaySafety::Safe;
-    let replay_safe = registry_safe
-        || cap.read_only
-        || matches!(
-            cap.retry_policy,
-            crate::agent::task_continuity::RetryPolicy::AlwaysSafe
-        );
-    let failure_retry_budget = match cap.retry_policy {
-        crate::agent::task_continuity::RetryPolicy::OnFailure { max_attempts } => {
-            max_attempts.saturating_sub(1)
-        }
-        crate::agent::task_continuity::RetryPolicy::AlwaysSafe => max_retries,
-        crate::agent::task_continuity::RetryPolicy::Never => 0,
-    };
-    let effective_max_retries = if replay_safe {
-        max_retries
-    } else {
-        failure_retry_budget.min(max_retries)
-    };
 
-    // If mapper resolved a CLI domain name to "shell", convert the structured args
-    // into a CLI command string that ShellTool expects: {"command": "neomind <domain> ..."}
+    // Canonicalize CLI-domain structured args BEFORE capability / retry policy
+    // so `{action:control,…}` is classified from the mapped `neomind device
+    // control …` command, not the bare alias field.
     let exec_args = if real_tool_name == "shell" && name != "shell" {
         crate::tools::mapper::build_cli_command(name, &arguments).unwrap_or(arguments.clone())
     } else {
         arguments.clone()
     };
+
+    // Capability from the canonical executable call (drives write-gate /
+    // fingerprint elsewhere). Explicit registry Unsafe must NOT be overridden
+    // by inferred read_only — a false-positive read classification used to
+    // blind-retry after an effect may already have landed (calls=2).
+    let _cap = if real_tool_name == "shell" && name != "shell" {
+        crate::agent::task_continuity::derive_tool_capability("shell", &exec_args)
+    } else {
+        crate::agent::task_continuity::derive_tool_capability(name, &exec_args)
+    };
+    let replay_safe =
+        tools.replay_safety(&real_tool_name) == crate::toolkit::tool::ReplaySafety::Safe;
+    // Unsafe → 0 interrupt retries (1 call). Safe → normal transient retries.
+    // Authorized same-args re-runs use `_new_operation` / TaskState, not here.
+    let effective_max_retries = if replay_safe { max_retries } else { 0 };
 
     // Tool execution timeout: 30s default, but respect shell tool's internal timeout
     const DEFAULT_TIMEOUT_SECS: u64 = 30;

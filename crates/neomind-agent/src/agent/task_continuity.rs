@@ -401,6 +401,39 @@ impl TaskState {
         }
     }
 
+    /// Owner-scoped cleanup when a stream/batch is interrupted mid-flight.
+    ///
+    /// Running leases become [`OperationStatus::Unknown`] (honest terminal —
+    /// effect may already have applied; do not auto-replay). Available
+    /// evidence is preserved. Prepared ops are cancelled. After this, an
+    /// authorized `_new_operation` can begin a fresh lease instead of
+    /// staying stuck on [`WriteDispatch::InProgress`].
+    pub fn abandon_running_operations_on_interrupt(&mut self, reason: impl Into<String>) {
+        let reason = reason.into();
+        self.cancel_prepared_operations();
+        for op in &mut self.operations {
+            if op.status != OperationStatus::Running {
+                continue;
+            }
+            let prior = op.evidence.clone();
+            op.status = OperationStatus::Unknown;
+            op.result = Some(StructuredResult {
+                success: false,
+                summary: format!("interrupted — outcome unknown ({reason})"),
+                body: reason.clone(),
+                details_ref: None,
+            });
+            op.evidence = prior;
+            if !op
+                .evidence
+                .iter()
+                .any(|e| e.contains("interrupted") || e.contains("OUTCOME UNKNOWN"))
+            {
+                op.evidence.push(format!("interrupted: {reason}"));
+            }
+        }
+    }
+
     /// Latest operation whose write fingerprint matches (if any).
     pub fn latest_op_for_fingerprint(&self, write_fingerprint: &str) -> Option<&OperationRecord> {
         self.operations
@@ -1141,15 +1174,43 @@ pub fn build_structured_result(
     StructuredResult::with_body(success, summary, cap_result_body(body), details_ref)
 }
 
+/// Canonicalize tool args before capability / fingerprint classification.
+///
+/// CLI-domain structured calls (`device` / `extension` / …) must be mapped to
+/// their real `neomind …` shell command **before** read_only / mutation is
+/// inferred — otherwise `{action:control, command:render_text}` is classified
+/// from the bare `render_text` token and falsely treated as read-only.
+pub fn canonicalize_tool_arguments(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> serde_json::Value {
+    let real = crate::tools::resolve_tool_name(tool_name);
+    if real == "shell" && tool_name != "shell" {
+        crate::tools::mapper::build_cli_command(tool_name, arguments)
+            .unwrap_or_else(|| arguments.clone())
+    } else {
+        arguments.clone()
+    }
+}
+
 /// Derive [`ToolCapability`] from tool name + args (CLI mutation when shell).
+///
+/// Classifies from the **canonical** executable call (see
+/// [`canonicalize_tool_arguments`]). Missing / empty shell command is **not**
+/// proven read-only.
 pub fn derive_tool_capability(tool_name: &str, arguments: &serde_json::Value) -> ToolCapability {
     let real = crate::tools::resolve_tool_name(tool_name);
+    let canonical = canonicalize_tool_arguments(tool_name, arguments);
     match real.as_str() {
         "shell" => {
-            let cmd = arguments
+            let cmd = canonical
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
+            // Empty / unknown command semantics ≠ proven read-only.
+            if cmd.trim().is_empty() {
+                return ToolCapability::mutating_unknown_sensitive();
+            }
             if crate::agent::streaming::is_mutation_command(cmd) {
                 ToolCapability::mutating_write()
             } else {
@@ -1381,9 +1442,13 @@ pub fn evaluate_mutating_gate(
             if let Some(r) = &result.details_ref {
                 data["_details_ref"] = serde_json::Value::String(r.clone());
             }
+            // Outer success must match the Operation outcome — never mark
+            // pending/failed resumes as ToolOutput.success (effective_success
+            // and confirm_step_from_tool key on the outer flag).
+            let output = operation_envelope_tool_output(result.success, data, &result.summary);
             MutatingGateOutcome::ResumeKnown {
                 operation_id: operation_id.clone(),
-                output: crate::toolkit::tool::ToolOutput::success(data),
+                output,
             }
         }
         Err(WriteDispatch::InquireStatus { operation_id }) => MutatingGateOutcome::Block {
@@ -1405,17 +1470,40 @@ pub fn evaluate_mutating_gate(
     }
 }
 
+/// Build a gate envelope [`ToolOutput`] whose outer `success` matches the
+/// Operation outcome (inner `data.success` stays for the model).
+pub fn operation_envelope_tool_output(
+    succeeded: bool,
+    data: serde_json::Value,
+    summary: &str,
+) -> crate::toolkit::tool::ToolOutput {
+    if succeeded {
+        crate::toolkit::tool::ToolOutput::success(data)
+    } else {
+        crate::toolkit::tool::ToolOutput {
+            success: false,
+            data,
+            error: Some(summary.to_string()),
+            metadata: None,
+        }
+    }
+}
+
 /// In-progress gate result as a tool output (no second execution).
+///
+/// Outer `success` is false — pending is not a confirmed success step.
 pub fn in_progress_tool_output(operation_id: &str) -> crate::toolkit::tool::ToolOutput {
-    crate::toolkit::tool::ToolOutput::success(serde_json::json!({
+    let summary = format!("operation {operation_id} already running — wait; do not re-exec");
+    let data = serde_json::json!({
         "_operation_in_progress": true,
         "operation_id": operation_id,
         "success": false,
-        "summary": format!("operation {operation_id} already running — wait; do not re-exec"),
+        "summary": summary,
         "message": format!(
             "Operation {operation_id} is already in progress for these args. Wait for its result; do not start a duplicate execution."
         ),
-    }))
+    });
+    operation_envelope_tool_output(false, data, &summary)
 }
 
 /// Build a structured result and, when large, store the full body in
@@ -2885,5 +2973,141 @@ mod tests {
             "inquire directive retained after halt"
         );
         assert!(!matches!(image_state.status, TaskStatus::Active));
+    }
+
+    // ── GPT review blockers (fcdff59b) ──────────────────────────────────
+
+    #[test]
+    fn gpt_capability_after_cli_mapping_control_is_mutating() {
+        // Structured device control must classify from the mapped CLI, not
+        // the bare `command: render_text` alias field.
+        let alias = serde_json::json!({
+            "action": "control",
+            "device_id": "D",
+            "command": "render_text",
+            "param": "text=weather"
+        });
+        let cap = derive_tool_capability("device", &alias);
+        assert!(
+            !cap.read_only,
+            "mapped neomind device control must not be read_only"
+        );
+        let empty = derive_tool_capability("shell", &serde_json::json!({"command": ""}));
+        assert!(
+            !empty.read_only,
+            "empty shell command is not proven read-only"
+        );
+    }
+
+    #[test]
+    fn gpt_new_operation_flag_does_not_bypass_concurrent_lease() {
+        // Fingerprint equality of flag vs no-flag is covered in intent tests;
+        // here the gate must treat them as the same business write.
+        let base = serde_json::json!({"agent_id": "A"});
+        let mut with_flag = base.clone();
+        with_flag
+            .as_object_mut()
+            .unwrap()
+            .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+        let mut clean = with_flag.clone();
+        strip_new_operation_flag(&mut clean);
+        let fp = write_fingerprint(
+            "run_now",
+            &serde_json::to_string(&clean).unwrap_or_default(),
+        );
+
+        let mut s = TaskState::default();
+        let first = evaluate_mutating_gate(&mut s, "run_now", &base, &fp);
+        let MutatingGateOutcome::Proceed { operation_id: op1 } = first else {
+            panic!("first must Proceed, got {first:?}");
+        };
+        // Concurrent same business args + flag must hit the Running lease.
+        let second = evaluate_mutating_gate(&mut s, "run_now", &with_flag, &fp);
+        match second {
+            MutatingGateOutcome::InProgress { operation_id } => {
+                assert_eq!(operation_id, op1);
+            }
+            other => panic!("flag must not bypass concurrent lease, got {other:?}"),
+        }
+        assert_eq!(s.operations.len(), 1);
+    }
+
+    #[test]
+    fn gpt_pending_and_failed_resume_are_not_effective_success() {
+        let pending = in_progress_tool_output("op-pending");
+        assert!(!pending.success, "outer success must be false for pending");
+        assert!(!crate::toolkit::tool::effective_success(
+            "run_now",
+            &pending
+        ));
+
+        let mut s = TaskState::default();
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let MutatingGateOutcome::Proceed { operation_id } = evaluate_mutating_gate(
+            &mut s,
+            "run_now",
+            &serde_json::json!({"agent_id": "A"}),
+            &fp,
+        ) else {
+            panic!("Proceed");
+        };
+        s.complete_operation_failed(
+            &operation_id,
+            StructuredResult::with_body(false, "failed", r#"{"ok":false}"#, None),
+        );
+        match evaluate_mutating_gate(
+            &mut s,
+            "run_now",
+            &serde_json::json!({"agent_id": "A"}),
+            &fp,
+        ) {
+            MutatingGateOutcome::ResumeKnown { output, .. } => {
+                assert!(!output.success, "failed resume outer success must be false");
+                assert_eq!(
+                    output.data.get("success").and_then(|v| v.as_bool()),
+                    Some(false)
+                );
+                assert!(!crate::toolkit::tool::effective_success(
+                    "run_now", &output
+                ));
+            }
+            other => panic!("failed op must ResumeKnown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gpt_interrupt_abandons_running_so_new_op_can_proceed() {
+        let mut s = TaskState::default();
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let MutatingGateOutcome::Proceed { operation_id: op1 } = evaluate_mutating_gate(
+            &mut s,
+            "run_now",
+            &serde_json::json!({"agent_id": "A"}),
+            &fp,
+        ) else {
+            panic!("Proceed");
+        };
+        assert_eq!(s.operation(&op1).unwrap().status, OperationStatus::Running);
+
+        s.abandon_running_operations_on_interrupt("user interrupt during tool batch");
+        assert_eq!(
+            s.operation(&op1).unwrap().status,
+            OperationStatus::Unknown,
+            "Running must become terminal Unknown"
+        );
+
+        // Without abandon, _new_operation stayed InProgress; after abandon it proceeds.
+        let mut new_args = serde_json::json!({"agent_id": "A"});
+        new_args
+            .as_object_mut()
+            .unwrap()
+            .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+        let MutatingGateOutcome::Proceed { operation_id: op2 } =
+            evaluate_mutating_gate(&mut s, "run_now", &new_args, &fp)
+        else {
+            panic!("_new_operation after interrupt must Proceed");
+        };
+        assert_ne!(op2, op1);
+        assert_eq!(s.operation(&op2).unwrap().status, OperationStatus::Running);
     }
 }
