@@ -43,6 +43,9 @@ pub use thinking::cleanup_thinking_content;
 
 /// Shell mutation heuristic (Round 3 capability derivation + write gates).
 pub(crate) use intent::is_mutation_command;
+/// Write-lease fingerprint (canonical args; lifecycle flag stripped first).
+#[cfg(test)]
+pub(crate) use intent::mutating_write_fingerprint;
 
 /// `StreamExt::next().await` wrapped in `tokio::time::timeout`.
 ///

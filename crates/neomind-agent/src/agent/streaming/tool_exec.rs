@@ -58,24 +58,19 @@ pub(crate) async fn execute_with_retry_impl(
     // Map simplified tool name to real tool name
     let real_tool_name = resolve_tool_name(name);
 
-    // Canonicalize CLI-domain structured args BEFORE capability / retry policy
-    // so `{action:control,…}` is classified from the mapped `neomind device
-    // control …` command, not the bare alias field.
-    let exec_args = if real_tool_name == "shell" && name != "shell" {
-        crate::tools::mapper::build_cli_command(name, &arguments).unwrap_or(arguments.clone())
-    } else {
-        arguments.clone()
-    };
+    // Strip lifecycle flag then canonicalize once — same contract as the
+    // write fingerprint path (flag must never become `--_new_operation`).
+    let exec_args =
+        crate::agent::task_continuity::canonicalize_tool_arguments(name, &arguments);
 
     // Capability from the canonical executable call (drives write-gate /
     // fingerprint elsewhere). Explicit registry Unsafe must NOT be overridden
     // by inferred read_only — a false-positive read classification used to
     // blind-retry after an effect may already have landed (calls=2).
-    let _cap = if real_tool_name == "shell" && name != "shell" {
-        crate::agent::task_continuity::derive_tool_capability("shell", &exec_args)
-    } else {
-        crate::agent::task_continuity::derive_tool_capability(name, &exec_args)
-    };
+    let _cap = crate::agent::task_continuity::derive_tool_capability_resolved(
+        real_tool_name.as_str(),
+        &exec_args,
+    );
     let replay_safe =
         tools.replay_safety(&real_tool_name) == crate::toolkit::tool::ReplaySafety::Safe;
     // Unsafe → 0 interrupt retries (1 call). Safe → normal transient retries.

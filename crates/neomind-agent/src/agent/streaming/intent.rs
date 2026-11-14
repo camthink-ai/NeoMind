@@ -577,12 +577,12 @@ pub(crate) fn is_mutation_command(cmd: &str) -> bool {
 
 /// Fingerprint for a mutating tool call, if this call is a write.
 ///
-/// **Single source of truth:** [`crate::agent::task_continuity::derive_tool_capability`]
-/// on **canonical** args (CLI mapping applied; lifecycle-only
-/// `_new_operation` stripped so the flag cannot bypass the concurrent lease).
+/// **Single source of truth:** canonicalize once (lifecycle flag stripped
+/// **before** CLI serialize), then
+/// [`crate::agent::task_continuity::derive_tool_capability_resolved`] on the
+/// resolved tool + canonical args — never re-enter domain action inference.
 /// Read-only capability → `None` (never gated). Unknown tools stay
-/// fail-closed on retry policy but do **not** enter the write-lease path
-/// (avoids false Operation / `op:` cache entries for custom tools).
+/// fail-closed on retry policy but do **not** enter the write-lease path.
 ///
 /// Shell fingerprints keep the original command string (arg values are not
 /// lowercased) so `DeviceA` and `devicea` do not collapse into one gate key.
@@ -590,14 +590,18 @@ pub(crate) fn mutating_write_fingerprint(
     tool_name: &str,
     arguments: &serde_json::Value,
 ) -> Option<String> {
-    let mut canonical =
+    // canonicalize_tool_arguments strips `_new_operation` first, then maps
+    // CLI aliases — so the flag never enters the business fingerprint.
+    let canonical =
         crate::agent::task_continuity::canonicalize_tool_arguments(tool_name, arguments);
-    crate::agent::task_continuity::strip_new_operation_flag(&mut canonical);
-    let cap = crate::agent::task_continuity::derive_tool_capability(tool_name, &canonical);
+    let real = crate::tools::resolve_tool_name(tool_name);
+    let cap = crate::agent::task_continuity::derive_tool_capability_resolved(
+        real.as_str(),
+        &canonical,
+    );
     if cap.read_only {
         return None;
     }
-    let real = crate::tools::resolve_tool_name(tool_name);
     match real.as_str() {
         "shell" => {
             let cmd = canonical.get("command").and_then(|v| v.as_str())?;
@@ -1370,6 +1374,43 @@ mod tests {
         });
         let fp = mutating_write_fingerprint("device", &alias).expect("device control is a write");
         assert!(fp.contains("control"), "fp={fp}");
+        assert!(
+            !fp.contains("_new_operation"),
+            "lifecycle flag must not appear in fp: {fp}"
+        );
+
+        // CLI alias + flag must share the same business fingerprint (strip
+        // before build_cli_command — otherwise `--_new_operation` is baked in).
+        let mut alias_flag = alias.clone();
+        alias_flag.as_object_mut().unwrap().insert(
+            crate::agent::task_continuity::NEW_OPERATION_ARG.into(),
+            serde_json::json!(true),
+        );
+        let fp_flag = mutating_write_fingerprint("device", &alias_flag).expect("flagged write");
+        assert_eq!(
+            fp, fp_flag,
+            "CLI alias fingerprint must ignore _new_operation; plain={fp} flagged={fp_flag}"
+        );
+    }
+
+    #[test]
+    fn device_list_read_query_is_not_write_leased() {
+        let list = serde_json::json!({"action": "list"});
+        assert!(
+            crate::agent::task_continuity::derive_tool_capability("device", &list).read_only,
+            "device list is read_only"
+        );
+        assert!(
+            mutating_write_fingerprint("device", &list).is_none(),
+            "read/list must not enter the write lease"
+        );
+        // Idempotent: already-canonical shell form must stay read_only.
+        let canon = crate::agent::task_continuity::canonicalize_tool_arguments("device", &list);
+        assert!(
+            crate::agent::task_continuity::derive_tool_capability("device", &canon).read_only,
+            "re-deriving on canonical args must not flip list→control"
+        );
+        assert!(mutating_write_fingerprint("device", &canon).is_none());
     }
 
     #[test]

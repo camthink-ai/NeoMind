@@ -325,6 +325,12 @@ pub async fn process_stream_events_with_safeguards(
     let stream = stream_result.map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
     Ok(Box::pin(async_stream::stream! {
+            // Drop/abort/timeout must abandon Running leases even without an
+            // explicit interrupt watch signal (consumer.abort / HTTP outer timeout).
+            let _stream_lease_guard = super::super::task_continuity::StreamLeaseGuard::new(
+                internal_state.clone(),
+                "stream dropped or timed out",
+            );
             let mut stream = stream;
             let mut buffer = String::new();
             let mut yielded_up_to: usize = 0; // Track how much of buffer has been yielded to prevent duplication

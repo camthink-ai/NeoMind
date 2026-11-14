@@ -492,6 +492,17 @@ async fn process_stream_to_channel(
                 );
                 let _ = session_store.delete_pending_stream(&session_id);
 
+                // Finalize Running leases so a later `_new_operation` is not
+                // stuck on InProgress. StreamLeaseGuard also fires when this
+                // function returns and drops `stream` (consumer abort path).
+                if let Ok(agent) = state.agents.session_manager.get_session(&session_id).await {
+                    agent
+                        .abandon_running_operations_on_interrupt(
+                            "HTTP chat stream outer timeout",
+                        )
+                        .await;
+                }
+
                 let timeout_json = json!({
                     "type": "Error",
                     "message": "Stream timeout: response took too long",

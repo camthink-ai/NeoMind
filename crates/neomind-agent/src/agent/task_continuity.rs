@@ -433,6 +433,52 @@ impl TaskState {
             }
         }
     }
+}
+
+/// RAII guard: when a stream consumer aborts / drops / times out without an
+/// explicit interrupt signal, Running leases must still become Unknown so a
+/// later `_new_operation` is not stuck on InProgress.
+///
+/// Held inside `async_stream::stream!` so generator Drop (consumer.abort,
+/// HTTP outer-timeout dropping the stream) triggers cleanup. `Drop` cannot
+/// await `RwLock`, so cleanup is spawned (same pattern as CancelSenderGuard).
+pub struct StreamLeaseGuard {
+    state: std::sync::Arc<tokio::sync::RwLock<crate::agent::types::AgentInternalState>>,
+    reason: &'static str,
+}
+
+impl StreamLeaseGuard {
+    pub fn new(
+        state: std::sync::Arc<tokio::sync::RwLock<crate::agent::types::AgentInternalState>>,
+        reason: &'static str,
+    ) -> Self {
+        Self { state, reason }
+    }
+}
+
+impl Drop for StreamLeaseGuard {
+    fn drop(&mut self) {
+        let state = self.state.clone();
+        let reason = self.reason;
+        // Prefer synchronous try_write so probes that abort then immediately
+        // inspect task_state see Unknown without waiting on a spawned task.
+        if let Ok(mut guard) = state.try_write() {
+            guard
+                .task_state
+                .abandon_running_operations_on_interrupt(reason);
+            return;
+        }
+        tokio::spawn(async move {
+            let mut guard = state.write().await;
+            guard
+                .task_state
+                .abandon_running_operations_on_interrupt(reason);
+        });
+    }
+}
+
+// Re-open TaskState impl block for methods that follow abandon helper.
+impl TaskState {
 
     /// Latest operation whose write fingerprint matches (if any).
     pub fn latest_op_for_fingerprint(&self, write_fingerprint: &str) -> Option<&OperationRecord> {
@@ -1174,36 +1220,59 @@ pub fn build_structured_result(
     StructuredResult::with_body(success, summary, cap_result_body(body), details_ref)
 }
 
+/// True when `arguments` already look like a mapped shell payload
+/// (`{"command":"neomind …"}` ± timeout) — re-running domain inference would
+/// misread the command string as a device-control `command` field.
+fn already_canonical_shell_args(arguments: &serde_json::Value) -> bool {
+    let Some(obj) = arguments.as_object() else {
+        return false;
+    };
+    let Some(cmd) = obj.get("command").and_then(|v| v.as_str()) else {
+        return false;
+    };
+    if !cmd.trim_start().starts_with("neomind ") && !cmd.trim_start().starts_with("neomind\t") {
+        return false;
+    }
+    // Allow only shell-shaped keys (+ lifecycle flag if a caller forgot to strip).
+    obj.keys()
+        .all(|k| k == "command" || k == "timeout" || k == NEW_OPERATION_ARG)
+}
+
 /// Canonicalize tool args before capability / fingerprint classification.
 ///
-/// CLI-domain structured calls (`device` / `extension` / …) must be mapped to
-/// their real `neomind …` shell command **before** read_only / mutation is
-/// inferred — otherwise `{action:control, command:render_text}` is classified
-/// from the bare `render_text` token and falsely treated as read-only.
+/// - Strips lifecycle-only [`NEW_OPERATION_ARG`] **before** CLI serialization
+///   so the flag never becomes `--_new_operation` inside the command string.
+/// - CLI-domain structured calls (`device` / …) map to `neomind …` once.
+/// - Idempotent: already-canonical `{command:"neomind …"}` is returned as-is
+///   (does not re-enter mapper action inference).
 pub fn canonicalize_tool_arguments(
     tool_name: &str,
     arguments: &serde_json::Value,
 ) -> serde_json::Value {
+    let mut cleaned = arguments.clone();
+    strip_new_operation_flag(&mut cleaned);
     let real = crate::tools::resolve_tool_name(tool_name);
     if real == "shell" && tool_name != "shell" {
-        crate::tools::mapper::build_cli_command(tool_name, arguments)
-            .unwrap_or_else(|| arguments.clone())
+        if already_canonical_shell_args(&cleaned) {
+            return cleaned;
+        }
+        crate::tools::mapper::build_cli_command(tool_name, &cleaned).unwrap_or(cleaned)
     } else {
-        arguments.clone()
+        cleaned
     }
 }
 
-/// Derive [`ToolCapability`] from tool name + args (CLI mutation when shell).
+/// Classify capability from a **resolved** tool name + already-canonical args.
 ///
-/// Classifies from the **canonical** executable call (see
-/// [`canonicalize_tool_arguments`]). Missing / empty shell command is **not**
-/// proven read-only.
-pub fn derive_tool_capability(tool_name: &str, arguments: &serde_json::Value) -> ToolCapability {
-    let real = crate::tools::resolve_tool_name(tool_name);
-    let canonical = canonicalize_tool_arguments(tool_name, arguments);
-    match real.as_str() {
+/// Does **not** re-canonicalize — callers must pass shell-shaped args for
+/// CLI domains (see [`canonicalize_tool_arguments`]).
+pub fn derive_tool_capability_resolved(
+    real_tool_name: &str,
+    canonical_arguments: &serde_json::Value,
+) -> ToolCapability {
+    match real_tool_name {
         "shell" => {
-            let cmd = canonical
+            let cmd = canonical_arguments
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
@@ -1226,6 +1295,17 @@ pub fn derive_tool_capability(tool_name: &str, arguments: &serde_json::Value) ->
             ToolCapability::mutating_unknown_sensitive()
         }
     }
+}
+
+/// Derive [`ToolCapability`] from tool name + args (CLI mutation when shell).
+///
+/// Classifies from the **canonical** executable call (see
+/// [`canonicalize_tool_arguments`]). Missing / empty shell command is **not**
+/// proven read-only.
+pub fn derive_tool_capability(tool_name: &str, arguments: &serde_json::Value) -> ToolCapability {
+    let real = crate::tools::resolve_tool_name(tool_name);
+    let canonical = canonicalize_tool_arguments(tool_name, arguments);
+    derive_tool_capability_resolved(real.as_str(), &canonical)
 }
 
 /// Progress-loop decision (Round 3) on top of identical-round counting.
@@ -3109,5 +3189,106 @@ mod tests {
         };
         assert_ne!(op2, op1);
         assert_eq!(s.operation(&op2).unwrap().status, OperationStatus::Running);
+    }
+
+    // ── GPT residuals on d2fbffca ───────────────────────────────────────
+
+    #[test]
+    fn gpt_cli_alias_flag_shares_fingerprint_and_lease() {
+        let base = serde_json::json!({
+            "action": "control",
+            "device_id": "D",
+            "command": "render_text",
+            "param": "text=weather"
+        });
+        let mut flagged = base.clone();
+        flagged
+            .as_object_mut()
+            .unwrap()
+            .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+        let fp1 = crate::agent::streaming::mutating_write_fingerprint("device", &base)
+            .expect("device control write");
+        let fp2 = crate::agent::streaming::mutating_write_fingerprint("device", &flagged)
+            .expect("flagged device control");
+        assert_eq!(fp1, fp2, "flag must not change CLI alias business fp");
+        assert!(
+            !fp1.contains("_new_operation"),
+            "flag must not be baked into command: {fp1}"
+        );
+
+        let mut s = TaskState::default();
+        let MutatingGateOutcome::Proceed { operation_id: op1 } =
+            evaluate_mutating_gate(&mut s, "device", &base, &fp1)
+        else {
+            panic!("first Proceed");
+        };
+        match evaluate_mutating_gate(&mut s, "device", &flagged, &fp2) {
+            MutatingGateOutcome::InProgress { operation_id } => assert_eq!(operation_id, op1),
+            other => panic!("flagged concurrent alias must InProgress, got {other:?}"),
+        }
+        assert_eq!(s.operations.len(), 1);
+    }
+
+    #[test]
+    fn gpt_device_list_repeat_is_not_resume_known() {
+        let list = serde_json::json!({"action": "list"});
+        assert!(
+            derive_tool_capability("device", &list).read_only,
+            "list is read_only"
+        );
+        assert!(
+            crate::agent::streaming::mutating_write_fingerprint("device", &list).is_none(),
+            "list must not be write-leased"
+        );
+        // Parity: classifying the canonical form must stay read_only (no
+        // double-canonicalize flipping list→control via command-key inference).
+        let canon = canonicalize_tool_arguments("device", &list);
+        assert!(
+            derive_tool_capability("device", &canon).read_only,
+            "canonical re-derive must stay read_only: {canon}"
+        );
+        assert!(crate::agent::streaming::mutating_write_fingerprint("device", &canon).is_none());
+    }
+
+    #[test]
+    fn gpt_stream_lease_guard_drop_abandons_running() {
+        let state = std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::agent::types::AgentInternalState::new("drop-guard".into()),
+        ));
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        {
+            let mut s = state.blocking_write();
+            let MutatingGateOutcome::Proceed { .. } = evaluate_mutating_gate(
+                &mut s.task_state,
+                "run_now",
+                &serde_json::json!({"agent_id": "A"}),
+                &fp,
+            ) else {
+                panic!("Proceed");
+            };
+            assert_eq!(
+                s.task_state.operations.last().unwrap().status,
+                OperationStatus::Running
+            );
+        }
+        // Guard drop (simulates consumer.abort / stream Drop) must finalize.
+        {
+            let _guard = StreamLeaseGuard::new(state.clone(), "unit-test stream drop");
+        }
+        let mut s = state.blocking_write();
+        assert_eq!(
+            s.task_state.operations.last().unwrap().status,
+            OperationStatus::Unknown
+        );
+        let mut new_args = serde_json::json!({"agent_id": "A"});
+        new_args
+            .as_object_mut()
+            .unwrap()
+            .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+        let MutatingGateOutcome::Proceed { .. } =
+            evaluate_mutating_gate(&mut s.task_state, "run_now", &new_args, &fp)
+        else {
+            panic!("new-op after drop must Proceed");
+        };
     }
 }

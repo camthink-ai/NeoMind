@@ -924,6 +924,17 @@ impl Agent {
     pub fn session_id(&self) -> &str {
         &self.session_id
     }
+
+    /// Abandon in-flight mutating leases (HTTP outer timeout / forced teardown).
+    ///
+    /// Running → Unknown; Prepared → Cancelled. Idempotent on terminal ops.
+    pub async fn abandon_running_operations_on_interrupt(&self, reason: impl Into<String>) {
+        self.internal_state
+            .write()
+            .await
+            .task_state
+            .abandon_running_operations_on_interrupt(reason);
+    }
 }
 impl Agent {
     /// Get the session state.

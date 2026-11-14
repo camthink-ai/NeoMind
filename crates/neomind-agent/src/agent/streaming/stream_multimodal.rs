@@ -178,6 +178,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     let has_images = !images.is_empty();
 
     Ok(Box::pin(async_stream::stream! {
+        // Drop/abort/timeout must abandon Running leases even without an
+        // explicit interrupt watch signal (consumer.abort / HTTP outer timeout).
+        let _stream_lease_guard = super::super::task_continuity::StreamLeaseGuard::new(
+            internal_state.clone(),
+            "stream dropped or timed out (multimodal)",
+        );
         let mut stream = stream;
         let mut buffer = String::new();
         let mut tool_calls_detected = false;
@@ -1309,4 +1315,116 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             None => yield AgentEvent::end(),
         }
     }))
+}
+
+#[cfg(test)]
+mod drop_lease_tests {
+    use super::*;
+    use crate::agent::task_continuity::{
+        evaluate_mutating_gate, MutatingGateOutcome, NEW_OPERATION_ARG, OperationStatus,
+    };
+    use crate::testing_helpers::mock_llm::{MockLlmRuntime, MockResponse};
+    use crate::toolkit::{Tool, ToolError, ToolOutput, ToolRegistry};
+    use neomind_core::llm::backend::LlmRuntime;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct WaitingTool {
+        started: Arc<tokio::sync::Notify>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for WaitingTool {
+        fn name(&self) -> &str {
+            "run_now"
+        }
+        fn description(&self) -> &str {
+            "waits forever after signaling start"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object","properties":{"agent_id":{"type":"string"}}})
+        }
+        async fn execute(
+            &self,
+            _: serde_json::Value,
+        ) -> std::result::Result<ToolOutput, ToolError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.started.notify_one();
+            std::future::pending::<std::result::Result<ToolOutput, ToolError>>().await
+        }
+    }
+
+    /// Consumer abort (no interrupt watch) must still finalize Running → Unknown
+    /// so an authorized `_new_operation` can Proceed.
+    #[tokio::test]
+    async fn consumer_abort_abandons_running_lease() {
+        let args = serde_json::json!({"agent_id": "review-only"});
+        let rt = MockLlmRuntime::new(vec![MockResponse::tool_call("run_now", args.clone())])
+            .with_max_context(32768);
+        let iface = Arc::new(crate::llm::LlmInterface::default());
+        let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+        iface.set_llm(rt_dyn).await;
+
+        let started = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(WaitingTool {
+            started: started.clone(),
+            calls: calls.clone(),
+        }));
+
+        let state = Arc::new(tokio::sync::RwLock::new(AgentInternalState::new(
+            "drop-lease".into(),
+        )));
+        let mut safeguards = StreamSafeguards::default();
+        safeguards.heartbeat_interval = std::time::Duration::from_millis(10);
+
+        let mut stream = process_multimodal_stream_events_with_safeguards(
+            iface,
+            state.clone(),
+            Arc::new(registry),
+            "run isolated review task",
+            vec![],
+            safeguards,
+            None,
+            None,
+        )
+        .await
+        .expect("stream");
+
+        let consumer = tokio::spawn(async move {
+            while stream.next().await.is_some() {}
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .expect("tool must start");
+        consumer.abort();
+        let _ = consumer.await;
+
+        // Give Drop guard a moment if it had to spawn (try_write missed).
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let mut st = state.write().await;
+        let op = st
+            .task_state
+            .operations
+            .last()
+            .expect("operation created");
+        assert_eq!(
+            op.status,
+            OperationStatus::Unknown,
+            "abort/drop must finalize Running"
+        );
+        let fp = op.write_fingerprint.clone().expect("fp");
+        let mut new_args = args;
+        new_args
+            .as_object_mut()
+            .unwrap()
+            .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+        match evaluate_mutating_gate(&mut st.task_state, "run_now", &new_args, &fp) {
+            MutatingGateOutcome::Proceed { .. } => {}
+            other => panic!("new-op after drop must Proceed, got {other:?}"),
+        }
+        assert!(calls.load(Ordering::SeqCst) >= 1);
+    }
 }
