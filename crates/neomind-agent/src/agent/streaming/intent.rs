@@ -124,7 +124,10 @@ pub(crate) fn all_tools_were_read_only(
     }
 
     for cmd in executed_commands {
-        if is_mutation_command(&cmd.to_lowercase()) {
+        // Capability unify: same derive_tool_capability as write gate / retry.
+        let args = serde_json::json!({ "command": cmd });
+        let cap = crate::agent::task_continuity::derive_tool_capability("shell", &args);
+        if !cap.read_only {
             return false;
         }
     }
@@ -569,16 +572,14 @@ pub(crate) const MUTATION_COMMAND_PATTERNS: &[&str] = &[
 /// [`mutating_write_fingerprint`], not a lowercased copy.
 pub(crate) fn is_mutation_command(cmd: &str) -> bool {
     let lower = cmd.to_lowercase();
-    MUTATION_COMMAND_PATTERNS
-        .iter()
-        .any(|p| lower.contains(p))
+    MUTATION_COMMAND_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
 /// Fingerprint for a mutating tool call, if this call is a write.
 ///
-/// Used by the G2 `may_execute_write` gate at tool dispatch: shell mutation
-/// commands plus direct write tools (`run_now` / `file_write` / `file_edit` /
-/// `image_edit`). Read-only tools return `None` (never gated).
+/// **Single source of truth:** [`crate::agent::task_continuity::derive_tool_capability`]
+/// (parsed CLI for shell + tool-name table). Read-only capability → `None`
+/// (never gated). Parallel name-tables must not diverge from this gate.
 ///
 /// Shell fingerprints keep the original command string (arg values are not
 /// lowercased) so `DeviceA` and `devicea` do not collapse into one gate key.
@@ -586,26 +587,24 @@ pub(crate) fn mutating_write_fingerprint(
     tool_name: &str,
     arguments: &serde_json::Value,
 ) -> Option<String> {
+    let cap = crate::agent::task_continuity::derive_tool_capability(tool_name, arguments);
+    if cap.read_only {
+        return None;
+    }
     let real = crate::tools::resolve_tool_name(tool_name);
     match real.as_str() {
         "shell" => {
             let cmd = arguments.get("command").and_then(|v| v.as_str())?;
-            if is_mutation_command(cmd) {
-                Some(super::super::task_continuity::write_fingerprint(
-                    "shell", cmd,
-                ))
-            } else {
-                None
-            }
-        }
-        "run_now" | "file_write" | "file_edit" | "image_edit" => {
-            let args = serde_json::to_string(arguments).unwrap_or_default();
             Some(super::super::task_continuity::write_fingerprint(
-                real.as_str(),
-                &args,
+                "shell", cmd,
             ))
         }
-        _ => None,
+        other => {
+            let args = serde_json::to_string(arguments).unwrap_or_default();
+            Some(super::super::task_continuity::write_fingerprint(
+                other, &args,
+            ))
+        }
     }
 }
 
@@ -1340,10 +1339,7 @@ mod tests {
             "command": "neomind device control DeviceA --action Reboot --note 'KeepCASE'"
         });
         let fp = mutating_write_fingerprint("shell", &mixed).expect("mutation");
-        assert!(
-            fp.contains("DeviceA"),
-            "device id case must survive: {fp}"
-        );
+        assert!(fp.contains("DeviceA"), "device id case must survive: {fp}");
         assert!(
             fp.contains("Reboot") || fp.contains("KeepCASE"),
             "arg values must not be lowercased away: {fp}"

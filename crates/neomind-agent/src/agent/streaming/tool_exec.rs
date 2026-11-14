@@ -57,8 +57,29 @@ pub(crate) async fn execute_with_retry_impl(
 ) -> std::result::Result<crate::toolkit::ToolOutput, crate::toolkit::ToolError> {
     // Map simplified tool name to real tool name
     let real_tool_name = resolve_tool_name(name);
-    let replay_safe =
+    // Capability unify: ToolCapability (CLI/name table) drives retry — not a
+    // parallel ReplaySafety-only path. Registry Safe still wins when present.
+    let cap = crate::agent::task_continuity::derive_tool_capability(name, &arguments);
+    let registry_safe =
         tools.replay_safety(&real_tool_name) == crate::toolkit::tool::ReplaySafety::Safe;
+    let replay_safe = registry_safe
+        || cap.read_only
+        || matches!(
+            cap.retry_policy,
+            crate::agent::task_continuity::RetryPolicy::AlwaysSafe
+        );
+    let failure_retry_budget = match cap.retry_policy {
+        crate::agent::task_continuity::RetryPolicy::OnFailure { max_attempts } => {
+            max_attempts.saturating_sub(1)
+        }
+        crate::agent::task_continuity::RetryPolicy::AlwaysSafe => max_retries,
+        crate::agent::task_continuity::RetryPolicy::Never => 0,
+    };
+    let effective_max_retries = if replay_safe {
+        max_retries
+    } else {
+        failure_retry_budget.min(max_retries)
+    };
 
     // If mapper resolved a CLI domain name to "shell", convert the structured args
     // into a CLI command string that ShellTool expects: {"command": "neomind <domain> ..."}
@@ -82,7 +103,7 @@ pub(crate) async fn execute_with_retry_impl(
         DEFAULT_TIMEOUT_SECS
     };
 
-    for attempt in 0..=max_retries {
+    for attempt in 0..=effective_max_retries {
         let result = tokio::time::timeout(
             tokio::time::Duration::from_secs(timeout_secs),
             tools.execute(&real_tool_name, exec_args.clone()),
@@ -127,7 +148,7 @@ pub(crate) async fn execute_with_retry_impl(
                         crate::toolkit::tool::outcome_unknown_guidance()
                     )));
                 }
-                if is_transient && replay_safe && attempt < max_retries {
+                if is_transient && replay_safe && attempt < effective_max_retries {
                     let delay_ms = 100u64 * (2_u64.pow(attempt));
                     tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                     continue;

@@ -1495,6 +1495,28 @@ pub async fn process_stream_events_with_safeguards(
                                     MutatingGateOutcome::Proceed { operation_id } => {
                                         tracked_operation_id = Some(operation_id);
                                     }
+                                    MutatingGateOutcome::InProgress { operation_id } => {
+                                        tracing::info!(
+                                            tool = %name,
+                                            operation_id = %operation_id,
+                                            fingerprint = %fp,
+                                            "Concurrent lease: operation already Running — wait"
+                                        );
+                                        return (
+                                            i,
+                                            name.clone(),
+                                            ToolExecutionResult {
+                                                _name: name.clone(),
+                                                arguments: arguments.clone(),
+                                                result: Ok(
+                                                    super::super::task_continuity::in_progress_tool_output(
+                                                        &operation_id,
+                                                    ),
+                                                ),
+                                                operation_id: Some(operation_id),
+                                            },
+                                        );
+                                    }
                                     MutatingGateOutcome::ResumeKnown {
                                         operation_id,
                                         output,
@@ -1605,11 +1627,15 @@ pub async fn process_stream_events_with_safeguards(
                                     }
                                 }
                             }
+                            let mut exec_args = arguments.clone();
+                            super::super::task_continuity::strip_new_operation_flag(
+                                &mut exec_args,
+                            );
                             let result = execute_tool_with_retry(
                                 &tools_clone,
                                 &cache_clone,
                                 &name,
-                                arguments.clone(),
+                                exec_args,
                             )
                             .await;
 
@@ -1747,13 +1773,21 @@ pub async fn process_stream_events_with_safeguards(
                         {
                             let mut state = internal_state.write().await;
                             if let Some(op_id) = execution.operation_id.as_deref() {
-                                if !resumed {
+                                let in_progress = matches!(
+                                    &execution.result,
+                                    Ok(out) if out.data.get("_operation_in_progress").and_then(|v| v.as_bool()) == Some(true)
+                                );
+                                if !resumed && !in_progress {
+                                    let mut cache =
+                                        std::mem::take(&mut state.large_data_cache);
                                     super::super::task_continuity::finalize_operation_from_tool_result(
                                         &mut state.task_state,
+                                        &mut cache,
                                         op_id,
                                         &name,
                                         &execution.result,
                                     );
+                                    state.large_data_cache = cache;
                                 }
                             }
                             if matches!(
@@ -2100,6 +2134,20 @@ pub async fn process_stream_events_with_safeguards(
                         status_poll_progress_rounds =
                             status_poll_progress_rounds.saturating_add(1);
                     }
+                    // Only the *current* Operation if it is Unknown — never
+                    // treat an older historical Unknown as a permanent halt.
+                    let write_unknown_op = {
+                        let state = internal_state.read().await;
+                        let cur = state.task_state.current_operation_id.clone();
+                        state
+                            .task_state
+                            .operation(&cur)
+                            .filter(|op| {
+                                op.status
+                                    == crate::agent::task_continuity::OperationStatus::Unknown
+                            })
+                            .map(|op| op.operation_id.clone())
+                    };
                     let progress_decision =
                         crate::agent::task_continuity::progress_loop_decision(
                             identical_rounds,
@@ -2107,29 +2155,34 @@ pub async fn process_stream_events_with_safeguards(
                             &call_fps,
                             results_changed,
                             status_poll_progress_rounds,
-                            None,
+                            write_unknown_op.as_deref(),
                         );
                     let chat_repeating = matches!(
                         progress_decision,
                         crate::agent::task_continuity::ProgressDecision::HaltNoProgress { .. }
+                            | crate::agent::task_continuity::ProgressDecision::InquireUnknown { .. }
                     );
                     if chat_repeating {
-                        // G3: forced stop is a loop halt — never task success.
-                        if let Some(halt) = crate::agent::task_continuity::loop_halt_decision(
-                            identical_rounds,
-                            CHAT_IDENTICAL_ROUNDS_LIMIT,
-                        ) {
+                        // G3 / Round-3 stop: write halt reason — never leave Active.
+                        {
                             let mut state = internal_state.write().await;
-                            let _ = state.task_state.halt(halt.detail.clone());
-                            debug_assert!(!halt.counts_as_task_success);
+                            let stopped = crate::agent::task_continuity::apply_progress_stop(
+                                &mut state.task_state,
+                                &progress_decision,
+                            );
+                            debug_assert!(stopped);
+                            debug_assert!(matches!(
+                                state.task_state.status,
+                                crate::agent::task_continuity::TaskStatus::Halted { .. }
+                            ));
                         }
                         tracing::warn!(
                             rounds = tool_iteration_count + 1,
                             identical_rounds,
                             new_calls = round_new_calls,
+                            ?progress_decision,
                             counts_as_task_success = false,
-                            "Chat tool loop detected — same calls AND identical results across \
-                             rounds; forcing the final summary (halt ≠ success)"
+                            "Chat tool loop / unknown-write stop — forcing final summary (halt ≠ success)"
                         );
                         yield AgentEvent::progress(
                             "Repeated the same calls with no new information — generating final response..."

@@ -363,13 +363,25 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                 match gate {
                                     MutatingGateOutcome::Proceed { operation_id } => {
                                         tracked_operation_id = Some(operation_id);
+                                        let mut exec_args = arguments.clone();
+                                        super::super::task_continuity::strip_new_operation_flag(
+                                            &mut exec_args,
+                                        );
                                         execute_tool_with_retry(
                                             &tools_clone,
                                             &cache_clone,
                                             &name,
-                                            arguments.clone(),
+                                            exec_args,
                                         )
                                         .await
+                                    }
+                                    MutatingGateOutcome::InProgress { operation_id } => {
+                                        tracked_operation_id = Some(operation_id.clone());
+                                        Ok(
+                                            super::super::task_continuity::in_progress_tool_output(
+                                                &operation_id,
+                                            ),
+                                        )
                                     }
                                     MutatingGateOutcome::ResumeKnown {
                                         operation_id,
@@ -452,16 +464,40 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     &execution.result,
                     Ok(out) if out.data.get("_operation_resume").and_then(|v| v.as_bool()) == Some(true)
                 );
+                let in_progress = matches!(
+                    &execution.result,
+                    Ok(out) if out.data.get("_operation_in_progress").and_then(|v| v.as_bool()) == Some(true)
+                );
                 {
                     let mut state = internal_state.write().await;
                     if let Some(op_id) = execution.operation_id.as_deref() {
-                        if !resumed {
+                        if !resumed && !in_progress {
+                            let mut cache = std::mem::take(&mut state.large_data_cache);
                             super::super::task_continuity::finalize_operation_from_tool_result(
                                 &mut state.task_state,
+                                &mut cache,
                                 op_id,
                                 &name,
                                 &execution.result,
                             );
+                            state.large_data_cache = cache;
+                            // Image entry: this batch's Unknown → halt (same helper as text).
+                            if state
+                                .task_state
+                                .operation(op_id)
+                                .is_some_and(|op| {
+                                    op.status
+                                        == crate::agent::task_continuity::OperationStatus::Unknown
+                                })
+                            {
+                                let decision = crate::agent::task_continuity::ProgressDecision::InquireUnknown {
+                                    operation_id: op_id.to_string(),
+                                };
+                                let _ = crate::agent::task_continuity::apply_progress_stop(
+                                    &mut state.task_state,
+                                    &decision,
+                                );
+                            }
                         }
                     }
                 }
@@ -708,13 +744,25 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                             match gate {
                                                 MutatingGateOutcome::Proceed { operation_id } => {
                                                     tracked_operation_id = Some(operation_id);
+                                                    let mut exec_args = arguments.clone();
+                                                    super::super::task_continuity::strip_new_operation_flag(
+                                                        &mut exec_args,
+                                                    );
                                                     execute_tool_with_retry(
                                                         &tools_clone,
                                                         &cache_clone,
                                                         &name,
-                                                        arguments.clone(),
+                                                        exec_args,
                                                     )
                                                     .await
+                                                }
+                                                MutatingGateOutcome::InProgress { operation_id } => {
+                                                    tracked_operation_id = Some(operation_id.clone());
+                                                    Ok(
+                                                        super::super::task_continuity::in_progress_tool_output(
+                                                            &operation_id,
+                                                        ),
+                                                    )
                                                 }
                                                 MutatingGateOutcome::ResumeKnown {
                                                     operation_id,
@@ -1062,13 +1110,25 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                             match gate {
                                                 MutatingGateOutcome::Proceed { operation_id } => {
                                                     tracked_operation_id = Some(operation_id);
+                                                    let mut exec_args = arguments.clone();
+                                                    super::super::task_continuity::strip_new_operation_flag(
+                                                        &mut exec_args,
+                                                    );
                                                     execute_tool_with_retry(
                                                         &tools_clone,
                                                         &cache_clone,
                                                         &name,
-                                                        arguments.clone(),
+                                                        exec_args,
                                                     )
                                                     .await
+                                                }
+                                                MutatingGateOutcome::InProgress { operation_id } => {
+                                                    tracked_operation_id = Some(operation_id.clone());
+                                                    Ok(
+                                                        super::super::task_continuity::in_progress_tool_output(
+                                                            &operation_id,
+                                                        ),
+                                                    )
                                                 }
                                                 MutatingGateOutcome::ResumeKnown {
                                                     operation_id,

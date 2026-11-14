@@ -224,7 +224,8 @@ timeout和判定来源。
 - P1 GPT 生产路径四项：~~零预算仍挂 tools / 写入指纹不换界 / TaskState 未进生产 / shell 指纹全小写~~ → **已修**（zero-budget degrade；TaskState 注入+confirm_step；shell 大小写）。证据 `eval/manifests/1.3.0-p1-gpt-production-path-four.json`。其中「话术 SetGoal / 再发送一次清门」已被 **execution-state Round 1** 取代。
 - Execution-state Round 1：~~话术猜边界 / 清账放行~~ → **已修**（Turn + write_ledger；operation 作用域防重放；`begin_new_operation` 显式重跑）。证据 `eval/manifests/1.3.0-exec-state-round1.json`。
 - Execution-state Round 2：~~Operation ID / 结构化结果 deferred~~ → **已修**（UUID `OperationRecord`；`prepared→running→succeeded|failed|unknown`；同 op resume 优先已知结果；超时 Unknown 不自动重放；`begin_new_operation` 接 stream）。证据 `eval/manifests/1.3.0-exec-state-round2.json`。
-- Execution-state Round 3：~~details_ref / capability / progress loops deferred~~ → **已修**（`details_ref`+结构化摘要；`ToolCapability`；`progress_loop_decision`；budget pressure 顺序 + ZeroBudget 禁 tools）。证据 `eval/manifests/1.3.0-exec-state-round3.json`。剩余：`$cached:op:` 实存、assemble 整包、live 138。
+- Execution-state Round 3：~~details_ref / capability / progress loops deferred~~ → **已修**（`details_ref`+结构化摘要；`ToolCapability`；`progress_loop_decision`；budget pressure 顺序 + ZeroBudget 禁 tools）。证据 `eval/manifests/1.3.0-exec-state-round3.json`。
+- Execution-state prod gaps：~~并发双 Execute / new-op 仅测 / `$cached:op:` 未实存 / capability 双轨 / stop 未写 Halted~~ → **已修**（lease+`_new_operation`；LargeDataCache 实存；capability 统一；`apply_progress_stop` text+image）。证据 `eval/manifests/1.3.0-exec-state-prod-gaps.json`。剩余：assemble 整包、live 138。
 - P1 真人UX、E live、tip138尚未完成，不能因计划打勾宣称发布验收通过。
 生产证据：T4 1.2.11会话6621a013-0d12-43c7-ad39-6dbf6e9cb156，北京时间19:46:18/:29/:38，两项list成功返回7925/449字节；历史9→1、9→1、10→1，available_tokens=0；实际Spark请求message_count=3后重复查询。证明裁剪与循环同时发生，完整请求正文未留存，唯一根因仍需复现。DeepSeek关联成功会话仅确认render_text回执queued，非屏幕物理刷新，非受控A/B。
 ### 执行计划

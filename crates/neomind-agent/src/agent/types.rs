@@ -1079,6 +1079,31 @@ impl LargeDataCache {
         }
     }
 
+    /// Store an Operation body under key `op:<operation_id>` and return
+    /// `$cached:op:<id>`. Bypasses the normal size threshold so Round-3
+    /// `details_ref` always round-trips through this session cache (eviction
+    /// / other-session → clear fail on read). Full body stays here; model
+    /// summaries must not treat a truncated prefix as the sole fact.
+    pub fn store_operation_body(&mut self, operation_id: &str, body: &str) -> String {
+        let key = format!("op:{operation_id}");
+        let size_bytes = body.len();
+        let cached = CachedLargeResult {
+            content_type: Self::detect_content_type(body),
+            data: body.to_string(),
+            size_bytes,
+            cached_at: chrono::Utc::now().timestamp(),
+            seq: next_cache_seq(),
+        };
+        self.entries.insert(key.clone(), cached);
+        self.evict_if_needed();
+        format!("$cached:{key}")
+    }
+
+    /// Drop a previously stored Operation body (test / expiry simulation).
+    pub fn drop_operation_body(&mut self, operation_id: &str) -> bool {
+        self.entries.remove(&format!("op:{operation_id}")).is_some()
+    }
+
     /// Store a tool result. Returns a summary string to use in message history.
     /// - Small results (<32KB): not cached, returned as-is
     /// - Large/image/base64 results: cached, returns summary with reference key

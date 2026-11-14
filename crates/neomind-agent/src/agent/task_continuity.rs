@@ -235,11 +235,14 @@ pub struct OperationRecord {
     pub capability: Option<ToolCapability>,
 }
 
-/// How the stream path should treat a mutating write (Round 2).
+/// How the stream path should treat a mutating write (Round 2 + prod lease).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WriteDispatch {
-    /// Execute (or continue) this operation — mark running if still Prepared.
+    /// Prepared op ready for the atomic execution lease (Prepared → Running).
     Execute { operation_id: OperationId },
+    /// Another caller already holds the Running lease — wait / in-progress;
+    /// do **not** execute the tool again.
+    InProgress { operation_id: OperationId },
     /// Same-op resume: return the known structured result; do not re-exec.
     PreferKnown {
         operation_id: OperationId,
@@ -252,6 +255,29 @@ pub enum WriteDispatch {
     BlockedCancelled,
     /// Prior success on this fingerprint without a reusable body — blocked.
     BlockedSucceeded { operation_id: OperationId },
+}
+
+/// Tool-arg key for the production new-op protocol (not a phrase whitelist).
+///
+/// When `true` on a mutating call whose latest same-args Operation is
+/// terminal, [`evaluate_mutating_gate`] calls [`TaskState::begin_new_operation`]
+/// so the same args may re-run under a fresh Operation ID. Absent / false →
+/// resume PreferKnown / block — never auto-replay.
+pub const NEW_OPERATION_ARG: &str = "_new_operation";
+
+/// Whether tool args authorize a fresh same-args Operation (production entry).
+pub fn wants_new_operation(arguments: &serde_json::Value) -> bool {
+    arguments
+        .get(NEW_OPERATION_ARG)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Strip the production new-op flag before the tool actually executes.
+pub fn strip_new_operation_flag(arguments: &mut serde_json::Value) {
+    if let Some(obj) = arguments.as_object_mut() {
+        obj.remove(NEW_OPERATION_ARG);
+    }
 }
 
 /// Lightweight cross-turn task state (G2) + Round 2 operation ledger.
@@ -436,7 +462,12 @@ impl TaskState {
                 }
             }
             Some(op) => match op.status {
-                OperationStatus::Prepared | OperationStatus::Running => WriteDispatch::Execute {
+                // Only Prepared may take the execution lease. Running means
+                // another concurrent caller already holds it.
+                OperationStatus::Prepared => WriteDispatch::Execute {
+                    operation_id: op.operation_id.clone(),
+                },
+                OperationStatus::Running => WriteDispatch::InProgress {
                     operation_id: op.operation_id.clone(),
                 },
                 OperationStatus::Unknown => WriteDispatch::InquireStatus {
@@ -470,17 +501,24 @@ impl TaskState {
         }
     }
 
-    /// Mark Prepared → Running. No-op if missing or already terminal.
-    pub fn mark_operation_running(&mut self, operation_id: &str) -> bool {
+    /// Atomic Prepared → Running lease. Only the holder may run the tool.
+    /// Returns `false` if missing, already Running, or terminal.
+    pub fn try_acquire_execution_lease(&mut self, operation_id: &str) -> bool {
         let Some(op) = self.operation_mut(operation_id) else {
             return false;
         };
-        if op.status == OperationStatus::Prepared || op.status == OperationStatus::Running {
+        if op.status == OperationStatus::Prepared {
             op.status = OperationStatus::Running;
             true
         } else {
             false
         }
+    }
+
+    /// Mark Prepared → Running. Prefer [`Self::try_acquire_execution_lease`]
+    /// for concurrent-safe dispatch (Running is not re-acquired).
+    pub fn mark_operation_running(&mut self, operation_id: &str) -> bool {
+        self.try_acquire_execution_lease(operation_id)
     }
 
     /// Record Succeeded + structured result; append write ledger when fingerprint set.
@@ -637,9 +675,7 @@ impl TaskState {
     /// Prompt block for the production assemble path (goal / done / next).
     /// Returns `None` when there is nothing useful to inject.
     pub fn to_prompt_section(&self) -> Option<String> {
-        if matches!(self.status, TaskStatus::Idle | TaskStatus::Cancelled)
-            && self.goal.is_none()
-        {
+        if matches!(self.status, TaskStatus::Idle | TaskStatus::Cancelled) && self.goal.is_none() {
             return None;
         }
         if self.goal.is_none()
@@ -763,9 +799,11 @@ impl TaskState {
         if self.current_operation_id.is_empty() {
             return;
         }
-        if self.write_ledger.iter().any(|w| {
-            w.operation_id == self.current_operation_id && w.fingerprint == fingerprint
-        }) {
+        if self
+            .write_ledger
+            .iter()
+            .any(|w| w.operation_id == self.current_operation_id && w.fingerprint == fingerprint)
+        {
             return;
         }
         self.write_ledger.push(WriteFact {
@@ -786,8 +824,11 @@ impl TaskState {
         }
         if let Some(op) = self.latest_op_for_fingerprint(write_fingerprint) {
             match op.status {
-                OperationStatus::Prepared | OperationStatus::Running => return true,
-                OperationStatus::Succeeded
+                // Only the Prepared lease candidate may execute; Running =
+                // another holder already in flight.
+                OperationStatus::Prepared => return true,
+                OperationStatus::Running
+                | OperationStatus::Succeeded
                 | OperationStatus::Failed
                 | OperationStatus::Unknown
                 | OperationStatus::Cancelled => return false,
@@ -1218,25 +1259,58 @@ pub fn tools_allowed_under_budget_pressure(
     true
 }
 
-/// Resolve a mutating write to an Operation ID ready for `mark_operation_running`.
+/// Resolve a mutating write to an Operation ID ready for the execution lease.
 ///
-/// - First attempt / authorized re-run path: when dispatch says Execute with
-///   no open op, calls [`TaskState::begin_new_operation`] (tool/model path wire).
-/// - Same-op Prepared/Running: returns that id (resume).
-/// - Terminal outcomes: returns `Err(WriteDispatch)` so the caller can prefer
-///   known results or inquire — never auto-replay.
+/// - First attempt: dispatch Execute with empty id → [`TaskState::begin_new_operation`].
+/// - User/model new-op (`_new_operation: true`) after a terminal same-args op →
+///   [`TaskState::begin_new_operation`] (production entry; not a phrase list).
+/// - Prepared: returns that id for lease acquire.
+/// - Running / terminal: `Err(WriteDispatch)` — InProgress / PreferKnown / inquire.
 pub fn prepare_mutating_dispatch(
     state: &mut TaskState,
     tool_name: &str,
     arguments: &serde_json::Value,
     write_fingerprint: &str,
 ) -> Result<OperationId, WriteDispatch> {
-    match state.dispatch_mutating_write(write_fingerprint) {
+    let authorize_new = wants_new_operation(arguments);
+    let dispatch = state.dispatch_mutating_write(write_fingerprint);
+
+    // Production new-op entry: terminal same-args + explicit `_new_operation`
+    // → begin a fresh Operation (resume without the flag never replays).
+    if authorize_new {
+        match &dispatch {
+            WriteDispatch::PreferKnown { .. }
+            | WriteDispatch::BlockedSucceeded { .. }
+            | WriteDispatch::InquireStatus { .. } => {
+                let mut clean = arguments.clone();
+                strip_new_operation_flag(&mut clean);
+                let args = serde_json::to_string(&clean).unwrap_or_else(|_| "{}".into());
+                let id = state.begin_new_operation(
+                    tool_name,
+                    extract_operation_target(&clean),
+                    args,
+                    Some(write_fingerprint.to_string()),
+                );
+                return Ok(id);
+            }
+            WriteDispatch::InProgress { operation_id } => {
+                return Err(WriteDispatch::InProgress {
+                    operation_id: operation_id.clone(),
+                });
+            }
+            WriteDispatch::BlockedCancelled => return Err(WriteDispatch::BlockedCancelled),
+            WriteDispatch::Execute { .. } => { /* fall through — first attempt */ }
+        }
+    }
+
+    match dispatch {
         WriteDispatch::Execute { operation_id } if operation_id.is_empty() => {
-            let args = serde_json::to_string(arguments).unwrap_or_else(|_| "{}".into());
+            let mut clean = arguments.clone();
+            strip_new_operation_flag(&mut clean);
+            let args = serde_json::to_string(&clean).unwrap_or_else(|_| "{}".into());
             let id = state.begin_new_operation(
                 tool_name,
-                extract_operation_target(arguments),
+                extract_operation_target(&clean),
                 args,
                 Some(write_fingerprint.to_string()),
             );
@@ -1247,11 +1321,13 @@ pub fn prepare_mutating_dispatch(
     }
 }
 
-/// Stream-path outcome for a mutating write gate (Round 2).
+/// Stream-path outcome for a mutating write gate (Round 2 + prod lease).
 #[derive(Debug)]
 pub enum MutatingGateOutcome {
-    /// Proceed to execute; Operation is Running.
+    /// Proceed to execute; caller holds the Running lease.
     Proceed { operation_id: OperationId },
+    /// Same fingerprint already Running — wait; do not re-exec the tool.
+    InProgress { operation_id: OperationId },
     /// Same-op resume — return known structured result without re-exec.
     ResumeKnown {
         operation_id: OperationId,
@@ -1262,6 +1338,9 @@ pub enum MutatingGateOutcome {
 }
 
 /// Evaluate + prepare the mutating write gate for stream_core / multimodal.
+///
+/// Acquires the atomic Prepared→Running lease; concurrent same-args callers
+/// get [`MutatingGateOutcome::InProgress`] so the tool runs once.
 pub fn evaluate_mutating_gate(
     state: &mut TaskState,
     tool_name: &str,
@@ -1270,10 +1349,19 @@ pub fn evaluate_mutating_gate(
 ) -> MutatingGateOutcome {
     match prepare_mutating_dispatch(state, tool_name, arguments, write_fingerprint) {
         Ok(op_id) => {
-            state.mark_operation_running(&op_id);
-            MutatingGateOutcome::Proceed {
-                operation_id: op_id,
+            if state.try_acquire_execution_lease(&op_id) {
+                MutatingGateOutcome::Proceed {
+                    operation_id: op_id,
+                }
+            } else {
+                // Race: another holder transitioned Prepared→Running first.
+                MutatingGateOutcome::InProgress {
+                    operation_id: op_id,
+                }
             }
+        }
+        Err(WriteDispatch::InProgress { operation_id }) => {
+            MutatingGateOutcome::InProgress { operation_id }
         }
         Err(WriteDispatch::PreferKnown {
             operation_id,
@@ -1283,20 +1371,24 @@ pub fn evaluate_mutating_gate(
                 serde_json::from_str::<serde_json::Value>(&result.body).unwrap_or_else(|_| {
                     serde_json::json!({ "body": result.body })
                 });
+            let mut data = serde_json::json!({
+                "_operation_resume": true,
+                "operation_id": operation_id,
+                "success": result.success,
+                "summary": result.summary,
+                "data": body,
+            });
+            if let Some(r) = &result.details_ref {
+                data["_details_ref"] = serde_json::Value::String(r.clone());
+            }
             MutatingGateOutcome::ResumeKnown {
                 operation_id: operation_id.clone(),
-                output: crate::toolkit::tool::ToolOutput::success(serde_json::json!({
-                    "_operation_resume": true,
-                    "operation_id": operation_id,
-                    "success": result.success,
-                    "summary": result.summary,
-                    "data": body,
-                })),
+                output: crate::toolkit::tool::ToolOutput::success(data),
             }
         }
         Err(WriteDispatch::InquireStatus { operation_id }) => MutatingGateOutcome::Block {
             message: format!(
-                "Write blocked: operation {operation_id} ended with unknown outcome (e.g. timeout). Inquire status; do not auto-replay; do not pretend success. Authorized re-run requires begin_new_operation."
+                "Write blocked: operation {operation_id} ended with unknown outcome (e.g. timeout). Inquire status; do not auto-replay; do not pretend success. Authorized re-run requires {NEW_OPERATION_ARG}=true (begin_new_operation)."
             ),
         },
         Err(WriteDispatch::BlockedCancelled) => MutatingGateOutcome::Block {
@@ -1304,7 +1396,7 @@ pub fn evaluate_mutating_gate(
         },
         Err(WriteDispatch::BlockedSucceeded { operation_id }) => MutatingGateOutcome::Block {
             message: format!(
-                "Write blocked: mutation already succeeded on operation {operation_id}. Do not replay it; report status or wait for evidence. Authorized re-run requires begin_new_operation."
+                "Write blocked: mutation already succeeded on operation {operation_id}. Do not replay it; report status or wait for evidence. Authorized re-run requires {NEW_OPERATION_ARG}=true (begin_new_operation)."
             ),
         },
         Err(WriteDispatch::Execute { .. }) => MutatingGateOutcome::Block {
@@ -1313,9 +1405,49 @@ pub fn evaluate_mutating_gate(
     }
 }
 
+/// In-progress gate result as a tool output (no second execution).
+pub fn in_progress_tool_output(operation_id: &str) -> crate::toolkit::tool::ToolOutput {
+    crate::toolkit::tool::ToolOutput::success(serde_json::json!({
+        "_operation_in_progress": true,
+        "operation_id": operation_id,
+        "success": false,
+        "summary": format!("operation {operation_id} already running — wait; do not re-exec"),
+        "message": format!(
+            "Operation {operation_id} is already in progress for these args. Wait for its result; do not start a duplicate execution."
+        ),
+    }))
+}
+
+/// Build a structured result and, when large, store the full body in
+/// [`crate::agent::types::LargeDataCache`] under `op:<id>` **before**
+/// publishing `details_ref=$cached:op:<id>`.
+pub fn build_structured_result_with_cache(
+    cache: &mut crate::agent::types::LargeDataCache,
+    operation_id: &str,
+    tool_name: &str,
+    status_label: &str,
+    success: bool,
+    body: &str,
+    target: Option<&str>,
+    error: Option<&str>,
+) -> StructuredResult {
+    let summary = build_structured_summary(tool_name, status_label, body, target, error);
+    let details_ref = if body.len() > DETAILS_REF_BODY_THRESHOLD {
+        Some(cache.store_operation_body(operation_id, body))
+    } else {
+        None
+    };
+    StructuredResult::with_body(success, summary, cap_result_body(body), details_ref)
+}
+
 /// Apply a tool execution outcome onto the Operation record.
+///
+/// Large bodies are stored in `cache` under `$cached:op:<id>` before the
+/// model-facing `details_ref` is published (session-scoped; eviction → clear
+/// fail on read — never treat a truncated body as the sole fact).
 pub fn finalize_operation_from_tool_result(
     state: &mut TaskState,
+    cache: &mut crate::agent::types::LargeDataCache,
     operation_id: &str,
     tool_name: &str,
     result: &Result<crate::toolkit::tool::ToolOutput, crate::toolkit::error::ToolError>,
@@ -1333,7 +1465,8 @@ pub fn finalize_operation_from_tool_result(
         };
         state.complete_operation_unknown(
             operation_id,
-            build_structured_result(
+            build_structured_result_with_cache(
+                cache,
                 operation_id,
                 tool_name,
                 "unknown",
@@ -1355,7 +1488,8 @@ pub fn finalize_operation_from_tool_result(
             let body = out.data.to_string();
             state.complete_operation_succeeded(
                 operation_id,
-                build_structured_result(
+                build_structured_result_with_cache(
+                    cache,
                     operation_id,
                     tool_name,
                     "succeeded",
@@ -1375,7 +1509,8 @@ pub fn finalize_operation_from_tool_result(
                 .unwrap_or_else(|| "tool reported failure".into());
             state.complete_operation_failed(
                 operation_id,
-                build_structured_result(
+                build_structured_result_with_cache(
+                    cache,
                     operation_id,
                     tool_name,
                     "failed",
@@ -1390,7 +1525,8 @@ pub fn finalize_operation_from_tool_result(
             let err = e.to_string();
             state.complete_operation_failed(
                 operation_id,
-                build_structured_result(
+                build_structured_result_with_cache(
+                    cache,
                     operation_id,
                     tool_name,
                     "failed",
@@ -1401,6 +1537,36 @@ pub fn finalize_operation_from_tool_result(
                 ),
             );
         }
+    }
+}
+
+/// Apply a progress-loop stop to TaskState (all entry points: text + image).
+///
+/// Writes a halt reason so status is [`TaskStatus::Halted`] — never leaves
+/// the task [`TaskStatus::Active`] after a stop decision.
+pub fn apply_progress_stop(state: &mut TaskState, decision: &ProgressDecision) -> bool {
+    match decision {
+        ProgressDecision::HaltNoProgress { identical_rounds } => {
+            let reason =
+                format!("progress loop halt after {identical_rounds} identical no-progress rounds");
+            let _ = state.halt(reason);
+            true
+        }
+        ProgressDecision::InquireUnknown { operation_id } => {
+            // Not a success; pin Halted so Active cannot be mistaken for progress.
+            let _ = state.halt(format!(
+                "write outcome unknown on operation {operation_id} — inquire, do not auto-replay"
+            ));
+            // `halt` clears next_action; re-attach the inquire directive.
+            state.next_action = Some(NextAction {
+                description: format!(
+                    "Inquire status of operation {operation_id} (outcome unknown)"
+                ),
+                source: "progress_loop".into(),
+            });
+            true
+        }
+        ProgressDecision::Allow => false,
     }
 }
 
@@ -1801,7 +1967,12 @@ mod tests {
         ];
         for (label, fp, target) in &cases {
             assert!(s.may_execute_write(fp), "{label} first attempt");
-            let op = s.begin_new_operation("shell", target.clone(), format!("{{{label}}}"), Some(fp.clone()));
+            let op = s.begin_new_operation(
+                "shell",
+                target.clone(),
+                format!("{{{label}}}"),
+                Some(fp.clone()),
+            );
             s.mark_operation_running(&op);
             s.complete_operation_succeeded(
                 &op,
@@ -1825,8 +1996,16 @@ mod tests {
         }
         // Authorized re-run per business: new op each.
         for (label, fp, target) in &cases {
-            s.begin_new_operation("shell", target.clone(), format!("{{{label}-rerun}}"), Some(fp.clone()));
-            assert!(s.may_execute_write(fp), "{label} re-run after begin_new_operation");
+            s.begin_new_operation(
+                "shell",
+                target.clone(),
+                format!("{{{label}-rerun}}"),
+                Some(fp.clone()),
+            );
+            assert!(
+                s.may_execute_write(fp),
+                "{label} re-run after begin_new_operation"
+            );
         }
         assert_eq!(s.write_ledger.len(), 5, "facts kept across businesses");
         assert_eq!(s.operations.len(), 10);
@@ -2080,12 +2259,8 @@ mod tests {
         let mut s = TaskState::default();
         let fp_done = write_fingerprint("shell", "done-write");
         let fp_pending = write_fingerprint("shell", "pending-write");
-        let done = s.begin_new_operation(
-            "shell",
-            Some("EK410".into()),
-            "{}",
-            Some(fp_done.clone()),
-        );
+        let done =
+            s.begin_new_operation("shell", Some("EK410".into()), "{}", Some(fp_done.clone()));
         s.mark_operation_running(&done);
         s.complete_operation_succeeded(
             &done,
@@ -2150,15 +2325,8 @@ mod tests {
             r#"{{"exit_code":0,"status":"queued","payload":"{}"}}"#,
             "x".repeat(600)
         );
-        let res = build_structured_result(
-            op,
-            "shell",
-            "succeeded",
-            true,
-            &large,
-            Some("EK410"),
-            None,
-        );
+        let res =
+            build_structured_result(op, "shell", "succeeded", true, &large, Some("EK410"), None);
         assert!(res.summary.contains("shell:succeeded"));
         assert!(res.summary.contains("target=EK410"));
         assert!(res.summary.contains("exit_code=0") || res.summary.contains("status=queued"));
@@ -2198,7 +2366,10 @@ mod tests {
             "render_text shell must be mutating capability"
         );
         s.mark_operation_running(&op);
-        let large = format!(r#"{{"exit_code":0,"status":"queued","blob":"{}"}}"#, "W".repeat(700));
+        let large = format!(
+            r#"{{"exit_code":0,"status":"queued","blob":"{}"}}"#,
+            "W".repeat(700)
+        );
         s.complete_operation_succeeded(
             &op,
             build_structured_result(&op, "shell", "succeeded", true, &large, Some("EK410"), None),
@@ -2210,7 +2381,12 @@ mod tests {
         assert!(section.contains("shell:succeeded"));
         assert!(!s.may_execute_write(&fp));
         // Authorized re-run still works (weather→screen regression).
-        s.begin_new_operation("shell", Some("EK410".into()), args.to_string(), Some(fp.clone()));
+        s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            args.to_string(),
+            Some(fp.clone()),
+        );
         assert!(s.may_execute_write(&fp));
     }
 
@@ -2489,5 +2665,225 @@ mod tests {
             .contains("GUIDE RELOADED"));
         assert!(!state.task_state.may_execute_write(&fp));
         assert_eq!(state.task_state.status, TaskStatus::Active);
+    }
+
+    // ── Production-path groups (exec-state prod gaps) ───────────────────
+
+    #[test]
+    fn prod_concurrent_same_args_tool_runs_once() {
+        let mut s = TaskState::default();
+        let cmd = "neomind extension invoke weather-forecast-v2 render_text --device EK410";
+        let args = serde_json::json!({ "command": cmd });
+        let fp = write_fingerprint("shell", cmd);
+        assert!(
+            !derive_tool_capability("shell", &args).read_only,
+            "capability unify: shell mutation is not read_only"
+        );
+
+        let first = evaluate_mutating_gate(&mut s, "shell", &args, &fp);
+        let MutatingGateOutcome::Proceed { operation_id: op1 } = first else {
+            panic!("first lease holder must Proceed, got {first:?}");
+        };
+        assert_eq!(s.operation(&op1).unwrap().status, OperationStatus::Running);
+
+        let second = evaluate_mutating_gate(&mut s, "shell", &args, &fp);
+        match second {
+            MutatingGateOutcome::InProgress { operation_id } => {
+                assert_eq!(operation_id, op1, "same op — wait, do not re-exec");
+            }
+            other => panic!("concurrent same-args must InProgress, got {other:?}"),
+        }
+        // Tool body ran at most once: still a single Running op, no second begin.
+        assert_eq!(s.operations.len(), 1);
+        assert!(!s.may_execute_write(&fp));
+    }
+
+    #[test]
+    fn prod_user_new_op_reruns_resume_old_does_not_replay() {
+        let mut s = TaskState::default();
+        let cmd = "neomind extension invoke weather-forecast-v2 render_text --device EK410";
+        let args = serde_json::json!({ "command": cmd });
+        let fp = write_fingerprint("shell", cmd);
+
+        let MutatingGateOutcome::Proceed { operation_id: op1 } =
+            evaluate_mutating_gate(&mut s, "shell", &args, &fp)
+        else {
+            panic!("first attempt Proceed");
+        };
+        let mut cache = crate::agent::types::LargeDataCache::new();
+        finalize_operation_from_tool_result(
+            &mut s,
+            &mut cache,
+            &op1,
+            "shell",
+            &Ok(crate::toolkit::tool::ToolOutput::success(
+                serde_json::json!({
+                    "queued": true,
+                    "stdout": "ok"
+                }),
+            )),
+        );
+        assert_eq!(
+            s.operation(&op1).unwrap().status,
+            OperationStatus::Succeeded
+        );
+
+        // Resume old without new-op flag → PreferKnown, no replay.
+        match evaluate_mutating_gate(&mut s, "shell", &args, &fp) {
+            MutatingGateOutcome::ResumeKnown {
+                operation_id,
+                output,
+            } => {
+                assert_eq!(operation_id, op1);
+                assert_eq!(
+                    output
+                        .data
+                        .get("_operation_resume")
+                        .and_then(|v| v.as_bool()),
+                    Some(true)
+                );
+            }
+            other => panic!("resume must PreferKnown/ResumeKnown, got {other:?}"),
+        }
+        assert_eq!(s.operations.len(), 1, "resume must not begin a new op");
+
+        // User/model new-op production entry (not a phrase) → same args re-run.
+        let mut new_args = args.clone();
+        new_args
+            .as_object_mut()
+            .unwrap()
+            .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+        let MutatingGateOutcome::Proceed { operation_id: op2 } =
+            evaluate_mutating_gate(&mut s, "shell", &new_args, &fp)
+        else {
+            panic!("_new_operation must authorize begin_new_operation");
+        };
+        assert_ne!(op2, op1);
+        assert_eq!(s.operations.len(), 2);
+        assert_eq!(s.operation(&op2).unwrap().status, OperationStatus::Running);
+        // Flag stripped from stored Operation args (not forwarded as tool fact).
+        assert!(
+            !s.operation(&op2)
+                .unwrap()
+                .arguments
+                .contains(NEW_OPERATION_ARG),
+            "stored args must not keep the protocol flag: {}",
+            s.operation(&op2).unwrap().arguments
+        );
+    }
+
+    #[test]
+    fn prod_details_ref_round_trips_expired_clear_fail() {
+        let mut s = TaskState::default();
+        let mut cache = crate::agent::types::LargeDataCache::new();
+        let big = "X".repeat(DETAILS_REF_BODY_THRESHOLD + 64);
+        let data = serde_json::json!({
+            "stdout": big,
+            "exit_code": 0,
+            "status": "ok"
+        });
+        let op = s.begin_new_operation(
+            "shell",
+            Some("EK410".into()),
+            r#"{"command":"neomind device get EK410"}"#,
+            None,
+        );
+        s.mark_operation_running(&op);
+        finalize_operation_from_tool_result(
+            &mut s,
+            &mut cache,
+            &op,
+            "shell",
+            &Ok(crate::toolkit::tool::ToolOutput::success(data)),
+        );
+        let res = s.operation(&op).unwrap().result.as_ref().unwrap();
+        let details_ref = res.details_ref.clone().expect("large body → details_ref");
+        assert!(
+            details_ref.starts_with("$cached:op:"),
+            "details_ref={details_ref}"
+        );
+        assert!(
+            !res.summary.contains(&big[..64.min(big.len())]),
+            "summary must not be a body-prefix fact"
+        );
+        // Round-trip through session cache.
+        let window = cache
+            .read_cached_window(&details_ref, 0, Some(128))
+            .expect("session cache hit");
+        assert!(window.content.contains("exit_code") || window.total_chars > 0);
+        // Expiry / eviction → clear fail (not empty success).
+        assert!(cache.drop_operation_body(&op));
+        let err = cache
+            .read_cached_window(&details_ref, 0, None)
+            .expect_err("expired ref must fail clearly");
+        assert!(
+            err.contains("Unknown $cached") || err.contains("evicted"),
+            "clear fail message: {err}"
+        );
+        // Other session cannot see it.
+        let other = crate::agent::types::LargeDataCache::new();
+        assert!(other.resolve_reference(&details_ref).is_none());
+    }
+
+    #[test]
+    fn prod_long_history_polling_stop_paths_consistent() {
+        // Packer keeps details_ref under pressure.
+        let details = "$cached:op:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        let history = vec![
+            neomind_core::Message::user("old noise"),
+            neomind_core::Message::assistant("called shell"),
+            neomind_core::Message::user(format!(
+                "[Tool: shell returned]\nstatus=ok details_ref={details}\n{}",
+                "z".repeat(4000)
+            )),
+        ];
+        // Tiny budget forces stub compression of the newest tool group.
+        let got = crate::agent::history_select::select_messages_for_history_budget(&history, 80);
+        let joined: String = got
+            .messages
+            .iter()
+            .map(|m| m.content.as_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains(details),
+            "packer must keep critical details_ref feedback intact: {joined}"
+        );
+
+        // Status-poll changing evidence allowed; identical → halt writes Halted.
+        let poll = write_fingerprint("shell", "neomind device status EK410");
+        assert_eq!(
+            progress_loop_decision(0, 3, &[poll.clone()], true, 1, None),
+            ProgressDecision::Allow
+        );
+        let halt_dec = progress_loop_decision(3, 3, &[poll], false, 0, None);
+        assert!(matches!(
+            halt_dec,
+            ProgressDecision::HaltNoProgress {
+                identical_rounds: 3
+            }
+        ));
+        let mut text_state = TaskState::default();
+        text_state.status = TaskStatus::Active;
+        assert!(apply_progress_stop(&mut text_state, &halt_dec));
+        assert!(matches!(text_state.status, TaskStatus::Halted { .. }));
+
+        // Image/text stop paths share apply_progress_stop — unknown write → Halted.
+        let mut image_state = TaskState::default();
+        image_state.status = TaskStatus::Active;
+        let inquire = ProgressDecision::InquireUnknown {
+            operation_id: "op-unknown-1".into(),
+        };
+        assert!(apply_progress_stop(&mut image_state, &inquire));
+        assert!(matches!(image_state.status, TaskStatus::Halted { .. }));
+        assert!(
+            image_state
+                .next_action
+                .as_ref()
+                .map(|a| a.description.contains("Inquire"))
+                .unwrap_or(false),
+            "inquire directive retained after halt"
+        );
+        assert!(!matches!(image_state.status, TaskStatus::Active));
     }
 }

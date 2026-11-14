@@ -319,6 +319,19 @@ fn compress_group(group: &[Message], max_tokens: usize) -> Option<Vec<Message>> 
 
 fn tool_result_stub(text: &str) -> String {
     let header = text.lines().next().unwrap_or("[Tool result]");
+    // Prefer Operation details_ref / $cached:op: so packer keeps critical
+    // feedback under budget pressure (never a bare truncated body as fact).
+    if let Some(details_ref) = extract_details_ref_stub(text) {
+        let needles = extract_evidence_needles(text);
+        let needle_line = if needles.is_empty() {
+            String::new()
+        } else {
+            format!("\n[truncated evidence] {}", needles.join(" · "))
+        };
+        return format!(
+            "{header}{needle_line}\ndetails_ref={details_ref}\n[truncated: full body behind details_ref — context budget]"
+        );
+    }
     let needles = extract_evidence_needles(text);
     if needles.is_empty() {
         format!("{header}\n[truncated: prior tool output omitted — context budget exhausted]")
@@ -330,11 +343,39 @@ fn tool_result_stub(text: &str) -> String {
     }
 }
 
+/// Pull `$cached:op:<id>` / `details_ref=…` out of a tool-result body.
+fn extract_details_ref_stub(text: &str) -> Option<String> {
+    for token in text.split_whitespace() {
+        let t = token.trim_matches(|c: char| c == '"' || c == ',' || c == '}');
+        if let Some(rest) = t.strip_prefix("details_ref=") {
+            if rest.starts_with("$cached:op:") {
+                return Some(rest.to_string());
+            }
+        }
+        if t.starts_with("$cached:op:") {
+            return Some(t.to_string());
+        }
+    }
+    // JSON-ish: "details_ref":"$cached:op:…"
+    if let Some(idx) = text.find("$cached:op:") {
+        let rest = &text[idx..];
+        let end = rest
+            .find(|c: char| c == '"' || c == ',' || c.is_whitespace() || c == '}')
+            .unwrap_or(rest.len());
+        return Some(rest[..end].to_string());
+    }
+    None
+}
+
 fn compress_tool_result_text(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_string();
     }
     let header = text.lines().next().unwrap_or("").to_string();
+    // Prefer an intact Operation details_ref over a truncated body prefix.
+    let details_line = extract_details_ref_stub(text)
+        .map(|r| format!("\ndetails_ref={r}"))
+        .unwrap_or_default();
     let needles = extract_evidence_needles(text);
     let needle_line = if needles.is_empty() {
         String::new()
@@ -343,6 +384,7 @@ fn compress_tool_result_text(text: &str, max_chars: usize) -> String {
     };
     let budget = max_chars
         .saturating_sub(header.chars().count())
+        .saturating_sub(details_line.chars().count())
         .saturating_sub(needle_line.chars().count())
         .saturating_sub(48);
     let body: String = text
@@ -350,7 +392,7 @@ fn compress_tool_result_text(text: &str, max_chars: usize) -> String {
         .skip(header.chars().count())
         .take(budget)
         .collect();
-    format!("{header}{needle_line}\n{body}…\n[truncated]")
+    format!("{header}{details_line}{needle_line}\n{body}…\n[truncated]")
 }
 
 fn extract_evidence_needles(text: &str) -> Vec<String> {

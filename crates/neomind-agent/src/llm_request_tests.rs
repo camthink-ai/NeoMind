@@ -1132,10 +1132,7 @@ async fn zero_budget_history_strips_tools_on_real_stream_request() {
     let history = vec![
         Message::user("把天气写到 EK410"),
         Message::assistant("calling shell"),
-        Message::user(format!(
-            "[Tool: shell returned]\n{}",
-            "RESULT ".repeat(200)
-        )),
+        Message::user(format!("[Tool: shell returned]\n{}", "RESULT ".repeat(200))),
     ];
     drain(
         iface
@@ -1162,13 +1159,7 @@ async fn task_state_prompt_injected_into_system_on_stream_request() {
                 .into(),
         ))
         .await;
-    drain(
-        iface
-            .chat_stream_with_history("继续", &[])
-            .await
-            .unwrap(),
-    )
-    .await;
+    drain(iface.chat_stream_with_history("继续", &[]).await.unwrap()).await;
     let captured = requests.lock().unwrap();
     let system = captured[0]["messages"].as_array().unwrap()[0].to_string();
     assert!(

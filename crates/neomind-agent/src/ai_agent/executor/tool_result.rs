@@ -248,11 +248,8 @@ impl AgentExecutor {
             // so scheduled-agent production runs cannot accumulate 15+ full guides.
             if result.name == "skill" {
                 let budget = crate::llm::skill_bodies_token_budget(context_window);
-                let (outcome, piece) = crate::llm::plan_skill_body_append(
-                    skill_reference,
-                    &result_text,
-                    budget,
-                );
+                let (outcome, piece) =
+                    crate::llm::plan_skill_body_append(skill_reference, &result_text, budget);
                 match outcome {
                     crate::llm::SkillBodyAppendOutcome::Skipped => {
                         tracing::warn!(
@@ -747,7 +744,9 @@ mod tests {
     #[test]
     fn executor_skill_reference_respects_shared_skill_body_budget() {
         use crate::agent::tokenizer::estimate_tokens;
-        use crate::llm::{plan_skill_body_append, skill_bodies_token_budget, SkillBodyAppendOutcome};
+        use crate::llm::{
+            plan_skill_body_append, skill_bodies_token_budget, SkillBodyAppendOutcome,
+        };
 
         // Same loop shape as process_tool_results skill branch (production
         // scheduled-agent path) — 15 full guides must not accumulate unbound.
@@ -756,8 +755,7 @@ mod tests {
         let mut skill_reference = String::new();
         for i in 0..15 {
             let result_text = format!("GUIDE{i} {}", "技能正文".repeat(200));
-            let (outcome, piece) =
-                plan_skill_body_append(&skill_reference, &result_text, budget);
+            let (outcome, piece) = plan_skill_body_append(&skill_reference, &result_text, budget);
             match outcome {
                 SkillBodyAppendOutcome::Skipped => {}
                 SkillBodyAppendOutcome::Truncated | SkillBodyAppendOutcome::Full => {

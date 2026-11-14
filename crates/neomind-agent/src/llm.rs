@@ -1412,8 +1412,7 @@ impl LlmInterface {
         // Re-enabling auto-load would re-add ~3000 tokens per turn.
         let transient = self.get_skill_context().await;
         let budget = skill_bodies_token_budget(self.max_context_length().await);
-        let skill_block =
-            build_skill_injection_block(&pinned_chunks, transient.as_deref(), budget);
+        let skill_block = build_skill_injection_block(&pinned_chunks, transient.as_deref(), budget);
         if !skill_block.is_empty() {
             prompt.push('\n');
             prompt.push_str(&skill_block);
@@ -3094,9 +3093,7 @@ mod tests {
         let yaml = format!(
             "---\nid: pin-big\nname: PinBig\ncategory: general\norigin: user\ntoken_budget: 8000\n---\n{pin_body}"
         );
-        registry
-            .add_user_skill(&yaml)
-            .expect("parse pin skill");
+        registry.add_user_skill(&yaml).expect("parse pin skill");
         interface
             .set_skill_registry(std::sync::Arc::new(tokio::sync::RwLock::new(registry)))
             .await;
