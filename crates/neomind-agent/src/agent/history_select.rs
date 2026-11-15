@@ -554,9 +554,10 @@ fn extract_bool_binding(text: &str, key: &str) -> Option<&'static str> {
 }
 
 /// Parse a tool-result JSON **object** from the body start (after optional
-/// `[Tool: …]` header lines). Does **not** scan for the first `{` — prose
-/// with embedded JSON and array roots are unparseable here (exec status →
-/// unknown). Truncated / non-object bodies return `None`.
+/// `[Tool: …]` header lines). Requires a **full** `from_str` of a single
+/// object — no first-`{` scan and no streaming first-value fallback. Extra
+/// content after one value (second object, error prose, etc.), array roots,
+/// and truncated / non-object bodies → `None` (exec status unknown).
 fn parse_tool_result_json(text: &str) -> Option<serde_json::Value> {
     let mut body = text.trim();
     while body.starts_with("[Tool:") {
@@ -565,16 +566,8 @@ fn parse_tool_result_json(text: &str) -> Option<serde_json::Value> {
             None => return None,
         };
     }
-    // From body start only — never body.find('{') / find('[').
-    let value = match serde_json::from_str::<serde_json::Value>(body) {
-        Ok(v) => v,
-        Err(_) => {
-            // Trailing prose after a complete value at the body start.
-            let mut de =
-                serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>();
-            de.next().and_then(Result::ok)?
-        }
-    };
+    // Strict full parse only — never find('{') / find('[') / Deserializer stream.
+    let value = serde_json::from_str::<serde_json::Value>(body).ok()?;
     if !value.is_object() {
         return None;
     }
@@ -1103,6 +1096,34 @@ mod tests {
         assert!(needles.iter().any(|n| n == "success=false"));
         assert!(needles.iter().any(|n| n == "operation_id=op-headed-1"));
         assert!(needles.iter().any(|n| n == "device_id=cam-headed-01"));
+    }
+
+    #[test]
+    fn two_consecutive_objects_is_unknown() {
+        // Streaming first-value fallback would bind the first object's success.
+        let body = r#"{"success":true,"id":"a"}{"success":false,"id":"b"}"#;
+        assert_eq!(extract_bool_binding(body, "success"), None);
+        assert!(parse_tool_result_json(body).is_none());
+        let needles = extract_evidence_needles(body);
+        assert!(
+            !needles.iter().any(|n| n.starts_with("success=")),
+            "two objects → unknown exec status, got {needles:?}"
+        );
+        assert!(!evidence_has_structured_outcome(&needles));
+    }
+
+    #[test]
+    fn object_then_error_text_is_unknown() {
+        // Streaming first-value fallback would accept the object and ignore prose.
+        let body = r#"{"success":true,"device_id":"cam-trail-01"} ERROR: device unreachable"#;
+        assert_eq!(extract_bool_binding(body, "success"), None);
+        assert!(parse_tool_result_json(body).is_none());
+        let needles = extract_evidence_needles(body);
+        assert!(
+            !needles.iter().any(|n| n.starts_with("success=")),
+            "object + error text → unknown, got {needles:?}"
+        );
+        assert!(!evidence_has_structured_outcome(&needles));
     }
 
     #[test]
