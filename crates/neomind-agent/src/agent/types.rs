@@ -2153,11 +2153,12 @@ impl AgentInternalState {
     /// authorization under one lock, returning an immutable
     /// [`AcceptedTurnContext`] for the stream / tool gate.
     ///
-    /// `authorization` travels **with** this message (not a shared pending
-    /// hop another request can steal). Host/UI submits a confirm
-    /// [`AuthorizeNewOpSubmit::request_id`]; the server atomically
-    /// validates + consumes before granting. Bare phrase shortcuts still
-    /// bind only a unique Unknown.
+    /// Every Unknown re-run grant **consumes a confirm request**:
+    /// - Button / structured submit → validate + consume by `request_id`
+    /// - Plain-text confirm phrase → only when exactly one valid pending
+    ///   confirm exists, then consume that request
+    /// - No request / expired / already consumed / incomplete structured
+    ///   fields → refuse (no op-level Unique-Unknown grant fallback)
     ///
     /// Content nodes still use `pending_user_content_nodes` (attached here
     /// under the same lock). Callers that already hold nodes may set them
@@ -2197,15 +2198,29 @@ impl AgentInternalState {
                         );
                     }
                     Err(_) => {
-                        // Invalid / expired / consumed — no grant. Phrase
-                        // shortcuts still do not apply when a structured
-                        // submit was attempted.
+                        // Invalid / expired / consumed — no grant.
                     }
                 }
             }
-            _ => {
-                if let Some(directive) =
-                    super::task_continuity::parse_user_directive(message.content.as_ref())
+            Some(_) => {
+                // Incomplete structured fields — refuse. Do not fall through
+                // to phrase or Unique-Unknown grant.
+            }
+            None => {
+                let content = message.content.as_ref();
+                if super::task_continuity::is_authorize_new_operation_phrase(content) {
+                    // Phrase only when exactly one valid pending confirm;
+                    // consume it — never grant from Unknown ops alone.
+                    if let Ok((op_id, fp)) = self.task_state.consume_unique_pending_confirm(None) {
+                        let _ = self.task_state.apply_directive(
+                            super::task_continuity::TaskDirective::AuthorizeNewOperation {
+                                prior_operation_id: Some(op_id),
+                                write_fingerprint: Some(fp),
+                            },
+                        );
+                    }
+                } else if let Some(directive) =
+                    super::task_continuity::parse_user_directive(content)
                 {
                     let _ = self.task_state.apply_directive(directive);
                 }
@@ -2219,8 +2234,9 @@ impl AgentInternalState {
     /// Push a message to the memory.
     ///
     /// User messages go through [`Self::accept_user_message`] with no host
-    /// authorization (phrase shortcuts only). Prefer `accept_user_message`
-    /// when a stream needs the returned [`AcceptedTurnContext`].
+    /// authorization (phrase may still consume a unique pending confirm).
+    /// Prefer `accept_user_message` when a stream needs the returned
+    /// [`AcceptedTurnContext`].
     pub fn push_message(&mut self, message: AgentMessage) {
         if message.role == "user" {
             let _ = self.accept_user_message(message, None);

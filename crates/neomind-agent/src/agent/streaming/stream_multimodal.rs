@@ -1505,10 +1505,17 @@ mod drop_lease_tests {
             MutatingGateOutcome::Block { .. } => {}
             other => panic!("model-alone after Unknown must Block, got {other:?}"),
         }
+        let op = st
+            .task_state
+            .operations
+            .last()
+            .unwrap()
+            .operation_id
+            .clone();
         st.task_state.apply_directive(
             crate::agent::task_continuity::TaskDirective::AuthorizeNewOperation {
-                prior_operation_id: None,
-                write_fingerprint: None,
+                prior_operation_id: Some(op),
+                write_fingerprint: Some(fp.clone()),
             },
         );
         let owner2 = crate::agent::task_continuity::new_stream_owner();

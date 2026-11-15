@@ -35,12 +35,13 @@
 //!   current operation.
 //! - **AuthorizeNewOperation** grants a one-shot, **operation-scoped** user
 //!   re-run after Unknown (bound to the **confirmed** prior Operation ID +
-//!   business fingerprint + confirming Turn). Confirm requests carry that
-//!   target explicitly when known; bare phrases only bind when exactly one
-//!   Unknown candidate exists — never “latest Unknown” fallback. Multiple
-//!   candidates require explicit disambiguation. Consume compares the
-//!   immutable call-site Turn ID (not a shared `turn_count` hop). The model
-//!   must still set `_new_operation` via the registered tool schema.
+//!   business fingerprint + confirming Turn). Every entry **consumes a
+//!   confirm request** first (button by `request_id`; phrase only when
+//!   exactly one valid pending confirm exists). No request / expired /
+//!   consumed / incomplete structured fields → refuse — never an op-level
+//!   Unique-Unknown grant fallback. Consume compares the immutable
+//!   call-site Turn ID (not a shared `turn_count` hop). The model must
+//!   still set `_new_operation` via the registered tool schema.
 //!
 //! ## Transient skills vs TaskState (plan §12 P1)
 //! Each **new user turn** clears temporary skill bodies on the LLM interface
@@ -289,9 +290,10 @@ pub enum WriteDispatch {
 /// never auto-replay.
 ///
 /// After **Unknown**, a model-added boolean alone is **not** sufficient —
-/// an operation-scoped [`NewOpAuthorization`] must also be granted and
-/// atomically consumed for that prior Operation + fingerprint (user control
-/// phrase / host grant via [`TaskDirective::AuthorizeNewOperation { prior_operation_id: None, write_fingerprint: None }`]).
+/// a confirm request must be consumed and an operation-scoped
+/// [`NewOpAuthorization`] granted for that prior Operation + fingerprint
+/// (host button by `request_id`, or unique-pending phrase via
+/// [`TaskState::consume_unique_pending_confirm`]).
 pub const NEW_OPERATION_ARG: &str = "_new_operation";
 
 /// One-shot user grant to begin a new same-args Operation after Unknown.
@@ -514,13 +516,12 @@ pub enum TaskDirective {
     /// Resume without replaying writes recorded on the current operation.
     Continue,
     /// Grant one-shot, operation-scoped user authorization for a new
-    /// same-args Operation after Unknown. When `prior_operation_id` +
-    /// `write_fingerprint` are set, the grant binds **exactly** that
-    /// Unknown op (no latest-Unknown fallback). When both are `None`
-    /// (phrase shortcuts), binds only if exactly one Unknown candidate
-    /// exists — multiple candidates → explicit disambiguation required.
-    /// Does **not** begin the Operation — the model must still set
-    /// [`NEW_OPERATION_ARG`] via the registered tool schema.
+    /// same-args Operation after Unknown. Both `prior_operation_id` +
+    /// `write_fingerprint` **must** be set (from a consumed confirm
+    /// request) — binds **exactly** that Unknown op. `None`/`None` is
+    /// refused (`confirm_request_required`); there is no Unique-Unknown
+    /// op-level fallback. Does **not** begin the Operation — the model
+    /// must still set [`NEW_OPERATION_ARG`] via the registered tool schema.
     AuthorizeNewOperation {
         prior_operation_id: Option<OperationId>,
         write_fingerprint: Option<String>,
@@ -612,12 +613,10 @@ impl TaskState {
 
     /// Resolve and grant one-shot authorization for a confirmed Unknown op.
     ///
-    /// - Both `prior_operation_id` + `write_fingerprint` set → bind that op
-    ///   only (must be Unknown with matching fingerprint).
-    /// - Both `None` → bind only when exactly one Unknown+fingerprint
-    ///   candidate exists (never “latest” among many).
-    /// - Partial / zero / ambiguous / mismatch → clear grant and return
-    ///   an ignore reason for [`Self::apply_directive`].
+    /// Both `prior_operation_id` + `write_fingerprint` must be set (from a
+    /// consumed confirm request). Missing either / both → refuse
+    /// (`confirm_request_required` / `incomplete_authorization_target`) —
+    /// there is **no** Unique-Unknown op-level grant fallback.
     pub fn grant_user_authorized_new_op(
         &mut self,
         prior_operation_id: Option<&str>,
@@ -644,27 +643,8 @@ impl TaskState {
                 (op.operation_id.clone(), op_fp.to_string())
             }
             (None, None) => {
-                let candidates: Vec<&OperationRecord> = self
-                    .operations
-                    .iter()
-                    .filter(|op| {
-                        op.status == OperationStatus::Unknown && op.write_fingerprint.is_some()
-                    })
-                    .collect();
-                match candidates.as_slice() {
-                    [] => {
-                        self.user_authorized_new_op = None;
-                        return Err("no_unknown_operation");
-                    }
-                    [only] => (
-                        only.operation_id.clone(),
-                        only.write_fingerprint.clone().expect("filtered"),
-                    ),
-                    _ => {
-                        self.user_authorized_new_op = None;
-                        return Err("ambiguous_unknown_operations");
-                    }
-                }
+                self.user_authorized_new_op = None;
+                return Err("confirm_request_required");
             }
             _ => {
                 self.user_authorized_new_op = None;
@@ -854,6 +834,36 @@ impl TaskState {
         self.pending_confirm_requests
             .iter()
             .find(|c| c.request_id == request_id)
+    }
+
+    /// Phrase shortcut: consume the unique valid pending confirm request.
+    ///
+    /// Zero / expired / ambiguous pending → refuse. Never grants from
+    /// Unique-Unknown ops alone — the request lifecycle is mandatory.
+    pub fn consume_unique_pending_confirm(
+        &mut self,
+        now_ms: Option<u64>,
+    ) -> Result<(OperationId, String), &'static str> {
+        let now = now_ms.unwrap_or_else(Self::now_ms);
+        self.expire_confirm_requests(now);
+        let active: Vec<ConfirmRequest> = self
+            .pending_confirm_requests
+            .iter()
+            .filter(|c| c.valid_until_ms > now)
+            .cloned()
+            .collect();
+        match active.as_slice() {
+            [] => Err("confirm_request_not_found"),
+            [only] => {
+                let submit = AuthorizeNewOpSubmit {
+                    request_id: only.request_id.clone(),
+                    prior_operation_id: only.prior_operation_id.clone(),
+                    write_fingerprint: only.write_fingerprint.clone(),
+                };
+                self.submit_confirm_request(&submit, Some(now))
+            }
+            _ => Err("ambiguous_confirm_requests"),
+        }
     }
 
     /// Atomically consume a grant for `prior_operation_id` + `write_fingerprint`
@@ -1288,8 +1298,7 @@ impl TaskState {
                 }
                 // One-shot op-scoped grant only — does not begin an Operation
                 // or wipe gates. Model must still pass `_new_operation` via
-                // schema. Specified target / unique Unknown only — never
-                // latest-Unknown fallback; ambiguous → disambiguation.
+                // schema. Requires op+fp from a consumed confirm request.
                 if let Err(reason) = self.grant_user_authorized_new_op(
                     prior_operation_id.as_deref(),
                     write_fingerprint.as_deref(),
@@ -1538,11 +1547,33 @@ pub async fn begin_user_turn_clear_transient_skills(llm: &crate::llm::LlmInterfa
     llm.clear_skill_context().await;
 }
 
+/// Whether `text` is a plain-text Unknown re-run confirm phrase.
+///
+/// Phrases alone never grant — [`AgentInternalState::accept_user_message`]
+/// consumes a unique valid pending [`ConfirmRequest`] first.
+pub fn is_authorize_new_operation_phrase(text: &str) -> bool {
+    let lower = text.trim().to_lowercase();
+    matches!(
+        lower.as_str(),
+        "确认重跑"
+            | "允许重跑"
+            | "确认再执行"
+            | "authorize re-run"
+            | "confirm re-run"
+            | "confirm rerun"
+            | "authorize new operation"
+            | "yes re-run"
+            | "yes, re-run"
+    )
+}
+
 /// Parse a user utterance into an **explicit** control directive only.
 ///
 /// Round 1: ordinary text is a Turn (no SetGoal / no re-execute whitelist).
 /// Supplement / follow-up / correct / new need are left for the model from
 /// context. Only short Continue / Cancel / Correct control phrases map here.
+/// Confirm re-run phrases are handled separately via confirm-request
+/// consumption — they are **not** directives that grant without a request.
 pub fn parse_user_directive(text: &str) -> Option<TaskDirective> {
     let t = text.trim();
     if t.is_empty() {
@@ -1568,26 +1599,9 @@ pub fn parse_user_directive(text: &str) -> Option<TaskDirective> {
         return Some(TaskDirective::Continue);
     }
 
-    // Authorize new Operation after Unknown — same structured
-    // AuthorizeNewOperation grant as host apply_directive (op-scoped; model
-    // still sets `_new_operation` via schema). Phrase form carries no target
-    // (unique Unknown only; multiple → disambiguation). Distinct from
-    // ordinary 「再发送一次」 turns (no separate privilege).
-    if matches!(
-        lower.as_str(),
-        "确认重跑"
-            | "允许重跑"
-            | "确认再执行"
-            | "authorize re-run"
-            | "confirm re-run"
-            | "yes re-run"
-            | "yes, re-run"
-    ) {
-        return Some(TaskDirective::AuthorizeNewOperation {
-            prior_operation_id: None,
-            write_fingerprint: None,
-        });
-    }
+    // Confirm re-run phrases are NOT directives here — they must go through
+    // accept_user_message → consume_unique_pending_confirm (request lifecycle).
+    // See [`is_authorize_new_operation_phrase`].
 
     // Correction control phrases update goal fields only (do not lift gates).
     if let Some(rest) = t.strip_prefix("改成") {
@@ -2686,21 +2700,11 @@ mod tests {
         assert!(parse_user_directive("再发送一次").is_none());
         assert!(parse_user_directive("好的").is_none());
         assert!(parse_user_directive("你好").is_none());
-        // Unknown re-run grant (distinct from ordinary 「再发送一次」).
-        assert_eq!(
-            parse_user_directive("确认重跑"),
-            Some(TaskDirective::AuthorizeNewOperation {
-                prior_operation_id: None,
-                write_fingerprint: None
-            })
-        );
-        assert_eq!(
-            parse_user_directive("confirm re-run"),
-            Some(TaskDirective::AuthorizeNewOperation {
-                prior_operation_id: None,
-                write_fingerprint: None
-            })
-        );
+        // Confirm phrases are not directives — request consumption is required.
+        assert!(parse_user_directive("确认重跑").is_none());
+        assert!(parse_user_directive("confirm re-run").is_none());
+        assert!(is_authorize_new_operation_phrase("确认重跑"));
+        assert!(is_authorize_new_operation_phrase("confirm re-run"));
     }
 
     #[test]
@@ -3947,8 +3951,8 @@ mod tests {
 
         // User grant + schema flag → Proceed.
         s.apply_directive(TaskDirective::AuthorizeNewOperation {
-            prior_operation_id: None,
-            write_fingerprint: None,
+            prior_operation_id: Some(op1.clone()),
+            write_fingerprint: Some(fp.clone()),
         });
         let owner2 = new_stream_owner();
         let MutatingGateOutcome::Proceed { operation_id: op2 } = evaluate_mutating_gate(
@@ -4086,10 +4090,11 @@ mod tests {
             MutatingGateOutcome::Block { .. } => {}
             other => panic!("model-alone after Unknown must Block, got {other:?}"),
         }
+        let op = s.task_state.operations.last().unwrap().operation_id.clone();
         s.task_state
             .apply_directive(TaskDirective::AuthorizeNewOperation {
-                prior_operation_id: None,
-                write_fingerprint: None,
+                prior_operation_id: Some(op),
+                write_fingerprint: Some(fp.clone()),
             });
         let owner2 = new_stream_owner();
         let call_site_turn = s.task_state.turn_count;
@@ -4434,14 +4439,14 @@ mod tests {
         let op_a = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp_a);
         let op_b = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"B"}"#, &fp_b);
         assert_eq!(s.current_operation_id, op_b);
-        // Two Unknowns: bare phrase must disambiguate, not fall back to latest.
+        // Bare AuthorizeNewOperation without a consumed confirm is refused.
         assert_eq!(
             s.apply_directive(TaskDirective::AuthorizeNewOperation {
                 prior_operation_id: None,
                 write_fingerprint: None,
             }),
             ApplyOutcome::Ignored {
-                reason: "ambiguous_unknown_operations"
+                reason: "confirm_request_required"
             }
         );
         assert!(s.user_authorized_new_op.is_none());
@@ -4492,8 +4497,8 @@ mod tests {
         let op = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp);
         assert_eq!(
             s.apply_directive(TaskDirective::AuthorizeNewOperation {
-                prior_operation_id: None,
-                write_fingerprint: None,
+                prior_operation_id: Some(op.clone()),
+                write_fingerprint: Some(fp.clone()),
             }),
             ApplyOutcome::Applied
         );
@@ -4526,8 +4531,8 @@ mod tests {
         let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
         let op = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp);
         s.apply_directive(TaskDirective::AuthorizeNewOperation {
-            prior_operation_id: None,
-            write_fingerprint: None,
+            prior_operation_id: Some(op.clone()),
+            write_fingerprint: Some(fp.clone()),
         });
         assert!(s.take_user_authorized_new_op(&op, &fp, call_site_turn));
         assert!(!s.take_user_authorized_new_op(&op, &fp, call_site_turn));
@@ -4544,8 +4549,8 @@ mod tests {
         let op = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp);
 
         s.apply_directive(TaskDirective::AuthorizeNewOperation {
-            prior_operation_id: None,
-            write_fingerprint: None,
+            prior_operation_id: Some(op.clone()),
+            write_fingerprint: Some(fp.clone()),
         });
         assert!(s.user_authorized_new_op.is_some());
         s.apply_directive(TaskDirective::Correct {
@@ -4560,8 +4565,8 @@ mod tests {
         assert!(!s.take_user_authorized_new_op(&op, &fp, call_site_turn));
 
         s.apply_directive(TaskDirective::AuthorizeNewOperation {
-            prior_operation_id: None,
-            write_fingerprint: None,
+            prior_operation_id: Some(op.clone()),
+            write_fingerprint: Some(fp.clone()),
         });
         assert!(s.user_authorized_new_op.is_some());
         s.apply_directive(TaskDirective::SetGoal {
@@ -4575,8 +4580,8 @@ mod tests {
         );
 
         s.apply_directive(TaskDirective::AuthorizeNewOperation {
-            prior_operation_id: None,
-            write_fingerprint: None,
+            prior_operation_id: Some(op.clone()),
+            write_fingerprint: Some(fp.clone()),
         });
         assert!(s.user_authorized_new_op.is_some());
         s.apply_directive(TaskDirective::Cancel);
@@ -4589,47 +4594,46 @@ mod tests {
 
     #[test]
     fn gpt_unknown_auth_phrase_feeds_same_structured_grant() {
-        assert_eq!(
-            parse_user_directive("确认重跑"),
-            Some(TaskDirective::AuthorizeNewOperation {
-                prior_operation_id: None,
-                write_fingerprint: None
-            })
-        );
-        assert_eq!(
-            parse_user_directive("confirm re-run"),
-            Some(TaskDirective::AuthorizeNewOperation {
-                prior_operation_id: None,
-                write_fingerprint: None
-            })
-        );
+        assert!(is_authorize_new_operation_phrase("确认重跑"));
+        assert!(is_authorize_new_operation_phrase("confirm re-run"));
+        assert!(parse_user_directive("确认重跑").is_none());
+        assert!(parse_user_directive("confirm re-run").is_none());
         assert!(parse_user_directive("再发送一次").is_none());
         assert!(parse_user_directive("请再跑一下那个任务").is_none());
 
-        let mut s = TaskState::default();
-        s.note_user_turn();
-        let call_site_turn = s.turn_count;
-
+        let mut state = crate::agent::types::AgentInternalState::new("phrase-grant".into());
         let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
-        let op = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp);
-        let dir = parse_user_directive("确认重跑").unwrap();
-        assert_eq!(s.apply_directive(dir), ApplyOutcome::Applied);
-        let grant = s.user_authorized_new_op.clone().unwrap();
+        let op = unknown_op_with_fp(&mut state.task_state, "run_now", r#"{"agent_id":"A"}"#, &fp);
+        let _ = confirm_submit_for(&mut state.task_state, &op, &fp, "run_now", None);
+        // Phrase with unique pending confirm → consume request → grant.
+        let accepted =
+            state.accept_user_message(crate::agent::types::AgentMessage::user("确认重跑"), None);
+        let grant = state
+            .task_state
+            .user_authorized_new_op
+            .clone()
+            .expect("phrase must consume unique pending");
         assert_eq!(grant.prior_operation_id, op);
         assert_eq!(grant.write_fingerprint, fp);
-        assert_eq!(grant.confirming_turn, s.turn_count);
+        assert_eq!(grant.confirming_turn, accepted.call_site_turn);
+        assert!(state.task_state.pending_confirm_requests.is_empty());
 
         let args = flagged_args(serde_json::json!({"agent_id": "A"}));
-        let MutatingGateOutcome::Proceed { .. } =
-            evaluate_mutating_gate(&mut s, "run_now", &args, &fp, None, call_site_turn)
-        else {
+        let MutatingGateOutcome::Proceed { .. } = evaluate_mutating_gate(
+            &mut state.task_state,
+            "run_now",
+            &args,
+            &fp,
+            None,
+            accepted.call_site_turn,
+        ) else {
             panic!("phrase-fed grant must Proceed via same protocol");
         };
-        assert!(s.user_authorized_new_op.is_none());
+        assert!(state.task_state.user_authorized_new_op.is_none());
     }
 
     #[test]
-    fn gpt_unknown_auth_grant_without_unknown_is_ignored() {
+    fn gpt_unknown_auth_grant_without_confirm_request_is_ignored() {
         let mut s = TaskState::default();
         s.note_user_turn();
         assert_eq!(
@@ -4638,7 +4642,7 @@ mod tests {
                 write_fingerprint: None
             }),
             ApplyOutcome::Ignored {
-                reason: "no_unknown_operation"
+                reason: "confirm_request_required"
             }
         );
         assert!(s.user_authorized_new_op.is_none());
@@ -5055,5 +5059,97 @@ mod tests {
         ) else {
             panic!("Turn B with auth-for-B must Proceed");
         };
+    }
+
+    // ── GPT phrase must consume confirm request (7d1ad679 P1 residual) ──
+
+    #[test]
+    fn gpt_phrase_confirm_expired_does_not_reauthorize() {
+        let mut state = crate::agent::types::AgentInternalState::new("phrase-expired".into());
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = unknown_op_with_fp(&mut state.task_state, "run_now", r#"{"agent_id":"A"}"#, &fp);
+        let mut req = state
+            .task_state
+            .issue_or_reuse_confirm_request(&op, &fp, "run_now", None);
+        let _ = state.task_state.drain_confirm_lifecycle_notices();
+        // Force wall-clock expiry while keeping the record visible.
+        req.valid_until_ms = 1;
+        state.task_state.pending_confirm_requests.clear();
+        state.task_state.pending_confirm_requests.push(req);
+
+        let _ = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("confirm re-run"),
+            None,
+        );
+        assert!(
+            state.task_state.user_authorized_new_op.is_none(),
+            "expired pending + phrase must not re-authorize"
+        );
+        assert!(
+            state.task_state.pending_confirm_requests.is_empty(),
+            "expired request must be swept on phrase attempt"
+        );
+    }
+
+    #[test]
+    fn gpt_phrase_confirm_consumed_does_not_reauthorize() {
+        let mut state = crate::agent::types::AgentInternalState::new("phrase-consumed".into());
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = unknown_op_with_fp(&mut state.task_state, "run_now", r#"{"agent_id":"A"}"#, &fp);
+        let submit = confirm_submit_for(&mut state.task_state, &op, &fp, "run_now", None);
+        // First accept consumes the request and grants.
+        let first = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("确认重跑"),
+            Some(submit),
+        );
+        assert!(state.task_state.user_authorized_new_op.is_some());
+        assert_eq!(
+            state
+                .task_state
+                .user_authorized_new_op
+                .as_ref()
+                .unwrap()
+                .confirming_turn,
+            first.call_site_turn
+        );
+        // Unique Unknown still present, but request already consumed.
+        // Phrase alone must refuse — no op-level Unique-Unknown fallback.
+        let _ = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("confirm re-run"),
+            None,
+        );
+        assert!(
+            state.task_state.user_authorized_new_op.is_none(),
+            "consumed request + phrase must not re-authorize"
+        );
+        assert!(state.task_state.pending_confirm_requests.is_empty());
+    }
+
+    #[test]
+    fn gpt_phrase_confirm_empty_structured_does_not_reauthorize() {
+        let mut state = crate::agent::types::AgentInternalState::new("phrase-empty".into());
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = unknown_op_with_fp(&mut state.task_state, "run_now", r#"{"agent_id":"A"}"#, &fp);
+        let _ = confirm_submit_for(&mut state.task_state, &op, &fp, "run_now", None);
+        assert_eq!(state.task_state.pending_confirm_requests.len(), 1);
+
+        // Incomplete structured fields + phrase → refuse (no phrase fallback).
+        let _ = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("确认重跑"),
+            Some(AuthorizeNewOpSubmit {
+                request_id: String::new(),
+                prior_operation_id: String::new(),
+                write_fingerprint: String::new(),
+            }),
+        );
+        assert!(
+            state.task_state.user_authorized_new_op.is_none(),
+            "empty structured + phrase must not re-authorize"
+        );
+        assert_eq!(
+            state.task_state.pending_confirm_requests.len(),
+            1,
+            "incomplete submit must not consume the pending request"
+        );
     }
 }
