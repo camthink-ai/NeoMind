@@ -404,8 +404,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             {
                                 let gate = {
                                     let mut state = state_for_write_gate.write().await;
-                                    super::super::task_continuity::evaluate_mutating_gate(
-                                        &mut state.task_state,
+                                    state.evaluate_mutating_gate_durable(
                                         &name,
                                         &arguments,
                                         &fp,
@@ -541,6 +540,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                 &execution.result,
                             );
                             state.large_data_cache = cache;
+                            state.persist_op_ledger_terminal_best_effort();
                             // Image entry: this batch's Unknown → halt (same helper as text).
                             if state
                                 .task_state
@@ -821,8 +821,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                         ) {
                                             let gate = {
                                                 let mut state = state_for_write_gate.write().await;
-                                                super::super::task_continuity::evaluate_mutating_gate(
-                                                    &mut state.task_state,
+                                                state.evaluate_mutating_gate_durable(
                                                     &name,
                                                     &arguments,
                                                     &fp,
@@ -907,6 +906,29 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             // Continuation round — matches the ToolCall struct's
                             // round: Some(2) persisted to history.
                             yield AgentEvent::tool_call_start_round(&name, execution.arguments.clone(), 2);
+                            let resumed = matches!(
+                                &execution.result,
+                                Ok(out) if out.data.get("_operation_resume").and_then(|v| v.as_bool()) == Some(true)
+                            );
+                            let in_progress = matches!(
+                                &execution.result,
+                                Ok(out) if out.data.get("_operation_in_progress").and_then(|v| v.as_bool()) == Some(true)
+                            );
+                            if let Some(op_id) = execution.operation_id.as_deref() {
+                                if !resumed && !in_progress {
+                                    let mut state = internal_state.write().await;
+                                    let mut cache = std::mem::take(&mut state.large_data_cache);
+                                    super::super::task_continuity::finalize_operation_from_tool_result(
+                                        &mut state.task_state,
+                                        &mut cache,
+                                        op_id,
+                                        &name,
+                                        &execution.result,
+                                    );
+                                    state.large_data_cache = cache;
+                                    state.persist_op_ledger_terminal_best_effort();
+                                }
+                            }
                             match execution.result {
                                 Ok(output) => {
                                     let result_str = output.prompt_value().to_string();
@@ -1193,8 +1215,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                         ) {
                                             let gate = {
                                                 let mut state = state_for_write_gate.write().await;
-                                                super::super::task_continuity::evaluate_mutating_gate(
-                                                    &mut state.task_state,
+                                                state.evaluate_mutating_gate_durable(
                                                     &name,
                                                     &arguments,
                                                     &fp,
@@ -1281,6 +1302,29 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     for (name, execution) in nudge_results {
                         // Nudge round — matches the ToolCall struct's round: Some(2).
                         yield AgentEvent::tool_call_start_round(&name, execution.arguments.clone(), 2);
+                        let resumed = matches!(
+                            &execution.result,
+                            Ok(out) if out.data.get("_operation_resume").and_then(|v| v.as_bool()) == Some(true)
+                        );
+                        let in_progress = matches!(
+                            &execution.result,
+                            Ok(out) if out.data.get("_operation_in_progress").and_then(|v| v.as_bool()) == Some(true)
+                        );
+                        if let Some(op_id) = execution.operation_id.as_deref() {
+                            if !resumed && !in_progress {
+                                let mut state = internal_state.write().await;
+                                let mut cache = std::mem::take(&mut state.large_data_cache);
+                                super::super::task_continuity::finalize_operation_from_tool_result(
+                                    &mut state.task_state,
+                                    &mut cache,
+                                    op_id,
+                                    &name,
+                                    &execution.result,
+                                );
+                                state.large_data_cache = cache;
+                                state.persist_op_ledger_terminal_best_effort();
+                            }
+                        }
                         match execution.result {
                             Ok(output) => {
                                 let result_str = output.prompt_value().to_string();

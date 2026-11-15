@@ -2046,7 +2046,7 @@ impl LargeDataCache {
 
 /// Unified internal state for the agent.
 /// Combines session state with LLM readiness and other runtime state.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentInternalState {
     /// Session ID
     pub session_id: String,
@@ -2069,6 +2069,32 @@ pub struct AgentInternalState {
     /// Cross-turn task continuity (G2): goal/object/evidence steps; Continue
     /// must not replay completed writes. Loop halts (G3) mark Halted, never Completed.
     pub task_state: super::task_continuity::TaskState,
+    /// When true, disk ledger could not be trusted (deserialize/load fail).
+    /// Mutating tools fail closed — never treat empty memory as authoritative.
+    pub op_ledger_untrusted: bool,
+    /// Optional durable sink. Production SessionManager always wires one;
+    /// unit tests may leave `None` (no crash-window coverage required).
+    pub op_ledger_commit: Option<std::sync::Arc<dyn super::task_continuity::OpLedgerCommit>>,
+}
+
+impl std::fmt::Debug for AgentInternalState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentInternalState")
+            .field("session_id", &self.session_id)
+            .field("llm_ready", &self.llm_ready)
+            .field("session", &self.session)
+            .field("memory_len", &self.memory.len())
+            .field("recent_response_hashes", &self.recent_response_hashes)
+            .field("large_data_cache", &self.large_data_cache)
+            .field("compaction_cache_is_some", &self.compaction_cache.is_some())
+            .field("task_state", &self.task_state)
+            .field("op_ledger_untrusted", &self.op_ledger_untrusted)
+            .field(
+                "op_ledger_commit",
+                &self.op_ledger_commit.as_ref().map(|_| "Some"),
+            )
+            .finish()
+    }
 }
 
 /// Immutable call-site context for one accepted user Turn.
@@ -2098,6 +2124,132 @@ impl AgentInternalState {
             )),
             compaction_cache: None,
             task_state: super::task_continuity::TaskState::default(),
+            op_ledger_untrusted: false,
+            op_ledger_commit: None,
+        }
+    }
+
+    /// Wire (or clear) the durable op-ledger commit sink.
+    pub fn set_op_ledger_commit(
+        &mut self,
+        commit: Option<std::sync::Arc<dyn super::task_continuity::OpLedgerCommit>>,
+    ) {
+        self.op_ledger_commit = commit;
+    }
+
+    /// Mark ledger untrusted after deserialize/load failure (fail closed).
+    pub fn mark_op_ledger_untrusted(&mut self) {
+        self.op_ledger_untrusted = true;
+    }
+
+    /// Persist current sanitized op ledger via the wired commit sink.
+    ///
+    /// `Ok(())` when no sink is configured (test agents). `Err` on serialize
+    /// or sink failure — callers of write-intent must fail closed.
+    pub fn commit_op_ledger_now(&self) -> Result<(), String> {
+        let Some(commit) = self.op_ledger_commit.as_ref() else {
+            return Ok(());
+        };
+        let bytes = serde_json::to_vec(&self.task_state.snapshot_op_ledger())
+            .map_err(|e| format!("serialize op ledger: {e}"))?;
+        commit.commit(&bytes)
+    }
+
+    /// Best-effort terminal persist after a mutating tool settles.
+    pub fn persist_op_ledger_terminal_best_effort(&self) {
+        if self.op_ledger_untrusted {
+            return;
+        }
+        if let Err(e) = self.commit_op_ledger_now() {
+            tracing::warn!(
+                session_id = %self.session_id,
+                error = %e,
+                "Failed to persist op ledger terminal state after side-effect tool"
+            );
+        }
+    }
+
+    /// After Prepared→Running: durable-commit write intent before the tool.
+    ///
+    /// On failure marks the op Failed (releases the lease) and returns Err so
+    /// the stream path does **not** execute the side-effect tool.
+    pub fn persist_write_intent_or_fail_closed(
+        &mut self,
+        operation_id: &str,
+    ) -> Result<(), String> {
+        if self.op_ledger_untrusted {
+            self.task_state.complete_operation_failed(
+                operation_id,
+                super::task_continuity::StructuredResult::with_body(
+                    false,
+                    "op ledger untrusted",
+                    super::task_continuity::OP_LEDGER_UNTRUSTED_MESSAGE,
+                    None,
+                ),
+            );
+            let _ = self.commit_op_ledger_now();
+            return Err(super::task_continuity::OP_LEDGER_UNTRUSTED_MESSAGE.into());
+        }
+        match self.commit_op_ledger_now() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let msg = format!(
+                    "{}: {e}",
+                    super::task_continuity::WRITE_INTENT_COMMIT_FAILED_PREFIX
+                );
+                self.task_state.complete_operation_failed(
+                    operation_id,
+                    super::task_continuity::StructuredResult::with_body(
+                        false,
+                        "durable write-intent commit failed",
+                        msg.clone(),
+                        None,
+                    ),
+                );
+                // Best-effort: record the Failed terminal if the sink recovers.
+                let _ = self.commit_op_ledger_now();
+                Err(msg)
+            }
+        }
+    }
+
+    /// Mutating write gate + durable write-intent commit (fail closed).
+    ///
+    /// Replaces bare [`super::task_continuity::evaluate_mutating_gate`] on
+    /// stream paths that may execute side-effect tools.
+    pub fn evaluate_mutating_gate_durable(
+        &mut self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+        write_fingerprint: &str,
+        stream_owner: Option<&str>,
+        call_site_turn: u64,
+    ) -> super::task_continuity::MutatingGateOutcome {
+        use super::task_continuity::MutatingGateOutcome;
+        if self.op_ledger_untrusted {
+            return MutatingGateOutcome::Block {
+                message: super::task_continuity::OP_LEDGER_UNTRUSTED_MESSAGE.into(),
+                confirm: None,
+            };
+        }
+        match super::task_continuity::evaluate_mutating_gate(
+            &mut self.task_state,
+            tool_name,
+            arguments,
+            write_fingerprint,
+            stream_owner,
+            call_site_turn,
+        ) {
+            MutatingGateOutcome::Proceed { operation_id } => {
+                match self.persist_write_intent_or_fail_closed(&operation_id) {
+                    Ok(()) => MutatingGateOutcome::Proceed { operation_id },
+                    Err(message) => MutatingGateOutcome::Block {
+                        message,
+                        confirm: None,
+                    },
+                }
+            }
+            other => other,
         }
     }
 
@@ -2263,6 +2415,8 @@ impl AgentInternalState {
     pub fn clear_memory(&mut self) {
         self.memory.clear();
         self.task_state = super::task_continuity::TaskState::default();
+        // Fresh empty ledger after explicit clear is authoritative again.
+        self.op_ledger_untrusted = false;
     }
 }
 

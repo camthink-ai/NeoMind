@@ -1607,14 +1607,15 @@ pub async fn process_stream_events_with_safeguards(
                             // resume prefers known result; Unknown → inquire
                             // (no auto-replay); first attempt calls
                             // begin_new_operation via evaluate_mutating_gate.
+                            // Durable write-intent is committed before Proceed
+                            // returns — fail closed if the commit sink errors.
                             let mut tracked_operation_id: Option<String> = None;
                             if let Some(fp) =
                                 super::intent::mutating_write_fingerprint(&name, &arguments)
                             {
                                 use super::super::task_continuity::MutatingGateOutcome;
                                 let mut state = state_for_write_gate.write().await;
-                                match super::super::task_continuity::evaluate_mutating_gate(
-                                    &mut state.task_state,
+                                match state.evaluate_mutating_gate_durable(
                                     &name,
                                     &arguments,
                                     &fp,
@@ -1896,6 +1897,9 @@ pub async fn process_stream_events_with_safeguards(
                                         &execution.result,
                                     );
                                     state.large_data_cache = cache;
+                                    // Persist terminal Succeeded/Failed/Unknown
+                                    // after the side-effect tool settles.
+                                    state.persist_op_ledger_terminal_best_effort();
                                 }
                             }
                             if matches!(

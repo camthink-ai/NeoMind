@@ -462,6 +462,22 @@ pub struct PersistedOpLedger {
     pub turn_count: u64,
 }
 
+/// Durable commit sink for [`PersistedOpLedger`] bytes (session store, test
+/// memory, …). Side-effect tools must not run unless a configured sink
+/// accepts the pre-tool write-intent snapshot (`fail closed`).
+pub trait OpLedgerCommit: Send + Sync {
+    fn commit(&self, ledger_json: &[u8]) -> Result<(), String>;
+}
+
+/// Message when restore deserialize/load fails — mutating writes refuse.
+pub const OP_LEDGER_UNTRUSTED_MESSAGE: &str = "Write blocked: op ledger restore failed — \
+    mutating tools refuse until the session ledger is repaired (fail closed; \
+    empty in-memory ledger is not treated as authoritative)";
+
+/// Message when pre-tool intent commit fails — tool must not run.
+pub const WRITE_INTENT_COMMIT_FAILED_PREFIX: &str =
+    "Write blocked: durable write-intent commit failed — side-effect tool not executed";
+
 /// Lightweight cross-turn task state (G2) + Round 2 operation ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskState {
@@ -5417,6 +5433,174 @@ mod tests {
         assert!(
             !cold.may_execute_write("shell|echo ready"),
             "cancelled Prepared must not auto-execute"
+        );
+    }
+
+    // ── GPT durable write intent (f4b0b193 P1) ──────────────────────────
+
+    #[derive(Default)]
+    struct MemOpLedgerCommit {
+        bytes: std::sync::Mutex<Option<Vec<u8>>>,
+        fail: std::sync::atomic::AtomicBool,
+        commits: std::sync::atomic::AtomicUsize,
+    }
+
+    impl OpLedgerCommit for MemOpLedgerCommit {
+        fn commit(&self, ledger_json: &[u8]) -> Result<(), String> {
+            if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("simulated durable commit failure".into());
+            }
+            *self.bytes.lock().unwrap() = Some(ledger_json.to_vec());
+            self.commits
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn durable_write_intent_crash_window_restores_unknown_no_auto_replay() {
+        let sink = std::sync::Arc::new(MemOpLedgerCommit::default());
+        let mut state = crate::agent::types::AgentInternalState::new("cw-intent".into());
+        state.set_op_ledger_commit(Some(sink.clone()));
+
+        let args = serde_json::json!({"command":"neomind device command send --id cam-cw"});
+        let fp = write_fingerprint("shell", &args.to_string());
+        let MutatingGateOutcome::Proceed { operation_id } =
+            state.evaluate_mutating_gate_durable("shell", &args, &fp, Some("owner-cw"), 1)
+        else {
+            panic!("intent path must Proceed after durable commit");
+        };
+        assert_eq!(
+            state.task_state.operation(&operation_id).unwrap().status,
+            OperationStatus::Running,
+            "memory keeps Running lease for the live executor"
+        );
+        assert!(
+            sink.commits.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+            "write intent must be committed before the side-effect tool"
+        );
+
+        // Crash window: process dies before the tool body runs / terminal save.
+        let bytes = sink
+            .bytes
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("intent snapshot on disk");
+        let snap: PersistedOpLedger =
+            serde_json::from_slice(&bytes).expect("intent snapshot deserializes");
+        assert_eq!(
+            snap.operations.last().unwrap().status,
+            OperationStatus::Unknown,
+            "persisted intent sanitizes Running → Unknown"
+        );
+
+        let mut cold = crate::agent::types::AgentInternalState::new("cw-intent".into());
+        cold.restore_op_ledger(snap);
+        assert!(
+            matches!(
+                cold.task_state.dispatch_mutating_write(&fp),
+                WriteDispatch::InquireStatus { .. }
+            ),
+            "crash-window restore must inquire — never auto re-side-effect"
+        );
+        assert!(!cold.task_state.may_execute_write(&fp));
+    }
+
+    #[test]
+    fn durable_write_intent_commit_failure_fail_closed_no_proceed() {
+        let sink = std::sync::Arc::new(MemOpLedgerCommit::default());
+        sink.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut state = crate::agent::types::AgentInternalState::new("cw-fail".into());
+        state.set_op_ledger_commit(Some(sink));
+
+        let args = serde_json::json!({"command":"neomind device command send --id cam-fail"});
+        let fp = write_fingerprint("shell", &args.to_string());
+        match state.evaluate_mutating_gate_durable("shell", &args, &fp, Some("owner-f"), 1) {
+            MutatingGateOutcome::Block { message, confirm } => {
+                assert!(
+                    message.contains("durable write-intent commit failed"),
+                    "fail-closed message, got: {message}"
+                );
+                assert!(confirm.is_none());
+            }
+            other => panic!("commit failure must Block, got {other:?}"),
+        }
+        assert_eq!(state.task_state.operations.len(), 1);
+        assert_eq!(
+            state.task_state.operations[0].status,
+            OperationStatus::Failed,
+            "lease released as Failed — tool must not run"
+        );
+        assert!(
+            !matches!(
+                state.task_state.dispatch_mutating_write(&fp),
+                WriteDispatch::Execute { .. } | WriteDispatch::InProgress { .. }
+            ),
+            "failed intent must not leave an executable / Running lease"
+        );
+    }
+
+    #[test]
+    fn durable_terminal_after_success_survives_restart() {
+        let sink = std::sync::Arc::new(MemOpLedgerCommit::default());
+        let mut state = crate::agent::types::AgentInternalState::new("cw-term".into());
+        state.set_op_ledger_commit(Some(sink.clone()));
+
+        let args = serde_json::json!({"command":"neomind device command send --id cam-ok"});
+        let fp = write_fingerprint("shell", &args.to_string());
+        let MutatingGateOutcome::Proceed { operation_id } =
+            state.evaluate_mutating_gate_durable("shell", &args, &fp, Some("owner-t"), 1)
+        else {
+            panic!("Proceed");
+        };
+        state.task_state.complete_operation_succeeded(
+            &operation_id,
+            StructuredResult::with_body(true, "sent", "ok", None),
+            ["broker accepted".into()],
+        );
+        state.persist_op_ledger_terminal_best_effort();
+        assert!(
+            sink.commits.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+            "intent + terminal commits"
+        );
+
+        let bytes = sink.bytes.lock().unwrap().clone().unwrap();
+        let snap: PersistedOpLedger = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            snap.operations.last().unwrap().status,
+            OperationStatus::Succeeded
+        );
+
+        let mut cold = crate::agent::types::AgentInternalState::new("cw-term".into());
+        cold.restore_op_ledger(snap);
+        assert!(matches!(
+            cold.task_state.dispatch_mutating_write(&fp),
+            WriteDispatch::PreferKnown { .. }
+        ));
+    }
+
+    #[test]
+    fn deserialize_fail_marks_untrusted_not_silent_empty_ledger() {
+        let mut state = crate::agent::types::AgentInternalState::new("cw-bad".into());
+        // Simulate SessionManager restore path after corrupt bytes.
+        state.mark_op_ledger_untrusted();
+        assert!(state.task_state.operations.is_empty());
+
+        let args = serde_json::json!({"command":"neomind device command send --id cam-bad"});
+        let fp = write_fingerprint("shell", &args.to_string());
+        match state.evaluate_mutating_gate_durable("shell", &args, &fp, None, 1) {
+            MutatingGateOutcome::Block { message, .. } => {
+                assert!(
+                    message.contains("op ledger restore failed"),
+                    "untrusted must fail closed, got: {message}"
+                );
+            }
+            other => panic!("untrusted empty ledger must not Proceed, got {other:?}"),
+        }
+        assert!(
+            state.task_state.operations.is_empty(),
+            "untrusted path must not begin a new Operation"
         );
     }
 }

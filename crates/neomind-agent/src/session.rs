@@ -1077,6 +1077,27 @@ impl SessionManager {
             .await
     }
 
+    /// Wire durable op-ledger commit on a freshly constructed Agent.
+    async fn attach_op_ledger_commit(&self, agent: &Agent) {
+        struct StoreOpLedgerCommit {
+            store: Arc<SessionStore>,
+            session_id: String,
+        }
+        impl crate::agent::task_continuity::OpLedgerCommit for StoreOpLedgerCommit {
+            fn commit(&self, ledger_json: &[u8]) -> std::result::Result<(), String> {
+                self.store
+                    .save_op_ledger(&self.session_id, ledger_json)
+                    .map_err(|e| e.to_string())
+            }
+        }
+        let commit: Arc<dyn crate::agent::task_continuity::OpLedgerCommit> =
+            Arc::new(StoreOpLedgerCommit {
+                store: self.store.clone(),
+                session_id: agent.session_id().to_string(),
+            });
+        agent.set_op_ledger_commit(Some(commit)).await;
+    }
+
     /// Create a new session with the given (full) `AgentConfig`.
     ///
     /// This is the canonical implementation; the no-arg and options variants
@@ -1109,6 +1130,7 @@ impl SessionManager {
             .set_skill_registry(self.skill_registry.clone())
             .await;
 
+        self.attach_op_ledger_commit(&agent).await;
         let agent = Arc::new(agent);
 
         self.sessions
@@ -1269,6 +1291,7 @@ impl SessionManager {
             .set_skill_registry(self.skill_registry.clone())
             .await;
 
+        self.attach_op_ledger_commit(&agent).await;
         let agent = Arc::new(agent);
 
         // Load message history from database
@@ -1282,6 +1305,7 @@ impl SessionManager {
 
         // Restore minimal op ledger (Succeeded / Unknown survive; Running→Unknown;
         // auth grants and stream leases are never restored).
+        // Deserialize/load failure → mark untrusted (fail closed); never silent empty.
         match self.store.load_op_ledger(session_id) {
             Ok(Some(bytes)) => {
                 match serde_json::from_slice::<crate::agent::task_continuity::PersistedOpLedger>(
@@ -1297,21 +1321,23 @@ impl SessionManager {
                         );
                     }
                     Err(e) => {
-                        tracing::warn!(
+                        tracing::error!(
                             session_id = %session_id,
                             error = %e,
-                            "Failed to deserialize op ledger — leaving TaskState empty"
+                            "Failed to deserialize op ledger — marking untrusted (fail closed)"
                         );
+                        agent.mark_op_ledger_untrusted().await;
                     }
                 }
             }
             Ok(None) => {}
             Err(e) => {
-                tracing::debug!(
+                tracing::error!(
                     session_id = %session_id,
                     error = %e,
-                    "No op ledger to restore"
+                    "Failed to load op ledger — marking untrusted (fail closed)"
                 );
+                agent.mark_op_ledger_untrusted().await;
             }
         }
 

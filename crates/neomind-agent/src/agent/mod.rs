@@ -964,6 +964,30 @@ impl Agent {
     }
 }
 impl Agent {
+    /// Wire the durable op-ledger commit sink (SessionManager production path).
+    pub async fn set_op_ledger_commit(
+        &self,
+        commit: Option<std::sync::Arc<dyn task_continuity::OpLedgerCommit>>,
+    ) {
+        self.internal_state
+            .write()
+            .await
+            .set_op_ledger_commit(commit);
+    }
+}
+impl Agent {
+    /// Fail closed after ledger deserialize/load failure.
+    pub async fn mark_op_ledger_untrusted(&self) {
+        self.internal_state.write().await.mark_op_ledger_untrusted();
+    }
+}
+impl Agent {
+    /// Whether mutating writes are refused due to an untrusted ledger.
+    pub async fn op_ledger_untrusted(&self) -> bool {
+        self.internal_state.read().await.op_ledger_untrusted
+    }
+}
+impl Agent {
     /// Clear conversation history.
     pub async fn clear_history(&self) {
         self.internal_state.write().await.clear_memory();
