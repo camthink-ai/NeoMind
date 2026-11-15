@@ -508,6 +508,47 @@ pub enum ExcludedRoute {
     NotificationOrWebhook,
 }
 
+/// Provenance ladder for goal results (config ≠ dispatch ≠ ACK ≠ physical).
+///
+/// Ordered: higher means stronger proof. `queued` / adapter accept stop at
+/// [`CommandDispatched`]; they never imply physical effect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GoalEvidenceLevel {
+    #[default]
+    None = 0,
+    /// Webhook / push / channel config succeeded — not a device command.
+    ConfigSuccess = 1,
+    /// Target device command accepted by adapter/extension (broker publish /
+    /// extension Ok). Device ACK and physical effect still unverified.
+    CommandDispatched = 2,
+    /// Device explicitly acknowledged receipt.
+    DeviceAcknowledged = 3,
+    /// Physical effect verified via state feedback.
+    PhysicalEffectVerified = 4,
+}
+
+/// Structured claim kinds checked against [`TaskState::goal_evidence`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GoalClaimKind {
+    /// "sent" / "command issued" / "dispatched to device".
+    CommandSent,
+    /// "screen refreshed" / "device updated" / physical effect done.
+    PhysicalEffect,
+    /// Mark the task Completed.
+    TaskComplete,
+}
+
+/// Best goal-relevant evidence observed from tool results (not model prose).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoalEvidence {
+    pub level: GoalEvidenceLevel,
+    pub device_id: Option<String>,
+    pub command: Option<String>,
+    pub delivery: Option<String>,
+    pub summary: String,
+}
+
 /// Lightweight cross-turn task state (G2) + Round 2 operation ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskState {
@@ -520,6 +561,9 @@ pub struct TaskState {
     /// Routes the user rejected; additive across corrections; kept on Continue.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub excluded_routes: Vec<ExcludedRoute>,
+    /// Strongest tool-proven evidence toward the current goal constraints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_evidence: Option<GoalEvidence>,
     pub confirmed_steps: Vec<ConfirmedStep>,
     pub next_action: Option<NextAction>,
     pub status: TaskStatus,
@@ -553,6 +597,7 @@ impl Default for TaskState {
             content: None,
             method: None,
             excluded_routes: Vec::new(),
+            goal_evidence: None,
             confirmed_steps: Vec::new(),
             next_action: None,
             status: TaskStatus::Idle,
@@ -1405,9 +1450,10 @@ impl TaskState {
                 if content.is_some() {
                     self.content = content;
                 }
-                // New charter — drop prior method / route exclusions.
+                // New charter — drop prior method / route exclusions / evidence.
                 self.method = None;
                 self.excluded_routes.clear();
+                self.goal_evidence = None;
                 self.next_action = None;
                 // Target / goal change invalidates a pending Unknown re-run grant.
                 self.clear_user_authorized_new_op();
@@ -1425,6 +1471,7 @@ impl TaskState {
                 // Correction updates the charter; write ledger + executed
                 // operation anti-replay stay. Cancel not-yet-executed ops.
                 // Omitted fields keep prior facts (object / content / method).
+                let prior_object = self.object.clone();
                 self.goal = Some(goal);
                 if let Some(o) = object {
                     self.object = Some(o);
@@ -1439,6 +1486,10 @@ impl TaskState {
                     if !self.excluded_routes.contains(&route) {
                         self.excluded_routes.push(route);
                     }
+                }
+                // Target device change invalidates prior goal evidence.
+                if self.object != prior_object {
+                    self.goal_evidence = None;
                 }
                 self.next_action = None;
                 self.cancel_prepared_operations();
@@ -1455,6 +1506,7 @@ impl TaskState {
                 self.next_action = None;
                 self.method = None;
                 self.excluded_routes.clear();
+                self.goal_evidence = None;
                 self.clear_user_authorized_new_op();
                 self.cancel_all_confirm_requests();
                 ApplyOutcome::Applied
@@ -1568,6 +1620,50 @@ impl TaskState {
                 out.push_str(&format!(
                     "  - relation: act on device `{o}` using the constrained method\n"
                 ));
+            }
+        }
+        if self.goal_needs_device_command_evidence() || self.goal_evidence.is_some() {
+            out.push_str("- Goal verification (tool evidence only; do not invent):\n");
+            out.push_str(
+                "  - ladder: config_success < command_dispatched < device_ack < physical_effect\n",
+            );
+            match &self.goal_evidence {
+                Some(ev) => {
+                    out.push_str(&format!(
+                        "  - proven: level={:?} device={} command={} delivery={}\n",
+                        ev.level,
+                        ev.device_id.as_deref().unwrap_or("-"),
+                        ev.command.as_deref().unwrap_or("-"),
+                        ev.delivery.as_deref().unwrap_or("-"),
+                    ));
+                    out.push_str(&format!("  - note: {}\n", ev.summary));
+                }
+                None => {
+                    out.push_str("  - proven: none — no target device command observed yet\n");
+                }
+            }
+            out.push_str(
+                "  - claims: do NOT say sent/updated without command_dispatched to the \
+                 goal device; queued/adapter_accepted/extension_accepted ≠ device ACK \
+                 ≠ physical effect (screen refresh unproven)\n",
+            );
+            if self.goal_needs_device_command_evidence() {
+                if self
+                    .evaluate_goal_claim(GoalClaimKind::CommandSent)
+                    .is_err()
+                {
+                    out.push_str(
+                        "  - status: CommandSent NOT allowed yet (need device command to goal object)\n",
+                    );
+                }
+                if self
+                    .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
+                    .is_err()
+                {
+                    out.push_str(
+                        "  - status: PhysicalEffect NOT allowed (need physical_effect_verified)\n",
+                    );
+                }
             }
         }
         if !self.confirmed_steps.is_empty() {
@@ -1718,14 +1814,34 @@ impl TaskState {
     }
 
     /// Mark completed only with an evidence id (device ACK, metric, etc.).
-    pub fn complete_with_evidence(&mut self, evidence_id: impl Into<String>) {
+    ///
+    /// When the task requires a target device command, refuses completion
+    /// until [`GoalEvidenceLevel::CommandDispatched`] (or stronger) is proven
+    /// for that device. Physical-sounding evidence ids still cannot complete
+    /// without [`GoalEvidenceLevel::PhysicalEffectVerified`].
+    ///
+    /// Returns `true` when Completed; `false` when refused (status unchanged).
+    pub fn complete_with_evidence(&mut self, evidence_id: impl Into<String>) -> bool {
         if matches!(self.status, TaskStatus::Cancelled) {
-            return;
+            return false;
         }
-        self.status = TaskStatus::Completed {
-            evidence_id: evidence_id.into(),
-        };
+        let id = evidence_id.into();
+        if self
+            .evaluate_goal_claim(GoalClaimKind::TaskComplete)
+            .is_err()
+        {
+            return false;
+        }
+        if evidence_id_suggests_physical(&id)
+            && self
+                .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
+                .is_err()
+        {
+            return false;
+        }
+        self.status = TaskStatus::Completed { evidence_id: id };
         self.next_action = None;
+        true
     }
 
     /// Record a loop/budget halt — never counts as task success.
@@ -2068,6 +2184,335 @@ impl TaskState {
              for this task.{method_hint}"
         ))
     }
+
+    /// Whether claims/completion must be backed by a target device command.
+    pub fn goal_needs_device_command_evidence(&self) -> bool {
+        if self.goal.is_none() {
+            return false;
+        }
+        matches!(self.method, Some(ExecutionMethod::DeviceNativeCommand))
+            || self
+                .excluded_routes
+                .contains(&ExcludedRoute::NotificationOrWebhook)
+            || self.object.is_some()
+    }
+
+    /// Whether `claim` is allowed given current tool-proven [`goal_evidence`].
+    pub fn evaluate_goal_claim(&self, claim: GoalClaimKind) -> Result<(), String> {
+        if !self.goal_needs_device_command_evidence() {
+            return Ok(());
+        }
+        let ev = self.goal_evidence.as_ref();
+        let level = ev.map(|e| e.level).unwrap_or(GoalEvidenceLevel::None);
+        let device_ok = match (&self.object, ev.and_then(|e| e.device_id.as_deref())) {
+            (Some(need), Some(got)) => need == got,
+            (Some(_), None) => false,
+            (None, _) => true,
+        };
+        match claim {
+            GoalClaimKind::CommandSent | GoalClaimKind::TaskComplete => {
+                if level >= GoalEvidenceLevel::CommandDispatched && device_ok {
+                    Ok(())
+                } else if level == GoalEvidenceLevel::ConfigSuccess {
+                    Err(
+                        "config/push/webhook success is not a target device command — \
+                         cannot claim sent or complete this goal"
+                            .into(),
+                    )
+                } else if !device_ok {
+                    Err(format!(
+                        "no command_dispatched evidence for goal device '{}'",
+                        self.object.as_deref().unwrap_or("?")
+                    ))
+                } else {
+                    Err(
+                        "need command_dispatched (or stronger) to the goal device before \
+                         claiming sent / completing"
+                            .into(),
+                    )
+                }
+            }
+            GoalClaimKind::PhysicalEffect => {
+                if level >= GoalEvidenceLevel::PhysicalEffectVerified && device_ok {
+                    Ok(())
+                } else {
+                    Err(
+                        "queued / adapter_accepted / device_ack ≠ physical effect — \
+                         cannot claim screen refreshed or physical update"
+                            .into(),
+                    )
+                }
+            }
+        }
+    }
+
+    /// Fold a successful tool result into [`Self::goal_evidence`] (monotonic).
+    ///
+    /// Config-only routes never raise above [`GoalEvidenceLevel::ConfigSuccess`].
+    /// Device command results raise to the delivery ladder. Wrong-device
+    /// commands do not satisfy a constrained goal object.
+    pub fn observe_tool_result_for_goal(
+        &mut self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+        result_data: &serde_json::Value,
+    ) {
+        if matches!(self.status, TaskStatus::Cancelled) {
+            return;
+        }
+        let Some(obs) = classify_goal_evidence(tool_name, arguments, result_data) else {
+            return;
+        };
+        // Constrained target: ignore evidence for a different device.
+        if let (Some(need), Some(got)) = (&self.object, &obs.device_id) {
+            if need != got && obs.level >= GoalEvidenceLevel::CommandDispatched {
+                return;
+            }
+        }
+        match &self.goal_evidence {
+            None => self.goal_evidence = Some(obs),
+            Some(cur) if obs.level > cur.level => self.goal_evidence = Some(obs),
+            Some(cur)
+                if obs.level == cur.level && obs.device_id.is_some() && cur.device_id.is_none() =>
+            {
+                self.goal_evidence = Some(obs);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn evidence_id_suggests_physical(evidence_id: &str) -> bool {
+    let lower = evidence_id.to_lowercase();
+    lower.contains("physical")
+        || lower.contains("refreshed")
+        || lower.contains("screen")
+        || lower.contains("rendered")
+        || lower.contains("display")
+}
+
+/// Classify a tool result into goal-evidence (or None if irrelevant).
+pub fn classify_goal_evidence(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+    result_data: &serde_json::Value,
+) -> Option<GoalEvidence> {
+    let real = crate::tools::resolve_tool_name(tool_name);
+    let canonical = canonicalize_tool_arguments(tool_name, arguments);
+
+    // Structured device_command success.
+    if real == "device_command" {
+        return evidence_from_device_command_result(&canonical, result_data);
+    }
+
+    let cmd = canonical
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Notify/push/webhook mutations → config only.
+    if mutating_call_excluded_route(tool_name, arguments)
+        == Some(ExcludedRoute::NotificationOrWebhook)
+        || (!cmd.is_empty() && is_notification_or_webhook_mutation(&cmd))
+    {
+        return Some(GoalEvidence {
+            level: GoalEvidenceLevel::ConfigSuccess,
+            device_id: extract_operation_target(&canonical),
+            command: None,
+            delivery: Some("config_or_notify".into()),
+            summary: "config/push/webhook path succeeded — not a device command".into(),
+        });
+    }
+
+    // Shell device control (or JSON bodies that look like device_command).
+    if real == "shell" && cmd.contains("neomind device control") {
+        return evidence_from_device_control_shell(&cmd, result_data);
+    }
+    if result_data.get("delivery").is_some() || result_data.get("delivery_note").is_some() {
+        if result_data.get("sent").and_then(|v| v.as_bool()) == Some(true)
+            || result_data.get("device_id").is_some()
+        {
+            return evidence_from_device_command_result(&canonical, result_data);
+        }
+    }
+    None
+}
+
+fn evidence_from_device_command_result(
+    arguments: &serde_json::Value,
+    result_data: &serde_json::Value,
+) -> Option<GoalEvidence> {
+    let device_id = result_data
+        .get("device_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| extract_operation_target(arguments));
+    let command = result_data
+        .get("command")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            arguments
+                .get("command")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+    let delivery = result_data
+        .get("delivery")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_lowercase())
+        .or_else(|| {
+            result_data
+                .get("delivery")
+                .map(|v| v.to_string().to_lowercase())
+        });
+    let note = result_data
+        .get("delivery_note")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let body = result_data.to_string().to_lowercase();
+
+    let level = delivery_level(delivery.as_deref(), &note, &body);
+    if level == GoalEvidenceLevel::None {
+        return None;
+    }
+    let summary = match level {
+        GoalEvidenceLevel::PhysicalEffectVerified => {
+            "physical effect verified via state feedback".into()
+        }
+        GoalEvidenceLevel::DeviceAcknowledged => {
+            "device acknowledged receipt; physical effect unverified".into()
+        }
+        GoalEvidenceLevel::CommandDispatched => {
+            "command dispatched (adapter/extension accept); device ACK and \
+             physical effect unverified"
+                .into()
+        }
+        GoalEvidenceLevel::ConfigSuccess => "config success only".into(),
+        GoalEvidenceLevel::None => return None,
+    };
+    Some(GoalEvidence {
+        level,
+        device_id,
+        command,
+        delivery,
+        summary,
+    })
+}
+
+fn evidence_from_device_control_shell(
+    cmd_lower: &str,
+    result_data: &serde_json::Value,
+) -> Option<GoalEvidence> {
+    // Prefer nested JSON delivery fields when the CLI echoes them.
+    if result_data.get("delivery").is_some()
+        || result_data.get("delivery_note").is_some()
+        || result_data.get("sent").is_some()
+    {
+        return evidence_from_device_command_result(&serde_json::json!({}), result_data);
+    }
+    if let Some(stdout) = result_data.get("stdout").and_then(|v| v.as_str()) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout) {
+            if let Some(ev) = evidence_from_device_command_result(&serde_json::json!({}), &v) {
+                return Some(ev);
+            }
+        }
+        let lower = stdout.to_lowercase();
+        if lower.contains("physical effect verified") {
+            return Some(GoalEvidence {
+                level: GoalEvidenceLevel::PhysicalEffectVerified,
+                device_id: device_id_from_control_cmd(cmd_lower),
+                command: command_from_control_cmd(cmd_lower),
+                delivery: Some("physical_effect_verified".into()),
+                summary: "physical effect verified via state feedback".into(),
+            });
+        }
+        if lower.contains("device acknowledged") {
+            return Some(GoalEvidence {
+                level: GoalEvidenceLevel::DeviceAcknowledged,
+                device_id: device_id_from_control_cmd(cmd_lower),
+                command: command_from_control_cmd(cmd_lower),
+                delivery: Some("device_acknowledged".into()),
+                summary: "device acknowledged receipt; physical effect unverified".into(),
+            });
+        }
+        // Successful control with queued / delivered language → dispatched only.
+        if lower.contains("queued")
+            || lower.contains("delivered")
+            || lower.contains("adapter")
+            || lower.contains("command sent")
+            || result_data.get("exit_code").and_then(|v| v.as_i64()) == Some(0)
+        {
+            return Some(GoalEvidence {
+                level: GoalEvidenceLevel::CommandDispatched,
+                device_id: device_id_from_control_cmd(cmd_lower),
+                command: command_from_control_cmd(cmd_lower),
+                delivery: Some("adapter_accepted_or_queued".into()),
+                summary: "command dispatched/queued; physical effect unverified".into(),
+            });
+        }
+    }
+    // exit 0 with no body still means at most dispatched (never physical).
+    if result_data.get("exit_code").and_then(|v| v.as_i64()) == Some(0) {
+        return Some(GoalEvidence {
+            level: GoalEvidenceLevel::CommandDispatched,
+            device_id: device_id_from_control_cmd(cmd_lower),
+            command: command_from_control_cmd(cmd_lower),
+            delivery: Some("cli_exit_0".into()),
+            summary: "device control exited 0; physical effect unverified".into(),
+        });
+    }
+    None
+}
+
+fn delivery_level(delivery: Option<&str>, note: &str, body: &str) -> GoalEvidenceLevel {
+    let d = delivery.unwrap_or("");
+    if d.contains("physical_effect") || note.contains("physical effect verified") {
+        return GoalEvidenceLevel::PhysicalEffectVerified;
+    }
+    if d.contains("device_acknowledged") || note.contains("device acknowledged") {
+        return GoalEvidenceLevel::DeviceAcknowledged;
+    }
+    if d.contains("adapter_accepted")
+        || d.contains("extension_accepted")
+        || note.contains("broker publish")
+        || note.contains("extension accepted")
+        || note.contains("physical effect unverified")
+        || body.contains("\"sent\":true")
+        || body.contains("\"sent\": true")
+        || body.contains("queued")
+    {
+        return GoalEvidenceLevel::CommandDispatched;
+    }
+    if !d.is_empty() || body.contains("sent") {
+        // Unknown delivery tag on a device command → at most dispatched.
+        return GoalEvidenceLevel::CommandDispatched;
+    }
+    GoalEvidenceLevel::None
+}
+
+fn device_id_from_control_cmd(cmd_lower: &str) -> Option<String> {
+    // `neomind device control <id> <command> ...`
+    let mut parts = cmd_lower.split_whitespace();
+    while let Some(p) = parts.next() {
+        if p == "control" {
+            return parts.next().map(str::to_string);
+        }
+    }
+    None
+}
+
+fn command_from_control_cmd(cmd_lower: &str) -> Option<String> {
+    let mut parts = cmd_lower.split_whitespace();
+    while let Some(p) = parts.next() {
+        if p == "control" {
+            let _id = parts.next()?;
+            return parts.next().map(str::to_string);
+        }
+    }
+    None
 }
 
 /// Stable fingerprint for a mutating write (tool + canonical args).
@@ -3095,7 +3540,7 @@ mod tests {
         });
         // No complete_with_evidence → still Active even if model would claim done.
         assert_eq!(s.status, TaskStatus::Active);
-        s.complete_with_evidence("device:EK410:ack");
+        assert!(s.complete_with_evidence("device:EK410:ack"));
         assert!(matches!(
             s.status,
             TaskStatus::Completed { evidence_id } if evidence_id == "device:EK410:ack"
@@ -3615,6 +4060,132 @@ mod tests {
             s.operation(&op).unwrap().evidence,
             vec!["queued-only".to_string()]
         );
+    }
+
+    #[test]
+    fn config_success_cannot_claim_sent_or_complete_device_goal() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "update target device display".into(),
+            object: Some("cam-1".into()),
+            content: Some("hello".into()),
+        });
+        s.apply_directive(TaskDirective::Correct {
+            goal: "not webhook, use device-native command".into(),
+            object: None,
+            content: None,
+            method: Some(ExecutionMethod::DeviceNativeCommand),
+            exclude_routes: vec![ExcludedRoute::NotificationOrWebhook],
+        });
+
+        // Push/config path "succeeds" — config only.
+        s.observe_tool_result_for_goal(
+            "shell",
+            &serde_json::json!({"command": "neomind push start weather-screen"}),
+            &serde_json::json!({"exit_code": 0, "stdout": "started"}),
+        );
+        assert_eq!(
+            s.goal_evidence.as_ref().map(|e| e.level),
+            Some(GoalEvidenceLevel::ConfigSuccess)
+        );
+        assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_err());
+        assert!(s.evaluate_goal_claim(GoalClaimKind::TaskComplete).is_err());
+        assert!(!s.complete_with_evidence("push:weather-screen:ok"));
+        assert_eq!(s.status, TaskStatus::Active);
+
+        let prompt = s.to_prompt_section().unwrap();
+        assert!(prompt.contains("Goal verification"));
+        assert!(prompt.contains("CommandSent NOT allowed"));
+    }
+
+    #[test]
+    fn queued_dispatch_allows_sent_not_physical_or_screen_claim() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "show text on device".into(),
+            object: Some("cam-1".into()),
+            content: Some("晴".into()),
+        });
+        s.method = Some(ExecutionMethod::DeviceNativeCommand);
+
+        s.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({
+                "device": "cam-1",
+                "command": "render_text",
+                "params": {"text": "晴"}
+            }),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "cam-1",
+                "command": "render_text",
+                "delivery": "adapter_accepted",
+                "delivery_note": "delivered to 1 adapter(s) (broker publish); device acknowledgment: none; physical effect unverified"
+            }),
+        );
+        assert_eq!(
+            s.goal_evidence.as_ref().map(|e| e.level),
+            Some(GoalEvidenceLevel::CommandDispatched)
+        );
+        assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_ok());
+        assert!(s
+            .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
+            .is_err());
+        // Completing as "screen refreshed" must fail; completing after dispatch OK.
+        assert!(!s.complete_with_evidence("screen-refreshed"));
+        assert_eq!(s.status, TaskStatus::Active);
+        assert!(s.complete_with_evidence("op:dispatched"));
+        assert!(matches!(s.status, TaskStatus::Completed { .. }));
+    }
+
+    #[test]
+    fn wrong_device_command_does_not_satisfy_goal_object() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "update cam-1".into(),
+            object: Some("cam-1".into()),
+            content: None,
+        });
+        s.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({"device": "other-9", "command": "reboot"}),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "other-9",
+                "command": "reboot",
+                "delivery": "adapter_accepted",
+                "delivery_note": "physical effect unverified"
+            }),
+        );
+        assert!(s.goal_evidence.is_none());
+        assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_err());
+    }
+
+    #[test]
+    fn physical_effect_level_allows_physical_claim() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "update cam-1".into(),
+            object: Some("cam-1".into()),
+            content: None,
+        });
+        s.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({"device": "cam-1", "command": "render_text"}),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "cam-1",
+                "command": "render_text",
+                "delivery": "physical_effect_verified",
+                "delivery_note": "physical effect verified via state feedback"
+            }),
+        );
+        assert_eq!(
+            s.goal_evidence.as_ref().map(|e| e.level),
+            Some(GoalEvidenceLevel::PhysicalEffectVerified)
+        );
+        assert!(s.evaluate_goal_claim(GoalClaimKind::PhysicalEffect).is_ok());
+        assert!(s.complete_with_evidence("screen-refreshed"));
     }
 
     #[test]

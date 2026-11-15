@@ -1943,6 +1943,13 @@ pub async fn process_stream_events_with_safeguards(
                                     &result_fp,
                                     summary,
                                 );
+                                if let Ok(out) = &execution.result {
+                                    state.task_state.observe_tool_result_for_goal(
+                                        &crate::tools::resolve_tool_name(&name),
+                                        &exec_arguments,
+                                        &out.data,
+                                    );
+                                }
                                 // write_ledger is filled by complete_operation_succeeded
                                 // when the Operation carries a write_fingerprint.
                             }
