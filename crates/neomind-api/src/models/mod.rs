@@ -68,9 +68,12 @@ pub struct ChatContentNode {
 
 /// Explicit Unknown re-run authorization target (multi-Unknown disambiguation).
 ///
-/// Echoes `prior_operation_id` + `write_fingerprint` from the gate's confirm
-/// request (`authorizeNewOperation target: …`). Travels with the message into
+/// Echoes `prior_operation_id` + `write_fingerprint` from the gate's structured
+/// confirm (`authorizeNewOperation confirm: request_id=… prior_operation_id=…
+/// write_fingerprint=… valid_until_ms=…`). Travels with the message into
 /// atomic `accept_user_message` as `TaskDirective::AuthorizeNewOperation`.
+/// Host/UI must send this via an explicit op button (or the unique-active
+/// phrase shortcut) — never by scanning history for a latest-B target.
 #[derive(utoipa::ToSchema, Debug, Clone, Deserialize, Serialize)]
 pub struct AuthorizeNewOperationRequest {
     /// Prior Unknown Operation ID to re-run.

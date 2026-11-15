@@ -19,13 +19,26 @@ import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
 import { ws, type ConnectionState } from "@/lib/websocket"
 import { api } from "@/lib/api"
 import { mentionKey, resolveMentions } from "@/lib/api/mentions"
-import type { Message, ChatImage, ChatReference, ChatContentNode } from "@/types"
+import type {
+  AuthorizeNewOperationRequest,
+  ChatContentNode,
+  ChatImage,
+  ChatReference,
+  Message,
+} from "@/types"
 import {
   contentNodesToComposerFields,
   normalizeContentNodes,
   saveSessionDraft,
 } from "@/lib/chat/contentProtocol"
-import { resolveAuthorizeNewOperationForSend } from "@/lib/chat/authorizeNewOperation"
+import {
+  collectActivePendingConfirms,
+  messageTextsForConfirmScan,
+  resolveAuthorizeNewOperationForSend,
+  toAuthorizeRequest,
+  type AuthorizeNewOperationConfirm,
+} from "@/lib/chat/authorizeNewOperation"
+import { AuthorizeConfirmBar } from "@/components/chat/AuthorizeConfirmBar"
 import { cn } from "@/lib/utils"
 import { getSessionDisplayTitle } from "@/lib/utils/sessionTitle"
 import { normalizeTimestampMs } from "@/lib/utils/format"
@@ -67,7 +80,7 @@ function getActiveBackendSupportsMultimodal(llmBackends: any[], activeBackendId:
 const WELCOME_DETACHED = "\u0000__welcome_detached__"
 
 export function ChatPage() {
-  const { t } = useTranslation(['common', 'chat'])
+  const { t, i18n } = useTranslation(['common', 'chat'])
   const { toast } = useToast()
   const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>()
   const navigate = useNavigate()
@@ -323,6 +336,14 @@ export function ChatPage() {
   const activeToolRound = streamingToolCalls.length > 0
     ? (streamingToolCalls[streamingToolCalls.length - 1].round ?? null)
     : null
+
+  const pendingAuthorizeConfirms = useMemo(() => {
+    const texts = messageTextsForConfirmScan(messages)
+    for (const tc of streamingToolCalls) {
+      if (typeof tc.result === 'string') texts.push(tc.result)
+    }
+    return collectActivePendingConfirms(texts)
+  }, [messages, streamingToolCalls])
 
   // Load LLM backends and sessions on mount
   useEffect(() => {
@@ -707,8 +728,14 @@ export function ChatPage() {
   }, [connectionState.status, isStreaming, sessionId, urlSessionId])
 
   // Send message - in welcome mode, create session and navigate
-  const handleSend = async (_e?: React.MouseEvent | React.KeyboardEvent) => {
-    const trimmedInput = input.trim()
+  const handleSend = async (
+    _e?: React.MouseEvent | React.KeyboardEvent,
+    overrides?: {
+      message?: string
+      authorizeNewOperation?: AuthorizeNewOperationRequest
+    },
+  ) => {
+    const trimmedInput = (overrides?.message ?? input).trim()
     if ((!trimmedInput && attachedImages.length === 0) || isStreaming || isLoadingSession) return
 
     // Check if images are attached but current model doesn't support vision
@@ -810,10 +837,10 @@ export function ChatPage() {
     beginTurn()
     setLastAssistantMessageId(null)
 
-    const authorizeNewOperation = resolveAuthorizeNewOperationForSend(
-      trimmedInput,
-      messages.map((m) => m.content || ""),
-    )
+    const authorizeNewOperation =
+      overrides?.authorizeNewOperation ??
+      resolveAuthorizeNewOperationForSend(trimmedInput, pendingAuthorizeConfirms) ??
+      undefined
     ws.sendMessage(
       trimmedInput,
       attachedImages.length > 0 ? attachedImages : undefined,
@@ -821,13 +848,21 @@ export function ChatPage() {
       undefined,
       sentReferences,
       sentContentNodes,
-      authorizeNewOperation || undefined,
+      authorizeNewOperation,
     )
 
     requestAnimationFrame(() => {
       const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
       if (pm) pm.focus()
       else inputRef.current?.focus()
+    })
+  }
+
+  const handleConfirmAuthorize = (confirm: AuthorizeNewOperationConfirm) => {
+    const phrase = i18n.language?.startsWith('zh') ? '确认重跑' : 'confirm re-run'
+    void handleSend(undefined, {
+      message: phrase,
+      authorizeNewOperation: toAuthorizeRequest(confirm),
     })
   }
 
@@ -1475,6 +1510,12 @@ export function ChatPage() {
                 </span>
               </div>
             )}
+
+            <AuthorizeConfirmBar
+              pending={pendingAuthorizeConfirms}
+              disabled={isStreaming || isLoadingSession}
+              onConfirm={handleConfirmAuthorize}
+            />
 
             {composerEl}
           </div>

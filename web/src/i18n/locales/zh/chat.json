@@ -239,5 +239,10 @@
     "protoViewportAuto": "跟随窗口",
     "protoViewportDesktop": "桌面浮层",
     "protoViewportMobile": "移动面板"
+  },
+  "authorizeConfirm": {
+    "title": "确认重跑被阻断的写入",
+    "pickOne": "有多个被阻断的操作 — 请选择要重跑的那一个",
+    "button": "重跑 {{opId}}"
   }
 }

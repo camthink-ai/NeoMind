@@ -1852,42 +1852,92 @@ pub fn prepare_mutating_dispatch(
     }
 }
 
+/// Wall-clock validity window for a UI confirm request (15 minutes).
+///
+/// Server-side grants still expire on turn advance; this bound is for the
+/// host/UI button so stale confirm chips cannot be clicked forever.
+pub const UNKNOWN_RERUN_CONFIRM_VALIDITY_MS: u64 = 15 * 60 * 1000;
+
+/// Structured confirm fields carried in [`unknown_rerun_confirm_request`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizeNewOperationConfirm {
+    pub request_id: String,
+    pub prior_operation_id: String,
+    pub write_fingerprint: String,
+    pub valid_until_ms: u64,
+}
+
 /// Confirm-request text for an Unknown Operation re-run.
 ///
-/// Carries the **exact** prior Operation ID + write fingerprint so the host/UI
-/// can echo them back via [`TaskDirective::AuthorizeNewOperation`] /
-/// `ChatRequest.authorizeNewOperation` — bare phrase shortcuts cannot pick
-/// among multiple Unknowns.
+/// Carries a **structured** confirm line (`request_id`, `prior_operation_id`,
+/// `write_fingerprint`, `valid_until_ms`) so the host/UI can render an explicit
+/// op button and echo the exact target via `ChatRequest.authorizeNewOperation`.
+/// Bare phrase shortcuts only apply when exactly one active pending confirm
+/// exists — they must not scan history for a latest-B fallback.
 pub fn unknown_rerun_confirm_request(prior_operation_id: &str, write_fingerprint: &str) -> String {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    unknown_rerun_confirm_request_structured(
+        prior_operation_id,
+        write_fingerprint,
+        &format!("req-{}", uuid::Uuid::new_v4()),
+        now_ms.saturating_add(UNKNOWN_RERUN_CONFIRM_VALIDITY_MS),
+    )
+}
+
+/// Deterministic structured confirm body (tests + custom validity).
+pub fn unknown_rerun_confirm_request_structured(
+    prior_operation_id: &str,
+    write_fingerprint: &str,
+    request_id: &str,
+    valid_until_ms: u64,
+) -> String {
     format!(
         "Write blocked: operation {prior_operation_id} ended with unknown outcome (e.g. timeout). \
          Inquire status; do not auto-replay; do not pretend success. A model-added \
          `{NEW_OPERATION_ARG}=true` alone is not user-authorized replay. Ask the user to confirm \
          a re-run of THIS operation, then set `{NEW_OPERATION_ARG}` from the tool schema.\n\
-         authorizeNewOperation target: prior_operation_id={prior_operation_id} \
-         write_fingerprint={write_fingerprint}"
+         authorizeNewOperation confirm: request_id={request_id} \
+         prior_operation_id={prior_operation_id} \
+         write_fingerprint={write_fingerprint} \
+         valid_until_ms={valid_until_ms}"
     )
+}
+
+fn split_kv_token<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.split(&format!("{key}="))
+        .nth(1)?
+        .split_whitespace()
+        .next()
+}
+
+/// Parse the structured confirm line from [`unknown_rerun_confirm_request`].
+pub fn parse_authorize_new_operation_confirm(text: &str) -> Option<AuthorizeNewOperationConfirm> {
+    if !text.contains("authorizeNewOperation confirm:") {
+        return None;
+    }
+    let request_id = split_kv_token(text, "request_id")?.to_string();
+    let prior_operation_id = split_kv_token(text, "prior_operation_id")?.to_string();
+    let write_fingerprint = split_kv_token(text, "write_fingerprint")?.to_string();
+    let valid_until_ms = split_kv_token(text, "valid_until_ms")?.parse().ok()?;
+    if request_id.is_empty() || prior_operation_id.is_empty() || write_fingerprint.is_empty() {
+        return None;
+    }
+    Some(AuthorizeNewOperationConfirm {
+        request_id,
+        prior_operation_id,
+        write_fingerprint,
+        valid_until_ms,
+    })
 }
 
 /// Parse `prior_operation_id` + `write_fingerprint` from a confirm-request body
 /// produced by [`unknown_rerun_confirm_request`].
 pub fn parse_authorize_new_operation_target(text: &str) -> Option<(String, String)> {
-    let id = text
-        .split("prior_operation_id=")
-        .nth(1)?
-        .split_whitespace()
-        .next()?
-        .to_string();
-    let fp = text
-        .split("write_fingerprint=")
-        .nth(1)?
-        .split_whitespace()
-        .next()?
-        .to_string();
-    if id.is_empty() || fp.is_empty() {
-        return None;
-    }
-    Some((id, fp))
+    let confirm = parse_authorize_new_operation_confirm(text)?;
+    Some((confirm.prior_operation_id, confirm.write_fingerprint))
 }
 
 /// Stream-path outcome for a mutating write gate (Round 2 + prod lease).
@@ -4460,10 +4510,27 @@ mod tests {
 
     #[test]
     fn gpt_auth_prod_confirm_request_carries_parseable_target() {
-        let msg = unknown_rerun_confirm_request("op-abc", "run_now|{\"agent_id\":\"A\"}");
+        let msg = unknown_rerun_confirm_request_structured(
+            "op-abc",
+            "run_now|{\"agent_id\":\"A\"}",
+            "req-fixed",
+            1_700_000_000_000,
+        );
+        let confirm = parse_authorize_new_operation_confirm(&msg).expect("structured");
+        assert_eq!(confirm.request_id, "req-fixed");
+        assert_eq!(confirm.prior_operation_id, "op-abc");
+        assert_eq!(confirm.write_fingerprint, "run_now|{\"agent_id\":\"A\"}");
+        assert_eq!(confirm.valid_until_ms, 1_700_000_000_000);
         let (id, fp) = parse_authorize_new_operation_target(&msg).expect("parseable");
         assert_eq!(id, "op-abc");
         assert_eq!(fp, "run_now|{\"agent_id\":\"A\"}");
+    }
+
+    #[test]
+    fn gpt_confirm_ui_plain_markers_without_request_are_not_structured() {
+        let legacy = "authorizeNewOperation target: prior_operation_id=op-a write_fingerprint=fp-a";
+        assert!(parse_authorize_new_operation_confirm(legacy).is_none());
+        assert!(parse_authorize_new_operation_target(legacy).is_none());
     }
 
     #[test]

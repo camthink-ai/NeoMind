@@ -244,5 +244,10 @@
     "protoViewportAuto": "Follow viewport",
     "protoViewportDesktop": "Desktop popover",
     "protoViewportMobile": "Mobile sheet"
+  },
+  "authorizeConfirm": {
+    "title": "Confirm re-run of blocked write",
+    "pickOne": "Multiple blocked operations — pick which to re-run",
+    "button": "Re-run {{opId}}"
   }
 }

@@ -16,7 +16,13 @@ import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
 import { generateId } from "@/lib/id"
 import { ws } from "@/lib/websocket"
 import { api } from "@/lib/api"
-import type { Message } from "@/types"
+import type {
+  AuthorizeNewOperationRequest,
+  ChatContentNode,
+  ChatImage,
+  ChatReference,
+  Message,
+} from "@/types"
 import { filterPartialMessages, mergeMessagesForDisplay as mergeAssistantMessages } from "@/lib/messageUtils"
 import { useChatStream } from "@/hooks/useChatStream"
 import {
@@ -29,17 +35,22 @@ import { pickPageAssistant, panelSessionKey, profileFingerprint, readStoredPanel
 import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
-import type { ChatContentNode, ChatReference } from "@/types"
 import {
   contentNodesToComposerFields,
   normalizeContentNodes,
   saveSessionDraft,
 } from "@/lib/chat/contentProtocol"
-import { resolveAuthorizeNewOperationForSend } from "@/lib/chat/authorizeNewOperation"
+import {
+  collectActivePendingConfirms,
+  messageTextsForConfirmScan,
+  resolveAuthorizeNewOperationForSend,
+  toAuthorizeRequest,
+  type AuthorizeNewOperationConfirm,
+} from "@/lib/chat/authorizeNewOperation"
+import { AuthorizeConfirmBar } from "./AuthorizeConfirmBar"
 import { ChatScrollPill } from "./ChatScrollPill"
 import { X, Minimize2, Bot, Plus, Settings, Cpu, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import type { ChatImage } from "@/types"
 
 /** Pin at most this many page-matched skills per send (prompt-budget guard). */
 const MAX_PINNED_SKILLS = 5
@@ -591,9 +602,20 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const imagesAllowed = supportsMultimodal || companionRunning
   const visionDelegate = !supportsMultimodal && companionRunning
 
+  const pendingAuthorizeConfirms = useMemo(() => {
+    const texts = messageTextsForConfirmScan(panelMessages)
+    for (const tc of streamingToolCalls) {
+      if (typeof tc.result === 'string') texts.push(tc.result)
+    }
+    return collectActivePendingConfirms(texts)
+  }, [panelMessages, streamingToolCalls])
+
   // Send message — ensure session is ready before sending
-  const handleSend = useCallback(async () => {
-    const text = input.trim()
+  const handleSend = useCallback(async (overrides?: {
+    message?: string
+    authorizeNewOperation?: AuthorizeNewOperationRequest
+  }) => {
+    const text = (overrides?.message ?? input).trim()
     if ((!text && attachedImages.length === 0) || isStreaming || sendInProgressRef.current || isHistoryLoading) return
 
     // Images need a vision-capable backend
@@ -651,10 +673,10 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // Page-matched skills ride every send (backend pins them per message);
     // the page's system focus already lives in the session's system prompt.
     const skillIds = matchedSkillIdsRef.current.length > 0 ? [...matchedSkillIdsRef.current] : undefined
-    const authorizeNewOperation = resolveAuthorizeNewOperationForSend(
-      text,
-      panelMessages.map((m) => m.content || ""),
-    )
+    const authorizeNewOperation =
+      overrides?.authorizeNewOperation ??
+      resolveAuthorizeNewOperationForSend(text, pendingAuthorizeConfirms) ??
+      undefined
     ws.sendMessage(
       text,
       sentImages,
@@ -662,14 +684,22 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       undefined,
       sentReferences,
       sentContentNodes,
-      authorizeNewOperation || undefined,
+      authorizeNewOperation,
     )
     requestAnimationFrame(() => {
       const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
       if (pm) pm.focus()
       else inputRef.current?.focus()
     })
-  }, [input, attachedImages, panelReferences, panelContentNodes, isStreaming, isHistoryLoading, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn])
+  }, [input, attachedImages, panelReferences, panelContentNodes, isStreaming, isHistoryLoading, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn, pendingAuthorizeConfirms])
+
+  const handleConfirmAuthorize = useCallback((confirm: AuthorizeNewOperationConfirm) => {
+    const phrase = i18n.language?.startsWith('zh') ? '确认重跑' : 'confirm re-run'
+    void handleSend({
+      message: phrase,
+      authorizeNewOperation: toAuthorizeRequest(confirm),
+    })
+  }, [handleSend, i18n.language])
 
   const filteredMessages = useMemo(() => filterPartialMessages(panelMessages), [panelMessages])
 
@@ -945,10 +975,15 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
       {/* Input area — the shared ChatComposer, same design as the chat page */}
       <div className="px-3 pt-3 pb-4 flex-shrink-0">
+        <AuthorizeConfirmBar
+          pending={pendingAuthorizeConfirms}
+          disabled={isStreaming || isHistoryLoading || sendPhase !== "idle"}
+          onConfirm={handleConfirmAuthorize}
+        />
         <ChatComposer
           value={input}
           onChange={setInput}
-          onSend={handleSend}
+          onSend={() => { void handleSend() }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
