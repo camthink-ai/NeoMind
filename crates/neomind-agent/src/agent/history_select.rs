@@ -418,13 +418,24 @@ fn evidence_has_structured_outcome(needles: &[String]) -> bool {
 
 /// Pull structured success/fail values and object IDs from a tool-result body.
 ///
-/// Bare keywords like `success` without a boolean are **not** kept as outcome
-/// evidence — callers mark `[unknown: need details]` when no structured
-/// outcome survives compression.
+/// Outcome bools (`success` / `failed`) come **only** from the outer JSON
+/// object (tool / envelope execution status). Nested business payloads and
+/// `stdout` JSON strings may carry their own `success` fields — those are
+/// **not** the tool outcome. Plain-text keyword matches are **not** treated as
+/// structured outcome (text fallback → unknown). Field-scoped object IDs are
+/// collected from the JSON tree (including multiple values and stdout JSON).
+///
+/// Multi-pass compression reuses a prior `[kept evidence]` /
+/// `[truncated evidence]` line so a later half-size pass cannot lose outer
+/// outcome bindings after the JSON body was truncated.
 fn extract_evidence_needles(text: &str) -> Vec<String> {
+    if let Some(prior) = prior_compressed_evidence(text) {
+        return prior;
+    }
+
     let mut out = Vec::new();
 
-    // Structured outcome bindings (JSON / key=value / key: value).
+    // Structured outcome: outer JSON only (no text substring fallback).
     push_unique(
         &mut out,
         extract_bool_binding(text, "success").map(|v| format!("success={v}")),
@@ -433,24 +444,20 @@ fn extract_evidence_needles(text: &str) -> Vec<String> {
         &mut out,
         extract_bool_binding(text, "failed").map(|v| format!("failed={v}")),
     );
-    if let Some(status) = extract_status_binding(text) {
-        push_unique(&mut out, Some(format!("status={status}")));
-    }
 
-    // Object / operation ids: labelled fields first, then common id-shaped tokens.
-    for (label, key) in [
-        ("operation_id", "operation_id"),
-        ("operation_id", "operationId"),
-        ("device_id", "device_id"),
-        ("device_id", "deviceId"),
-        ("id", "\"id\""),
-    ] {
-        if let Some(id) = extract_labelled_id(text, key) {
-            push_unique(&mut out, Some(format!("{label}={id}")));
-            if out.len() >= 10 {
-                return out;
-            }
+    if let Some(root) = parse_tool_result_json(text) {
+        if let Some(status) = root
+            .as_object()
+            .and_then(|o| o.get("status"))
+            .and_then(|v| json_scalar_string(v))
+        {
+            push_unique(&mut out, Some(format!("status={status}")));
         }
+        collect_field_scoped_ids(&root, &mut out);
+    } else if let Some(status) = extract_status_binding_text(text) {
+        // Status is orientation-only (does not satisfy structured outcome).
+        push_unique(&mut out, Some(format!("status={status}")));
+        collect_labelled_ids_from_text(text, &mut out);
     }
 
     for token in
@@ -490,25 +497,162 @@ fn push_unique(out: &mut Vec<String>, value: Option<String>) {
     }
 }
 
-fn extract_bool_binding(text: &str, key: &str) -> Option<&'static str> {
-    // "success": true | "success":false | success=true | success: true
-    let patterns = [format!("\"{key}\""), format!("{key}="), format!("{key}:")];
-    for pat in &patterns {
-        if let Some(idx) = text.find(pat.as_str()) {
-            let after = text[idx + pat.len()..].trim_start_matches([' ', '\t', ':', '=', '"']);
-            let lower = after.to_ascii_lowercase();
-            if lower.starts_with("true") {
-                return Some("true");
-            }
-            if lower.starts_with("false") {
-                return Some("false");
+/// Reuse needles from an earlier compress pass (before the JSON body was cut).
+fn prior_compressed_evidence(text: &str) -> Option<Vec<String>> {
+    for line in text.lines() {
+        let rest = line
+            .strip_prefix("[kept evidence] ")
+            .or_else(|| line.strip_prefix("[truncated evidence] "));
+        if let Some(rest) = rest {
+            let parts: Vec<String> = rest
+                .split(" · ")
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
+            // Only reuse a prior line that already carries structured bindings
+            // (not raw token scraps from a failed text fallback pass).
+            if parts.iter().any(|p| {
+                p.starts_with("success=")
+                    || p.starts_with("failed=")
+                    || p.starts_with("operation_id=")
+                    || p.starts_with("device_id=")
+                    || p.starts_with("id=")
+                    || p.starts_with("status=")
+                    || p.starts_with("$cached:op:")
+            }) {
+                return Some(parts);
             }
         }
     }
     None
 }
 
-fn extract_status_binding(text: &str) -> Option<String> {
+/// Outer-object boolean only. Nested / business / stdout `success` is ignored.
+/// Text fallback deliberately returns `None` (unknown). Already-compressed
+/// stubs may still expose `success=` via [`prior_compressed_evidence`].
+fn extract_bool_binding(text: &str, key: &str) -> Option<&'static str> {
+    if let Some(prior) = prior_compressed_evidence(text) {
+        let prefix = format!("{key}=");
+        for p in &prior {
+            if let Some(v) = p.strip_prefix(&prefix) {
+                if v == "true" {
+                    return Some("true");
+                }
+                if v == "false" {
+                    return Some("false");
+                }
+            }
+        }
+    }
+    let root = parse_tool_result_json(text)?;
+    let obj = root.as_object()?;
+    match obj.get(key)?.as_bool()? {
+        true => Some("true"),
+        false => Some("false"),
+    }
+}
+
+/// Parse the first JSON value in a tool-result body (after optional
+/// `[Tool: …]` header lines). Prefer `{…}` object roots so a leftover
+/// `[Tool:` prefix is never mistaken for a JSON array. Truncated /
+/// non-JSON bodies return `None` (bool text fallback → unknown).
+fn parse_tool_result_json(text: &str) -> Option<serde_json::Value> {
+    let mut body = text.trim();
+    while body.starts_with("[Tool:") {
+        body = match body.find('\n') {
+            Some(i) => body[i + 1..].trim_start(),
+            None => return None,
+        };
+    }
+    // Object first — tool envelopes are objects; `[` would match `[Tool:`.
+    let start = body.find('{').or_else(|| {
+        // Genuine JSON array payloads (no Tool header left).
+        body.find('[')
+    })?;
+    let slice = &body[start..];
+    if let Ok(v) = serde_json::from_str(slice) {
+        return Some(v);
+    }
+    // Trailing prose after a complete value: parse via deserializer stream.
+    let mut de = serde_json::Deserializer::from_str(slice).into_iter::<serde_json::Value>();
+    de.next().and_then(Result::ok)
+}
+
+fn json_scalar_string(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) if !s.is_empty() && s.len() <= 64 => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(if *b { "true".into() } else { "false".into() }),
+        _ => None,
+    }
+}
+
+const ID_FIELD_LABELS: &[(&str, &str)] = &[
+    ("operation_id", "operation_id"),
+    ("operation_id", "operationId"),
+    ("device_id", "device_id"),
+    ("device_id", "deviceId"),
+    ("id", "id"),
+];
+
+/// Walk JSON collecting field-scoped ids. Descends into nested objects/arrays
+/// and into string values that themselves parse as JSON (e.g. `stdout`), but
+/// never promotes nested bools into the outer outcome binding.
+fn collect_field_scoped_ids(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                for (label, field) in ID_FIELD_LABELS {
+                    if key == field {
+                        if let Some(id) = json_scalar_string(child) {
+                            if id.len() >= 2 {
+                                push_unique(out, Some(format!("{label}={id}")));
+                            }
+                        }
+                    }
+                }
+                if out.len() >= 10 {
+                    return;
+                }
+                // stdout / stderr / body often embed business JSON as a string.
+                if let serde_json::Value::String(s) = child {
+                    if looks_like_json_blob(s) {
+                        if let Ok(nested) = serde_json::from_str::<serde_json::Value>(s) {
+                            collect_field_scoped_ids(&nested, out);
+                        }
+                    }
+                } else {
+                    collect_field_scoped_ids(child, out);
+                }
+                if out.len() >= 10 {
+                    return;
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_field_scoped_ids(item, out);
+                if out.len() >= 10 {
+                    return;
+                }
+            }
+        }
+        serde_json::Value::String(s) if looks_like_json_blob(s) => {
+            if let Ok(nested) = serde_json::from_str::<serde_json::Value>(s) {
+                collect_field_scoped_ids(&nested, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn looks_like_json_blob(s: &str) -> bool {
+    let t = s.trim();
+    (t.starts_with('{') && t.contains('}')) || (t.starts_with('[') && t.contains(']'))
+}
+
+fn extract_status_binding_text(text: &str) -> Option<String> {
     for pat in ["\"status\"", "status=", "status:"] {
         if let Some(idx) = text.find(pat) {
             let after = text[idx + pat.len()..].trim_start_matches([' ', '\t', ':', '=', '"']);
@@ -524,7 +668,24 @@ fn extract_status_binding(text: &str) -> Option<String> {
     None
 }
 
-fn extract_labelled_id(text: &str, key: &str) -> Option<String> {
+fn collect_labelled_ids_from_text(text: &str, out: &mut Vec<String>) {
+    for (label, key) in [
+        ("operation_id", "operation_id"),
+        ("operation_id", "operationId"),
+        ("device_id", "device_id"),
+        ("device_id", "deviceId"),
+        ("id", "id"),
+    ] {
+        if let Some(id) = extract_labelled_id_text(text, key) {
+            push_unique(out, Some(format!("{label}={id}")));
+            if out.len() >= 10 {
+                return;
+            }
+        }
+    }
+}
+
+fn extract_labelled_id_text(text: &str, key: &str) -> Option<String> {
     let bare = key.trim_matches('"');
     let candidates = [
         format!("\"{bare}\""),
@@ -815,6 +976,133 @@ mod tests {
         assert!(
             !joined.contains("success=true") && !joined.contains("success=false"),
             "must not invent structured outcome"
+        );
+    }
+
+    #[test]
+    fn extract_bool_prefers_outer_false_over_nested_true() {
+        let body = r#"{"success":false,"summary":"tool failed","data":{"success":true,"device_id":"cam-nested-01"}}"#;
+        assert_eq!(extract_bool_binding(body, "success"), Some("false"));
+        let needles = extract_evidence_needles(body);
+        assert!(
+            needles.iter().any(|n| n == "success=false"),
+            "outer fail must win, got {needles:?}"
+        );
+        assert!(
+            !needles.iter().any(|n| n == "success=true"),
+            "nested business success must not become outcome, got {needles:?}"
+        );
+        assert!(
+            needles.iter().any(|n| n == "device_id=cam-nested-01"),
+            "field-scoped nested id kept, got {needles:?}"
+        );
+    }
+
+    #[test]
+    fn extract_bool_outer_false_with_nested_false() {
+        let body = r#"{"success":false,"data":{"success":false,"id":"biz-9"}}"#;
+        assert_eq!(extract_bool_binding(body, "success"), Some("false"));
+        let needles = extract_evidence_needles(body);
+        assert!(needles.iter().any(|n| n == "success=false"));
+        assert_eq!(
+            needles.iter().filter(|n| n.starts_with("success=")).count(),
+            1,
+            "only one outer success binding, got {needles:?}"
+        );
+        assert!(needles.iter().any(|n| n == "id=biz-9"));
+    }
+
+    #[test]
+    fn extract_keeps_multiple_field_scoped_object_ids() {
+        let body = r#"{"success":true,"data":{"items":[{"device_id":"cam-a"},{"device_id":"cam-b"},{"operation_id":"op-multi-1"}]}}"#;
+        let needles = extract_evidence_needles(body);
+        assert!(needles.iter().any(|n| n == "success=true"));
+        assert!(
+            needles.iter().any(|n| n == "device_id=cam-a"),
+            "first device id, got {needles:?}"
+        );
+        assert!(
+            needles.iter().any(|n| n == "device_id=cam-b"),
+            "second device id, got {needles:?}"
+        );
+        assert!(needles.iter().any(|n| n == "operation_id=op-multi-1"));
+    }
+
+    #[test]
+    fn extract_stdout_json_success_does_not_override_outer() {
+        let body = r#"{"success":false,"error":"write failed","data":{"stdout":"{\"success\":true,\"device_id\":\"eink-01\",\"status\":\"ok\"}","exit_code":1}}"#;
+        assert_eq!(extract_bool_binding(body, "success"), Some("false"));
+        let needles = extract_evidence_needles(body);
+        assert!(
+            needles.iter().any(|n| n == "success=false"),
+            "outer tool status, got {needles:?}"
+        );
+        assert!(
+            !needles.iter().any(|n| n == "success=true"),
+            "stdout JSON success must not override, got {needles:?}"
+        );
+        assert!(
+            needles.iter().any(|n| n == "device_id=eink-01"),
+            "field-scoped id from stdout JSON kept, got {needles:?}"
+        );
+    }
+
+    #[test]
+    fn text_success_keyword_fallback_is_unknown() {
+        // Prose / key=value without parseable JSON must NOT invent structured outcome.
+        let body = "shell said success=true for device_id=cam-text-01 but no JSON envelope";
+        assert_eq!(extract_bool_binding(body, "success"), None);
+        let needles = extract_evidence_needles(body);
+        assert!(
+            !evidence_has_structured_outcome(&needles),
+            "text fallback → unknown, got {needles:?}"
+        );
+        assert!(
+            !needles.iter().any(|n| n.starts_with("success=")),
+            "must not bind success from text, got {needles:?}"
+        );
+    }
+
+    #[test]
+    fn compress_outer_false_survives_nested_stdout_success() {
+        let stdout = format!(
+            "{{\"success\":true,\"device_id\":\"cam-green-01\",\"payload\":\"{}\"}}",
+            "x".repeat(20_000)
+        );
+        let body = format!(
+            r#"{{"success":false,"operation_id":"op-outer-1","data":{{"stdout":{}}}}}"#,
+            serde_json::Value::String(stdout)
+        );
+        let history = vec![
+            user("重跑"),
+            assistant("In a previous turn I called the shell tool."),
+            tool_as_user("shell", &body),
+        ];
+        let assistant_tokens = message_tokens(&history[1]);
+        let budget = assistant_tokens + 350;
+        let got = select_messages_for_history_budget(&history, budget);
+        assert!(got.truncated);
+        let joined: String = got
+            .messages
+            .iter()
+            .map(|m| m.content.as_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("success=false"),
+            "compressed evidence must keep outer fail, got: {joined}"
+        );
+        assert!(
+            !joined.contains("success=true"),
+            "must not keep stdout nested success as outcome, got: {joined}"
+        );
+        assert!(
+            joined.contains("op-outer-1") || joined.contains("operation_id=op-outer-1"),
+            "must keep operation id, got: {joined}"
+        );
+        assert!(
+            !joined.contains("[unknown: need details"),
+            "outer structured outcome present → no unknown"
         );
     }
 
