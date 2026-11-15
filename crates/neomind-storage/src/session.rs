@@ -1050,6 +1050,9 @@ impl SessionStore {
 
     /// Test seam: replace `op_ledgers` with a wrong value type so
     /// [`load_op_ledger`] returns `Err` (TableTypeMismatch), not `Ok(None)`.
+    ///
+    /// Gated behind `test-utils` so it never compiles into a release binary.
+    #[cfg(feature = "test-utils")]
     #[doc(hidden)]
     pub fn debug_corrupt_op_ledger_table_type(&self) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;

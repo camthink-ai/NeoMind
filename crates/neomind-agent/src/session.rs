@@ -3200,6 +3200,10 @@ mod tests {
 
     /// GPT tip e328cf9f P1: `load_op_ledger` must Err on non-missing table
     /// errors; `restore_session_from_db` must mark untrusted (not silent empty).
+    ///
+    /// Needs `neomind-storage/test-utils` (via this crate's `test-utils`) for
+    /// the corrupt-table seam — never available in release builds.
+    #[cfg(feature = "test-utils")]
     #[tokio::test]
     async fn op_ledger_load_table_error_marks_untrusted_via_get_session() {
         let manager = create_temp_manager();

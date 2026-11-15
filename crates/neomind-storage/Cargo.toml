@@ -45,6 +45,11 @@ redb = []
 # Settings migration support
 settings = []
 
+# Test-only seams (e.g. corrupt-table helpers). Off by default so they never
+# ship in a release binary. Enable via `--features test-utils` or transitively
+# through `neomind-agent/test-utils`.
+test-utils = []
+
 # All features
 all = ["redb", "settings"]
 
