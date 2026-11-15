@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through contentNodes, honest automation/device/agent status surfaces, and offline eval freezes (Plan E/F). Product version is now **1.3.0** across Cargo/Web/Tauri/locks. Live Plan E 9/10, tip 138, Appliance, and 5-person usability remain open — see `docs/development/1.3.0-release-prep-2026-11-14.md`.
 
 ### Upgrade notes
+- Builtin llama.cpp runtime pin (official-asset platforms) moves **b12024 → b12359** (= llama.cpp **v1.0.0**, 2026-11-13). Semver tag `v1.0.0` ships binaries under nightly build `b12359`; NeoMind keeps the `bNNNN` cache/URL shape. Jetson and Linux-x64-CUDA self-hosted pins stay at **b12024** until matching `NeoMind-Runtimes` assets exist. `--defrag-thold` was never used by NeoMind; spawn sampling flags (`--temp`/`--top-p`/`--top-k`/`--min-p`/`--repeat-penalty`) unchanged.
 - Chat composer can attach typed `@` mentions via server search (`GET /api/mentions/search`) and send-time resolve (`POST /api/mentions/resolve`); invalid refs stay in the draft marked invalid instead of silently dropping.
 - Messages may carry ordered `contentNodes` (v1); old `references` preamble path still works for prior clients/sessions.
 - Transform **Test** is honest: failure / no-output / partial / unverified are distinct; a non-empty unverified set is never a plain green success.

@@ -25,7 +25,7 @@
 # =============================================================================
 set -euo pipefail
 
-LLAMA_CPP_TAG="${LLAMA_CPP_TAG:-b12024}"
+LLAMA_CPP_TAG="${LLAMA_CPP_TAG:-b12359}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 

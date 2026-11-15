@@ -56,18 +56,24 @@ use std::path::PathBuf;
 /// `recommended`); a runtime fix ships as a channel edit, no product release
 /// needed (the b11960 macOS Metal breakage class). The self-hosted variants
 /// have their own fallback pins below.
-pub const LLAMA_CPP_VERSION: &str = "b12024";
+/// Official llama.cpp v1.0.0 (2026-11-13). Semver release `v1.0.0` publishes
+/// binaries under the matching nightly build tag `b12359` (see that release's
+/// `nightly-tag.txt`); NeoMind's pin/cache/URL shape stays the canonical
+/// `bNNNN` tag.
+pub const LLAMA_CPP_VERSION: &str = "b12359";
 
 /// Fallback pin for OUR Jetson runtime (the only Jetson build that exists —
 /// armv8.2-a + sm_87; see JETSON_RUNTIME_SHA256 for the build recipe).
 /// Decoupled from LLAMA_CPP_VERSION so the official-platform pin can move
-/// while the Jetson asset catches up at its own cadence.
+/// while the Jetson asset catches up at its own cadence. Held at b12024 —
+/// no `runtime-b12359` Jetson asset in NeoMind-Runtimes yet.
 pub const JETSON_RUNTIME_VERSION: &str = "b12024";
 
 /// Fallback pin for OUR Linux x64 CUDA runtime. Official ubuntu-cuda assets
 /// exist but require glibc 2.38; ours keeps the 22.04 floor (T4-class
 /// fleet), so it moves only when we rebuild it. Other CUDA platforms
-/// (Windows) use the official assets under LLAMA_CPP_VERSION.
+/// (Windows) use the official assets under LLAMA_CPP_VERSION. Held at
+/// b12024 — no `runtime-b12359` linux-cuda asset in NeoMind-Runtimes yet.
 pub const LINUX_CUDA_RUNTIME_VERSION: &str = "b12024";
 
 /// The compiled fallback pin for a platform/variant. The RUNTIME effective
