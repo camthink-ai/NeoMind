@@ -361,8 +361,14 @@ pub enum ConfirmLifecycleNotice {
 }
 
 /// Mutating tools that advertise [`NEW_OPERATION_ARG`] in the LLM schema.
-pub const NEW_OPERATION_PROTOCOL_TOOLS: &[&str] =
-    &["shell", "run_now", "file_write", "file_edit", "image_edit"];
+pub const NEW_OPERATION_PROTOCOL_TOOLS: &[&str] = &[
+    "shell",
+    "run_now",
+    "device_command",
+    "file_write",
+    "file_edit",
+    "image_edit",
+];
 
 /// Whether tool args request a fresh same-args Operation (model protocol bit).
 pub fn wants_new_operation(arguments: &serde_json::Value) -> bool {
@@ -2044,7 +2050,9 @@ pub fn derive_tool_capability_resolved(
         "file_read" | "web_search" | "web_fetch" | "vision" | "skill" | "memory" => {
             ToolCapability::read_query()
         }
-        "file_write" | "file_edit" | "image_edit" | "run_now" => ToolCapability::mutating_write(),
+        "file_write" | "file_edit" | "image_edit" | "run_now" | "device_command" => {
+            ToolCapability::mutating_write()
+        }
         _ => {
             // Conservative default: treat unknown tools / extensions as
             // non-idempotent side-effects (must enter the write gate).

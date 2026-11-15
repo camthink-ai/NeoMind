@@ -1344,7 +1344,84 @@ mod tests {
         let fp2 = mutating_write_fingerprint("file_write", &fw).expect("file_write");
         assert!(fp2.starts_with("file_write|"));
 
+        let dc = serde_json::json!({
+            "device": "cam-1",
+            "command": "render_text",
+            "params": {"text": "hello"}
+        });
+        let fp_dc = mutating_write_fingerprint("device_command", &dc).expect("device_command");
+        assert!(fp_dc.starts_with("device_command|"));
+        assert!(fp_dc.contains("cam-1"));
+
         assert!(mutating_write_fingerprint("skill", &serde_json::json!({"name": "x"})).is_none());
+    }
+
+    #[test]
+    fn device_command_is_mutating_write_and_gates() {
+        use crate::agent::task_continuity::{
+            derive_tool_capability, inject_new_operation_protocol, NEW_OPERATION_ARG,
+        };
+
+        let args = serde_json::json!({
+            "device": "speaker-9",
+            "command": "play_cue",
+            "params": {"cue": "chime"}
+        });
+        let cap = derive_tool_capability("device_command", &args);
+        assert!(!cap.read_only, "device_command must not be read-only");
+        assert!(
+            !cap.idempotent,
+            "device_command must be non-idempotent mutating write"
+        );
+        assert!(
+            matches!(
+                cap.retry_policy,
+                crate::agent::task_continuity::RetryPolicy::OnFailure { max_attempts: 2 }
+            ),
+            "device_command must use mutating_write retry policy, got {:?}",
+            cap.retry_policy
+        );
+        let fp = mutating_write_fingerprint("device_command", &args).expect("fp");
+        let mut with_flag = args.clone();
+        with_flag
+            .as_object_mut()
+            .unwrap()
+            .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+        let fp2 = mutating_write_fingerprint("device_command", &with_flag).expect("fp+flag");
+        assert_eq!(fp, fp2, "_new_operation must not change business fp");
+
+        let mut defs = vec![crate::toolkit::tool::ToolDefinition {
+            name: "device_command".into(),
+            description: "Send a native command".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "device": {"type": "string"},
+                    "command": {"type": "string"},
+                    "params": {"type": "object"}
+                },
+                "required": ["device", "command"]
+            }),
+            example: None,
+            category: crate::toolkit::tool::ToolCategory::System,
+            scenarios: vec![],
+            relationships: Default::default(),
+            deprecated: false,
+            replaced_by: None,
+            version: "1.0.0".into(),
+            examples: vec![],
+            response_format: None,
+            namespace: None,
+        }];
+        inject_new_operation_protocol(&mut defs);
+        assert!(
+            defs[0]
+                .parameters
+                .get("properties")
+                .and_then(|p| p.get(NEW_OPERATION_ARG))
+                .is_some(),
+            "device_command schema must advertise _new_operation"
+        );
     }
 
     /// GPT tip 5d8ed5f0: non-CLI writes + compound / unknown shell must not

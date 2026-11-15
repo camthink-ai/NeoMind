@@ -3,6 +3,7 @@
 //! This crate provides function calling capabilities for the NeoMind platform.
 
 pub mod agent_tools;
+pub mod device_command;
 pub mod error;
 pub mod extension_tools;
 pub mod file_edit;
@@ -45,6 +46,11 @@ pub use image_edit::ImageEditTool;
 
 pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
+
+pub use device_command::{
+    CommandCapability, DeviceCommandCatalog, DeviceCommandOutcome, DeviceCommandTool,
+    DiscoverDeviceCommandsCallback, ParamCapability, SendDeviceCommandCallback,
+};
 
 /// Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

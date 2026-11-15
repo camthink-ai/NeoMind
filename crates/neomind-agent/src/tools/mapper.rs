@@ -50,6 +50,12 @@ impl ToolNameMapper {
         self.register_simplified("extension", "shell");
         self.register_simplified("skill", "skill");
         self.register_simplified("shell", "shell");
+        // First-class registry tool (not CLI domain). Must win before fuzzy
+        // substring match: "device_command".contains("device"|"command") would
+        // otherwise route it to shell and break structured device control.
+        self.register_simplified("device_command", "device_command");
+        self.register_simplified("run_now", "run_now");
+        self.register_simplified("query_conclusion", "query_conclusion");
 
         // Aliases that point to intermediate domain names (not directly to shell).
         // This ensures resolve_domain_name() returns the domain name for
@@ -606,6 +612,11 @@ mod tests {
         // Non-CLI tools still map to themselves
         assert_eq!(mapper.resolve("skill"), "skill");
         assert_eq!(mapper.resolve("shell"), "shell");
+        // Structured device_command must NOT fuzzy-match into device→shell
+        // (substring "device" / "command" would otherwise steal it).
+        assert_eq!(mapper.resolve("device_command"), "device_command");
+        assert_eq!(mapper.resolve("run_now"), "run_now");
+        assert_eq!(mapper.resolve("query_conclusion"), "query_conclusion");
     }
 
     #[test]

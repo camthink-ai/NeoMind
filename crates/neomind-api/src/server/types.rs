@@ -2113,37 +2113,12 @@ impl ServerState {
         }
     }
 
-    /// Initialize tool registry with CLI-first design.
-    /// Domain tools (device, agent, rule, message, etc.) are handled via `neomind` CLI
-    /// commands through the shell tool. Built-in skills guide the LLM on CLI usage.
-    pub async fn init_tools(&self) {
-        use neomind_agent::toolkit::ToolRegistryBuilder;
+    /// Register chat agent tools that depend on ServerState callbacks
+    /// (`query_conclusion`, `run_now`, `device_command`). Shared by
+    /// [`Self::init_tools`] and [`Self::refresh_extension_tools`] so a
+    /// refresh cannot drop them.
+    fn register_stateful_chat_tools(&self, registry: &mut neomind_agent::toolkit::ToolRegistry) {
         use std::sync::Arc;
-
-        let mut registry = ToolRegistryBuilder::new()
-            // Extension registry for scanning extension-provided tools
-            .with_extension_registry(self.extensions.registry.clone())
-            // Shell tool — CLI-first: domain operations via `neomind` commands
-            .with_shell_tool(Some(neomind_agent::toolkit::ShellConfig {
-                enabled: true,
-                timeout_secs: 30,
-                max_output_chars: 10000,
-            }))
-            // Scan extensions and register their tools (dynamic, keep)
-            .with_extensions_scanned()
-            .await
-            .build();
-
-        // Register standalone tools that don't map to CLI commands
-        // Skill tool — manages skill CRUD (not CLI-replaceable)
-        let skill_registry = self.agents.session_manager.skill_registry();
-        {
-            let tool = neomind_agent::toolkit::skill_tool::SkillTool::with_data_dir(
-                skill_registry.clone(),
-                self.data_dir.clone(),
-            );
-            registry.register(Arc::new(tool));
-        }
 
         // Ask an agent what it already concluded. Registered ahead of the
         // CLI-routed tools on purpose: "what does the cold room look like"
@@ -2220,6 +2195,166 @@ impl ServerState {
                 ),
             ));
         }
+
+        // Structured device command — device id + command + params JSON.
+        // Discovers param schemas from the device type template (no type
+        // special-cases). Parallel to shell `neomind device control …` (CLI kept).
+        {
+            let state = self.clone();
+            let discover: neomind_agent::toolkit::DiscoverDeviceCommandsCallback =
+                Arc::new(move |needle: String| {
+                    let state = state.clone();
+                    Box::pin(async move {
+                        let service = &state.devices.service;
+                        let config = if let Some(c) = service.get_device(&needle) {
+                            c
+                        } else if let Some(c) = service.get_device_by_name(&needle).await {
+                            c
+                        } else {
+                            return Err(format!(
+                                "device '{needle}' not found (pass id or exact name)"
+                            ));
+                        };
+                        let template =
+                            service.get_template(&config.device_type).ok_or_else(|| {
+                                format!(
+                                    "device '{}' has type '{}' but no template is registered",
+                                    config.device_id, config.device_type
+                                )
+                            })?;
+                        let commands = template
+                            .commands
+                            .into_iter()
+                            .map(|cmd| {
+                                let parameters = cmd
+                                    .parameters
+                                    .into_iter()
+                                    .map(|p| {
+                                        let data_type = match p.data_type {
+                                            neomind_devices::mdl::MetricDataType::Integer => {
+                                                "integer"
+                                            }
+                                            neomind_devices::mdl::MetricDataType::Float => "float",
+                                            neomind_devices::mdl::MetricDataType::String => {
+                                                "string"
+                                            }
+                                            neomind_devices::mdl::MetricDataType::Boolean => {
+                                                "boolean"
+                                            }
+                                            neomind_devices::mdl::MetricDataType::Binary => {
+                                                "binary"
+                                            }
+                                            neomind_devices::mdl::MetricDataType::Enum {
+                                                ..
+                                            } => "enum",
+                                            neomind_devices::mdl::MetricDataType::Array {
+                                                ..
+                                            } => "array",
+                                        }
+                                        .to_string();
+                                        neomind_agent::toolkit::ParamCapability {
+                                            name: p.name,
+                                            display_name: p.display_name,
+                                            data_type,
+                                            required: p.required,
+                                            description: if p.help_text.is_empty() {
+                                                String::new()
+                                            } else {
+                                                p.help_text
+                                            },
+                                        }
+                                    })
+                                    .collect();
+                                neomind_agent::toolkit::CommandCapability {
+                                    name: cmd.name,
+                                    display_name: cmd.display_name,
+                                    description: cmd.description,
+                                    parameters,
+                                }
+                            })
+                            .collect();
+                        Ok(neomind_agent::toolkit::DeviceCommandCatalog {
+                            device_id: config.device_id,
+                            device_name: config.name,
+                            device_type: config.device_type,
+                            commands,
+                        })
+                    })
+                });
+
+            let state = self.clone();
+            let send: neomind_agent::toolkit::SendDeviceCommandCallback =
+                Arc::new(move |device_id: String, command: String, params| {
+                    let state = state.clone();
+                    Box::pin(async move {
+                        let (_value, delivery) = state
+                            .devices
+                            .service
+                            .send_command_reported(&device_id, &command, params)
+                            .await
+                            .map_err(|e| format!("{e:?}"))?;
+                        let delivery_tag = match &delivery {
+                            neomind_devices::service::CommandDelivery::AdapterAccepted {
+                                ..
+                            } => "adapter_accepted",
+                            neomind_devices::service::CommandDelivery::ExtensionAccepted => {
+                                "extension_accepted"
+                            }
+                            neomind_devices::service::CommandDelivery::DeviceAcknowledged => {
+                                "device_acknowledged"
+                            }
+                            neomind_devices::service::CommandDelivery::PhysicalEffectVerified => {
+                                "physical_effect_verified"
+                            }
+                        };
+                        Ok(neomind_agent::toolkit::DeviceCommandOutcome {
+                            device_id,
+                            command,
+                            delivery: delivery_tag.to_string(),
+                            delivery_note: delivery.describe(),
+                        })
+                    })
+                });
+
+            registry.register(Arc::new(neomind_agent::toolkit::DeviceCommandTool::new(
+                discover, send,
+            )));
+        }
+    }
+
+    /// Initialize tool registry with CLI-first design.
+    /// Domain tools (device, agent, rule, message, etc.) are handled via `neomind` CLI
+    /// commands through the shell tool. Built-in skills guide the LLM on CLI usage.
+    pub async fn init_tools(&self) {
+        use neomind_agent::toolkit::ToolRegistryBuilder;
+        use std::sync::Arc;
+
+        let mut registry = ToolRegistryBuilder::new()
+            // Extension registry for scanning extension-provided tools
+            .with_extension_registry(self.extensions.registry.clone())
+            // Shell tool — CLI-first: domain operations via `neomind` commands
+            .with_shell_tool(Some(neomind_agent::toolkit::ShellConfig {
+                enabled: true,
+                timeout_secs: 30,
+                max_output_chars: 10000,
+            }))
+            // Scan extensions and register their tools (dynamic, keep)
+            .with_extensions_scanned()
+            .await
+            .build();
+
+        // Register standalone tools that don't map to CLI commands
+        // Skill tool — manages skill CRUD (not CLI-replaceable)
+        let skill_registry = self.agents.session_manager.skill_registry();
+        {
+            let tool = neomind_agent::toolkit::skill_tool::SkillTool::with_data_dir(
+                skill_registry.clone(),
+                self.data_dir.clone(),
+            );
+            registry.register(Arc::new(tool));
+        }
+
+        self.register_stateful_chat_tools(&mut registry);
 
         // Web search tool — keyless structured search (Bing RSS channel)
         registry.register(Arc::new(neomind_agent::toolkit::WebSearchTool::new()));
@@ -2318,6 +2453,10 @@ impl ServerState {
             );
             registry.register(Arc::new(tool));
         }
+
+        // Re-register stateful chat tools (query_conclusion / run_now /
+        // device_command) — previously dropped on extension refresh.
+        self.register_stateful_chat_tools(&mut registry);
 
         // Re-register web/file tools
         registry.register(Arc::new(neomind_agent::toolkit::WebSearchTool::new()));
