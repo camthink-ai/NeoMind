@@ -3197,6 +3197,33 @@ mod tests {
             "mark_cleaned_up should suppress the Drop-spawned removal"
         );
     }
+
+    /// GPT tip e328cf9f P1: `load_op_ledger` must Err on non-missing table
+    /// errors; `restore_session_from_db` must mark untrusted (not silent empty).
+    #[tokio::test]
+    async fn op_ledger_load_table_error_marks_untrusted_via_get_session() {
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        manager
+            .save_history(&session_id, &[AgentMessage::user("seed")])
+            .unwrap();
+
+        // Force a non-missing table error (type mismatch). Pre-fix this was
+        // swallowed as Ok(None) and restore trusted an empty ledger.
+        manager
+            .session_store()
+            .debug_corrupt_op_ledger_table_type()
+            .unwrap();
+
+        // Evict so the next get_session hits restore_session_from_db → load_op_ledger.
+        manager.sessions.write().await.remove(&session_id);
+
+        let agent = manager.get_session(&session_id).await.unwrap();
+        assert!(
+            agent.op_ledger_untrusted().await,
+            "non-missing load_op_ledger error must fail closed via real restore path"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -1025,25 +1025,42 @@ impl SessionStore {
     }
 
     /// Load a session's persisted op ledger JSON, if any.
+    ///
+    /// Fail-closed: only a truly missing table or missing key yields
+    /// `Ok(None)`. `begin_read` / non-missing table errors (type mismatch,
+    /// storage, already-open, …) return `Err` so callers mark the ledger
+    /// untrusted instead of treating failure as an empty trusted ledger.
     pub fn load_op_ledger(&self, session_id: &str) -> Result<Option<Vec<u8>>, Error> {
-        let read_txn = match self.db.begin_read() {
-            Ok(txn) => txn,
-            Err(_) => return Ok(None),
-        };
+        let read_txn = self.db.begin_read()?;
         let table = match read_txn.open_table(OP_LEDGER_TABLE) {
             Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
             Err(e) => {
-                let error_msg = e.to_string();
-                if error_msg.contains("does not exist") || error_msg.contains("Table") {
-                    return Ok(None);
-                }
-                return Err(Error::Storage(format!("Redb table error: {}", e)));
+                return Err(Error::Storage(format!(
+                    "Failed to open op_ledgers table: {}",
+                    e
+                )));
             }
         };
         match table.get(session_id)? {
             Some(value) => Ok(Some(value.value())),
             None => Ok(None),
         }
+    }
+
+    /// Test seam: replace `op_ledgers` with a wrong value type so
+    /// [`load_op_ledger`] returns `Err` (TableTypeMismatch), not `Ok(None)`.
+    #[doc(hidden)]
+    pub fn debug_corrupt_op_ledger_table_type(&self) -> Result<(), Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let _ = write_txn.delete_table(OP_LEDGER_TABLE)?;
+            const WRONG: TableDefinition<&str, i64> = TableDefinition::new("op_ledgers");
+            let mut table = write_txn.open_table(WRONG)?;
+            table.insert("__type_mismatch__", 0i64)?;
+        }
+        write_txn.commit()?;
+        Ok(())
     }
 
     /// Delete a session's persisted op ledger (no-op when missing).
@@ -1776,6 +1793,51 @@ mod tests {
         store.save_op_ledger("ledger-session", payload).unwrap();
         store.delete_session("ledger-session").unwrap();
         assert!(store.load_op_ledger("ledger-session").unwrap().is_none());
+    }
+
+    #[test]
+    fn load_op_ledger_missing_table_or_key_is_none() {
+        // Fresh store never created op_ledgers → TableDoesNotExist → Ok(None).
+        let store = SessionStore::open_isolated(":memory:").unwrap();
+        assert!(store.load_op_ledger("no-such-session").unwrap().is_none());
+
+        // Table exists after a save, but a different key is still Ok(None).
+        store
+            .save_op_ledger("other-session", br#"{"operations":[]}"#)
+            .unwrap();
+        assert!(store.load_op_ledger("no-such-session").unwrap().is_none());
+    }
+
+    #[test]
+    fn load_op_ledger_table_type_mismatch_is_err_not_none() {
+        // Same table name, wrong value type: must Err (fail closed), not Ok(None).
+        // Pre-fix string match on "Table" swallowed TableTypeMismatch as missing.
+        let temp_dir =
+            std::env::temp_dir().join(format!("session_ledger_mismatch_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let db_path = temp_dir.join("sessions.redb");
+
+        {
+            let db = Database::create(&db_path).unwrap();
+            let write = db.begin_write().unwrap();
+            {
+                const WRONG: TableDefinition<&str, i64> = TableDefinition::new("op_ledgers");
+                let mut table = write.open_table(WRONG).unwrap();
+                table.insert("sid", 1i64).unwrap();
+            }
+            write.commit().unwrap();
+        }
+
+        let store = SessionStore::open_isolated(&db_path).unwrap();
+        let err = store
+            .load_op_ledger("sid")
+            .expect_err("type mismatch must not look like a missing ledger");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("op_ledgers") || msg.contains("Failed to open"),
+            "unexpected error: {msg}"
+        );
     }
 
     #[test]
