@@ -219,29 +219,22 @@ pub async fn attach_pending_content_nodes(
     }
 }
 
-/// Queue host/UI `AuthorizeNewOperation` target for the next user push.
+/// Convert host/UI `AuthorizeNewOperation` into the pair that travels with
+/// the message into atomic [`AgentInternalState::accept_user_message`].
 ///
-/// Production path for multi-Unknown confirm: `ChatRequest.authorizeNewOperation`
-/// → pending on the agent → `push_message` applies the scoped grant.
-pub async fn attach_pending_authorize_new_op(
-    state: &ServerState,
-    session_id: &str,
+/// Empty / missing fields → `None` (phrase shortcuts still apply for a
+/// unique Unknown). No shared pending hop — authorization is an argument.
+pub fn authorize_new_op_pair(
     authorize: Option<&crate::models::AuthorizeNewOperationRequest>,
-) {
-    let Some(auth) = authorize else {
-        return;
-    };
+) -> Option<(String, String)> {
+    let auth = authorize?;
     if auth.prior_operation_id.is_empty() || auth.write_fingerprint.is_empty() {
-        return;
+        return None;
     }
-    if let Ok(agent) = state.agents.session_manager.get_session(session_id).await {
-        agent
-            .set_pending_authorize_new_op(
-                Some(auth.prior_operation_id.clone()),
-                Some(auth.write_fingerprint.clone()),
-            )
-            .await;
-    }
+    Some((
+        auth.prior_operation_id.clone(),
+        auth.write_fingerprint.clone(),
+    ))
 }
 
 /// Hard-fail errors for the content-nodes protocol (never silent).

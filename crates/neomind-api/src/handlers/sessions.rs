@@ -1345,12 +1345,8 @@ pub async fn chat_handler(
         req.references.as_deref(),
     )
     .await;
-    super::chat_refs::attach_pending_authorize_new_op(
-        &state,
-        &id,
-        req.authorize_new_operation.as_ref(),
-    )
-    .await;
+    let authorize_pair =
+        super::chat_refs::authorize_new_op_pair(req.authorize_new_operation.as_ref());
 
     // Branch on multimodal input for REST parity with WS. The old HTTP handler
     // dropped req.images entirely, so a REST vision client silently degraded to
@@ -1375,11 +1371,12 @@ pub async fn chat_handler(
         state
             .agents
             .session_manager
-            .process_message_multimodal_with_backend_stream(
+            .process_message_multimodal_with_backend_stream_authorize(
                 &id,
                 &final_message,
                 images,
                 req.backend_id.as_deref(),
+                authorize_pair,
             )
             .await
     } else {
@@ -1391,6 +1388,7 @@ pub async fn chat_handler(
                 &final_message,
                 req.backend_id.as_deref(),
                 req.selected_skills.as_deref(),
+                authorize_pair,
             )
             .await
     };
@@ -2059,23 +2057,21 @@ async fn handle_ws_socket(
                                             chat_req.references.as_deref(),
                                         )
                                         .await;
-                                        super::chat_refs::attach_pending_authorize_new_op(
-                                            &task_state,
-                                            &task_session_id,
+                                        let authorize_pair = super::chat_refs::authorize_new_op_pair(
                                             chat_req.authorize_new_operation.as_ref(),
-                                        )
-                                        .await;
+                                        );
 
                                         // Use streaming for multimodal messages.
                                         // The clone here is the ONE deliberate copy:
                                         // `images` must stay alive for the
                                         // non-streaming fallback below if stream
                                         // setup fails.
-                                        match task_state.agents.session_manager.process_message_multimodal_with_backend_stream(
+                                        match task_state.agents.session_manager.process_message_multimodal_with_backend_stream_authorize(
                                             &task_session_id,
                                             &final_message,
                                             images.clone(),
                                             backend_id_str.as_deref(),
+                                            authorize_pair,
                                         ).await {
                                             Ok(stream) => {
                                                 // Clone the channel sender and session ID for the spawned task
@@ -2217,12 +2213,9 @@ async fn handle_ws_socket(
                                                     task_references.as_deref(),
                                                 )
                                                 .await;
-                                                super::chat_refs::attach_pending_authorize_new_op(
-                                                    &task_state,
-                                                    &task_session_id,
+                                                let authorize_pair = super::chat_refs::authorize_new_op_pair(
                                                     task_authorize_new_op.as_ref(),
-                                                )
-                                                .await;
+                                                );
                                                 match task_state
                                                     .agents
                                                     .session_manager
@@ -2231,6 +2224,7 @@ async fn handle_ws_socket(
                                                         &task_final_message,
                                                         task_backend_id.as_deref(),
                                                         task_skills.as_deref(),
+                                                        authorize_pair,
                                                     )
                                                     .await
                                                 {

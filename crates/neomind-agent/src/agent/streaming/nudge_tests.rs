@@ -137,6 +137,7 @@ async fn guide_turn(rt: &MockLlmRuntime) -> Vec<AgentEvent> {
         super::StreamSafeguards::default(),
         None,
         None,
+        0,
     )
     .await
     .expect("stream");
@@ -224,6 +225,7 @@ async fn text_path_chat_policy_labels_promise_without_extra_round() {
         super::StreamSafeguards::default(),
         None,
         None,
+        0,
     )
     .await
     .expect("stream");
@@ -271,6 +273,7 @@ async fn text_path_opt_in_behavioral_guards_still_recover_tool_call() {
         super::StreamSafeguards::default().with_behavioral_guards(true),
         None,
         None,
+        0,
     )
     .await
     .expect("stream");
@@ -312,6 +315,7 @@ async fn complete_reply_with_tail_politeness_closing_never_enters_round_two() {
         super::StreamSafeguards::default(),
         None,
         None,
+        0,
     )
     .await
     .expect("stream");
@@ -359,6 +363,7 @@ async fn plan_only_request_suppresses_nudge_and_label() {
         super::StreamSafeguards::default().with_behavioral_guards(true),
         None,
         None,
+        0,
     )
     .await
     .expect("stream");
@@ -412,6 +417,7 @@ async fn later_round_degenerate_output_does_not_resurrect_stale_narration() {
         super::StreamSafeguards::default().with_behavioral_guards(true),
         None,
         None,
+        0,
     )
     .await
     .expect("stream");
@@ -456,6 +462,7 @@ async fn nudge_round_answering_empty_array_restores_the_narration() {
         super::StreamSafeguards::default().with_behavioral_guards(true),
         None,
         None,
+        0,
     )
     .await
     .expect("stream");
@@ -527,6 +534,7 @@ async fn multimodal_path_narration_nudge_recovers_tool_call() {
         super::StreamSafeguards::default(),
         None,
         None,
+        None,
     )
     .await
     .expect("stream");
@@ -583,6 +591,7 @@ mod multimodal_recovery_guards {
             user_message,
             vec![],
             crate::agent::StreamSafeguards::default(),
+            None,
             None,
             None,
         )
@@ -746,6 +755,7 @@ async fn identical_reusable_tool_call_is_served_from_turn_cache() {
         super::StreamSafeguards::default(),
         None,
         None,
+        0,
     )
     .await
     .expect("stream");
@@ -825,6 +835,7 @@ async fn mixed_progress_request(
         super::StreamSafeguards::default(),
         None,
         None,
+        0,
     )
     .await
     .expect("stream");
@@ -1057,6 +1068,7 @@ async fn assert_recovery_keeps_reasoning_out_of_content(
         super::StreamSafeguards::default(),
         None,
         None,
+        0,
     )
     .await
     .unwrap();

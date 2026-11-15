@@ -60,8 +60,7 @@ pub(crate) async fn execute_with_retry_impl(
 
     // Strip lifecycle flag then canonicalize once — same contract as the
     // write fingerprint path (flag must never become `--_new_operation`).
-    let exec_args =
-        crate::agent::task_continuity::canonicalize_tool_arguments(name, &arguments);
+    let exec_args = crate::agent::task_continuity::canonicalize_tool_arguments(name, &arguments);
 
     // Capability from the canonical executable call (drives write-gate /
     // fingerprint elsewhere). Explicit registry Unsafe must NOT be overridden

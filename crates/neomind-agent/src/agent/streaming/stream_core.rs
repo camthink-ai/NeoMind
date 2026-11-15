@@ -151,22 +151,13 @@ pub async fn process_stream_events_with_safeguards(
     safeguards: StreamSafeguards,
     conversation_summary: Option<String>,
     summary_up_to_index: Option<u64>,
+    // Immutable Turn from AcceptedTurnContext (same lock as message save).
+    // Passed locally — never re-read from shared agent state after awaits.
+    call_site_turn: u64,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-    // Freeze call-site Turn ID NOW — allocated when the user message was
-    // saved (`push_message` → `active_call_site_turn`). Must not wait for
-    // the lazy async_stream first poll (a later confirm Turn must not leak in).
-    // Eager read is before any LLM await; fall back to turn_count only for
-    // harnesses that skip push_message (still not a lazy-poll hop).
-    let call_site_turn = {
-        let state = internal_state.read().await;
-        if state.active_call_site_turn > 0 {
-            state.active_call_site_turn
-        } else {
-            state.task_state.turn_count
-        }
-    };
+    let call_site_turn = call_site_turn;
     // New user turn: drop transient skill bodies; TaskState (goal / writes)
-    // survives on AgentInternalState (push_message already applied directives).
+    // survives on AgentInternalState (accept already applied directives).
     // Later ReAct rounds in THIS turn may reload skills under the total budget.
     super::super::task_continuity::begin_user_turn_clear_transient_skills(&llm_interface).await;
     {

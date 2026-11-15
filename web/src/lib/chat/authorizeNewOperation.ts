@@ -15,3 +15,32 @@ export function parseAuthorizeNewOperationTarget(
   if (!priorOperationId || !writeFingerprint) return null
   return { priorOperationId, writeFingerprint }
 }
+
+/** Phrases that map to AuthorizeNewOperation on the server (unique-Unknown shortcut). */
+export function isAuthorizeNewOperationPhrase(text: string): boolean {
+  const t = text.trim().toLowerCase()
+  return (
+    t === '确认重跑' ||
+    t === 'confirm re-run' ||
+    t === 'confirm rerun' ||
+    t === 'authorize new operation'
+  )
+}
+
+/**
+ * Confirm-op loop: when the user sends a confirm phrase, attach the latest
+ * parseable target from recent assistant/tool text so multi-Unknown grants
+ * travel with the message (not a shared hop).
+ */
+export function resolveAuthorizeNewOperationForSend(
+  userText: string,
+  recentTexts: Iterable<string>,
+): AuthorizeNewOperationRequest | null {
+  if (!isAuthorizeNewOperationPhrase(userText)) return null
+  let found: AuthorizeNewOperationRequest | null = null
+  for (const text of recentTexts) {
+    const parsed = parseAuthorizeNewOperationTarget(text)
+    if (parsed) found = parsed
+  }
+  return found
+}

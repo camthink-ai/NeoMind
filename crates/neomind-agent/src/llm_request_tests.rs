@@ -318,6 +318,7 @@ async fn new_text_turn_clears_old_skill_but_keeps_skills_loaded_in_its_tool_roun
             Default::default(),
             None,
             None,
+            0,
         )
         .await
         .unwrap();
@@ -354,6 +355,7 @@ async fn new_multimodal_turn_clears_old_skill_before_first_request() {
         Default::default(),
         None,
         None,
+        None,
     )
     .await
     .unwrap();
@@ -379,6 +381,7 @@ async fn review_run_turn(
         Default::default(),
         summary,
         None,
+        0,
     )
     .await
     .unwrap();

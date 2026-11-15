@@ -1940,6 +1940,19 @@ Assistant: {ar}\n"
         session_id: &str,
         message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
+        self.process_message_events_with_authorize(session_id, message, None)
+            .await
+    }
+
+    /// Like [`Self::process_message_events`], with optional host/UI
+    /// `AuthorizeNewOperation` target traveling with the message into atomic
+    /// accept (not a shared pending hop).
+    pub async fn process_message_events_with_authorize(
+        &self,
+        session_id: &str,
+        message: &str,
+        authorize_new_operation: Option<(String, String)>,
+    ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         let agent = self.get_session(session_id).await?;
 
         // Read conversation summary from session metadata for context compression
@@ -1968,6 +1981,7 @@ Assistant: {ar}\n"
                 conversation_summary,
                 summary_up_to_index,
                 safeguards,
+                authorize_new_operation,
             )
             .await?;
 
@@ -2014,20 +2028,25 @@ Assistant: {ar}\n"
         message: &str,
         backend_id: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-        self.process_message_events_with_backend_and_skills(session_id, message, backend_id, None)
-            .await
+        self.process_message_events_with_backend_and_skills(
+            session_id, message, backend_id, None, None,
+        )
+        .await
     }
 
     /// Process a message in a session with event streaming, optional backend override, and pinned skills.
     ///
     /// `selected_skills`: `None` = leave the session's pins untouched;
     /// `Some(list)` = replace the pins (an empty list clears them).
+    /// `authorize_new_operation`: optional `(prior_operation_id, write_fingerprint)`
+    /// for Unknown re-run confirm — travels with the message into atomic accept.
     pub async fn process_message_events_with_backend_and_skills(
         &self,
         session_id: &str,
         message: &str,
         backend_id: Option<&str>,
         selected_skills: Option<&[String]>,
+        authorize_new_operation: Option<(String, String)>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         // If a specific backend is requested, configure the agent with it
         if let Some(backend) = backend_id {
@@ -2051,7 +2070,8 @@ Assistant: {ar}\n"
             }
         }
 
-        self.process_message_events(session_id, message).await
+        self.process_message_events_with_authorize(session_id, message, authorize_new_operation)
+            .await
     }
 
     /// Process a multimodal message with images in a session.
@@ -2141,6 +2161,22 @@ Assistant: {ar}\n"
         images: Vec<String>,
         backend_id: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
+        self.process_message_multimodal_with_backend_stream_authorize(
+            session_id, message, images, backend_id, None,
+        )
+        .await
+    }
+
+    /// Multimodal stream with optional `AuthorizeNewOperation` target traveling
+    /// with the message into atomic accept.
+    pub async fn process_message_multimodal_with_backend_stream_authorize(
+        &self,
+        session_id: &str,
+        message: &str,
+        images: Vec<String>,
+        backend_id: Option<&str>,
+        authorize_new_operation: Option<(String, String)>,
+    ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
         // If a specific backend is requested, configure the agent with it
         if let Some(backend) = backend_id {
             self.configure_agent_by_backend_id(session_id, backend)
@@ -2176,8 +2212,13 @@ Assistant: {ar}\n"
             }
         }
 
-        self.process_message_multimodal_stream(session_id, message, images)
-            .await
+        self.process_message_multimodal_stream_authorize(
+            session_id,
+            message,
+            images,
+            authorize_new_operation,
+        )
+        .await
     }
 
     /// Process a multimodal message (text + images) with streaming response.
@@ -2186,6 +2227,18 @@ Assistant: {ar}\n"
         session_id: &str,
         message: &str,
         images: Vec<String>,
+    ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
+        self.process_message_multimodal_stream_authorize(session_id, message, images, None)
+            .await
+    }
+
+    /// Multimodal stream with authorization traveling into atomic accept.
+    pub async fn process_message_multimodal_stream_authorize(
+        &self,
+        session_id: &str,
+        message: &str,
+        images: Vec<String>,
+        authorize_new_operation: Option<(String, String)>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
         // Check if images are provided and model supports vision
         if !images.is_empty() {
@@ -2227,7 +2280,12 @@ Assistant: {ar}\n"
         let cancel_senders = self.cancel_senders.clone();
 
         let stream = agent
-            .process_multimodal_stream_events_with_safeguards(message, images, safeguards)
+            .process_multimodal_stream_events_with_safeguards(
+                message,
+                images,
+                safeguards,
+                authorize_new_operation,
+            )
             .await?;
 
         // [crash window] The multimodal path pushes the user message into

@@ -25,6 +25,7 @@ import {
   normalizeContentNodes,
   saveSessionDraft,
 } from "@/lib/chat/contentProtocol"
+import { resolveAuthorizeNewOperationForSend } from "@/lib/chat/authorizeNewOperation"
 import { cn } from "@/lib/utils"
 import { getSessionDisplayTitle } from "@/lib/utils/sessionTitle"
 import { normalizeTimestampMs } from "@/lib/utils/format"
@@ -809,6 +810,10 @@ export function ChatPage() {
     beginTurn()
     setLastAssistantMessageId(null)
 
+    const authorizeNewOperation = resolveAuthorizeNewOperationForSend(
+      trimmedInput,
+      messages.map((m) => m.content || ""),
+    )
     ws.sendMessage(
       trimmedInput,
       attachedImages.length > 0 ? attachedImages : undefined,
@@ -816,6 +821,7 @@ export function ChatPage() {
       undefined,
       sentReferences,
       sentContentNodes,
+      authorizeNewOperation || undefined,
     )
 
     requestAnimationFrame(() => {

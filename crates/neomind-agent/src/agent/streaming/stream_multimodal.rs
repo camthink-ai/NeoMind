@@ -39,10 +39,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     safeguards: StreamSafeguards,
     conversation_summary: Option<String>,
     summary_up_to_index: Option<u64>,
+    // Host/UI AuthorizeNewOperation target traveling with this message.
+    authorization: Option<(String, String)>,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
     use neomind_core::ContentPart;
 
-    // New user turn: clear transient skills, then push user (G2 directives)
+    // New user turn: clear transient skills, then accept user (G2 directives)
     // BEFORE the first model request — same contract as the text stream path.
     super::super::task_continuity::begin_user_turn_clear_transient_skills(&llm_interface).await;
     let turn_context =
@@ -59,9 +61,8 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         }
     }
 
-    // Cache + persist the user turn (directives via push_message) before LLM.
-    // Capture call_site_turn atomically with that save — before any LLM await
-    // and outside the lazy async_stream first poll.
+    // Atomic accept: save + Turn alloc + authorization under one lock.
+    // Local AcceptedTurnContext is moved into the stream — never via shared hops.
     if !images.is_empty() {
         let mut state = internal_state.write().await;
         for (i, url) in images.iter().enumerate() {
@@ -87,8 +88,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     let call_site_turn = {
         let user_msg = AgentMessage::user_with_images(&user_message, user_images);
         let mut state = internal_state.write().await;
-        state.push_message(user_msg);
-        state.active_call_site_turn
+        state
+            .accept_user_message(user_msg, authorization)
+            .call_site_turn
     };
     {
         let section = internal_state.read().await.task_state.to_prompt_section();
@@ -1419,6 +1421,7 @@ mod drop_lease_tests {
             safeguards,
             None,
             None,
+            None,
         )
         .await
         .expect("stream");
@@ -1539,6 +1542,7 @@ mod drop_lease_tests {
             "run B",
             vec![],
             safeguards,
+            None,
             None,
             None,
         )

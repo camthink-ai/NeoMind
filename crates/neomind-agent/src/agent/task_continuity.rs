@@ -48,7 +48,7 @@
 //! the next turn. [`TaskState`] is **not** cleared by that call — it lives on
 //! `AgentInternalState` and is updated only via [`TaskDirective`] when the user
 //! message is pushed. Order of operations:
-//! 1. `push_message(user)` → note Turn; parse Continue/Correct/Cancel/AuthorizeNewOperation if any
+//! 1. `accept_user_message(user, auth?)` → note Turn + apply auth under one lock; return local TurnContext
 //! 2. Stream entry → clear transient skills
 //! 3. Within the turn, the skill tool may reload guides under the total body budget
 //!
@@ -4456,7 +4456,7 @@ mod tests {
         assert!(s.user_authorized_new_op.is_none());
     }
 
-    // ── GPT auth production wiring (b9b99ca1 P1 residuals) ──────────────
+    // ── GPT atomic accept (1ce98210 P1 residuals) ───────────────────────
 
     #[test]
     fn gpt_auth_prod_confirm_request_carries_parseable_target() {
@@ -4467,23 +4467,23 @@ mod tests {
     }
 
     #[test]
-    fn gpt_auth_prod_delayed_poll_keeps_own_turn_not_later_confirm() {
-        // Message-save allocates Turn A; a later confirm Turn B must not
-        // replace A's frozen call_site_turn (the lazy-poll bug).
-        let mut state = crate::agent::types::AgentInternalState::new("delayed-poll".into());
-        state.push_message(crate::agent::types::AgentMessage::user("start A"));
-        let stream_a_turn = state.active_call_site_turn;
-        assert_eq!(stream_a_turn, 1);
+    fn gpt_atomic_accept_local_turn_survives_interleaved_confirm() {
+        // accept_user_message returns an immutable TurnContext; a later
+        // confirm accept must not replace stream A's local call_site_turn.
+        let mut state = crate::agent::types::AgentInternalState::new("atomic-turn".into());
+        let stream_a =
+            state.accept_user_message(crate::agent::types::AgentMessage::user("start A"), None);
+        assert_eq!(stream_a.call_site_turn, 1);
 
         let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
         let op = unknown_op_with_fp(&mut state.task_state, "run_now", r#"{"agent_id":"A"}"#, &fp);
 
-        // Confirm Turn B via production pending target (not bare phrase).
-        state.pending_authorize_new_op = Some((op.clone(), fp.clone()));
-        state.push_message(crate::agent::types::AgentMessage::user("确认重跑"));
-        let stream_b_turn = state.active_call_site_turn;
-        assert_eq!(stream_b_turn, 2);
-        assert_ne!(stream_a_turn, stream_b_turn);
+        let stream_b = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("确认重跑"),
+            Some((op.clone(), fp.clone())),
+        );
+        assert_eq!(stream_b.call_site_turn, 2);
+        assert_ne!(stream_a.call_site_turn, stream_b.call_site_turn);
         assert_eq!(
             state
                 .task_state
@@ -4491,15 +4491,15 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .confirming_turn,
-            stream_b_turn
+            stream_b.call_site_turn
         );
 
-        // Delayed "first poll" of stream A still holds Turn 1 — cannot steal B's grant.
+        // Delayed "first poll" of stream A still holds its local Turn 1.
         assert!(
             !state
                 .task_state
-                .take_user_authorized_new_op(&op, &fp, stream_a_turn),
-            "delayed poll of stream A must keep its own Turn, not confirm Turn B"
+                .take_user_authorized_new_op(&op, &fp, stream_a.call_site_turn),
+            "local Turn A must not consume confirm Turn B's grant"
         );
         assert!(state.task_state.user_authorized_new_op.is_some());
 
@@ -4510,7 +4510,7 @@ mod tests {
             &args,
             &fp,
             None,
-            stream_a_turn,
+            stream_a.call_site_turn,
         ) {
             MutatingGateOutcome::Block { .. } => {}
             other => panic!("stream A delayed poll must Block, got {other:?}"),
@@ -4522,7 +4522,7 @@ mod tests {
             &args,
             &fp,
             None,
-            stream_b_turn,
+            stream_b.call_site_turn,
         ) else {
             panic!("confirm Turn B call-site must Proceed");
         };
@@ -4530,10 +4530,10 @@ mod tests {
     }
 
     #[test]
-    fn gpt_auth_prod_pending_confirm_selects_specified_unknown() {
-        // Multiple Unknowns → ChatRequest.authorizeNewOperation / pending
-        // entry selects the specified op (bare phrase would be ambiguous).
-        let mut state = crate::agent::types::AgentInternalState::new("multi-unk".into());
+    fn gpt_atomic_accept_auth_travels_with_message_not_shared_hop() {
+        // Authorization is an accept argument — interleaved accepts cannot
+        // steal each other's target (no pending_authorize_new_op hop).
+        let mut state = crate::agent::types::AgentInternalState::new("atomic-auth".into());
         let fp_a = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
         let fp_b = write_fingerprint("run_now", r#"{"agent_id":"B"}"#);
         let op_a = unknown_op_with_fp(
@@ -4550,27 +4550,49 @@ mod tests {
         );
         assert_eq!(state.task_state.current_operation_id, op_b);
 
-        // Bare phrase alone is ambiguous — production must send the target.
-        state.push_message(crate::agent::types::AgentMessage::user("确认重跑"));
+        // Bare phrase alone is ambiguous with two Unknowns.
+        let _ =
+            state.accept_user_message(crate::agent::types::AgentMessage::user("确认重跑"), None);
         assert!(
             state.task_state.user_authorized_new_op.is_none(),
             "bare phrase with two Unknowns must not grant"
         );
 
-        // Real confirm entry with specified older op A.
-        state.pending_authorize_new_op = Some((op_a.clone(), fp_a.clone()));
-        state.push_message(crate::agent::types::AgentMessage::user("确认重跑"));
-        let call_site_turn = state.active_call_site_turn;
+        // Interleaved: accept B with auth for A — grant binds A on B's Turn.
+        // A concurrent plain accept must not consume a shared pending hop
+        // (there is none): auth only applies when passed to accept.
+        let confirm = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("确认重跑"),
+            Some((op_a.clone(), fp_a.clone())),
+        );
         let grant = state
             .task_state
             .user_authorized_new_op
             .clone()
-            .expect("specified pending must grant");
+            .expect("auth arg must grant specified op");
         assert_eq!(grant.prior_operation_id, op_a);
         assert_eq!(grant.write_fingerprint, fp_a);
         assert_ne!(grant.prior_operation_id, op_b);
-        assert_eq!(grant.confirming_turn, call_site_turn);
+        assert_eq!(grant.confirming_turn, confirm.call_site_turn);
 
+        // Another accept without auth does not steal — grant already applied
+        // to confirm's Turn; a later plain accept expires it (confirming_turn
+        // binding) rather than redirecting it.
+        let interloper = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("顺便问一下天气"),
+            None,
+        );
+        assert!(
+            state.task_state.user_authorized_new_op.is_none(),
+            "later Turn without auth must expire prior grant, not steal it"
+        );
+        assert_ne!(interloper.call_site_turn, confirm.call_site_turn);
+
+        // Re-accept with auth for A after interloper.
+        let confirm2 = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("确认重跑"),
+            Some((op_a.clone(), fp_a.clone())),
+        );
         let args_a = flagged_args(serde_json::json!({"agent_id": "A"}));
         let args_b = flagged_args(serde_json::json!({"agent_id": "B"}));
         match evaluate_mutating_gate(
@@ -4579,7 +4601,7 @@ mod tests {
             &args_b,
             &fp_b,
             None,
-            call_site_turn,
+            confirm2.call_site_turn,
         ) {
             MutatingGateOutcome::Block { .. } => {}
             other => panic!("newer B must not consume A's grant, got {other:?}"),
@@ -4590,10 +4612,66 @@ mod tests {
             &args_a,
             &fp_a,
             None,
-            call_site_turn,
+            confirm2.call_site_turn,
         ) else {
-            panic!("specified older A via production pending must Proceed");
+            panic!("auth traveling with confirm accept must Proceed for A");
         };
         assert!(state.task_state.user_authorized_new_op.is_none());
+    }
+
+    #[test]
+    fn gpt_atomic_accept_interleaved_confirm_and_save_keep_own_auth() {
+        // Two confirm accepts for different Unknowns: each TurnContext keeps
+        // its own call_site; only the matching Turn consumes its grant.
+        let mut state = crate::agent::types::AgentInternalState::new("interleaved".into());
+        let fp_a = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let fp_b = write_fingerprint("run_now", r#"{"agent_id":"B"}"#);
+        let op_a = unknown_op_with_fp(
+            &mut state.task_state,
+            "run_now",
+            r#"{"agent_id":"A"}"#,
+            &fp_a,
+        );
+        let _op_b = unknown_op_with_fp(
+            &mut state.task_state,
+            "run_now",
+            r#"{"agent_id":"B"}"#,
+            &fp_b,
+        );
+
+        let turn_a = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("确认重跑 A"),
+            Some((op_a.clone(), fp_a.clone())),
+        );
+        // Note: second accept expires turn_a's grant (confirming_turn binding).
+        // Simulate the race the shared hop had: auth for B arrives as its own
+        // accept argument — never overwriting a pending slot turn_a relied on.
+        let turn_b = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("确认重跑 B"),
+            Some((_op_b.clone(), fp_b.clone())),
+        );
+        assert_ne!(turn_a.call_site_turn, turn_b.call_site_turn);
+
+        // Grant is for B (latest accept). Turn A cannot take it.
+        assert!(
+            !state
+                .task_state
+                .take_user_authorized_new_op(&op_a, &fp_a, turn_a.call_site_turn),
+            "Turn A must not consume Turn B's grant"
+        );
+        // Restore path left grant in place when call-site mismatched for A;
+        // but grant is for B — take with A's op fails without consuming.
+        // Matching Turn B + op B proceeds.
+        let args_b = flagged_args(serde_json::json!({"agent_id": "B"}));
+        let MutatingGateOutcome::Proceed { .. } = evaluate_mutating_gate(
+            &mut state.task_state,
+            "run_now",
+            &args_b,
+            &fp_b,
+            None,
+            turn_b.call_site_turn,
+        ) else {
+            panic!("Turn B with auth-for-B must Proceed");
+        };
     }
 }

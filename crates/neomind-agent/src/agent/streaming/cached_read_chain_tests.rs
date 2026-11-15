@@ -146,6 +146,7 @@ async fn big_output_refs_are_readable_next_turn_through_real_dispatch() {
             StreamSafeguards::default(),
             None,
             None,
+            0,
         )
         .await
         .expect("stream"),
@@ -193,6 +194,7 @@ async fn big_output_refs_are_readable_next_turn_through_real_dispatch() {
             StreamSafeguards::default(),
             None,
             None,
+            0,
         )
         .await
         .expect("stream"),
@@ -267,6 +269,7 @@ async fn big_output_refs_are_readable_next_turn_through_real_dispatch() {
             StreamSafeguards::default(),
             None,
             None,
+            0,
         )
         .await
         .expect("stream"),
@@ -319,6 +322,7 @@ async fn disabled_file_read_falls_through_to_registry_gate() {
             StreamSafeguards::default(),
             None,
             None,
+            0,
         )
         .await
         .expect("stream"),
@@ -380,6 +384,7 @@ async fn multi_window_readback_keeps_next_turn_request_in_budget() {
                 StreamSafeguards::default(),
                 None,
                 None,
+                0,
             )
             .await
             .expect("stream"),
@@ -419,6 +424,7 @@ async fn multi_window_readback_keeps_next_turn_request_in_budget() {
                 StreamSafeguards::default(),
                 None,
                 None,
+                0,
             )
             .await
             .expect("stream"),
@@ -442,6 +448,7 @@ async fn multi_window_readback_keeps_next_turn_request_in_budget() {
             StreamSafeguards::default(),
             None,
             None,
+            0,
         )
         .await
         .expect("stream"),
@@ -510,6 +517,7 @@ async fn cross_window_synthesis_with_revisit_stays_coherent() {
                 StreamSafeguards::default(),
                 None,
                 None,
+                0,
             )
             .await
             .expect("stream"),
@@ -549,6 +557,7 @@ async fn cross_window_synthesis_with_revisit_stays_coherent() {
                 StreamSafeguards::default(),
                 None,
                 None,
+                0,
             )
             .await
             .expect("stream"),
@@ -590,6 +599,7 @@ async fn cross_window_synthesis_with_revisit_stays_coherent() {
                 StreamSafeguards::default(),
                 None,
                 None,
+                0,
             )
             .await
             .expect("stream"),

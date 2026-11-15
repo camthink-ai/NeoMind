@@ -457,17 +457,22 @@ impl Agent {
             user_message,
             images,
             StreamSafeguards::default(),
+            None,
         )
         .await
     }
 }
 impl Agent {
     /// Process a multimodal user message with streaming response and custom safeguards.
+    ///
+    /// `authorize_new_operation`: optional `(prior_operation_id, write_fingerprint)`
+    /// traveling with this message into atomic accept (multi-Unknown confirm).
     pub async fn process_multimodal_stream_events_with_safeguards(
         &self,
         user_message: &str,
         images: Vec<String>, // Base64 data URLs
         safeguards: StreamSafeguards,
+        authorize_new_operation: Option<(String, String)>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         tracing::debug!(
             message = %user_message,
@@ -502,6 +507,7 @@ impl Agent {
             safeguards,
             None,
             None,
+            authorize_new_operation,
         )
         .await
         {
@@ -542,22 +548,30 @@ impl Agent {
             conversation_summary,
             summary_up_to_index,
             StreamSafeguards::default(),
+            None,
         )
         .await
     }
 }
 impl Agent {
     /// Process a user message with streaming response and custom safeguards (e.g., interrupt signal).
+    ///
+    /// `authorize_new_operation`: optional `(prior_operation_id, write_fingerprint)`
+    /// applied in the same lock as message save via [`AgentInternalState::accept_user_message`].
     pub async fn process_stream_events_with_safeguards(
         &self,
         user_message: &str,
         conversation_summary: Option<String>,
         summary_up_to_index: Option<u64>,
         safeguards: StreamSafeguards,
+        authorize_new_operation: Option<(String, String)>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-        // Add user message to history
-        let user_msg = AgentMessage::user(user_message);
-        self.internal_state.write().await.push_message(user_msg);
+        // Atomic accept: Turn + auth under one lock; local context for stream.
+        let accepted = {
+            let mut state = self.internal_state.write().await;
+            state.accept_user_message(AgentMessage::user(user_message), authorize_new_operation)
+        };
+        let call_site_turn = accepted.call_site_turn;
 
         // Set session ID on memory tool to avoid cross-session contamination
         self.tools
@@ -590,6 +604,7 @@ impl Agent {
             safeguards,
             conversation_summary,
             summary_up_to_index,
+            call_site_turn,
         )
         .await
         {

@@ -35,6 +35,7 @@ import {
   normalizeContentNodes,
   saveSessionDraft,
 } from "@/lib/chat/contentProtocol"
+import { resolveAuthorizeNewOperationForSend } from "@/lib/chat/authorizeNewOperation"
 import { ChatScrollPill } from "./ChatScrollPill"
 import { X, Minimize2, Bot, Plus, Settings, Cpu, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -650,7 +651,19 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     // Page-matched skills ride every send (backend pins them per message);
     // the page's system focus already lives in the session's system prompt.
     const skillIds = matchedSkillIdsRef.current.length > 0 ? [...matchedSkillIdsRef.current] : undefined
-    ws.sendMessage(text, sentImages, skillIds, undefined, sentReferences, sentContentNodes)
+    const authorizeNewOperation = resolveAuthorizeNewOperationForSend(
+      text,
+      panelMessages.map((m) => m.content || ""),
+    )
+    ws.sendMessage(
+      text,
+      sentImages,
+      skillIds,
+      undefined,
+      sentReferences,
+      sentContentNodes,
+      authorizeNewOperation || undefined,
+    )
     requestAnimationFrame(() => {
       const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
       if (pm) pm.focus()

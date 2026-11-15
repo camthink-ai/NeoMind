@@ -595,10 +595,8 @@ pub(crate) fn mutating_write_fingerprint(
     let canonical =
         crate::agent::task_continuity::canonicalize_tool_arguments(tool_name, arguments);
     let real = crate::tools::resolve_tool_name(tool_name);
-    let cap = crate::agent::task_continuity::derive_tool_capability_resolved(
-        real.as_str(),
-        &canonical,
-    );
+    let cap =
+        crate::agent::task_continuity::derive_tool_capability_resolved(real.as_str(), &canonical);
     if cap.read_only {
         return None;
     }

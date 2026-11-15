@@ -109,7 +109,12 @@ pub fn effective_success(name: &str, out: &ToolOutput) -> bool {
     // Operation-gate envelopes nest the real outcome under data.success.
     // Pending / failed-resume must not count as confirmed success steps
     // even if a caller mistakenly wrapped them in ToolOutput::success.
-    if out.data.get("_operation_in_progress").and_then(|v| v.as_bool()) == Some(true) {
+    if out
+        .data
+        .get("_operation_in_progress")
+        .and_then(|v| v.as_bool())
+        == Some(true)
+    {
         return false;
     }
     if out.data.get("_operation_resume").and_then(|v| v.as_bool()) == Some(true) {
