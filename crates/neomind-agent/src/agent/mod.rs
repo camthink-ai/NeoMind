@@ -964,6 +964,12 @@ impl Agent {
     }
 }
 impl Agent {
+    /// Single durable commit path: bump version + sink (fail closed when untrusted).
+    pub async fn commit_op_ledger_now(&self) -> std::result::Result<(), String> {
+        self.internal_state.write().await.commit_op_ledger_now()
+    }
+}
+impl Agent {
     /// Wire the durable op-ledger commit sink (SessionManager production path).
     pub async fn set_op_ledger_commit(
         &self,
@@ -985,6 +991,12 @@ impl Agent {
     /// Whether mutating writes are refused due to an untrusted ledger.
     pub async fn op_ledger_untrusted(&self) -> bool {
         self.internal_state.read().await.op_ledger_untrusted
+    }
+}
+impl Agent {
+    /// History clear generation — stale persists must observe a mismatch.
+    pub async fn history_generation(&self) -> u64 {
+        self.internal_state.read().await.history_generation
     }
 }
 impl Agent {

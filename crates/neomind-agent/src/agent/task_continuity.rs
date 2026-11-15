@@ -452,6 +452,11 @@ pub fn apply_new_operation_from_tool_schema(
 /// orphaned `Prepared` ops so a cold start cannot auto-replay side effects.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PersistedOpLedger {
+    /// Monotonic commit generation. `save_op_ledger` rejects writes whose
+    /// version is not strictly newer than the bytes already on disk, so a
+    /// stale `persist_history` snapshot cannot clobber a newer write intent.
+    #[serde(default)]
+    pub version: u64,
     #[serde(default)]
     pub operations: Vec<OperationRecord>,
     #[serde(default)]
@@ -1078,10 +1083,14 @@ impl TaskState {
     }
 
     /// Snapshot the minimal op ledger for persistence (no auth / leases).
+    ///
+    /// `version` is filled by [`crate::agent::types::AgentInternalState`] on
+    /// durable commit (monotonic generation). Snapshots default to 0.
     pub fn snapshot_op_ledger(&self) -> PersistedOpLedger {
         let mut operations = self.operations.clone();
         Self::sanitize_ops_for_persist(&mut operations);
         PersistedOpLedger {
+            version: 0,
             operations,
             write_ledger: self.write_ledger.clone(),
             current_operation_id: self.current_operation_id.clone(),
@@ -1089,10 +1098,40 @@ impl TaskState {
         }
     }
 
+    /// After cold restore the in-process large-data cache is gone — drop
+    /// stale `$cached:op:…` handles and mark details unavailable (no new
+    /// cache system).
+    fn sanitize_details_ref_after_restore(ops: &mut [OperationRecord]) {
+        for op in ops.iter_mut() {
+            let Some(result) = op.result.as_mut() else {
+                continue;
+            };
+            let Some(details) = result.details_ref.as_deref() else {
+                continue;
+            };
+            if !details.starts_with("$cached:op:") {
+                continue;
+            }
+            result.details_ref = None;
+            if !result.summary.contains("details unavailable") {
+                result.summary = format!("{} (details unavailable after restore)", result.summary);
+            }
+            if !op
+                .evidence
+                .iter()
+                .any(|e| e.contains("details unavailable after restore"))
+            {
+                op.evidence
+                    .push("details unavailable after restore ($cached:op cleared)".into());
+            }
+        }
+    }
+
     /// Restore a persisted op ledger after process restart / session reload.
     ///
-    /// Re-sanitizes Running→Unknown / Prepared→Cancelled, strips leases, and
-    /// **never** restores auth grants or pending confirm requests.
+    /// Re-sanitizes Running→Unknown / Prepared→Cancelled, strips leases,
+    /// drops stale `$cached:op` details_ref handles, and **never** restores
+    /// auth grants or pending confirm requests.
     pub fn restore_op_ledger(&mut self, ledger: PersistedOpLedger) {
         self.user_authorized_new_op = None;
         self.pending_confirm_requests.clear();
@@ -1100,6 +1139,7 @@ impl TaskState {
 
         let mut operations = ledger.operations;
         Self::sanitize_ops_for_persist(&mut operations);
+        Self::sanitize_details_ref_after_restore(&mut operations);
         self.operations = operations;
         self.write_ledger = ledger.write_ledger;
         self.current_operation_id = ledger.current_operation_id;
@@ -5296,6 +5336,62 @@ mod tests {
     // ── GPT op-ledger restore (1b35bed1 P1) ─────────────────────────────
 
     #[test]
+    fn restore_drops_stale_cached_op_details_ref() {
+        let mut live = TaskState::default();
+        let fp = "shell|neomind device command send --id cam-details";
+        let op = live.begin_new_operation_for_owner(
+            "shell",
+            Some("cam-details".into()),
+            r#"{"command":"neomind device command send --id cam-details"}"#,
+            Some(fp.into()),
+            Some("owner-d"),
+        );
+        live.mark_operation_running(&op);
+        live.complete_operation_succeeded(
+            &op,
+            StructuredResult::with_body(
+                true,
+                "sent",
+                "x".repeat(DETAILS_REF_BODY_THRESHOLD + 8),
+                Some(format!("$cached:op:{op}")),
+            ),
+            ["broker accepted".into()],
+        );
+        assert_eq!(
+            live.operation(&op)
+                .unwrap()
+                .result
+                .as_ref()
+                .unwrap()
+                .details_ref
+                .as_deref(),
+            Some(format!("$cached:op:{op}")).as_deref()
+        );
+
+        let snap = live.snapshot_op_ledger();
+        let mut cold = TaskState::default();
+        cold.restore_op_ledger(snap);
+        let restored = cold.operation(&op).unwrap().result.as_ref().unwrap();
+        assert!(
+            restored.details_ref.is_none(),
+            "stale $cached:op must not survive restore"
+        );
+        assert!(
+            restored.summary.contains("details unavailable after restore"),
+            "summary must mark details unavailable, got: {}",
+            restored.summary
+        );
+        assert!(
+            cold.operation(&op)
+                .unwrap()
+                .evidence
+                .iter()
+                .any(|e| e.contains("details unavailable after restore")),
+            "evidence must record cache loss"
+        );
+    }
+
+    #[test]
     fn op_ledger_success_then_restart_blocks_auto_replay() {
         let mut live = TaskState::default();
         let fp = "shell|neomind device command send --id cam-1";
@@ -5601,6 +5697,120 @@ mod tests {
         assert!(
             state.task_state.operations.is_empty(),
             "untrusted path must not begin a new Operation"
+        );
+    }
+
+    #[test]
+    fn untrusted_commit_refuses_and_does_not_touch_sink() {
+        let sink = std::sync::Arc::new(MemOpLedgerCommit::default());
+        let mut state = crate::agent::types::AgentInternalState::new("cw-skip".into());
+        state.set_op_ledger_commit(Some(sink.clone()));
+        state.mark_op_ledger_untrusted();
+        let err = state
+            .commit_op_ledger_now()
+            .expect_err("untrusted must refuse durable persist");
+        assert!(err.contains("untrusted"), "got: {err}");
+        assert_eq!(
+            sink.commits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "empty untrusted memory must not overwrite the sink"
+        );
+    }
+
+    /// Version-aware sink mirroring SessionStore::save_op_ledger reject rules.
+    struct VersionedMemOpLedgerCommit {
+        bytes: std::sync::Mutex<Option<Vec<u8>>>,
+        commits: std::sync::atomic::AtomicUsize,
+        rejects: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Default for VersionedMemOpLedgerCommit {
+        fn default() -> Self {
+            Self {
+                bytes: std::sync::Mutex::new(None),
+                commits: std::sync::atomic::AtomicUsize::new(0),
+                rejects: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl OpLedgerCommit for VersionedMemOpLedgerCommit {
+        fn commit(&self, ledger_json: &[u8]) -> Result<(), String> {
+            #[derive(serde::Deserialize)]
+            struct Peek {
+                #[serde(default)]
+                version: u64,
+            }
+            let incoming: Peek =
+                serde_json::from_slice(ledger_json).map_err(|e| format!("unreadable: {e}"))?;
+            let mut slot = self.bytes.lock().unwrap();
+            if let Some(existing) = slot.as_ref() {
+                let existing_v: Peek = serde_json::from_slice(existing)
+                    .map_err(|e| format!("unreadable on-disk: {e}"))?;
+                if incoming.version <= existing_v.version {
+                    self.rejects
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    return Err(format!(
+                        "stale op ledger write rejected (incoming version {} <= on-disk {})",
+                        incoming.version, existing_v.version
+                    ));
+                }
+            }
+            *slot = Some(ledger_json.to_vec());
+            self.commits
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn interleaved_stale_snapshot_cannot_clobber_newer_intent_version() {
+        // persist_history snapshot-then-write racing mid-turn write-intent:
+        // older version must not replace newer intent bytes.
+        let sink = std::sync::Arc::new(VersionedMemOpLedgerCommit::default());
+        let mut state = crate::agent::types::AgentInternalState::new("cw-race".into());
+        state.set_op_ledger_commit(Some(sink.clone()));
+
+        let args = serde_json::json!({"command":"neomind device command send --id cam-race"});
+        let fp = write_fingerprint("shell", &args.to_string());
+        let MutatingGateOutcome::Proceed { .. } =
+            state.evaluate_mutating_gate_durable("shell", &args, &fp, Some("owner-race"), 1)
+        else {
+            panic!("intent commit must Proceed");
+        };
+        assert_eq!(state.op_ledger_version, 1);
+        let intent_bytes = sink.bytes.lock().unwrap().clone().expect("intent on sink");
+        let intent: PersistedOpLedger = serde_json::from_slice(&intent_bytes).unwrap();
+        assert_eq!(intent.version, 1);
+        assert_eq!(
+            intent.operations.last().unwrap().status,
+            OperationStatus::Unknown
+        );
+
+        // Stale empty snapshot taken before the intent (version 0), written
+        // out-of-band like the old persist_history path.
+        let stale = PersistedOpLedger {
+            version: 0,
+            ..PersistedOpLedger::default()
+        };
+        let stale_bytes = serde_json::to_vec(&stale).unwrap();
+        let err = sink
+            .commit(&stale_bytes)
+            .expect_err("stale snapshot must be rejected");
+        assert!(err.contains("stale"), "got: {err}");
+        assert_eq!(
+            sink.rejects.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+
+        let kept: PersistedOpLedger =
+            serde_json::from_slice(sink.bytes.lock().unwrap().as_ref().unwrap()).unwrap();
+        assert_eq!(kept.version, 1);
+        assert_eq!(kept.operations.len(), 1);
+        assert_eq!(
+            kept.operations[0].status,
+            OperationStatus::Unknown,
+            "newer write intent must survive interleaved stale persist"
         );
     }
 }

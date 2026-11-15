@@ -269,6 +269,9 @@ pub struct SessionManager {
     skill_registry: crate::skills::SharedSkillRegistry,
     /// Cancel signal senders for active streaming sessions (session_id → watch::Sender)
     cancel_senders: Arc<RwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// Sessions mid-`clear_history`: new turns are refused until clear finishes
+    /// (cancel + await stream → memory wipe → durable deletes).
+    clearing_sessions: Arc<RwLock<HashMap<String, ()>>>,
     /// Per-session event subscribers. ChatSessionCapabilityProvider
     /// registers one mpsc::Sender per session-stream subscription. Each
     /// AgentEvent yielded by `process_message_events` is teed (best-effort,
@@ -493,6 +496,7 @@ impl SessionManager {
             tool_registry: Arc::new(RwLock::new(None)),
             skill_registry: crate::skills::create_shared_registry(None),
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
+            clearing_sessions: Arc::new(RwLock::new(HashMap::new())),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -513,6 +517,7 @@ impl SessionManager {
             tool_registry: Arc::new(RwLock::new(None)),
             skill_registry: crate::skills::create_shared_registry(Some(data_dir)),
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
+            clearing_sessions: Arc::new(RwLock::new(HashMap::new())),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -1947,6 +1952,7 @@ Assistant: {ar}\n"
         message: &str,
     ) -> Result<super::agent::AgentResponse> {
         tracing::debug!(session_id = %session_id, message = %message, "SessionManager::process_message");
+        self.refuse_if_clearing(session_id).await?;
         let agent = self.get_session(session_id).await?;
 
         let response = agent.process(message).await?;
@@ -2015,6 +2021,7 @@ Assistant: {ar}\n"
         authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
         content_nodes: Option<(Vec<serde_json::Value>, u32)>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
+        self.refuse_if_clearing(session_id).await?;
         let agent = self.get_session(session_id).await?;
 
         // Read conversation summary from session metadata for context compression
@@ -2312,6 +2319,7 @@ Assistant: {ar}\n"
         authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
         content_nodes: Option<(Vec<serde_json::Value>, u32)>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
+        self.refuse_if_clearing(session_id).await?;
         // Check if images are provided and model supports vision
         if !images.is_empty() {
             let agent = self.get_session(session_id).await?;
@@ -2446,69 +2454,143 @@ Assistant: {ar}\n"
         }
     }
 
+    /// Whether this session is mid-clear (new turns must refuse).
+    async fn is_clearing(&self, session_id: &str) -> bool {
+        self.clearing_sessions.read().await.contains_key(session_id)
+    }
+
+    /// Refuse new turns while `clear_history` is in flight.
+    async fn refuse_if_clearing(&self, session_id: &str) -> Result<()> {
+        if self.is_clearing(session_id).await {
+            return Err(NeoMindError::validation(
+                "Session history is being cleared — wait for clear to finish before sending a new message",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Cancel any active stream and wait until its cancel-sender is gone.
+    async fn cancel_and_await_stream(&self, session_id: &str) {
+        let _ = self.cancel_session(session_id).await;
+        // Poll until the stream wrapper removes its cancel sender (natural
+        // end or CancelSenderGuard Drop). Bound wait so a wedged consumer
+        // cannot block clear forever.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            if !self.cancel_senders.read().await.contains_key(session_id) {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                tracing::warn!(
+                    session_id = %session_id,
+                    "clear_history: stream cancel await timed out — proceeding with generation bump"
+                );
+                // Force-drop the registration so new turns are not stuck
+                // behind a zombie sender after clear unmarks.
+                self.cancel_senders.write().await.remove(session_id);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
     /// Clear conversation history for a session.
+    ///
+    /// Order (ledger-consistency): mark clearing (block new turns) → cancel
+    /// + await in-flight stream → bump history generation + wipe memory →
+    /// durable history clear → durable op-ledger delete. DB failures
+    /// propagate to the caller (no silent Ok). Stale stream persists that
+    /// observed a pre-clear generation are no-ops.
     pub async fn clear_history(&self, session_id: &str) -> Result<()> {
         let agent = self.get_session(session_id).await?;
-        agent.clear_history().await;
 
-        // Update in-memory cache
-        self.session_messages
+        self.clearing_sessions
             .write()
             .await
-            .insert(session_id.to_string(), Vec::new());
+            .insert(session_id.to_string(), ());
 
-        // Clear persisted history using the dedicated clear method
-        if let Err(e) = self.store.clear_history(session_id) {
-            tracing::error!(session_id = %session_id, error = %e, message = "Failed to clear history");
-        }
+        let clear_result = async {
+            self.cancel_and_await_stream(session_id).await;
 
-        if let Err(e) = self.store.delete_op_ledger(session_id) {
-            tracing::debug!(
-                session_id = %session_id,
-                error = %e,
-                "Failed to clear op ledger on history clear"
-            );
-        }
+            // Generation bump happens inside clear_memory — any concurrent /
+            // late persist_history that snapshotted the old generation skips.
+            agent.clear_history().await;
 
-        // [ghost-summary fix] The conversation summary survives a history
-        // clear unless reset — the next turn then injected a summary of the
-        // DELETED conversation as a system message. Reset both fields so a
-        // cleared session starts truly fresh.
-        match self.store.get_session_metadata(session_id) {
-            Ok(mut meta) => {
-                if meta.conversation_summary.is_some() || meta.summary_up_to_index.is_some() {
-                    meta.conversation_summary = None;
-                    meta.summary_up_to_index = None;
-                    if let Err(e) = self.store.save_session_metadata(session_id, &meta) {
-                        tracing::error!(
-                            session_id = %session_id,
-                            error = %e,
-                            message = "Failed to reset conversation summary on clear"
-                        );
+            self.session_messages
+                .write()
+                .await
+                .insert(session_id.to_string(), Vec::new());
+
+            self.store.clear_history(session_id).map_err(|e| {
+                NeoMindError::Storage(format!("Failed to clear session history: {e}"))
+            })?;
+
+            self.store.delete_op_ledger(session_id).map_err(|e| {
+                NeoMindError::Storage(format!("Failed to clear op ledger on history clear: {e}"))
+            })?;
+
+            // [ghost-summary fix] Reset conversation summary so a cleared
+            // session starts truly fresh.
+            match self.store.get_session_metadata(session_id) {
+                Ok(mut meta) => {
+                    if meta.conversation_summary.is_some() || meta.summary_up_to_index.is_some() {
+                        meta.conversation_summary = None;
+                        meta.summary_up_to_index = None;
+                        if let Err(e) = self.store.save_session_metadata(session_id, &meta) {
+                            tracing::error!(
+                                session_id = %session_id,
+                                error = %e,
+                                message = "Failed to reset conversation summary on clear"
+                            );
+                        }
                     }
                 }
+                Err(e) => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        error = %e,
+                        "No session metadata to reset on clear"
+                    );
+                }
             }
-            Err(e) => {
-                tracing::debug!(
-                    session_id = %session_id,
-                    error = %e,
-                    "No session metadata to reset on clear"
-                );
-            }
-        }
 
-        Ok(())
+            Ok(())
+        }
+        .await;
+
+        self.clearing_sessions.write().await.remove(session_id);
+        clear_result
     }
 
     /// Persist the current history for a session to the database.
     pub async fn persist_history(&self, session_id: &str) -> Result<()> {
-        let messages = if let Ok(agent) = self.get_session(session_id).await {
-            agent.history().await
+        if self.is_clearing(session_id).await {
+            tracing::debug!(
+                session_id = %session_id,
+                "Skipping persist_history — session clear in progress"
+            );
+            return Ok(());
+        }
+
+        let (messages, generation) = if let Ok(agent) = self.get_session(session_id).await {
+            let generation = agent.history_generation().await;
+            (agent.history().await, Some((agent, generation)))
         } else if let Some(cached) = self.session_messages.read().await.get(session_id) {
-            cached.clone()
+            (cached.clone(), None)
         } else {
             return Ok(());
         };
+
+        // Stale stream after clear: generation bumped → refuse rewrite.
+        if let Some((agent, generation)) = generation.as_ref() {
+            if agent.history_generation().await != *generation {
+                tracing::debug!(
+                    session_id = %session_id,
+                    "Skipping persist_history — history generation advanced (cleared)"
+                );
+                return Ok(());
+            }
+        }
 
         if let Err(e) = self.save_history(session_id, &messages) {
             tracing::debug!(
@@ -2518,26 +2600,28 @@ Assistant: {ar}\n"
             );
         }
 
-        // Persist minimal op ledger alongside history (anti-replay across restart).
-        if let Ok(agent) = self.get_session(session_id).await {
-            let ledger = agent.snapshot_op_ledger().await;
-            match serde_json::to_vec(&ledger) {
-                Ok(bytes) => {
-                    if let Err(e) = self.store.save_op_ledger(session_id, &bytes) {
-                        tracing::debug!(
-                            session_id = %session_id,
-                            error = %e,
-                            "Failed to persist op ledger"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::debug!(
-                        session_id = %session_id,
-                        error = %e,
-                        "Failed to serialize op ledger"
-                    );
-                }
+        // Persist minimal op ledger via the single versioned commit path.
+        // Never snapshot-then-write out-of-band: that raced with mid-turn
+        // write-intent commits and could clobber newer durable intent.
+        // Untrusted sessions skip entirely so empty memory cannot replace
+        // a failed on-disk ledger (explicit clear_history recovers).
+        if let Some((agent, generation)) = generation {
+            if agent.history_generation().await != generation {
+                tracing::debug!(
+                    session_id = %session_id,
+                    "Skipping op ledger persist — history generation advanced (cleared)"
+                );
+            } else if agent.op_ledger_untrusted().await {
+                tracing::debug!(
+                    session_id = %session_id,
+                    "Skipping op ledger persist — untrusted until clear/recover"
+                );
+            } else if let Err(e) = agent.commit_op_ledger_now().await {
+                tracing::debug!(
+                    session_id = %session_id,
+                    error = %e,
+                    "Failed to persist op ledger via commit path"
+                );
             }
         }
 
@@ -2681,6 +2765,7 @@ impl Default for SessionManager {
                 tool_registry: Arc::new(RwLock::new(None)),
                 skill_registry: crate::skills::create_shared_registry(None),
                 cancel_senders: Arc::new(RwLock::new(HashMap::new())),
+                clearing_sessions: Arc::new(RwLock::new(HashMap::new())),
                 event_subscribers: Arc::new(RwLock::new(HashMap::new())),
             }
         })
@@ -3227,6 +3312,266 @@ mod tests {
             agent.op_ledger_untrusted().await,
             "non-missing load_op_ledger error must fail closed via real restore path"
         );
+    }
+
+    /// GPT tip af5e3548: clear blocks new turns while in flight.
+    #[tokio::test]
+    async fn clear_history_blocks_new_turns_while_clearing() {
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        manager
+            .clearing_sessions
+            .write()
+            .await
+            .insert(session_id.clone(), ());
+        match manager
+            .process_message_events(&session_id, "hello during clear")
+            .await
+        {
+            Err(err) => assert!(
+                err.to_string().to_lowercase().contains("clear"),
+                "got: {err}"
+            ),
+            Ok(_) => panic!("new turns must refuse mid-clear"),
+        }
+        manager.clearing_sessions.write().await.remove(&session_id);
+    }
+
+    /// GPT tip af5e3548: clear cancels + awaits stream; stale persist cannot
+    /// rewrite history/ledger after generation bump.
+    #[tokio::test]
+    async fn clear_history_cancels_stream_and_rejects_stale_persist() {
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        manager
+            .save_history(&session_id, &[AgentMessage::user("before clear")])
+            .unwrap();
+        let agent = manager.get_session(&session_id).await.unwrap();
+        // Put a durable ledger byte so clear must delete it.
+        let ledger = br#"{"version":1,"operations":[],"write_ledger":[],"current_operation_id":"","turn_count":0}"#;
+        manager
+            .session_store()
+            .save_op_ledger(&session_id, ledger)
+            .unwrap();
+
+        let (tx, mut rx) = tokio::sync::watch::channel(false);
+        assert!(manager.register_cancel_sender(&session_id, tx).await);
+
+        let mgr = SessionManager {
+            sessions: manager.sessions.clone(),
+            session_messages: manager.session_messages.clone(),
+            store: manager.store.clone(),
+            default_config: manager.default_config.clone(),
+            default_llm_backend: manager.default_llm_backend.clone(),
+            tool_registry: manager.tool_registry.clone(),
+            skill_registry: manager.skill_registry.clone(),
+            cancel_senders: manager.cancel_senders.clone(),
+            clearing_sessions: manager.clearing_sessions.clone(),
+            event_subscribers: manager.event_subscribers.clone(),
+        };
+        let sid = session_id.clone();
+        let clear_task = tokio::spawn(async move { mgr.clear_history(&sid).await });
+
+        // Stream observes cancel, then removes its sender (stream end).
+        tokio::time::timeout(std::time::Duration::from_secs(2), rx.changed())
+            .await
+            .expect("clear must cancel the active stream")
+            .expect("watch channel");
+        assert!(*rx.borrow());
+        manager.remove_cancel_sender(&session_id).await;
+
+        clear_task
+            .await
+            .expect("join")
+            .expect("clear_history must succeed");
+
+        assert!(
+            agent.history().await.is_empty(),
+            "memory wiped after clear"
+        );
+        assert!(
+            manager.load_history(&session_id).unwrap().is_empty(),
+            "DB history cleared"
+        );
+        assert!(
+            manager
+                .session_store()
+                .load_op_ledger(&session_id)
+                .unwrap()
+                .is_none(),
+            "op ledger deleted on clear"
+        );
+        assert!(agent.history_generation().await >= 1);
+
+        // Stale persist: generation already advanced — even if we re-inject
+        // messages into the session_messages cache, live agent gen gate +
+        // empty agent history means persist writes empty, not the old turn.
+        manager
+            .session_messages
+            .write()
+            .await
+            .insert(
+                session_id.clone(),
+                vec![AgentMessage::user("stale rewrite attempt")],
+            );
+        manager.persist_history(&session_id).await.unwrap();
+        let disk = manager.load_history(&session_id).unwrap();
+        assert!(
+            disk.iter().all(|m| {
+                let c = m.content.as_ref();
+                c != "stale rewrite attempt" && c != "before clear"
+            }),
+            "post-clear persist must not resurrect pre-clear or stale cache text: {disk:?}"
+        );
+    }
+
+    /// GPT tip af5e3548 P1: stale snapshot-then-write must not clobber a newer
+    /// durable write-intent (store version gate + single commit path).
+    #[tokio::test]
+    async fn persist_history_interleaved_stale_snapshot_keeps_newer_intent() {
+        use crate::agent::task_continuity::{
+            OperationStatus, PersistedOpLedger, TaskState,
+        };
+
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+
+        // Newer mid-turn write intent already on disk (version 2).
+        let mut live = TaskState::default();
+        let fp = "shell|neomind device command send --id cam-race";
+        let op = live.begin_new_operation_for_owner(
+            "shell",
+            Some("cam-race".into()),
+            r#"{"command":"neomind device command send --id cam-race"}"#,
+            Some(fp.into()),
+            Some("owner-race"),
+        );
+        live.mark_operation_running(&op);
+        let mut newer = live.snapshot_op_ledger();
+        newer.version = 2;
+        assert_eq!(
+            newer.operations.last().unwrap().status,
+            OperationStatus::Unknown
+        );
+        let newer_bytes = serde_json::to_vec(&newer).unwrap();
+        manager
+            .session_store()
+            .save_op_ledger(&session_id, &newer_bytes)
+            .unwrap();
+
+        // Stale empty persist_history snapshot (version 1) — pre-fix overwrite.
+        let stale = PersistedOpLedger {
+            version: 1,
+            ..PersistedOpLedger::default()
+        };
+        let stale_bytes = serde_json::to_vec(&stale).unwrap();
+        let err = manager
+            .session_store()
+            .save_op_ledger(&session_id, &stale_bytes)
+            .expect_err("stale version must be rejected");
+        assert!(
+            err.to_string().contains("stale op ledger write rejected"),
+            "got: {err}"
+        );
+
+        let loaded = manager
+            .session_store()
+            .load_op_ledger(&session_id)
+            .unwrap()
+            .unwrap();
+        let kept: PersistedOpLedger = serde_json::from_slice(&loaded).unwrap();
+        assert_eq!(kept.version, 2);
+        assert_eq!(kept.operations.len(), 1);
+        assert_eq!(kept.operations[0].status, OperationStatus::Unknown);
+    }
+
+    /// GPT tip af5e3548: DB op-ledger delete failure must surface to caller.
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn clear_history_propagates_op_ledger_delete_failure() {
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        manager
+            .save_history(&session_id, &[AgentMessage::user("seed")])
+            .unwrap();
+        manager
+            .session_store()
+            .debug_corrupt_op_ledger_table_type()
+            .unwrap();
+
+        let err = manager
+            .clear_history(&session_id)
+            .await
+            .expect_err("corrupt op_ledgers delete must not look like success");
+        assert!(
+            err.to_string().contains("op ledger") || err.to_string().contains("op_ledgers"),
+            "got: {err}"
+        );
+        // Clearing flag must be released even on failure.
+        assert!(!manager.is_clearing(&session_id).await);
+        // New turns allowed again after failed clear unmarks.
+        let stream = manager.process_message_events(&session_id, "after failed clear");
+        // May succeed or fail on LLM — must not be the mid-clear refusal.
+        if let Err(e) = stream.await {
+            assert!(
+                !e.to_string().to_lowercase().contains("being cleared"),
+                "clearing flag leaked: {e}"
+            );
+        }
+    }
+
+    /// GPT tip af5e3548 P1: load-fail → chat (`persist_history`) → restart
+    /// must still block writes; empty untrusted memory must not clear disk.
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn untrusted_persist_history_keeps_corrupt_ledger_across_restart() {
+        use crate::agent::task_continuity::{write_fingerprint, MutatingGateOutcome};
+
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        manager
+            .save_history(&session_id, &[AgentMessage::user("seed")])
+            .unwrap();
+
+        manager
+            .session_store()
+            .debug_write_op_ledger_raw(&session_id, b"not-json{{{")
+            .unwrap();
+
+        // load-fail → untrusted
+        manager.sessions.write().await.remove(&session_id);
+        let agent = manager.get_session(&session_id).await.unwrap();
+        assert!(agent.op_ledger_untrusted().await);
+
+        // chat end would call persist_history — must not replace corrupt bytes
+        manager.persist_history(&session_id).await.unwrap();
+        let disk = manager
+            .session_store()
+            .load_op_ledger(&session_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            disk, b"not-json{{{",
+            "persist_history must not write empty ledger over corrupt bytes"
+        );
+
+        // restart
+        manager.sessions.write().await.remove(&session_id);
+        let agent2 = manager.get_session(&session_id).await.unwrap();
+        assert!(
+            agent2.op_ledger_untrusted().await,
+            "restart must still see untrusted after skipped persist"
+        );
+
+        // Writes still blocked (same gate the stream path uses).
+        let mut state = crate::agent::types::AgentInternalState::new(session_id.clone());
+        state.mark_op_ledger_untrusted();
+        let args = serde_json::json!({"command":"neomind device command send --id cam-u"});
+        let fp = write_fingerprint("shell", &args.to_string());
+        match state.evaluate_mutating_gate_durable("shell", &args, &fp, None, 1) {
+            MutatingGateOutcome::Block { .. } => {}
+            other => panic!("untrusted after restart must Block writes, got {other:?}"),
+        }
     }
 }
 

@@ -2071,7 +2071,17 @@ pub struct AgentInternalState {
     pub task_state: super::task_continuity::TaskState,
     /// When true, disk ledger could not be trusted (deserialize/load fail).
     /// Mutating tools fail closed — never treat empty memory as authoritative.
+    /// Durable persist is refused until explicit clear/recover so empty memory
+    /// cannot overwrite the on-disk failure.
     pub op_ledger_untrusted: bool,
+    /// Last successfully committed op-ledger generation (restored from disk).
+    /// Each durable commit bumps this and embeds it in
+    /// [`super::task_continuity::PersistedOpLedger::version`].
+    pub op_ledger_version: u64,
+    /// Bumped on explicit history clear. Stale stream `persist_history` /
+    /// turn-start snapshots that observed an older generation must not
+    /// rewrite history or the op ledger after clear.
+    pub history_generation: u64,
     /// Optional durable sink. Production SessionManager always wires one;
     /// unit tests may leave `None` (no crash-window coverage required).
     pub op_ledger_commit: Option<std::sync::Arc<dyn super::task_continuity::OpLedgerCommit>>,
@@ -2089,6 +2099,8 @@ impl std::fmt::Debug for AgentInternalState {
             .field("compaction_cache_is_some", &self.compaction_cache.is_some())
             .field("task_state", &self.task_state)
             .field("op_ledger_untrusted", &self.op_ledger_untrusted)
+            .field("op_ledger_version", &self.op_ledger_version)
+            .field("history_generation", &self.history_generation)
             .field(
                 "op_ledger_commit",
                 &self.op_ledger_commit.as_ref().map(|_| "Some"),
@@ -2125,6 +2137,8 @@ impl AgentInternalState {
             compaction_cache: None,
             task_state: super::task_continuity::TaskState::default(),
             op_ledger_untrusted: false,
+            op_ledger_version: 0,
+            history_generation: 0,
             op_ledger_commit: None,
         }
     }
@@ -2144,19 +2158,39 @@ impl AgentInternalState {
 
     /// Persist current sanitized op ledger via the wired commit sink.
     ///
-    /// `Ok(())` when no sink is configured (test agents). `Err` on serialize
-    /// or sink failure — callers of write-intent must fail closed.
-    pub fn commit_op_ledger_now(&self) -> Result<(), String> {
+    /// Bumps [`Self::op_ledger_version`] and embeds it so the store can reject
+    /// stale snapshots. Refuses entirely when untrusted (empty memory must not
+    /// overwrite a failed on-disk ledger). `Ok(())` when no sink is configured
+    /// (test agents). `Err` on serialize or sink failure — write-intent callers
+    /// must fail closed.
+    pub fn commit_op_ledger_now(&mut self) -> Result<(), String> {
+        if self.op_ledger_untrusted {
+            return Err(
+                "op ledger untrusted — durable persist refused until clear/recover".into(),
+            );
+        }
         let Some(commit) = self.op_ledger_commit.as_ref() else {
             return Ok(());
         };
-        let bytes = serde_json::to_vec(&self.task_state.snapshot_op_ledger())
-            .map_err(|e| format!("serialize op ledger: {e}"))?;
-        commit.commit(&bytes)
+        self.op_ledger_version = self.op_ledger_version.saturating_add(1);
+        let mut snap = self.task_state.snapshot_op_ledger();
+        snap.version = self.op_ledger_version;
+        let bytes = serde_json::to_vec(&snap).map_err(|e| {
+            // Roll back the bump so a serialize failure can retry at the same gen.
+            self.op_ledger_version = self.op_ledger_version.saturating_sub(1);
+            format!("serialize op ledger: {e}")
+        })?;
+        match commit.commit(&bytes) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.op_ledger_version = self.op_ledger_version.saturating_sub(1);
+                Err(e)
+            }
+        }
     }
 
     /// Best-effort terminal persist after a mutating tool settles.
-    pub fn persist_op_ledger_terminal_best_effort(&self) {
+    pub fn persist_op_ledger_terminal_best_effort(&mut self) {
         if self.op_ledger_untrusted {
             return;
         }
@@ -2187,7 +2221,8 @@ impl AgentInternalState {
                     None,
                 ),
             );
-            let _ = self.commit_op_ledger_now();
+            // Do NOT durable-commit: empty/untrusted memory must not overwrite
+            // the on-disk failure (explicit clear/recover only).
             return Err(super::task_continuity::OP_LEDGER_UNTRUSTED_MESSAGE.into());
         }
         match self.commit_op_ledger_now() {
@@ -2403,20 +2438,29 @@ impl AgentInternalState {
 
     /// Restore the persisted Operation + write ledger (no auth / leases).
     pub fn restore_op_ledger(&mut self, ledger: super::task_continuity::PersistedOpLedger) {
+        self.op_ledger_version = ledger.version;
         self.task_state.restore_op_ledger(ledger);
     }
 
     /// Snapshot the minimal op ledger for durable storage.
     pub fn snapshot_op_ledger(&self) -> super::task_continuity::PersistedOpLedger {
-        self.task_state.snapshot_op_ledger()
+        let mut snap = self.task_state.snapshot_op_ledger();
+        snap.version = self.op_ledger_version;
+        snap
     }
 
     /// Clear the memory.
+    ///
+    /// Bumps [`Self::history_generation`] first so any in-flight persist that
+    /// snapshotted the pre-clear generation is rejected.
     pub fn clear_memory(&mut self) {
+        self.history_generation = self.history_generation.saturating_add(1);
         self.memory.clear();
         self.task_state = super::task_continuity::TaskState::default();
         // Fresh empty ledger after explicit clear is authoritative again.
         self.op_ledger_untrusted = false;
+        self.op_ledger_version = 0;
+        self.large_data_cache = LargeDataCache::new();
     }
 }
 

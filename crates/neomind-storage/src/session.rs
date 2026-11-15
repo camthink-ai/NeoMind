@@ -1011,8 +1011,67 @@ impl SessionStore {
 
     // ========== Op ledger (anti-replay across process restart) ==========
 
+    /// Peek `version` from persisted op-ledger JSON (default 0 when absent).
+    fn peek_op_ledger_version(ledger_json: &[u8]) -> Result<u64, Error> {
+        #[derive(Deserialize)]
+        struct VersionPeek {
+            #[serde(default)]
+            version: u64,
+        }
+        let peek: VersionPeek = serde_json::from_slice(ledger_json).map_err(|e| {
+            Error::Storage(format!(
+                "op ledger JSON unreadable (refusing overwrite until clear/recover): {e}"
+            ))
+        })?;
+        Ok(peek.version)
+    }
+
     /// Persist a session's minimal Operation + write ledger (opaque JSON).
+    ///
+    /// Single durable write path for production: callers must supply
+    /// strictly increasing `version`. Stale snapshots (`version` ≤ on-disk)
+    /// are rejected so interleaved `persist_history` cannot clobber a newer
+    /// write-intent commit. Unreadable on-disk bytes are also refused —
+    /// only [`Self::delete_op_ledger`] (explicit clear/recover) clears them.
     pub fn save_op_ledger(&self, session_id: &str, ledger_json: &[u8]) -> Result<(), Error> {
+        let incoming_version = Self::peek_op_ledger_version(ledger_json)?;
+
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn
+                .open_table(OP_LEDGER_TABLE)
+                .map_err(|e| Error::Storage(format!("Failed to open op_ledgers table: {}", e)))?;
+            if let Some(existing) = table.get(session_id)? {
+                let existing_bytes = existing.value();
+                let existing_version = match Self::peek_op_ledger_version(&existing_bytes) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(Error::Storage(format!(
+                            "refusing to overwrite unreadable op ledger until clear/recover: {e}"
+                        )));
+                    }
+                };
+                if incoming_version <= existing_version {
+                    return Err(Error::Storage(format!(
+                        "stale op ledger write rejected (incoming version {incoming_version} <= on-disk {existing_version})"
+                    )));
+                }
+            }
+            table.insert(session_id, ledger_json.to_vec())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Test seam: write raw op-ledger bytes bypassing version/parse gates
+    /// (seed corrupt fixtures). Never compiled into release builds.
+    #[cfg(any(test, feature = "test-utils"))]
+    #[doc(hidden)]
+    pub fn debug_write_op_ledger_raw(
+        &self,
+        session_id: &str,
+        ledger_json: &[u8],
+    ) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn
@@ -1067,17 +1126,20 @@ impl SessionStore {
     }
 
     /// Delete a session's persisted op ledger (no-op when missing).
+    ///
+    /// Missing table → Ok (nothing to delete). Non-missing open errors
+    /// (type mismatch, …) → Err so `clear_history` can fail closed to the
+    /// caller instead of reporting success while the ledger remains.
     pub fn delete_op_ledger(&self, session_id: &str) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = match write_txn.open_table(OP_LEDGER_TABLE) {
                 Ok(t) => t,
+                Err(redb::TableError::TableDoesNotExist(_)) => return Ok(()),
                 Err(e) => {
-                    let error_msg = e.to_string();
-                    if error_msg.contains("does not exist") || error_msg.contains("Table") {
-                        return Ok(());
-                    }
-                    return Err(Error::Storage(format!("Redb table error: {}", e)));
+                    return Err(Error::Storage(format!(
+                        "Failed to open op_ledgers table for delete: {e}"
+                    )));
                 }
             };
             table.remove(session_id)?;
@@ -1785,8 +1847,7 @@ mod tests {
     fn test_op_ledger_round_trip_and_delete() {
         let store = create_temp_store();
         store.save_session_id("ledger-session").unwrap();
-        let payload =
-            br#"{"operations":[],"write_ledger":[],"current_operation_id":"op-1","turn_count":3}"#;
+        let payload = br#"{"version":1,"operations":[],"write_ledger":[],"current_operation_id":"op-1","turn_count":3}"#;
         store.save_op_ledger("ledger-session", payload).unwrap();
         let loaded = store.load_op_ledger("ledger-session").unwrap().unwrap();
         assert_eq!(loaded, payload);
@@ -1799,6 +1860,49 @@ mod tests {
     }
 
     #[test]
+    fn save_op_ledger_rejects_stale_version_keeps_newer() {
+        let store = create_temp_store();
+        store.save_session_id("race-session").unwrap();
+        // Minimal JSON — version gate only peeks `version`, not full schema.
+        let newer = br#"{"version":2,"operations":[],"write_ledger":[],"current_operation_id":"op-intent","turn_count":1}"#;
+        store.save_op_ledger("race-session", newer).unwrap();
+
+        let stale = br#"{"version":1,"operations":[],"write_ledger":[],"current_operation_id":"","turn_count":0}"#;
+        let err = store
+            .save_op_ledger("race-session", stale)
+            .expect_err("stale version must be rejected");
+        assert!(
+            err.to_string().contains("stale op ledger write rejected"),
+            "got: {err}"
+        );
+
+        let loaded = store.load_op_ledger("race-session").unwrap().unwrap();
+        assert_eq!(loaded, newer, "newer write intent must survive stale snapshot");
+    }
+
+    #[test]
+    fn save_op_ledger_refuses_overwrite_of_unreadable_bytes() {
+        let store = create_temp_store();
+        store.save_session_id("corrupt-session").unwrap();
+        store
+            .debug_write_op_ledger_raw("corrupt-session", b"not-json{{{")
+            .unwrap();
+        let newer = br#"{"version":1,"operations":[]}"#;
+        let err = store
+            .save_op_ledger("corrupt-session", newer)
+            .expect_err("unreadable on-disk ledger must block overwrite");
+        assert!(
+            err.to_string().contains("unreadable"),
+            "got: {err}"
+        );
+        let loaded = store.load_op_ledger("corrupt-session").unwrap().unwrap();
+        assert_eq!(loaded, b"not-json{{{");
+        // Explicit clear/recover unlocks writes.
+        store.delete_op_ledger("corrupt-session").unwrap();
+        store.save_op_ledger("corrupt-session", newer).unwrap();
+    }
+
+    #[test]
     fn load_op_ledger_missing_table_or_key_is_none() {
         // Fresh store never created op_ledgers → TableDoesNotExist → Ok(None).
         let store = SessionStore::open_isolated(":memory:").unwrap();
@@ -1806,7 +1910,7 @@ mod tests {
 
         // Table exists after a save, but a different key is still Ok(None).
         store
-            .save_op_ledger("other-session", br#"{"operations":[]}"#)
+            .save_op_ledger("other-session", br#"{"version":1,"operations":[]}"#)
             .unwrap();
         assert!(store.load_op_ledger("no-such-session").unwrap().is_none());
     }
