@@ -24,8 +24,11 @@ pub enum HistorySelectReason {
     TruncatedToRecentGroups,
     /// Soft budget is zero — keep nothing from history.
     ZeroBudget,
-    /// Newest tool group was compressed to fit.
+    /// Newest / latest tool group was compressed to fit.
     CompressedNewestToolGroup,
+    /// Latest complete tool interaction could not fit even after compression —
+    /// keep nothing; callers must not attach tools (P0 no feedback-less loops).
+    CannotKeepLatestToolFeedback,
 }
 
 /// Outcome of selecting history for a prompt.
@@ -39,33 +42,104 @@ pub struct HistorySelectResult {
 }
 
 /// Whether the production assemble path may still attach tools after history
-/// selection. Zero soft budget with a non-empty prior history must **not**
-/// continue as a tool-enabled request (that is the re-query loop shape).
+/// selection.
 ///
-/// Round 3: same gate as
-/// [`crate::agent::task_continuity::tools_allowed_under_budget_pressure`] —
-/// never continue tool calls after losing current-op / history feedback.
+/// P0: if history had a complete latest tool interaction and the selected
+/// window dropped it, tools must stay off — never continue a feedback-less
+/// tool loop. Zero soft budget / cannot-keep reasons with non-empty prior
+/// history also refuse tools.
 pub fn tools_allowed_after_history_select(
     reason: HistorySelectReason,
-    history_was_nonempty: bool,
+    history_before_trim: &[Message],
+    selected_history: &[Message],
     requested_tools: bool,
 ) -> bool {
     if !requested_tools {
         return false;
     }
+    let history_was_nonempty = !history_before_trim.is_empty();
+    let feedback_fits = latest_tool_feedback_survives(history_before_trim, selected_history);
+    let hard_stop = matches!(
+        reason,
+        HistorySelectReason::ZeroBudget | HistorySelectReason::CannotKeepLatestToolFeedback
+    );
     crate::agent::task_continuity::tools_allowed_under_budget_pressure(
-        true, // current-op feedback already in TaskState / newest group
-        reason == HistorySelectReason::ZeroBudget,
+        feedback_fits,
+        hard_stop,
         history_was_nonempty,
     )
+}
+
+/// Whether `selected` still carries the latest complete tool feedback from
+/// `history` (exact body or same tool-result label after compression).
+pub fn latest_tool_feedback_survives(history: &[Message], selected: &[Message]) -> bool {
+    let Some(fb) = latest_complete_tool_result(history) else {
+        return true;
+    };
+    let fb_text = fb.content.as_text();
+    if selected.iter().any(|m| m.content.as_text() == fb_text) {
+        return true;
+    }
+    let Some(label) = tool_result_label_local(&fb_text) else {
+        // Complete interaction without a parseable label — require exact body.
+        return false;
+    };
+    selected.iter().any(|m| {
+        is_tool_result_message(m)
+            && tool_result_label_local(&m.content.as_text()).as_deref() == Some(label.as_str())
+    })
+}
+
+fn tool_result_label_local(text: &str) -> Option<String> {
+    let trimmed = text.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("[Tool:") {
+        let name = rest.split_whitespace().next().unwrap_or("").trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    if let Some(rest) = trimmed.strip_prefix("Tool '") {
+        let name = rest.split('\'').next().unwrap_or("").trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+fn latest_complete_tool_result(history: &[Message]) -> Option<&Message> {
+    let mut i = history.len();
+    while i > 0 {
+        let end = i - 1;
+        if !is_tool_result_message(&history[end]) {
+            i = end;
+            continue;
+        }
+        let mut start = end;
+        while start > 0 && is_tool_result_message(&history[start - 1]) {
+            start -= 1;
+        }
+        if start > 0 && history[start - 1].role == MessageRole::Assistant {
+            return Some(&history[end]);
+        }
+        i = start;
+    }
+    None
+}
+
+fn group_is_complete_tool_interaction(group: &[Message]) -> bool {
+    let has_tool = group.iter().any(is_tool_result_message);
+    let has_assistant = group.iter().any(|m| m.role == MessageRole::Assistant);
+    has_tool && has_assistant
 }
 
 /// Select history messages to fit `available_tokens`.
 ///
 /// `available_tokens == 0` → empty `messages`, `truncated = true`, reason
-/// [`HistorySelectReason::ZeroBudget`]. The caller still appends the current
-/// user turn; it must not invent an early-user-only history, and must not
-/// keep assembling a tool-enabled request (see
+/// [`HistorySelectReason::ZeroBudget`]. When a latest complete tool interaction
+/// exists, it is reserved first (compress if needed); if it still cannot fit,
+/// returns empty with [`HistorySelectReason::CannotKeepLatestToolFeedback`].
+/// Callers must not attach tools in that case (see
 /// [`tools_allowed_after_history_select`]).
 pub fn select_messages_for_history_budget(
     history: &[Message],
@@ -100,6 +174,86 @@ pub fn select_messages_for_history_budget(
     }
 
     let groups = partition_into_groups(history);
+    let latest_tool_idx = groups
+        .iter()
+        .rposition(|g| group_is_complete_tool_interaction(g));
+
+    // No complete tool interaction — previous newest-first + compress-newest.
+    let Some(tool_idx) = latest_tool_idx else {
+        return select_newest_first_compress_newest(&groups, available_tokens);
+    };
+
+    let mut kept: Vec<Option<Vec<Message>>> = vec![None; groups.len()];
+    let mut truncated = false;
+    let mut reason = HistorySelectReason::TruncatedToRecentGroups;
+    let mut compressed = false;
+
+    // Phase 1: reserve latest complete tool interaction (compress if needed).
+    let mut used = {
+        let group = &groups[tool_idx];
+        let cost: usize = group.iter().map(message_tokens).sum();
+        if cost <= available_tokens {
+            kept[tool_idx] = Some(group.clone());
+            cost
+        } else if let Some(compressed_group) = compress_group(group, available_tokens) {
+            let c: usize = compressed_group.iter().map(message_tokens).sum();
+            kept[tool_idx] = Some(compressed_group);
+            compressed = true;
+            truncated = true;
+            reason = HistorySelectReason::CompressedNewestToolGroup;
+            c
+        } else {
+            return HistorySelectResult {
+                messages: Vec::new(),
+                truncated: true,
+                reason: HistorySelectReason::CannotKeepLatestToolFeedback,
+                used_tokens: 0,
+            };
+        }
+    };
+
+    // Phase 2: fill remaining budget newest-first for other groups.
+    for (i, group) in groups.iter().enumerate().rev() {
+        if kept[i].is_some() {
+            continue;
+        }
+        let cost: usize = group.iter().map(message_tokens).sum();
+        if used + cost <= available_tokens {
+            used += cost;
+            kept[i] = Some(group.clone());
+            continue;
+        }
+        truncated = true;
+        break;
+    }
+
+    if kept.iter().filter(|g| g.is_some()).count() < groups.len() {
+        truncated = true;
+        if !compressed {
+            reason = HistorySelectReason::TruncatedToRecentGroups;
+        }
+    }
+
+    let messages: Vec<Message> = kept.into_iter().flatten().flatten().collect();
+    debug_assert!(!has_orphan_tool_result(&messages));
+    debug_assert!(
+        latest_tool_feedback_survives(history, &messages),
+        "reserved tool feedback must survive selection"
+    );
+
+    HistorySelectResult {
+        messages,
+        truncated,
+        reason,
+        used_tokens: used,
+    }
+}
+
+/// Newest-first fill when history has no complete tool interaction.
+fn select_newest_first_compress_newest(
+    groups: &[Vec<Message>],
+    available_tokens: usize,
+) -> HistorySelectResult {
     let mut used = 0usize;
     let mut kept_rev: Vec<Vec<Message>> = Vec::new();
     let mut truncated = false;
@@ -115,7 +269,6 @@ pub fn select_messages_for_history_budget(
         }
 
         truncated = true;
-        // Only the newest group may be compressed to salvage evidence.
         if kept_rev.is_empty() {
             let remaining = available_tokens.saturating_sub(used);
             if let Some(compressed_group) = compress_group(group, remaining) {
@@ -138,9 +291,6 @@ pub fn select_messages_for_history_budget(
 
     kept_rev.reverse();
     let messages: Vec<Message> = kept_rev.into_iter().flatten().collect();
-
-    // Sanity: no orphan tool results without a preceding assistant in the
-    // kept window (groups are atomic, so this should hold).
     debug_assert!(!has_orphan_tool_result(&messages));
 
     HistorySelectResult {
@@ -782,25 +932,101 @@ mod tests {
 
     #[test]
     fn zero_budget_must_not_keep_tools_on_assemble() {
+        let hist = vec![
+            user("task"),
+            assistant("calling shell"),
+            tool_as_user("shell", "ok device=cam-1"),
+        ];
         assert!(!tools_allowed_after_history_select(
             HistorySelectReason::ZeroBudget,
-            true,
+            &hist,
+            &[],
             true
         ));
         assert!(tools_allowed_after_history_select(
             HistorySelectReason::Fits,
-            true,
+            &hist,
+            &hist,
             true
         ));
+        // Empty prior history + ZeroBudget is not the feedback-drop shape.
         assert!(tools_allowed_after_history_select(
             HistorySelectReason::ZeroBudget,
-            false,
+            &[],
+            &[],
             true
         ));
         assert!(!tools_allowed_after_history_select(
             HistorySelectReason::Fits,
-            true,
+            &hist,
+            &hist,
             false
+        ));
+    }
+
+    #[test]
+    fn trailing_continue_must_not_displace_latest_tool_feedback() {
+        // Trailing non-tool crumb used to be "newest" and steal the budget,
+        // dropping the complete tool interaction while tools stayed open.
+        let history = vec![
+            user("old"),
+            assistant("In a previous turn I called the shell tool."),
+            tool_as_user(
+                "shell",
+                &format!("device_id: EK410-01\nstatus=ok\n{}", "z".repeat(800)),
+            ),
+            user("继续"), // trailing crumb — must not displace tool feedback
+        ];
+        let tool_group_tokens = message_tokens(&history[1]) + message_tokens(&history[2]);
+        // Budget fits tool group but not tool group + continue.
+        let budget = tool_group_tokens;
+        let got = select_messages_for_history_budget(&history, budget);
+        assert!(
+            latest_tool_feedback_survives(&history, &got.messages),
+            "latest tool feedback must remain traceable"
+        );
+        assert!(
+            got.messages
+                .iter()
+                .any(|m| m.content.as_text().contains("EK410-01")),
+            "key result must survive: {:?}",
+            got.messages
+                .iter()
+                .map(|m| m.content.as_text().chars().take(60).collect::<String>())
+                .collect::<Vec<_>>()
+        );
+        assert!(tools_allowed_after_history_select(
+            got.reason,
+            &history,
+            &got.messages,
+            true
+        ));
+    }
+
+    #[test]
+    fn cannot_keep_latest_tool_feedback_refuses_tools() {
+        let huge = format!(
+            "device_id: cam-huge-01\nstatus=ok\n{}",
+            "DATA,".repeat(50_000)
+        );
+        let history = vec![
+            user("run"),
+            assistant("In a previous turn I called the shell tool."),
+            tool_as_user("shell", &huge),
+        ];
+        // Budget too small even for a compressed stub of the tool group.
+        let got = select_messages_for_history_budget(&history, 8);
+        assert!(got.messages.is_empty());
+        assert_eq!(
+            got.reason,
+            HistorySelectReason::CannotKeepLatestToolFeedback
+        );
+        assert!(!latest_tool_feedback_survives(&history, &got.messages));
+        assert!(!tools_allowed_after_history_select(
+            got.reason,
+            &history,
+            &got.messages,
+            true
         ));
     }
 

@@ -286,6 +286,7 @@ pub fn reason_name(r: HistorySelectReason) -> &'static str {
         HistorySelectReason::TruncatedToRecentGroups => "TruncatedToRecentGroups",
         HistorySelectReason::ZeroBudget => "ZeroBudget",
         HistorySelectReason::CompressedNewestToolGroup => "CompressedNewestToolGroup",
+        HistorySelectReason::CannotKeepLatestToolFeedback => "CannotKeepLatestToolFeedback",
     }
 }
 
@@ -511,11 +512,12 @@ mod tests {
             observed.tool_feedback.interaction_present_in_history,
             "T4-shaped history has complete shell tool feedback"
         );
-        // Soft-budget collapse may drop feedback; observation must say so.
+        // P0: if latest feedback could not survive the send boundary, tools
+        // must stay closed (no feedback-less empty loops).
         if !observed.tool_feedback.survived {
             assert!(
-                observed.tool_feedback.tools_attached || observed.tools_count > 0,
-                "dropped feedback with tools still in play is the P0 signal"
+                !observed.tool_feedback.tools_attached,
+                "P0: dropped tool feedback must not keep tools open"
             );
         }
 
@@ -552,5 +554,79 @@ mod tests {
         assert!(!blob.contains("Bearer SECRET"));
         assert!(!blob.contains("SECRETTOKEN"));
         assert!(!blob.contains("api_key\":"));
+    }
+
+    /// P0 acceptance via request-observation:
+    /// 1) compress-first keeps label → tools may stay with survived=true
+    /// 2) soft budget 0 drops history → tools must close (!survived ∧ !attached)
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn p0_observation_survived_or_tools_closed() {
+        use crate::llm::{ChatConfig, LlmInterface};
+        use crate::testing_helpers::mock_llm::{MockLlmRuntime, MockResponse};
+        use futures::StreamExt;
+        use std::sync::Arc;
+
+        async fn run_once(
+            max_ctx: usize,
+            tool_desc_repeat: usize,
+        ) -> crate::agent::prompt_capture::DesensitizedPromptArchive {
+            let huge = format!(
+                "[Tool: shell returned]\ndevice_id: cam-p0-01\n{}",
+                "PAYLOAD,".repeat(20_000)
+            );
+            let history = vec![
+                Message::user("do it"),
+                Message::assistant("calling shell"),
+                Message::user(huge),
+                Message::user("继续"), // trailing crumb must not displace tools
+            ];
+            let rt = MockLlmRuntime::new(vec![MockResponse::text("ok")]).with_max_context(max_ctx);
+            let iface = Arc::new(LlmInterface::new(ChatConfig::default()));
+            iface.set_llm(Arc::new(rt)).await;
+            iface
+                .set_tool_definitions(vec![neomind_core::llm::backend::ToolDefinition {
+                    name: "shell".into(),
+                    description: "shell ".repeat(tool_desc_repeat),
+                    parameters: serde_json::json!({"type":"object","properties":{"cmd":{"type":"string"}}}),
+                }])
+                .await;
+            let mut stream = iface
+                .chat_stream_with_history("下一步", &history)
+                .await
+                .expect("stream");
+            while let Some(chunk) = stream.next().await {
+                chunk.expect("chunk");
+            }
+            iface
+                .take_last_prompt_archive()
+                .await
+                .expect("send-boundary archive")
+        }
+
+        // Moderate window: compress / reserve should keep feedback traceable.
+        let kept = run_once(8192, 20).await;
+        assert!(kept.tool_feedback.interaction_present_in_history);
+        assert!(
+            kept.tool_feedback.survived,
+            "compress/reserve must keep latest tool feedback traceable"
+        );
+        assert_eq!(
+            kept.tool_feedback.latest_feedback_label.as_deref(),
+            Some("shell")
+        );
+
+        // Tiny window + fat tool defs → soft budget collapses; tools closed.
+        let closed = run_once(512, 200).await;
+        assert!(closed.tool_feedback.interaction_present_in_history);
+        assert!(
+            !closed.tool_feedback.survived,
+            "zero soft budget must report feedback loss"
+        );
+        assert!(
+            !closed.tool_feedback.tools_attached,
+            "P0: tools must stay closed when latest feedback cannot be kept"
+        );
+        assert_eq!(closed.tools_count, 0);
     }
 }

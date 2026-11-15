@@ -1787,9 +1787,9 @@ impl LlmInterface {
 
         // Build messages with history if provided, truncated to fit context window
         let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
-        let mut history_was_nonempty = false;
         let mut available_tokens_obs = 0usize;
         let mut history_before_trim: Vec<Message> = Vec::new();
+        let mut selected_history: Vec<Message> = Vec::new();
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -1797,7 +1797,6 @@ impl LlmInterface {
                 .iter()
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
-            history_was_nonempty = !history_msgs.is_empty();
             history_before_trim = history_msgs.iter().map(|m| (*m).clone()).collect();
 
             let (available_tokens, _prompt_budget) = self
@@ -1817,6 +1816,7 @@ impl LlmInterface {
                 "Truncated conversation history to fit context window",
             );
             history_reason = selected.reason;
+            selected_history = selected.messages.clone();
             msgs.extend(selected.messages);
 
             msgs.push(user_msg);
@@ -1827,13 +1827,14 @@ impl LlmInterface {
 
         let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
             history_reason,
-            history_was_nonempty,
+            &history_before_trim,
+            &selected_history,
             has_tools,
         );
         if has_tools && !attach_tools {
             tracing::warn!(
                 reason = ?history_reason,
-                "zero_budget_degrade_no_tools: refusing tool-enabled assemble after empty history_select"
+                "no_feedback_degrade_no_tools: refusing tool-enabled assemble when latest tool feedback cannot be kept"
             );
         }
 
@@ -1981,9 +1982,9 @@ impl LlmInterface {
 
         // Build messages with history if provided, truncated to fit context window
         let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
-        let mut history_was_nonempty = false;
         let mut available_tokens_obs = 0usize;
         let mut history_before_trim: Vec<Message> = Vec::new();
+        let mut selected_history: Vec<Message> = Vec::new();
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -1991,7 +1992,6 @@ impl LlmInterface {
                 .iter()
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
-            history_was_nonempty = !history_msgs.is_empty();
             history_before_trim = history_msgs.iter().map(|m| (*m).clone()).collect();
 
             let user_text = user_message.content.as_text();
@@ -2012,6 +2012,7 @@ impl LlmInterface {
                 "Truncated conversation history to fit context window",
             );
             history_reason = selected.reason;
+            selected_history = selected.messages.clone();
             msgs.extend(selected.messages);
 
             if !is_message_empty(&user_message) {
@@ -2024,13 +2025,14 @@ impl LlmInterface {
 
         let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
             history_reason,
-            history_was_nonempty,
+            &history_before_trim,
+            &selected_history,
             has_tools,
         );
         if has_tools && !attach_tools {
             tracing::warn!(
                 reason = ?history_reason,
-                "zero_budget_degrade_no_tools: refusing tool-enabled assemble after empty history_select"
+                "no_feedback_degrade_no_tools: refusing tool-enabled assemble when latest tool feedback cannot be kept"
             );
         }
 
@@ -2309,9 +2311,9 @@ impl LlmInterface {
 
         // Build messages with history if provided, truncated to fit context window
         let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
-        let mut history_was_nonempty = false;
         let mut available_tokens_obs = 0usize;
         let mut history_before_trim: Vec<Message> = Vec::new();
+        let mut selected_history: Vec<Message> = Vec::new();
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -2319,7 +2321,6 @@ impl LlmInterface {
                 .iter()
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
-            history_was_nonempty = !history_msgs.is_empty();
             history_before_trim = history_msgs.iter().map(|m| (*m).clone()).collect();
 
             let user_text = user_message.content.as_text();
@@ -2340,6 +2341,7 @@ impl LlmInterface {
                 "Truncated conversation history to fit context window (multimodal stream)",
             );
             history_reason = selected.reason;
+            selected_history = selected.messages.clone();
             msgs.extend(selected.messages);
 
             if !is_message_empty(&user_message) {
@@ -2352,13 +2354,14 @@ impl LlmInterface {
 
         let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
             history_reason,
-            history_was_nonempty,
+            &history_before_trim,
+            &selected_history,
             include_tools,
         );
         if include_tools && !attach_tools {
             tracing::warn!(
                 reason = ?history_reason,
-                "zero_budget_degrade_no_tools: refusing tool-enabled assemble after empty history_select"
+                "no_feedback_degrade_no_tools: refusing tool-enabled assemble when latest tool feedback cannot be kept"
             );
         }
 
@@ -2659,9 +2662,9 @@ impl LlmInterface {
 
         // Build messages with history if provided, truncated to fit context window
         let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
-        let mut history_was_nonempty = false;
         let mut available_tokens_obs = 0usize;
         let mut history_before_trim: Vec<Message> = Vec::new();
+        let mut selected_history: Vec<Message> = Vec::new();
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -2670,7 +2673,6 @@ impl LlmInterface {
                 .iter()
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
-            history_was_nonempty = !history_msgs.is_empty();
             history_before_trim = history_msgs.iter().map(|m| (*m).clone()).collect();
 
             // Use token-based budget calculation accounting for tools and template overhead
@@ -2695,6 +2697,7 @@ impl LlmInterface {
                 "Truncated conversation history to fit context window (group-aware)",
             );
             history_reason = selected.reason;
+            selected_history = selected.messages.clone();
             msgs.extend(selected.messages);
 
             msgs.push(user_msg);
@@ -2705,13 +2708,14 @@ impl LlmInterface {
 
         let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
             history_reason,
-            history_was_nonempty,
+            &history_before_trim,
+            &selected_history,
             include_tools,
         );
         if include_tools && !attach_tools {
             tracing::warn!(
                 reason = ?history_reason,
-                "zero_budget_degrade_no_tools: refusing tool-enabled assemble after empty history_select"
+                "no_feedback_degrade_no_tools: refusing tool-enabled assemble when latest tool feedback cannot be kept"
             );
         }
 
