@@ -553,10 +553,10 @@ fn extract_bool_binding(text: &str, key: &str) -> Option<&'static str> {
     }
 }
 
-/// Parse the first JSON value in a tool-result body (after optional
-/// `[Tool: …]` header lines). Prefer `{…}` object roots so a leftover
-/// `[Tool:` prefix is never mistaken for a JSON array. Truncated /
-/// non-JSON bodies return `None` (bool text fallback → unknown).
+/// Parse a tool-result JSON **object** from the body start (after optional
+/// `[Tool: …]` header lines). Does **not** scan for the first `{` — prose
+/// with embedded JSON and array roots are unparseable here (exec status →
+/// unknown). Truncated / non-object bodies return `None`.
 fn parse_tool_result_json(text: &str) -> Option<serde_json::Value> {
     let mut body = text.trim();
     while body.starts_with("[Tool:") {
@@ -565,18 +565,20 @@ fn parse_tool_result_json(text: &str) -> Option<serde_json::Value> {
             None => return None,
         };
     }
-    // Object first — tool envelopes are objects; `[` would match `[Tool:`.
-    let start = body.find('{').or_else(|| {
-        // Genuine JSON array payloads (no Tool header left).
-        body.find('[')
-    })?;
-    let slice = &body[start..];
-    if let Ok(v) = serde_json::from_str(slice) {
-        return Some(v);
+    // From body start only — never body.find('{') / find('[').
+    let value = match serde_json::from_str::<serde_json::Value>(body) {
+        Ok(v) => v,
+        Err(_) => {
+            // Trailing prose after a complete value at the body start.
+            let mut de =
+                serde_json::Deserializer::from_str(body).into_iter::<serde_json::Value>();
+            de.next().and_then(Result::ok)?
+        }
+    };
+    if !value.is_object() {
+        return None;
     }
-    // Trailing prose after a complete value: parse via deserializer stream.
-    let mut de = serde_json::Deserializer::from_str(slice).into_iter::<serde_json::Value>();
-    de.next().and_then(Result::ok)
+    Some(value)
 }
 
 fn json_scalar_string(v: &serde_json::Value) -> Option<String> {
@@ -1061,6 +1063,46 @@ mod tests {
             !needles.iter().any(|n| n.starts_with("success=")),
             "must not bind success from text, got {needles:?}"
         );
+    }
+
+    #[test]
+    fn array_root_first_true_later_false_is_unknown() {
+        // Scanning for first `{` would bind the first element's success=true.
+        let body = r#"[{"success":true,"id":"a"},{"success":false,"id":"b"}]"#;
+        assert_eq!(extract_bool_binding(body, "success"), None);
+        assert!(parse_tool_result_json(body).is_none());
+        let needles = extract_evidence_needles(body);
+        assert!(
+            !needles.iter().any(|n| n.starts_with("success=")),
+            "array root → unknown exec status, got {needles:?}"
+        );
+        assert!(!evidence_has_structured_outcome(&needles));
+    }
+
+    #[test]
+    fn text_embedded_success_json_is_unknown() {
+        // Prose wrapping a success object must not bind via find('{').
+        let body = r#"shell printed note {"success":true,"device_id":"cam-embed-01"} then exited 1"#;
+        assert_eq!(extract_bool_binding(body, "success"), None);
+        assert!(parse_tool_result_json(body).is_none());
+        let needles = extract_evidence_needles(body);
+        assert!(
+            !needles.iter().any(|n| n.starts_with("success=")),
+            "embedded JSON → unknown, got {needles:?}"
+        );
+        assert!(!evidence_has_structured_outcome(&needles));
+    }
+
+    #[test]
+    fn headed_full_object_binds_outer_success() {
+        let body = "[Tool: shell]\n{\"success\":false,\"operation_id\":\"op-headed-1\",\"data\":{\"device_id\":\"cam-headed-01\"}}";
+        assert_eq!(extract_bool_binding(body, "success"), Some("false"));
+        let root = parse_tool_result_json(body).expect("headed object parses");
+        assert!(root.is_object());
+        let needles = extract_evidence_needles(body);
+        assert!(needles.iter().any(|n| n == "success=false"));
+        assert!(needles.iter().any(|n| n == "operation_id=op-headed-1"));
+        assert!(needles.iter().any(|n| n == "device_id=cam-headed-01"));
     }
 
     #[test]
