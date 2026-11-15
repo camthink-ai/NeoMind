@@ -489,12 +489,37 @@ pub const OP_LEDGER_UNTRUSTED_MESSAGE: &str = "Write blocked: op ledger restore 
 pub const WRITE_INTENT_COMMIT_FAILED_PREFIX: &str =
     "Write blocked: durable write-intent commit failed — side-effect tool not executed";
 
+/// How the user wants the goal delivered (structured; not product keywords).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionMethod {
+    /// Use a command the target device's type template supports
+    /// (`device_command` / `neomind device control`), not notify/push/webhook.
+    DeviceNativeCommand,
+}
+
+/// Delivery routes the user rejected for the current task.
+///
+/// General classes only — never product-specific (eink / weather / …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExcludedRoute {
+    /// Notification, data-push, or webhook configuration/delivery paths.
+    NotificationOrWebhook,
+}
+
 /// Lightweight cross-turn task state (G2) + Round 2 operation ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskState {
     pub goal: Option<String>,
     pub object: Option<String>,
     pub content: Option<String>,
+    /// Preferred execution method after a user correction (kept across Continue).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<ExecutionMethod>,
+    /// Routes the user rejected; additive across corrections; kept on Continue.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded_routes: Vec<ExcludedRoute>,
     pub confirmed_steps: Vec<ConfirmedStep>,
     pub next_action: Option<NextAction>,
     pub status: TaskStatus,
@@ -526,6 +551,8 @@ impl Default for TaskState {
             goal: None,
             object: None,
             content: None,
+            method: None,
+            excluded_routes: Vec::new(),
             confirmed_steps: Vec::new(),
             next_action: None,
             status: TaskStatus::Idle,
@@ -544,18 +571,23 @@ impl Default for TaskState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskDirective {
     /// Establish or replace the working goal fields (does **not** change
-    /// operation scope or wipe write facts).
+    /// operation scope or wipe write facts). Clears prior method /
+    /// excluded-route constraints (new charter).
     SetGoal {
         goal: String,
         object: Option<String>,
         content: Option<String>,
     },
-    /// Correction overwrites the prior goal (and optional fields). Does **not**
-    /// lift anti-replay on the current operation.
+    /// Correction overwrites the prior goal (and optional fields). Keeps
+    /// prior facts when a field is omitted. Does **not** lift anti-replay.
+    /// May bind [`ExecutionMethod`] / [`ExcludedRoute`] from the correction.
     Correct {
         goal: String,
         object: Option<String>,
         content: Option<String>,
+        method: Option<ExecutionMethod>,
+        /// Additive exclusions (union with existing); empty = leave as-is.
+        exclude_routes: Vec<ExcludedRoute>,
     },
     Cancel,
     /// Resume without replaying writes recorded on the current operation.
@@ -1373,6 +1405,9 @@ impl TaskState {
                 if content.is_some() {
                     self.content = content;
                 }
+                // New charter — drop prior method / route exclusions.
+                self.method = None;
+                self.excluded_routes.clear();
                 self.next_action = None;
                 // Target / goal change invalidates a pending Unknown re-run grant.
                 self.clear_user_authorized_new_op();
@@ -1384,15 +1419,26 @@ impl TaskState {
                 goal,
                 object,
                 content,
+                method,
+                exclude_routes,
             } => {
                 // Correction updates the charter; write ledger + executed
                 // operation anti-replay stay. Cancel not-yet-executed ops.
+                // Omitted fields keep prior facts (object / content / method).
                 self.goal = Some(goal);
                 if let Some(o) = object {
                     self.object = Some(o);
                 }
                 if let Some(c) = content {
                     self.content = Some(c);
+                }
+                if let Some(m) = method {
+                    self.method = Some(m);
+                }
+                for route in exclude_routes {
+                    if !self.excluded_routes.contains(&route) {
+                        self.excluded_routes.push(route);
+                    }
                 }
                 self.next_action = None;
                 self.cancel_prepared_operations();
@@ -1407,6 +1453,8 @@ impl TaskState {
             TaskDirective::Cancel => {
                 self.status = TaskStatus::Cancelled;
                 self.next_action = None;
+                self.method = None;
+                self.excluded_routes.clear();
                 self.clear_user_authorized_new_op();
                 self.cancel_all_confirm_requests();
                 ApplyOutcome::Applied
@@ -1491,6 +1539,36 @@ impl TaskState {
         }
         if let Some(c) = &self.content {
             out.push_str(&format!("- Content: {c}\n"));
+        }
+        if self.method.is_some() || !self.excluded_routes.is_empty() {
+            out.push_str("- Constraints (user corrections; binding):\n");
+            if let Some(m) = &self.method {
+                let method_line = match m {
+                    ExecutionMethod::DeviceNativeCommand => {
+                        "method=device_native_command (device type template command \
+                         via device_command / device control — not notification/push/webhook)"
+                    }
+                };
+                out.push_str(&format!("  - {method_line}\n"));
+            }
+            for route in &self.excluded_routes {
+                let line = match route {
+                    ExcludedRoute::NotificationOrWebhook => {
+                        "excluded=notification_or_webhook (do not configure or send via \
+                         push/message/webhook for this goal)"
+                    }
+                };
+                out.push_str(&format!("  - {line}\n"));
+            }
+            if let (Some(o), Some(c)) = (&self.object, &self.content) {
+                out.push_str(&format!(
+                    "  - relation: deliver content `{c}` to device `{o}` using the constrained method\n"
+                ));
+            } else if let Some(o) = &self.object {
+                out.push_str(&format!(
+                    "  - relation: act on device `{o}` using the constrained method\n"
+                ));
+            }
         }
         if !self.confirmed_steps.is_empty() {
             out.push_str("- Confirmed steps (tool evidence):\n");
@@ -1748,11 +1826,7 @@ pub fn parse_user_directive(text: &str) -> Option<TaskDirective> {
     if let Some(rest) = t.strip_prefix("改成") {
         let goal = rest.trim();
         if !goal.is_empty() {
-            return Some(TaskDirective::Correct {
-                goal: goal.to_string(),
-                object: extract_object(goal),
-                content: None,
-            });
+            return Some(correct_directive_from_text(goal));
         }
     }
     if lower.starts_with("change to ") || lower.starts_with("instead ") {
@@ -1762,24 +1836,119 @@ pub fn parse_user_directive(text: &str) -> Option<TaskDirective> {
             lower.trim_start_matches("instead").trim()
         };
         if !goal.is_empty() {
-            return Some(TaskDirective::Correct {
-                goal: goal.to_string(),
-                object: extract_object(goal),
-                content: None,
-            });
+            return Some(correct_directive_from_text(goal));
         }
     }
     if t.contains("不是") && t.contains("是") && t.chars().count() < 80 {
-        return Some(TaskDirective::Correct {
-            goal: t.to_string(),
-            object: extract_object(t),
-            content: None,
-        });
+        return Some(correct_directive_from_text(t));
+    }
+    // General reject+prefer route correction (zh/en), e.g. "not webhook,
+    // use device-native command". No product-keyword branches.
+    if looks_like_route_correction(t) {
+        return Some(correct_directive_from_text(t));
     }
 
     // Ordinary utterances (incl. 「再发送一次」 / long requests) are Turns —
     // not directives. Re-execute is `begin_new_operation`, not a phrase list.
     None
+}
+
+fn correct_directive_from_text(text: &str) -> TaskDirective {
+    let parsed = parse_correction_constraints(text);
+    TaskDirective::Correct {
+        goal: text.trim().to_string(),
+        object: parsed.object,
+        content: parsed.content,
+        method: parsed.method,
+        exclude_routes: parsed.exclude_routes,
+    }
+}
+
+/// Lexical classes for delivery routes — general vocabulary only.
+const NOTIFY_WEBHOOK_TERMS: &[&str] = &[
+    "webhook",
+    "web hook",
+    "推送",
+    "push",
+    "notification",
+    "notify",
+    "通知",
+    "消息通道",
+];
+const DEVICE_NATIVE_TERMS: &[&str] = &[
+    "device-native",
+    "device native",
+    "device_command",
+    "device command",
+    "native command",
+    "设备原生",
+    "设备命令",
+    "原生命令",
+    "device control",
+];
+const REJECT_CUES: &[&str] = &[
+    "不是",
+    "不要",
+    "别用",
+    "别走",
+    "别再",
+    "别搞",
+    "not ",
+    "don't",
+    "do not",
+    "instead of",
+    "rather than",
+    "no more",
+    "stop using",
+    "without ",
+];
+
+#[derive(Debug, Default)]
+struct ParsedCorrectionConstraints {
+    method: Option<ExecutionMethod>,
+    exclude_routes: Vec<ExcludedRoute>,
+    object: Option<String>,
+    content: Option<String>,
+}
+
+fn text_has_any(hay: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|n| hay.contains(n))
+}
+
+/// True when the utterance rejects/prefers delivery route classes (not a
+/// free-form long request). Caps length so ordinary task statements stay Turns.
+fn looks_like_route_correction(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() || t.chars().count() > 120 {
+        return false;
+    }
+    let lower = t.to_lowercase();
+    let has_notify = text_has_any(&lower, NOTIFY_WEBHOOK_TERMS);
+    let has_device = text_has_any(&lower, DEVICE_NATIVE_TERMS);
+    let has_reject = text_has_any(&lower, REJECT_CUES);
+    // Need a rejection cue plus at least one route class (typically reject
+    // notify/webhook and/or prefer device-native).
+    has_reject && (has_notify || has_device)
+}
+
+fn parse_correction_constraints(text: &str) -> ParsedCorrectionConstraints {
+    let lower = text.to_lowercase();
+    let mut out = ParsedCorrectionConstraints {
+        object: extract_object(text),
+        content: extract_content_fragment(text),
+        ..Default::default()
+    };
+    let has_notify = text_has_any(&lower, NOTIFY_WEBHOOK_TERMS);
+    let has_device = text_has_any(&lower, DEVICE_NATIVE_TERMS);
+    let has_reject = text_has_any(&lower, REJECT_CUES);
+    if has_notify && has_reject {
+        out.exclude_routes
+            .push(ExcludedRoute::NotificationOrWebhook);
+    }
+    if has_device {
+        out.method = Some(ExecutionMethod::DeviceNativeCommand);
+    }
+    out
 }
 
 fn extract_object(text: &str) -> Option<String> {
@@ -1793,6 +1962,112 @@ fn extract_object(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Optional content fragment from quotes; None keeps prior TaskState.content.
+fn extract_content_fragment(text: &str) -> Option<String> {
+    for (open, close) in [('「', '」'), ('"', '"'), ('“', '”'), ('\'', '\'')] {
+        if let Some(start) = text.find(open) {
+            let rest = &text[start + open.len_utf8()..];
+            if let Some(end) = rest.find(close) {
+                let inner = rest[..end].trim();
+                if !inner.is_empty() && inner.chars().count() <= 80 {
+                    return Some(inner.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Whether a mutating tool call matches a user-excluded delivery route.
+pub fn mutating_call_excluded_route(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> Option<ExcludedRoute> {
+    let real = crate::tools::resolve_tool_name(tool_name);
+    // Structured device command is never a notify/webhook route.
+    if real == "device_command" {
+        return None;
+    }
+    let canonical = canonicalize_tool_arguments(tool_name, arguments);
+    let cmd = canonical
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if cmd.is_empty() {
+        // Non-shell structured tools: treat message/push-shaped names as notify.
+        if real == "message" || real.contains("push") || real.contains("webhook") {
+            return Some(ExcludedRoute::NotificationOrWebhook);
+        }
+        return None;
+    }
+    if is_notification_or_webhook_mutation(&cmd) {
+        Some(ExcludedRoute::NotificationOrWebhook)
+    } else {
+        None
+    }
+}
+
+fn is_notification_or_webhook_mutation(cmd_lower: &str) -> bool {
+    let c = cmd_lower.trim();
+    if c.contains("neomind push") {
+        // Read-only push queries are not gated here (caller only passes
+        // mutating fingerprints); still exclude any push mutation verb.
+        return !(c.contains(" push list")
+            || c.contains(" push get")
+            || c.contains(" push stats")
+            || c.ends_with(" push"));
+    }
+    if c.contains("neomind message") {
+        return !(c.contains(" message list")
+            || c.contains(" message get")
+            || c.contains(" message history")
+            || c.contains(" message read"));
+    }
+    // Generic webhook configuration / enablement (not device control).
+    if c.contains("webhook")
+        && (c.contains("create")
+            || c.contains("update")
+            || c.contains("add")
+            || c.contains("enable")
+            || c.contains("start")
+            || c.contains("set ")
+            || c.contains("config"))
+    {
+        return true;
+    }
+    false
+}
+
+impl TaskState {
+    /// If this mutating call violates bound exclusions, return a block reason.
+    pub fn constraint_block_reason(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+    ) -> Option<String> {
+        if self.excluded_routes.is_empty() {
+            return None;
+        }
+        let Some(route) = mutating_call_excluded_route(tool_name, arguments) else {
+            return None;
+        };
+        if !self.excluded_routes.contains(&route) {
+            return None;
+        }
+        let method_hint = match self.method {
+            Some(ExecutionMethod::DeviceNativeCommand) => {
+                " Use device_command (or device control) for the goal device instead."
+            }
+            None => " Follow the Active Task State constraints.",
+        };
+        Some(format!(
+            "Write blocked: user correction excluded notification/webhook/push routes \
+             for this task.{method_hint}"
+        ))
+    }
 }
 
 /// Stable fingerprint for a mutating write (tool + canonical args).
@@ -2327,6 +2602,14 @@ pub fn evaluate_mutating_gate(
     stream_owner: Option<&str>,
     call_site_turn: u64,
 ) -> MutatingGateOutcome {
+    // Structured correction constraints bind before Operation lease — prompt
+    // alone is not enough when the model still reaches for excluded routes.
+    if let Some(message) = state.constraint_block_reason(tool_name, arguments) {
+        return MutatingGateOutcome::Block {
+            message,
+            confirm: None,
+        };
+    }
     match prepare_mutating_dispatch(
         state,
         tool_name,
@@ -2722,6 +3005,8 @@ mod tests {
             goal: "写到 eink EK410".into(),
             object: Some("EK410".into()),
             content: None,
+            method: None,
+            exclude_routes: vec![],
         });
         assert_eq!(s.goal.as_deref(), Some("写到 eink EK410"));
         assert_eq!(s.object.as_deref(), Some("EK410"));
@@ -2846,6 +3131,102 @@ mod tests {
     }
 
     #[test]
+    fn correction_binds_device_method_and_excludes_webhook_push() {
+        // Acceptance: after “not webhook, use device-native command”,
+        // constraints bind (no eink/weather keyword branch).
+        match parse_user_directive("not webhook, use device-native command") {
+            Some(TaskDirective::Correct {
+                method,
+                exclude_routes,
+                ..
+            }) => {
+                assert_eq!(method, Some(ExecutionMethod::DeviceNativeCommand));
+                assert!(exclude_routes.contains(&ExcludedRoute::NotificationOrWebhook));
+            }
+            other => panic!("expected route Correct, got {other:?}"),
+        }
+        match parse_user_directive("不是 webhook，用设备原生命令") {
+            Some(TaskDirective::Correct {
+                method,
+                exclude_routes,
+                ..
+            }) => {
+                assert_eq!(method, Some(ExecutionMethod::DeviceNativeCommand));
+                assert!(exclude_routes.contains(&ExcludedRoute::NotificationOrWebhook));
+            }
+            other => panic!("expected zh route Correct, got {other:?}"),
+        }
+        // Ordinary goal statements stay Turns (no reject cue).
+        assert!(parse_user_directive("把天气写到屏幕").is_none());
+        assert!(parse_user_directive("configure the webhook for weather").is_none());
+    }
+
+    #[test]
+    fn continue_keeps_corrected_constraints_and_blocks_push() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "update the screen".into(),
+            object: Some("cam-1".into()),
+            content: Some("晴".into()),
+        });
+        // User was on a push path; corrects to device-native.
+        s.apply_directive(TaskDirective::Correct {
+            goal: "not webhook, use device-native command on cam-1".into(),
+            object: Some("cam-1".into()),
+            content: None, // keep prior content
+            method: Some(ExecutionMethod::DeviceNativeCommand),
+            exclude_routes: vec![ExcludedRoute::NotificationOrWebhook],
+        });
+        assert_eq!(s.content.as_deref(), Some("晴"));
+        assert_eq!(s.method, Some(ExecutionMethod::DeviceNativeCommand));
+        assert!(s
+            .excluded_routes
+            .contains(&ExcludedRoute::NotificationOrWebhook));
+
+        s.note_user_turn();
+        s.apply_directive(TaskDirective::Continue);
+        assert_eq!(s.goal.as_deref().unwrap().contains("device-native"), true);
+        assert_eq!(s.object.as_deref(), Some("cam-1"));
+        assert_eq!(s.content.as_deref(), Some("晴"));
+        assert_eq!(s.method, Some(ExecutionMethod::DeviceNativeCommand));
+        assert!(s
+            .excluded_routes
+            .contains(&ExcludedRoute::NotificationOrWebhook));
+
+        let prompt = s.to_prompt_section().expect("prompt");
+        assert!(prompt.contains("Constraints"));
+        assert!(prompt.contains("device_native_command"));
+        assert!(prompt.contains("notification_or_webhook"));
+
+        let call_site = s.turn_count;
+        let push_args = serde_json::json!({
+            "command": "neomind push start weather-screen"
+        });
+        let fp = crate::agent::streaming::mutating_write_fingerprint("shell", &push_args)
+            .expect("push start is a write");
+        match evaluate_mutating_gate(&mut s, "shell", &push_args, &fp, None, call_site) {
+            MutatingGateOutcome::Block { message, confirm } => {
+                assert!(message.contains("excluded"), "{message}");
+                assert!(confirm.is_none());
+            }
+            other => panic!("push must be blocked by correction constraints, got {other:?}"),
+        }
+
+        // Device-native path remains allowed.
+        let dc_args = serde_json::json!({
+            "device": "cam-1",
+            "command": "render_text",
+            "params": {"text": "晴"}
+        });
+        let fp_dc = crate::agent::streaming::mutating_write_fingerprint("device_command", &dc_args)
+            .expect("device_command write");
+        match evaluate_mutating_gate(&mut s, "device_command", &dc_args, &fp_dc, None, call_site) {
+            MutatingGateOutcome::Proceed { .. } => {}
+            other => panic!("device_command must proceed, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn followup_correct_do_not_lift_anti_replay_reexecute_advances_operation() {
         let mut s = TaskState::default();
         s.apply_directive(TaskDirective::SetGoal {
@@ -2888,6 +3269,8 @@ mod tests {
             goal: "写到 eink EK410 更大字号".into(),
             object: Some("EK410".into()),
             content: None,
+            method: None,
+            exclude_routes: vec![],
         });
         assert!(!s.may_execute_write(&fp));
         assert_eq!(s.confirmed_steps.len(), 1);
@@ -3345,6 +3728,8 @@ mod tests {
             goal: "写到更大字号".into(),
             object: Some("EK410".into()),
             content: None,
+            method: None,
+            exclude_routes: vec![],
         });
         assert_eq!(
             s.operation(&pending).unwrap().status,
@@ -4735,6 +5120,8 @@ mod tests {
             goal: "do something else".into(),
             object: Some("other".into()),
             content: None,
+            method: None,
+            exclude_routes: vec![],
         });
         assert!(
             s.user_authorized_new_op.is_none(),
