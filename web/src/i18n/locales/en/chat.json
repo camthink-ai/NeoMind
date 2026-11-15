@@ -248,6 +248,7 @@
   "authorizeConfirm": {
     "title": "Confirm re-run of blocked write",
     "pickOne": "Multiple blocked operations — pick which to re-run",
-    "button": "Re-run {{opId}}"
+    "button": "Re-run {{opId}}",
+    "buttonWithTarget": "Re-run {{opId}} · {{target}}"
   }
 }

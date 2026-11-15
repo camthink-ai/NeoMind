@@ -1987,6 +1987,32 @@ fn agent_event_to_json(event: &AgentEvent) -> Value {
             v
         }
         AgentEvent::SystemNote { note } => json!({ "type": "SystemNote", "note": note }),
+        AgentEvent::AuthorizeConfirmRequest {
+            request_id,
+            prior_operation_id,
+            write_fingerprint,
+            tool_name,
+            target,
+            valid_until_ms,
+        } => {
+            let mut json = json!({
+                "type": "AuthorizeConfirmRequest",
+                "requestId": request_id,
+                "priorOperationId": prior_operation_id,
+                "writeFingerprint": write_fingerprint,
+                "toolName": tool_name,
+                "validUntilMs": valid_until_ms,
+            });
+            if let Some(t) = target {
+                json["target"] = json!(t);
+            }
+            json
+        }
+        AgentEvent::AuthorizeConfirmRemoved { request_id, reason } => json!({
+            "type": "AuthorizeConfirmRemoved",
+            "requestId": request_id,
+            "reason": reason,
+        }),
         AgentEvent::Progress {
             message,
             stage,

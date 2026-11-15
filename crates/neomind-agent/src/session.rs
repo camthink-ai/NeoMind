@@ -1951,7 +1951,7 @@ Assistant: {ar}\n"
         &self,
         session_id: &str,
         message: &str,
-        authorize_new_operation: Option<(String, String)>,
+        authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         let agent = self.get_session(session_id).await?;
 
@@ -2046,7 +2046,7 @@ Assistant: {ar}\n"
         message: &str,
         backend_id: Option<&str>,
         selected_skills: Option<&[String]>,
-        authorize_new_operation: Option<(String, String)>,
+        authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         // If a specific backend is requested, configure the agent with it
         if let Some(backend) = backend_id {
@@ -2175,7 +2175,7 @@ Assistant: {ar}\n"
         message: &str,
         images: Vec<String>,
         backend_id: Option<&str>,
-        authorize_new_operation: Option<(String, String)>,
+        authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
         // If a specific backend is requested, configure the agent with it
         if let Some(backend) = backend_id {
@@ -2238,7 +2238,7 @@ Assistant: {ar}\n"
         session_id: &str,
         message: &str,
         images: Vec<String>,
-        authorize_new_operation: Option<(String, String)>,
+        authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
         // Check if images are provided and model supports vision
         if !images.is_empty() {

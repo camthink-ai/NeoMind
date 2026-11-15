@@ -1,49 +1,26 @@
 import type { AuthorizeNewOperationRequest } from '@/types'
 
-/** Structured Unknown re-run confirm emitted by the write gate / UI button. */
+/**
+ * Structured Unknown re-run confirm from server WS events
+ * (`AuthorizeConfirmRequest`). Fingerprints travel as JSON fields and may
+ * contain spaces (e.g. `shell|neomind device control …`) — never parse them
+ * out of prose with `(\S+)` / split_whitespace.
+ */
 export interface AuthorizeNewOperationConfirm {
   requestId: string
   priorOperationId: string
   writeFingerprint: string
+  toolName?: string
+  target?: string | null
   validUntilMs: number
 }
 
-function kvToken(text: string, key: string): string | null {
-  const re = new RegExp(`${key}=(\\S+)`)
-  const match = text.match(re)
-  const value = match?.[1]?.trim()
-  return value || null
-}
-
-/**
- * Parse a structured confirm line
- * (`authorizeNewOperation confirm: request_id=… prior_operation_id=…
- * write_fingerprint=… valid_until_ms=…`).
- *
- * Incomplete / legacy `target:` markers without request id + validity are
- * rejected — the UI must not reconstruct a latest-B grant from body text.
- */
-export function parseAuthorizeNewOperationConfirm(
-  text: string,
-): AuthorizeNewOperationConfirm | null {
-  if (!text.includes('authorizeNewOperation confirm:')) return null
-  const requestId = kvToken(text, 'request_id')
-  const priorOperationId = kvToken(text, 'prior_operation_id')
-  const writeFingerprint = kvToken(text, 'write_fingerprint')
-  const validRaw = kvToken(text, 'valid_until_ms')
-  if (!requestId || !priorOperationId || !writeFingerprint || !validRaw) return null
-  const validUntilMs = Number(validRaw)
-  if (!Number.isFinite(validUntilMs)) return null
-  return { requestId, priorOperationId, writeFingerprint, validUntilMs }
-}
-
-/** @deprecated Prefer parseAuthorizeNewOperationConfirm — target-only is incomplete. */
-export function parseAuthorizeNewOperationTarget(
-  text: string,
-): AuthorizeNewOperationRequest | null {
-  const confirm = parseAuthorizeNewOperationConfirm(text)
-  if (!confirm) return null
+/** Build the host submit payload (request-id keyed). */
+export function toAuthorizeRequest(
+  confirm: AuthorizeNewOperationConfirm,
+): AuthorizeNewOperationRequest {
   return {
+    requestId: confirm.requestId,
     priorOperationId: confirm.priorOperationId,
     writeFingerprint: confirm.writeFingerprint,
   }
@@ -56,51 +33,34 @@ export function isConfirmActive(
   return confirm.validUntilMs > nowMs
 }
 
-export function toAuthorizeRequest(
-  confirm: AuthorizeNewOperationConfirm,
-): AuthorizeNewOperationRequest {
-  return {
-    priorOperationId: confirm.priorOperationId,
-    writeFingerprint: confirm.writeFingerprint,
-  }
-}
-
-/** Collect text blobs that may carry structured confirm lines. */
-export function messageTextsForConfirmScan(
-  messages: Array<{ content?: string; tool_calls?: Array<{ result?: unknown }> }>,
-): string[] {
-  const out: string[] = []
-  for (const message of messages) {
-    if (message.content) out.push(message.content)
-    for (const tc of message.tool_calls ?? []) {
-      if (typeof tc.result === 'string') out.push(tc.result)
-      else if (tc.result != null) {
-        try {
-          out.push(JSON.stringify(tc.result))
-        } catch {
-          // ignore non-serializable tool results
-        }
-      }
-    }
-  }
-  return out
-}
-
-/**
- * Active pending confirms from structured sources only.
- * Dedupes by requestId; expired entries are dropped.
- */
-export function collectActivePendingConfirms(
-  sources: Iterable<string>,
+/** Upsert a confirm from a WS AuthorizeConfirmRequest event. */
+export function upsertPendingConfirm(
+  pending: AuthorizeNewOperationConfirm[],
+  incoming: AuthorizeNewOperationConfirm,
   nowMs: number = Date.now(),
 ): AuthorizeNewOperationConfirm[] {
-  const byId = new Map<string, AuthorizeNewOperationConfirm>()
-  for (const text of sources) {
-    const parsed = parseAuthorizeNewOperationConfirm(text)
-    if (!parsed || !isConfirmActive(parsed, nowMs)) continue
-    byId.set(parsed.requestId, parsed)
+  if (!isConfirmActive(incoming, nowMs)) {
+    return pending.filter((c) => c.requestId !== incoming.requestId)
   }
-  return [...byId.values()]
+  const next = pending.filter((c) => c.requestId !== incoming.requestId)
+  next.push(incoming)
+  return next
+}
+
+/** Remove a confirm (consumed / expired / cancelled). */
+export function removePendingConfirm(
+  pending: AuthorizeNewOperationConfirm[],
+  requestId: string,
+): AuthorizeNewOperationConfirm[] {
+  return pending.filter((c) => c.requestId !== requestId)
+}
+
+/** Drop wall-clock-expired entries. */
+export function filterActivePendingConfirms(
+  pending: AuthorizeNewOperationConfirm[],
+  nowMs: number = Date.now(),
+): AuthorizeNewOperationConfirm[] {
+  return pending.filter((c) => isConfirmActive(c, nowMs))
 }
 
 /** Phrases that map to AuthorizeNewOperation when exactly one confirm is active. */
@@ -117,7 +77,7 @@ export function isAuthorizeNewOperationPhrase(text: string): boolean {
 /**
  * Phrase shortcut: attach auth only when there is exactly one active pending
  * confirm. Multi-candidate → null (user must pick an explicit op button).
- * Never scans history bodies for a latest parseable target.
+ * Pending list comes from WS events — never from history-body text scan.
  */
 export function resolveAuthorizeNewOperationForSend(
   userText: string,
@@ -125,7 +85,18 @@ export function resolveAuthorizeNewOperationForSend(
   nowMs: number = Date.now(),
 ): AuthorizeNewOperationRequest | null {
   if (!isAuthorizeNewOperationPhrase(userText)) return null
-  const active = pendingConfirms.filter((c) => isConfirmActive(c, nowMs))
+  const active = filterActivePendingConfirms(pendingConfirms, nowMs)
   if (active.length !== 1) return null
   return toAuthorizeRequest(active[0])
+}
+
+/** Display label: op short id + optional target name. */
+export function confirmDisplayLabel(confirm: AuthorizeNewOperationConfirm): {
+  opId: string
+  target?: string
+} {
+  const id = confirm.priorOperationId
+  const opId = id.length <= 12 ? id : `${id.slice(0, 8)}…`
+  const target = confirm.target?.trim() || undefined
+  return { opId, target }
 }

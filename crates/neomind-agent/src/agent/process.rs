@@ -472,7 +472,7 @@ impl Agent {
         user_message: &str,
         images: Vec<String>, // Base64 data URLs
         safeguards: StreamSafeguards,
-        authorize_new_operation: Option<(String, String)>,
+        authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         tracing::debug!(
             message = %user_message,
@@ -564,7 +564,7 @@ impl Agent {
         conversation_summary: Option<String>,
         summary_up_to_index: Option<u64>,
         safeguards: StreamSafeguards,
-        authorize_new_operation: Option<(String, String)>,
+        authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         // Atomic accept: Turn + auth under one lock; local context for stream.
         let accepted = {

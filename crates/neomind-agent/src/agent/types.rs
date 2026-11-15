@@ -126,6 +126,28 @@ pub enum AgentEvent {
         /// Note body (no header/footer markup — presentation is the UI's job)
         note: String,
     },
+    /// Unknown re-run confirm request — structured JSON fields for the host/UI.
+    /// Fingerprints travel here (may contain spaces); never via text KV parse.
+    AuthorizeConfirmRequest {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        #[serde(rename = "priorOperationId")]
+        prior_operation_id: String,
+        #[serde(rename = "writeFingerprint")]
+        write_fingerprint: String,
+        #[serde(rename = "toolName")]
+        tool_name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+        #[serde(rename = "validUntilMs")]
+        valid_until_ms: u64,
+    },
+    /// Pending confirm removed (consumed / expired / cancelled).
+    AuthorizeConfirmRemoved {
+        #[serde(rename = "requestId")]
+        request_id: String,
+        reason: String,
+    },
 }
 
 impl AgentEvent {
@@ -201,6 +223,34 @@ impl AgentEvent {
     pub fn warning(message: impl Into<String>) -> Self {
         Self::Warning {
             message: message.into(),
+        }
+    }
+
+    /// Structured Unknown re-run confirm for the host/UI (JSON fields).
+    pub fn authorize_confirm_request(confirm: &super::task_continuity::ConfirmRequest) -> Self {
+        Self::AuthorizeConfirmRequest {
+            request_id: confirm.request_id.clone(),
+            prior_operation_id: confirm.prior_operation_id.clone(),
+            write_fingerprint: confirm.write_fingerprint.clone(),
+            tool_name: confirm.tool_name.clone(),
+            target: confirm.target.clone(),
+            valid_until_ms: confirm.valid_until_ms,
+        }
+    }
+
+    /// Pending confirm removed (consumed / expired / cancelled).
+    pub fn authorize_confirm_removed(
+        request_id: impl Into<String>,
+        reason: super::task_continuity::ConfirmRemoveReason,
+    ) -> Self {
+        let reason = match reason {
+            super::task_continuity::ConfirmRemoveReason::Consumed => "consumed",
+            super::task_continuity::ConfirmRemoveReason::Expired => "expired",
+            super::task_continuity::ConfirmRemoveReason::Cancelled => "cancelled",
+        };
+        Self::AuthorizeConfirmRemoved {
+            request_id: request_id.into(),
+            reason: reason.to_string(),
         }
     }
 
@@ -2104,8 +2154,10 @@ impl AgentInternalState {
     /// [`AcceptedTurnContext`] for the stream / tool gate.
     ///
     /// `authorization` travels **with** this message (not a shared pending
-    /// hop another request can steal). Host/UI explicit target wins over
-    /// bare phrase shortcuts (unique-Unknown only).
+    /// hop another request can steal). Host/UI submits a confirm
+    /// [`AuthorizeNewOpSubmit::request_id`]; the server atomically
+    /// validates + consumes before granting. Bare phrase shortcuts still
+    /// bind only a unique Unknown.
     ///
     /// Content nodes still use `pending_user_content_nodes` (attached here
     /// under the same lock). Callers that already hold nodes may set them
@@ -2113,7 +2165,7 @@ impl AgentInternalState {
     pub fn accept_user_message(
         &mut self,
         message: AgentMessage,
-        authorization: Option<(String, String)>,
+        authorization: Option<super::task_continuity::AuthorizeNewOpSubmit>,
     ) -> AcceptedTurnContext {
         let mut message = message;
         debug_assert_eq!(
@@ -2130,13 +2182,26 @@ impl AgentInternalState {
         // re-execute from utterance length or phrase whitelists.
         let call_site_turn = self.task_state.note_user_turn();
         match authorization {
-            Some((op_id, fp)) if !op_id.is_empty() && !fp.is_empty() => {
-                let _ = self.task_state.apply_directive(
-                    super::task_continuity::TaskDirective::AuthorizeNewOperation {
-                        prior_operation_id: Some(op_id),
-                        write_fingerprint: Some(fp),
-                    },
-                );
+            Some(submit)
+                if !submit.request_id.is_empty()
+                    && !submit.prior_operation_id.is_empty()
+                    && !submit.write_fingerprint.is_empty() =>
+            {
+                match self.task_state.submit_confirm_request(&submit, None) {
+                    Ok((op_id, fp)) => {
+                        let _ = self.task_state.apply_directive(
+                            super::task_continuity::TaskDirective::AuthorizeNewOperation {
+                                prior_operation_id: Some(op_id),
+                                write_fingerprint: Some(fp),
+                            },
+                        );
+                    }
+                    Err(_) => {
+                        // Invalid / expired / consumed — no grant. Phrase
+                        // shortcuts still do not apply when a structured
+                        // submit was attempted.
+                    }
+                }
             }
             _ => {
                 if let Some(directive) =

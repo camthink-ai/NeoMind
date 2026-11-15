@@ -41,8 +41,6 @@ import {
   saveSessionDraft,
 } from "@/lib/chat/contentProtocol"
 import {
-  collectActivePendingConfirms,
-  messageTextsForConfirmScan,
   resolveAuthorizeNewOperationForSend,
   toAuthorizeRequest,
   type AuthorizeNewOperationConfirm,
@@ -125,6 +123,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     streamingContent,
     streamingThinking,
     streamingToolCalls,
+    pendingAuthorizeConfirms,
     roundContents,
     streamingRoundThinking,
     currentRound,
@@ -132,6 +131,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     hardReset,
     restore,
     restoreIfBehind,
+    dismissAuthorizeConfirm,
   } = useChatStream({
     onContextCompacted: (count) => {
       // Post-compact tokenUsage is applied via onTokenUsage when present.
@@ -602,14 +602,6 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const imagesAllowed = supportsMultimodal || companionRunning
   const visionDelegate = !supportsMultimodal && companionRunning
 
-  const pendingAuthorizeConfirms = useMemo(() => {
-    const texts = messageTextsForConfirmScan(panelMessages)
-    for (const tc of streamingToolCalls) {
-      if (typeof tc.result === 'string') texts.push(tc.result)
-    }
-    return collectActivePendingConfirms(texts)
-  }, [panelMessages, streamingToolCalls])
-
   // Send message — ensure session is ready before sending
   const handleSend = useCallback(async (overrides?: {
     message?: string
@@ -695,11 +687,12 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
   const handleConfirmAuthorize = useCallback((confirm: AuthorizeNewOperationConfirm) => {
     const phrase = i18n.language?.startsWith('zh') ? '确认重跑' : 'confirm re-run'
+    dismissAuthorizeConfirm(confirm.requestId)
     void handleSend({
       message: phrase,
       authorizeNewOperation: toAuthorizeRequest(confirm),
     })
-  }, [handleSend, i18n.language])
+  }, [handleSend, i18n.language, dismissAuthorizeConfirm])
 
   const filteredMessages = useMemo(() => filterPartialMessages(panelMessages), [panelMessages])
 

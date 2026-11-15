@@ -312,6 +312,52 @@ pub struct NewOpAuthorization {
     pub confirming_turn: u64,
 }
 
+/// Host/UI submit payload for an Unknown re-run confirm (request-id keyed).
+///
+/// Fingerprints travel as **JSON fields** on this struct / WS events — never
+/// via whitespace-splitting text parse (`\\S+` / `split_whitespace`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorizeNewOpSubmit {
+    pub request_id: String,
+    pub prior_operation_id: OperationId,
+    pub write_fingerprint: String,
+}
+
+/// Server-side confirm-request lifecycle record (runtime-only).
+///
+/// Issued (or reused) when a mutating gate returns InquireStatus. Host/UI
+/// submits [`AuthorizeNewOpSubmit::request_id`]; the server atomically
+/// validates + consumes before granting [`NewOpAuthorization`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfirmRequest {
+    pub request_id: String,
+    pub prior_operation_id: OperationId,
+    pub write_fingerprint: String,
+    pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub valid_until_ms: u64,
+}
+
+/// Why a pending confirm was removed (emitted to the host/UI).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConfirmRemoveReason {
+    Consumed,
+    Expired,
+    Cancelled,
+}
+
+/// Queued confirm-lifecycle notice for the next stream emission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmLifecycleNotice {
+    Requested(ConfirmRequest),
+    Removed {
+        request_id: String,
+        reason: ConfirmRemoveReason,
+    },
+}
+
 /// Mutating tools that advertise [`NEW_OPERATION_ARG`] in the LLM schema.
 pub const NEW_OPERATION_PROTOCOL_TOOLS: &[&str] =
     &["shell", "run_now", "file_write", "file_edit", "image_edit"];
@@ -419,6 +465,12 @@ pub struct TaskState {
     /// [`Self::take_user_authorized_new_op`].
     #[serde(skip)]
     pub user_authorized_new_op: Option<NewOpAuthorization>,
+    /// Pending Unknown re-run confirm requests (runtime-only).
+    #[serde(skip)]
+    pub pending_confirm_requests: Vec<ConfirmRequest>,
+    /// Notices to emit on the next stream (requested / removed).
+    #[serde(skip)]
+    pub confirm_lifecycle_notices: Vec<ConfirmLifecycleNotice>,
 }
 
 impl Default for TaskState {
@@ -435,6 +487,8 @@ impl Default for TaskState {
             write_ledger: Vec::new(),
             turn_count: 0,
             user_authorized_new_op: None,
+            pending_confirm_requests: Vec::new(),
+            confirm_lifecycle_notices: Vec::new(),
         }
     }
 }
@@ -628,6 +682,178 @@ impl TaskState {
     /// Clear any outstanding new-op grant (cancel / target change / expiry).
     pub fn clear_user_authorized_new_op(&mut self) {
         self.user_authorized_new_op = None;
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    /// Drain queued confirm lifecycle notices for stream emission.
+    pub fn drain_confirm_lifecycle_notices(&mut self) -> Vec<ConfirmLifecycleNotice> {
+        std::mem::take(&mut self.confirm_lifecycle_notices)
+    }
+
+    /// Drop expired pending confirms (wall-clock) and queue Removed notices.
+    pub fn expire_confirm_requests(&mut self, now_ms: u64) {
+        let (keep, expired): (Vec<_>, Vec<_>) = self
+            .pending_confirm_requests
+            .drain(..)
+            .partition(|c| c.valid_until_ms > now_ms);
+        self.pending_confirm_requests = keep;
+        for c in expired {
+            self.confirm_lifecycle_notices
+                .push(ConfirmLifecycleNotice::Removed {
+                    request_id: c.request_id,
+                    reason: ConfirmRemoveReason::Expired,
+                });
+        }
+    }
+
+    /// Cancel all pending confirms (Cancel / Correct / SetGoal).
+    pub fn cancel_all_confirm_requests(&mut self) {
+        for c in self.pending_confirm_requests.drain(..) {
+            self.confirm_lifecycle_notices
+                .push(ConfirmLifecycleNotice::Removed {
+                    request_id: c.request_id,
+                    reason: ConfirmRemoveReason::Cancelled,
+                });
+        }
+    }
+
+    /// Issue or reuse a confirm request for an Unknown Operation.
+    ///
+    /// Same Unknown op + fingerprint → reuse the existing pending request
+    /// (duplicate gate hits do not mint a new id). Fingerprint / target /
+    /// tool travel as structured fields — not text KV.
+    pub fn issue_or_reuse_confirm_request(
+        &mut self,
+        prior_operation_id: &str,
+        write_fingerprint: &str,
+        tool_name: &str,
+        target: Option<String>,
+    ) -> ConfirmRequest {
+        let now = Self::now_ms();
+        self.expire_confirm_requests(now);
+        if let Some(existing) = self
+            .pending_confirm_requests
+            .iter()
+            .find(|c| {
+                c.prior_operation_id == prior_operation_id
+                    && c.write_fingerprint == write_fingerprint
+            })
+            .cloned()
+        {
+            // Re-emit so late-joining UIs still see the pending chip.
+            self.confirm_lifecycle_notices
+                .push(ConfirmLifecycleNotice::Requested(existing.clone()));
+            return existing;
+        }
+        let req = ConfirmRequest {
+            request_id: format!("req-{}", uuid::Uuid::new_v4()),
+            prior_operation_id: prior_operation_id.to_string(),
+            write_fingerprint: write_fingerprint.to_string(),
+            tool_name: tool_name.to_string(),
+            target,
+            valid_until_ms: now.saturating_add(UNKNOWN_RERUN_CONFIRM_VALIDITY_MS),
+        };
+        self.pending_confirm_requests.push(req.clone());
+        self.confirm_lifecycle_notices
+            .push(ConfirmLifecycleNotice::Requested(req.clone()));
+        req
+    }
+
+    /// Atomically validate + consume a confirm request by id.
+    ///
+    /// Verifies the request exists, is not expired, the Operation is still
+    /// Unknown, and the submitted op/fingerprint match the server record.
+    /// On success removes the pending request and returns the bound pair for
+    /// [`Self::grant_user_authorized_new_op`].
+    pub fn submit_confirm_request(
+        &mut self,
+        submit: &AuthorizeNewOpSubmit,
+        now_ms: Option<u64>,
+    ) -> Result<(OperationId, String), &'static str> {
+        let now = now_ms.unwrap_or_else(Self::now_ms);
+        // Look up this id before sweeping others so an expired click gets
+        // `confirm_request_expired` (not a generic not_found).
+        let idx = self
+            .pending_confirm_requests
+            .iter()
+            .position(|c| c.request_id == submit.request_id);
+        let Some(idx) = idx else {
+            self.expire_confirm_requests(now);
+            return Err("confirm_request_not_found");
+        };
+        let req = self.pending_confirm_requests.remove(idx);
+        if req.valid_until_ms <= now {
+            self.confirm_lifecycle_notices
+                .push(ConfirmLifecycleNotice::Removed {
+                    request_id: req.request_id,
+                    reason: ConfirmRemoveReason::Expired,
+                });
+            self.expire_confirm_requests(now);
+            return Err("confirm_request_expired");
+        }
+        self.expire_confirm_requests(now);
+        if req.prior_operation_id != submit.prior_operation_id
+            || req.write_fingerprint != submit.write_fingerprint
+        {
+            // Restore — client must not mutate bound fields.
+            self.pending_confirm_requests.push(req);
+            return Err("confirm_request_mismatch");
+        }
+        let Some(op) = self.operation(&req.prior_operation_id) else {
+            self.confirm_lifecycle_notices
+                .push(ConfirmLifecycleNotice::Removed {
+                    request_id: req.request_id,
+                    reason: ConfirmRemoveReason::Cancelled,
+                });
+            return Err("no_matching_unknown_operation");
+        };
+        if op.status != OperationStatus::Unknown {
+            self.confirm_lifecycle_notices
+                .push(ConfirmLifecycleNotice::Removed {
+                    request_id: req.request_id,
+                    reason: ConfirmRemoveReason::Cancelled,
+                });
+            return Err("no_matching_unknown_operation");
+        }
+        let Some(op_fp) = op.write_fingerprint.as_deref() else {
+            self.confirm_lifecycle_notices
+                .push(ConfirmLifecycleNotice::Removed {
+                    request_id: req.request_id,
+                    reason: ConfirmRemoveReason::Cancelled,
+                });
+            return Err("no_matching_unknown_operation");
+        };
+        if op_fp != req.write_fingerprint {
+            self.confirm_lifecycle_notices
+                .push(ConfirmLifecycleNotice::Removed {
+                    request_id: req.request_id,
+                    reason: ConfirmRemoveReason::Cancelled,
+                });
+            return Err("fingerprint_mismatch");
+        }
+        let bound = (
+            req.prior_operation_id.clone(),
+            req.write_fingerprint.clone(),
+        );
+        self.confirm_lifecycle_notices
+            .push(ConfirmLifecycleNotice::Removed {
+                request_id: req.request_id,
+                reason: ConfirmRemoveReason::Consumed,
+            });
+        Ok(bound)
+    }
+
+    /// Look up a pending confirm (tests / UI helpers).
+    pub fn pending_confirm(&self, request_id: &str) -> Option<&ConfirmRequest> {
+        self.pending_confirm_requests
+            .iter()
+            .find(|c| c.request_id == request_id)
     }
 
     /// Atomically consume a grant for `prior_operation_id` + `write_fingerprint`
@@ -999,6 +1225,7 @@ impl TaskState {
                 self.next_action = None;
                 // Target / goal change invalidates a pending Unknown re-run grant.
                 self.clear_user_authorized_new_op();
+                self.cancel_all_confirm_requests();
                 self.status = TaskStatus::Active;
                 ApplyOutcome::Applied
             }
@@ -1020,6 +1247,7 @@ impl TaskState {
                 self.cancel_prepared_operations();
                 // Target change invalidates a pending Unknown re-run grant.
                 self.clear_user_authorized_new_op();
+                self.cancel_all_confirm_requests();
                 if !matches!(self.status, TaskStatus::Cancelled) {
                     self.status = TaskStatus::Active;
                 }
@@ -1029,6 +1257,7 @@ impl TaskState {
                 self.status = TaskStatus::Cancelled;
                 self.next_action = None;
                 self.clear_user_authorized_new_op();
+                self.cancel_all_confirm_requests();
                 ApplyOutcome::Applied
             }
             TaskDirective::Continue => {
@@ -1452,18 +1681,41 @@ pub fn extract_operation_target(arguments: &serde_json::Value) -> Option<String>
             }
         }
     }
-    // Shell command: look for `--device VALUE`
+    // Shell command: look for `--device VALUE` (supports quoted values with spaces).
     if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
         let parts: Vec<&str> = cmd.split_whitespace().collect();
         for i in 0..parts.len() {
             if parts[i] == "--device" || parts[i] == "--name" || parts[i] == "--channel" {
-                if let Some(v) = parts.get(i + 1) {
-                    return Some((*v).to_string());
+                if let Some(v) = shell_flag_value(&parts, i) {
+                    if !v.is_empty() {
+                        return Some(v);
+                    }
                 }
             }
         }
     }
     None
+}
+
+/// Read a CLI flag value after `parts[flag_idx]`, rejoining quoted tokens.
+fn shell_flag_value(parts: &[&str], flag_idx: usize) -> Option<String> {
+    let first = *parts.get(flag_idx + 1)?;
+    if first.starts_with('"') {
+        if first.len() > 1 && first.ends_with('"') {
+            return Some(first.trim_matches('"').to_string());
+        }
+        let mut acc = first.trim_start_matches('"').to_string();
+        for part in parts.iter().skip(flag_idx + 2) {
+            acc.push(' ');
+            if part.ends_with('"') {
+                acc.push_str(part.trim_end_matches('"'));
+                return Some(acc);
+            }
+            acc.push_str(part);
+        }
+        return Some(acc);
+    }
+    Some(first.to_string())
 }
 
 /// Cap a result body for storage on [`StructuredResult`].
@@ -1858,86 +2110,29 @@ pub fn prepare_mutating_dispatch(
 /// host/UI button so stale confirm chips cannot be clicked forever.
 pub const UNKNOWN_RERUN_CONFIRM_VALIDITY_MS: u64 = 15 * 60 * 1000;
 
-/// Structured confirm fields carried in [`unknown_rerun_confirm_request`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AuthorizeNewOperationConfirm {
-    pub request_id: String,
-    pub prior_operation_id: String,
-    pub write_fingerprint: String,
-    pub valid_until_ms: u64,
-}
-
-/// Confirm-request text for an Unknown Operation re-run.
+/// Model-facing prose for an Unknown Operation re-run confirm.
 ///
-/// Carries a **structured** confirm line (`request_id`, `prior_operation_id`,
-/// `write_fingerprint`, `valid_until_ms`) so the host/UI can render an explicit
-/// op button and echo the exact target via `ChatRequest.authorizeNewOperation`.
-/// Bare phrase shortcuts only apply when exactly one active pending confirm
-/// exists — they must not scan history for a latest-B fallback.
-pub fn unknown_rerun_confirm_request(prior_operation_id: &str, write_fingerprint: &str) -> String {
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    unknown_rerun_confirm_request_structured(
-        prior_operation_id,
-        write_fingerprint,
-        &format!("req-{}", uuid::Uuid::new_v4()),
-        now_ms.saturating_add(UNKNOWN_RERUN_CONFIRM_VALIDITY_MS),
-    )
-}
-
-/// Deterministic structured confirm body (tests + custom validity).
-pub fn unknown_rerun_confirm_request_structured(
-    prior_operation_id: &str,
-    write_fingerprint: &str,
-    request_id: &str,
-    valid_until_ms: u64,
-) -> String {
+/// Does **not** embed `write_fingerprint=` KV tokens — fingerprints with
+/// spaces (e.g. `shell|neomind device control …`) must travel via
+/// [`ConfirmRequest`] / WS JSON fields, never whitespace-split text parse.
+pub fn unknown_rerun_confirm_message(confirm: &ConfirmRequest) -> String {
+    let target = confirm
+        .target
+        .as_deref()
+        .filter(|t| !t.is_empty())
+        .map(|t| format!(" target={t}"))
+        .unwrap_or_default();
     format!(
-        "Write blocked: operation {prior_operation_id} ended with unknown outcome (e.g. timeout). \
+        "Write blocked: operation {op}{target} ended with unknown outcome (e.g. timeout). \
          Inquire status; do not auto-replay; do not pretend success. A model-added \
-         `{NEW_OPERATION_ARG}=true` alone is not user-authorized replay. Ask the user to confirm \
-         a re-run of THIS operation, then set `{NEW_OPERATION_ARG}` from the tool schema.\n\
-         authorizeNewOperation confirm: request_id={request_id} \
-         prior_operation_id={prior_operation_id} \
-         write_fingerprint={write_fingerprint} \
-         valid_until_ms={valid_until_ms}"
+         `{flag}=true` alone is not user-authorized replay. Ask the user to confirm \
+         a re-run of THIS operation (confirm request {req}), then set `{flag}` \
+         from the tool schema.",
+        op = confirm.prior_operation_id,
+        target = target,
+        req = confirm.request_id,
+        flag = NEW_OPERATION_ARG,
     )
-}
-
-fn split_kv_token<'a>(text: &'a str, key: &str) -> Option<&'a str> {
-    text.split(&format!("{key}="))
-        .nth(1)?
-        .split_whitespace()
-        .next()
-}
-
-/// Parse the structured confirm line from [`unknown_rerun_confirm_request`].
-pub fn parse_authorize_new_operation_confirm(text: &str) -> Option<AuthorizeNewOperationConfirm> {
-    if !text.contains("authorizeNewOperation confirm:") {
-        return None;
-    }
-    let request_id = split_kv_token(text, "request_id")?.to_string();
-    let prior_operation_id = split_kv_token(text, "prior_operation_id")?.to_string();
-    let write_fingerprint = split_kv_token(text, "write_fingerprint")?.to_string();
-    let valid_until_ms = split_kv_token(text, "valid_until_ms")?.parse().ok()?;
-    if request_id.is_empty() || prior_operation_id.is_empty() || write_fingerprint.is_empty() {
-        return None;
-    }
-    Some(AuthorizeNewOperationConfirm {
-        request_id,
-        prior_operation_id,
-        write_fingerprint,
-        valid_until_ms,
-    })
-}
-
-/// Parse `prior_operation_id` + `write_fingerprint` from a confirm-request body
-/// produced by [`unknown_rerun_confirm_request`].
-pub fn parse_authorize_new_operation_target(text: &str) -> Option<(String, String)> {
-    let confirm = parse_authorize_new_operation_confirm(text)?;
-    Some((confirm.prior_operation_id, confirm.write_fingerprint))
 }
 
 /// Stream-path outcome for a mutating write gate (Round 2 + prod lease).
@@ -1953,7 +2148,14 @@ pub enum MutatingGateOutcome {
         output: crate::toolkit::tool::ToolOutput,
     },
     /// Blocked (cancelled / unknown / succeeded without body).
-    Block { message: String },
+    ///
+    /// When `confirm` is set, the host/UI must render a button from the
+    /// structured fields (and the matching WS event) — never by parsing
+    /// fingerprint tokens out of `message` text.
+    Block {
+        message: String,
+        confirm: Option<ConfirmRequest>,
+    },
 }
 
 /// Evaluate + prepare the mutating write gate for stream_core / multimodal.
@@ -2021,11 +2223,25 @@ pub fn evaluate_mutating_gate(
                 output,
             }
         }
-        Err(WriteDispatch::InquireStatus { operation_id }) => MutatingGateOutcome::Block {
-            message: unknown_rerun_confirm_request(&operation_id, write_fingerprint),
-        },
+        Err(WriteDispatch::InquireStatus { operation_id }) => {
+            let target = state
+                .operation(&operation_id)
+                .and_then(|op| op.target.clone())
+                .or_else(|| extract_operation_target(arguments));
+            let confirm = state.issue_or_reuse_confirm_request(
+                &operation_id,
+                write_fingerprint,
+                tool_name,
+                target,
+            );
+            MutatingGateOutcome::Block {
+                message: unknown_rerun_confirm_message(&confirm),
+                confirm: Some(confirm),
+            }
+        }
         Err(WriteDispatch::BlockedCancelled) => MutatingGateOutcome::Block {
             message: "Write blocked: the task was cancelled. Do not replay mutations.".into(),
+            confirm: None,
         },
         Err(WriteDispatch::BlockedSucceeded { operation_id }) => MutatingGateOutcome::Block {
             message: format!(
@@ -2033,9 +2249,11 @@ pub fn evaluate_mutating_gate(
                  replay it; report status or wait for evidence. Authorized re-run: set \
                  `{NEW_OPERATION_ARG}=true` (see tool schema)."
             ),
+            confirm: None,
         },
         Err(WriteDispatch::Execute { .. }) => MutatingGateOutcome::Block {
             message: "Write blocked: unable to prepare operation.".into(),
+            confirm: None,
         },
     }
 }
@@ -3714,10 +3932,14 @@ mod tests {
             Some(new_stream_owner().as_str()),
             call_site_turn,
         ) {
-            MutatingGateOutcome::Block { message } => {
+            MutatingGateOutcome::Block { message, confirm } => {
                 assert!(
                     message.contains("alone is not user-authorized") || message.contains("confirm"),
                     "unexpected block: {message}"
+                );
+                assert!(
+                    confirm.is_some(),
+                    "InquireStatus must issue a confirm request"
                 );
             }
             other => panic!("model-alone after Unknown must Block, got {other:?}"),
@@ -4177,6 +4399,22 @@ mod tests {
         op
     }
 
+    fn confirm_submit_for(
+        s: &mut TaskState,
+        op: &str,
+        fp: &str,
+        tool: &str,
+        target: Option<&str>,
+    ) -> AuthorizeNewOpSubmit {
+        let req = s.issue_or_reuse_confirm_request(op, fp, tool, target.map(|t| t.to_string()));
+        let _ = s.drain_confirm_lifecycle_notices();
+        AuthorizeNewOpSubmit {
+            request_id: req.request_id,
+            prior_operation_id: req.prior_operation_id,
+            write_fingerprint: req.write_fingerprint,
+        }
+    }
+
     fn flagged_args(base: serde_json::Value) -> serde_json::Value {
         let mut v = base;
         v.as_object_mut()
@@ -4506,31 +4744,103 @@ mod tests {
         assert!(s.user_authorized_new_op.is_none());
     }
 
-    // ── GPT atomic accept (1ce98210 P1 residuals) ───────────────────────
+    // ── GPT confirm lifecycle (a76f348f P1 residuals) ───────────────────
 
     #[test]
-    fn gpt_auth_prod_confirm_request_carries_parseable_target() {
-        let msg = unknown_rerun_confirm_request_structured(
-            "op-abc",
-            "run_now|{\"agent_id\":\"A\"}",
-            "req-fixed",
-            1_700_000_000_000,
+    fn gpt_confirm_lifecycle_spaced_fingerprint_shell_device_control() {
+        // Fingerprints with spaces must survive end-to-end via JSON fields.
+        let mut s = TaskState::default();
+        let cmd = r#"neomind device control --device "Front Door Cam" --action reboot"#;
+        let fp = write_fingerprint("shell", cmd);
+        assert!(fp.contains(' '), "fixture must include spaces: {fp}");
+        let op = unknown_op_with_fp(&mut s, "shell", &format!(r#"{{"command":"{cmd}"}}"#), &fp);
+        let args = flagged_args(serde_json::json!({ "command": cmd }));
+        let call_site = s.note_user_turn();
+        let MutatingGateOutcome::Block { confirm, message } =
+            evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, call_site)
+        else {
+            panic!("Unknown must Block with confirm");
+        };
+        let confirm = confirm.expect("confirm issued");
+        assert_eq!(confirm.write_fingerprint, fp);
+        assert_eq!(confirm.target.as_deref(), Some("Front Door Cam"));
+        assert!(
+            !message.contains("write_fingerprint="),
+            "model prose must not embed fingerprint KV for text parse"
         );
-        let confirm = parse_authorize_new_operation_confirm(&msg).expect("structured");
-        assert_eq!(confirm.request_id, "req-fixed");
-        assert_eq!(confirm.prior_operation_id, "op-abc");
-        assert_eq!(confirm.write_fingerprint, "run_now|{\"agent_id\":\"A\"}");
-        assert_eq!(confirm.valid_until_ms, 1_700_000_000_000);
-        let (id, fp) = parse_authorize_new_operation_target(&msg).expect("parseable");
-        assert_eq!(id, "op-abc");
-        assert_eq!(fp, "run_now|{\"agent_id\":\"A\"}");
+        // Submit request id → grant with full spaced fingerprint.
+        let submit = AuthorizeNewOpSubmit {
+            request_id: confirm.request_id.clone(),
+            prior_operation_id: confirm.prior_operation_id.clone(),
+            write_fingerprint: confirm.write_fingerprint.clone(),
+        };
+        s.note_user_turn();
+        let (bound_op, bound_fp) = s.submit_confirm_request(&submit, None).expect("consume");
+        assert_eq!(bound_op, op);
+        assert_eq!(bound_fp, fp);
+        s.grant_user_authorized_new_op(Some(&bound_op), Some(&bound_fp))
+            .expect("grant");
+        assert_eq!(
+            s.user_authorized_new_op.as_ref().unwrap().write_fingerprint,
+            fp
+        );
     }
 
     #[test]
-    fn gpt_confirm_ui_plain_markers_without_request_are_not_structured() {
-        let legacy = "authorizeNewOperation target: prior_operation_id=op-a write_fingerprint=fp-a";
-        assert!(parse_authorize_new_operation_confirm(legacy).is_none());
-        assert!(parse_authorize_new_operation_target(legacy).is_none());
+    fn gpt_confirm_lifecycle_duplicate_requests_same_op_reuse_id() {
+        let mut s = TaskState::default();
+        let fp = write_fingerprint(
+            "shell",
+            "neomind device control --device EK410 --action reboot",
+        );
+        let op = unknown_op_with_fp(&mut s, "shell", r#"{"command":"x"}"#, &fp);
+        let a = s.issue_or_reuse_confirm_request(&op, &fp, "shell", Some("EK410".into()));
+        let _ = s.drain_confirm_lifecycle_notices();
+        let b = s.issue_or_reuse_confirm_request(&op, &fp, "shell", Some("EK410".into()));
+        assert_eq!(
+            a.request_id, b.request_id,
+            "same Unknown op must reuse request id"
+        );
+        assert_eq!(s.pending_confirm_requests.len(), 1);
+    }
+
+    #[test]
+    fn gpt_confirm_lifecycle_consumed_replay_rejected() {
+        let mut s = TaskState::default();
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp);
+        let submit = confirm_submit_for(&mut s, &op, &fp, "run_now", None);
+        s.note_user_turn();
+        s.submit_confirm_request(&submit, None)
+            .expect("first consume");
+        let err = s
+            .submit_confirm_request(&submit, None)
+            .expect_err("replay must fail");
+        assert_eq!(err, "confirm_request_not_found");
+        assert!(s.pending_confirm(&submit.request_id).is_none());
+    }
+
+    #[test]
+    fn gpt_confirm_lifecycle_expired_click_rejected() {
+        let mut s = TaskState::default();
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp);
+        let mut req = s.issue_or_reuse_confirm_request(&op, &fp, "run_now", None);
+        let _ = s.drain_confirm_lifecycle_notices();
+        // Force expiry.
+        req.valid_until_ms = 1;
+        s.pending_confirm_requests.clear();
+        s.pending_confirm_requests.push(req.clone());
+        let submit = AuthorizeNewOpSubmit {
+            request_id: req.request_id.clone(),
+            prior_operation_id: req.prior_operation_id.clone(),
+            write_fingerprint: req.write_fingerprint.clone(),
+        };
+        let err = s
+            .submit_confirm_request(&submit, Some(2))
+            .expect_err("expired");
+        assert_eq!(err, "confirm_request_expired");
+        assert!(s.pending_confirm(&submit.request_id).is_none());
     }
 
     #[test]
@@ -4544,10 +4854,11 @@ mod tests {
 
         let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
         let op = unknown_op_with_fp(&mut state.task_state, "run_now", r#"{"agent_id":"A"}"#, &fp);
+        let submit = confirm_submit_for(&mut state.task_state, &op, &fp, "run_now", None);
 
         let stream_b = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑"),
-            Some((op.clone(), fp.clone())),
+            Some(submit),
         );
         assert_eq!(stream_b.call_site_turn, 2);
         assert_ne!(stream_a.call_site_turn, stream_b.call_site_turn);
@@ -4628,9 +4939,10 @@ mod tests {
         // Interleaved: accept B with auth for A — grant binds A on B's Turn.
         // A concurrent plain accept must not consume a shared pending hop
         // (there is none): auth only applies when passed to accept.
+        let submit_a = confirm_submit_for(&mut state.task_state, &op_a, &fp_a, "run_now", None);
         let confirm = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑"),
-            Some((op_a.clone(), fp_a.clone())),
+            Some(submit_a),
         );
         let grant = state
             .task_state
@@ -4656,9 +4968,10 @@ mod tests {
         assert_ne!(interloper.call_site_turn, confirm.call_site_turn);
 
         // Re-accept with auth for A after interloper.
+        let submit_a2 = confirm_submit_for(&mut state.task_state, &op_a, &fp_a, "run_now", None);
         let confirm2 = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑"),
-            Some((op_a.clone(), fp_a.clone())),
+            Some(submit_a2),
         );
         let args_a = flagged_args(serde_json::json!({"agent_id": "A"}));
         let args_b = flagged_args(serde_json::json!({"agent_id": "B"}));
@@ -4706,16 +5019,18 @@ mod tests {
             &fp_b,
         );
 
+        let submit_a = confirm_submit_for(&mut state.task_state, &op_a, &fp_a, "run_now", None);
         let turn_a = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑 A"),
-            Some((op_a.clone(), fp_a.clone())),
+            Some(submit_a),
         );
         // Note: second accept expires turn_a's grant (confirming_turn binding).
         // Simulate the race the shared hop had: auth for B arrives as its own
         // accept argument — never overwriting a pending slot turn_a relied on.
+        let submit_b = confirm_submit_for(&mut state.task_state, &_op_b, &fp_b, "run_now", None);
         let turn_b = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑 B"),
-            Some((_op_b.clone(), fp_b.clone())),
+            Some(submit_b),
         );
         assert_ne!(turn_a.call_site_turn, turn_b.call_site_turn);
 

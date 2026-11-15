@@ -66,16 +66,17 @@ pub struct ChatContentNode {
     pub label_snapshot: Option<String>,
 }
 
-/// Explicit Unknown re-run authorization target (multi-Unknown disambiguation).
+/// Explicit Unknown re-run authorization submit (request-id keyed).
 ///
-/// Echoes `prior_operation_id` + `write_fingerprint` from the gate's structured
-/// confirm (`authorizeNewOperation confirm: request_id=… prior_operation_id=…
-/// write_fingerprint=… valid_until_ms=…`). Travels with the message into
-/// atomic `accept_user_message` as `TaskDirective::AuthorizeNewOperation`.
-/// Host/UI must send this via an explicit op button (or the unique-active
-/// phrase shortcut) — never by scanning history for a latest-B target.
+/// Host/UI echoes the structured confirm event fields (`requestId`,
+/// `priorOperationId`, `writeFingerprint`) — fingerprints may contain spaces
+/// and must travel as JSON, never via whitespace-split text parse. Server
+/// atomically validates + consumes the pending confirm before granting.
 #[derive(utoipa::ToSchema, Debug, Clone, Deserialize, Serialize)]
 pub struct AuthorizeNewOperationRequest {
+    /// Server-issued confirm request id (required for host submit).
+    #[serde(rename = "requestId")]
+    pub request_id: String,
     /// Prior Unknown Operation ID to re-run.
     #[serde(rename = "priorOperationId")]
     pub prior_operation_id: String,

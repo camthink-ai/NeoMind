@@ -401,6 +401,36 @@ async fn process_stream_to_channel(
                             "sessionId": session_id,
                         })
                     }
+                    AgentEvent::AuthorizeConfirmRequest {
+                        request_id,
+                        prior_operation_id,
+                        write_fingerprint,
+                        tool_name,
+                        target,
+                        valid_until_ms,
+                    } => {
+                        let mut json = json!({
+                            "type": "AuthorizeConfirmRequest",
+                            "requestId": request_id,
+                            "priorOperationId": prior_operation_id,
+                            "writeFingerprint": write_fingerprint,
+                            "toolName": tool_name,
+                            "validUntilMs": valid_until_ms,
+                            "sessionId": session_id,
+                        });
+                        if let Some(t) = target {
+                            json["target"] = json!(t);
+                        }
+                        json
+                    }
+                    AgentEvent::AuthorizeConfirmRemoved { request_id, reason } => {
+                        json!({
+                            "type": "AuthorizeConfirmRemoved",
+                            "requestId": request_id,
+                            "reason": reason,
+                            "sessionId": session_id,
+                        })
+                    }
                     AgentEvent::Progress {
                         message,
                         stage,
@@ -1345,8 +1375,8 @@ pub async fn chat_handler(
         req.references.as_deref(),
     )
     .await;
-    let authorize_pair =
-        super::chat_refs::authorize_new_op_pair(req.authorize_new_operation.as_ref());
+    let authorize_submit =
+        super::chat_refs::authorize_new_op_submit(req.authorize_new_operation.as_ref());
 
     // Branch on multimodal input for REST parity with WS. The old HTTP handler
     // dropped req.images entirely, so a REST vision client silently degraded to
@@ -1376,7 +1406,7 @@ pub async fn chat_handler(
                 &final_message,
                 images,
                 req.backend_id.as_deref(),
-                authorize_pair,
+                authorize_submit,
             )
             .await
     } else {
@@ -1388,7 +1418,7 @@ pub async fn chat_handler(
                 &final_message,
                 req.backend_id.as_deref(),
                 req.selected_skills.as_deref(),
-                authorize_pair,
+                authorize_submit,
             )
             .await
     };
@@ -2057,7 +2087,7 @@ async fn handle_ws_socket(
                                             chat_req.references.as_deref(),
                                         )
                                         .await;
-                                        let authorize_pair = super::chat_refs::authorize_new_op_pair(
+                                        let authorize_submit = super::chat_refs::authorize_new_op_submit(
                                             chat_req.authorize_new_operation.as_ref(),
                                         );
 
@@ -2071,7 +2101,7 @@ async fn handle_ws_socket(
                                             &final_message,
                                             images.clone(),
                                             backend_id_str.as_deref(),
-                                            authorize_pair,
+                                            authorize_submit,
                                         ).await {
                                             Ok(stream) => {
                                                 // Clone the channel sender and session ID for the spawned task
@@ -2213,7 +2243,7 @@ async fn handle_ws_socket(
                                                     task_references.as_deref(),
                                                 )
                                                 .await;
-                                                let authorize_pair = super::chat_refs::authorize_new_op_pair(
+                                                let authorize_submit = super::chat_refs::authorize_new_op_submit(
                                                     task_authorize_new_op.as_ref(),
                                                 );
                                                 match task_state
@@ -2224,7 +2254,7 @@ async fn handle_ws_socket(
                                                         &task_final_message,
                                                         task_backend_id.as_deref(),
                                                         task_skills.as_deref(),
-                                                        authorize_pair,
+                                                        authorize_submit,
                                                     )
                                                     .await
                                                 {

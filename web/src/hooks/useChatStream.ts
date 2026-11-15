@@ -31,6 +31,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import {
+  filterActivePendingConfirms,
+  removePendingConfirm,
+  upsertPendingConfirm,
+  type AuthorizeNewOperationConfirm,
+} from "@/lib/chat/authorizeNewOperation"
 import { plausiblePromptTokenMeter } from "@/lib/contextUsage"
 import { generateId } from "@/lib/id"
 import { ws } from "@/lib/websocket"
@@ -136,6 +142,10 @@ export function useChatStream(options: UseChatStreamOptions) {
   const [streamingThinking, setStreamingThinking] = useState("")
   // Immediate — tool events are rare
   const [streamingToolCalls, setStreamingToolCalls] = useState<any[]>([])
+  // Pending Unknown re-run confirms from WS events (not history text scan).
+  const [pendingAuthorizeConfirms, setPendingAuthorizeConfirms] = useState<
+    AuthorizeNewOperationConfirm[]
+  >([])
   const [roundContents, setRoundContents] = useState<Record<number, string>>({})
   const [streamingRoundThinking, setStreamingRoundThinking] = useState<Record<number, string>>({})
   const [currentRound, setCurrentRound] = useState(1)
@@ -569,6 +579,27 @@ export function useChatStream(options: UseChatStreamOptions) {
         systemNotesAccRef.current.push(data.note || "")
         break
 
+      case "AuthorizeConfirmRequest": {
+        // Structured JSON fields from the server — fingerprints may contain
+        // spaces; never reconstruct from tool-result prose.
+        const incoming: AuthorizeNewOperationConfirm = {
+          requestId: data.requestId,
+          priorOperationId: data.priorOperationId,
+          writeFingerprint: data.writeFingerprint,
+          toolName: data.toolName,
+          target: data.target ?? null,
+          validUntilMs: data.validUntilMs,
+        }
+        setPendingAuthorizeConfirms((prev) => upsertPendingConfirm(prev, incoming))
+        break
+      }
+
+      case "AuthorizeConfirmRemoved":
+        setPendingAuthorizeConfirms((prev) =>
+          removePendingConfirm(prev, data.requestId),
+        )
+        break
+
       default:
         optionsRef.current.onRawEvent?.(data)
         break
@@ -585,6 +616,14 @@ export function useChatStream(options: UseChatStreamOptions) {
     }
   }, [handleEvent, stopWatchdog])
 
+  const dismissAuthorizeConfirm = useCallback((requestId: string) => {
+    setPendingAuthorizeConfirms((prev) => removePendingConfirm(prev, requestId))
+  }, [])
+
+  const activePendingAuthorizeConfirms = filterActivePendingConfirms(
+    pendingAuthorizeConfirms,
+  )
+
   return {
     // state
     isStreaming,
@@ -594,6 +633,7 @@ export function useChatStream(options: UseChatStreamOptions) {
     streamingContent,
     streamingThinking,
     streamingToolCalls,
+    pendingAuthorizeConfirms: activePendingAuthorizeConfirms,
     roundContents,
     streamingRoundThinking,
     currentRound,
@@ -602,5 +642,6 @@ export function useChatStream(options: UseChatStreamOptions) {
     hardReset,
     restore,
     restoreIfBehind,
+    dismissAuthorizeConfirm,
   }
 }

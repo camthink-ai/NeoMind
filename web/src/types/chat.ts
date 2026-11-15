@@ -122,6 +122,18 @@ export type ServerMessage =
   // Runtime guard note for the user (incomplete action, guard budget
   // spent) — rendered as a callout, never part of the content stream.
   | { type: 'SystemNote'; note: string; sessionId: string }
+  // Structured Unknown re-run confirm (JSON fields; fingerprints may contain spaces)
+  | {
+      type: 'AuthorizeConfirmRequest'
+      requestId: string
+      priorOperationId: string
+      writeFingerprint: string
+      toolName?: string
+      target?: string
+      validUntilMs: number
+      sessionId: string
+    }
+  | { type: 'AuthorizeConfirmRemoved'; requestId: string; reason: string; sessionId: string }
   // Execution plan step (informational, not displayed in current UI)
   | { type: 'Plan'; step: string; stage: string; sessionId: string }
   // Heartbeat to keep connection alive (not displayed)
@@ -185,8 +197,9 @@ export interface ChatReference {
   label?: string
 }
 
-/** Explicit Unknown re-run authorization target (multi-Unknown disambiguation). */
+/** Explicit Unknown re-run authorization submit (request-id keyed). */
 export interface AuthorizeNewOperationRequest {
+  requestId: string
   priorOperationId: string
   writeFingerprint: string
 }

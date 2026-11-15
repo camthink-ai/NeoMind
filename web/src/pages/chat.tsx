@@ -32,8 +32,6 @@ import {
   saveSessionDraft,
 } from "@/lib/chat/contentProtocol"
 import {
-  collectActivePendingConfirms,
-  messageTextsForConfirmScan,
   resolveAuthorizeNewOperationForSend,
   toAuthorizeRequest,
   type AuthorizeNewOperationConfirm,
@@ -186,6 +184,7 @@ export function ChatPage() {
     streamingContent,
     streamingThinking,
     streamingToolCalls,
+    pendingAuthorizeConfirms,
     roundContents,
     streamingRoundThinking,
     currentRound,
@@ -193,6 +192,7 @@ export function ChatPage() {
     hardReset,
     restore,
     restoreIfBehind,
+    dismissAuthorizeConfirm,
   } = useChatStream({
     onContextCompacted: (count, _sid) => {
       // tokenUsage (if any) already applied via onTokenUsage from the WS
@@ -336,14 +336,6 @@ export function ChatPage() {
   const activeToolRound = streamingToolCalls.length > 0
     ? (streamingToolCalls[streamingToolCalls.length - 1].round ?? null)
     : null
-
-  const pendingAuthorizeConfirms = useMemo(() => {
-    const texts = messageTextsForConfirmScan(messages)
-    for (const tc of streamingToolCalls) {
-      if (typeof tc.result === 'string') texts.push(tc.result)
-    }
-    return collectActivePendingConfirms(texts)
-  }, [messages, streamingToolCalls])
 
   // Load LLM backends and sessions on mount
   useEffect(() => {
@@ -860,6 +852,7 @@ export function ChatPage() {
 
   const handleConfirmAuthorize = (confirm: AuthorizeNewOperationConfirm) => {
     const phrase = i18n.language?.startsWith('zh') ? '确认重跑' : 'confirm re-run'
+    dismissAuthorizeConfirm(confirm.requestId)
     void handleSend(undefined, {
       message: phrase,
       authorizeNewOperation: toAuthorizeRequest(confirm),

@@ -342,6 +342,28 @@ pub async fn process_stream_events_with_safeguards(
                 stream_owner.clone(),
                 "stream dropped or timed out",
             );
+            // Emit confirm removals from accept_user_message (consumed submit).
+            {
+                let notices = {
+                    let mut state = internal_state.write().await;
+                    state.task_state.drain_confirm_lifecycle_notices()
+                };
+                for notice in notices {
+                    match notice {
+                        super::super::task_continuity::ConfirmLifecycleNotice::Requested(
+                            confirm,
+                        ) => {
+                            yield AgentEvent::authorize_confirm_request(&confirm);
+                        }
+                        super::super::task_continuity::ConfirmLifecycleNotice::Removed {
+                            request_id,
+                            reason,
+                        } => {
+                            yield AgentEvent::authorize_confirm_removed(request_id, reason);
+                        }
+                    }
+                }
+            }
             let mut stream = stream;
             let mut buffer = String::new();
             let mut yielded_up_to: usize = 0; // Track how much of buffer has been yielded to prevent duplication
@@ -1645,12 +1667,15 @@ pub async fn process_stream_events_with_safeguards(
                                             },
                                         );
                                     }
-                                    MutatingGateOutcome::Block { message } => {
+                                    MutatingGateOutcome::Block { message, confirm: _ } => {
                                         tracing::info!(
                                             tool = %name,
                                             fingerprint = %fp,
                                             "Write gate blocked mutating tool"
                                         );
+                                        // ConfirmRequest was queued on
+                                        // task_state.confirm_lifecycle_notices;
+                                        // the stream drains + emits after the batch.
                                         return (
                                             i,
                                             name.clone(),
@@ -1776,6 +1801,30 @@ pub async fn process_stream_events_with_safeguards(
                     };
                     // Restore LLM-emission order (buffer_unordered completes in arbitrary order).
                     tool_results_executed.sort_by_key(|(i, _, _)| *i);
+
+                    // Emit structured confirm lifecycle events (JSON fields —
+                    // fingerprints may contain spaces; never text-parse).
+                    {
+                        let notices = {
+                            let mut state = internal_state.write().await;
+                            state.task_state.drain_confirm_lifecycle_notices()
+                        };
+                        for notice in notices {
+                            match notice {
+                                super::super::task_continuity::ConfirmLifecycleNotice::Requested(
+                                    confirm,
+                                ) => {
+                                    yield AgentEvent::authorize_confirm_request(&confirm);
+                                }
+                                super::super::task_continuity::ConfirmLifecycleNotice::Removed {
+                                    request_id,
+                                    reason,
+                                } => {
+                                    yield AgentEvent::authorize_confirm_removed(request_id, reason);
+                                }
+                            }
+                        }
+                    }
 
                     // Process results
                     let mut tool_calls_with_results: Vec<ToolCall> = Vec::new();

@@ -219,22 +219,37 @@ pub async fn attach_pending_content_nodes(
     }
 }
 
-/// Convert host/UI `AuthorizeNewOperation` into the pair that travels with
+/// Convert host/UI `AuthorizeNewOperation` into the submit that travels with
 /// the message into atomic [`AgentInternalState::accept_user_message`].
 ///
 /// Empty / missing fields → `None` (phrase shortcuts still apply for a
 /// unique Unknown). No shared pending hop — authorization is an argument.
+/// Fingerprints stay on the JSON fields (may contain spaces).
+pub fn authorize_new_op_submit(
+    authorize: Option<&crate::models::AuthorizeNewOperationRequest>,
+) -> Option<neomind_agent::agent::task_continuity::AuthorizeNewOpSubmit> {
+    let auth = authorize?;
+    if auth.request_id.is_empty()
+        || auth.prior_operation_id.is_empty()
+        || auth.write_fingerprint.is_empty()
+    {
+        return None;
+    }
+    Some(
+        neomind_agent::agent::task_continuity::AuthorizeNewOpSubmit {
+            request_id: auth.request_id.clone(),
+            prior_operation_id: auth.prior_operation_id.clone(),
+            write_fingerprint: auth.write_fingerprint.clone(),
+        },
+    )
+}
+
+/// @deprecated Prefer [`authorize_new_op_submit`].
 pub fn authorize_new_op_pair(
     authorize: Option<&crate::models::AuthorizeNewOperationRequest>,
 ) -> Option<(String, String)> {
-    let auth = authorize?;
-    if auth.prior_operation_id.is_empty() || auth.write_fingerprint.is_empty() {
-        return None;
-    }
-    Some((
-        auth.prior_operation_id.clone(),
-        auth.write_fingerprint.clone(),
-    ))
+    let s = authorize_new_op_submit(authorize)?;
+    Some((s.prior_operation_id, s.write_fingerprint))
 }
 
 /// Hard-fail errors for the content-nodes protocol (never silent).

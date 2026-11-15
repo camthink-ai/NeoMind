@@ -1,25 +1,23 @@
 /**
  * Explicit Unknown re-run confirm buttons.
  *
- * Multi-candidate → user picks one op; phrase shortcuts only work when exactly
- * one active pending confirm exists (resolved by the parent, not by history
- * body inference).
+ * Pending list comes from WS AuthorizeConfirmRequest events (not history
+ * text scan). Multi-candidate → user picks one op; phrase shortcuts only
+ * work when exactly one active pending confirm exists.
  */
 
 import { useTranslation } from "react-i18next"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import type { AuthorizeNewOperationConfirm } from "@/lib/chat/authorizeNewOperation"
+import {
+  confirmDisplayLabel,
+  type AuthorizeNewOperationConfirm,
+} from "@/lib/chat/authorizeNewOperation"
 
 interface AuthorizeConfirmBarProps {
   pending: AuthorizeNewOperationConfirm[]
   disabled?: boolean
   onConfirm: (confirm: AuthorizeNewOperationConfirm) => void
-}
-
-function shortOpId(id: string): string {
-  if (id.length <= 12) return id
-  return `${id.slice(0, 8)}…`
 }
 
 export function AuthorizeConfirmBar({
@@ -42,22 +40,25 @@ export function AuthorizeConfirmBar({
           : t("authorizeConfirm.title")}
       </p>
       <div className="flex flex-wrap gap-1.5">
-        {pending.map((confirm) => (
-          <Button
-            key={confirm.requestId}
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={disabled}
-            className="h-8 gap-1.5 text-xs"
-            onClick={() => onConfirm(confirm)}
-          >
-            <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-            {t("authorizeConfirm.button", {
-              opId: shortOpId(confirm.priorOperationId),
-            })}
-          </Button>
-        ))}
+        {pending.map((confirm) => {
+          const { opId, target } = confirmDisplayLabel(confirm)
+          return (
+            <Button
+              key={confirm.requestId}
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={disabled}
+              className="h-8 gap-1.5 text-xs"
+              onClick={() => onConfirm(confirm)}
+            >
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+              {target
+                ? t("authorizeConfirm.buttonWithTarget", { opId, target })
+                : t("authorizeConfirm.button", { opId })}
+            </Button>
+          )
+        })}
       </div>
     </div>
   )

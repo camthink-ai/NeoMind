@@ -243,6 +243,7 @@
   "authorizeConfirm": {
     "title": "确认重跑被阻断的写入",
     "pickOne": "有多个被阻断的操作 — 请选择要重跑的那一个",
-    "button": "重跑 {{opId}}"
+    "button": "重跑 {{opId}}",
+    "buttonWithTarget": "重跑 {{opId}} · {{target}}"
   }
 }

@@ -40,7 +40,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     conversation_summary: Option<String>,
     summary_up_to_index: Option<u64>,
     // Host/UI AuthorizeNewOperation target traveling with this message.
-    authorization: Option<(String, String)>,
+    authorization: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
     use neomind_core::ContentPart;
 
@@ -197,6 +197,25 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             stream_owner.clone(),
             "stream dropped or timed out (multimodal)",
         );
+        {
+            let notices = {
+                let mut state = internal_state.write().await;
+                state.task_state.drain_confirm_lifecycle_notices()
+            };
+            for notice in notices {
+                match notice {
+                    super::super::task_continuity::ConfirmLifecycleNotice::Requested(confirm) => {
+                        yield AgentEvent::authorize_confirm_request(&confirm);
+                    }
+                    super::super::task_continuity::ConfirmLifecycleNotice::Removed {
+                        request_id,
+                        reason,
+                    } => {
+                        yield AgentEvent::authorize_confirm_removed(request_id, reason);
+                    }
+                }
+            }
+        }
         let mut stream = stream;
         let mut buffer = String::new();
         let mut tool_calls_detected = false;
@@ -422,7 +441,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                         tracked_operation_id = Some(operation_id);
                                         Ok(output)
                                     }
-                                    MutatingGateOutcome::Block { message } => {
+                                    MutatingGateOutcome::Block { message, confirm: _ } => {
                                         Err(crate::toolkit::error::ToolError::Execution(message))
                                     }
                                 }
@@ -644,6 +663,29 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 }
             }
 
+            // Structured confirm lifecycle (JSON fields; spaced fingerprints).
+            {
+                let notices = {
+                    let mut state = internal_state.write().await;
+                    state.task_state.drain_confirm_lifecycle_notices()
+                };
+                for notice in notices {
+                    match notice {
+                        super::super::task_continuity::ConfirmLifecycleNotice::Requested(
+                            confirm,
+                        ) => {
+                            yield AgentEvent::authorize_confirm_request(&confirm);
+                        }
+                        super::super::task_continuity::ConfirmLifecycleNotice::Removed {
+                            request_id,
+                            reason,
+                        } => {
+                            yield AgentEvent::authorize_confirm_removed(request_id, reason);
+                        }
+                    }
+                }
+            }
+
             // Save assistant message with tool calls
             let response_to_save = if content_before_tools.is_empty() {
                 String::new()
@@ -816,7 +858,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                                     tracked_operation_id = Some(operation_id);
                                                     Ok(output)
                                                 }
-                                                MutatingGateOutcome::Block { message } => Err(
+                                                MutatingGateOutcome::Block { message, confirm: _ } => Err(
                                                     crate::toolkit::error::ToolError::Execution(
                                                         message,
                                                     ),
@@ -1188,7 +1230,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                                     tracked_operation_id = Some(operation_id);
                                                     Ok(output)
                                                 }
-                                                MutatingGateOutcome::Block { message } => Err(
+                                                MutatingGateOutcome::Block { message, confirm: _ } => Err(
                                                     crate::toolkit::error::ToolError::Execution(
                                                         message,
                                                     ),
