@@ -183,6 +183,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         // Owner is passed explicitly into create/lease — never via a shared
         // session hop (concurrent streams must not overwrite each other).
         let stream_owner = super::super::task_continuity::new_stream_owner();
+        // Immutable Turn ID for this stream — grant consume compares
+        // against confirming_turn; never re-read shared turn_count.
+        let call_site_turn = {
+            let state = internal_state.read().await;
+            state.task_state.turn_count
+        };
         let _stream_lease_guard = super::super::task_continuity::StreamLeaseGuard::new(
             internal_state.clone(),
             stream_owner.clone(),
@@ -355,11 +361,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
             let state_for_write_gate = internal_state.clone();
             let stream_owner_for_tools = stream_owner.clone();
+            let call_site_turn_for_tools = call_site_turn;
             let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(name, arguments, cached_read)| {
                 let tools_clone = tools.clone();
                 let cache_clone = cache.clone();
                 let state_for_write_gate = state_for_write_gate.clone();
                 let stream_owner = stream_owner_for_tools.clone();
+                let call_site_turn = call_site_turn_for_tools;
 
                 async move {
                     use super::super::task_continuity::MutatingGateOutcome;
@@ -378,6 +386,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                         &arguments,
                                         &fp,
                                         Some(stream_owner.as_str()),
+                                        call_site_turn,
                                     )
                                 };
                                 match gate {
@@ -746,11 +755,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                 .collect();
                         let state_for_write_gate = internal_state.clone();
                         let stream_owner_for_cont = stream_owner.clone();
+                        let call_site_turn_for_cont = call_site_turn;
                         let cont_futures = futures::stream::iter(cont_inputs.into_iter().map(|(name, arguments, cached_read)| {
                             let tools_clone = tools.clone();
                             let cache_clone = cache_cont.clone();
                             let state_for_write_gate = state_for_write_gate.clone();
                             let stream_owner = stream_owner_for_cont.clone();
+                            let call_site_turn = call_site_turn_for_cont;
                             async move {
                                 use super::super::task_continuity::MutatingGateOutcome;
                                 let mut tracked_operation_id: Option<String> = None;
@@ -769,6 +780,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                                     &arguments,
                                                     &fp,
                                                     Some(stream_owner.as_str()),
+                                                    call_site_turn,
                                                 )
                                             };
                                             match gate {
@@ -1114,12 +1126,14 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                         .collect();
                     let state_for_write_gate = internal_state.clone();
                     let stream_owner_for_nudge = stream_owner.clone();
+                    let call_site_turn_for_nudge = call_site_turn;
                     let nudge_futures = futures::stream::iter(nudge_inputs.into_iter().map(
                         |(name, arguments, cached_read)| {
                             let tools_clone = tools.clone();
                             let cache_clone = cache_n.clone();
                             let state_for_write_gate = state_for_write_gate.clone();
                             let stream_owner = stream_owner_for_nudge.clone();
+                            let call_site_turn = call_site_turn_for_nudge;
                             async move {
                                 use super::super::task_continuity::MutatingGateOutcome;
                                 let mut tracked_operation_id: Option<String> = None;
@@ -1138,6 +1152,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                                     &arguments,
                                                     &fp,
                                                     Some(stream_owner.as_str()),
+                                                    call_site_turn,
                                                 )
                                             };
                                             match gate {
@@ -1336,7 +1351,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 mod drop_lease_tests {
     use super::*;
     use crate::agent::task_continuity::{
-        evaluate_mutating_gate, MutatingGateOutcome, NEW_OPERATION_ARG, OperationStatus,
+        evaluate_mutating_gate, MutatingGateOutcome, OperationStatus, NEW_OPERATION_ARG,
     };
     use crate::testing_helpers::mock_llm::{MockLlmRuntime, MockResponse};
     use crate::toolkit::{Tool, ToolError, ToolOutput, ToolRegistry};
@@ -1407,9 +1422,7 @@ mod drop_lease_tests {
         .await
         .expect("stream");
 
-        let consumer = tokio::spawn(async move {
-            while stream.next().await.is_some() {}
-        });
+        let consumer = tokio::spawn(async move { while stream.next().await.is_some() {} });
         tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
             .await
             .expect("tool must start");
@@ -1420,20 +1433,13 @@ mod drop_lease_tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let mut st = state.write().await;
-        let op = st
-            .task_state
-            .operations
-            .last()
-            .expect("operation created");
+        let op = st.task_state.operations.last().expect("operation created");
         assert_eq!(
             op.status,
             OperationStatus::Unknown,
             "abort/drop must finalize Running"
         );
-        assert!(
-            op.owner_id.is_some(),
-            "stream-owned op must carry owner_id"
-        );
+        assert!(op.owner_id.is_some(), "stream-owned op must carry owner_id");
         let fp = op.write_fingerprint.clone().expect("fp");
         let mut new_args = args;
         new_args
@@ -1441,19 +1447,33 @@ mod drop_lease_tests {
             .unwrap()
             .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
         // Unknown: model boolean alone must Block.
-        match evaluate_mutating_gate(&mut st.task_state, "run_now", &new_args, &fp, None) {
+        let call_site_turn = st.task_state.turn_count;
+        match evaluate_mutating_gate(
+            &mut st.task_state,
+            "run_now",
+            &new_args,
+            &fp,
+            None,
+            call_site_turn,
+        ) {
             MutatingGateOutcome::Block { .. } => {}
             other => panic!("model-alone after Unknown must Block, got {other:?}"),
         }
-        st.task_state
-            .apply_directive(crate::agent::task_continuity::TaskDirective::AuthorizeNewOperation);
+        st.task_state.apply_directive(
+            crate::agent::task_continuity::TaskDirective::AuthorizeNewOperation {
+                prior_operation_id: None,
+                write_fingerprint: None,
+            },
+        );
         let owner2 = crate::agent::task_continuity::new_stream_owner();
+        let call_site_turn = st.task_state.turn_count;
         match evaluate_mutating_gate(
             &mut st.task_state,
             "run_now",
             &new_args,
             &fp,
             Some(owner2.as_str()),
+            call_site_turn,
         ) {
             MutatingGateOutcome::Proceed { .. } => {}
             other => panic!("user-authorized new-op after drop must Proceed, got {other:?}"),
@@ -1478,20 +1498,20 @@ mod drop_lease_tests {
             let mut st = state.write().await;
             let fp = crate::agent::streaming::mutating_write_fingerprint("run_now", &args_a)
                 .expect("fp A");
+            let call_site_turn = st.task_state.turn_count;
             let MutatingGateOutcome::Proceed { operation_id } = evaluate_mutating_gate(
                 &mut st.task_state,
                 "run_now",
                 &args_a,
                 &fp,
                 Some(owner_a.as_str()),
+                call_site_turn,
             ) else {
                 panic!("A Proceed");
             };
             st.task_state.complete_operation_succeeded(
                 &operation_id,
-                crate::agent::task_continuity::StructuredResult::with_body(
-                    true, "ok", "{}", None,
-                ),
+                crate::agent::task_continuity::StructuredResult::with_body(true, "ok", "{}", None),
                 None::<String>,
             );
             StreamLeaseGuard::new(state.clone(), owner_a, "delayed A")
@@ -1523,9 +1543,7 @@ mod drop_lease_tests {
         )
         .await
         .expect("stream B");
-        let consumer_b = tokio::spawn(async move {
-            while stream_b.next().await.is_some() {}
-        });
+        let consumer_b = tokio::spawn(async move { while stream_b.next().await.is_some() {} });
         tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
             .await
             .expect("B tool start");
@@ -1566,7 +1584,15 @@ mod drop_lease_tests {
                 .as_object_mut()
                 .unwrap()
                 .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
-            match evaluate_mutating_gate(&mut st.task_state, "run_now", &retry, &fp_b, None) {
+            let call_site_turn = st.task_state.turn_count;
+            match evaluate_mutating_gate(
+                &mut st.task_state,
+                "run_now",
+                &retry,
+                &fp_b,
+                None,
+                call_site_turn,
+            ) {
                 MutatingGateOutcome::InProgress { operation_id } => {
                     assert_eq!(operation_id, op_b_id);
                 }

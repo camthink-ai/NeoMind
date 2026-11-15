@@ -330,6 +330,12 @@ pub async fn process_stream_events_with_safeguards(
             // Owner is passed explicitly into create/lease — never via a shared
             // session hop (concurrent streams must not overwrite each other).
             let stream_owner = super::super::task_continuity::new_stream_owner();
+            // Immutable Turn ID for this stream — grant consume compares
+            // against confirming_turn; never re-read shared turn_count.
+            let call_site_turn = {
+                let state = internal_state.read().await;
+                state.task_state.turn_count
+            };
             let _stream_lease_guard = super::super::task_continuity::StreamLeaseGuard::new(
                 internal_state.clone(),
                 stream_owner.clone(),
@@ -1432,6 +1438,7 @@ pub async fn process_stream_events_with_safeguards(
                     let failed_map = failed_tool_signatures.clone();
                     let state_for_write_gate = internal_state.clone();
                     let stream_owner_for_tools = stream_owner.clone();
+                    let call_site_turn_for_tools = call_site_turn;
                     let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments, cached_read)| {
                         let tools_clone = tools.clone();
                         let cache_clone = cache.clone();
@@ -1439,6 +1446,7 @@ pub async fn process_stream_events_with_safeguards(
                         let failed_map = failed_map.clone();
                         let state_for_write_gate = state_for_write_gate.clone();
                         let stream_owner = stream_owner_for_tools.clone();
+                        let call_site_turn = call_site_turn_for_tools;
 
                         async move {
                             // `$cached:` read-back: served from the cache in
@@ -1588,6 +1596,7 @@ pub async fn process_stream_events_with_safeguards(
                                     &arguments,
                                     &fp,
                                     Some(stream_owner.as_str()),
+                                    call_site_turn,
                                 ) {
                                     MutatingGateOutcome::Proceed { operation_id } => {
                                         tracked_operation_id = Some(operation_id);
