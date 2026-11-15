@@ -33,8 +33,11 @@
 //! - **Cancel** stops the task; further writes are refused.
 //! - **Continue** resumes without replaying writes already recorded on the
 //!   current operation.
-//! - **AuthorizeNewOperation** grants a one-shot user re-run after Unknown;
-//!   the model must still set `_new_operation` via the registered tool schema.
+//! - **AuthorizeNewOperation** grants a one-shot, **operation-scoped** user
+//!   re-run after Unknown (bound to prior Operation ID + business fingerprint
+//!   + confirming Turn); the model must still set `_new_operation` via the
+//!   registered tool schema. Phrase shortcuts feed this same grant — they are
+//!   not a separate privilege path.
 //!
 //! ## Transient skills vs TaskState (plan §12 P1)
 //! Each **new user turn** clears temporary skill bodies on the LLM interface
@@ -283,18 +286,30 @@ pub enum WriteDispatch {
 /// never auto-replay.
 ///
 /// After **Unknown**, a model-added boolean alone is **not** sufficient —
-/// [`TaskState::take_user_authorized_new_op`] must also be granted (user
-/// control phrase / host grant).
+/// an operation-scoped [`NewOpAuthorization`] must also be granted and
+/// atomically consumed for that prior Operation + fingerprint (user control
+/// phrase / host grant via [`TaskDirective::AuthorizeNewOperation`]).
 pub const NEW_OPERATION_ARG: &str = "_new_operation";
 
+/// One-shot user grant to begin a new same-args Operation after Unknown.
+///
+/// Bound to the prior Unknown Operation, its business write fingerprint, and
+/// the confirming Turn. Not a session-global sticky flag — cross-op / cross-
+/// Turn / concurrent consumers cannot reuse another op's grant. Runtime-only
+/// (not persisted).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewOpAuthorization {
+    /// Prior Unknown [`OperationRecord::operation_id`] this grant re-runs.
+    pub prior_operation_id: OperationId,
+    /// Business write fingerprint that must match on consume.
+    pub write_fingerprint: String,
+    /// [`TaskState::turn_count`] when the user authorized (confirming Turn).
+    pub confirming_turn: u64,
+}
+
 /// Mutating tools that advertise [`NEW_OPERATION_ARG`] in the LLM schema.
-pub const NEW_OPERATION_PROTOCOL_TOOLS: &[&str] = &[
-    "shell",
-    "run_now",
-    "file_write",
-    "file_edit",
-    "image_edit",
-];
+pub const NEW_OPERATION_PROTOCOL_TOOLS: &[&str] =
+    &["shell", "run_now", "file_write", "file_edit", "image_edit"];
 
 /// Whether tool args request a fresh same-args Operation (model protocol bit).
 pub fn wants_new_operation(arguments: &serde_json::Value) -> bool {
@@ -394,11 +409,11 @@ pub struct TaskState {
     pub write_ledger: Vec<WriteFact>,
     /// Count of user Turns observed (each user message).
     pub turn_count: u64,
-    /// One-shot user authorization for a new Operation after Unknown.
+    /// One-shot, operation-scoped user authorization after Unknown.
     /// Runtime-only — not persisted. Consumed by
     /// [`Self::take_user_authorized_new_op`].
     #[serde(skip)]
-    pub user_authorized_new_op: bool,
+    pub user_authorized_new_op: Option<NewOpAuthorization>,
 }
 
 impl Default for TaskState {
@@ -414,7 +429,7 @@ impl Default for TaskState {
             operations: Vec::new(),
             write_ledger: Vec::new(),
             turn_count: 0,
-            user_authorized_new_op: false,
+            user_authorized_new_op: None,
         }
     }
 }
@@ -439,9 +454,11 @@ pub enum TaskDirective {
     Cancel,
     /// Resume without replaying writes recorded on the current operation.
     Continue,
-    /// Grant one-shot user authorization for a new same-args Operation after
-    /// Unknown. Does **not** begin the Operation — the model must still set
-    /// [`NEW_OPERATION_ARG`] via the registered tool schema.
+    /// Grant one-shot, operation-scoped user authorization for a new
+    /// same-args Operation after Unknown (binds prior Operation ID +
+    /// fingerprint + confirming Turn). Does **not** begin the Operation —
+    /// the model must still set [`NEW_OPERATION_ARG`] via the registered
+    /// tool schema. Phrase shortcuts parse to this same directive.
     AuthorizeNewOperation,
 }
 
@@ -454,8 +471,16 @@ pub enum ApplyOutcome {
 impl TaskState {
     /// Record a user Turn. Does **not** advance the operation or lift
     /// anti-replay — the model interprets the utterance from context.
+    ///
+    /// Expires any outstanding new-op grant from a prior Turn (confirming
+    /// Turn binding). A directive on *this* message may grant again after.
     pub fn note_user_turn(&mut self) {
         self.turn_count = self.turn_count.saturating_add(1);
+        if let Some(grant) = &self.user_authorized_new_op {
+            if grant.confirming_turn < self.turn_count {
+                self.user_authorized_new_op = None;
+            }
+        }
     }
 
     /// Open a **new** Operation with a fresh UUID (no stream owner).
@@ -469,13 +494,7 @@ impl TaskState {
         arguments: impl Into<String>,
         write_fingerprint: Option<String>,
     ) -> OperationId {
-        self.begin_new_operation_for_owner(
-            tool_name,
-            target,
-            arguments,
-            write_fingerprint,
-            None,
-        )
+        self.begin_new_operation_for_owner(tool_name, target, arguments, write_fingerprint, None)
     }
 
     /// Open a **new** Operation tagged with the current stream's owner.
@@ -521,16 +540,69 @@ impl TaskState {
         id
     }
 
-    /// Grant one-shot user authorization for a new Operation after Unknown.
+    /// Grant one-shot authorization bound to the latest Unknown Operation
+    /// that has a write fingerprint. No-op when none exists (does not create
+    /// a sticky session-wide true flag).
     pub fn grant_user_authorized_new_op(&mut self) {
-        self.user_authorized_new_op = true;
+        let bound = self
+            .unknown_op_for_new_op_grant()
+            .and_then(|op| Some((op.operation_id.clone(), op.write_fingerprint.clone()?)));
+        let Some((prior_operation_id, write_fingerprint)) = bound else {
+            self.user_authorized_new_op = None;
+            return;
+        };
+        self.user_authorized_new_op = Some(NewOpAuthorization {
+            prior_operation_id,
+            write_fingerprint,
+            confirming_turn: self.turn_count,
+        });
     }
 
-    /// Consume one-shot user authorization (returns whether it was granted).
-    pub fn take_user_authorized_new_op(&mut self) -> bool {
-        let granted = self.user_authorized_new_op;
-        self.user_authorized_new_op = false;
-        granted
+    /// Latest Unknown Operation eligible for a re-run grant (prefer current).
+    fn unknown_op_for_new_op_grant(&self) -> Option<&OperationRecord> {
+        if let Some(op) = self.operation(&self.current_operation_id) {
+            if op.status == OperationStatus::Unknown && op.write_fingerprint.is_some() {
+                return Some(op);
+            }
+        }
+        self.operations
+            .iter()
+            .rev()
+            .find(|op| op.status == OperationStatus::Unknown && op.write_fingerprint.is_some())
+    }
+
+    /// Clear any outstanding new-op grant (cancel / target change / expiry).
+    pub fn clear_user_authorized_new_op(&mut self) {
+        self.user_authorized_new_op = None;
+    }
+
+    /// Atomically consume a grant for `prior_operation_id` + `write_fingerprint`.
+    ///
+    /// Returns true only on an exact match that is still valid for the
+    /// confirming Turn. A mismatched consumer does **not** steal the grant
+    /// (restored for the bound op). Expired / cancelled grants yield false.
+    pub fn take_user_authorized_new_op(
+        &mut self,
+        prior_operation_id: &str,
+        write_fingerprint: &str,
+    ) -> bool {
+        let Some(grant) = self.user_authorized_new_op.take() else {
+            return false;
+        };
+        // Expiry: only the confirming Turn may consume (new user turns clear
+        // via note_user_turn; this is the hard gate for races).
+        if grant.confirming_turn != self.turn_count {
+            // Do not restore an expired grant.
+            return false;
+        }
+        if grant.prior_operation_id == prior_operation_id
+            && grant.write_fingerprint == write_fingerprint
+        {
+            return true;
+        }
+        // Cross-op / wrong fingerprint: restore so the bound op can still use it.
+        self.user_authorized_new_op = Some(grant);
+        false
     }
 
     /// Cancel Prepared (not-yet-executed) operations; keep executed facts.
@@ -644,7 +716,6 @@ impl Drop for StreamLeaseGuard {
 
 // Re-open TaskState impl block for methods that follow abandon helper.
 impl TaskState {
-
     /// Latest operation whose write fingerprint matches (if any).
     pub fn latest_op_for_fingerprint(&self, write_fingerprint: &str) -> Option<&OperationRecord> {
         self.operations
@@ -867,6 +938,8 @@ impl TaskState {
                     self.content = content;
                 }
                 self.next_action = None;
+                // Target / goal change invalidates a pending Unknown re-run grant.
+                self.clear_user_authorized_new_op();
                 self.status = TaskStatus::Active;
                 ApplyOutcome::Applied
             }
@@ -886,6 +959,8 @@ impl TaskState {
                 }
                 self.next_action = None;
                 self.cancel_prepared_operations();
+                // Target change invalidates a pending Unknown re-run grant.
+                self.clear_user_authorized_new_op();
                 if !matches!(self.status, TaskStatus::Cancelled) {
                     self.status = TaskStatus::Active;
                 }
@@ -894,6 +969,7 @@ impl TaskState {
             TaskDirective::Cancel => {
                 self.status = TaskStatus::Cancelled;
                 self.next_action = None;
+                self.clear_user_authorized_new_op();
                 ApplyOutcome::Applied
             }
             TaskDirective::Continue => {
@@ -919,9 +995,15 @@ impl TaskState {
                         reason: "cancelled",
                     };
                 }
-                // One-shot grant only — does not begin an Operation or wipe
-                // gates. Model must still pass `_new_operation` via schema.
+                // One-shot op-scoped grant only — does not begin an Operation
+                // or wipe gates. Model must still pass `_new_operation` via
+                // schema. No Unknown target → grant stays unset.
                 self.grant_user_authorized_new_op();
+                if self.user_authorized_new_op.is_none() {
+                    return ApplyOutcome::Ignored {
+                        reason: "no_unknown_operation",
+                    };
+                }
                 if !matches!(self.status, TaskStatus::Completed { .. }) {
                     self.status = TaskStatus::Active;
                 }
@@ -1024,11 +1106,14 @@ impl TaskState {
              a known terminal result. After Unknown, the model boolean alone is not \
              enough — ask the user to authorize a re-run first.\n"
         ));
-        if self.user_authorized_new_op {
-            out.push_str(
-                "- User authorized a new Operation (one-shot); combine with \
-                 `_new_operation: true` on the next mutating call.\n",
-            );
+        if let Some(grant) = &self.user_authorized_new_op {
+            out.push_str(&format!(
+                "- User authorized a new Operation (one-shot, op {} fingerprint-bound, \
+                 turn {}); combine with `_new_operation: true` on the next matching \
+                 mutating call.\n",
+                short_op_id(&grant.prior_operation_id),
+                grant.confirming_turn
+            ));
         }
         Some(out)
     }
@@ -1191,8 +1276,10 @@ pub fn parse_user_directive(text: &str) -> Option<TaskDirective> {
         return Some(TaskDirective::Continue);
     }
 
-    // Authorize new Operation after Unknown (one-shot grant; model still sets
-    // `_new_operation` via schema). Distinct from ordinary 「再发送一次」 turns.
+    // Authorize new Operation after Unknown — same structured
+    // AuthorizeNewOperation grant as host apply_directive (op-scoped; model
+    // still sets `_new_operation` via schema). Distinct from ordinary
+    // 「再发送一次」 turns (no separate privilege).
     if matches!(
         lower.as_str(),
         "确认重跑"
@@ -1644,7 +1731,7 @@ pub fn prepare_mutating_dispatch(
                 return Ok(id);
             }
             WriteDispatch::InquireStatus { operation_id } => {
-                if state.take_user_authorized_new_op() {
+                if state.take_user_authorized_new_op(operation_id, write_fingerprint) {
                     let mut clean = arguments.clone();
                     strip_new_operation_flag(&mut clean);
                     let args = serde_json::to_string(&clean).unwrap_or_else(|_| "{}".into());
@@ -3369,8 +3456,7 @@ mod tests {
         let pending = in_progress_tool_output("op-pending");
         assert!(!pending.success, "outer success must be false for pending");
         assert!(!crate::toolkit::tool::effective_success(
-            "run_now",
-            &pending
+            "run_now", &pending
         ));
 
         let mut s = TaskState::default();
@@ -3379,7 +3465,9 @@ mod tests {
             &mut s,
             "run_now",
             &serde_json::json!({"agent_id": "A"}),
-            &fp, None) else {
+            &fp,
+            None,
+        ) else {
             panic!("Proceed");
         };
         s.complete_operation_failed(
@@ -3390,16 +3478,16 @@ mod tests {
             &mut s,
             "run_now",
             &serde_json::json!({"agent_id": "A"}),
-            &fp, None) {
+            &fp,
+            None,
+        ) {
             MutatingGateOutcome::ResumeKnown { output, .. } => {
                 assert!(!output.success, "failed resume outer success must be false");
                 assert_eq!(
                     output.data.get("success").and_then(|v| v.as_bool()),
                     Some(false)
                 );
-                assert!(!crate::toolkit::tool::effective_success(
-                    "run_now", &output
-                ));
+                assert!(!crate::toolkit::tool::effective_success("run_now", &output));
             }
             other => panic!("failed op must ResumeKnown, got {other:?}"),
         }
@@ -3447,8 +3535,7 @@ mod tests {
         ) {
             MutatingGateOutcome::Block { message } => {
                 assert!(
-                    message.contains("alone is not user-authorized")
-                        || message.contains("confirm"),
+                    message.contains("alone is not user-authorized") || message.contains("confirm"),
                     "unexpected block: {message}"
                 );
             }
@@ -3458,13 +3545,9 @@ mod tests {
         // User grant + schema flag → Proceed.
         s.apply_directive(TaskDirective::AuthorizeNewOperation);
         let owner2 = new_stream_owner();
-        let MutatingGateOutcome::Proceed { operation_id: op2 } = evaluate_mutating_gate(
-            &mut s,
-            "run_now",
-            &new_args,
-            &fp,
-            Some(owner2.as_str()),
-        ) else {
+        let MutatingGateOutcome::Proceed { operation_id: op2 } =
+            evaluate_mutating_gate(&mut s, "run_now", &new_args, &fp, Some(owner2.as_str()))
+        else {
             panic!("user-authorized _new_operation after interrupt must Proceed");
         };
         assert_ne!(op2, op1);
@@ -3563,8 +3646,7 @@ mod tests {
         }
         // Guard drop (simulates consumer.abort / stream Drop) must finalize.
         {
-            let _guard =
-                StreamLeaseGuard::new(state.clone(), owner, "unit-test stream drop");
+            let _guard = StreamLeaseGuard::new(state.clone(), owner, "unit-test stream drop");
         }
         let mut s = state.blocking_write();
         assert_eq!(
@@ -3841,5 +3923,203 @@ mod tests {
             namespace: None,
         };
         assert!(apply_new_operation_from_tool_schema(&bare, base).is_err());
+    }
+
+    // ── GPT op-scoped Unknown re-run auth (86a49573 P1) ─────────────────
+
+    fn unknown_op_with_fp(s: &mut TaskState, tool: &str, args: &str, fp: &str) -> OperationId {
+        let op = s.begin_new_operation(tool, None, args, Some(fp.to_string()));
+        s.mark_operation_running(&op);
+        s.complete_operation_unknown(
+            &op,
+            StructuredResult {
+                success: false,
+                summary: "interrupted".into(),
+                body: String::new(),
+                details_ref: None,
+            },
+        );
+        op
+    }
+
+    fn flagged_args(base: serde_json::Value) -> serde_json::Value {
+        let mut v = base;
+        v.as_object_mut()
+            .unwrap()
+            .insert(NEW_OPERATION_ARG.into(), serde_json::json!(true));
+        v
+    }
+
+    #[test]
+    fn gpt_unknown_auth_cross_op_grant_does_not_leak() {
+        let mut s = TaskState::default();
+        s.note_user_turn();
+        let fp_a = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let fp_b = write_fingerprint("run_now", r#"{"agent_id":"B"}"#);
+        let op_a = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp_a);
+        let op_b = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"B"}"#, &fp_b);
+        assert_eq!(s.current_operation_id, op_b);
+        assert_eq!(
+            s.apply_directive(TaskDirective::AuthorizeNewOperation),
+            ApplyOutcome::Applied
+        );
+        let grant = s.user_authorized_new_op.clone().expect("grant");
+        assert_eq!(grant.prior_operation_id, op_b);
+        assert_eq!(grant.write_fingerprint, fp_b);
+        assert_eq!(grant.confirming_turn, s.turn_count);
+
+        let args_a = flagged_args(serde_json::json!({"agent_id": "A"}));
+        let args_b = flagged_args(serde_json::json!({"agent_id": "B"}));
+
+        match evaluate_mutating_gate(&mut s, "run_now", &args_a, &fp_a, None) {
+            MutatingGateOutcome::Block { .. } => {}
+            other => panic!("A must not consume B grant, got {other:?}"),
+        }
+        assert!(
+            s.user_authorized_new_op.is_some(),
+            "mismatched consume must restore grant"
+        );
+
+        let MutatingGateOutcome::Proceed {
+            operation_id: op_new,
+        } = evaluate_mutating_gate(&mut s, "run_now", &args_b, &fp_b, None)
+        else {
+            panic!("B with matching grant must Proceed");
+        };
+        assert_ne!(op_new, op_a);
+        assert_ne!(op_new, op_b);
+        assert!(
+            s.user_authorized_new_op.is_none(),
+            "grant one-shot consumed"
+        );
+    }
+
+    #[test]
+    fn gpt_unknown_auth_cross_turn_expires() {
+        let mut s = TaskState::default();
+        s.note_user_turn();
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp);
+        assert_eq!(
+            s.apply_directive(TaskDirective::AuthorizeNewOperation),
+            ApplyOutcome::Applied
+        );
+        assert_eq!(
+            s.user_authorized_new_op
+                .as_ref()
+                .unwrap()
+                .prior_operation_id,
+            op
+        );
+        s.note_user_turn();
+        assert!(
+            s.user_authorized_new_op.is_none(),
+            "grant must expire on turn advance"
+        );
+        let args = flagged_args(serde_json::json!({"agent_id": "A"}));
+        match evaluate_mutating_gate(&mut s, "run_now", &args, &fp, None) {
+            MutatingGateOutcome::Block { .. } => {}
+            other => panic!("expired grant must Block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gpt_unknown_auth_concurrent_consume_is_one_shot() {
+        let mut s = TaskState::default();
+        s.note_user_turn();
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp);
+        s.apply_directive(TaskDirective::AuthorizeNewOperation);
+        assert!(s.take_user_authorized_new_op(&op, &fp));
+        assert!(!s.take_user_authorized_new_op(&op, &fp));
+        assert!(s.user_authorized_new_op.is_none());
+    }
+
+    #[test]
+    fn gpt_unknown_auth_cancel_and_target_change_invalidate() {
+        let mut s = TaskState::default();
+        s.note_user_turn();
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp);
+
+        s.apply_directive(TaskDirective::AuthorizeNewOperation);
+        assert!(s.user_authorized_new_op.is_some());
+        s.apply_directive(TaskDirective::Correct {
+            goal: "do something else".into(),
+            object: Some("other".into()),
+            content: None,
+        });
+        assert!(
+            s.user_authorized_new_op.is_none(),
+            "Correct must invalidate grant"
+        );
+        assert!(!s.take_user_authorized_new_op(&op, &fp));
+
+        s.apply_directive(TaskDirective::AuthorizeNewOperation);
+        assert!(s.user_authorized_new_op.is_some());
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "new goal".into(),
+            object: Some("X".into()),
+            content: None,
+        });
+        assert!(
+            s.user_authorized_new_op.is_none(),
+            "SetGoal must invalidate grant"
+        );
+
+        s.apply_directive(TaskDirective::AuthorizeNewOperation);
+        assert!(s.user_authorized_new_op.is_some());
+        s.apply_directive(TaskDirective::Cancel);
+        assert!(
+            s.user_authorized_new_op.is_none(),
+            "Cancel must invalidate grant"
+        );
+        assert!(!s.take_user_authorized_new_op(&op, &fp));
+    }
+
+    #[test]
+    fn gpt_unknown_auth_phrase_feeds_same_structured_grant() {
+        assert_eq!(
+            parse_user_directive("确认重跑"),
+            Some(TaskDirective::AuthorizeNewOperation)
+        );
+        assert_eq!(
+            parse_user_directive("confirm re-run"),
+            Some(TaskDirective::AuthorizeNewOperation)
+        );
+        assert!(parse_user_directive("再发送一次").is_none());
+        assert!(parse_user_directive("请再跑一下那个任务").is_none());
+
+        let mut s = TaskState::default();
+        s.note_user_turn();
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = unknown_op_with_fp(&mut s, "run_now", r#"{"agent_id":"A"}"#, &fp);
+        let dir = parse_user_directive("确认重跑").unwrap();
+        assert_eq!(s.apply_directive(dir), ApplyOutcome::Applied);
+        let grant = s.user_authorized_new_op.clone().unwrap();
+        assert_eq!(grant.prior_operation_id, op);
+        assert_eq!(grant.write_fingerprint, fp);
+        assert_eq!(grant.confirming_turn, s.turn_count);
+
+        let args = flagged_args(serde_json::json!({"agent_id": "A"}));
+        let MutatingGateOutcome::Proceed { .. } =
+            evaluate_mutating_gate(&mut s, "run_now", &args, &fp, None)
+        else {
+            panic!("phrase-fed grant must Proceed via same protocol");
+        };
+        assert!(s.user_authorized_new_op.is_none());
+    }
+
+    #[test]
+    fn gpt_unknown_auth_grant_without_unknown_is_ignored() {
+        let mut s = TaskState::default();
+        s.note_user_turn();
+        assert_eq!(
+            s.apply_directive(TaskDirective::AuthorizeNewOperation),
+            ApplyOutcome::Ignored {
+                reason: "no_unknown_operation"
+            }
+        );
+        assert!(s.user_authorized_new_op.is_none());
     }
 }
