@@ -41,6 +41,8 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     summary_up_to_index: Option<u64>,
     // Host/UI AuthorizeNewOperation target traveling with this message.
     authorization: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
+    // Content nodes / @-refs traveling with this message (no shared pending hop).
+    content_nodes: Option<(Vec<serde_json::Value>, u32)>,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
     use neomind_core::ContentPart;
 
@@ -89,7 +91,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         let user_msg = AgentMessage::user_with_images(&user_message, user_images);
         let mut state = internal_state.write().await;
         state
-            .accept_user_message(user_msg, authorization)
+            .accept_user_message(user_msg, authorization, content_nodes)
             .call_site_turn
     };
     {
@@ -1464,6 +1466,7 @@ mod drop_lease_tests {
             None,
             None,
             None,
+            None,
         )
         .await
         .expect("stream");
@@ -1591,6 +1594,7 @@ mod drop_lease_tests {
             "run B",
             vec![],
             safeguards,
+            None,
             None,
             None,
             None,

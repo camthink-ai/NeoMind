@@ -535,6 +535,7 @@ async fn multimodal_path_narration_nudge_recovers_tool_call() {
         None,
         None,
         None,
+        None,
     )
     .await
     .expect("stream");
@@ -591,6 +592,7 @@ mod multimodal_recovery_guards {
             user_message,
             vec![],
             crate::agent::StreamSafeguards::default(),
+            None,
             None,
             None,
             None,

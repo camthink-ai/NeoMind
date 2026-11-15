@@ -458,6 +458,7 @@ impl Agent {
             images,
             StreamSafeguards::default(),
             None,
+            None,
         )
         .await
     }
@@ -465,14 +466,15 @@ impl Agent {
 impl Agent {
     /// Process a multimodal user message with streaming response and custom safeguards.
     ///
-    /// `authorize_new_operation`: optional `(prior_operation_id, write_fingerprint)`
-    /// traveling with this message into atomic accept (multi-Unknown confirm).
+    /// `authorize_new_operation` / `content_nodes` travel with this message into
+    /// atomic accept (no shared pending hops).
     pub async fn process_multimodal_stream_events_with_safeguards(
         &self,
         user_message: &str,
         images: Vec<String>, // Base64 data URLs
         safeguards: StreamSafeguards,
         authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
+        content_nodes: Option<(Vec<serde_json::Value>, u32)>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         tracing::debug!(
             message = %user_message,
@@ -508,6 +510,7 @@ impl Agent {
             None,
             None,
             authorize_new_operation,
+            content_nodes,
         )
         .await
         {
@@ -549,6 +552,7 @@ impl Agent {
             summary_up_to_index,
             StreamSafeguards::default(),
             None,
+            None,
         )
         .await
     }
@@ -556,8 +560,8 @@ impl Agent {
 impl Agent {
     /// Process a user message with streaming response and custom safeguards (e.g., interrupt signal).
     ///
-    /// `authorize_new_operation`: optional `(prior_operation_id, write_fingerprint)`
-    /// applied in the same lock as message save via [`AgentInternalState::accept_user_message`].
+    /// `authorize_new_operation` / `content_nodes` applied in the same lock as
+    /// message save via [`AgentInternalState::accept_user_message`].
     pub async fn process_stream_events_with_safeguards(
         &self,
         user_message: &str,
@@ -565,11 +569,16 @@ impl Agent {
         summary_up_to_index: Option<u64>,
         safeguards: StreamSafeguards,
         authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
+        content_nodes: Option<(Vec<serde_json::Value>, u32)>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-        // Atomic accept: Turn + auth under one lock; local context for stream.
+        // Atomic accept: Turn + auth + content nodes under one lock; local context.
         let accepted = {
             let mut state = self.internal_state.write().await;
-            state.accept_user_message(AgentMessage::user(user_message), authorize_new_operation)
+            state.accept_user_message(
+                AgentMessage::user(user_message),
+                authorize_new_operation,
+                content_nodes,
+            )
         };
         let call_site_turn = accepted.call_site_turn;
 

@@ -1364,17 +1364,14 @@ pub async fn chat_handler(
     };
     let final_message = prepared.model_message;
 
-    // Persist client contentNodes (or synthesized chip nodes) on the next
-    // user SessionMessage — prepare only shapes the model text.
-    super::chat_refs::attach_pending_content_nodes(
-        &state,
-        &id,
+    // Content nodes travel with the message into atomic accept (like auth) —
+    // prepare only shapes the model text.
+    let content_nodes_arg = super::chat_refs::content_nodes_for_accept(
         &req.message,
         req.content_nodes.as_deref(),
         req.content_version,
         req.references.as_deref(),
-    )
-    .await;
+    );
     let authorize_submit =
         super::chat_refs::authorize_new_op_submit(req.authorize_new_operation.as_ref());
 
@@ -1407,6 +1404,7 @@ pub async fn chat_handler(
                 images,
                 req.backend_id.as_deref(),
                 authorize_submit,
+                content_nodes_arg,
             )
             .await
     } else {
@@ -1419,6 +1417,7 @@ pub async fn chat_handler(
                 req.backend_id.as_deref(),
                 req.selected_skills.as_deref(),
                 authorize_submit,
+                content_nodes_arg,
             )
             .await
     };
@@ -2078,15 +2077,12 @@ async fn handle_ws_socket(
                                         };
                                         let final_message = prepared.model_message;
 
-                                        super::chat_refs::attach_pending_content_nodes(
-                                            &task_state,
-                                            &task_session_id,
+                                        let content_nodes_arg = super::chat_refs::content_nodes_for_accept(
                                             &chat_req.message,
                                             chat_req.content_nodes.as_deref(),
                                             chat_req.content_version,
                                             chat_req.references.as_deref(),
-                                        )
-                                        .await;
+                                        );
                                         let authorize_submit = super::chat_refs::authorize_new_op_submit(
                                             chat_req.authorize_new_operation.as_ref(),
                                         );
@@ -2102,6 +2098,7 @@ async fn handle_ws_socket(
                                             images.clone(),
                                             backend_id_str.as_deref(),
                                             authorize_submit,
+                                            content_nodes_arg,
                                         ).await {
                                             Ok(stream) => {
                                                 // Clone the channel sender and session ID for the spawned task
@@ -2234,15 +2231,12 @@ async fn handle_ws_socket(
                                                 // awaited stream creation below — see
                                                 // create_initial_pending_snapshot.
                                                 create_initial_pending_snapshot(&task_state, &task_session_id, &task_user_message);
-                                                super::chat_refs::attach_pending_content_nodes(
-                                                    &task_state,
-                                                    &task_session_id,
+                                                let content_nodes_arg = super::chat_refs::content_nodes_for_accept(
                                                     &task_user_message,
                                                     task_content_nodes.as_deref(),
                                                     task_content_version,
                                                     task_references.as_deref(),
-                                                )
-                                                .await;
+                                                );
                                                 let authorize_submit = super::chat_refs::authorize_new_op_submit(
                                                     task_authorize_new_op.as_ref(),
                                                 );
@@ -2255,6 +2249,7 @@ async fn handle_ws_socket(
                                                         task_backend_id.as_deref(),
                                                         task_skills.as_deref(),
                                                         authorize_submit,
+                                                        content_nodes_arg,
                                                     )
                                                     .await
                                                 {

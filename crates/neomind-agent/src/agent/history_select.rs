@@ -321,24 +321,30 @@ fn tool_result_stub(text: &str) -> String {
     let header = text.lines().next().unwrap_or("[Tool result]");
     // Prefer Operation details_ref / $cached:op: so packer keeps critical
     // feedback under budget pressure (never a bare truncated body as fact).
+    let evidence = extract_evidence_needles(text);
+    let needle_line = if evidence.is_empty() {
+        String::new()
+    } else {
+        format!("\n[truncated evidence] {}", evidence.join(" · "))
+    };
     if let Some(details_ref) = extract_details_ref_stub(text) {
-        let needles = extract_evidence_needles(text);
-        let needle_line = if needles.is_empty() {
-            String::new()
-        } else {
-            format!("\n[truncated evidence] {}", needles.join(" · "))
-        };
+        // details_ref is the fetch path — do not mark unknown.
         return format!(
             "{header}{needle_line}\ndetails_ref={details_ref}\n[truncated: full body behind details_ref — context budget]"
         );
     }
-    let needles = extract_evidence_needles(text);
-    if needles.is_empty() {
-        format!("{header}\n[truncated: prior tool output omitted — context budget exhausted]")
+    let unknown = if evidence_has_structured_outcome(&evidence) {
+        String::new()
+    } else {
+        "\n[unknown: need details — truncated tool result lost structured success/fail]".to_string()
+    };
+    if evidence.is_empty() {
+        format!(
+            "{header}\n[unknown: need details — truncated tool result lost structured success/fail and object ids]\n[truncated: prior tool output omitted — context budget exhausted]"
+        )
     } else {
         format!(
-            "{header}\n[truncated evidence] {}\n[truncated: full tool output omitted — context budget exhausted]",
-            needles.join(" · ")
+            "{header}{needle_line}{unknown}\n[truncated: full tool output omitted — context budget exhausted]"
         )
     }
 }
@@ -382,44 +388,162 @@ fn compress_tool_result_text(text: &str, max_chars: usize) -> String {
     } else {
         format!("\n[kept evidence] {}", needles.join(" · "))
     };
+    // details_ref (if any) already in details_line — that is the fetch path.
+    let unknown_line = if !details_line.is_empty() || evidence_has_structured_outcome(&needles) {
+        String::new()
+    } else {
+        "\n[unknown: need details — truncated tool result lost structured success/fail]".to_string()
+    };
     let budget = max_chars
         .saturating_sub(header.chars().count())
         .saturating_sub(details_line.chars().count())
         .saturating_sub(needle_line.chars().count())
+        .saturating_sub(unknown_line.chars().count())
         .saturating_sub(48);
     let body: String = text
         .chars()
         .skip(header.chars().count())
         .take(budget)
         .collect();
-    format!("{header}{details_line}{needle_line}\n{body}…\n[truncated]")
+    format!("{header}{details_line}{needle_line}{unknown_line}\n{body}…\n[truncated]")
 }
 
+/// True when evidence already carries a concrete success/fail binding
+/// (`success=true` / `success=false`), not a bare keyword.
+fn evidence_has_structured_outcome(needles: &[String]) -> bool {
+    needles
+        .iter()
+        .any(|n| n.starts_with("success=") || n.starts_with("failed="))
+}
+
+/// Pull structured success/fail values and object IDs from a tool-result body.
+///
+/// Bare keywords like `success` without a boolean are **not** kept as outcome
+/// evidence — callers mark `[unknown: need details]` when no structured
+/// outcome survives compression.
 fn extract_evidence_needles(text: &str) -> Vec<String> {
     let mut out = Vec::new();
-    // Device / object ids: common NeoMind patterns.
+
+    // Structured outcome bindings (JSON / key=value / key: value).
+    push_unique(
+        &mut out,
+        extract_bool_binding(text, "success").map(|v| format!("success={v}")),
+    );
+    push_unique(
+        &mut out,
+        extract_bool_binding(text, "failed").map(|v| format!("failed={v}")),
+    );
+    if let Some(status) = extract_status_binding(text) {
+        push_unique(&mut out, Some(format!("status={status}")));
+    }
+
+    // Object / operation ids: labelled fields first, then common id-shaped tokens.
+    for (label, key) in [
+        ("operation_id", "operation_id"),
+        ("operation_id", "operationId"),
+        ("device_id", "device_id"),
+        ("device_id", "deviceId"),
+        ("id", "\"id\""),
+    ] {
+        if let Some(id) = extract_labelled_id(text, key) {
+            push_unique(&mut out, Some(format!("{label}={id}")));
+            if out.len() >= 10 {
+                return out;
+            }
+        }
+    }
+
     for token in
         text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':'))
     {
-        if token.len() >= 4
-            && (token.contains('-') || token.contains('_') || token.contains(':'))
-            && !out.iter().any(|s| s == token)
+        if token.starts_with("$cached:op:")
+            || (token.len() >= 4
+                && (token.contains('-') || token.contains('_') || token.contains(':'))
+                && !token.eq_ignore_ascii_case("success")
+                && !token.eq_ignore_ascii_case("failed")
+                && !token.eq_ignore_ascii_case("status"))
         {
-            out.push(token.to_string());
-            if out.len() >= 8 {
+            push_unique(&mut out, Some(token.to_string()));
+            if out.len() >= 10 {
                 break;
             }
         }
     }
+
+    // Non-outcome keywords that still help orientation (ACK / online) — never
+    // substitute for structured success/fail.
     for key in [
-        "error", "Error", "ERROR", "status", "ACK", "ack", "queued", "failed", "success",
-        "offline", "online",
+        "ACK", "ack", "queued", "offline", "online", "error", "Error", "ERROR",
     ] {
-        if text.contains(key) && !out.iter().any(|s| s == key) {
-            out.push(key.to_string());
+        if text.contains(key) {
+            push_unique(&mut out, Some(key.to_string()));
         }
     }
     out
+}
+
+fn push_unique(out: &mut Vec<String>, value: Option<String>) {
+    if let Some(v) = value {
+        if !out.iter().any(|s| s == &v) {
+            out.push(v);
+        }
+    }
+}
+
+fn extract_bool_binding(text: &str, key: &str) -> Option<&'static str> {
+    // "success": true | "success":false | success=true | success: true
+    let patterns = [format!("\"{key}\""), format!("{key}="), format!("{key}:")];
+    for pat in &patterns {
+        if let Some(idx) = text.find(pat.as_str()) {
+            let after = text[idx + pat.len()..].trim_start_matches([' ', '\t', ':', '=', '"']);
+            let lower = after.to_ascii_lowercase();
+            if lower.starts_with("true") {
+                return Some("true");
+            }
+            if lower.starts_with("false") {
+                return Some("false");
+            }
+        }
+    }
+    None
+}
+
+fn extract_status_binding(text: &str) -> Option<String> {
+    for pat in ["\"status\"", "status=", "status:"] {
+        if let Some(idx) = text.find(pat) {
+            let after = text[idx + pat.len()..].trim_start_matches([' ', '\t', ':', '=', '"']);
+            let end = after
+                .find(|c: char| c == '"' || c == ',' || c == '}' || c.is_whitespace())
+                .unwrap_or(after.len().min(32));
+            let val = after[..end].trim();
+            if !val.is_empty() && val.len() <= 32 {
+                return Some(val.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_labelled_id(text: &str, key: &str) -> Option<String> {
+    let bare = key.trim_matches('"');
+    let candidates = [
+        format!("\"{bare}\""),
+        format!("{bare}="),
+        format!("{bare}:"),
+    ];
+    for pat in &candidates {
+        if let Some(idx) = text.find(pat.as_str()) {
+            let after = text[idx + pat.len()..].trim_start_matches([' ', '\t', ':', '=', '"']);
+            let end = after
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == ':'))
+                .unwrap_or(after.len().min(64));
+            let id = &after[..end];
+            if id.len() >= 2 {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Group-aware eviction helper for AgentMessage windows (outer builder).
@@ -612,10 +736,86 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            joined.contains("cam-green-01") || joined.contains("ACK") || joined.contains("status")
+            joined.contains("cam-green-01")
+                || joined.contains("device_id=cam-green-01")
+                || joined.contains("ACK")
+                || joined.contains("status=ok")
         );
         assert!(got.used_tokens <= budget);
         assert!(!has_orphan_tool_result(&got.messages));
+    }
+
+    #[test]
+    fn compress_keeps_structured_success_fail_and_object_ids() {
+        let body = format!(
+            r#"[Tool: shell]
+{{"_operation_resume":true,"operation_id":"op-abc-123","success":false,"summary":"write failed","data":{{"device_id":"cam-green-01","stdout":"{}"}}}}"#,
+            "x".repeat(30_000)
+        );
+        let history = vec![
+            user("重跑写屏"),
+            assistant("In a previous turn I called the shell tool."),
+            tool_as_user("shell", &body),
+        ];
+        let assistant_tokens = message_tokens(&history[1]);
+        let budget = assistant_tokens + 350;
+        let got = select_messages_for_history_budget(&history, budget);
+        assert!(got.truncated);
+        let joined: String = got
+            .messages
+            .iter()
+            .map(|m| m.content.as_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("success=false"),
+            "must keep structured fail value, got: {joined}"
+        );
+        assert!(
+            joined.contains("op-abc-123") || joined.contains("operation_id=op-abc-123"),
+            "must keep operation id, got: {joined}"
+        );
+        assert!(
+            joined.contains("cam-green-01") || joined.contains("device_id=cam-green-01"),
+            "must keep object id, got: {joined}"
+        );
+        assert!(
+            !joined.contains("[unknown: need details"),
+            "structured outcome present → no unknown marker"
+        );
+    }
+
+    #[test]
+    fn compress_marks_unknown_when_outcome_and_ids_lost() {
+        // No boolean success/fail, no id-shaped tokens — compression must not
+        // invent a success keyword; it must mark unknown / need details.
+        let body = format!(
+            "[Tool: weather]\nplain prose forecast without bindings\n{}",
+            "cloud,".repeat(25_000)
+        );
+        let history = vec![
+            user("天气"),
+            assistant("In a previous turn I called the weather tool."),
+            tool_as_user("weather", &body),
+        ];
+        let assistant_tokens = message_tokens(&history[1]);
+        let budget = assistant_tokens + 220;
+        let got = select_messages_for_history_budget(&history, budget);
+        assert!(got.truncated);
+        let joined: String = got
+            .messages
+            .iter()
+            .map(|m| m.content.as_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("[unknown: need details"),
+            "must mark unknown when structured outcome missing, got: {joined}"
+        );
+        assert!(
+            !joined.contains("success=true") && !joined.contains("success=false"),
+            "must not invent structured outcome"
+        );
     }
 
     #[test]

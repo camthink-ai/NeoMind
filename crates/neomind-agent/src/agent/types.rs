@@ -2069,11 +2069,6 @@ pub struct AgentInternalState {
     /// Cross-turn task continuity (G2): goal/object/evidence steps; Continue
     /// must not replay completed writes. Loop halts (G3) mark Halted, never Completed.
     pub task_state: super::task_continuity::TaskState,
-    /// Content nodes to attach to the next pushed user message (set by API
-    /// before process; consumed once in `accept_user_message` / `push_message`).
-    pub pending_user_content_nodes: Option<Vec<Value>>,
-    /// Protocol version paired with `pending_user_content_nodes`.
-    pub pending_user_content_version: Option<u32>,
 }
 
 /// Immutable call-site context for one accepted user Turn.
@@ -2103,8 +2098,6 @@ impl AgentInternalState {
             )),
             compaction_cache: None,
             task_state: super::task_continuity::TaskState::default(),
-            pending_user_content_nodes: None,
-            pending_user_content_version: None,
         }
     }
 
@@ -2150,8 +2143,8 @@ impl AgentInternalState {
     }
 
     /// Atomically accept a user message: save + allocate Turn + apply
-    /// authorization under one lock, returning an immutable
-    /// [`AcceptedTurnContext`] for the stream / tool gate.
+    /// authorization + attach content nodes under one lock, returning an
+    /// immutable [`AcceptedTurnContext`] for the stream / tool gate.
     ///
     /// Every Unknown re-run grant **consumes a confirm request**:
     /// - Button / structured submit → validate + consume by `request_id`
@@ -2160,24 +2153,23 @@ impl AgentInternalState {
     /// - No request / expired / already consumed / incomplete structured
     ///   fields → refuse (no op-level Unique-Unknown grant fallback)
     ///
-    /// Content nodes still use `pending_user_content_nodes` (attached here
-    /// under the same lock). Callers that already hold nodes may set them
-    /// on `message` directly.
+    /// `content_nodes` travels with this message (same pattern as
+    /// `authorization`) — never via a shared pending hop on agent state.
+    /// When `Some`, nodes+version overwrite any nodes already on `message`.
     pub fn accept_user_message(
         &mut self,
         message: AgentMessage,
         authorization: Option<super::task_continuity::AuthorizeNewOpSubmit>,
+        content_nodes: Option<(Vec<Value>, u32)>,
     ) -> AcceptedTurnContext {
         let mut message = message;
         debug_assert_eq!(
             message.role, "user",
             "accept_user_message is for user Turns only"
         );
-        if let Some(nodes) = self.pending_user_content_nodes.take() {
+        if let Some((nodes, ver)) = content_nodes {
             message.content_nodes = Some(nodes);
-            message.content_version = self.pending_user_content_version.take();
-        } else {
-            self.pending_user_content_version = None;
+            message.content_version = Some(ver);
         }
         // Round 1: every user message is a Turn; do not invent SetGoal /
         // re-execute from utterance length or phrase whitelists.
@@ -2234,12 +2226,13 @@ impl AgentInternalState {
     /// Push a message to the memory.
     ///
     /// User messages go through [`Self::accept_user_message`] with no host
-    /// authorization (phrase may still consume a unique pending confirm).
-    /// Prefer `accept_user_message` when a stream needs the returned
+    /// authorization / content-nodes arg (nodes already on `message` are kept;
+    /// phrase may still consume a unique pending confirm). Prefer
+    /// `accept_user_message` when a stream needs the returned
     /// [`AcceptedTurnContext`].
     pub fn push_message(&mut self, message: AgentMessage) {
         if message.role == "user" {
-            let _ = self.accept_user_message(message, None);
+            let _ = self.accept_user_message(message, None, None);
             return;
         }
         self.memory.push(message);

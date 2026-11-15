@@ -1940,18 +1940,19 @@ Assistant: {ar}\n"
         session_id: &str,
         message: &str,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-        self.process_message_events_with_authorize(session_id, message, None)
+        self.process_message_events_with_authorize(session_id, message, None, None)
             .await
     }
 
     /// Like [`Self::process_message_events`], with optional host/UI
-    /// `AuthorizeNewOperation` target traveling with the message into atomic
-    /// accept (not a shared pending hop).
+    /// `AuthorizeNewOperation` and content nodes traveling with the message
+    /// into atomic accept (not shared pending hops).
     pub async fn process_message_events_with_authorize(
         &self,
         session_id: &str,
         message: &str,
         authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
+        content_nodes: Option<(Vec<serde_json::Value>, u32)>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         let agent = self.get_session(session_id).await?;
 
@@ -1982,6 +1983,7 @@ Assistant: {ar}\n"
                 summary_up_to_index,
                 safeguards,
                 authorize_new_operation,
+                content_nodes,
             )
             .await?;
 
@@ -2029,7 +2031,7 @@ Assistant: {ar}\n"
         backend_id: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         self.process_message_events_with_backend_and_skills(
-            session_id, message, backend_id, None, None,
+            session_id, message, backend_id, None, None, None,
         )
         .await
     }
@@ -2038,8 +2040,8 @@ Assistant: {ar}\n"
     ///
     /// `selected_skills`: `None` = leave the session's pins untouched;
     /// `Some(list)` = replace the pins (an empty list clears them).
-    /// `authorize_new_operation`: optional `(prior_operation_id, write_fingerprint)`
-    /// for Unknown re-run confirm — travels with the message into atomic accept.
+    /// `authorize_new_operation` / `content_nodes` travel with the message into
+    /// atomic accept (no shared pending hops).
     pub async fn process_message_events_with_backend_and_skills(
         &self,
         session_id: &str,
@@ -2047,6 +2049,7 @@ Assistant: {ar}\n"
         backend_id: Option<&str>,
         selected_skills: Option<&[String]>,
         authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
+        content_nodes: Option<(Vec<serde_json::Value>, u32)>,
     ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
         // If a specific backend is requested, configure the agent with it
         if let Some(backend) = backend_id {
@@ -2070,8 +2073,13 @@ Assistant: {ar}\n"
             }
         }
 
-        self.process_message_events_with_authorize(session_id, message, authorize_new_operation)
-            .await
+        self.process_message_events_with_authorize(
+            session_id,
+            message,
+            authorize_new_operation,
+            content_nodes,
+        )
+        .await
     }
 
     /// Process a multimodal message with images in a session.
@@ -2162,13 +2170,13 @@ Assistant: {ar}\n"
         backend_id: Option<&str>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
         self.process_message_multimodal_with_backend_stream_authorize(
-            session_id, message, images, backend_id, None,
+            session_id, message, images, backend_id, None, None,
         )
         .await
     }
 
-    /// Multimodal stream with optional `AuthorizeNewOperation` target traveling
-    /// with the message into atomic accept.
+    /// Multimodal stream with optional `AuthorizeNewOperation` / content nodes
+    /// traveling with the message into atomic accept.
     pub async fn process_message_multimodal_with_backend_stream_authorize(
         &self,
         session_id: &str,
@@ -2176,6 +2184,7 @@ Assistant: {ar}\n"
         images: Vec<String>,
         backend_id: Option<&str>,
         authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
+        content_nodes: Option<(Vec<serde_json::Value>, u32)>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
         // If a specific backend is requested, configure the agent with it
         if let Some(backend) = backend_id {
@@ -2217,6 +2226,7 @@ Assistant: {ar}\n"
             message,
             images,
             authorize_new_operation,
+            content_nodes,
         )
         .await
     }
@@ -2228,17 +2238,18 @@ Assistant: {ar}\n"
         message: &str,
         images: Vec<String>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
-        self.process_message_multimodal_stream_authorize(session_id, message, images, None)
+        self.process_message_multimodal_stream_authorize(session_id, message, images, None, None)
             .await
     }
 
-    /// Multimodal stream with authorization traveling into atomic accept.
+    /// Multimodal stream with authorization / content nodes traveling into atomic accept.
     pub async fn process_message_multimodal_stream_authorize(
         &self,
         session_id: &str,
         message: &str,
         images: Vec<String>,
         authorize_new_operation: Option<crate::agent::task_continuity::AuthorizeNewOpSubmit>,
+        content_nodes: Option<(Vec<serde_json::Value>, u32)>,
     ) -> Result<Pin<Box<dyn Stream<Item = super::agent::AgentEvent> + Send>>> {
         // Check if images are provided and model supports vision
         if !images.is_empty() {
@@ -2285,6 +2296,7 @@ Assistant: {ar}\n"
                 images,
                 safeguards,
                 authorize_new_operation,
+                content_nodes,
             )
             .await?;
 

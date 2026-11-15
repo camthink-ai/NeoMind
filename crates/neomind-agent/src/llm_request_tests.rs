@@ -356,6 +356,7 @@ async fn new_multimodal_turn_clears_old_skill_before_first_request() {
         None,
         None,
         None,
+        None,
     )
     .await
     .unwrap();

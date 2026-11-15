@@ -49,7 +49,7 @@
 //! the next turn. [`TaskState`] is **not** cleared by that call — it lives on
 //! `AgentInternalState` and is updated only via [`TaskDirective`] when the user
 //! message is pushed. Order of operations:
-//! 1. `accept_user_message(user, auth?)` → note Turn + apply auth under one lock; return local TurnContext
+//! 1. `accept_user_message(user, auth?, content_nodes?)` → note Turn + apply auth/nodes under one lock; return local TurnContext
 //! 2. Stream entry → clear transient skills
 //! 3. Within the turn, the skill tool may reload guides under the total body budget
 //!
@@ -3012,24 +3012,50 @@ mod tests {
     }
 
     #[test]
-    fn push_message_consumes_pending_content_nodes_once() {
+    fn accept_user_message_takes_content_nodes_atomically() {
         use crate::agent::types::{AgentInternalState, AgentMessage};
         let mut state = AgentInternalState::new("s-nodes".into());
-        state.pending_user_content_nodes = Some(vec![serde_json::json!({
+        let nodes = vec![serde_json::json!({
             "kind": "reference",
             "type": "device",
             "id": "d1",
             "labelSnapshot": "D"
-        })]);
-        state.pending_user_content_version = Some(1);
-        state.push_message(AgentMessage::user("check"));
+        })];
+        let _ = state.accept_user_message(AgentMessage::user("check"), None, Some((nodes, 1)));
         let last = state.memory.last().expect("user msg");
         assert_eq!(last.content_version, Some(1));
         assert_eq!(last.content_nodes.as_ref().unwrap()[0]["id"], "d1");
-        assert!(state.pending_user_content_nodes.is_none());
-        // Second push without pending keeps None.
-        state.push_message(AgentMessage::user("again"));
+        // Later accept without nodes keeps None — no shared pending leftover.
+        let _ = state.accept_user_message(AgentMessage::user("again"), None, None);
         assert!(state.memory.last().unwrap().content_nodes.is_none());
+    }
+
+    #[test]
+    fn interleaved_accepts_do_not_steal_content_nodes() {
+        use crate::agent::types::{AgentInternalState, AgentMessage};
+        let mut state = AgentInternalState::new("s-nodes-race".into());
+        let nodes_a = vec![serde_json::json!({
+            "kind": "reference",
+            "type": "device",
+            "id": "dev-a",
+            "labelSnapshot": "A"
+        })];
+        let nodes_b = vec![serde_json::json!({
+            "kind": "reference",
+            "type": "device",
+            "id": "dev-b",
+            "labelSnapshot": "B"
+        })];
+        let _ = state.accept_user_message(AgentMessage::user("look @A"), None, Some((nodes_a, 1)));
+        let _ = state.accept_user_message(AgentMessage::user("look @B"), None, Some((nodes_b, 1)));
+        assert_eq!(
+            state.memory[0].content_nodes.as_ref().unwrap()[0]["id"],
+            "dev-a"
+        );
+        assert_eq!(
+            state.memory[1].content_nodes.as_ref().unwrap()[0]["id"],
+            "dev-b"
+        );
     }
 
     #[test]
@@ -4606,8 +4632,11 @@ mod tests {
         let op = unknown_op_with_fp(&mut state.task_state, "run_now", r#"{"agent_id":"A"}"#, &fp);
         let _ = confirm_submit_for(&mut state.task_state, &op, &fp, "run_now", None);
         // Phrase with unique pending confirm → consume request → grant.
-        let accepted =
-            state.accept_user_message(crate::agent::types::AgentMessage::user("确认重跑"), None);
+        let accepted = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("确认重跑"),
+            None,
+            None,
+        );
         let grant = state
             .task_state
             .user_authorized_new_op
@@ -4852,8 +4881,11 @@ mod tests {
         // accept_user_message returns an immutable TurnContext; a later
         // confirm accept must not replace stream A's local call_site_turn.
         let mut state = crate::agent::types::AgentInternalState::new("atomic-turn".into());
-        let stream_a =
-            state.accept_user_message(crate::agent::types::AgentMessage::user("start A"), None);
+        let stream_a = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("start A"),
+            None,
+            None,
+        );
         assert_eq!(stream_a.call_site_turn, 1);
 
         let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
@@ -4863,6 +4895,7 @@ mod tests {
         let stream_b = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑"),
             Some(submit),
+            None,
         );
         assert_eq!(stream_b.call_site_turn, 2);
         assert_ne!(stream_a.call_site_turn, stream_b.call_site_turn);
@@ -4933,8 +4966,11 @@ mod tests {
         assert_eq!(state.task_state.current_operation_id, op_b);
 
         // Bare phrase alone is ambiguous with two Unknowns.
-        let _ =
-            state.accept_user_message(crate::agent::types::AgentMessage::user("确认重跑"), None);
+        let _ = state.accept_user_message(
+            crate::agent::types::AgentMessage::user("确认重跑"),
+            None,
+            None,
+        );
         assert!(
             state.task_state.user_authorized_new_op.is_none(),
             "bare phrase with two Unknowns must not grant"
@@ -4947,6 +4983,7 @@ mod tests {
         let confirm = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑"),
             Some(submit_a),
+            None,
         );
         let grant = state
             .task_state
@@ -4964,6 +5001,7 @@ mod tests {
         let interloper = state.accept_user_message(
             crate::agent::types::AgentMessage::user("顺便问一下天气"),
             None,
+            None,
         );
         assert!(
             state.task_state.user_authorized_new_op.is_none(),
@@ -4976,6 +5014,7 @@ mod tests {
         let confirm2 = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑"),
             Some(submit_a2),
+            None,
         );
         let args_a = flagged_args(serde_json::json!({"agent_id": "A"}));
         let args_b = flagged_args(serde_json::json!({"agent_id": "B"}));
@@ -5027,6 +5066,7 @@ mod tests {
         let turn_a = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑 A"),
             Some(submit_a),
+            None,
         );
         // Note: second accept expires turn_a's grant (confirming_turn binding).
         // Simulate the race the shared hop had: auth for B arrives as its own
@@ -5035,6 +5075,7 @@ mod tests {
         let turn_b = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑 B"),
             Some(submit_b),
+            None,
         );
         assert_ne!(turn_a.call_site_turn, turn_b.call_site_turn);
 
@@ -5080,6 +5121,7 @@ mod tests {
         let _ = state.accept_user_message(
             crate::agent::types::AgentMessage::user("confirm re-run"),
             None,
+            None,
         );
         assert!(
             state.task_state.user_authorized_new_op.is_none(),
@@ -5101,6 +5143,7 @@ mod tests {
         let first = state.accept_user_message(
             crate::agent::types::AgentMessage::user("确认重跑"),
             Some(submit),
+            None,
         );
         assert!(state.task_state.user_authorized_new_op.is_some());
         assert_eq!(
@@ -5116,6 +5159,7 @@ mod tests {
         // Phrase alone must refuse — no op-level Unique-Unknown fallback.
         let _ = state.accept_user_message(
             crate::agent::types::AgentMessage::user("confirm re-run"),
+            None,
             None,
         );
         assert!(
@@ -5141,6 +5185,7 @@ mod tests {
                 prior_operation_id: String::new(),
                 write_fingerprint: String::new(),
             }),
+            None,
         );
         assert!(
             state.task_state.user_authorized_new_op.is_none(),

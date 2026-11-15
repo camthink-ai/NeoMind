@@ -198,25 +198,16 @@ pub fn nodes_for_persistence(
     Some((values, CONTENT_VERSION_V1))
 }
 
-/// Attach persistable content nodes to the session agent before process.
-pub async fn attach_pending_content_nodes(
-    state: &ServerState,
-    session_id: &str,
+/// Build persistable content nodes to pass into atomic
+/// [`neomind_agent::agent::types::AgentInternalState::accept_user_message`]
+/// (same pattern as authorize — no shared pending hop on the agent).
+pub fn content_nodes_for_accept(
     message: &str,
     content_nodes: Option<&[ChatContentNode]>,
     content_version: Option<u32>,
     references: Option<&[ChatReference]>,
-) {
-    let Some((nodes, ver)) =
-        nodes_for_persistence(message, content_nodes, content_version, references)
-    else {
-        return;
-    };
-    if let Ok(agent) = state.agents.session_manager.get_session(session_id).await {
-        agent
-            .set_pending_user_content_nodes(Some(nodes), Some(ver))
-            .await;
-    }
+) -> Option<(Vec<serde_json::Value>, u32)> {
+    nodes_for_persistence(message, content_nodes, content_version, references)
 }
 
 /// Convert host/UI `AuthorizeNewOperation` into the submit that travels with
