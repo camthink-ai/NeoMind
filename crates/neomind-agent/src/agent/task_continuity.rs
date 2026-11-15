@@ -5386,7 +5386,9 @@ mod tests {
             "stale $cached:op must not survive restore"
         );
         assert!(
-            restored.summary.contains("details unavailable after restore"),
+            restored
+                .summary
+                .contains("details unavailable after restore"),
             "summary must mark details unavailable, got: {}",
             restored.summary
         );
@@ -5807,10 +5809,7 @@ mod tests {
             .commit(&stale_bytes)
             .expect_err("stale snapshot must be rejected");
         assert!(err.contains("stale"), "got: {err}");
-        assert_eq!(
-            sink.rejects.load(std::sync::atomic::Ordering::SeqCst),
-            1
-        );
+        assert_eq!(sink.rejects.load(std::sync::atomic::Ordering::SeqCst), 1);
 
         let kept: PersistedOpLedger =
             serde_json::from_slice(sink.bytes.lock().unwrap().as_ref().unwrap()).unwrap();

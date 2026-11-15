@@ -469,6 +469,11 @@ pub struct LlmInterface {
     /// overhead the old 60%-of-window threshold could be unreachable while
     /// history was already being truncated every turn (2026-10-30).
     history_truncated: Arc<std::sync::atomic::AtomicBool>,
+    /// Last desensitized prompt archive recorded at the final LLM send
+    /// boundary (roles/lengths/hashes/budget + tool-feedback survival).
+    /// No auth headers / raw secrets. Take/peek for failure forensics.
+    last_prompt_archive:
+        Arc<tokio::sync::Mutex<Option<crate::agent::prompt_capture::DesensitizedPromptArchive>>>,
     /// Intent classifier for staged processing.
     intent_classifier: IntentClassifier,
     /// Global timezone for time-aware prompts (IANA format, e.g., "Asia/Shanghai").
@@ -604,6 +609,7 @@ impl LlmInterface {
             temperature_override: Arc::new(RwLock::new(None)),
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
             history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            last_prompt_archive: Arc::new(tokio::sync::Mutex::new(None)),
             intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
             skill_registry: Arc::new(RwLock::new(None)),
@@ -642,6 +648,7 @@ impl LlmInterface {
             temperature_override: Arc::new(RwLock::new(None)),
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
             history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            last_prompt_archive: Arc::new(tokio::sync::Mutex::new(None)),
             intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
             skill_registry: Arc::new(RwLock::new(None)),
@@ -688,6 +695,87 @@ impl LlmInterface {
     pub fn take_history_truncated(&self) -> bool {
         self.history_truncated
             .swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Peek the last desensitized send-boundary prompt archive (no take).
+    pub async fn peek_last_prompt_archive(
+        &self,
+    ) -> Option<crate::agent::prompt_capture::DesensitizedPromptArchive> {
+        self.last_prompt_archive.lock().await.clone()
+    }
+
+    /// Take the last desensitized send-boundary prompt archive.
+    pub async fn take_last_prompt_archive(
+        &self,
+    ) -> Option<crate::agent::prompt_capture::DesensitizedPromptArchive> {
+        self.last_prompt_archive.lock().await.take()
+    }
+
+    /// Tip label for observation archives (`NEOMIND_TIP_SHA` or `"runtime"`).
+    fn observation_tip_sha() -> String {
+        std::env::var("NEOMIND_TIP_SHA").unwrap_or_else(|_| "runtime".into())
+    }
+
+    /// Record sanitized request shape at the final LLM send boundary.
+    async fn observe_send_boundary(
+        &self,
+        assembled_messages: &[Message],
+        history_before_trim: &[Message],
+        available_tokens: usize,
+        tools: Option<&[neomind_core::llm::backend::ToolDefinition]>,
+        boundary: &str,
+    ) {
+        let tools_attached = tools.map(|t| !t.is_empty()).unwrap_or(false);
+        let tool_names: Vec<String> = tools
+            .map(|t| t.iter().map(|d| d.name.clone()).collect())
+            .unwrap_or_default();
+        let tools_count = tool_names.len();
+        let history_truncated_flag = self
+            .history_truncated
+            .load(std::sync::atomic::Ordering::SeqCst);
+        let tip_sha = Self::observation_tip_sha();
+        let mut archive = crate::agent::prompt_capture::build_prompt_archive(
+            crate::agent::prompt_capture::PromptArchiveInput {
+                tip_sha: &tip_sha,
+                assembled_messages,
+                history_before_trim,
+                available_tokens,
+                tools_count,
+                tool_names,
+                tools_attached,
+                history_truncated_flag,
+                notes: Vec::new(),
+            },
+        );
+        archive.notes = vec![
+            format!("send_boundary={boundary}"),
+            format!("tools_attached={tools_attached}"),
+            format!(
+                "latest_tool_feedback_survived={}",
+                archive.tool_feedback.survived
+            ),
+            format!(
+                "latest_tool_feedback_label={:?}",
+                archive.tool_feedback.latest_feedback_label
+            ),
+        ];
+        if archive.tool_feedback.interaction_present_in_history && !archive.tool_feedback.survived {
+            tracing::warn!(
+                boundary,
+                tools_attached,
+                label = ?archive.tool_feedback.latest_feedback_label,
+                "send_boundary_tool_feedback_dropped"
+            );
+        } else {
+            tracing::debug!(
+                boundary,
+                message_count = archive.message_count,
+                select_reason = %archive.budget.select_reason,
+                feedback_survived = archive.tool_feedback.survived,
+                "send_boundary_prompt_observed"
+            );
+        }
+        *self.last_prompt_archive.lock().await = Some(archive);
     }
 
     /// Set the global timezone for time-aware prompts.
@@ -1700,6 +1788,8 @@ impl LlmInterface {
         // Build messages with history if provided, truncated to fit context window
         let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
         let mut history_was_nonempty = false;
+        let mut available_tokens_obs = 0usize;
+        let mut history_before_trim: Vec<Message> = Vec::new();
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -1708,6 +1798,7 @@ impl LlmInterface {
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
             history_was_nonempty = !history_msgs.is_empty();
+            history_before_trim = history_msgs.iter().map(|m| (*m).clone()).collect();
 
             let (available_tokens, _prompt_budget) = self
                 .compute_history_budget(
@@ -1718,6 +1809,7 @@ impl LlmInterface {
                     has_tools,
                 )
                 .await;
+            available_tokens_obs = available_tokens;
 
             let selected = self.select_history_for_prompt(
                 &history_msgs,
@@ -1759,6 +1851,15 @@ impl LlmInterface {
         } else {
             None
         };
+
+        self.observe_send_boundary(
+            &messages,
+            &history_before_trim,
+            available_tokens_obs,
+            tools_input.as_deref(),
+            "chat_internal",
+        )
+        .await;
 
         let input = LlmInput {
             messages,
@@ -1881,6 +1982,8 @@ impl LlmInterface {
         // Build messages with history if provided, truncated to fit context window
         let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
         let mut history_was_nonempty = false;
+        let mut available_tokens_obs = 0usize;
+        let mut history_before_trim: Vec<Message> = Vec::new();
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -1889,6 +1992,7 @@ impl LlmInterface {
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
             history_was_nonempty = !history_msgs.is_empty();
+            history_before_trim = history_msgs.iter().map(|m| (*m).clone()).collect();
 
             let user_text = user_message.content.as_text();
             let (available_tokens, _prompt_budget) = self
@@ -1900,6 +2004,7 @@ impl LlmInterface {
                     has_tools,
                 )
                 .await;
+            available_tokens_obs = available_tokens;
 
             let selected = self.select_history_for_prompt(
                 &history_msgs,
@@ -1962,6 +2067,15 @@ impl LlmInterface {
         } else {
             None
         };
+
+        self.observe_send_boundary(
+            &messages,
+            &history_before_trim,
+            available_tokens_obs,
+            tools_input.as_deref(),
+            "chat_internal_message",
+        )
+        .await;
 
         let input = LlmInput {
             messages,
@@ -2196,6 +2310,8 @@ impl LlmInterface {
         // Build messages with history if provided, truncated to fit context window
         let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
         let mut history_was_nonempty = false;
+        let mut available_tokens_obs = 0usize;
+        let mut history_before_trim: Vec<Message> = Vec::new();
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -2204,6 +2320,7 @@ impl LlmInterface {
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
             history_was_nonempty = !history_msgs.is_empty();
+            history_before_trim = history_msgs.iter().map(|m| (*m).clone()).collect();
 
             let user_text = user_message.content.as_text();
             let (available_tokens, _prompt_budget) = self
@@ -2215,6 +2332,7 @@ impl LlmInterface {
                     include_tools,
                 )
                 .await;
+            available_tokens_obs = available_tokens;
 
             let selected = self.select_history_for_prompt(
                 &history_msgs,
@@ -2265,6 +2383,15 @@ impl LlmInterface {
             Some(tools.clone())
         };
         drop(tools);
+
+        self.observe_send_boundary(
+            &messages,
+            &history_before_trim,
+            available_tokens_obs,
+            tools_input.as_deref(),
+            "chat_stream_internal_message",
+        )
+        .await;
 
         let input = LlmInput {
             messages,
@@ -2533,6 +2660,8 @@ impl LlmInterface {
         // Build messages with history if provided, truncated to fit context window
         let mut history_reason = crate::agent::history_select::HistorySelectReason::Fits;
         let mut history_was_nonempty = false;
+        let mut available_tokens_obs = 0usize;
+        let mut history_before_trim: Vec<Message> = Vec::new();
         let messages = if let Some(hist) = history {
             let mut msgs = vec![system_msg];
 
@@ -2542,6 +2671,7 @@ impl LlmInterface {
                 .filter(|msg| msg.role != neomind_core::MessageRole::System)
                 .collect();
             history_was_nonempty = !history_msgs.is_empty();
+            history_before_trim = history_msgs.iter().map(|m| (*m).clone()).collect();
 
             // Use token-based budget calculation accounting for tools and template overhead
             let (available_tokens, _prompt_budget) = self
@@ -2553,6 +2683,7 @@ impl LlmInterface {
                     include_tools,
                 )
                 .await;
+            available_tokens_obs = available_tokens;
 
             // Group-aware selection: recent tool-call/result units stay
             // atomic; available_tokens==0 keeps nothing (never force-insert
@@ -2601,6 +2732,15 @@ impl LlmInterface {
             }
         };
         drop(tools);
+
+        self.observe_send_boundary(
+            &messages,
+            &history_before_trim,
+            available_tokens_obs,
+            tools_input.as_deref(),
+            "chat_stream_internal_scoped",
+        )
+        .await;
 
         let input = LlmInput {
             messages,

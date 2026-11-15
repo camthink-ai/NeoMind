@@ -2165,9 +2165,7 @@ impl AgentInternalState {
     /// must fail closed.
     pub fn commit_op_ledger_now(&mut self) -> Result<(), String> {
         if self.op_ledger_untrusted {
-            return Err(
-                "op ledger untrusted — durable persist refused until clear/recover".into(),
-            );
+            return Err("op ledger untrusted — durable persist refused until clear/recover".into());
         }
         let Some(commit) = self.op_ledger_commit.as_ref() else {
             return Ok(());

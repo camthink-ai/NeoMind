@@ -1075,7 +1075,8 @@ mod tests {
     #[test]
     fn text_embedded_success_json_is_unknown() {
         // Prose wrapping a success object must not bind via find('{').
-        let body = r#"shell printed note {"success":true,"device_id":"cam-embed-01"} then exited 1"#;
+        let body =
+            r#"shell printed note {"success":true,"device_id":"cam-embed-01"} then exited 1"#;
         assert_eq!(extract_bool_binding(body, "success"), None);
         assert!(parse_tool_result_json(body).is_none());
         let needles = extract_evidence_needles(body);

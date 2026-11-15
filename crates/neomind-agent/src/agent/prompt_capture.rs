@@ -36,6 +36,30 @@ pub struct PromptBudgetMeta {
     pub used_tokens: usize,
 }
 
+/// Whether the latest complete tool interaction survived the send boundary.
+///
+/// Used to prove (or refute) feedback-less tool loops: if history had a
+/// complete assistant→tool-result pair but the assembled prompt dropped it
+/// while tools stayed attached, the model cannot see what it already did.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ToolFeedbackSurvival {
+    /// History contained a complete latest tool interaction (assistant + result).
+    pub interaction_present_in_history: bool,
+    /// sha256 of the latest tool-result body in history (raw, pre-redact).
+    pub latest_feedback_sha256: Option<String>,
+    /// Short label extracted from the result prefix (`shell`, `skill`, …).
+    pub latest_feedback_label: Option<String>,
+    /// Exact body sha appears in assembled send-boundary messages.
+    pub exact_sha_survived: bool,
+    /// A tool-result with the same label appears in assembled messages
+    /// (covers compressed stubs that change the body sha).
+    pub label_survived: bool,
+    /// Convenience: `!interaction_present || exact_sha_survived || label_survived`.
+    pub survived: bool,
+    /// Tools were attached on this send (`tools` array non-empty).
+    pub tools_attached: bool,
+}
+
 /// Full desensitized prompt archive (no Authorization / api_key fields ever).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct DesensitizedPromptArchive {
@@ -49,6 +73,8 @@ pub struct DesensitizedPromptArchive {
     pub tool_names: Vec<String>,
     pub budget: PromptBudgetMeta,
     pub history_truncated_flag: bool,
+    /// Latest tool-feedback survival relative to the assembled send body.
+    pub tool_feedback: ToolFeedbackSurvival,
     pub notes: Vec<String>,
 }
 
@@ -134,8 +160,88 @@ pub struct PromptArchiveInput<'a> {
     pub available_tokens: usize,
     pub tools_count: usize,
     pub tool_names: Vec<String>,
+    pub tools_attached: bool,
     pub history_truncated_flag: bool,
     pub notes: Vec<String>,
+}
+
+/// Extract a short tool label from a tool-result body (`[Tool: shell returned]` → `shell`).
+pub fn tool_result_label(text: &str) -> Option<String> {
+    let trimmed = text.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("[Tool:") {
+        let name = rest.split_whitespace().next().unwrap_or("").trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    if let Some(rest) = trimmed.strip_prefix("Tool '") {
+        let name = rest.split('\'').next().unwrap_or("").trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+/// Find the latest **complete** tool interaction's result message in history.
+///
+/// Complete = a tool-result that has a preceding assistant turn in the same
+/// contiguous tool block (mirrors history_select grouping).
+pub fn latest_complete_tool_feedback(history: &[Message]) -> Option<&Message> {
+    let mut i = history.len();
+    while i > 0 {
+        let end = i - 1;
+        if !is_tool_result_message(&history[end]) {
+            i = end;
+            continue;
+        }
+        let mut start = end;
+        while start > 0 && is_tool_result_message(&history[start - 1]) {
+            start -= 1;
+        }
+        if start > 0 && history[start - 1].role == MessageRole::Assistant {
+            return Some(&history[end]);
+        }
+        i = start;
+    }
+    None
+}
+
+/// Compare history's latest complete tool feedback against assembled messages.
+pub fn assess_tool_feedback_survival(
+    history_before_trim: &[Message],
+    assembled_messages: &[Message],
+    tools_attached: bool,
+) -> ToolFeedbackSurvival {
+    let feedback = latest_complete_tool_feedback(history_before_trim);
+    let interaction_present_in_history = feedback.is_some();
+    let latest_feedback_sha256 = feedback.map(|m| sha256_hex(&m.content.as_text()));
+    let latest_feedback_label = feedback.and_then(|m| tool_result_label(&m.content.as_text()));
+
+    let exact_sha_survived = match &latest_feedback_sha256 {
+        Some(sha) => assembled_messages
+            .iter()
+            .any(|m| sha256_hex(&m.content.as_text()) == *sha),
+        None => true,
+    };
+    let label_survived = match &latest_feedback_label {
+        Some(label) => assembled_messages.iter().any(|m| {
+            is_tool_result_message(m)
+                && tool_result_label(&m.content.as_text()).as_deref() == Some(label.as_str())
+        }),
+        None => !interaction_present_in_history,
+    };
+    let survived = !interaction_present_in_history || exact_sha_survived || label_survived;
+
+    ToolFeedbackSurvival {
+        interaction_present_in_history,
+        latest_feedback_sha256,
+        latest_feedback_label,
+        exact_sha_survived,
+        label_survived,
+        survived,
+        tools_attached,
+    }
 }
 
 /// Build a G0 archive from the history that would feed the inner trim, plus
@@ -145,8 +251,13 @@ pub fn build_prompt_archive(input: PromptArchiveInput<'_>) -> DesensitizedPrompt
         select_messages_for_history_budget(input.history_before_trim, input.available_tokens);
     let messages = desensitize_messages(input.assembled_messages);
     let roles: Vec<String> = messages.iter().map(|m| m.role.clone()).collect();
+    let tool_feedback = assess_tool_feedback_survival(
+        input.history_before_trim,
+        input.assembled_messages,
+        input.tools_attached,
+    );
     DesensitizedPromptArchive {
-        schema: "neomind-desensitized-prompt/v1".into(),
+        schema: "neomind-desensitized-prompt/v2".into(),
         slice: "1.3.0-g0-prompt-capture".into(),
         tip_sha: input.tip_sha.into(),
         message_count: messages.len(),
@@ -163,6 +274,7 @@ pub fn build_prompt_archive(input: PromptArchiveInput<'_>) -> DesensitizedPrompt
             used_tokens: selected.used_tokens,
         },
         history_truncated_flag: input.history_truncated_flag,
+        tool_feedback,
         notes: input.notes,
     }
 }
@@ -237,6 +349,7 @@ mod tests {
             available_tokens,
             tools_count: 2,
             tool_names: vec!["shell".into(), "skill".into()],
+            tools_attached: true,
             history_truncated_flag: true,
             notes: vec![
                 "T4-shaped reconstruction; production wire body was not retained".into(),
@@ -258,10 +371,40 @@ mod tests {
         );
         assert!(archive.messages[0].redaction_hits >= 1);
 
+        // ZeroBudget drop of tool results while tools stay attached — the
+        // observation must surface feedback loss (P0 evidence channel).
+        assert!(archive.tool_feedback.interaction_present_in_history);
+        assert!(!archive.tool_feedback.survived);
+        assert!(archive.tool_feedback.tools_attached);
+        assert_eq!(
+            archive.tool_feedback.latest_feedback_label.as_deref(),
+            Some("shell")
+        );
+
         // Legacy contrast (not in archive messages, but asserted for root cause).
         let legacy_assembled_count = 1 + legacy.len() + 1; // system + early user + current
         assert_eq!(legacy_assembled_count, 3);
         assert_eq!(archive.message_count, 2);
+    }
+
+    #[test]
+    fn tool_feedback_survival_detects_kept_result() {
+        let history = vec![
+            Message::user("do it"),
+            Message::assistant("calling shell"),
+            Message::user("[Tool: shell returned]\nok device=cam-1"),
+        ];
+        let assembled = vec![
+            Message::system("sys"),
+            Message::assistant("calling shell"),
+            Message::user("[Tool: shell returned]\nok device=cam-1"),
+            Message::user("继续"),
+        ];
+        let tf = assess_tool_feedback_survival(&history, &assembled, true);
+        assert!(tf.interaction_present_in_history);
+        assert!(tf.exact_sha_survived);
+        assert!(tf.label_survived);
+        assert!(tf.survived);
     }
 
     #[test]
@@ -358,13 +501,38 @@ mod tests {
             .collect();
         // Force ZeroBudget archive contrast for the history input regardless of
         // whether this particular max_ctx left a thin residual.
+        // Production send-boundary observation (wired in llm.rs) must be populated.
+        let observed = iface
+            .take_last_prompt_archive()
+            .await
+            .expect("send boundary must record a desensitized archive");
+        assert_eq!(observed.schema, "neomind-desensitized-prompt/v2");
+        assert!(
+            observed.tool_feedback.interaction_present_in_history,
+            "T4-shaped history has complete shell tool feedback"
+        );
+        // Soft-budget collapse may drop feedback; observation must say so.
+        if !observed.tool_feedback.survived {
+            assert!(
+                observed.tool_feedback.tools_attached || observed.tools_count > 0,
+                "dropped feedback with tools still in play is the P0 signal"
+            );
+        }
+
+        // Forced ZeroBudget contrast: assemble as tip would when history is
+        // emptied (system + current only) so survival must be false.
+        let zero_budget_assembled = vec![
+            Message::system(assembled[0].content.as_text()),
+            Message::user("继续写到屏幕"),
+        ];
         let archive = build_prompt_archive(PromptArchiveInput {
             tip_sha: "77be53f8",
-            assembled_messages: &assembled,
+            assembled_messages: &zero_budget_assembled,
             history_before_trim: &history,
             available_tokens: 0,
             tools_count: 2,
             tool_names: vec!["shell".into(), "skill".into()],
+            tools_attached: true,
             history_truncated_flag: truncated || true,
             notes: vec![
                 format!("llm_interface_message_count={msg_count}"),
@@ -373,6 +541,10 @@ mod tests {
             ],
         });
         assert_eq!(archive.budget.select_reason, "ZeroBudget");
+        assert!(
+            !archive.tool_feedback.survived,
+            "ZeroBudget assemble without tool results must report feedback loss"
+        );
         let blob = serde_json::to_string(&archive).unwrap();
         // Schema never grows auth header fields; body previews may mention the
         // word Authorization only as a redacted `Authorization: Bearer [REDACTED]`.

@@ -2825,6 +2825,26 @@ mod tests {
         SessionManager::with_path(test_path).unwrap()
     }
 
+    /// Isolated file-backed manager (no process singleton) for kill/reopen tests.
+    fn create_isolated_file_manager(db_path: &std::path::Path) -> SessionManager {
+        if let Some(parent) = db_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let store = SessionStore::open_isolated(db_path).expect("open_isolated session store");
+        SessionManager {
+            sessions: Arc::new(RwLock::new(HashMap::new())),
+            session_messages: Arc::new(RwLock::new(HashMap::new())),
+            store,
+            default_config: AgentConfig::default(),
+            default_llm_backend: Arc::new(RwLock::new(None)),
+            tool_registry: Arc::new(RwLock::new(None)),
+            skill_registry: crate::skills::create_shared_registry(None),
+            cancel_senders: Arc::new(RwLock::new(HashMap::new())),
+            clearing_sessions: Arc::new(RwLock::new(HashMap::new())),
+            event_subscribers: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
     #[tokio::test]
     async fn test_session_manager_creation() {
         let manager = create_temp_manager();
@@ -3385,10 +3405,7 @@ mod tests {
             .expect("join")
             .expect("clear_history must succeed");
 
-        assert!(
-            agent.history().await.is_empty(),
-            "memory wiped after clear"
-        );
+        assert!(agent.history().await.is_empty(), "memory wiped after clear");
         assert!(
             manager.load_history(&session_id).unwrap().is_empty(),
             "DB history cleared"
@@ -3406,14 +3423,10 @@ mod tests {
         // Stale persist: generation already advanced — even if we re-inject
         // messages into the session_messages cache, live agent gen gate +
         // empty agent history means persist writes empty, not the old turn.
-        manager
-            .session_messages
-            .write()
-            .await
-            .insert(
-                session_id.clone(),
-                vec![AgentMessage::user("stale rewrite attempt")],
-            );
+        manager.session_messages.write().await.insert(
+            session_id.clone(),
+            vec![AgentMessage::user("stale rewrite attempt")],
+        );
         manager.persist_history(&session_id).await.unwrap();
         let disk = manager.load_history(&session_id).unwrap();
         assert!(
@@ -3429,9 +3442,7 @@ mod tests {
     /// durable write-intent (store version gate + single commit path).
     #[tokio::test]
     async fn persist_history_interleaved_stale_snapshot_keeps_newer_intent() {
-        use crate::agent::task_continuity::{
-            OperationStatus, PersistedOpLedger, TaskState,
-        };
+        use crate::agent::task_continuity::{OperationStatus, PersistedOpLedger, TaskState};
 
         let manager = create_temp_manager();
         let session_id = manager.create_session().await.unwrap();
@@ -3572,6 +3583,132 @@ mod tests {
             MutatingGateOutcome::Block { .. } => {}
             other => panic!("untrusted after restart must Block writes, got {other:?}"),
         }
+    }
+
+    /// GPT tip Task3: kill mid-write-intent → drop DB handle → reopen → durable
+    /// gate blocks auto-replay (production StoreOpLedgerCommit + restore path).
+    #[tokio::test]
+    async fn process_kill_mid_write_intent_reopen_db_blocks_auto_replay() {
+        use crate::agent::task_continuity::{
+            write_fingerprint, MutatingGateOutcome, OperationStatus, PersistedOpLedger,
+            WriteDispatch,
+        };
+
+        let dir =
+            std::env::temp_dir().join(format!("neomind_op_ledger_reopen_{}", uuid::Uuid::new_v4()));
+        let db_path = dir.join("sessions.redb");
+        let args = serde_json::json!({
+            "command": "neomind device control cam-kill reboot"
+        });
+        let fp = write_fingerprint("shell", args["command"].as_str().unwrap());
+
+        // Phase 1: live manager commits durable write-intent, then "dies".
+        let session_id = {
+            let manager = create_isolated_file_manager(&db_path);
+            let session_id = manager.create_session().await.unwrap();
+            // Ensure history table exists so reopen restore does not Err on
+            // a missing table (create_session alone only stamps session id).
+            manager
+                .save_history(&session_id, &[AgentMessage::user("pre-kill seed")])
+                .unwrap();
+            let agent = manager.get_session(&session_id).await.unwrap();
+
+            match agent
+                .evaluate_mutating_gate_durable("shell", &args, &fp, Some("owner-kill"), 1)
+                .await
+            {
+                MutatingGateOutcome::Proceed { .. } => {}
+                other => panic!("intent commit must Proceed, got {other:?}"),
+            }
+
+            let bytes = manager
+                .session_store()
+                .load_op_ledger(&session_id)
+                .unwrap()
+                .expect("write intent must be on disk before side-effect");
+            let snap: PersistedOpLedger = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                snap.operations.last().unwrap().status,
+                OperationStatus::Unknown,
+                "persisted intent sanitizes Running → Unknown"
+            );
+            // Process kill: drop all handles (release redb file lock).
+            drop(agent);
+            drop(manager);
+            session_id
+        };
+
+        // Phase 2: reopen same DB file (new process shape).
+        let manager2 = create_isolated_file_manager(&db_path);
+        let agent2 = manager2.get_session(&session_id).await.unwrap();
+        assert!(
+            !agent2.op_ledger_untrusted().await,
+            "clean Unknown restore must be trusted"
+        );
+        assert!(
+            !agent2.may_execute_write(&fp).await,
+            "reopen must not auto-allow the interrupted write"
+        );
+        assert!(
+            matches!(
+                agent2.dispatch_mutating_write(&fp).await,
+                WriteDispatch::InquireStatus { .. }
+            ),
+            "crash-window reopen must inquire — never auto re-side-effect"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// GPT tip Task3: clear deletes ledger; reopen must not resurrect intent.
+    #[tokio::test]
+    async fn clear_history_then_reopen_has_no_op_ledger_to_replay() {
+        let dir = std::env::temp_dir().join(format!(
+            "neomind_op_ledger_clear_reopen_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let db_path = dir.join("sessions.redb");
+        let session_id = {
+            let manager = create_isolated_file_manager(&db_path);
+            let session_id = manager.create_session().await.unwrap();
+            manager
+                .save_history(&session_id, &[AgentMessage::user("pre-clear seed")])
+                .unwrap();
+            let agent = manager.get_session(&session_id).await.unwrap();
+            let args = serde_json::json!({
+                "command": "neomind device delete cam-clear"
+            });
+            let fp = crate::agent::task_continuity::write_fingerprint(
+                "shell",
+                args["command"].as_str().unwrap(),
+            );
+            let _ = agent
+                .evaluate_mutating_gate_durable("shell", &args, &fp, Some("owner-clear"), 1)
+                .await;
+            assert!(manager
+                .session_store()
+                .load_op_ledger(&session_id)
+                .unwrap()
+                .is_some());
+            manager.clear_history(&session_id).await.unwrap();
+            assert!(manager
+                .session_store()
+                .load_op_ledger(&session_id)
+                .unwrap()
+                .is_none());
+            drop(agent);
+            drop(manager);
+            session_id
+        };
+        let manager2 = create_isolated_file_manager(&db_path);
+        let agent2 = manager2.get_session(&session_id).await.unwrap();
+        assert!(!agent2.op_ledger_untrusted().await);
+        assert!(manager2
+            .session_store()
+            .load_op_ledger(&session_id)
+            .unwrap()
+            .is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

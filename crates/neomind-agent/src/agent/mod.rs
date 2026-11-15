@@ -994,6 +994,49 @@ impl Agent {
     }
 }
 impl Agent {
+    /// Production durable mutating gate (stream paths use this before side effects).
+    pub async fn evaluate_mutating_gate_durable(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+        write_fingerprint: &str,
+        stream_owner: Option<&str>,
+        call_site_turn: u64,
+    ) -> task_continuity::MutatingGateOutcome {
+        self.internal_state
+            .write()
+            .await
+            .evaluate_mutating_gate_durable(
+                tool_name,
+                arguments,
+                write_fingerprint,
+                stream_owner,
+                call_site_turn,
+            )
+    }
+
+    /// Dispatch decision for a write fingerprint against live TaskState.
+    pub async fn dispatch_mutating_write(
+        &self,
+        write_fingerprint: &str,
+    ) -> task_continuity::WriteDispatch {
+        self.internal_state
+            .read()
+            .await
+            .task_state
+            .dispatch_mutating_write(write_fingerprint)
+    }
+
+    /// Whether the live TaskState would allow executing this write.
+    pub async fn may_execute_write(&self, write_fingerprint: &str) -> bool {
+        self.internal_state
+            .read()
+            .await
+            .task_state
+            .may_execute_write(write_fingerprint)
+    }
+}
+impl Agent {
     /// History clear generation — stale persists must observe a mismatch.
     pub async fn history_generation(&self) -> u64 {
         self.internal_state.read().await.history_generation
