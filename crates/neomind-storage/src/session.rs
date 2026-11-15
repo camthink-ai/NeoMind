@@ -29,6 +29,10 @@ const HISTORY_TABLE: TableDefinition<(&str, u64), Vec<u8>> = TableDefinition::ne
 const PENDING_STREAM_TABLE: TableDefinition<&str, Vec<u8>> =
     TableDefinition::new("pending_streams");
 
+// Minimal Operation + write ledger per session (JSON). Auth grants / stream
+// leases are never stored here — agent sanitizes Running→Unknown on restore.
+const OP_LEDGER_TABLE: TableDefinition<&str, Vec<u8>> = TableDefinition::new("op_ledgers");
+
 /// Default value for memory_enabled: true.
 const fn default_memory_enabled() -> bool {
     true
@@ -832,6 +836,13 @@ impl SessionStore {
             let _ = meta_table.remove(session_id); // Ignore error if not exists
         }
 
+        // Delete op ledger (table may not exist on older DBs)
+        {
+            if let Ok(mut ledger_table) = write_txn.open_table(OP_LEDGER_TABLE) {
+                let _ = ledger_table.remove(session_id);
+            }
+        }
+
         // Delete from history table - we need to collect the actual key tuples
         {
             let mut history_table = write_txn.open_table(HISTORY_TABLE)?;
@@ -992,6 +1003,63 @@ impl SessionStore {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(SESSIONS_META_TABLE)?;
+            table.remove(session_id)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    // ========== Op ledger (anti-replay across process restart) ==========
+
+    /// Persist a session's minimal Operation + write ledger (opaque JSON).
+    pub fn save_op_ledger(&self, session_id: &str, ledger_json: &[u8]) -> Result<(), Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn
+                .open_table(OP_LEDGER_TABLE)
+                .map_err(|e| Error::Storage(format!("Failed to open op_ledgers table: {}", e)))?;
+            table.insert(session_id, ledger_json.to_vec())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Load a session's persisted op ledger JSON, if any.
+    pub fn load_op_ledger(&self, session_id: &str) -> Result<Option<Vec<u8>>, Error> {
+        let read_txn = match self.db.begin_read() {
+            Ok(txn) => txn,
+            Err(_) => return Ok(None),
+        };
+        let table = match read_txn.open_table(OP_LEDGER_TABLE) {
+            Ok(t) => t,
+            Err(e) => {
+                let error_msg = e.to_string();
+                if error_msg.contains("does not exist") || error_msg.contains("Table") {
+                    return Ok(None);
+                }
+                return Err(Error::Storage(format!("Redb table error: {}", e)));
+            }
+        };
+        match table.get(session_id)? {
+            Some(value) => Ok(Some(value.value())),
+            None => Ok(None),
+        }
+    }
+
+    /// Delete a session's persisted op ledger (no-op when missing).
+    pub fn delete_op_ledger(&self, session_id: &str) -> Result<(), Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = match write_txn.open_table(OP_LEDGER_TABLE) {
+                Ok(t) => t,
+                Err(e) => {
+                    let error_msg = e.to_string();
+                    if error_msg.contains("does not exist") || error_msg.contains("Table") {
+                        return Ok(());
+                    }
+                    return Err(Error::Storage(format!("Redb table error: {}", e)));
+                }
+            };
             table.remove(session_id)?;
         }
         write_txn.commit()?;
@@ -1691,6 +1759,23 @@ mod tests {
 
         let sessions = store.list_sessions().unwrap();
         assert_eq!(sessions.len(), 2);
+    }
+
+    #[test]
+    fn test_op_ledger_round_trip_and_delete() {
+        let store = create_temp_store();
+        store.save_session_id("ledger-session").unwrap();
+        let payload =
+            br#"{"operations":[],"write_ledger":[],"current_operation_id":"op-1","turn_count":3}"#;
+        store.save_op_ledger("ledger-session", payload).unwrap();
+        let loaded = store.load_op_ledger("ledger-session").unwrap().unwrap();
+        assert_eq!(loaded, payload);
+        store.delete_op_ledger("ledger-session").unwrap();
+        assert!(store.load_op_ledger("ledger-session").unwrap().is_none());
+        // delete_session also drops the ledger
+        store.save_op_ledger("ledger-session", payload).unwrap();
+        store.delete_session("ledger-session").unwrap();
+        assert!(store.load_op_ledger("ledger-session").unwrap().is_none());
     }
 
     #[test]

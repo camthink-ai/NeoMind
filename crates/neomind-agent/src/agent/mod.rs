@@ -943,8 +943,24 @@ impl Agent {
 }
 impl Agent {
     /// Restore conversation history from persisted data.
+    ///
+    /// Message memory only — TaskState ops/ledger are restored separately via
+    /// [`Self::restore_op_ledger`] so process restart can map Running→Unknown
+    /// without inventing auth grants or stream leases.
     pub async fn restore_history(&self, messages: Vec<AgentMessage>) {
         self.internal_state.write().await.restore_memory(messages);
+    }
+}
+impl Agent {
+    /// Restore the minimal persisted Operation + write ledger.
+    pub async fn restore_op_ledger(&self, ledger: task_continuity::PersistedOpLedger) {
+        self.internal_state.write().await.restore_op_ledger(ledger);
+    }
+}
+impl Agent {
+    /// Snapshot the minimal op ledger for persistence (no auth / leases).
+    pub async fn snapshot_op_ledger(&self) -> task_continuity::PersistedOpLedger {
+        self.internal_state.read().await.snapshot_op_ledger()
     }
 }
 impl Agent {

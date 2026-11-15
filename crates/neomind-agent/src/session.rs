@@ -1280,6 +1280,41 @@ impl SessionManager {
             tracing::debug!(session_id = %session_id, count = history.len(), "Restored messages for session");
         }
 
+        // Restore minimal op ledger (Succeeded / Unknown survive; Running→Unknown;
+        // auth grants and stream leases are never restored).
+        match self.store.load_op_ledger(session_id) {
+            Ok(Some(bytes)) => {
+                match serde_json::from_slice::<crate::agent::task_continuity::PersistedOpLedger>(
+                    &bytes,
+                ) {
+                    Ok(ledger) => {
+                        let op_count = ledger.operations.len();
+                        agent.restore_op_ledger(ledger).await;
+                        tracing::debug!(
+                            session_id = %session_id,
+                            op_count,
+                            "Restored op ledger for session"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %session_id,
+                            error = %e,
+                            "Failed to deserialize op ledger — leaving TaskState empty"
+                        );
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::debug!(
+                    session_id = %session_id,
+                    error = %e,
+                    "No op ledger to restore"
+                );
+            }
+        }
+
         // Save to in-memory cache.
         //
         // Double-checked locking: between the read-lock check in `get_session`
@@ -2401,6 +2436,14 @@ Assistant: {ar}\n"
             tracing::error!(session_id = %session_id, error = %e, message = "Failed to clear history");
         }
 
+        if let Err(e) = self.store.delete_op_ledger(session_id) {
+            tracing::debug!(
+                session_id = %session_id,
+                error = %e,
+                "Failed to clear op ledger on history clear"
+            );
+        }
+
         // [ghost-summary fix] The conversation summary survives a history
         // clear unless reset — the next turn then injected a summary of the
         // DELETED conversation as a system message. Reset both fields so a
@@ -2447,6 +2490,29 @@ Assistant: {ar}\n"
                 error = %e,
                 "Failed to persist history"
             );
+        }
+
+        // Persist minimal op ledger alongside history (anti-replay across restart).
+        if let Ok(agent) = self.get_session(session_id).await {
+            let ledger = agent.snapshot_op_ledger().await;
+            match serde_json::to_vec(&ledger) {
+                Ok(bytes) => {
+                    if let Err(e) = self.store.save_op_ledger(session_id, &bytes) {
+                        tracing::debug!(
+                            session_id = %session_id,
+                            error = %e,
+                            "Failed to persist op ledger"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        session_id = %session_id,
+                        error = %e,
+                        "Failed to serialize op ledger"
+                    );
+                }
+            }
         }
 
         // Update preview from first user message if not already set

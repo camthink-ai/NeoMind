@@ -385,4 +385,24 @@ describe('useChatStream', () => {
     act(() => latest.restoreIfBehind('长一些的服务端快', ''))
     expect(latest.streamingContent).toBe('长一些的服务端快照')
   })
+
+  it('clears pendingAuthorizeConfirms on session switch (idle)', async () => {
+    const { rerender } = render(<Harness sessionId="s1" />)
+    act(() => {
+      emit({
+        type: 'AuthorizeConfirmRequest',
+        sessionId: 's1',
+        requestId: 'req-1',
+        priorOperationId: 'op-1',
+        writeFingerprint: 'shell|cmd with spaces',
+        toolName: 'shell',
+        target: null,
+        validUntilMs: Date.now() + 60_000,
+      } as ServerMessage)
+    })
+    expect(latest.pendingAuthorizeConfirms).toHaveLength(1)
+
+    rerender(<Harness sessionId="s2" />)
+    expect(latest.pendingAuthorizeConfirms).toHaveLength(0)
+  })
 })

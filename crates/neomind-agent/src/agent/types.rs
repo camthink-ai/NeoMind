@@ -2240,8 +2240,23 @@ impl AgentInternalState {
     }
 
     /// Restore memory from a list of messages.
+    ///
+    /// Does **not** restore [`Self::task_state`] — callers that reload a
+    /// session after process restart must also apply
+    /// [`Self::restore_op_ledger`] so Succeeded / Unknown ops survive and
+    /// Running leases become Unknown (no auto re-side-effect).
     pub fn restore_memory(&mut self, messages: Vec<AgentMessage>) {
         self.memory = messages;
+    }
+
+    /// Restore the persisted Operation + write ledger (no auth / leases).
+    pub fn restore_op_ledger(&mut self, ledger: super::task_continuity::PersistedOpLedger) {
+        self.task_state.restore_op_ledger(ledger);
+    }
+
+    /// Snapshot the minimal op ledger for durable storage.
+    pub fn snapshot_op_ledger(&self) -> super::task_continuity::PersistedOpLedger {
+        self.task_state.snapshot_op_ledger()
     }
 
     /// Clear the memory.

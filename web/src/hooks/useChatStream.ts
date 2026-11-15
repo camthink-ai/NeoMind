@@ -367,6 +367,8 @@ export function useChatStream(options: UseChatStreamOptions) {
   // When sessionId changes (user switches session), the streaming state
   // belongs to the PREVIOUS session — reset it. Without this, the thinking
   // dots / partial content from session A bleed into session B's display.
+  // Always clear pendingAuthorizeConfirms too: Unknown re-run chips from
+  // session A must not authorize a send on session B (even when idle).
   // The actual WS events are already filtered by sessionId (line ~195); this
   // clears the UI projection. If the user switches BACK to a still-streaming
   // session, the next event from the WS will rebuild the display state.
@@ -377,6 +379,8 @@ export function useChatStream(options: UseChatStreamOptions) {
       if (isStreamingRef.current || streamingMessageIdRef.current) {
         hardReset()
       }
+      // Session-scoped: drop confirm chips on every switch (streaming or idle).
+      setPendingAuthorizeConfirms([])
       prevSessionRef.current = current
     }
     // hardReset is a stable useCallback (empty deps) — listing it satisfies

@@ -444,6 +444,24 @@ pub fn apply_new_operation_from_tool_schema(
     Ok(args)
 }
 
+/// Minimal Operation + write ledger persisted across process restart.
+///
+/// Auth grants, pending confirm requests, and stream owner leases are
+/// **never** part of this snapshot — they are runtime-only. On restore,
+/// [`TaskState::restore_op_ledger`] maps `Running → Unknown` and cancels
+/// orphaned `Prepared` ops so a cold start cannot auto-replay side effects.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PersistedOpLedger {
+    #[serde(default)]
+    pub operations: Vec<OperationRecord>,
+    #[serde(default)]
+    pub write_ledger: Vec<WriteFact>,
+    #[serde(default)]
+    pub current_operation_id: OperationId,
+    #[serde(default)]
+    pub turn_count: u64,
+}
+
 /// Lightweight cross-turn task state (G2) + Round 2 operation ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskState {
@@ -1011,6 +1029,67 @@ impl Drop for StreamLeaseGuard {
 
 // Re-open TaskState impl block for methods that follow abandon helper.
 impl TaskState {
+    /// Sanitize in-flight ops for durable storage / cold restore.
+    ///
+    /// - `Running` → `Unknown` (effect may already have applied; never auto-replay)
+    /// - `Prepared` → `Cancelled` (no live executor after restart)
+    /// - Strip `owner_id` leases (stream tokens die with the process)
+    fn sanitize_ops_for_persist(ops: &mut [OperationRecord]) {
+        for op in ops.iter_mut() {
+            match op.status {
+                OperationStatus::Running => {
+                    let prior = op.evidence.clone();
+                    op.status = OperationStatus::Unknown;
+                    op.result = Some(StructuredResult {
+                        success: false,
+                        summary: "process restart — outcome unknown".into(),
+                        body: "restored while Running; treated as Unknown".into(),
+                        details_ref: None,
+                    });
+                    op.evidence = prior;
+                    if !op.evidence.iter().any(|e| e.contains("process restart")) {
+                        op.evidence
+                            .push("process restart: Running → Unknown".into());
+                    }
+                }
+                OperationStatus::Prepared => {
+                    op.status = OperationStatus::Cancelled;
+                }
+                _ => {}
+            }
+            op.owner_id = None;
+        }
+    }
+
+    /// Snapshot the minimal op ledger for persistence (no auth / leases).
+    pub fn snapshot_op_ledger(&self) -> PersistedOpLedger {
+        let mut operations = self.operations.clone();
+        Self::sanitize_ops_for_persist(&mut operations);
+        PersistedOpLedger {
+            operations,
+            write_ledger: self.write_ledger.clone(),
+            current_operation_id: self.current_operation_id.clone(),
+            turn_count: self.turn_count,
+        }
+    }
+
+    /// Restore a persisted op ledger after process restart / session reload.
+    ///
+    /// Re-sanitizes Running→Unknown / Prepared→Cancelled, strips leases, and
+    /// **never** restores auth grants or pending confirm requests.
+    pub fn restore_op_ledger(&mut self, ledger: PersistedOpLedger) {
+        self.user_authorized_new_op = None;
+        self.pending_confirm_requests.clear();
+        self.confirm_lifecycle_notices.clear();
+
+        let mut operations = ledger.operations;
+        Self::sanitize_ops_for_persist(&mut operations);
+        self.operations = operations;
+        self.write_ledger = ledger.write_ledger;
+        self.current_operation_id = ledger.current_operation_id;
+        self.turn_count = ledger.turn_count;
+    }
+
     /// Latest operation whose write fingerprint matches (if any).
     pub fn latest_op_for_fingerprint(&self, write_fingerprint: &str) -> Option<&OperationRecord> {
         self.operations
@@ -5195,6 +5274,149 @@ mod tests {
             state.task_state.pending_confirm_requests.len(),
             1,
             "incomplete submit must not consume the pending request"
+        );
+    }
+
+    // ── GPT op-ledger restore (1b35bed1 P1) ─────────────────────────────
+
+    #[test]
+    fn op_ledger_success_then_restart_blocks_auto_replay() {
+        let mut live = TaskState::default();
+        let fp = "shell|neomind device command send --id cam-1";
+        let op = live.begin_new_operation_for_owner(
+            "shell",
+            Some("cam-1".into()),
+            r#"{"command":"neomind device command send --id cam-1"}"#,
+            Some(fp.into()),
+            Some("owner-a"),
+        );
+        live.mark_operation_running(&op);
+        live.complete_operation_succeeded(
+            &op,
+            StructuredResult::with_body(true, "sent", "ok", None),
+            ["broker accepted".into()],
+        );
+        assert!(!live.may_execute_write(fp));
+        assert!(matches!(
+            live.dispatch_mutating_write(fp),
+            WriteDispatch::PreferKnown { .. }
+        ));
+
+        // Simulate process restart: snapshot → fresh TaskState restore.
+        let snap = live.snapshot_op_ledger();
+        assert!(
+            snap.operations.iter().all(|o| o.owner_id.is_none()),
+            "leases must not be persisted"
+        );
+        // Stale grant / confirm must not survive restore.
+        let mut cold = TaskState {
+            user_authorized_new_op: Some(NewOpAuthorization {
+                prior_operation_id: "stale".into(),
+                write_fingerprint: fp.into(),
+                confirming_turn: 99,
+            }),
+            pending_confirm_requests: vec![ConfirmRequest {
+                request_id: "req-stale".into(),
+                prior_operation_id: "stale".into(),
+                write_fingerprint: fp.into(),
+                tool_name: "shell".into(),
+                target: None,
+                valid_until_ms: u64::MAX,
+            }],
+            ..Default::default()
+        };
+        cold.restore_op_ledger(snap);
+
+        assert!(cold.user_authorized_new_op.is_none(), "auth not restored");
+        assert!(
+            cold.pending_confirm_requests.is_empty(),
+            "confirms not restored"
+        );
+        assert!(!cold.may_execute_write(fp), "success must still block");
+        assert!(
+            matches!(
+                cold.dispatch_mutating_write(fp),
+                WriteDispatch::PreferKnown { .. }
+            ),
+            "restored Succeeded → PreferKnown, no auto re-side-effect"
+        );
+        assert_eq!(
+            cold.operation(&op).unwrap().status,
+            OperationStatus::Succeeded
+        );
+    }
+
+    #[test]
+    fn op_ledger_interrupted_then_restart_is_unknown_no_auto_replay() {
+        let mut live = TaskState::default();
+        let fp = "shell|neomind device command send --id cam-2";
+        let op = live.begin_new_operation_for_owner(
+            "shell",
+            Some("cam-2".into()),
+            r#"{"command":"neomind device command send --id cam-2"}"#,
+            Some(fp.into()),
+            Some("owner-b"),
+        );
+        live.mark_operation_running(&op);
+        assert_eq!(
+            live.operation(&op).unwrap().status,
+            OperationStatus::Running
+        );
+
+        // Crash / restart while Running — snapshot sanitizes to Unknown.
+        let snap = live.snapshot_op_ledger();
+        assert_eq!(
+            snap.operations.last().unwrap().status,
+            OperationStatus::Unknown,
+            "Running must become Unknown in the persisted ledger"
+        );
+        assert!(snap.operations.last().unwrap().owner_id.is_none());
+
+        let mut cold = TaskState::default();
+        cold.restore_op_ledger(snap);
+
+        assert!(!cold.may_execute_write(fp));
+        assert!(
+            matches!(
+                cold.dispatch_mutating_write(fp),
+                WriteDispatch::InquireStatus { .. }
+            ),
+            "restored Unknown must inquire — never auto re-side-effect"
+        );
+        assert_eq!(
+            cold.operation(&op).unwrap().status,
+            OperationStatus::Unknown
+        );
+        assert!(cold.operation(&op).unwrap().owner_id.is_none());
+        assert!(cold.user_authorized_new_op.is_none());
+    }
+
+    #[test]
+    fn op_ledger_restore_cancels_prepared_and_strips_leases() {
+        let mut live = TaskState::default();
+        let prepared = live.begin_new_operation_for_owner(
+            "shell",
+            None,
+            r#"{"command":"echo ready"}"#,
+            Some("shell|echo ready".into()),
+            Some("owner-c"),
+        );
+        assert_eq!(
+            live.operation(&prepared).unwrap().status,
+            OperationStatus::Prepared
+        );
+
+        let mut cold = TaskState::default();
+        cold.restore_op_ledger(live.snapshot_op_ledger());
+        assert_eq!(
+            cold.operation(&prepared).unwrap().status,
+            OperationStatus::Cancelled,
+            "orphaned Prepared must not stay executable after restart"
+        );
+        assert!(cold.operation(&prepared).unwrap().owner_id.is_none());
+        assert!(
+            !cold.may_execute_write("shell|echo ready"),
+            "cancelled Prepared must not auto-execute"
         );
     }
 }

@@ -15,6 +15,7 @@
 //!   it resets on restart and is not persisted.
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use neomind_core::datasource::DataSourceId;
 
@@ -198,14 +199,15 @@ impl RuleEngine {
             }
         });
 
-        // Cooldown: engine memory only.
+        // Cooldown: engine memory only. Compare Durations (not secs) so a
+        // configured Duration::ZERO never looks "in cooldown" via as_secs().
         let remaining = {
             let cooldowns = self.cooldowns.read();
             cooldowns
                 .get(id)
-                .map(|last| rule.cooldown.saturating_sub(last.elapsed()).as_secs())
+                .map(|last| rule.cooldown.saturating_sub(last.elapsed()))
         };
-        let in_cooldown = remaining.map(|r| r > 0).unwrap_or(false);
+        let in_cooldown = remaining.map(|r| r > Duration::ZERO).unwrap_or(false);
         notes.push("cooldown state is engine memory; it resets on server restart".to_string());
         if unified.is_some() {
             notes.push(
@@ -302,7 +304,11 @@ impl RuleEngine {
             cooldown: CooldownExplanation {
                 configured_secs: rule.cooldown.as_secs(),
                 in_cooldown,
-                remaining_secs: if in_cooldown { remaining } else { None },
+                remaining_secs: if in_cooldown {
+                    remaining.map(|d| d.as_secs())
+                } else {
+                    None
+                },
             },
             trigger_count: rule.state.trigger_count,
             last_triggered: rule.state.last_triggered,
