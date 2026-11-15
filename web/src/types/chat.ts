@@ -185,6 +185,12 @@ export interface ChatReference {
   label?: string
 }
 
+/** Explicit Unknown re-run authorization target (multi-Unknown disambiguation). */
+export interface AuthorizeNewOperationRequest {
+  priorOperationId: string
+  writeFingerprint: string
+}
+
 // Client WebSocket message types
 export interface ClientChatMessage {
   message: string
@@ -198,6 +204,8 @@ export interface ClientChatMessage {
   contentVersion?: typeof CHAT_CONTENT_VERSION_V1
   /** Ordered text/reference nodes — preferred over references when present. */
   contentNodes?: ChatContentNode[]
+  /** Host/UI confirm target for Unknown re-run (required when multiple Unknowns). */
+  authorizeNewOperation?: AuthorizeNewOperationRequest
 }
 
 // ========== Chat Input Types ==========

@@ -2024,6 +2024,14 @@ pub struct AgentInternalState {
     pub pending_user_content_nodes: Option<Vec<Value>>,
     /// Protocol version paired with `pending_user_content_nodes`.
     pub pending_user_content_version: Option<u32>,
+    /// Host/UI `AuthorizeNewOperation` target for the next user push
+    /// (`prior_operation_id`, `write_fingerprint`). Consumed once in
+    /// `push_message` — takes precedence over bare phrase shortcuts.
+    pub pending_authorize_new_op: Option<(String, String)>,
+    /// Immutable Turn ID allocated when the latest user message was saved.
+    /// Streams capture this **eagerly** (outside lazy `async_stream`) and
+    /// pass it into the tool gate — never re-read shared `turn_count`.
+    pub active_call_site_turn: u64,
 }
 
 impl AgentInternalState {
@@ -2044,6 +2052,8 @@ impl AgentInternalState {
             task_state: super::task_continuity::TaskState::default(),
             pending_user_content_nodes: None,
             pending_user_content_version: None,
+            pending_authorize_new_op: None,
+            active_call_site_turn: 0,
         }
     }
 
@@ -2100,8 +2110,18 @@ impl AgentInternalState {
             }
             // Round 1: every user message is a Turn; do not invent SetGoal /
             // re-execute from utterance length or phrase whitelists.
-            self.task_state.note_user_turn();
-            if let Some(directive) =
+            // Allocate the call-site Turn ID here (message receive/save) —
+            // streams must freeze this value outside lazy poll.
+            self.active_call_site_turn = self.task_state.note_user_turn();
+            // Host/UI explicit target wins over bare phrase (unique-Unknown only).
+            if let Some((op_id, fp)) = self.pending_authorize_new_op.take() {
+                let _ = self.task_state.apply_directive(
+                    super::task_continuity::TaskDirective::AuthorizeNewOperation {
+                        prior_operation_id: Some(op_id),
+                        write_fingerprint: Some(fp),
+                    },
+                );
+            } else if let Some(directive) =
                 super::task_continuity::parse_user_directive(message.content.as_ref())
             {
                 let _ = self.task_state.apply_directive(directive);

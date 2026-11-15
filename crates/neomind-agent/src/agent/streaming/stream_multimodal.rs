@@ -60,6 +60,8 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     }
 
     // Cache + persist the user turn (directives via push_message) before LLM.
+    // Capture call_site_turn atomically with that save — before any LLM await
+    // and outside the lazy async_stream first poll.
     if !images.is_empty() {
         let mut state = internal_state.write().await;
         for (i, url) in images.iter().enumerate() {
@@ -82,10 +84,12 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             }
         })
         .collect();
-    {
+    let call_site_turn = {
         let user_msg = AgentMessage::user_with_images(&user_message, user_images);
-        internal_state.write().await.push_message(user_msg);
-    }
+        let mut state = internal_state.write().await;
+        state.push_message(user_msg);
+        state.active_call_site_turn
+    };
     {
         let section = internal_state.read().await.task_state.to_prompt_section();
         llm_interface.set_task_state_prompt(section).await;
@@ -183,12 +187,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         // Owner is passed explicitly into create/lease — never via a shared
         // session hop (concurrent streams must not overwrite each other).
         let stream_owner = super::super::task_continuity::new_stream_owner();
-        // Immutable Turn ID for this stream — grant consume compares
-        // against confirming_turn; never re-read shared turn_count.
-        let call_site_turn = {
-            let state = internal_state.read().await;
-            state.task_state.turn_count
-        };
+        // Immutable Turn ID captured at push_message time — moved into the
+        // stream; never re-read shared turn_count on first poll.
+        let call_site_turn = call_site_turn;
         let _stream_lease_guard = super::super::task_continuity::StreamLeaseGuard::new(
             internal_state.clone(),
             stream_owner.clone(),

@@ -324,6 +324,7 @@ export class ChatWebSocket {
     pageContext?: string,
     references?: ChatReference[],
     contentNodes?: import("@/types").ChatContentNode[],
+    authorizeNewOperation?: import("@/types").AuthorizeNewOperationRequest,
   ) {
     this.sendRequest({
       message: content,
@@ -339,6 +340,7 @@ export class ChatWebSocket {
           : undefined,
       contentNodes:
         contentNodes && contentNodes.length > 0 ? contentNodes : undefined,
+      authorizeNewOperation: authorizeNewOperation || undefined,
     })
   }
 

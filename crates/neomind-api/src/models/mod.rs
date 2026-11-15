@@ -66,6 +66,21 @@ pub struct ChatContentNode {
     pub label_snapshot: Option<String>,
 }
 
+/// Explicit Unknown re-run authorization target (multi-Unknown disambiguation).
+///
+/// Echoes `prior_operation_id` + `write_fingerprint` from the gate's confirm
+/// request (`authorizeNewOperation target: …`). Applied as
+/// `TaskDirective::AuthorizeNewOperation` when the user message is saved.
+#[derive(utoipa::ToSchema, Debug, Clone, Deserialize, Serialize)]
+pub struct AuthorizeNewOperationRequest {
+    /// Prior Unknown Operation ID to re-run.
+    #[serde(rename = "priorOperationId")]
+    pub prior_operation_id: String,
+    /// Business write fingerprint that must match that Operation.
+    #[serde(rename = "writeFingerprint")]
+    pub write_fingerprint: String,
+}
+
 /// Chat request from the web client.
 #[derive(utoipa::ToSchema, Debug, Clone, Deserialize)]
 pub struct ChatRequest {
@@ -112,6 +127,11 @@ pub struct ChatRequest {
     /// prompt without polluting every user message via `pageContext`.
     #[serde(rename = "sessionConfig", default)]
     pub session_config: Option<SessionConfigPatch>,
+    /// Host/UI Unknown re-run authorization target. When set, binds the
+    /// one-shot grant to this Operation (required when multiple Unknowns
+    /// exist). Bare phrase shortcuts still work for a unique Unknown.
+    #[serde(rename = "authorizeNewOperation", default)]
+    pub authorize_new_operation: Option<AuthorizeNewOperationRequest>,
 }
 
 /// Patch-style session config: every field is optional, and `None` means

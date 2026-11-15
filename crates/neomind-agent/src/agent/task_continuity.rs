@@ -483,15 +483,20 @@ impl TaskState {
     /// Record a user Turn. Does **not** advance the operation or lift
     /// anti-replay — the model interprets the utterance from context.
     ///
+    /// Returns the **immutable** Turn ID allocated for this user message.
+    /// Callers must capture and pass that ID into the stream / tool gate —
+    /// never re-read shared [`Self::turn_count`] inside a lazy stream.
+    ///
     /// Expires any outstanding new-op grant from a prior Turn (confirming
     /// Turn binding). A directive on *this* message may grant again after.
-    pub fn note_user_turn(&mut self) {
+    pub fn note_user_turn(&mut self) -> u64 {
         self.turn_count = self.turn_count.saturating_add(1);
         if let Some(grant) = &self.user_authorized_new_op {
             if grant.confirming_turn < self.turn_count {
                 self.user_authorized_new_op = None;
             }
         }
+        self.turn_count
     }
 
     /// Open a **new** Operation with a fresh UUID (no stream owner).
@@ -1847,6 +1852,44 @@ pub fn prepare_mutating_dispatch(
     }
 }
 
+/// Confirm-request text for an Unknown Operation re-run.
+///
+/// Carries the **exact** prior Operation ID + write fingerprint so the host/UI
+/// can echo them back via [`TaskDirective::AuthorizeNewOperation`] /
+/// `ChatRequest.authorizeNewOperation` — bare phrase shortcuts cannot pick
+/// among multiple Unknowns.
+pub fn unknown_rerun_confirm_request(prior_operation_id: &str, write_fingerprint: &str) -> String {
+    format!(
+        "Write blocked: operation {prior_operation_id} ended with unknown outcome (e.g. timeout). \
+         Inquire status; do not auto-replay; do not pretend success. A model-added \
+         `{NEW_OPERATION_ARG}=true` alone is not user-authorized replay. Ask the user to confirm \
+         a re-run of THIS operation, then set `{NEW_OPERATION_ARG}` from the tool schema.\n\
+         authorizeNewOperation target: prior_operation_id={prior_operation_id} \
+         write_fingerprint={write_fingerprint}"
+    )
+}
+
+/// Parse `prior_operation_id` + `write_fingerprint` from a confirm-request body
+/// produced by [`unknown_rerun_confirm_request`].
+pub fn parse_authorize_new_operation_target(text: &str) -> Option<(String, String)> {
+    let id = text
+        .split("prior_operation_id=")
+        .nth(1)?
+        .split_whitespace()
+        .next()?
+        .to_string();
+    let fp = text
+        .split("write_fingerprint=")
+        .nth(1)?
+        .split_whitespace()
+        .next()?
+        .to_string();
+    if id.is_empty() || fp.is_empty() {
+        return None;
+    }
+    Some((id, fp))
+}
+
 /// Stream-path outcome for a mutating write gate (Round 2 + prod lease).
 #[derive(Debug)]
 pub enum MutatingGateOutcome {
@@ -1907,10 +1950,8 @@ pub fn evaluate_mutating_gate(
             operation_id,
             result,
         }) => {
-            let body =
-                serde_json::from_str::<serde_json::Value>(&result.body).unwrap_or_else(|_| {
-                    serde_json::json!({ "body": result.body })
-                });
+            let body = serde_json::from_str::<serde_json::Value>(&result.body)
+                .unwrap_or_else(|_| serde_json::json!({ "body": result.body }));
             let mut data = serde_json::json!({
                 "_operation_resume": true,
                 "operation_id": operation_id,
@@ -1931,12 +1972,7 @@ pub fn evaluate_mutating_gate(
             }
         }
         Err(WriteDispatch::InquireStatus { operation_id }) => MutatingGateOutcome::Block {
-            message: format!(
-                "Write blocked: operation {operation_id} ended with unknown outcome (e.g. timeout). \
-                 Inquire status; do not auto-replay; do not pretend success. A model-added \
-                 `{NEW_OPERATION_ARG}=true` alone is not user-authorized replay — ask the user \
-                 to confirm a re-run first, then set `{NEW_OPERATION_ARG}` from the tool schema."
-            ),
+            message: unknown_rerun_confirm_request(&operation_id, write_fingerprint),
         },
         Err(WriteDispatch::BlockedCancelled) => MutatingGateOutcome::Block {
             message: "Write blocked: the task was cancelled. Do not replay mutations.".into(),
@@ -4418,5 +4454,146 @@ mod tests {
             panic!("confirming Turn call-site must Proceed");
         };
         assert!(s.user_authorized_new_op.is_none());
+    }
+
+    // ── GPT auth production wiring (b9b99ca1 P1 residuals) ──────────────
+
+    #[test]
+    fn gpt_auth_prod_confirm_request_carries_parseable_target() {
+        let msg = unknown_rerun_confirm_request("op-abc", "run_now|{\"agent_id\":\"A\"}");
+        let (id, fp) = parse_authorize_new_operation_target(&msg).expect("parseable");
+        assert_eq!(id, "op-abc");
+        assert_eq!(fp, "run_now|{\"agent_id\":\"A\"}");
+    }
+
+    #[test]
+    fn gpt_auth_prod_delayed_poll_keeps_own_turn_not_later_confirm() {
+        // Message-save allocates Turn A; a later confirm Turn B must not
+        // replace A's frozen call_site_turn (the lazy-poll bug).
+        let mut state = crate::agent::types::AgentInternalState::new("delayed-poll".into());
+        state.push_message(crate::agent::types::AgentMessage::user("start A"));
+        let stream_a_turn = state.active_call_site_turn;
+        assert_eq!(stream_a_turn, 1);
+
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = unknown_op_with_fp(&mut state.task_state, "run_now", r#"{"agent_id":"A"}"#, &fp);
+
+        // Confirm Turn B via production pending target (not bare phrase).
+        state.pending_authorize_new_op = Some((op.clone(), fp.clone()));
+        state.push_message(crate::agent::types::AgentMessage::user("确认重跑"));
+        let stream_b_turn = state.active_call_site_turn;
+        assert_eq!(stream_b_turn, 2);
+        assert_ne!(stream_a_turn, stream_b_turn);
+        assert_eq!(
+            state
+                .task_state
+                .user_authorized_new_op
+                .as_ref()
+                .unwrap()
+                .confirming_turn,
+            stream_b_turn
+        );
+
+        // Delayed "first poll" of stream A still holds Turn 1 — cannot steal B's grant.
+        assert!(
+            !state
+                .task_state
+                .take_user_authorized_new_op(&op, &fp, stream_a_turn),
+            "delayed poll of stream A must keep its own Turn, not confirm Turn B"
+        );
+        assert!(state.task_state.user_authorized_new_op.is_some());
+
+        let args = flagged_args(serde_json::json!({"agent_id": "A"}));
+        match evaluate_mutating_gate(
+            &mut state.task_state,
+            "run_now",
+            &args,
+            &fp,
+            None,
+            stream_a_turn,
+        ) {
+            MutatingGateOutcome::Block { .. } => {}
+            other => panic!("stream A delayed poll must Block, got {other:?}"),
+        }
+
+        let MutatingGateOutcome::Proceed { .. } = evaluate_mutating_gate(
+            &mut state.task_state,
+            "run_now",
+            &args,
+            &fp,
+            None,
+            stream_b_turn,
+        ) else {
+            panic!("confirm Turn B call-site must Proceed");
+        };
+        assert!(state.task_state.user_authorized_new_op.is_none());
+    }
+
+    #[test]
+    fn gpt_auth_prod_pending_confirm_selects_specified_unknown() {
+        // Multiple Unknowns → ChatRequest.authorizeNewOperation / pending
+        // entry selects the specified op (bare phrase would be ambiguous).
+        let mut state = crate::agent::types::AgentInternalState::new("multi-unk".into());
+        let fp_a = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let fp_b = write_fingerprint("run_now", r#"{"agent_id":"B"}"#);
+        let op_a = unknown_op_with_fp(
+            &mut state.task_state,
+            "run_now",
+            r#"{"agent_id":"A"}"#,
+            &fp_a,
+        );
+        let op_b = unknown_op_with_fp(
+            &mut state.task_state,
+            "run_now",
+            r#"{"agent_id":"B"}"#,
+            &fp_b,
+        );
+        assert_eq!(state.task_state.current_operation_id, op_b);
+
+        // Bare phrase alone is ambiguous — production must send the target.
+        state.push_message(crate::agent::types::AgentMessage::user("确认重跑"));
+        assert!(
+            state.task_state.user_authorized_new_op.is_none(),
+            "bare phrase with two Unknowns must not grant"
+        );
+
+        // Real confirm entry with specified older op A.
+        state.pending_authorize_new_op = Some((op_a.clone(), fp_a.clone()));
+        state.push_message(crate::agent::types::AgentMessage::user("确认重跑"));
+        let call_site_turn = state.active_call_site_turn;
+        let grant = state
+            .task_state
+            .user_authorized_new_op
+            .clone()
+            .expect("specified pending must grant");
+        assert_eq!(grant.prior_operation_id, op_a);
+        assert_eq!(grant.write_fingerprint, fp_a);
+        assert_ne!(grant.prior_operation_id, op_b);
+        assert_eq!(grant.confirming_turn, call_site_turn);
+
+        let args_a = flagged_args(serde_json::json!({"agent_id": "A"}));
+        let args_b = flagged_args(serde_json::json!({"agent_id": "B"}));
+        match evaluate_mutating_gate(
+            &mut state.task_state,
+            "run_now",
+            &args_b,
+            &fp_b,
+            None,
+            call_site_turn,
+        ) {
+            MutatingGateOutcome::Block { .. } => {}
+            other => panic!("newer B must not consume A's grant, got {other:?}"),
+        }
+        let MutatingGateOutcome::Proceed { .. } = evaluate_mutating_gate(
+            &mut state.task_state,
+            "run_now",
+            &args_a,
+            &fp_a,
+            None,
+            call_site_turn,
+        ) else {
+            panic!("specified older A via production pending must Proceed");
+        };
+        assert!(state.task_state.user_authorized_new_op.is_none());
     }
 }

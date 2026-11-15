@@ -302,6 +302,24 @@ impl Agent {
         state.pending_user_content_nodes = nodes;
         state.pending_user_content_version = version;
     }
+
+    /// Queue an explicit Unknown re-run authorization for the next user push.
+    ///
+    /// Production path for multi-Unknown disambiguation: host/UI echoes the
+    /// `prior_operation_id` + `write_fingerprint` from the confirm request
+    /// (see [`crate::agent::task_continuity::unknown_rerun_confirm_request`]).
+    /// Consumed once by `AgentInternalState::push_message`.
+    pub async fn set_pending_authorize_new_op(
+        &self,
+        prior_operation_id: Option<String>,
+        write_fingerprint: Option<String>,
+    ) {
+        let mut state = self.internal_state.write().await;
+        state.pending_authorize_new_op = match (prior_operation_id, write_fingerprint) {
+            (Some(op_id), Some(fp)) if !op_id.is_empty() && !fp.is_empty() => Some((op_id, fp)),
+            _ => None,
+        };
+    }
 }
 impl Agent {
     /// Create a new agent with empty tool registry.

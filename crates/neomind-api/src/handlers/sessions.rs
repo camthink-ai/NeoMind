@@ -1345,6 +1345,12 @@ pub async fn chat_handler(
         req.references.as_deref(),
     )
     .await;
+    super::chat_refs::attach_pending_authorize_new_op(
+        &state,
+        &id,
+        req.authorize_new_operation.as_ref(),
+    )
+    .await;
 
     // Branch on multimodal input for REST parity with WS. The old HTTP handler
     // dropped req.images entirely, so a REST vision client silently degraded to
@@ -2053,6 +2059,12 @@ async fn handle_ws_socket(
                                             chat_req.references.as_deref(),
                                         )
                                         .await;
+                                        super::chat_refs::attach_pending_authorize_new_op(
+                                            &task_state,
+                                            &task_session_id,
+                                            chat_req.authorize_new_operation.as_ref(),
+                                        )
+                                        .await;
 
                                         // Use streaming for multimodal messages.
                                         // The clone here is the ONE deliberate copy:
@@ -2182,6 +2194,8 @@ async fn handle_ws_socket(
                                             let task_content_nodes = chat_req.content_nodes.clone();
                                             let task_content_version = chat_req.content_version;
                                             let task_references = chat_req.references.clone();
+                                            let task_authorize_new_op =
+                                                chat_req.authorize_new_operation.clone();
                                             // Decision-layer cascade (shadow → short-circuit →
                                             // guidance → prefill) now lives INSIDE
                                             // SessionManager's message chokepoint
@@ -2201,6 +2215,12 @@ async fn handle_ws_socket(
                                                     task_content_nodes.as_deref(),
                                                     task_content_version,
                                                     task_references.as_deref(),
+                                                )
+                                                .await;
+                                                super::chat_refs::attach_pending_authorize_new_op(
+                                                    &task_state,
+                                                    &task_session_id,
+                                                    task_authorize_new_op.as_ref(),
                                                 )
                                                 .await;
                                                 match task_state

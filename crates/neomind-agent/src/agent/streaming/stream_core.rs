@@ -152,6 +152,19 @@ pub async fn process_stream_events_with_safeguards(
     conversation_summary: Option<String>,
     summary_up_to_index: Option<u64>,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
+    // Freeze call-site Turn ID NOW — allocated when the user message was
+    // saved (`push_message` → `active_call_site_turn`). Must not wait for
+    // the lazy async_stream first poll (a later confirm Turn must not leak in).
+    // Eager read is before any LLM await; fall back to turn_count only for
+    // harnesses that skip push_message (still not a lazy-poll hop).
+    let call_site_turn = {
+        let state = internal_state.read().await;
+        if state.active_call_site_turn > 0 {
+            state.active_call_site_turn
+        } else {
+            state.task_state.turn_count
+        }
+    };
     // New user turn: drop transient skill bodies; TaskState (goal / writes)
     // survives on AgentInternalState (push_message already applied directives).
     // Later ReAct rounds in THIS turn may reload skills under the total budget.
@@ -330,12 +343,9 @@ pub async fn process_stream_events_with_safeguards(
             // Owner is passed explicitly into create/lease — never via a shared
             // session hop (concurrent streams must not overwrite each other).
             let stream_owner = super::super::task_continuity::new_stream_owner();
-            // Immutable Turn ID for this stream — grant consume compares
-            // against confirming_turn; never re-read shared turn_count.
-            let call_site_turn = {
-                let state = internal_state.read().await;
-                state.task_state.turn_count
-            };
+            // Immutable Turn ID captured at function entry (message-receive
+            // time) — moved into the stream; never re-read shared turn_count.
+            let call_site_turn = call_site_turn;
             let _stream_lease_guard = super::super::task_continuity::StreamLeaseGuard::new(
                 internal_state.clone(),
                 stream_owner.clone(),
