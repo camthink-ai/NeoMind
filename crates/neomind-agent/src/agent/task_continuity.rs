@@ -2037,22 +2037,17 @@ pub fn derive_tool_capability_resolved(
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            // Empty / unknown command semantics ≠ proven read-only.
-            if cmd.trim().is_empty() {
-                return ToolCapability::mutating_unknown_sensitive();
-            }
-            if crate::agent::streaming::is_mutation_command(cmd) {
-                ToolCapability::mutating_write()
-            } else {
-                ToolCapability::read_query()
-            }
+            // Platform CLI → parsed command type; other/unknown shell →
+            // unknown side-effects. Keyword absence is NOT proven read-only.
+            crate::toolkit::shell::classify_shell_capability(cmd)
         }
         "file_read" | "web_search" | "web_fetch" | "vision" | "skill" | "memory" => {
             ToolCapability::read_query()
         }
         "file_write" | "file_edit" | "image_edit" | "run_now" => ToolCapability::mutating_write(),
         _ => {
-            // Conservative default: treat unknown tools as non-idempotent writes.
+            // Conservative default: treat unknown tools / extensions as
+            // non-idempotent side-effects (must enter the write gate).
             ToolCapability::mutating_unknown_sensitive()
         }
     }
@@ -3450,7 +3445,7 @@ mod tests {
     fn tool_capability_distinguishes_shell_read_vs_write() {
         let ro = derive_tool_capability(
             "shell",
-            &serde_json::json!({"command": "neomind device status sensor-001"}),
+            &serde_json::json!({"command": "neomind device get sensor-001"}),
         );
         assert!(ro.read_only && ro.idempotent);
         assert_eq!(ro.retry_policy, RetryPolicy::AlwaysSafe);
@@ -3458,21 +3453,35 @@ mod tests {
         let wr = derive_tool_capability(
             "shell",
             &serde_json::json!({
-                "command": "neomind extension invoke weather-forecast-v2 render_text --device EK410"
+                "command": "neomind device delete sensor-001"
             }),
         );
         assert!(!wr.read_only && !wr.idempotent);
         assert!(matches!(wr.retry_policy, RetryPolicy::OnFailure { .. }));
+
+        // Unparsed / non-CLI shell (e.g. legacy `extension invoke` line) is
+        // unknown side-effects — Never retry, still not read-only.
+        let unk = derive_tool_capability(
+            "shell",
+            &serde_json::json!({
+                "command": "neomind extension invoke weather-forecast-v2 render_text --device EK410"
+            }),
+        );
+        assert!(!unk.read_only);
+        assert_eq!(unk.retry_policy, RetryPolicy::Never);
     }
 
     #[test]
     fn write_failure_retry_policy_and_unknown_inquire() {
         let mut s = TaskState::default();
-        let fp = write_fingerprint("shell", "neomind rule create --name r1");
+        // Must parse as a proven CLI mutation (OnFailure), not an unparsed
+        // unknown-sensitive line (Never).
+        let cmd = "neomind device delete cam-retry-1";
+        let fp = write_fingerprint("shell", cmd);
         let op = s.begin_new_operation(
             "shell",
-            Some("r1".into()),
-            r#"{"command":"neomind rule create --name r1"}"#,
+            Some("cam-retry-1".into()),
+            serde_json::json!({ "command": cmd }).to_string(),
             Some(fp.clone()),
         );
         s.mark_operation_running(&op);
@@ -3496,8 +3505,8 @@ mod tests {
         // Unknown blocks blind replay regardless of retry policy.
         let op_u = s.begin_new_operation(
             "shell",
-            Some("r1".into()),
-            r#"{"command":"neomind rule create --name r1"}"#,
+            Some("cam-retry-1".into()),
+            serde_json::json!({ "command": cmd }).to_string(),
             Some(fp.clone()),
         );
         s.mark_operation_running(&op_u);

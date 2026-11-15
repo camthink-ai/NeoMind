@@ -581,8 +581,9 @@ pub(crate) fn is_mutation_command(cmd: &str) -> bool {
 /// **before** CLI serialize), then
 /// [`crate::agent::task_continuity::derive_tool_capability_resolved`] on the
 /// resolved tool + canonical args — never re-enter domain action inference.
-/// Read-only capability → `None` (never gated). Unknown tools stay
-/// fail-closed on retry policy but do **not** enter the write-lease path.
+/// Read-only capability → `None` (never gated). **Any** non-read-only path
+/// (proven CLI mutation, unknown shell, unknown extension tool) returns
+/// `Some` so the durable write-intent gate cannot be skipped.
 ///
 /// Shell fingerprints keep the original command string (arg values are not
 /// lowercased) so `DeviceA` and `devicea` do not collapse into one gate key.
@@ -602,24 +603,22 @@ pub(crate) fn mutating_write_fingerprint(
     }
     match real.as_str() {
         "shell" => {
-            let cmd = canonical.get("command").and_then(|v| v.as_str())?;
-            if cmd.trim().is_empty() {
-                return None;
-            }
+            let cmd = canonical
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            // Empty / unknown still gates (fingerprint the canonical call).
             Some(super::super::task_continuity::write_fingerprint(
-                "shell", cmd,
+                "shell",
+                if cmd.is_empty() { "<empty>" } else { cmd },
             ))
         }
-        // Proven direct writes only — unknown tools use Never retry without
-        // a business fingerprint / lease.
-        "file_write" | "file_edit" | "image_edit" | "run_now" => {
+        other => {
             let args = serde_json::to_string(&canonical).unwrap_or_default();
             Some(super::super::task_continuity::write_fingerprint(
-                real.as_str(),
-                &args,
+                other, &args,
             ))
         }
-        _ => None,
     }
 }
 
@@ -1332,7 +1331,7 @@ mod tests {
     #[test]
     fn mutating_write_fingerprint_covers_shell_and_direct_writes() {
         let shell_mut = serde_json::json!({
-            "command": "neomind device control sensor-001 --action reboot"
+            "command": "neomind device control sensor-001 reboot"
         });
         let fp = mutating_write_fingerprint("shell", &shell_mut).expect("shell mutation");
         assert!(fp.starts_with("shell|"));
@@ -1346,6 +1345,63 @@ mod tests {
         assert!(fp2.starts_with("file_write|"));
 
         assert!(mutating_write_fingerprint("skill", &serde_json::json!({"name": "x"})).is_none());
+    }
+
+    /// GPT tip 5d8ed5f0: non-CLI writes + compound / unknown shell must not
+    /// skip the execution-intent gate (no keyword-absence ⇒ read-only).
+    #[test]
+    fn unknown_and_compound_shell_cannot_skip_write_gate() {
+        use crate::agent::task_continuity::derive_tool_capability;
+
+        // Non-CLI shell with no write keyword — still unknown side-effects.
+        let echo = serde_json::json!({"command": "echo hello-world"});
+        assert!(
+            !derive_tool_capability("shell", &echo).read_only,
+            "echo is not a proven CLI query"
+        );
+        assert!(
+            mutating_write_fingerprint("shell", &echo).is_some(),
+            "non-CLI shell must fingerprint → gate"
+        );
+
+        let curl = serde_json::json!({
+            "command": "curl -X POST https://example.com/hook -d '{}'"
+        });
+        assert!(mutating_write_fingerprint("shell", &curl).is_some());
+
+        // Compound: proven RO + mutation → gated mutation.
+        let compound_mut = serde_json::json!({
+            "command": "neomind device list; neomind device delete cam-1"
+        });
+        assert!(!derive_tool_capability("shell", &compound_mut).read_only);
+        assert!(mutating_write_fingerprint("shell", &compound_mut).is_some());
+
+        // Compound: RO + non-CLI → unknown side-effects, still gated.
+        let compound_unk = serde_json::json!({
+            "command": "neomind device list; echo done"
+        });
+        let cap = derive_tool_capability("shell", &compound_unk);
+        assert!(!cap.read_only);
+        assert!(
+            matches!(
+                cap.retry_policy,
+                crate::agent::task_continuity::RetryPolicy::Never
+            ),
+            "mixed CLI+shell must be unknown-sensitive"
+        );
+        assert!(mutating_write_fingerprint("shell", &compound_unk).is_some());
+
+        // Unparseable neomind → unknown, gated (not keyword-RO).
+        let bogus = serde_json::json!({"command": "neomind totally-bogus list"});
+        assert!(!derive_tool_capability("shell", &bogus).read_only);
+        assert!(mutating_write_fingerprint("shell", &bogus).is_some());
+
+        // Unknown extension-shaped tool name → gated.
+        let ext = serde_json::json!({"action": "run", "payload": {}});
+        assert!(
+            mutating_write_fingerprint("my_custom_extension_tool", &ext).is_some(),
+            "unknown tools must not skip the write gate"
+        );
     }
 
     #[test]
@@ -1456,13 +1512,18 @@ mod tests {
             assert!(is_mutation_command(cmd), "must be a mutation: {cmd}");
             assert!(!all_tools_were_read_only(&[cmd], &[]), "{cmd}");
         }
-        // Read-only shapes that must NOT match (bounded/substring traps).
+        // Keyword detector must not false-positive on bounded/substring traps.
+        assert!(
+            !is_mutation_command("neomind agent list --status starting"),
+            "`starting` must not match bounded ` start ` pattern"
+        );
+        // Proven CLI queries (parseable) stay read-only for the write gate.
         for cmd in [
             "neomind push list",
             "neomind push get webhook-1",
             "neomind push stats",
             "neomind connector subscriptions",
-            "neomind agent list --status starting",
+            "neomind agent list",
             "neomind llm list",
             "neomind device drafts list",
         ] {

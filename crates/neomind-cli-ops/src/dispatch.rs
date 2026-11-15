@@ -10,8 +10,11 @@
 //! create`) return [`DispatchError::NotInProcess`] so the caller can fall back
 //! to spawning the real binary.
 
+pub mod capability;
 pub mod commands;
 pub mod handlers;
+
+pub use capability::{classify_argv, classify_parsed_command, CliSideEffect};
 
 use crate::types::CliResponse;
 use clap::Parser;

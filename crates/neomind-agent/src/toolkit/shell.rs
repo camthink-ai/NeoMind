@@ -1010,19 +1010,108 @@ fn apply_truncation_pipeline(
     output
 }
 
-/// Tokenize a `neomind` command line into an argv vector, respecting single
-/// and double quotes and backslash escapes.
+/// Classify a shell command line for the mutating write gate.
 ///
-/// This is NOT a full shell parser — it deliberately ignores pipes,
-/// redirections, `$` expansions, and command separators. Simple truncation
-/// pipes (`| head -100`) are handled one level up by
-/// [`split_truncation_pipeline`]; anything else is left for the real shell
-/// (subprocess path) to interpret.
+/// - Platform CLI (`neomind …`): capability from **parsed** command type
+///   (only proven query variants are read-only).
+/// - Compound / non-CLI / unparseable: [`ToolCapability::mutating_unknown_sensitive`]
+///   — absence of a write keyword is **not** proof of read-only.
+pub(crate) fn classify_shell_capability(
+    cmd: &str,
+) -> crate::agent::task_continuity::ToolCapability {
+    use crate::agent::task_continuity::ToolCapability;
+    use neomind_cli_ops::dispatch::CliSideEffect;
+
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
+        return ToolCapability::mutating_unknown_sensitive();
+    }
+
+    // Compound sequencing: unknown part ⇒ unknown; else any mutate ⇒ mutate.
+    if let Some(parts) = split_shell_sequence(trimmed) {
+        if parts.len() > 1 {
+            use crate::agent::task_continuity::RetryPolicy;
+            let mut any_mutating = false;
+            for part in &parts {
+                let cap = classify_shell_capability(part);
+                match cap.retry_policy {
+                    RetryPolicy::Never => {
+                        return ToolCapability::mutating_unknown_sensitive();
+                    }
+                    RetryPolicy::OnFailure { .. } => any_mutating = true,
+                    RetryPolicy::AlwaysSafe => {}
+                }
+            }
+            return if any_mutating {
+                ToolCapability::mutating_write()
+            } else {
+                ToolCapability::read_query()
+            };
+        }
+    }
+
+    // Peel safe truncation pipelines (`… 2>&1 | head -N`) before CLI parse.
+    let base = match split_truncation_pipeline(trimmed) {
+        Some((b, _, _)) => b,
+        None => {
+            // Unsupported pipe/redir → unknown side-effects (not keyword RO).
+            return ToolCapability::mutating_unknown_sensitive();
+        }
+    };
+
+    let base_trim = base.trim();
+    if !(base_trim == "neomind" || base_trim.starts_with("neomind ")) {
+        return ToolCapability::mutating_unknown_sensitive();
+    }
+
+    let argv = match tokenize_neomind_command(base_trim) {
+        Ok(a) => a,
+        Err(_) => return ToolCapability::mutating_unknown_sensitive(),
+    };
+    match neomind_cli_ops::dispatch::classify_argv(&argv) {
+        Ok(CliSideEffect::ProvenReadOnly) => ToolCapability::read_query(),
+        Ok(CliSideEffect::Mutating) => ToolCapability::mutating_write(),
+        Err(_) => ToolCapability::mutating_unknown_sensitive(),
+    }
+}
+
+/// Split `&&` / `;` sequences (first separator wins), ignoring empties.
+fn split_shell_sequence(trimmed: &str) -> Option<Vec<String>> {
+    let has_sep = trimmed.contains("&&") || trimmed.contains(';');
+    if !has_sep {
+        return None;
+    }
+    let sep = if let Some(amp) = trimmed.find("&&") {
+        if let Some(semi) = trimmed.find(';') {
+            if semi < amp {
+                ";"
+            } else {
+                "&&"
+            }
+        } else {
+            "&&"
+        }
+    } else {
+        ";"
+    };
+    let parts: Vec<String> = trimmed
+        .split(sep)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if parts.len() > 1 {
+        Some(parts)
+    } else {
+        None
+    }
+}
+
+/// Tokenize a pure `neomind …` line for clap / capability classification.
 ///
-/// The first token is expected to be `neomind`. Returns an error if the input
-/// has unbalanced quotes (so the caller can fall back to the subprocess and
-/// surface the real shell error message).
-fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<String>, String> {
+/// Rejects shell constructs (`|<>$\``) outside quotes so compound / piped
+/// lines are not mis-parsed as CLI argv.
+pub(crate) fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<String>, String> {
     // Shell-construct guard: a pipe / redirection / command-substitution char
     // OUTSIDE quotes means this is a real shell command line, not a pure
     // `neomind` invocation — bail so the caller routes it to the subprocess

@@ -41,8 +41,6 @@ pub use stream_core::{process_stream_events_with_safeguards, StreamSafeguards};
 pub use stream_multimodal::process_multimodal_stream_events_with_safeguards;
 pub use thinking::cleanup_thinking_content;
 
-/// Shell mutation heuristic (Round 3 capability derivation + write gates).
-pub(crate) use intent::is_mutation_command;
 /// Write-lease fingerprint (canonical args; lifecycle flag stripped first).
 #[cfg(test)]
 pub(crate) use intent::mutating_write_fingerprint;
