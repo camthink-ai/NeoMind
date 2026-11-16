@@ -139,7 +139,8 @@ pub struct ChatRequest {
     /// Client-supplied correlation id for a receive-ack (`MessageReceived`).
     /// Older clients omit it — the server then emits no ack frame. Used by
     /// the composer draft lifecycle: local `ws.send` / queue success is NOT
-    /// a server accept.
+    /// a server accept. Accepted is emitted only AFTER `prepare_chat_input`
+    /// succeeds; prepare/validation failures reject with the same id.
     #[serde(rename = "clientRequestId", default)]
     pub client_request_id: Option<String>,
 }

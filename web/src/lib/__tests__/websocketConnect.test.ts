@@ -126,6 +126,7 @@ describe('ChatWebSocket connect race', () => {
     expect(requestId).toBeTruthy()
     // Stamp was on the wire payload.
     const sent = JSON.parse((sock as unknown as { lastSent?: string }).lastSent || '{}')
+    expect(sent.clientRequestId).toBe(requestId)
     // FakeWebSocket may not record send — still wait on ack path.
     const ackPromise = cws.waitForReceiveAck(requestId, 5_000)
     sock.onmessage?.({
@@ -144,5 +145,13 @@ describe('ChatWebSocket connect race', () => {
     await vi.advanceTimersByTimeAsync(1_000)
     await expect(timeoutPromise).resolves.toEqual({ status: 'timeout' })
     vi.useRealTimers()
+  })
+
+  it('dropPendingByRequestId removes a queued frame (timeout restore vs reconnect)', () => {
+    const cws = new ChatWebSocket()
+    // Not connected → sendMessage queues.
+    const { requestId } = cws.sendMessage('queued-body')
+    expect(cws.dropPendingByRequestId(requestId)).toBe(true)
+    expect(cws.dropPendingByRequestId(requestId)).toBe(false)
   })
 })

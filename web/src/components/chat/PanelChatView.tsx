@@ -41,6 +41,7 @@ import {
   markDraftForRetry,
   normalizeContentNodes,
   saveSessionDraft,
+  canHydrateDraftIntoEditor,
   settlePendingDraft,
   stashPendingDraft,
   validateSendContent,
@@ -228,8 +229,18 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const [panelContentNodes, setPanelContentNodes] = useState<ChatContentNode[]>([])
   /** Latest composer state — the page-change draft restore reads it without
    *  re-running on every keystroke (E15). */
-  const panelComposerRef = useRef({ input, references: panelReferences, nodes: panelContentNodes })
-  panelComposerRef.current = { input, references: panelReferences, nodes: panelContentNodes }
+  const panelComposerRef = useRef({
+    input,
+    references: panelReferences,
+    nodes: panelContentNodes,
+    images: attachedImages,
+  })
+  panelComposerRef.current = {
+    input,
+    references: panelReferences,
+    nodes: panelContentNodes,
+    images: attachedImages,
+  }
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const editorHostRef = useRef<HTMLElement | null>(null)
   const [sendPhase, setSendPhase] = useState<"idle" | "preparing" | "waiting">("idle")
@@ -788,15 +799,31 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           settlePendingDraft(requestId, "accepted")
           return
         }
+        // Persist under the original panel session; hydrate only if still
+        // on that session and the composer is unmodified.
+        // Drop any still-queued copy — no server clientRequestId dedupe yet.
+        ws.dropPendingByRequestId(requestId)
         const restored = settlePendingDraft(requestId, "failed")
         if (restored) {
-          setPanelMessages(prev => prev.filter(message => message.id !== pendingUserMessageId))
-          setInput(restored.message)
-          setAttachedImages(restored.images ?? [])
-          setPanelReferences(restored.references)
-          setPanelContentNodes(restored.contentNodes ?? [])
-          setSendPhase("idle")
-          sendInProgressRef.current = false
+          const live = panelComposerRef.current
+          const currentSession = panelSessionIdRef.current
+          const mayHydrate =
+            currentSession != null &&
+            canHydrateDraftIntoEditor(restored.sessionId, currentSession, {
+              message: live.input,
+              references: live.references,
+              contentNodes: live.nodes,
+              images: live.images,
+            })
+          if (mayHydrate) {
+            setPanelMessages(prev => prev.filter(message => message.id !== pendingUserMessageId))
+            setInput(restored.message)
+            setAttachedImages(restored.images ?? [])
+            setPanelReferences(restored.references)
+            setPanelContentNodes(restored.contentNodes ?? [])
+            setSendPhase("idle")
+            sendInProgressRef.current = false
+          }
         }
         toast({ title: t("errors.sendMessage"), variant: "destructive" })
       })

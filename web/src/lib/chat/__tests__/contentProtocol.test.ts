@@ -5,6 +5,7 @@ import {
   buildChatRequestFromChips,
   buildChatRequestFromDoc,
   chipsAndTextToContentNodes,
+  canHydrateDraftIntoEditor,
   clearPendingDraftsForTests,
   clearSessionDraft,
   contentNodesHaveReferences,
@@ -162,6 +163,36 @@ describe("contentProtocol", () => {
     expect(restored?.message).toBe("panel keep")
     expect(restored?.sessionId).toBe("side-chat")
     expect(loadSessionDraft("side-chat")?.message).toBe("panel keep")
+  })
+
+  it("failed settle keeps original session draft; hydrate only when same session + empty editor", () => {
+    stashPendingDraft("req-a", "s1", { message: "original", references: [] })
+    const restored = settlePendingDraft("req-a", "failed")
+    expect(restored?.sessionId).toBe("s1")
+    expect(loadSessionDraft("s1")?.message).toBe("original")
+    // Switched away — do not hydrate into the other session's editor.
+    expect(
+      canHydrateDraftIntoEditor("s1", "s2", {
+        message: "",
+        references: [],
+      }),
+    ).toBe(false)
+    // Same session but user already typed — do not overwrite.
+    expect(
+      canHydrateDraftIntoEditor("s1", "s1", {
+        message: "new typing",
+        references: [],
+      }),
+    ).toBe(false)
+    // Same session + empty composer after optimistic clear — ok to hydrate.
+    expect(
+      canHydrateDraftIntoEditor("s1", "s1", {
+        message: "",
+        references: [],
+        contentNodes: [],
+        images: [],
+      }),
+    ).toBe(true)
   })
 
   it("validateSendContent mirrors the server caps for the send path (E14)", () => {

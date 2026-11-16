@@ -445,6 +445,28 @@ export class ChatWebSocket {
     waiter.resolve(result)
   }
 
+  /**
+   * Drop a still-queued outbound frame by clientRequestId.
+   * Used when an ACK timeout restores the draft: leaving the frame in the
+   * offline queue would resend it on reconnect (no server-side dedupe by
+   * clientRequestId yet) while the user also retries from the restored draft.
+   * @returns true when a queued frame was removed.
+   */
+  dropPendingByRequestId(requestId: string): boolean {
+    const before = this.pendingMessages.length
+    this.pendingMessages = this.pendingMessages.filter(
+      (m) => m.clientRequestId !== requestId,
+    )
+    if (this.pendingMessages.length !== before) {
+      this.persistPendingMessages()
+      if (this.pendingMessages.length === 0) {
+        storage.remove(STORAGE_KEY)
+      }
+      return true
+    }
+    return false
+  }
+
   setActiveBackend(backendId: string | null) {
     this.activeBackendId = backendId
   }

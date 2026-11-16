@@ -33,6 +33,7 @@ import {
   normalizeContentNodes,
   pruneSessionDrafts,
   saveSessionDraft,
+  canHydrateDraftIntoEditor,
   settlePendingDraft,
   stashPendingDraft,
   validateSendContent,
@@ -448,8 +449,14 @@ export function ChatPage() {
     input: "",
     references: [] as ChatReference[],
     nodes: [] as ChatContentNode[],
+    images: [] as ChatImage[],
   })
-  composerDraftRef.current = { input, references: chatReferences, nodes: chatContentNodes }
+  composerDraftRef.current = {
+    input,
+    references: chatReferences,
+    nodes: chatContentNodes,
+    images: attachedImages,
+  }
   const prevDraftSessionRef = useRef<string | null>(null)
   useEffect(() => {
     // One-time growth bound: nothing deletes drafts of removed sessions.
@@ -1000,12 +1007,27 @@ export function ChatPage() {
             settlePendingDraft(requestId, "accepted")
             return
           }
+          // Persist under the original session always; hydrate the editor
+          // only if we are still on that session and it is unmodified.
+          // Drop any still-queued copy — no server clientRequestId dedupe yet.
+          ws.dropPendingByRequestId(requestId)
           const restored = settlePendingDraft(requestId, "failed")
           if (restored) {
-            setInput(restored.message)
-            setAttachedImages(restored.images ?? [])
-            setChatReferences(restored.references)
-            setChatContentNodes(restored.contentNodes ?? [])
+            const live = composerDraftRef.current
+            const currentSession = urlSessionId ?? "new"
+            if (
+              canHydrateDraftIntoEditor(restored.sessionId, currentSession, {
+                message: live.input,
+                references: live.references,
+                contentNodes: live.nodes,
+                images: live.images,
+              })
+            ) {
+              setInput(restored.message)
+              setAttachedImages(restored.images ?? [])
+              setChatReferences(restored.references)
+              setChatContentNodes(restored.contentNodes ?? [])
+            }
           }
           toast({ title: t('chat:errors.sendMessage'), variant: "destructive" })
         })

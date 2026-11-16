@@ -376,7 +376,9 @@ export function stashPendingDraft(
 
 /**
  * Resolve a pending draft after server ack / reject / timeout / queue drop.
- * `accepted` clears storage; failure returns the stash for UI restore.
+ * `accepted` clears storage under the **original** session id.
+ * Failure re-persists under that same session id and returns the stash —
+ * callers must only hydrate the editor when {@link canHydrateDraftIntoEditor}.
  */
 export function settlePendingDraft(
   requestId: string,
@@ -389,12 +391,38 @@ export function settlePendingDraft(
     clearSessionDraft(entry.sessionId)
     return null
   }
+  // Always target the original session's persisted draft — never the
+  // session the user may have switched to while waiting for the ack.
   markDraftForRetry(entry.sessionId, {
     message: entry.stash.message,
     references: entry.stash.references,
     contentNodes: entry.stash.contentNodes,
   })
   return { sessionId: entry.sessionId, ...entry.stash }
+}
+
+/**
+ * Whether a failed-ack draft may be written into the live composer.
+ * Requires: still viewing the draft's original session, and the editor
+ * has not been modified since the optimistic clear (still empty).
+ */
+export function canHydrateDraftIntoEditor(
+  draftSessionId: string,
+  currentSessionId: string | null | undefined,
+  editor: {
+    message: string
+    references: ChatReference[]
+    contentNodes?: ChatContentNode[]
+    images?: import("@/types").ChatImage[]
+  },
+): boolean {
+  const current = currentSessionId || "new"
+  if (draftSessionId !== current) return false
+  if (editor.message.trim()) return false
+  if (editor.references.length > 0) return false
+  if (editor.contentNodes && editor.contentNodes.length > 0) return false
+  if (editor.images && editor.images.length > 0) return false
+  return true
 }
 
 /** Test / diagnostics: how many in-flight draft acks are waiting. */
