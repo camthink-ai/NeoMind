@@ -88,6 +88,9 @@ export function ChatPage() {
   const { t, i18n } = useTranslation(['common', 'chat'])
   const { toast } = useToast()
   const { sessionId: urlSessionId } = useParams<{ sessionId?: string }>()
+  /** Live URL session for ACK callbacks — never close over a stale send-time id. */
+  const urlSessionIdRef = useRef(urlSessionId)
+  urlSessionIdRef.current = urlSessionId
   const navigate = useNavigate()
   const _openSettings = useStore((s) => s.openSettings)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -1014,7 +1017,9 @@ export function ChatPage() {
           const restored = settlePendingDraft(requestId, "failed")
           if (restored) {
             const live = composerDraftRef.current
-            const currentSession = urlSessionId ?? "new"
+            // Read the LIVE route session — a send-time closed-over
+            // urlSessionId would hydrate the wrong composer after a switch.
+            const currentSession = urlSessionIdRef.current ?? "new"
             if (
               canHydrateDraftIntoEditor(restored.sessionId, currentSession, {
                 message: live.input,

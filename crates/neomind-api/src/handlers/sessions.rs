@@ -1547,8 +1547,8 @@ pub async fn chat_handler(
 /// Build a `MessageReceived` receive-ack frame for a client-supplied
 /// `clientRequestId`. Local `ws.send` / queue success is NOT a server accept —
 /// the composer draft lifecycle waits for this frame (or a reject/timeout).
-/// `accepted` must only be sent AFTER `prepare_chat_input` succeeds; rejects
-/// always echo the same `requestId` so the client can restore the draft.
+/// `accepted` must only be sent AFTER busy/clearing checks and the user
+/// message is successfully saved; rejects always echo the same `requestId`.
 fn message_received_frame(
     request_id: &str,
     status: &str,
@@ -1567,6 +1567,51 @@ fn message_received_frame(
         body["reason"] = json!(r);
     }
     body.to_string()
+}
+
+/// Stable reject reason for composer draft restore (matched by tests).
+fn receive_ack_reject_reason(err: &dyn std::fmt::Display) -> &'static str {
+    let s = err.to_string().to_lowercase();
+    if s.contains("already being generated") {
+        "session_busy"
+    } else if s.contains("being cleared") || s.contains("cleared during turn") {
+        "session_clearing"
+    } else if s.contains("failed to save user message") || s.contains("storage error") {
+        "save_failed"
+    } else {
+        "rejected"
+    }
+}
+
+#[cfg(test)]
+mod receive_ack_reason_tests {
+    use super::receive_ack_reject_reason;
+
+    #[test]
+    fn maps_busy_clearing_save_and_protocol() {
+        assert_eq!(
+            receive_ack_reject_reason(
+                &"A response is already being generated for this session — wait"
+            ),
+            "session_busy"
+        );
+        assert_eq!(
+            receive_ack_reject_reason(
+                &"Session history is being cleared — wait for clear to finish"
+            ),
+            "session_clearing"
+        );
+        assert_eq!(
+            receive_ack_reject_reason(&"Storage error: Failed to save user message: disk full"),
+            "save_failed"
+        );
+        // prepare_chat_input / protocol codes fall through as generic rejected
+        // at the WS layer (those paths pass err.code directly, not this helper).
+        assert_eq!(
+            receive_ack_reject_reason(&"Validation error: contentNodes exceed cap"),
+            "rejected"
+        );
+    }
 }
 
 /// WebSocket chat handler.
@@ -2147,22 +2192,11 @@ async fn handle_ws_socket(
                                             }
                                         };
 
-                                        // Real accept: prepare succeeded — ack before spawn.
-                                        if let Some(ref rid) = client_request_id {
-                                            let ack = message_received_frame(
-                                                rid,
-                                                "accepted",
-                                                Some(&session_id),
-                                                None,
-                                            );
-                                            if socket.send(AxumMessage::Text(ack)).await.is_err() {
-                                                return;
-                                            }
-                                        }
-
                                         // [frame-receipt pending snapshot] Born BEFORE the
                                         // awaited stream creation below (and before the pinned-
                                         // skills await) — see create_initial_pending_snapshot.
+                                        // MessageReceived:accepted waits until process_* returns
+                                        // Ok (busy/clearing/save already succeeded).
                                         create_initial_pending_snapshot(&task_state, &task_session_id, &chat_req.message);
 
                                         // Set session ID on memory tool for session-scoped operations
@@ -2202,6 +2236,18 @@ async fn handle_ws_socket(
                                             content_nodes_arg,
                                         ).await {
                                             Ok(stream) => {
+                                                // User message saved + busy/clearing passed.
+                                                if let Some(ref rid) = client_request_id {
+                                                    let ack = message_received_frame(
+                                                        rid,
+                                                        "accepted",
+                                                        Some(&session_id),
+                                                        None,
+                                                    );
+                                                    if socket.send(AxumMessage::Text(ack)).await.is_err() {
+                                                        return;
+                                                    }
+                                                }
                                                 // Clone the channel sender and session ID for the spawned task
                                                 let task_tx = stream_tx.clone();
                                                 let task_session_id = session_id.clone();
@@ -2213,6 +2259,29 @@ async fn handle_ws_socket(
                                                 });
                                             }
                                             Err(e) => {
+                                                if let Some(ref rid) = client_request_id {
+                                                    let ack = message_received_frame(
+                                                        rid,
+                                                        "rejected",
+                                                        Some(&task_session_id),
+                                                        Some(receive_ack_reject_reason(&e)),
+                                                    );
+                                                    let _ = socket.send(AxumMessage::Text(ack)).await;
+                                                }
+                                                let err_str = e.to_string();
+                                                if err_str.contains("already being generated")
+                                                    || err_str.to_lowercase().contains("being cleared")
+                                                    || err_str.contains("Failed to save user message")
+                                                {
+                                                    let err_frame = json!({
+                                                        "type": "Error",
+                                                        "message": err_str,
+                                                        "sessionId": task_session_id,
+                                                    })
+                                                    .to_string();
+                                                    let _ = socket.send(AxumMessage::Text(err_frame)).await;
+                                                    continue;
+                                                }
                                                 // Fallback to non-streaming on error
                                                 tracing::error!(error = %e, session_id = %task_session_id, backend_id = ?backend_id_str, "Streaming multimodal failed, falling back to non-streaming");
                                                 // The frame-receipt snapshot must not outlive this
@@ -2305,19 +2374,6 @@ async fn handle_ws_socket(
                                             }
                                         };
 
-                                        // Real accept only after prepare_chat_input succeeds.
-                                        if let Some(ref rid) = client_request_id {
-                                            let ack = message_received_frame(
-                                                rid,
-                                                "accepted",
-                                                Some(&session_id),
-                                                None,
-                                            );
-                                            if socket.send(AxumMessage::Text(ack)).await.is_err() {
-                                                return;
-                                            }
-                                        }
-
                                         let final_message = prepared.model_message;
                                         // Set session ID on memory tool for session-scoped operations
                                         // (now handled inside Agent::process to avoid cross-session races)
@@ -2330,6 +2386,8 @@ async fn handle_ws_socket(
                                         // fallback response is delivered through the event channel
                                         // like any other stream event, so this loop keeps serving
                                         // ping/pong and cancel frames immediately.
+                                        // MessageReceived:accepted is emitted from the task only
+                                        // after process_* returns Ok (user message saved).
                                         {
                                             let task_tx = stream_tx.clone();
                                             let task_session_id = session_id.clone();
@@ -2344,6 +2402,7 @@ async fn handle_ws_socket(
                                             let task_references = chat_req.references.clone();
                                             let task_authorize_new_op =
                                                 chat_req.authorize_new_operation.clone();
+                                            let task_client_request_id = client_request_id.clone();
                                             // Decision-layer cascade (shadow → short-circuit →
                                             // guidance → prefill) now lives INSIDE
                                             // SessionManager's message chokepoint
@@ -2379,6 +2438,18 @@ async fn handle_ws_socket(
                                                     .await
                                                 {
                                                     Ok(stream) => {
+                                                        if let Some(ref rid) = task_client_request_id {
+                                                            let _ = task_tx
+                                                                .send(StreamEvent {
+                                                                    json: message_received_frame(
+                                                                        rid,
+                                                                        "accepted",
+                                                                        Some(&task_session_id),
+                                                                        None,
+                                                                    ),
+                                                                })
+                                                                .await;
+                                                        }
                                                         process_stream_to_channel(
                                                             stream,
                                                             task_session_id,
@@ -2389,6 +2460,18 @@ async fn handle_ws_socket(
                                                         .await;
                                                     }
                                                     Err(e) => {
+                                                        if let Some(ref rid) = task_client_request_id {
+                                                            let _ = task_tx
+                                                                .send(StreamEvent {
+                                                                    json: message_received_frame(
+                                                                        rid,
+                                                                        "rejected",
+                                                                        Some(&task_session_id),
+                                                                        Some(receive_ack_reject_reason(&e)),
+                                                                    ),
+                                                                })
+                                                                .await;
+                                                        }
                                                         // [single-stream mutex] A rejection because a turn is
                                                         // already running (e.g. the previous turn is still
                                                         // completing in the background after the client
@@ -2398,7 +2481,11 @@ async fn handle_ws_socket(
                                                         // state — interleaved history writes, out-of-order
                                                         // replies. Surface an actionable error instead.
                                                         let err_str = e.to_string();
-                                                        if err_str.contains("already being generated") {
+                                                        if err_str.contains("already being generated")
+                                                            || err_str.to_lowercase().contains("being cleared")
+                                                            || err_str.contains("Failed to save user message")
+                                                            || err_str.contains("cleared during turn")
+                                                        {
                                                             let _ = task_tx
                                                                 .send(StreamEvent {
                                                                     json: json!({

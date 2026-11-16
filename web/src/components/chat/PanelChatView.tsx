@@ -802,6 +802,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         // Persist under the original panel session; hydrate only if still
         // on that session and the composer is unmodified.
         // Drop any still-queued copy — no server clientRequestId dedupe yet.
+        // panelSessionIdRef is the LIVE panel session (not send-time close-over).
         ws.dropPendingByRequestId(requestId)
         const restored = settlePendingDraft(requestId, "failed")
         if (restored) {

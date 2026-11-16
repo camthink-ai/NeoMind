@@ -195,6 +195,27 @@ describe("contentProtocol", () => {
     ).toBe(true)
   })
 
+  it("send on A then switch to B: A timeout must not hydrate B (live session ref)", () => {
+    // Mimic ACK callback reading a LIVE session ref after a route switch.
+    const liveSessionRef = { current: "session-a" }
+    stashPendingDraft("req-switch", "session-a", {
+      message: "draft for A",
+      references: [],
+    })
+    // User navigates to B while waiting for A's ACK.
+    liveSessionRef.current = "session-b"
+    const restored = settlePendingDraft("req-switch", "failed")
+    expect(restored?.sessionId).toBe("session-a")
+    expect(loadSessionDraft("session-a")?.message).toBe("draft for A")
+    expect(loadSessionDraft("session-b")).toBeNull()
+    expect(
+      canHydrateDraftIntoEditor(restored!.sessionId, liveSessionRef.current, {
+        message: "",
+        references: [],
+      }),
+    ).toBe(false)
+  })
+
   it("validateSendContent mirrors the server caps for the send path (E14)", () => {
     expect(validateSendContent([])).toBeNull()
     expect(validateSendContent([{ kind: "text", text: "hello" }])).toBeNull()

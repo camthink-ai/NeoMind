@@ -51,6 +51,8 @@ struct PersistClearHooks {
     persist_after_snapshot: std::sync::Mutex<Option<PersistClearPause>>,
     /// After clearing mark is armed, before durable clear IO.
     clear_after_mark: std::sync::Mutex<Option<PersistClearPause>>,
+    /// Test hook: next turn-start save returns Storage error (MessageReceived reject).
+    fail_next_turn_start_save: std::sync::atomic::AtomicBool,
 }
 
 struct PersistClearPause {
@@ -59,6 +61,17 @@ struct PersistClearPause {
 }
 
 impl PersistClearHooks {
+    #[cfg(test)]
+    fn arm_fail_next_turn_start_save(&self) {
+        self.fail_next_turn_start_save
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn take_fail_next_turn_start_save(&self) -> bool {
+        self.fail_next_turn_start_save
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
     #[cfg(test)]
     fn install_persist_pause(&self) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
         let entered = Arc::new(tokio::sync::Notify::new());
@@ -2221,11 +2234,13 @@ Assistant: {ar}\n"
         // already in agent memory at this point, and until persist_history
         // ran at stream end / disconnect the whole exchange lived only in
         // RAM — a kill -9 mid-turn (window up to the 1200s stream timeout)
-        // silently dropped the user's words. Best-effort: the end-of-turn
-        // persist remains the authoritative write. Same persist/clear
-        // guards as persist_history so a concurrent clear cannot race a
-        // bare save_history past is_clearing / generation.
-        self.snapshot_history_at_turn_start(session_id).await;
+        // silently dropped the user's words. Fail closed: a save error
+        // aborts the turn so WS MessageReceived stays rejected (composer
+        // draft restore). Same persist/clear guards as persist_history.
+        if let Err(e) = self.snapshot_history_at_turn_start(session_id).await {
+            Self::remove_cancel_sender_if_token(&cancel_senders, session_id, cancel_token).await;
+            return Err(e);
+        }
 
         // Wrap the stream with a scopeguard so the cancel sender is removed
         // even if the consumer drops the stream early (client disconnect,
@@ -2529,15 +2544,13 @@ Assistant: {ar}\n"
             )
             .await?;
 
-        // [crash window] The multimodal path pushes the user message into
-        // memory on the stream's FIRST poll, so the snapshot is taken on the
-        // first yielded event (same rationale + persist/clear guards as the
-        // text path above).
-        let snapshot_store = self.store.clone();
-        let snapshot_history_io = self.history_io.clone();
-        let snapshot_clearing = self.clearing_sessions.clone();
-        let snapshot_agent = agent.clone();
-        let snapshot_session_id = session_id.to_string();
+        // Accept already ran inside process_multimodal_* (eager). Persist
+        // BEFORE returning Ok so WS MessageReceived:accepted means the user
+        // message is on disk — same contract as the text path.
+        if let Err(e) = self.snapshot_history_at_turn_start(session_id).await {
+            Self::remove_cancel_sender_if_token(&cancel_senders, session_id, cancel_token).await;
+            return Err(e);
+        }
 
         // Wrap with scopeguard so cancel sender is removed on both natural
         // stream end and early drop (matches the text streaming path above).
@@ -2548,19 +2561,7 @@ Assistant: {ar}\n"
                 cancel_token,
             );
             let mut stream = stream;
-            let mut turn_start_persisted = false;
             while let Some(event) = stream.next().await {
-                if !turn_start_persisted {
-                    turn_start_persisted = true;
-                    Self::guarded_turn_start_save(
-                        &snapshot_store,
-                        &snapshot_history_io,
-                        &snapshot_clearing,
-                        &snapshot_agent,
-                        &snapshot_session_id,
-                    )
-                    .await;
-                }
                 yield event;
             }
             Self::remove_cancel_sender_if_token(&cancel_senders, &session_id_owned, cancel_token)
@@ -2739,25 +2740,23 @@ Assistant: {ar}\n"
         // _clearing Drop unmarks here (and on cancel/panic).
     }
 
-    /// Best-effort turn-start history snapshot under the same guards as
-    /// [`Self::persist_history`]: skip while clearing, hold `history_io`,
+    /// Turn-start history snapshot under the same guards as
+    /// [`Self::persist_history`]: refuse while clearing, hold `history_io`,
     /// and refuse if history generation advanced (cleared mid-flight).
     ///
-    /// Closes the review finding that crash-window saves called
-    /// `store.save_history` bare and could rewrite disk past a concurrent
-    /// clear.
-    async fn snapshot_history_at_turn_start(&self, session_id: &str) {
-        let Ok(agent) = self.get_session(session_id).await else {
-            return;
-        };
+    /// Failures propagate so callers (WS MessageReceived) can reject the
+    /// client request id instead of clearing the composer draft.
+    async fn snapshot_history_at_turn_start(&self, session_id: &str) -> Result<()> {
+        let agent = self.get_session(session_id).await?;
         Self::guarded_turn_start_save(
             &self.store,
             &self.history_io,
             &self.clearing_sessions,
             &agent,
             session_id,
+            &self.persist_clear_hooks,
         )
-        .await;
+        .await
     }
 
     /// Shared crash-window / multimodal turn-start save (Arcs for stream move).
@@ -2767,7 +2766,13 @@ Assistant: {ar}\n"
         clearing_sessions: &Arc<std::sync::Mutex<HashMap<String, ()>>>,
         agent: &Arc<Agent>,
         session_id: &str,
-    ) {
+        persist_clear_hooks: &PersistClearHooks,
+    ) -> Result<()> {
+        if persist_clear_hooks.take_fail_next_turn_start_save() {
+            return Err(NeoMindError::Storage(
+                "Failed to save user message: injected test failure".into(),
+            ));
+        }
         let clearing = || {
             clearing_sessions
                 .lock()
@@ -2775,11 +2780,9 @@ Assistant: {ar}\n"
                 .contains_key(session_id)
         };
         if clearing() {
-            tracing::debug!(
-                session_id = %session_id,
-                "Skipping turn-start history snapshot — session clear in progress"
-            );
-            return;
+            return Err(NeoMindError::validation(
+                "Session history is being cleared — wait for clear to finish before sending a new message",
+            ));
         }
         let generation = agent.history_generation().await;
         let messages = agent.history().await;
@@ -2787,26 +2790,24 @@ Assistant: {ar}\n"
 
         let _io = history_io.lock().await;
         if clearing() {
-            tracing::debug!(
-                session_id = %session_id,
-                "Skipping turn-start history snapshot — session clear in progress (under history_io)"
-            );
-            return;
+            return Err(NeoMindError::validation(
+                "Session history is being cleared — wait for clear to finish before sending a new message",
+            ));
         }
         if agent.history_generation().await != generation {
-            tracing::debug!(
-                session_id = %session_id,
-                "Skipping turn-start history snapshot — history generation advanced (cleared)"
-            );
-            return;
+            return Err(NeoMindError::validation(
+                "Session history was cleared during turn start — message was not saved",
+            ));
         }
-        if let Err(e) = store.save_history(session_id, &converted) {
-            tracing::debug!(
+        store.save_history(session_id, &converted).map_err(|e| {
+            tracing::error!(
                 session_id = %session_id,
                 error = %e,
-                "turn-start history snapshot failed (end-of-turn persist still authoritative)"
+                "turn-start history snapshot failed"
             );
-        }
+            NeoMindError::Storage(format!("Failed to save user message: {e}"))
+        })?;
+        Ok(())
     }
 
     /// Persist the current history for a session to the database.
@@ -3867,6 +3868,51 @@ mod tests {
             .lock()
             .unwrap()
             .remove(&session_id);
+    }
+
+    /// MessageReceived reject path: session busy (active cancel sender).
+    #[tokio::test]
+    async fn process_events_rejects_when_session_busy() {
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        let (tx, _rx) = tokio::sync::watch::channel(false);
+        manager
+            .register_cancel_sender(&session_id, tx)
+            .await
+            .expect("first registration");
+        match manager
+            .process_message_events(&session_id, "second turn")
+            .await
+        {
+            Err(err) => assert!(
+                err.to_string().contains("already being generated"),
+                "got: {err}"
+            ),
+            Ok(_) => panic!("busy session must reject new turns"),
+        }
+    }
+
+    /// MessageReceived reject path: turn-start save failure (injected).
+    #[tokio::test]
+    async fn process_events_rejects_when_turn_start_save_fails() {
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        manager
+            .persist_clear_hooks
+            .arm_fail_next_turn_start_save();
+        match manager
+            .process_message_events(&session_id, "hello")
+            .await
+        {
+            Err(err) => {
+                let msg = err.to_string().to_lowercase();
+                assert!(
+                    msg.contains("save") || msg.contains("storage"),
+                    "expected save/storage failure, got: {err}"
+                );
+            }
+            Ok(_) => panic!("turn-start save failure must reject"),
+        }
     }
 
     /// GPT tip af5e3548: clear cancels + awaits stream; stale persist cannot
