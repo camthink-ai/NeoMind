@@ -630,12 +630,21 @@ impl JsTransformExecutor {
         let wrapped_code = format!("(function() {{\n{}\n}})()", code);
 
         // Execute the transformation code
-        let result = context
-            .eval(Source::from_bytes(wrapped_code.as_bytes()))
-            .map_err(|e| AutomationError::TransformError {
-                operation: "JsTransform".to_string(),
-                message: format!("JavaScript execution error: {}", e),
-            })?;
+        let result = match context.eval(Source::from_bytes(wrapped_code.as_bytes())) {
+            Ok(v) => v,
+            Err(e) => {
+                // Host AtomicBool is authoritative — not the JS error string.
+                // An uncaught stub throw and a user rethrow after invoke both
+                // set the flag; a forged marker string without invoke does not.
+                if extension_invoke_blocked.load(Ordering::SeqCst) {
+                    return Err(AutomationError::DryRunExtensionBlocked);
+                }
+                return Err(AutomationError::TransformError {
+                    operation: "JsTransform".to_string(),
+                    message: format!("JavaScript execution error: {}", e),
+                });
+            }
+        };
 
         // Convert result to Value
         let result_value = self.js_value_to_json(result, &mut context)?;

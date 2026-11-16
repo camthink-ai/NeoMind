@@ -36,24 +36,64 @@ impl TransformEngine {
         device_type: Option<&str>,
         raw_data: &Value,
     ) -> Value {
+        self.preprocess_with_extensions_gated(device_id, device_type, raw_data, None)
+            .await
+            .0
+    }
+
+    /// Preprocess with an optional dry-run Pure allow-list re-check at
+    /// **execute** time (closes list→get TOCTOU: a non-pure extension that
+    /// appears after the outer scan must not run).
+    ///
+    /// `dry_run_allow_list` is the same comma-separated string as
+    /// [`super::dry_run_pure_extensions`]. `None` = production (no gate).
+    ///
+    /// Returns `(data, late_unverified)` — late markers only when gated.
+    pub(crate) async fn preprocess_with_extensions_gated(
+        &self,
+        device_id: &str,
+        device_type: Option<&str>,
+        raw_data: &Value,
+        dry_run_allow_list: Option<&str>,
+    ) -> (Value, Vec<String>) {
+        let mut late_unverified = Vec::new();
         if let Some(ref registry) = self.extension_registry {
-            // Try extensions with preprocess command
             let extensions = registry.list().await;
 
             for info in extensions {
                 let metadata_id = info.metadata.id.clone();
 
-                // Check if this extension has a preprocess command
                 let has_preprocess = info.commands.iter().any(|cmd| cmd.name == "preprocess");
                 if !has_preprocess {
                     continue;
                 }
 
-                // Get the actual extension instance
+                // Re-check Pure allow-list at execute time (dry-run only).
+                if let Some(allow) = dry_run_allow_list {
+                    if !super::extension_allowed_in_dry_run(&metadata_id, allow) {
+                        late_unverified.push(format!(
+                            "preprocess extension '{metadata_id}' not invoked in dry-run (side-effecting); raw data used; preprocessed behavior unverified"
+                        ));
+                        continue;
+                    }
+                }
+
                 let ext = match registry.get(&metadata_id).await {
                     Some(e) => e,
                     None => continue,
                 };
+
+                // Second Pure gate after get() — registry may have changed
+                // between list and get (TOCTOU). Production passes None.
+                if let Some(allow) = dry_run_allow_list {
+                    if !super::extension_allowed_in_dry_run(&metadata_id, allow) {
+                        late_unverified.push(format!(
+                            "preprocess extension '{metadata_id}' not invoked in dry-run (side-effecting); raw data used; preprocessed behavior unverified"
+                        ));
+                        drop(ext);
+                        continue;
+                    }
+                }
 
                 let args = serde_json::json!({
                     "device_id": device_id,
@@ -70,18 +110,16 @@ impl TransformEngine {
                             "Preprocessed data for device {}",
                             device_id
                         );
-                        return preprocessed;
+                        return (preprocessed, late_unverified);
                     }
                     Err(_) => {
-                        // Extension failed, try next
                         continue;
                     }
                 }
             }
         }
 
-        // No preprocessor found, return original data
-        raw_data.clone()
+        (raw_data.clone(), late_unverified)
     }
 }
 impl TransformEngine {
@@ -212,12 +250,18 @@ impl TransformEngine {
                     .cloned()
                     .collect();
                 if blocked.is_empty() {
-                    (
-                        self.preprocess_with_extensions(device_id, device_type, raw_data)
-                            .await,
-                        Vec::new(),
-                        Vec::new(),
-                    )
+                    // All listed preprocessors looked Pure — still re-check
+                    // the allow-list at execute time inside gated preprocess
+                    // so a TOCTOU install of a non-pure id cannot run.
+                    let (data, late) = self
+                        .preprocess_with_extensions_gated(
+                            device_id,
+                            device_type,
+                            raw_data,
+                            Some(allow_list.as_str()),
+                        )
+                        .await;
+                    (data, Vec::new(), late)
                 } else {
                     let mut unverified = Vec::new();
                     for id in &blocked {
@@ -425,13 +469,10 @@ impl TransformEngine {
                             );
                         }
                     }
-                    // Uncaught dry-run stub throw (flag set, but execute
-                    // returned Err before packing the output): same unverified
-                    // channel as the flag path above.
-                    Err(e)
-                        if mode == TransformExecutionMode::DryRun
-                            && e.to_string().contains("NEOMIND_DRYRUN_EXTENSION_BLOCKED") =>
-                    {
+                    // Uncaught dry-run stub throw: host discriminant, not
+                    // error-text substring (user-echoed markers must not flip
+                    // classification).
+                    Err(e) if e.is_dry_run_extension_blocked() => {
                         unverified.push(
                             "extension invocation blocked in dry-run; extension-dependent behavior unverified"
                                 .to_string(),
@@ -484,6 +525,9 @@ impl TransformEngine {
                     }
                     Err(e) => {
                         failed_ops += 1;
+                        // Keep MultiOutput (etc.) sub-error detail on the
+                        // failure path — previously only Ok merged op_warnings.
+                        warnings.extend(op_warnings);
                         warnings.push(format!("Operation failed: {}", e));
                     }
                 }
@@ -491,18 +535,10 @@ impl TransformEngine {
             // Every operation failed → the transform produced nothing: that
             // is a failed execution, not a silent success with warnings.
             if total_ops > 0 && failed_ops == total_ops {
-                let last_error = warnings
-                    .iter()
-                    .rev()
-                    .find_map(|w| w.strip_prefix("Operation failed: "))
-                    .unwrap_or("unknown error")
-                    .to_string();
+                let detail = warnings.join("; ");
                 return Err(AutomationError::TransformError {
                     operation: "Operations".to_string(),
-                    message: format!(
-                        "all {} operations failed; last error: {}",
-                        total_ops, last_error
-                    ),
+                    message: format!("all {total_ops} operations failed; details: {detail}"),
                 });
             }
         }
@@ -799,9 +835,17 @@ impl TransformEngine {
                     }
                 }
                 if sub_total > 0 && sub_failed == sub_total {
+                    let sub_detail: Vec<&str> = warnings
+                        .iter()
+                        .filter(|w| w.starts_with("MultiOutput sub-operation failed:"))
+                        .map(|s| s.as_str())
+                        .collect();
                     return Err(AutomationError::TransformError {
                         operation: "MultiOutput".to_string(),
-                        message: format!("all {} sub-operations failed", sub_total),
+                        message: format!(
+                            "all {sub_total} sub-operations failed; {}",
+                            sub_detail.join("; ")
+                        ),
                     });
                 }
                 Ok(all_metrics)

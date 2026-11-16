@@ -55,6 +55,22 @@ pub enum AutomationError {
     /// Transform operation error
     #[error("Transform error in {operation}: {message}")]
     TransformError { operation: String, message: String },
+
+    /// Dry-run refused an `extensions.invoke` via the host stub (AtomicBool).
+    ///
+    /// Distinct from [`Self::TransformError`] so pipeline / handlers classify
+    /// unverified by **discriminant**, not by scanning error text — a user
+    /// script that echoes `NEOMIND_DRYRUN_EXTENSION_BLOCKED` must not flip a
+    /// real failure into unverified (and vice versa).
+    #[error("extension invocation blocked in dry-run")]
+    DryRunExtensionBlocked,
+}
+
+impl AutomationError {
+    /// Host-authoritative dry-run extension refusal (not substring matching).
+    pub fn is_dry_run_extension_blocked(&self) -> bool {
+        matches!(self, Self::DryRunExtensionBlocked)
+    }
 }
 
 impl From<redb::Error> for AutomationError {

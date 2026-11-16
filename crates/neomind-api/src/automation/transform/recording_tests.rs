@@ -310,6 +310,42 @@ async fn dry_run_blocks_extension_invocation_as_unverified() {
 }
 
 #[tokio::test]
+async fn dry_run_echoed_blocked_marker_without_invoke_is_not_unverified() {
+    // Classification must use the host AtomicBool / DryRunExtensionBlocked
+    // discriminant — a script that only *mentions* the stub marker string
+    // must remain a real JS failure, not flip to unverified.
+    let (engine, _store) = engine_with_store();
+    let t = js_transform(
+        "dry-echo",
+        "throw new Error('NEOMIND_DRYRUN_EXTENSION_BLOCKED: forged');",
+    );
+    let result = engine
+        .process_device_data_dry(
+            std::slice::from_ref(&t),
+            "sensor-1",
+            None,
+            &json!({"temperature": 25.5}),
+        )
+        .await
+        .expect("dry aggregator returns Ok with warnings");
+
+    assert!(
+        result.unverified.is_empty(),
+        "forged marker must not become unverified: {:?}",
+        result.unverified
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("failed") || w.contains("JavaScript")),
+        "real throw should surface as a transform failure warning: {:?}",
+        result.warnings
+    );
+    assert!(result.metrics.is_empty());
+}
+
+#[tokio::test]
 async fn dry_run_caught_invoke_still_marks_unverified() {
     // Host flag must survive a user catch that returns a value — otherwise
     // the run looks fully verified despite a blocked extension call.
@@ -700,9 +736,26 @@ async fn multioutput_nested_extension_production_all_fail() {
         1,
         "failing nested Extension was still invoked"
     );
-    assert!(result.is_err(), "all sub-ops failed → transform Err");
+    let err = match result {
+        Err(e) => e.to_string(),
+        Ok(_) => panic!("all sub-ops failed → transform Err"),
+    };
+    assert!(
+        err.contains("sub-operation failed")
+            || err.contains("nested-fail")
+            || err.contains("Extension"),
+        "failure path must carry sub-error detail, not only a count: {err}"
+    );
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].status, ExecutionStatus::Failed);
+    let rec_err = records[0].error.as_deref().unwrap_or_default();
+    assert!(
+        rec_err.contains("sub-operation failed")
+            || rec_err.contains("nested-fail")
+            || rec_err.contains("Extension")
+            || rec_err.contains("all"),
+        "recorded error should retain MultiOutput detail: {rec_err}"
+    );
 }
 
 #[tokio::test]

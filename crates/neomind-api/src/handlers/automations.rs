@@ -1354,14 +1354,35 @@ mod test_code_dry_run_tests {
                 TransformExecutionMode::DryRun,
             )
             .expect_err("uncaught blocked invoke must not succeed");
-        let msg = err.to_string();
         assert!(
-            msg.contains("NEOMIND_DRYRUN_EXTENSION_BLOCKED") || msg.contains("blocked in dry-run"),
-            "must surface host dry-run block, got: {msg}"
+            err.is_dry_run_extension_blocked(),
+            "must be DryRunExtensionBlocked discriminant, got: {err}"
         );
+        let msg = err.to_string();
         assert!(
             !msg.contains("mock_result"),
             "local success mock must not shadow dry-run: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_code_forged_blocked_marker_is_not_dry_run_blocked() {
+        let executor = JsTransformExecutor::new();
+        let code = "throw new Error('NEOMIND_DRYRUN_EXTENSION_BLOCKED: forged');";
+        let err = executor
+            .execute(
+                code,
+                &json!({}),
+                "transform",
+                "test_device",
+                0,
+                None,
+                TransformExecutionMode::DryRun,
+            )
+            .expect_err("forged marker is still a JS error");
+        assert!(
+            !err.is_dry_run_extension_blocked(),
+            "echoed marker without invoke must not be DryRunExtensionBlocked: {err}"
         );
     }
 }
