@@ -7,7 +7,7 @@ import { useStore } from "@/store"
 import { shallow } from "zustand/shallow"
 import { useParams, useNavigate, useSearchParams } from "react-router-dom"
 import { generateId } from "@/lib/id"
-import { ChevronDown, Loader2, Menu, Plus } from "lucide-react"
+import { Loader2, Menu, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
@@ -1246,8 +1246,9 @@ export function ChatPage() {
         )
       )}
 
-      {/* Mobile Sidebar - drawer */}
-      {!isDesktop && (sessions.length > 0 || !isWelcomeMode) && (
+      {/* Mobile workspace drawer — always mounted so welcome/empty chat can
+          still reach sessions + the System hub without a second top control. */}
+      {!isDesktop && (
         <SessionSidebar
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
@@ -1255,15 +1256,12 @@ export function ChatPage() {
         />
       )}
 
-      {/* (Legacy mobile FAB removed — session toggle now lives in MobilePageHeader) */}
-
       {/* Main Content — mobile header overlays the conversation (transparent);
           scroll area is full-height; content padding clears the controls. */}
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
-        {/* Same MobilePageHeader contract as System / business pages:
-            [☰ → System hub] [title] [glass actions]. Chat has no bottom
-            capsule; the hamburger jumps to /system (drawer nav is retired).
-            Title opens the session list. */}
+        {/* Mobile chrome: [☰ workspace drawer] [session title] [+].
+            Left opens the unified drawer (chats + workspace exit); title is
+            display-only so it no longer competes with the list affordance. */}
         {!isDesktop && (
           <div className="pointer-events-none absolute inset-x-0 top-0 z-30">
             <div className="pointer-events-auto">
@@ -1275,36 +1273,22 @@ export function ChatPage() {
                     variant="ghost"
                     size="icon"
                     className="h-10 w-10 shrink-0 rounded-full border border-glass-border bg-surface-glass shadow-sm backdrop-blur-xl hover:border-glass-border-hover hover:bg-muted sm:h-10 sm:w-10"
-                    onClick={() => navigate('/system')}
-                    aria-label={t('common:system.menu')}
-                    data-testid="chat-workspace-button"
+                    onClick={() => setSidebarOpen(true)}
+                    aria-label={t('common:session.openDrawer')}
+                    aria-expanded={sidebarOpen}
+                    aria-controls="session-workspace-drawer"
+                    data-testid="chat-drawer-button"
                   >
                     <Menu className="h-5 w-5" />
                   </Button>
                 }
                 title={
-                  <button
-                    type="button"
+                  <span
                     data-testid="chat-session-title"
-                    className="group mx-auto flex min-w-0 max-w-full items-center justify-center gap-1.5 text-center disabled:pointer-events-none"
-                    onClick={() => setSidebarOpen(true)}
-                    disabled={sessions.length === 0 && isWelcomeMode}
-                    aria-label={t('common:session.history')}
-                    aria-expanded={sidebarOpen}
-                    aria-haspopup="dialog"
+                    className="mx-auto block min-w-0 max-w-full truncate text-center"
                   >
-                    <span className="min-w-0 truncate">{mobileChatTitle}</span>
-                    {(sessions.length > 0 || !isWelcomeMode) && (
-                      <ChevronDown
-                        className={cn(
-                          "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-active:text-foreground",
-                          sidebarOpen && "rotate-180",
-                        )}
-                        strokeWidth={1.8}
-                        aria-hidden="true"
-                      />
-                    )}
-                  </button>
+                    {mobileChatTitle}
+                  </span>
                 }
                 actions={
                   !noLlmContent ? (

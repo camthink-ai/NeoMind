@@ -511,8 +511,10 @@
   "session": {
     "history": "Session History",
     "sessions": "Sessions",
+    "recent": "Recent chats",
+    "openDrawer": "Open menu",
     "newChat": "New Chat",
-    "search": "Search...",
+    "search": "Search chats...",
     "noSessions": "No sessions yet",
     "noMatch": "No matching sessions",
     "messages": "{{count}} messages",
@@ -520,7 +522,8 @@
     "deleteTitle": "Delete Session",
     "deleteDescription": "Are you sure you want to delete this session? This action cannot be undone.",
     "sessionDeleted": "Session deleted",
-    "generating": "Generating"
+    "generating": "Generating",
+    "rename": "Rename"
   },
   "language": {},
   "dataPush": {
@@ -773,6 +776,8 @@
   "system": {
     "pageTitle": "System",
     "menu": "Menu",
+    "openWorkspace": "Workspace",
+    "workspaceHint": "Devices, agents, dashboards, and settings",
     "sectionBusiness": "Business",
     "sectionSystem": "System",
     "sectionAbout": "About",

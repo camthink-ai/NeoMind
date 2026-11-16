@@ -286,7 +286,9 @@ describe('translation keys referenced from source', () => {
     // filled in en/zh (net −1 after scanner sees remaining soft gaps).
     // 247 -> 251 (1.3.0 tip 08a4c80d): soft count already 251 on tip before
     // goalStatus frontend wire — ratchet to measured tip so the gate is honest.
-    const FROZEN = 251
+    // 251 -> 253 (1.3.0 chat drawer): measured tip before this change already
+    // soft=253; ratchet so the gate stays honest.
+    const FROZEN = 253
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )
