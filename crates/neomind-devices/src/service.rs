@@ -1474,6 +1474,78 @@ impl DeviceService {
         self.registry.update_device(device_id, config).await
     }
 
+    /// Persist a full device config update and refresh adapter subscriptions /
+    /// runtime topic maps so MQTT routing picks up new `telemetry_topic` +
+    /// identity rules. Plain [`Self::update_device`] only touches the registry
+    /// and leaves adapters on the old topic mapping.
+    pub async fn update_device_and_refresh_adapters(
+        &self,
+        device_id: &str,
+        config: DeviceConfig,
+    ) -> Result<(), DeviceError> {
+        let adapter_type = config.adapter_type.clone();
+        let target_adapter_id = config.adapter_id.clone();
+
+        self.registry.update_device(device_id, config).await?;
+
+        if adapter_type == "extension" {
+            return Ok(());
+        }
+
+        let matched = {
+            let adapters = self.adapters.read().await;
+            let mut result = Vec::new();
+            for (adapter_id, adapter) in adapters.iter() {
+                let is_match = if let Some(ref target_id) = target_adapter_id {
+                    adapter.adapter_type() == adapter_type && adapter_id == target_id
+                } else {
+                    adapter.adapter_type() == adapter_type
+                };
+                if is_match {
+                    result.push((adapter_id.clone(), adapter.clone()));
+                }
+            }
+            result
+        };
+
+        if matched.is_empty() {
+            tracing::warn!(
+                "No adapter found to refresh for device '{}' (type: {}, adapter_id: {:?})",
+                device_id,
+                adapter_type,
+                target_adapter_id
+            );
+            return Ok(());
+        }
+
+        for (adapter_id, adapter) in &matched {
+            // Drop old topic-map entries first; subscribe rebuilds from registry.
+            if let Err(e) = adapter.unsubscribe_device(device_id).await {
+                tracing::warn!(
+                    device_id = %device_id,
+                    adapter = %adapter_id,
+                    error = %e,
+                    "Adapter failed to unsubscribe during config refresh (continuing)"
+                );
+            }
+            tracing::info!(
+                "Refreshing adapter '{}' subscription for device '{}'",
+                adapter_id,
+                device_id
+            );
+            if let Err(e) = adapter.subscribe_device(device_id).await {
+                tracing::warn!(
+                    device_id = %device_id,
+                    adapter = %adapter_id,
+                    error = %e,
+                    "Adapter failed to resubscribe during config refresh (continuing)"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     // ========== Command Sending ==========
 
     /// Send a command to a device.

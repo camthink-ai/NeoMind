@@ -1484,6 +1484,130 @@ mod handling_path {
         );
     }
 
+    /// Attach-existing path: B already registered on an old topic; after
+    /// `update_device_and_refresh_adapters` with conflict topic + sn, memory,
+    /// runtime topic map, and subsequent MQTT all follow the new rules.
+    #[tokio::test]
+    async fn after_attach_existing_refresh_routes_to_b_with_new_rules() {
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "A",
+            "gw",
+            "gateway/data",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+        // Pre-existing B on a stale topic / identity — the attach target.
+        approve_device(
+            &registry,
+            "B",
+            "gw",
+            "device/gw/B/uplink",
+            Some("topic_strong"),
+            None,
+        )
+        .await;
+
+        let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "test",
+            "localhost:1883",
+        )));
+        adapter.set_shared_device_registry(registry.clone()).await;
+        // Seed stale runtime maps as if B had been subscribed on the old topic.
+        {
+            let mut map = adapter.topic_to_device.write().await;
+            topic_map_insert(&mut map, "device/gw/B/uplink", "B");
+            topic_map_insert(&mut map, "gateway/data", "A");
+            let mut types = adapter.device_types.write().await;
+            types.insert("B".to_string(), "gw".to_string());
+            types.insert("A".to_string(), "gw".to_string());
+        }
+
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+        service
+            .register_adapter(
+                "test-mqtt".into(),
+                adapter.clone() as Arc<dyn DeviceAdapter>,
+            )
+            .await;
+
+        let conflict_topic = "device/gw/A/uplink";
+        let mut extra = HashMap::new();
+        extra.insert(
+            MQTT_IDENTITY_SOURCE_KEY.to_string(),
+            serde_json::Value::String("auto_payload".to_string()),
+        );
+        extra.insert(
+            MQTT_IDENTITY_FIELD_KEY.to_string(),
+            serde_json::Value::String("sn".to_string()),
+        );
+        let mut b_cfg = registry.get_device("B").expect("B exists");
+        b_cfg.connection_config = ConnectionConfig {
+            telemetry_topic: Some(conflict_topic.to_string()),
+            extra,
+            ..Default::default()
+        };
+        service
+            .update_device_and_refresh_adapters("B", b_cfg)
+            .await
+            .expect("attach refresh must persist + resubscribe");
+
+        // Memory: new topic + sticky identity.
+        let b = registry.get_device("B").expect("B still registered");
+        assert_eq!(
+            b.connection_config.telemetry_topic.as_deref(),
+            Some(conflict_topic)
+        );
+        assert_eq!(
+            b.connection_config
+                .extra
+                .get(MQTT_IDENTITY_FIELD_KEY)
+                .and_then(|v| v.as_str()),
+            Some("sn")
+        );
+
+        // Runtime topic map: conflict topic → B; old B topic cleared.
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, conflict_topic)
+                .contains("B"),
+            "refresh must map B onto the confirmed topic"
+        );
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, "device/gw/B/uplink")
+                .is_empty(),
+            "old B topic mapping must be cleared"
+        );
+
+        // Simulate reload from registry (restart restore).
+        reload_bindings(&adapter).await;
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, conflict_topic)
+                .contains("B"),
+            "reload must keep B on the confirmed topic"
+        );
+
+        let mut rx = adapter.event_tx.subscribe();
+        handle(
+            &adapter,
+            conflict_topic,
+            b"{\"sn\":\"B\",\"device_id\":\"A\",\"v\":2}",
+        )
+        .await;
+        let events = drain(&mut rx);
+        let ids = metric_ids(&events);
+        assert!(
+            !ids.is_empty() && ids.iter().all(|id| id == "B"),
+            "post-attach traffic with sn=B must route to B; got {:?}",
+            ids
+        );
+    }
+
     /// After human confirm of real identity B + parse field sn on the conflict
     /// topic, later messages with sn=B route to B (A stays on its own topic).
     #[tokio::test]

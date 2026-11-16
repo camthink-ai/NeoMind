@@ -653,14 +653,61 @@ pub async fn confirm_association_draft(
         ));
     }
 
-    let real_id = request.device_id.trim().to_string();
-    if real_id.is_empty() {
-        return Err(ErrorResponse::bad_request(
-            "device_id is required — confirm the real device identity explicitly",
+    use neomind_devices::adapters::mqtt::{
+        is_pending_association_candidate_id, normalize_confirm_device_id,
+        verify_confirm_identity_against_sample, MqttIdentitySource, MQTT_IDENTITY_FIELD_KEY,
+        MQTT_IDENTITY_SOURCE_KEY,
+    };
+
+    let identity_source_raw = request
+        .identity_source
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("auto_payload");
+    let identity_source = MqttIdentitySource::parse(identity_source_raw).ok_or_else(|| {
+        ErrorResponse::bad_request(format!(
+            "identity_source '{identity_source_raw}' is invalid"
+        ))
+        .with_hint(
+            "Use one of: auto_payload, configured_payload, topic_strong, topic_weak, topic_hash",
         )
-        .with_hint("Do not reuse the pending-assoc-* placeholder."));
-    }
-    if neomind_devices::adapters::mqtt::is_pending_association_candidate_id(&real_id) {
+    })?;
+
+    let identity_field = {
+        let trimmed = request.identity_field.trim();
+        if identity_source.requires_identity_field() && trimmed.is_empty() {
+            return Err(ErrorResponse::bad_request(
+                "identity_field is required — name the JSON parse field that identifies the device",
+            )
+            .with_hint("Example: sn, device_id, mac"));
+        }
+        // Persist only nonempty fields (topic sources may omit).
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    };
+
+    let real_id = {
+        let trimmed = request.device_id.trim();
+        if trimmed.is_empty() {
+            return Err(ErrorResponse::bad_request(
+                "device_id is required — confirm the real device identity explicitly",
+            )
+            .with_hint("Do not reuse the pending-assoc-* placeholder."));
+        }
+        normalize_confirm_device_id(trimmed).ok_or_else(|| {
+            ErrorResponse::bad_request(
+                "device_id is empty or invalid after normalization (ascii alnum, -, _, :, . only)",
+            )
+            .with_hint(
+                "Enter the real payload identity (e.g. sn value), not a path or placeholder.",
+            )
+        })?
+    };
+    if is_pending_association_candidate_id(&real_id) {
         return Err(ErrorResponse::bad_request(
             "device_id must not be a pending-assoc-* placeholder",
         )
@@ -668,17 +715,6 @@ pub async fn confirm_association_draft(
             "Enter the real device identity from the payload (e.g. sn value) or an existing id.",
         ));
     }
-
-    let identity_field = {
-        let trimmed = request.identity_field.trim();
-        if trimmed.is_empty() {
-            return Err(ErrorResponse::bad_request(
-                "identity_field is required — name the JSON parse field that identifies the device",
-            )
-            .with_hint("Example: sn, device_id, mac"));
-        }
-        trimmed.to_string()
-    };
 
     let overwrite_blocked = request.overwrite_blocked.unwrap_or(false);
     if draft.blocked_device_ids.iter().any(|id| id == &real_id) && !overwrite_blocked {
@@ -698,15 +734,26 @@ pub async fn confirm_association_draft(
         .original_topic
         .clone()
         .unwrap_or_else(|| draft.source.clone());
+
+    // Fail closed before mutating registry / consuming the draft.
+    if let Err(reason) = verify_confirm_identity_against_sample(
+        draft.samples.first().and_then(|s| s.parsed.as_ref()),
+        &topic,
+        identity_source,
+        identity_field.as_deref(),
+        &real_id,
+    ) {
+        return Err(ErrorResponse::bad_request(format!(
+            "identity config does not match the draft sample: {reason}"
+        ))
+        .with_hint(
+            "Check identity_field / device_id against the sample payload before confirming.",
+        ));
+    }
+
     let adapter_type = draft.source.clone();
     let default_adapter_id = format!("internal-{}", adapter_type);
-    let identity_source = request
-        .identity_source
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("auto_payload")
-        .to_string();
+    let identity_source_str = identity_source.as_str().to_string();
 
     let mut connection_config = if adapter_type == "webhook" {
         ConnectionConfig::default()
@@ -717,13 +764,15 @@ pub async fn confirm_association_draft(
         }
     };
     connection_config.extra.insert(
-        neomind_devices::adapters::mqtt::MQTT_IDENTITY_SOURCE_KEY.to_string(),
-        serde_json::Value::String(identity_source),
+        MQTT_IDENTITY_SOURCE_KEY.to_string(),
+        serde_json::Value::String(identity_source_str),
     );
-    connection_config.extra.insert(
-        neomind_devices::adapters::mqtt::MQTT_IDENTITY_FIELD_KEY.to_string(),
-        serde_json::Value::String(identity_field.clone()),
-    );
+    if let Some(ref field) = identity_field {
+        connection_config.extra.insert(
+            MQTT_IDENTITY_FIELD_KEY.to_string(),
+            serde_json::Value::String(field.clone()),
+        );
+    }
 
     let device_instance_name = request
         .device_name
@@ -733,24 +782,28 @@ pub async fn confirm_association_draft(
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("Device {}", real_id));
 
+    let identity_field_label = identity_field.as_deref().unwrap_or("(topic)");
+
     let existing = device_service.get_device(&real_id);
     let (device_type, message) = if let Some(mut existing_cfg) = existing {
-        // Attach: update topic + sticky identity on the existing device.
+        // Attach: full config update + adapter resubscribe (register_device's
+        // duplicate branch only patches name/adapter_id/last_seen).
         existing_cfg.name = device_instance_name.clone();
+        existing_cfg.adapter_type = adapter_type.clone();
         existing_cfg.connection_config = connection_config;
         if existing_cfg.adapter_id.is_none() {
             existing_cfg.adapter_id = draft.adapter_id.clone().or(Some(default_adapter_id));
         }
         let device_type = existing_cfg.device_type.clone();
         device_service
-            .register_device(existing_cfg)
+            .update_device_and_refresh_adapters(&real_id, existing_cfg)
             .await
             .map_err(|e| ErrorResponse::internal(e.to_string()))?;
         (
             device_type,
             format!(
                 "Attached topic '{}' to existing device '{}' with identity_field='{}'",
-                topic, real_id, identity_field
+                topic, real_id, identity_field_label
             ),
         )
     } else {
@@ -838,7 +891,7 @@ pub async fn confirm_association_draft(
             device_type,
             format!(
                 "Registered device '{}' ({}) with identity_field='{}' on topic '{}'",
-                real_id, type_message, identity_field, topic
+                real_id, type_message, identity_field_label, topic
             ),
         )
     };

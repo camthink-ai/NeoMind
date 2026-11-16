@@ -493,3 +493,162 @@ async fn confirm_real_identity_registers_b_not_placeholder() {
         "pending draft consumed after confirm"
     );
 }
+
+/// NM-190: attach to existing B must update topic + identity (not register's
+/// name-only duplicate branch). Draft consumed only after a real config write.
+#[tokio::test]
+async fn confirm_attach_existing_b_updates_topic_and_identity() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let topic = "device/gw/A/uplink";
+
+    // Pre-existing B on a stale topic / identity (the attach target).
+    let mut stale_extra = HashMap::new();
+    stale_extra.insert(MQTT_IDENTITY_SOURCE_KEY.to_string(), json!("topic_strong"));
+    state
+        .devices
+        .registry
+        .register_device(DeviceConfig {
+            device_id: "B".to_string(),
+            name: "Old B".to_string(),
+            device_type: "gw".to_string(),
+            adapter_type: "mqtt".to_string(),
+            connection_config: ConnectionConfig {
+                telemetry_topic: Some("device/gw/B/uplink".to_string()),
+                extra: stale_extra,
+                ..Default::default()
+            },
+            adapter_id: Some("test-mqtt".to_string()),
+            last_seen: 0,
+            offline_timeout_secs: None,
+        })
+        .await
+        .unwrap();
+
+    let result = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: None,
+            new_type: None,
+            device_name: Some("Device B attached".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await
+    .expect("confirm attach to existing B must succeed");
+    let resp = result.0.data.expect("confirm response");
+    assert!(resp.registered);
+    assert_eq!(resp.system_device_id, "B");
+
+    let b = state
+        .devices
+        .service
+        .get_device("B")
+        .expect("B still registered");
+    assert_eq!(b.name, "Device B attached");
+    assert_eq!(b.connection_config.telemetry_topic.as_deref(), Some(topic));
+    assert_eq!(
+        b.connection_config
+            .extra
+            .get(MQTT_IDENTITY_FIELD_KEY)
+            .and_then(|v| v.as_str()),
+        Some("sn")
+    );
+    assert_eq!(
+        b.connection_config
+            .extra
+            .get(MQTT_IDENTITY_SOURCE_KEY)
+            .and_then(|v| v.as_str()),
+        Some("auto_payload")
+    );
+
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    assert!(
+        manager.get_draft(&pending).await.is_none(),
+        "pending draft consumed after successful attach"
+    );
+}
+
+/// NM-190: bad identity config must not consume the draft or claim success.
+#[tokio::test]
+async fn confirm_bad_identity_config_does_not_consume_draft() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+
+    // Invalid identity_source enum.
+    let bad_source = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("not_a_source".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: None,
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(bad_source.is_err(), "unknown identity_source must fail");
+    assert!(
+        manager.get_draft(&pending).await.is_some(),
+        "draft must remain after bad identity_source"
+    );
+    assert!(state.devices.service.get_device("B").is_none());
+
+    // Empty identity_field for payload source.
+    let empty_field = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "   ".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: None,
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(empty_field.is_err(), "empty identity_field must fail");
+    assert!(manager.get_draft(&pending).await.is_some());
+
+    // Sample has sn=B; confirming C with field sn must fail closed.
+    let mismatch = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "C".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: None,
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(
+        mismatch.is_err(),
+        "sample sn=B must not confirm device_id=C"
+    );
+    assert!(
+        manager.get_draft(&pending).await.is_some(),
+        "draft must remain after sample mismatch"
+    );
+    assert!(
+        state.devices.service.get_device("C").is_none(),
+        "failed confirm must not register C"
+    );
+    assert!(
+        state.devices.service.get_device("B").is_none(),
+        "failed confirm must not invent B either"
+    );
+}

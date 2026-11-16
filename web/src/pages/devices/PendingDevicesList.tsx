@@ -365,7 +365,7 @@ export function PendingDevicesList({
       handleError(error, {
         operation: 'Confirm association',
         showToast: true,
-        fallbackMessage: t('devices:pending.associationException.confirmFailed'),
+        userMessage: t('devices:pending.associationException.confirmFailed'),
       })
     } finally {
       setProcessing(null)
