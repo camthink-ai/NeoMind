@@ -63,6 +63,7 @@ impl MqttAdapter {
             metric_cache: Arc::new(RwLock::new(HashMap::new())),
             topic_to_device: Arc::new(RwLock::new(HashMap::new())),
             outbound_echoes: Arc::new(RwLock::new(OutboundEchoBuffer::new())),
+            uncollectable: Arc::new(RwLock::new(std::collections::HashSet::new())),
             extractor,
             data_dir: Arc::new(RwLock::new(None)),
         }
@@ -133,6 +134,7 @@ impl MqttAdapter {
             metric_cache: Arc::new(RwLock::new(HashMap::new())),
             topic_to_device: Arc::new(RwLock::new(HashMap::new())),
             outbound_echoes: Arc::new(RwLock::new(OutboundEchoBuffer::new())),
+            uncollectable: Arc::new(RwLock::new(std::collections::HashSet::new())),
             extractor,
             data_dir: Arc::new(RwLock::new(None)),
         }
@@ -450,6 +452,7 @@ impl MqttAdapter {
         let extractor = self.extractor.clone();
         let topic_to_device = self.topic_to_device.clone();
         let outbound_echoes = self.outbound_echoes.clone();
+        let uncollectable = self.uncollectable.clone();
         let data_dir_clone = self.data_dir.clone();
 
         info!(
@@ -525,6 +528,7 @@ impl MqttAdapter {
                                 &extractor,
                                 &topic_to_device,
                                 &outbound_echoes,
+                                &uncollectable,
                                 data_dir_clone.read().await.as_ref(),
                             ))
                             .catch_unwind()
@@ -791,6 +795,7 @@ impl MqttAdapter {
         let extractor = self.extractor.clone();
         let topic_to_device = self.topic_to_device.clone();
         let outbound_echoes = self.outbound_echoes.clone();
+        let uncollectable = self.uncollectable.clone();
         let data_dir_clone = self.data_dir.clone();
 
         let (eventloop_tx, eventloop_rx) = async_channel::unbounded();
@@ -814,6 +819,7 @@ impl MqttAdapter {
                             &extractor,
                             &topic_to_device,
                             &outbound_echoes,
+                            &uncollectable,
                             data_dir_clone.read().await.as_ref(),
                         )
                         .await;

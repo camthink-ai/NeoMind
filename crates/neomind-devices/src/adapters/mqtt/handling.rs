@@ -21,7 +21,7 @@ use neomind_core::EventBus;
 
 use neomind_core::NeoMindEvent;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use std::path::PathBuf;
 
@@ -33,8 +33,9 @@ use tracing::{debug, error, info, warn};
 
 use super::identity::{
     approved_identity_from_extra, lookup_topic_device_ids, match_by_approved_identity,
-    match_registered_device, resolve_mqtt_device_identity, topic_map_insert, OutboundEchoBuffer,
-    TopicDeviceMap, MQTT_IDENTITY_FIELD_KEY, MQTT_IDENTITY_SOURCE_KEY, OUTBOUND_ECHO_TTL,
+    match_registered_device, resolve_mqtt_device_identity, topic_map_insert,
+    ApprovedIdentityOutcome, OutboundEchoBuffer, TopicDeviceMap, MQTT_IDENTITY_FIELD_KEY,
+    MQTT_IDENTITY_SOURCE_KEY, OUTBOUND_ECHO_TTL,
 };
 
 impl MqttAdapter {
@@ -228,6 +229,7 @@ impl MqttAdapter {
         extractor: &Arc<UnifiedExtractor>,
         topic_to_device: &Arc<RwLock<TopicDeviceMap>>,
         outbound_echoes: &Arc<RwLock<OutboundEchoBuffer>>,
+        uncollectable: &Arc<RwLock<HashSet<String>>>,
         data_dir: Option<&PathBuf>,
     ) {
         match notification {
@@ -305,22 +307,14 @@ impl MqttAdapter {
                     }
                 }
 
-                // Bound devices on this topic (explicit telemetry wins over shape).
+                // Bound devices on this topic (explicit telemetry / learned map).
+                // Topic shape is not purpose: unbound NeoMind `…/downlink` may still
+                // become a discovery candidate. `$SYS` (above) and outbound echo
+                // suppression remain the only protocol drops.
                 let bound_devices = {
                     let mapping = topic_to_device.read().await;
                     lookup_topic_device_ids(&mapping, &topic)
                 };
-
-                // NeoMind-shaped downlink is protocol-special only when unbound.
-                // Explicit telemetry config on `device/{type}/{id}/downlink` continues.
-                // Unbound command-channel noise is still dropped (echo covers our own sends).
-                if looks_like_non_telemetry_topic(&topic) && bound_devices.is_empty() {
-                    debug!(
-                        "Skipping unbound protocol-special non-telemetry topic: {}",
-                        topic
-                    );
-                    return;
-                }
 
                 // Discovery-rule identity (adapter config / auto-detect). Used for
                 // unknown identities and as fallback when no approved per-device rule.
@@ -334,37 +328,50 @@ impl MqttAdapter {
                 );
 
                 // Registered devices: prefer each device's approved identity rule
-                // (sticky source/field from draft/approve). Then discovery match +
-                // explicit 1:1 bind compat. Never "sole registrant gets everything"
-                // when the message claims an unknown JSON identity.
+                // (sticky source/field from draft/approve). Compat fallback to
+                // match_registered_device only when no claiming approved rule fired
+                // a mismatch — otherwise auto-detect must not remap e.g. approved
+                // `sn=B` onto registered A via payload `device_id=A`.
+                let mut approved_blocked = HashSet::new();
                 let mut device_id_opt = {
                     let registry = device_registry.read().await;
-                    if let Some(id) = match_by_approved_identity(
+                    match match_by_approved_identity(
                         &bound_devices,
                         &topic,
                         &payload,
                         config,
                         |dev_id| {
-                            registry
-                                .get_device(dev_id)
-                                .and_then(|d| approved_identity_from_extra(&d.connection_config.extra))
+                            registry.get_device(dev_id).and_then(|d| {
+                                approved_identity_from_extra(&d.connection_config.extra)
+                            })
                         },
                     ) {
-                        Some(id)
-                    } else {
-                        let mapping = topic_to_device.read().await;
-                        match_registered_device(&mapping, &topic, &identity)
+                        ApprovedIdentityOutcome::Match(id) => Some(id),
+                        ApprovedIdentityOutcome::NoRule => {
+                            let mapping = topic_to_device.read().await;
+                            match_registered_device(&mapping, &topic, &identity)
+                        }
+                        ApprovedIdentityOutcome::Conflict { blocked } => {
+                            approved_blocked = blocked;
+                            None
+                        }
                     }
                 };
 
                 // CT-Prov bare-topic / stale map: strong-extract id already in the
                 // **live registry** → associate + learn the topic, do NOT draft.
-                // device_types cache alone is NOT proof of registration (delete
-                // must not leave stale cache hits that re-learn and keep ingesting).
+                // Obey approved-mismatch blocks and the delete-teardown ban.
                 if device_id_opt.is_none()
                     && identity.source == super::identity::MqttIdentitySource::TopicStrong
+                    && !approved_blocked.contains(&identity.device_id)
                 {
-                    let known = {
+                    let banned = {
+                        let u = uncollectable.read().await;
+                        u.contains(&identity.device_id)
+                    };
+                    let known = if banned {
+                        false
+                    } else {
                         let registry = device_registry.read().await;
                         registry.get_device(&identity.device_id).is_some()
                     };
@@ -376,6 +383,60 @@ impl MqttAdapter {
                             identity.device_id, topic
                         );
                         device_id_opt = Some(identity.device_id.clone());
+                    }
+                }
+
+                // Formal routing requires a live, collectable registration.
+                if let Some(ref id) = device_id_opt {
+                    let banned = {
+                        let u = uncollectable.read().await;
+                        u.contains(id)
+                    };
+                    if banned || approved_blocked.contains(id) {
+                        debug!(
+                            "Skipping formal route for banned/blocked device {} on {}",
+                            id, topic
+                        );
+                        device_id_opt = None;
+                        if banned {
+                            // Teardown in progress — do not rediscover mid-delete.
+                            return;
+                        }
+                    } else {
+                        let registered = {
+                            let registry = device_registry.read().await;
+                            registry.get_device(id).is_some()
+                        };
+                        if !registered {
+                            debug!(
+                                "Dropping stale map route for unregistered device {} on {}",
+                                id, topic
+                            );
+                            device_id_opt = None;
+                        }
+                    }
+                }
+
+                // Mid-delete (banned + still registered): no discovery draft.
+                // After registry remove, banned-but-unregistered may rediscover
+                // (ban clears on re-subscribe).
+                if device_id_opt.is_none() {
+                    let banned = {
+                        let u = uncollectable.read().await;
+                        u.contains(&identity.device_id)
+                    };
+                    if banned {
+                        let still_registered = {
+                            let registry = device_registry.read().await;
+                            registry.get_device(&identity.device_id).is_some()
+                        };
+                        if still_registered {
+                            debug!(
+                                "Skipping discovery for uncollectable+registered identity {} on {}",
+                                identity.device_id, topic
+                            );
+                            return;
+                        }
                     }
                 }
 

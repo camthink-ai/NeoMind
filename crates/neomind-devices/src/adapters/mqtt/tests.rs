@@ -273,11 +273,10 @@ fn test_ct_prov_bare_topic_extracts_device_id_not_type() {
     );
 }
 
-/// Downlink is a command channel: never classify as telemetry, never pass the
-/// non-telemetry filter (auto-onboard / auto-learn must not treat echoes as
-/// metrics under wide `#` subscriptions).
+/// Downlink is not a NeoMind telemetry topic shape, but unbound downlink is
+/// no longer dropped by the protocol filter (topic shape ≠ purpose).
 #[test]
-fn test_downlink_is_not_telemetry_and_skips_auto_onboard() {
+fn test_downlink_is_not_telemetry_shape() {
     let downlink = "device/ne101_camera/000012e186d30000/downlink";
     assert!(
         !is_neomind_device_telemetry_topic(downlink),
@@ -285,8 +284,8 @@ fn test_downlink_is_not_telemetry_and_skips_auto_onboard() {
     );
     assert!(is_neomind_device_downlink_topic(downlink));
     assert!(
-        looks_like_non_telemetry_topic(downlink),
-        "downlink must be filtered from auto-onboarding"
+        !looks_like_non_telemetry_topic(downlink),
+        "unbound NeoMind downlink must remain discoverable"
     );
 
     // Uplink / bare remain telemetry.
@@ -445,8 +444,8 @@ fn test_parse_sys_presence_topic_handles_internal_client_id() {
 }
 
 /// Custom topics whose *name* contains status/downlink/offline remain
-/// discoverable. Only `$SYS` and NeoMind family `…/downlink` are protocol
-/// specials. Human approve is the gate for LWT-looking topics.
+/// discoverable. Only `$SYS` is a protocol-layer drop. Human approve is the
+/// gate for LWT-looking topics; NeoMind `…/downlink` shape is discoverable.
 #[test]
 fn test_custom_status_and_downlink_topics_are_discoverable() {
     assert!(!looks_like_non_telemetry_topic("aicam/status/offline"));
@@ -462,11 +461,11 @@ fn test_custom_status_and_downlink_topics_are_discoverable() {
     assert!(!looks_like_non_telemetry_topic(
         "device/ne301_camera/2819FD/uplink"
     ));
-
-    // True protocol specials still filtered.
-    assert!(looks_like_non_telemetry_topic(
+    assert!(!looks_like_non_telemetry_topic(
         "device/ne101_camera/000012e186d30000/downlink"
     ));
+
+    // Only $SYS remains a protocol-layer drop.
     assert!(looks_like_non_telemetry_topic(
         "$SYS/brokers/n/clients/c/connected"
     ));
@@ -714,6 +713,34 @@ fn acceptance_nested_auto_detect_persists_full_field_path() {
     assert_eq!(id.field.as_deref(), Some("data.sn"));
 }
 
+#[test]
+fn approved_payload_mismatch_is_conflict_not_fallback() {
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let bound = std::collections::HashSet::from(["A".to_string()]);
+    let outcome = match_by_approved_identity(
+        &bound,
+        "gateway/data",
+        b"{\"sn\":\"B\",\"device_id\":\"A\"}",
+        &cfg,
+        |_| Some((MqttIdentitySource::AutoPayload, Some("sn".to_string()))),
+    );
+    match outcome {
+        ApprovedIdentityOutcome::Conflict { blocked } => {
+            assert!(blocked.contains("A"));
+        }
+        other => panic!("expected Conflict, got {:?}", other),
+    }
+    // NoRule path still allows 1:1 compat when only weak rules exist.
+    let weak = match_by_approved_identity(
+        &bound,
+        "factory/temperature",
+        b"{\"temperature\":25}",
+        &cfg,
+        |_| Some((MqttIdentitySource::TopicWeak, None)),
+    );
+    assert_eq!(weak, ApprovedIdentityOutcome::NoRule);
+}
+
 // ---------------------------------------------------------------------------
 // Handling-path integration: approve → persist → reload → handle → delete
 // ---------------------------------------------------------------------------
@@ -721,9 +748,7 @@ fn acceptance_nested_auto_detect_persists_full_field_path() {
 mod handling_path {
     use super::super::*;
     use crate::adapter::{DeviceAdapter, DeviceEvent};
-    use crate::registry::{
-        ConnectionConfig, DeviceConfig, DeviceRegistry, DeviceTypeTemplate,
-    };
+    use crate::registry::{ConnectionConfig, DeviceConfig, DeviceRegistry, DeviceTypeTemplate};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::broadcast;
@@ -846,6 +871,7 @@ mod handling_path {
             &adapter.extractor,
             &adapter.topic_to_device,
             &adapter.outbound_echoes,
+            &adapter.uncollectable,
             data_dir.as_ref(),
         )
         .await;
@@ -906,15 +932,7 @@ mod handling_path {
         let registry = Arc::new(DeviceRegistry::new());
         seed_template(&registry, "cam").await;
         let topic = "device/cam/dev-1/uplink";
-        approve_device(
-            &registry,
-            "dev-1",
-            "cam",
-            topic,
-            Some("topic_strong"),
-            None,
-        )
-        .await;
+        approve_device(&registry, "dev-1", "cam", topic, Some("topic_strong"), None).await;
 
         let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
         adapter.set_shared_device_registry(registry.clone()).await;
@@ -1004,8 +1022,8 @@ mod handling_path {
         reload_bindings(&adapter).await;
 
         assert!(
-            looks_like_non_telemetry_topic(topic),
-            "precondition: shape looks like command channel"
+            is_neomind_device_downlink_topic(topic),
+            "precondition: NeoMind downlink topic shape"
         );
 
         let mut rx = adapter.event_tx.subscribe();
@@ -1020,20 +1038,173 @@ mod handling_path {
     }
 
     #[tokio::test]
-    async fn unbound_downlink_still_dropped_without_discovery() {
+    async fn unbound_downlink_becomes_discovery_candidate() {
         let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
         let mut rx = adapter.event_tx.subscribe();
         handle(
             &adapter,
             "device/cam/ghost/downlink",
-            b"{\"cmd\":\"x\"}",
+            b"{\"temperature\":1}",
         )
         .await;
         let events = drain(&mut rx);
         assert!(metric_ids(&events).is_empty());
-        assert!(
-            discovery_ids(&events).is_empty(),
-            "unbound NeoMind downlink must not enter discovery"
+        assert_eq!(
+            discovery_ids(&events),
+            vec!["ghost".to_string()],
+            "unbound NeoMind downlink must enter discovery (shape ≠ purpose)"
         );
+    }
+
+    #[tokio::test]
+    async fn approved_mismatch_does_not_ingest_via_other_field() {
+        // Approved sticky field is sn=A; payload claims sn=B but also device_id=A.
+        // Auto-detect prefers device_id — must NOT remap onto A.
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "A",
+            "gw",
+            "gateway/data",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry).await;
+        reload_bindings(&adapter).await;
+
+        let mut rx = adapter.event_tx.subscribe();
+        handle(
+            &adapter,
+            "gateway/data",
+            b"{\"sn\":\"B\",\"device_id\":\"A\",\"v\":1}",
+        )
+        .await;
+        let events = drain(&mut rx);
+        assert!(
+            metric_ids(&events).is_empty(),
+            "approved sn mismatch must not ingest to A via device_id; got {:?}",
+            metric_ids(&events)
+        );
+        // Discovery may still resolve via auto-detect field order; the P1
+        // invariant is no formal ingest remapping onto A.
+    }
+
+    #[tokio::test]
+    async fn delete_interleave_cannot_relearn_while_registry_still_has_device() {
+        // Controllable delete window: adapter teardown done (uncollectable +
+        // maps cleared) while registry still lists the device — uplink must
+        // not restore topic mapping or formally ingest.
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "cam").await;
+        let topic = "device/cam/dev-1/uplink";
+        approve_device(&registry, "dev-1", "cam", topic, Some("topic_strong"), None).await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry.clone()).await;
+        {
+            let mut types = adapter.device_types.write().await;
+            types.insert("dev-1".to_string(), "cam".to_string());
+            let mut map = adapter.topic_to_device.write().await;
+            topic_map_insert(&mut map, topic, "dev-1");
+        }
+
+        // Phase 1 of delete (adapter): mark + clear. Registry still has device.
+        DeviceAdapter::unsubscribe_device(&adapter, "dev-1")
+            .await
+            .unwrap();
+        assert!(adapter.uncollectable.read().await.contains("dev-1"));
+        assert!(registry.get_device("dev-1").is_some());
+        assert!(lookup_topic_device_ids(&*adapter.topic_to_device.read().await, topic).is_empty());
+
+        let mut rx = adapter.event_tx.subscribe();
+        handle(&adapter, topic, b"{\"temp\":1}").await;
+        let mid = drain(&mut rx);
+        assert!(
+            metric_ids(&mid).is_empty(),
+            "delete window must not formally ingest"
+        );
+        assert!(
+            discovery_ids(&mid).is_empty(),
+            "delete window must not rediscover mid-teardown"
+        );
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, topic).is_empty(),
+            "CT-Prov must not re-learn topic while uncollectable"
+        );
+        assert!(
+            adapter.uncollectable.read().await.contains("dev-1"),
+            "ban must remain through the delete window"
+        );
+
+        // Phase 2: registry remove — next uplink rediscovers only (ban may
+        // linger until re-subscribe; unregistered+banned still discovers).
+        registry.unregister_device("dev-1").unwrap();
+        handle(&adapter, topic, b"{\"temp\":2}").await;
+        let after = drain(&mut rx);
+        assert!(metric_ids(&after).is_empty());
+        assert_eq!(discovery_ids(&after), vec!["dev-1".to_string()]);
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, topic).is_empty(),
+            "post-delete uplink must not restore formal mapping"
+        );
+    }
+
+    #[tokio::test]
+    async fn persist_reload_approved_identity_still_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("devices.redb");
+
+        {
+            let registry = Arc::new(DeviceRegistry::with_persistence(&db).await.unwrap());
+            seed_template(&registry, "gw").await;
+            approve_device(
+                &registry,
+                "A",
+                "gw",
+                "gateway/data",
+                Some("auto_payload"),
+                Some("sn"),
+            )
+            .await;
+            // Drop registry → close storage handle.
+        }
+
+        let registry = Arc::new(DeviceRegistry::with_persistence(&db).await.unwrap());
+        assert!(
+            registry.get_device("A").is_some(),
+            "device must reload from disk"
+        );
+        let extra = &registry.get_device("A").unwrap().connection_config.extra;
+        assert_eq!(
+            extra.get(MQTT_IDENTITY_SOURCE_KEY).and_then(|v| v.as_str()),
+            Some("auto_payload")
+        );
+        assert_eq!(
+            extra.get(MQTT_IDENTITY_FIELD_KEY).and_then(|v| v.as_str()),
+            Some("sn")
+        );
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry).await;
+        reload_bindings(&adapter).await;
+
+        let mut rx = adapter.event_tx.subscribe();
+        handle(
+            &adapter,
+            "gateway/data",
+            b"{\"sn\":\"A\",\"device_id\":\"OTHER\",\"v\":1}",
+        )
+        .await;
+        let events = drain(&mut rx);
+        assert_eq!(
+            metric_ids(&events),
+            vec!["A".to_string()],
+            "reloaded approved sn must stick after persist restart"
+        );
+        assert!(discovery_ids(&events).is_empty());
     }
 }

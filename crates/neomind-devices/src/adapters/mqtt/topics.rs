@@ -410,16 +410,14 @@ pub(crate) fn extract_device_type_from_topic(topic: &str) -> Option<String> {
     }
 }
 
-/// Topics that must NOT enter discovery / telemetry.
+/// Topics that must NOT enter discovery / telemetry at the protocol layer.
 ///
-/// Only true protocol specials remain here:
-/// - MQTT `$SYS/...` broker internals
-/// - NeoMind family command channel `device/{type}/{id}/downlink`
-///
-/// Custom topics whose *name* happens to contain `status` / `downlink` /
-/// `offline` stay discoverable (human approve is the gate). Outbound
-/// command echoes are suppressed by topic+payload+TTL matching, not by
-/// topic-word filters.
+/// Only MQTT `$SYS/...` broker internals remain here. NeoMind-shaped
+/// `device/{type}/{id}/downlink` is **not** dropped unbound — topic shape ≠
+/// purpose; first uplink on that path may become a discovery candidate.
+/// Outbound command echoes are suppressed by topic+payload+TTL matching.
+/// Explicit telemetry binds on a downlink-shaped topic still ingest via the
+/// topic map. `$SYS` presence synthesis short-circuits earlier in handling.
 pub(crate) fn looks_like_non_telemetry_topic(topic: &str) -> bool {
-    topic.starts_with("$SYS") || is_neomind_device_downlink_topic(topic)
+    topic.starts_with("$SYS")
 }

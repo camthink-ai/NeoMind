@@ -222,6 +222,12 @@ impl DeviceAdapter for MqttAdapter {
     async fn subscribe_device(&self, device_id: &str) -> AdapterResult<()> {
         info!("subscribe_device called for device_id: {}", device_id);
 
+        // Re-registration after delete clears the teardown ban.
+        {
+            let mut banned = self.uncollectable.write().await;
+            banned.remove(device_id);
+        }
+
         // Get the device configuration to find its telemetry topic
         let device_opt = self.device_registry.read().await.get_device(device_id);
         info!(
@@ -321,9 +327,17 @@ impl DeviceAdapter for MqttAdapter {
     }
 
     async fn unsubscribe_device(&self, device_id: &str) -> AdapterResult<()> {
-        // Live registry is source of truth after delete. Clear the type cache
-        // first so a late uplink cannot treat a cache hit as "still registered"
-        // and re-learn the topic (wildcard uplink keep-writing bug).
+        // FIRST: mark uncollectable / unlearnable before clearing maps or
+        // awaiting broker unsubscribe. Registry removal happens later in
+        // DeviceService — a message in that window must not re-insert the
+        // topic map just because the device is still in the registry.
+        {
+            let mut banned = self.uncollectable.write().await;
+            banned.insert(device_id.to_string());
+        }
+
+        // Clear the type cache so a late uplink cannot treat a cache hit as
+        // "still registered" and re-learn the topic.
         {
             let mut types = self.device_types.write().await;
             types.remove(device_id);

@@ -28,7 +28,7 @@ use crate::unified_extractor::UnifiedExtractor;
 use base64::Engine as _;
 use futures::StreamExt;
 use neomind_core::EventBus;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -84,6 +84,10 @@ pub struct MqttAdapter {
     /// Recent outbound command publishes for short-TTL echo suppression
     /// (match topic + payload + time — not "topic ever used for outbound").
     pub(crate) outbound_echoes: Arc<RwLock<identity::OutboundEchoBuffer>>,
+    /// Device ids in teardown: uncollectable / unlearnable until cleared on
+    /// re-subscribe. Marked at the start of delete so a late uplink cannot
+    /// re-learn a topic while the registry still lists the device.
+    pub(crate) uncollectable: Arc<RwLock<HashSet<String>>>,
     /// Unified data extractor
     pub(crate) extractor: Arc<UnifiedExtractor>,
     /// Data directory for image storage (runtime, not config)

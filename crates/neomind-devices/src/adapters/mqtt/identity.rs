@@ -403,21 +403,53 @@ pub fn match_registered_device(
     None
 }
 
+/// Outcome of matching bound devices' approved identity rules.
+///
+/// Distinguishes "no sticky rule" (1:1 / discovery-field fallback OK) from
+/// "sticky rule fired but mismatched" (must NOT remap the same device via
+/// other payload fields such as `device_id` when approved field was `sn`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovedIdentityOutcome {
+    /// Approved rule extracted an id equal to a bound device.
+    Match(String),
+    /// At least one claiming approved rule extracted a different identity.
+    /// Those device ids must not be attributed via `match_registered_device`
+    /// remapping (auto-detect / 1:1 compat).
+    Conflict { blocked: HashSet<String> },
+    /// No bound device carried a claiming approved rule that fired.
+    NoRule,
+}
+
+/// True for identity sources that are sticky claims (not weak discovery noise).
+fn is_claiming_approved_source(source: MqttIdentitySource) -> bool {
+    matches!(
+        source,
+        MqttIdentitySource::ConfiguredPayload
+            | MqttIdentitySource::AutoPayload
+            | MqttIdentitySource::TopicStrong
+    )
+}
+
 /// Try each bound device's **approved** identity rule against this payload.
 /// First exact match wins (shared-topic split stays order-stable per insert).
+///
+/// When a claiming rule extracts a value that does **not** equal that device,
+/// returns [`ApprovedIdentityOutcome::Conflict`] so ingest does not fall back
+/// to auto-detected fields that happen to name the same registered device.
 pub fn match_by_approved_identity<F>(
     bound_devices: &HashSet<String>,
     topic: &str,
     payload: &[u8],
     config: &MqttAdapterConfig,
     mut rule_for: F,
-) -> Option<String>
+) -> ApprovedIdentityOutcome
 where
     F: FnMut(&str) -> Option<(MqttIdentitySource, Option<String>)>,
 {
     // Deterministic order for shared topics.
     let mut ids: Vec<&String> = bound_devices.iter().collect();
     ids.sort();
+    let mut blocked = HashSet::new();
     for device_id in ids {
         let Some((source, field)) = rule_for(device_id) else {
             continue;
@@ -426,11 +458,20 @@ where
             extract_with_approved_rule(topic, payload, source, field.as_deref(), config)
         {
             if extracted == *device_id {
-                return Some(device_id.clone());
+                return ApprovedIdentityOutcome::Match(device_id.clone());
+            }
+            // TopicWeak / TopicHash are discovery fallbacks — a segment mismatch
+            // must not block explicit 1:1 bind compat.
+            if is_claiming_approved_source(source) {
+                blocked.insert(device_id.clone());
             }
         }
     }
-    None
+    if blocked.is_empty() {
+        ApprovedIdentityOutcome::NoRule
+    } else {
+        ApprovedIdentityOutcome::Conflict { blocked }
+    }
 }
 
 // ---------- Outbound echo suppression (topic + payload + short TTL) ----------
