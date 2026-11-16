@@ -200,6 +200,9 @@ pub struct DeviceTypeTemplate {
     /// builtin type are preserved (and keep this marker).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builtin_version: Option<String>,
+    /// Optional CamThink CT-Prov discovery/provision metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ct_prov: Option<neomind_storage::device_registry::CtProvMetadata>,
 }
 
 impl DeviceTypeTemplate {
@@ -217,6 +220,7 @@ impl DeviceTypeTemplate {
             default_offline_timeout_secs: None,
             store_raw: None,
             builtin_version: None,
+            ct_prov: None,
         }
     }
 
@@ -592,6 +596,7 @@ impl DeviceRegistry {
                 default_offline_timeout_secs: storage_template.default_offline_timeout_secs,
                 store_raw: storage_template.store_raw,
                 builtin_version: storage_template.builtin_version,
+                ct_prov: storage_template.ct_prov,
             };
 
             self.templates
@@ -747,6 +752,7 @@ impl DeviceRegistry {
                 default_offline_timeout_secs: template.default_offline_timeout_secs,
                 store_raw: template.store_raw,
                 builtin_version: template.builtin_version.clone(),
+                ct_prov: template.ct_prov.clone(),
             };
             store
                 .save_template(&storage_template)
@@ -884,6 +890,7 @@ impl DeviceRegistry {
             default_offline_timeout_secs: template.default_offline_timeout_secs,
             store_raw: template.store_raw,
             builtin_version: template.builtin_version.clone(),
+            ct_prov: template.ct_prov.clone(),
         };
 
         self.templates.insert(device_type, template);

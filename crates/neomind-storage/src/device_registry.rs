@@ -70,6 +70,31 @@ pub struct DeviceTypeTemplate {
     /// deserialization of records written by older installs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builtin_version: Option<String>,
+    /// Optional CamThink CT-Prov discovery/provision metadata.
+    /// Forward-compatible: absent on older templates; ignored by older NeoMind.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ct_prov: Option<CtProvMetadata>,
+}
+
+/// CamThink CT-Prov metadata carried on a device type template.
+#[derive(utoipa::ToSchema, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CtProvMetadata {
+    /// BLE advertising model_code (e.g. 0x01 = NE101).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_code: Option<u8>,
+    /// Canonical model string reported by device.info (e.g. "NE101").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+    /// SoftAP / legacy SSID family prefixes (e.g. "NE101", "NE503").
+    /// `CT-AP-<MAC6>` is always recognized separately by the client.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ap_ssid_families: Vec<String>,
+    /// SoftAP HTTP gateway host (no scheme), e.g. "192.168.1.1".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub softap_default_host: Option<String>,
+    /// Discovery channels this type supports: "ble" and/or "ap".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_discovery: Vec<String>,
 }
 
 /// Metric definition (matches neomind_devices::mdl_format::MetricDefinition)
@@ -878,6 +903,10 @@ impl DeviceRegistryStore {
                 "ne302_camera",
                 include_str!("builtin_types/ne302_camera.json"),
             ),
+            (
+                "ne503_camera",
+                include_str!("builtin_types/ne503_camera.json"),
+            ),
         ];
 
         let mut changed = 0;
@@ -1025,6 +1054,7 @@ mod tests {
             default_offline_timeout_secs: None,
             store_raw: None,
             builtin_version: None,
+            ct_prov: None,
         };
 
         store.save_template(&template).unwrap();
@@ -1194,13 +1224,14 @@ mod tests {
     fn test_seed_builtin_templates() {
         let store = create_temp_store();
 
-        // First seed should insert NE101, NE301 and NE302
+        // First seed should insert NE101, NE301, NE302 and NE503
         let seeded = store.seed_builtin_templates().unwrap();
-        assert_eq!(seeded, 3);
+        assert_eq!(seeded, 4);
 
         // Templates should exist
         assert!(store.template_exists("ne101_camera").unwrap());
         assert!(store.template_exists("ne301_camera").unwrap());
+        assert!(store.template_exists("ne503_camera").unwrap());
         assert!(store.template_exists("ne302_camera").unwrap());
 
         // Verify NE101 content
@@ -1208,6 +1239,9 @@ mod tests {
         assert_eq!(ne101.device_type, "ne101_camera");
         assert!(ne101.name.contains("NE101") || ne101.name.contains("Sensing"));
         assert!(!ne101.metrics.is_empty());
+        let ne101_ct = ne101.ct_prov.as_ref().expect("ne101 ct_prov metadata");
+        assert_eq!(ne101_ct.model_code, Some(1));
+        assert_eq!(ne101_ct.softap_default_host.as_deref(), Some("192.168.1.1"));
 
         // Verify NE301 content
         let ne301 = store.load_template("ne301_camera").unwrap().unwrap();
@@ -1215,6 +1249,17 @@ mod tests {
         assert!(ne301.name.contains("NE301") || ne301.name.contains("Edge AI"));
         assert!(!ne301.metrics.is_empty());
         assert!(!ne301.commands.is_empty()); // NE301 has capture/sleep commands
+        assert_eq!(
+            ne301.ct_prov.as_ref().and_then(|c| c.softap_default_host.as_deref()),
+            Some("192.168.10.10")
+        );
+
+        let ne503 = store.load_template("ne503_camera").unwrap().unwrap();
+        assert_eq!(ne503.device_type, "ne503_camera");
+        assert_eq!(
+            ne503.ct_prov.as_ref().and_then(|c| c.softap_default_host.as_deref()),
+            Some("10.0.0.1")
+        );
 
         // Verify NE302 content (NE301-compatible protocol + trigger_type)
         let ne302 = store.load_template("ne302_camera").unwrap().unwrap();
@@ -1258,14 +1303,15 @@ mod tests {
             default_offline_timeout_secs: None,
             store_raw: None,
             builtin_version: None,
+            ct_prov: None,
         };
         store.save_template(&custom).unwrap();
 
-        // Seed must NOT overwrite the existing NE101; insert NE301/NE302 fresh
+        // Seed must NOT overwrite the existing NE101; insert NE301/NE302/NE503 fresh
         let seeded = store.seed_builtin_templates().unwrap();
         assert_eq!(
-            seeded, 2,
-            "only NE301/NE302 inserted; existing NE101 untouched"
+            seeded, 3,
+            "only NE301/NE302/NE503 inserted; existing NE101 untouched"
         );
 
         // Existing NE101 is preserved verbatim (not reset to the bundled one)
@@ -1290,13 +1336,14 @@ mod tests {
             commands: vec![],
             default_offline_timeout_secs: None,
             builtin_version: None, // No version = user-created
+            ct_prov: None,
             store_raw: None,
         };
         store.save_template(&user_template).unwrap();
 
         // Seed should NOT overwrite the user template
         let seeded = store.seed_builtin_templates().unwrap();
-        assert_eq!(seeded, 2); // Only NE301/NE302 were inserted, NE101 was skipped
+        assert_eq!(seeded, 3); // NE301/NE302/NE503 inserted; NE101 skipped
 
         // Verify user template is preserved
         let loaded = store.load_template("ne101_camera").unwrap().unwrap();

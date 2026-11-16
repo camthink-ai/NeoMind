@@ -377,6 +377,7 @@ pub async fn approve_draft_device(
                 default_offline_timeout_secs: None,
                 store_raw: None,
                 builtin_version: None, // auto-onboard types are user-domain, never builtin
+                ct_prov: None,
             };
 
             // Register the device type template

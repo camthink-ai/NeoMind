@@ -2,7 +2,10 @@
   "device_type": "ne101_camera",
   "name": "CamThink NE101 Sensing Camera",
   "description": "CamThink NE101 sensing camera with low-power battery support and button-triggered capture. Ideal for remote monitoring and photo capture scenarios.",
-  "categories": ["Camera", "Sensing"],
+  "categories": [
+    "Camera",
+    "Sensing"
+  ],
   "mode": "full",
   "store_raw": false,
   "metrics": [
@@ -104,5 +107,17 @@
       }
     }
   ],
-  "commands": []
+  "commands": [],
+  "ct_prov": {
+    "model_code": 1,
+    "model_name": "NE101",
+    "ap_ssid_families": [
+      "NE101"
+    ],
+    "softap_default_host": "192.168.1.1",
+    "supported_discovery": [
+      "ble",
+      "ap"
+    ]
+  }
 }

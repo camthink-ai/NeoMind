@@ -80,6 +80,9 @@ pub struct DeviceTypeDto {
     /// user-created / imported ones
     #[serde(skip_serializing_if = "Option::is_none")]
     pub builtin_version: Option<String>,
+    /// Optional CamThink CT-Prov discovery/provision metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ct_prov: Option<neomind_storage::device_registry::CtProvMetadata>,
 }
 
 /// Metric definition for API responses

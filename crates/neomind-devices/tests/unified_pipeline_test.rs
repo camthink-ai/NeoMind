@@ -22,6 +22,7 @@ async fn create_test_registry_with_template() -> DeviceRegistry {
         categories: vec!["sensor".to_string()],
         mode: neomind_devices::registry::DeviceTypeMode::Simple,
         builtin_version: None,
+        ct_prov: None,
         metrics: vec![
             MetricDefinition {
                 name: "values.battery".to_string(),
@@ -378,6 +379,7 @@ async fn test_extract_store_raw_false_skips_raw_metric() {
         categories: vec![],
         mode: neomind_devices::registry::DeviceTypeMode::Simple,
         builtin_version: None,
+        ct_prov: None,
         metrics: vec![MetricDefinition {
             name: "battery".to_string(),
             display_name: "Battery".to_string(),

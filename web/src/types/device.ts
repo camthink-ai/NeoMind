@@ -73,6 +73,14 @@ export interface DeviceType {
   // Origin marker: present for built-in seeded types (NE101/NE301/NE302…),
   // absent for user-created / imported ones
   builtin_version?: string | null
+  /** CamThink CT-Prov discovery/provision metadata (optional) */
+  ct_prov?: {
+    model_code?: number | null
+    model_name?: string | null
+    ap_ssid_families?: string[]
+    softap_default_host?: string | null
+    supported_discovery?: string[]
+  } | null
 }
 
 export interface MetricDefinition {

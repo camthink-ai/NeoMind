@@ -88,6 +88,7 @@ pub async fn list_device_types_handler(
                 metric_count: Some(t.metrics.len()),
                 command_count: Some(t.commands.len()),
                 builtin_version: t.builtin_version.clone(),
+                ct_prov: t.ct_prov.clone(),
             }
         })
         .collect();
@@ -142,6 +143,7 @@ pub async fn get_device_type_handler(
         "default_offline_timeout_secs": template.default_offline_timeout_secs,
         "store_raw": template.store_raw,
         "builtin_version": template.builtin_version,
+        "ct_prov": template.ct_prov,
         "metric_count": template.metrics.len(),
         "command_count": template.commands.len(),
     }))

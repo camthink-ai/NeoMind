@@ -24,6 +24,7 @@ Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through conten
 
 ### Added
 - CamThink CT-Prov client library (`web/src/lib/ct-prov/`), BLE+SoftAP transports, rewritten BLE provision tab, and SoftAP **AP** add-device tab (hand-join SSID guide); shared session path info→capabilities→config.set→close then existing two-phase `/devices/ble-provision` register.
+- Device type `ct_prov` metadata (`model_code`, SoftAP host/SSID families, `supported_discovery`) on NE101/NE301 plus new built-in `ne503_camera` so CT-Prov register no longer 400s on NE503.
 - Inline-@ editor prototype at `/dev/inline-at` (`InlineDoc` model) plus production ChatComposer mention search, type filters, load-more, IME Enter guards, and listbox/option/tablist ARIA.
 - `contentNodes` v1 in-place protocol on HTTP/WS/image paths; draft persistence in localStorage; hard 400/Error on oversize.
 - Production chip composer sends `contentNodes` (text + trailing refs); SessionMessage/AgentMessage persist `contentNodes`/`contentVersion` for history reload (legacy chips synthesize nodes when nodes omitted).

@@ -11,12 +11,14 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useCtProvision } from '@/hooks/useCtProvision'
 import {
+  listApProvisionModels,
   modelToDeviceType,
   parseApSsid,
   softapHostForModel,
   type CtMqttConfig,
 } from '@/lib/ct-prov'
 import { api, fetchAPI } from '@/lib/api'
+import { useStore } from '@/store'
 
 interface BrokerOption {
   id: string
@@ -29,11 +31,11 @@ interface ApProvisionTabProps {
 
 type Phase = 'guide' | 'connecting' | 'config' | 'provisioning' | 'done' | 'failed'
 
-const MODEL_OPTIONS = ['NE101', 'NE301', 'NE503'] as const
-
 export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
   const { t } = useTranslation(['common', 'devices'])
   const ct = useCtProvision('ap')
+  const deviceTypes = useStore((s) => s.deviceTypes)
+  const apModels = useMemo(() => listApProvisionModels(deviceTypes), [deviceTypes])
 
   const [phase, setPhase] = useState<Phase>('guide')
   const [wifiSsid, setWifiSsid] = useState('')
@@ -45,6 +47,13 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
   const [registerError, setRegisterError] = useState<string | null>(null)
   const [isReprovision, setIsReprovision] = useState(false)
   const [modelPick, setModelPick] = useState<string>('NE101')
+
+  useEffect(() => {
+    if (apModels.length && !apModels.some((m) => m.model === modelPick)) {
+      setModelPick(apModels[0]!.model)
+      ct.setApHost(apModels[0]!.host)
+    }
+  }, [apModels]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (ct.deviceInfo?.deviceName && !deviceName) {
@@ -67,13 +76,14 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
   useEffect(() => {
     const parsed = parseApSsid(ct.apSsidInput.trim())
     if (parsed?.modelHint) {
-      setModelPick(parsed.modelHint.replace(/[^A-Z0-9].*$/, '') || parsed.modelHint)
-      // Prefer family host for NE503C etc.
-      const family = MODEL_OPTIONS.find((m) => parsed.modelHint!.startsWith(m)) ?? modelPick
-      ct.setApHost(softapHostForModel(family))
-      ct.setApModelHint(parsed.modelHint)
+      const hint = parsed.modelHint
+      const family =
+        apModels.find((m) => hint === m.model || hint.startsWith(m.model))?.model ?? hint
+      setModelPick(family)
+      ct.setApHost(softapHostForModel(family, deviceTypes))
+      ct.setApModelHint(hint)
     }
-  }, [ct.apSsidInput]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ct.apSsidInput, apModels, deviceTypes]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const wifiSection = useMemo(() => {
     const sections = ct.capabilities?.sections ?? []
@@ -85,7 +95,7 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
 
   const handleConnect = useCallback(async () => {
     setPhase('connecting')
-    const host = softapHostForModel(modelPick)
+    const host = softapHostForModel(modelPick, deviceTypes)
     ct.setApHost(host)
     const ok = await ct.connectAp({
       ssid: ct.apSsidInput || undefined,
@@ -93,12 +103,12 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
       host,
     })
     setPhase(ok ? 'config' : 'failed')
-  }, [ct, modelPick])
+  }, [ct, modelPick, deviceTypes])
 
   const handleApply = useCallback(async () => {
     if (!ct.deviceInfo) return
     const modelName = ct.deviceInfo.model
-    const deviceType = modelToDeviceType(modelName)
+    const deviceType = modelToDeviceType(modelName, deviceTypes)
     if (!deviceType) {
       setRegisterError(`Unknown model: ${modelName}`)
       setPhase('failed')
@@ -161,7 +171,7 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
       setRegisterError(err instanceof Error ? err.message : String(err))
       setPhase('failed')
     }
-  }, [ct, wifiSsid, wifiPassword, deviceName, brokerId, needsWifi, wifiSection])
+  }, [ct, wifiSsid, wifiPassword, deviceName, brokerId, needsWifi, wifiSection, deviceTypes])
 
   const reset = useCallback(() => {
     ct.disconnect()
@@ -215,7 +225,7 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
               value={modelPick}
               onValueChange={(v) => {
                 setModelPick(v)
-                ct.setApHost(softapHostForModel(v))
+                ct.setApHost(softapHostForModel(v, deviceTypes))
                 ct.setApModelHint(v)
               }}
             >
@@ -223,9 +233,9 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {MODEL_OPTIONS.map((m) => (
-                  <SelectItem key={m} value={m}>
-                    {m} ({softapHostForModel(m)})
+                {apModels.map((m) => (
+                  <SelectItem key={m.model} value={m.model}>
+                    {m.model} ({m.host})
                   </SelectItem>
                 ))}
               </SelectContent>

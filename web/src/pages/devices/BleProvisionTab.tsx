@@ -11,8 +11,15 @@ import { PasswordInput } from '@/components/ui/password-input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useCtProvision } from '@/hooks/useCtProvision'
-import { isTauriEnv, modelToDeviceType, type CtMqttConfig, type CtScanDevice } from '@/lib/ct-prov'
+import {
+  isTauriEnv,
+  modelNameFromCode,
+  modelToDeviceType,
+  type CtMqttConfig,
+  type CtScanDevice,
+} from '@/lib/ct-prov'
 import { api, fetchAPI } from '@/lib/api'
+import { useStore } from '@/store'
 
 interface BrokerOption {
   id: string
@@ -28,6 +35,7 @@ type Phase = 'scan' | 'connecting' | 'config' | 'provisioning' | 'done' | 'faile
 export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
   const { t } = useTranslation(['common', 'devices'])
   const ct = useCtProvision('ble')
+  const deviceTypes = useStore((s) => s.deviceTypes)
 
   const [phase, setPhase] = useState<Phase>('scan')
   const [wifiSsid, setWifiSsid] = useState('')
@@ -83,7 +91,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
   const handleApply = useCallback(async () => {
     if (!ct.deviceInfo) return
     const modelName = ct.deviceInfo.model
-    const deviceType = modelToDeviceType(modelName)
+    const deviceType = modelToDeviceType(modelName, deviceTypes)
     if (!deviceType) {
       setRegisterError(`Unknown model: ${modelName}`)
       setPhase('failed')
@@ -150,7 +158,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
       setRegisterError(err instanceof Error ? err.message : String(err))
       setPhase('failed')
     }
-  }, [ct, wifiSsid, wifiPassword, deviceName, brokerId, needsWifi, wifiSection])
+  }, [ct, wifiSsid, wifiPassword, deviceName, brokerId, needsWifi, wifiSection, deviceTypes])
 
   const reset = useCallback(() => {
     ct.disconnect()
@@ -189,10 +197,15 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
           <div className="space-y-2 max-w-md mx-auto w-full">
             {ct.scannedDevices.map((dev) => {
               const busy = dev.discovered?.busy
+              const codeName =
+                dev.discovered?.modelCode != null
+                  ? modelNameFromCode(dev.discovered.modelCode, deviceTypes) ||
+                    dev.discovered.modelCodeName
+                  : dev.discovered?.modelCodeName
               const label =
                 dev.discovered?.displayName ||
                 dev.name ||
-                dev.discovered?.modelCodeName ||
+                codeName ||
                 dev.id
               return (
                 <button

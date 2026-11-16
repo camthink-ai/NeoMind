@@ -113,6 +113,7 @@ pub fn device_type_to_template(def: &DeviceTypeDefinition) -> DeviceTypeTemplate
         default_offline_timeout_secs: None,
         store_raw: None,
         builtin_version: None,
+        ct_prov: None,
     }
 }
 

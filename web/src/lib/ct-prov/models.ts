@@ -1,37 +1,37 @@
 /**
  * Model / SoftAP host mapping for CamThink CT-Prov UI.
- * Full DeviceTypes metadata lands in NM-158; these stubs match plan §2.6.
+ *
+ * Prefer DeviceType.ct_prov metadata from NeoMind / DeviceTypes.
+ * Plan §2.6 hosts are used only as safe fallbacks when types are missing.
  */
 
 import { SOFTAP_DEFAULT_HOST } from './constants'
 
-/** Maps CT model strings to NeoMind device type identifiers. */
-export const MODEL_TO_DEVICE_TYPE: Readonly<Record<string, string>> = {
+/** Plan §2.6 SoftAP hosts — last-resort fallbacks when DeviceTypes lack ct_prov. */
+export const PLAN_SOFTAP_HOST_FALLBACK: Readonly<Record<string, string>> = {
+  ...SOFTAP_DEFAULT_HOST,
+}
+
+/** Legacy hardcoded map kept as fallback when DeviceTypes are unloaded. */
+export const MODEL_TO_DEVICE_TYPE_FALLBACK: Readonly<Record<string, string>> = {
   NE101: 'ne101_camera',
   NE301: 'ne301_camera',
   NE503: 'ne503_camera',
 }
 
-/** Derive device type from model string: NE101 → ne101_camera. */
-export function modelToDeviceType(model: string): string | null {
-  if (MODEL_TO_DEVICE_TYPE[model]) return MODEL_TO_DEVICE_TYPE[model]!
-  if (/^[A-Z]+\d+[A-Z0-9]*$/.test(model)) return `${model.toLowerCase()}_camera`
-  return null
+export interface CtProvTypeMetadata {
+  model_code?: number | null
+  model_name?: string | null
+  ap_ssid_families?: string[]
+  softap_default_host?: string | null
+  supported_discovery?: string[]
 }
 
-/** SoftAP gateway host for a model family (NE503C → NE503). */
-export function softapHostForModel(model: string): string {
-  const upper = model.toUpperCase()
-  for (const family of Object.keys(SOFTAP_DEFAULT_HOST)) {
-    if (upper === family || upper.startsWith(family)) {
-      return SOFTAP_DEFAULT_HOST[family]!
-    }
-  }
-  return SOFTAP_DEFAULT_HOST.NE101!
-}
-
-export function softapEndpointForHost(host: string): string {
-  return `http://${host}/api/v1/ctprov`
+/** Minimal device-type shape needed for CT-Prov resolution (matches API DTO). */
+export interface CtProvDeviceTypeRef {
+  device_type: string
+  name?: string
+  ct_prov?: CtProvTypeMetadata | null
 }
 
 /** MQTT config returned by POST /devices/ble-provision (resolve phase). */
@@ -42,6 +42,117 @@ export interface CtMqttConfig {
   password: string
   topic_prefix: string
   client_id: string
+}
+
+function normalizeModel(model: string): string {
+  return model.trim().toUpperCase()
+}
+
+/** Family match: NE503C → NE503 when families list contains NE503. */
+function familyMatch(model: string, family: string): boolean {
+  const m = normalizeModel(model)
+  const f = normalizeModel(family)
+  return m === f || m.startsWith(f)
+}
+
+export function findCtProvType(
+  deviceTypes: CtProvDeviceTypeRef[] | undefined | null,
+  model: string,
+): CtProvDeviceTypeRef | null {
+  if (!deviceTypes?.length) return null
+  const want = normalizeModel(model)
+
+  for (const t of deviceTypes) {
+    const name = t.ct_prov?.model_name
+    if (name && normalizeModel(name) === want) return t
+  }
+  for (const t of deviceTypes) {
+    const families = t.ct_prov?.ap_ssid_families ?? []
+    if (families.some((f) => familyMatch(want, f))) return t
+  }
+  // device_type ne101_camera → NE101
+  const guessed = `${want.toLowerCase()}_camera`
+  return deviceTypes.find((t) => t.device_type === guessed) ?? null
+}
+
+/** Derive device type id from model, preferring DeviceTypes ct_prov metadata. */
+export function modelToDeviceType(
+  model: string,
+  deviceTypes?: CtProvDeviceTypeRef[] | null,
+): string | null {
+  const fromMeta = findCtProvType(deviceTypes, model)
+  if (fromMeta) return fromMeta.device_type
+
+  const upper = normalizeModel(model)
+  if (MODEL_TO_DEVICE_TYPE_FALLBACK[upper]) return MODEL_TO_DEVICE_TYPE_FALLBACK[upper]!
+  if (/^[A-Z]+\d+[A-Z0-9]*$/.test(upper)) return `${upper.toLowerCase()}_camera`
+  return null
+}
+
+/** SoftAP gateway host for a model family. */
+export function softapHostForModel(
+  model: string,
+  deviceTypes?: CtProvDeviceTypeRef[] | null,
+): string {
+  const fromMeta = findCtProvType(deviceTypes, model)
+  const host = fromMeta?.ct_prov?.softap_default_host?.trim()
+  if (host) return host
+
+  const upper = normalizeModel(model)
+  for (const family of Object.keys(PLAN_SOFTAP_HOST_FALLBACK)) {
+    if (upper === family || upper.startsWith(family)) {
+      return PLAN_SOFTAP_HOST_FALLBACK[family]!
+    }
+  }
+  return PLAN_SOFTAP_HOST_FALLBACK.NE101!
+}
+
+export function softapEndpointForHost(host: string): string {
+  return `http://${host}/api/v1/ctprov`
+}
+
+/** Models that advertise SoftAP discovery in DeviceTypes (fallback: plan trio). */
+export function listApProvisionModels(
+  deviceTypes?: CtProvDeviceTypeRef[] | null,
+): Array<{ model: string; host: string; deviceType: string }> {
+  const out: Array<{ model: string; host: string; deviceType: string }> = []
+  if (deviceTypes?.length) {
+    for (const t of deviceTypes) {
+      const ct = t.ct_prov
+      if (!ct) continue
+      const discovery = ct.supported_discovery ?? []
+      if (discovery.length > 0 && !discovery.includes('ap')) continue
+      const model = ct.model_name || ct.ap_ssid_families?.[0]
+      if (!model) continue
+      out.push({
+        model,
+        host: ct.softap_default_host || softapHostForModel(model, deviceTypes),
+        deviceType: t.device_type,
+      })
+    }
+  }
+  if (out.length > 0) return out
+  return (['NE101', 'NE301', 'NE503'] as const).map((model) => ({
+    model,
+    host: softapHostForModel(model),
+    deviceType: modelToDeviceType(model)!,
+  }))
+}
+
+/** Resolve model string from BLE advertising model_code via DeviceTypes. */
+export function modelNameFromCode(
+  modelCode: number,
+  deviceTypes?: CtProvDeviceTypeRef[] | null,
+): string | undefined {
+  if (deviceTypes?.length) {
+    const hit = deviceTypes.find((t) => t.ct_prov?.model_code === modelCode)
+    if (hit?.ct_prov?.model_name) return hit.ct_prov.model_name
+  }
+  // Plan / discovery fallbacks (also in discovery.MODEL_CODE_NAMES)
+  if (modelCode === 0x01) return 'NE101'
+  if (modelCode === 0x02) return 'NE301'
+  if (modelCode === 0x03) return 'NE503'
+  return undefined
 }
 
 /** Build CT `mqtt` section from NeoMind resolve response. */
@@ -57,3 +168,6 @@ export function mqttSectionFromResolve(cfg: CtMqttConfig): Record<string, unknow
     topic: cfg.topic_prefix || undefined,
   }
 }
+
+/** @deprecated use MODEL_TO_DEVICE_TYPE_FALLBACK — kept for older imports */
+export const MODEL_TO_DEVICE_TYPE = MODEL_TO_DEVICE_TYPE_FALLBACK
