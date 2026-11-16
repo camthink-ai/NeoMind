@@ -304,16 +304,16 @@ impl DeviceStatus {
 /// Provides unified interface for device operations
 pub struct DeviceService {
     /// Device registry for templates and configurations
-    registry: Arc<DeviceRegistry>,
+    pub(crate) registry: Arc<DeviceRegistry>,
     /// Event bus for publishing events
     event_bus: EventBus,
     /// Telemetry storage (optional)
     telemetry_storage: Arc<RwLock<Option<Arc<TimeSeriesStorage>>>>,
     /// Adapter registry for command sending (plugin registry will provide this)
     /// This will be populated by device adapters that register themselves
-    adapters: Arc<RwLock<HashMap<String, Arc<dyn DeviceAdapter>>>>,
+    pub(crate) adapters: Arc<RwLock<HashMap<String, Arc<dyn DeviceAdapter>>>>,
     /// Device status cache (device_id -> DeviceStatus)
-    device_status: Arc<RwLock<HashMap<String, DeviceStatus>>>,
+    pub(crate) device_status: Arc<RwLock<HashMap<String, DeviceStatus>>>,
     /// Command history (device_id -> Vec<CommandHistoryRecord>)
     command_history: Arc<RwLock<HashMap<String, Vec<CommandHistoryRecord>>>>,
     /// Command ID counter
@@ -1483,6 +1483,10 @@ impl DeviceService {
         device_id: &str,
         config: DeviceConfig,
     ) -> Result<(), DeviceError> {
+        // Prefer the unified association bind when only topic/identity/adapter
+        // change is intended — this path remains for general config edits but
+        // now fails closed on missing adapter / subscribe errors (no silent
+        // "DB new, runtime old").
         let adapter_type = config.adapter_type.clone();
         let target_adapter_id = config.adapter_id.clone();
 
@@ -1509,15 +1513,19 @@ impl DeviceService {
         };
 
         if matched.is_empty() {
-            tracing::warn!(
-                "No adapter found to refresh for device '{}' (type: {}, adapter_id: {:?})",
-                device_id,
-                adapter_type,
-                target_adapter_id
-            );
-            return Ok(());
+            return Err(DeviceError::BindIncomplete {
+                message: format!(
+                    "No adapter found to refresh for device '{device_id}' (type: {adapter_type}, adapter_id: {target_adapter_id:?})"
+                ),
+                config_applied: true,
+                retry_hint: format!(
+                    "Device '{device_id}' config is saved. Register/connect adapter {target_adapter_id:?} and retry the update — runtime maps will rebuild."
+                ),
+            });
         }
 
+        let mut any_ok = false;
+        let mut last_err: Option<String> = None;
         for (adapter_id, adapter) in &matched {
             // Drop old topic-map entries first; subscribe rebuilds from registry.
             if let Err(e) = adapter.unsubscribe_device(device_id).await {
@@ -1525,7 +1533,7 @@ impl DeviceService {
                     device_id = %device_id,
                     adapter = %adapter_id,
                     error = %e,
-                    "Adapter failed to unsubscribe during config refresh (continuing)"
+                    "Adapter failed to unsubscribe during config refresh"
                 );
             }
             tracing::info!(
@@ -1533,14 +1541,25 @@ impl DeviceService {
                 adapter_id,
                 device_id
             );
-            if let Err(e) = adapter.subscribe_device(device_id).await {
-                tracing::warn!(
-                    device_id = %device_id,
-                    adapter = %adapter_id,
-                    error = %e,
-                    "Adapter failed to resubscribe during config refresh (continuing)"
-                );
+            match adapter.subscribe_device(device_id).await {
+                Ok(()) => any_ok = true,
+                Err(e) => {
+                    last_err = Some(format!("{adapter_id}: {e}"));
+                }
             }
+        }
+
+        if !any_ok {
+            let detail = last_err.unwrap_or_else(|| "unknown subscribe error".into());
+            return Err(DeviceError::BindIncomplete {
+                message: format!(
+                    "Adapter resubscribe failed for device '{device_id}': {detail}"
+                ),
+                config_applied: true,
+                retry_hint: format!(
+                    "Device '{device_id}' config is saved. Fix adapter/broker connectivity and retry — maps rebuild without re-registering."
+                ),
+            });
         }
 
         Ok(())

@@ -171,6 +171,14 @@ impl From<neomind_devices::DeviceError> for ErrorResponse {
                      Run 'neomind device types list' to see valid device types.",
                 )
             }
+            neomind_devices::DeviceError::BindIncomplete {
+                message,
+                config_applied,
+                retry_hint,
+            } => Self::service_unavailable(format!(
+                "{message}; config_applied={config_applied}"
+            ))
+            .with_hint(retry_hint),
             _ => Self::internal(e.to_string()),
         }
     }

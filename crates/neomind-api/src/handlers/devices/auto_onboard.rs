@@ -26,8 +26,8 @@ fn draft_error_to_response(
 use neomind_agent::llm_backends::backends::{OllamaConfig, OllamaRuntime};
 use neomind_core::llm::backend::LlmRuntime;
 use neomind_devices::{
-    ConnectionConfig, ConnectionStatus, DeviceConfig, DeviceTypeMode, DeviceTypeTemplate,
-    MdlMetricDefinition as MetricDefinition,
+    AssociationBindInput, ConnectionConfig, ConnectionStatus, DeviceConfig, DeviceError,
+    DeviceTypeMode, DeviceTypeTemplate, MdlMetricDefinition as MetricDefinition,
 };
 
 use crate::handlers::common::{ok, HandlerResult};
@@ -510,6 +510,8 @@ pub async fn approve_draft_device(
         device_type,
         recommended_topic,
         registered: true,
+        subscription_ready: false,
+        online: false,
         message,
     })
 }
@@ -655,8 +657,7 @@ pub async fn confirm_association_draft(
 
     use neomind_devices::adapters::mqtt::{
         is_pending_association_candidate_id, normalize_confirm_device_id,
-        verify_confirm_identity_against_sample, MqttIdentitySource, MQTT_IDENTITY_FIELD_KEY,
-        MQTT_IDENTITY_SOURCE_KEY,
+        verify_confirm_identity_against_raw, MqttIdentitySource,
     };
 
     let identity_source_raw = request
@@ -664,6 +665,7 @@ pub async fn confirm_association_draft(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
+        .or(draft.mqtt_identity_source.as_deref())
         .unwrap_or("auto_payload");
     let identity_source = MqttIdentitySource::parse(identity_source_raw).ok_or_else(|| {
         ErrorResponse::bad_request(format!(
@@ -676,17 +678,27 @@ pub async fn confirm_association_draft(
 
     let identity_field = {
         let trimmed = request.identity_field.trim();
-        if identity_source.requires_identity_field() && trimmed.is_empty() {
+        let from_draft = draft
+            .mqtt_identity_field
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let effective = if trimmed.is_empty() {
+            from_draft.unwrap_or("")
+        } else {
+            trimmed
+        };
+        if identity_source.requires_identity_field() && effective.is_empty() {
             return Err(ErrorResponse::bad_request(
                 "identity_field is required — name the JSON parse field that identifies the device",
             )
-            .with_hint("Example: sn, device_id, mac"));
+            .with_hint("Example: sn, data.sn, device_id, mac"));
         }
         // Persist only nonempty fields (topic sources may omit).
-        if trimmed.is_empty() {
+        if effective.is_empty() {
             None
         } else {
-            Some(trimmed.to_string())
+            Some(effective.to_string())
         }
     };
 
@@ -735,9 +747,9 @@ pub async fn confirm_association_draft(
         .clone()
         .unwrap_or_else(|| draft.source.clone());
 
-    // Fail closed before mutating registry / consuming the draft.
-    if let Err(reason) = verify_confirm_identity_against_sample(
-        draft.samples.first().and_then(|s| s.parsed.as_ref()),
+    // Fail closed on the full raw sample before mutating registry / consuming draft.
+    if let Err(reason) = verify_confirm_identity_against_raw(
+        draft.samples.first().map(|s| s.raw_data.as_slice()),
         &topic,
         identity_source,
         identity_field.as_deref(),
@@ -753,26 +765,11 @@ pub async fn confirm_association_draft(
 
     let adapter_type = draft.source.clone();
     let default_adapter_id = format!("internal-{}", adapter_type);
-    let identity_source_str = identity_source.as_str().to_string();
-
-    let mut connection_config = if adapter_type == "webhook" {
-        ConnectionConfig::default()
-    } else {
-        ConnectionConfig {
-            telemetry_topic: Some(topic.clone()),
-            ..Default::default()
-        }
-    };
-    connection_config.extra.insert(
-        MQTT_IDENTITY_SOURCE_KEY.to_string(),
-        serde_json::Value::String(identity_source_str),
-    );
-    if let Some(ref field) = identity_field {
-        connection_config.extra.insert(
-            MQTT_IDENTITY_FIELD_KEY.to_string(),
-            serde_json::Value::String(field.clone()),
-        );
-    }
+    // Confirmed draft source constrains broker — never silently keep a stale adapter_id.
+    let confirmed_adapter_id = draft
+        .adapter_id
+        .clone()
+        .or(Some(default_adapter_id.clone()));
 
     let device_instance_name = request
         .device_name
@@ -785,37 +782,15 @@ pub async fn confirm_association_draft(
     let identity_field_label = identity_field.as_deref().unwrap_or("(topic)");
 
     let existing = device_service.get_device(&real_id);
-    let (device_type, message) = if let Some(mut existing_cfg) = existing {
-        // Attach: full config update + adapter resubscribe (register_device's
-        // duplicate branch only patches name/adapter_id/last_seen).
-        existing_cfg.name = device_instance_name.clone();
-        existing_cfg.adapter_type = adapter_type.clone();
-        existing_cfg.connection_config = connection_config;
-        if existing_cfg.adapter_id.is_none() {
-            existing_cfg.adapter_id = draft.adapter_id.clone().or(Some(default_adapter_id));
-        }
-        let device_type = existing_cfg.device_type.clone();
-        device_service
-            .update_device_and_refresh_adapters(&real_id, existing_cfg)
-            .await
-            .map_err(|e| ErrorResponse::internal(e.to_string()))?;
-        (
-            device_type,
-            format!(
-                "Attached topic '{}' to existing device '{}' with identity_field='{}'",
-                topic, real_id, identity_field_label
-            ),
-        )
+    let device_type = if let Some(existing_cfg) = existing.as_ref() {
+        existing_cfg.device_type.clone()
     } else {
-        // Register a new device under the confirmed real identity.
+        // Resolve type for a new device before the unified bind.
         let use_existing_type = request.existing_type.as_ref().filter(|s| !s.is_empty());
         let new_type_info = request.new_type.as_ref();
 
-        let (device_type, type_message) = if let Some(existing_type) = use_existing_type {
-            (
-                existing_type.clone(),
-                format!("existing type '{}'", existing_type),
-            )
+        if let Some(existing_type) = use_existing_type {
+            existing_type.clone()
         } else if let Some(new_info) = new_type_info {
             let gen_type = draft.generated_type.as_ref();
             let type_id = new_info.device_type.clone();
@@ -850,18 +825,10 @@ pub async fn confirm_association_draft(
                 .register_template(template)
                 .await
                 .map_err(|e| ErrorResponse::internal(e.to_string()))?;
-            (type_id, "new type".to_string())
+            type_id
         } else if let Some(blocked) = draft.blocked_device_ids.first() {
-            // Convenience: reuse the blocked peer's type when the operator
-            // only confirms identity (same family on a shared/conflict topic).
             if let Some(peer) = device_service.get_device(blocked) {
-                (
-                    peer.device_type.clone(),
-                    format!(
-                        "type '{}' copied from blocked peer '{}'",
-                        peer.device_type, blocked
-                    ),
-                )
+                peer.device_type.clone()
             } else {
                 return Err(ErrorResponse::bad_request(
                     "existing_type or new_type is required when confirming a new device",
@@ -871,50 +838,42 @@ pub async fn confirm_association_draft(
             return Err(ErrorResponse::bad_request(
                 "existing_type or new_type is required when confirming a new device",
             ));
-        };
+        }
+    };
 
-        let device_config = DeviceConfig {
+    // Unified business op: apply config + subscribe switch; return actual result.
+    let bind = device_service
+        .apply_association_bind(AssociationBindInput {
             device_id: real_id.clone(),
             name: device_instance_name,
             device_type: device_type.clone(),
             adapter_type,
-            connection_config,
-            adapter_id: draft.adapter_id.clone().or(Some(default_adapter_id)),
-            last_seen: chrono::Utc::now().timestamp(),
-            offline_timeout_secs: None,
-        };
-        device_service
-            .register_device(device_config)
-            .await
-            .map_err(|e| ErrorResponse::internal(e.to_string()))?;
-        (
-            device_type,
-            format!(
-                "Registered device '{}' ({}) with identity_field='{}' on topic '{}'",
-                real_id, type_message, identity_field_label, topic
-            ),
-        )
-    };
+            adapter_id: confirmed_adapter_id,
+            telemetry_topic: topic.clone(),
+            identity_source: identity_source.as_str().to_string(),
+            identity_field: identity_field.clone(),
+        })
+        .await
+        .map_err(bind_error_to_response)?;
 
-    device_service
-        .update_device_status(&real_id, ConnectionStatus::Connected)
-        .await;
-
-    if let Some(event_bus) = state.core.event_bus.as_ref() {
-        let _ = event_bus
-            .publish(neomind_core::NeoMindEvent::DeviceOnline {
-                device_id: real_id.clone(),
-                device_type: device_type.clone(),
-                timestamp: chrono::Utc::now().timestamp(),
-            })
-            .await;
-    }
-
-    // Consume the placeholder draft (never register it).
+    // Draft consumed ONLY after config+subscribe both succeeded.
     manager
         .remove_draft(&draft_key)
         .await
         .map_err(draft_error_to_response)?;
+
+    // Config ≠ online: do not mark Connected / publish DeviceOnline here.
+    // Online/connected follows real telemetry or transport evidence.
+
+    let action = if bind.was_existing {
+        "Attached"
+    } else {
+        "Registered"
+    };
+    let message = format!(
+        "{action} device '{}' on topic '{}' with identity_field='{}' via adapter {:?} (subscription ready; not marked online — waiting for telemetry)",
+        real_id, topic, identity_field_label, bind.subscribed_adapter_id
+    );
 
     ok(ApproveDraftResponse {
         original_device_id: draft_key,
@@ -922,8 +881,25 @@ pub async fn confirm_association_draft(
         device_type,
         recommended_topic: topic,
         registered: true,
+        subscription_ready: true,
+        online: false,
         message,
     })
+}
+
+fn bind_error_to_response(e: DeviceError) -> ErrorResponse {
+    match e {
+        DeviceError::BindIncomplete {
+            message,
+            config_applied,
+            retry_hint,
+        } => ErrorResponse::service_unavailable(format!(
+            "{message}; config_applied={config_applied}"
+        ))
+        .with_hint(retry_hint),
+        DeviceError::InvalidParameter(msg) => ErrorResponse::bad_request(msg),
+        other => ErrorResponse::from(other),
+    }
 }
 
 /// Trigger manual analysis of a draft device
@@ -1334,6 +1310,15 @@ pub struct DraftDeviceDto {
     /// First sample payload preview (association-exception conflict UX).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_preview: Option<serde_json::Value>,
+    /// Sticky identity source discovered with the sample (confirm prefill).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mqtt_identity_source: Option<String>,
+    /// Sticky identity field path (e.g. `data.sn`) for confirm prefill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mqtt_identity_field: Option<String>,
+    /// Source adapter id from the draft (cross-broker confirm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter_id: Option<String>,
 }
 
 impl From<crate::automation::DraftDevice> for DraftDeviceDto {
@@ -1369,6 +1354,9 @@ impl From<crate::automation::DraftDevice> for DraftDeviceDto {
             blocked_device_ids: draft.blocked_device_ids,
             claimed_identity: draft.claimed_identity,
             sample_preview,
+            mqtt_identity_source: draft.mqtt_identity_source,
+            mqtt_identity_field: draft.mqtt_identity_field,
+            adapter_id: draft.adapter_id,
         }
     }
 }
@@ -1447,7 +1435,7 @@ impl From<&crate::automation::ProcessingSummary> for ProcessingSummaryDto {
     }
 }
 
-/// Response for device approval
+/// Response for device approval / association confirm
 #[derive(Debug, Serialize)]
 pub struct ApproveDraftResponse {
     /// Original device_id (also used as the registered device_id)
@@ -1460,6 +1448,12 @@ pub struct ApproveDraftResponse {
     pub recommended_topic: String,
     /// Whether registration was successful
     pub registered: bool,
+    /// True when adapter subscribe switch completed (confirm path).
+    #[serde(default)]
+    pub subscription_ready: bool,
+    /// Always false on confirm — online requires real telemetry/transport evidence.
+    #[serde(default)]
+    pub online: bool,
     /// Success message
     pub message: String,
 }

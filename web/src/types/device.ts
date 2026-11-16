@@ -387,6 +387,12 @@ export interface DraftDevice {
   claimed_identity?: string
   /** First sample payload preview for conflict UX. */
   sample_preview?: Record<string, unknown> | null
+  /** Sticky identity source from discovery (confirm prefill). */
+  mqtt_identity_source?: string
+  /** Sticky identity field path (e.g. data.sn) for confirm prefill. */
+  mqtt_identity_field?: string
+  /** Source adapter id (cross-broker confirm). */
+  adapter_id?: string
 }
 
 /**

@@ -312,7 +312,20 @@ export function PendingDevicesList({
     // Never prefill pending-assoc / blocked ids — operator must type the real identity.
     setAssocDeviceId('')
     const preview = draft.sample_preview
+    const fromDraft =
+      (typeof draft.mqtt_identity_field === 'string' && draft.mqtt_identity_field.trim()) || ''
+    const nestedDataSn =
+      preview &&
+      typeof preview === 'object' &&
+      preview.data &&
+      typeof preview.data === 'object' &&
+      preview.data !== null &&
+      'sn' in (preview.data as Record<string, unknown>)
+        ? 'data.sn'
+        : ''
     const hintedField =
+      fromDraft ||
+      nestedDataSn ||
       (preview && typeof preview === 'object' && 'sn' in preview && 'sn') ||
       (preview && typeof preview === 'object' && 'device_sn' in preview && 'device_sn') ||
       'sn'
@@ -349,19 +362,23 @@ export function PendingDevicesList({
       const result = await api.confirmAssociationDraft(assocDraft.device_id, {
         device_id: realId,
         identity_field: field,
-        identity_source: 'auto_payload',
+        identity_source: assocDraft.mqtt_identity_source || 'auto_payload',
         device_name: assocDeviceName.trim() || undefined,
       })
       toast({
         title: t('common:success'),
-        description: t('devices:pending.associationException.confirmed', {
-          deviceId: result.system_device_id,
-        }),
+        description:
+          result.message ||
+          t('devices:pending.associationException.confirmed', {
+            deviceId: result.system_device_id,
+          }),
       })
+      // Bound ≠ online; dialog closes only after subscription_ready success.
       closeAssociationDialog()
       await fetchDrafts()
       onRefresh?.()
     } catch (error) {
+      // Keep dialog open so the operator can retry without re-opening.
       handleError(error, {
         operation: 'Confirm association',
         showToast: true,

@@ -514,6 +514,16 @@ pub enum DeviceError {
     /// Storage error
     #[error("Storage error: {0}")]
     Storage(String),
+
+    /// Association bind applied config but runtime subscribe/switch did not
+    /// complete. Caller must keep the draft / retry entry; do not claim success
+    /// or mark the device online. Retry is safe (no double-register).
+    #[error("{message} (config_applied={config_applied})")]
+    BindIncomplete {
+        message: String,
+        config_applied: bool,
+        retry_hint: String,
+    },
 }
 
 #[cfg(test)]

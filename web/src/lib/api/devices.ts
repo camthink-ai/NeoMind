@@ -253,6 +253,8 @@ export const devicesApi = {
       device_type: string
       recommended_topic: string
       registered: boolean
+      subscription_ready?: boolean
+      online?: boolean
       message: string
     }>(`/devices/drafts/${draftId}/confirm-association`, {
       method: 'POST',

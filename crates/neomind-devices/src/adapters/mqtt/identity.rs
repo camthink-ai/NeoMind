@@ -136,32 +136,26 @@ pub fn normalize_confirm_device_id(raw: &str) -> Option<String> {
     sanitize_auto_device_id(raw.trim().to_string())
 }
 
-/// Validate confirm-association identity against an optional draft sample.
+/// Validate confirm-association identity against the **raw** draft sample
+/// bytes (same JSON path as discover / ingest, including nested `data.sn`).
 ///
-/// When `sample` is present and parseable as JSON, the approved rule must
-/// extract `expected_device_id`. Missing/binary samples skip verification
-/// (caller still owns nonempty field / enum checks).
-pub fn verify_confirm_identity_against_sample(
-    sample: Option<&serde_json::Value>,
+/// Empty / missing / non-JSON samples skip verification (caller still owns
+/// nonempty field / enum checks). Prefer this over a re-serialized `parsed`
+/// Value so confirm cannot drift from the wire payload.
+pub fn verify_confirm_identity_against_raw(
+    raw: Option<&[u8]>,
     topic: &str,
     source: MqttIdentitySource,
     field: Option<&str>,
     expected_device_id: &str,
 ) -> Result<(), String> {
-    let Some(sample) = sample else {
+    let Some(payload) = raw.filter(|b| !b.is_empty()) else {
         return Ok(());
     };
-    if sample.is_null() {
-        return Ok(());
-    }
-    let payload = serde_json::to_vec(sample).map_err(|e| format!("sample serialize: {e}"))?;
-    if payload.is_empty() {
-        return Ok(());
-    }
     // Topic extraction uses default broker config (strong/weak patterns only).
     let config =
         crate::adapters::mqtt::MqttAdapterConfig::new("confirm-validate", "localhost:1883");
-    match extract_with_approved_rule(topic, &payload, source, field, &config) {
+    match extract_with_approved_rule(topic, payload, source, field, &config) {
         Some(id) if id == expected_device_id => Ok(()),
         Some(id) => Err(format!(
             "sample identity '{id}' does not match confirmed device_id '{expected_device_id}'"
@@ -179,6 +173,33 @@ pub fn verify_confirm_identity_against_sample(
             ),
         }),
     }
+}
+
+/// Validate confirm-association identity against an optional parsed sample.
+///
+/// Prefer [`verify_confirm_identity_against_raw`] when `DeviceSample::raw_data`
+/// is available — that keeps discover/confirm/ingest on the same wire bytes.
+pub fn verify_confirm_identity_against_sample(
+    sample: Option<&serde_json::Value>,
+    topic: &str,
+    source: MqttIdentitySource,
+    field: Option<&str>,
+    expected_device_id: &str,
+) -> Result<(), String> {
+    let Some(sample) = sample else {
+        return Ok(());
+    };
+    if sample.is_null() {
+        return Ok(());
+    }
+    let payload = serde_json::to_vec(sample).map_err(|e| format!("sample serialize: {e}"))?;
+    verify_confirm_identity_against_raw(
+        Some(payload.as_slice()),
+        topic,
+        source,
+        field,
+        expected_device_id,
+    )
 }
 
 /// Read approved identity rule from `ConnectionConfig.extra` (draft/approve persist).

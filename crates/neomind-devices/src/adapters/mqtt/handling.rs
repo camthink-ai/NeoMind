@@ -718,10 +718,14 @@ impl MqttAdapter {
                     return;
                 }
 
+                // Keep the FULL wire JSON (including nested `data.sn`). Do not
+                // peel a top-level `data` key — that broke confirm/ingest parity
+                // when identity lived under `data.*`. The DeviceDiscovered
+                // envelope still wraps this value as its own `data` field;
+                // process_device_discovered unwraps that envelope once.
                 let (sample_data, is_binary, data_format) =
                     if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload) {
-                        let actual_data = json_data.get("data").unwrap_or(&json_data);
-                        (actual_data.clone(), false, "json")
+                        (json_data, false, "json")
                     } else {
                         (serde_json::json!(BASE64.encode(&payload)), true, "base64")
                     };

@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use axum::extract::{Path, State};
 use axum::Json;
+use futures::Stream;
 use neomind_api::automation::discovery::auto_onboard::AutoOnboardManager;
 use neomind_api::handlers::devices::auto_onboard::{
     approve_draft_device, confirm_association_draft, ApproveDraftDeviceRequest,
@@ -29,13 +30,16 @@ use neomind_core::llm::backend::{
     TokenUsage,
 };
 use neomind_core::NeoMindEvent;
+use neomind_devices::adapter::{AdapterResult, DeviceAdapter, DeviceEvent};
 use neomind_devices::adapters::mqtt::{
-    pending_association_candidate_id, MQTT_ASSOCIATION_EXCEPTION_KEY, MQTT_ASSOCIATION_KIND_KEY,
-    MQTT_CLAIMED_IDENTITY_KEY, MQTT_IDENTITY_FIELD_KEY, MQTT_IDENTITY_SOURCE_KEY,
-    MQTT_PENDING_CANDIDATE_ID_KEY,
+    pending_association_candidate_id, MqttAdapter, MqttAdapterConfig,
+    MQTT_ASSOCIATION_EXCEPTION_KEY, MQTT_ASSOCIATION_KIND_KEY, MQTT_CLAIMED_IDENTITY_KEY,
+    MQTT_IDENTITY_FIELD_KEY, MQTT_IDENTITY_SOURCE_KEY, MQTT_PENDING_CANDIDATE_ID_KEY,
 };
 use neomind_devices::registry::{ConnectionConfig, DeviceConfig, DeviceTypeTemplate};
+use neomind_devices::ConnectionStatus;
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct DummyLlm;
 #[async_trait::async_trait]
@@ -83,6 +87,100 @@ async fn state_with_listener() -> ServerState {
     state.init_auto_onboarding_events().await;
     tokio::time::sleep(Duration::from_millis(50)).await;
     state
+}
+
+/// Register a real MQTT adapter under the draft's source id (`test`) so confirm's
+/// subscribe switch can succeed (no broker needed — empty clients still update maps).
+async fn register_confirm_adapter(state: &ServerState, adapter_id: &str) -> Arc<MqttAdapter> {
+    let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+        adapter_id,
+        "localhost:1883",
+    )));
+    adapter
+        .set_shared_device_registry(state.devices.registry.clone())
+        .await;
+    state
+        .devices
+        .service
+        .register_adapter(
+            adapter_id.to_string(),
+            adapter.clone() as Arc<dyn DeviceAdapter>,
+        )
+        .await;
+    adapter
+}
+
+/// Adapter that fails subscribe_device — used for failure-recovery acceptance.
+struct FailSubscribeAdapter {
+    name: String,
+    fail: AtomicBool,
+    subscribe_calls: AtomicUsize,
+}
+
+impl FailSubscribeAdapter {
+    fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            fail: AtomicBool::new(true),
+            subscribe_calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl DeviceAdapter for FailSubscribeAdapter {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn adapter_type(&self) -> &'static str {
+        "mqtt"
+    }
+    fn is_running(&self) -> bool {
+        true
+    }
+    async fn start(&self) -> AdapterResult<()> {
+        Ok(())
+    }
+    async fn stop(&self) -> AdapterResult<()> {
+        Ok(())
+    }
+    fn subscribe(&self) -> Pin<Box<dyn Stream<Item = DeviceEvent> + Send + '_>> {
+        Box::pin(futures::stream::empty())
+    }
+    fn device_count(&self) -> usize {
+        0
+    }
+    fn list_devices(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    async fn send_command(
+        &self,
+        _device_id: &str,
+        _command_name: &str,
+        _payload: String,
+        _topic: Option<String>,
+    ) -> AdapterResult<()> {
+        Ok(())
+    }
+    fn connection_status(&self) -> ConnectionStatus {
+        ConnectionStatus::Disconnected
+    }
+    async fn subscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+        self.subscribe_calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail.load(Ordering::SeqCst) {
+            Err(neomind_devices::adapter::AdapterError::Communication(
+                "forced subscribe failure".into(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+    async fn unsubscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+        Ok(())
+    }
 }
 
 async fn approve_registered_a(state: &ServerState) {
@@ -432,6 +530,7 @@ async fn confirm_refuses_default_overwrite_of_blocked_a() {
 async fn confirm_real_identity_registers_b_not_placeholder() {
     let state = state_with_listener().await;
     let pending = seed_conflict_pending(&state).await;
+    let _adapter = register_confirm_adapter(&state, "test").await;
     let topic = "device/gw/A/uplink";
 
     let result = confirm_association_draft(
@@ -492,6 +591,16 @@ async fn confirm_real_identity_registers_b_not_placeholder() {
         manager.get_draft(&pending).await.is_none(),
         "pending draft consumed after confirm"
     );
+    assert!(
+        resp.subscription_ready && !resp.online,
+        "confirm success means subscription ready, never marks online"
+    );
+    let status = state.devices.service.get_device_status("B").await;
+    assert_eq!(
+        status.status,
+        ConnectionStatus::Disconnected,
+        "config ≠ online"
+    );
 }
 
 /// NM-190: attach to existing B must update topic + identity (not register's
@@ -500,11 +609,13 @@ async fn confirm_real_identity_registers_b_not_placeholder() {
 async fn confirm_attach_existing_b_updates_topic_and_identity() {
     let state = state_with_listener().await;
     let pending = seed_conflict_pending(&state).await;
+    let _adapter = register_confirm_adapter(&state, "test").await;
     let topic = "device/gw/A/uplink";
 
     // Pre-existing B on a stale topic / identity (the attach target).
     let mut stale_extra = HashMap::new();
     stale_extra.insert(MQTT_IDENTITY_SOURCE_KEY.to_string(), json!("topic_strong"));
+    stale_extra.insert("plant_tag".to_string(), json!("keep-me"));
     state
         .devices
         .registry
@@ -515,6 +626,7 @@ async fn confirm_attach_existing_b_updates_topic_and_identity() {
             adapter_type: "mqtt".to_string(),
             connection_config: ConnectionConfig {
                 telemetry_topic: Some("device/gw/B/uplink".to_string()),
+                command_topic: Some("device/gw/B/downlink".to_string()),
                 extra: stale_extra,
                 ..Default::default()
             },
@@ -564,6 +676,22 @@ async fn confirm_attach_existing_b_updates_topic_and_identity() {
             .get(MQTT_IDENTITY_SOURCE_KEY)
             .and_then(|v| v.as_str()),
         Some("auto_payload")
+    );
+
+    assert_eq!(
+        b.connection_config.command_topic.as_deref(),
+        Some("device/gw/B/downlink"),
+        "unrelated command topic must be preserved"
+    );
+    assert_eq!(
+        b.connection_config.extra.get("plant_tag"),
+        Some(&json!("keep-me")),
+        "non-identity extra must be preserved"
+    );
+    assert_eq!(
+        b.adapter_id.as_deref(),
+        Some("test"),
+        "cross-source confirm must use draft adapter_id, not stale test-mqtt"
     );
 
     let manager = state.auto_onboard_manager.read().await.clone().unwrap();
@@ -650,5 +778,309 @@ async fn confirm_bad_identity_config_does_not_consume_draft() {
     assert!(
         state.devices.service.get_device("B").is_none(),
         "failed confirm must not invent B either"
+    );
+}
+
+/// NM-191: missing adapter → not fake success; draft kept; config may apply; retry works.
+#[tokio::test]
+async fn confirm_missing_adapter_keeps_draft_and_retries() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+
+    let first = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("B retry".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(first.is_err(), "missing adapter must not claim success");
+    assert!(
+        manager.get_draft(&pending).await.is_some(),
+        "draft retained for retry"
+    );
+    // Config may already be applied — that is recoverable.
+    let applied = state.devices.service.get_device("B").is_some();
+    assert!(
+        applied,
+        "bind persists config so retry updates in place (no double-register)"
+    );
+    assert_eq!(
+        state.devices.service.get_device_status("B").await.status,
+        ConnectionStatus::Disconnected,
+        "must not mark online on incomplete bind"
+    );
+
+    let _adapter = register_confirm_adapter(&state, "test").await;
+    let second = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("B retry".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await
+    .expect("retry after adapter register must succeed");
+    let resp = second.0.data.expect("response");
+    assert!(resp.registered && resp.subscription_ready && !resp.online);
+    assert!(manager.get_draft(&pending).await.is_none());
+    // Still a single B — no double-register / dual mapping inventing another id.
+    assert!(state.devices.service.get_device("B").is_some());
+    assert!(state.devices.service.get_device(&pending).is_none());
+}
+
+/// NM-191: subscribe failure → not success; draft kept; retry after fix recovers.
+#[tokio::test]
+async fn confirm_subscribe_failure_keeps_draft_then_recovers() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let failing = Arc::new(FailSubscribeAdapter::new("test"));
+    state
+        .devices
+        .service
+        .register_adapter(
+            "test".to_string(),
+            failing.clone() as Arc<dyn DeviceAdapter>,
+        )
+        .await;
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+
+    let first = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: None,
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(first.is_err(), "subscribe failure must not claim success");
+    assert!(manager.get_draft(&pending).await.is_some());
+    assert!(state.devices.service.get_device("B").is_some());
+    assert!(failing.subscribe_calls.load(Ordering::SeqCst) >= 1);
+
+    failing.fail.store(false, Ordering::SeqCst);
+    let second = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: None,
+            overwrite_blocked: None,
+        }),
+    )
+    .await
+    .expect("retry after subscribe fix must succeed");
+    assert!(second.0.data.expect("resp").subscription_ready);
+    assert!(manager.get_draft(&pending).await.is_none());
+}
+
+/// NM-191: nested data.sn raw sample — discover/confirm same path.
+#[tokio::test]
+async fn confirm_nested_data_sn_raw_sample() {
+    let state = state_with_listener().await;
+    approve_registered_a(&state).await;
+    let _adapter = register_confirm_adapter(&state, "test").await;
+    let topic = "device/gw/A/uplink";
+    let pending = pending_association_candidate_id(topic, "A");
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    let accepted = ServerState::process_device_discovered_for_onboarding(
+        manager.as_ref(),
+        state.devices.service.as_ref(),
+        pending.clone(),
+        "mqtt".to_string(),
+        Some("test".to_string()),
+        &json!({
+            "original_topic": topic,
+            MQTT_ASSOCIATION_EXCEPTION_KEY: true,
+            MQTT_ASSOCIATION_KIND_KEY: "conflict",
+            MQTT_CLAIMED_IDENTITY_KEY: "A",
+            MQTT_PENDING_CANDIDATE_ID_KEY: pending,
+            "mqtt_blocked_device_ids": ["A"],
+            "mqtt_identity_source": "auto_payload",
+            "mqtt_identity_field": "data.sn",
+        }),
+        // Envelope form (as handling emits): outer `data` = full wire payload.
+        &json!({
+            "device_id": pending,
+            "topic": topic,
+            "data": {"data": {"sn": "NEST-B", "v": 1}, "device_id": "A"},
+            "format": "json",
+            "is_binary": false,
+        }),
+        false,
+    )
+    .await;
+    assert!(accepted);
+    let draft = wait_for_draft(manager.as_ref(), &pending).await;
+    // Stored sample must retain nested data.sn (not peeled to top-level sn).
+    let stored = draft.samples.first().and_then(|s| s.parsed.as_ref());
+    assert_eq!(
+        stored
+            .and_then(|v| v.pointer("/data/sn"))
+            .and_then(|v| v.as_str()),
+        Some("NEST-B"),
+        "draft sample must keep full wire JSON with nested data.sn"
+    );
+
+    let result = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "NEST-B".to_string(),
+            identity_field: "data.sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("Nested B".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await
+    .expect("data.sn confirm must succeed against raw sample");
+    assert_eq!(result.0.data.expect("r").system_device_id, "NEST-B");
+    let b = state
+        .devices
+        .service
+        .get_device("NEST-B")
+        .expect("registered");
+    assert_eq!(
+        b.connection_config
+            .extra
+            .get(MQTT_IDENTITY_FIELD_KEY)
+            .and_then(|v| v.as_str()),
+        Some("data.sn")
+    );
+}
+
+/// NM-191: consecutive confirm — second call does not re-exec / overwrite wrongly.
+#[tokio::test]
+async fn confirm_consecutive_does_not_double_consume() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let _adapter = register_confirm_adapter(&state, "test").await;
+
+    let first = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("First".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await
+    .expect("first confirm");
+    assert!(first.0.data.expect("r").registered);
+
+    let second = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("Second overwrite?".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(
+        second.is_err(),
+        "consumed draft must 404 — no silent re-exec"
+    );
+    let b = state.devices.service.get_device("B").expect("B");
+    assert_eq!(b.name, "First", "second confirm must not overwrite name");
+}
+
+/// NM-191: cross-broker confirm uses draft adapter_id and preserves unrelated fields.
+/// Runtime topic-map clear is covered in neomind-devices `handling_path::cross_broker_*`.
+#[tokio::test]
+async fn confirm_cross_broker_uses_draft_adapter_and_preserves_fields() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let _old = register_confirm_adapter(&state, "old-broker").await;
+    let _new = register_confirm_adapter(&state, "test").await;
+
+    let mut extra = HashMap::new();
+    extra.insert(MQTT_IDENTITY_SOURCE_KEY.to_string(), json!("topic_strong"));
+    extra.insert("site".to_string(), json!("line-3"));
+    state
+        .devices
+        .registry
+        .register_device(DeviceConfig {
+            device_id: "B".to_string(),
+            name: "Old B".to_string(),
+            device_type: "gw".to_string(),
+            adapter_type: "mqtt".to_string(),
+            connection_config: ConnectionConfig {
+                telemetry_topic: Some("device/gw/B/uplink".to_string()),
+                command_topic: Some("cmd/B".to_string()),
+                extra,
+                ..Default::default()
+            },
+            adapter_id: Some("old-broker".to_string()),
+            last_seen: 0,
+            offline_timeout_secs: None,
+        })
+        .await
+        .unwrap();
+
+    let result = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: None,
+            new_type: None,
+            device_name: Some("B moved".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await
+    .expect("cross-broker confirm");
+    assert!(result.0.data.expect("r").subscription_ready);
+
+    let b = state.devices.service.get_device("B").expect("B");
+    assert_eq!(
+        b.adapter_id.as_deref(),
+        Some("test"),
+        "must bind draft source adapter, not leave old-broker"
+    );
+    assert_eq!(b.connection_config.command_topic.as_deref(), Some("cmd/B"));
+    assert_eq!(
+        b.connection_config.extra.get("site"),
+        Some(&json!("line-3"))
     );
 }

@@ -1850,4 +1850,333 @@ mod handling_path {
         );
         assert!(discovery_ids(&events).is_empty());
     }
+
+    /// NM-191: unified apply_association_bind moves B across brokers and
+    /// clears the old adapter's runtime maps (shared topic keeps peer A).
+    #[tokio::test]
+    async fn cross_broker_bind_clears_old_adapter_keeps_peer() {
+        use crate::association_bind::AssociationBindInput;
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "A",
+            "gw",
+            "shared/data",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+        approve_device(
+            &registry,
+            "B",
+            "gw",
+            "device/gw/B/uplink",
+            Some("topic_strong"),
+            None,
+        )
+        .await;
+        // Give A/B a command topic + extra to prove preservation.
+        {
+            let mut b = registry.get_device("B").unwrap();
+            b.connection_config.command_topic = Some("cmd/B".into());
+            b.connection_config
+                .extra
+                .insert("site".into(), serde_json::json!("line-3"));
+            b.adapter_id = Some("old-broker".into());
+            registry.update_device("B", b).await.unwrap();
+        }
+
+        let old = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "old-broker",
+            "localhost:1883",
+        )));
+        let new = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "new-broker",
+            "localhost:1883",
+        )));
+        old.set_shared_device_registry(registry.clone()).await;
+        new.set_shared_device_registry(registry.clone()).await;
+        {
+            let mut map = old.topic_to_device.write().await;
+            topic_map_insert(&mut map, "device/gw/B/uplink", "B");
+            topic_map_insert(&mut map, "shared/data", "A");
+        }
+
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+        service
+            .register_adapter("old-broker".into(), old.clone() as Arc<dyn DeviceAdapter>)
+            .await;
+        service
+            .register_adapter("new-broker".into(), new.clone() as Arc<dyn DeviceAdapter>)
+            .await;
+
+        let outcome = service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "B".into(),
+                name: "B moved".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("new-broker".into()),
+                telemetry_topic: "shared/data".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect("cross-broker bind");
+        assert!(outcome.subscribe_ok && outcome.config_applied);
+        assert_eq!(outcome.subscribed_adapter_id.as_deref(), Some("new-broker"));
+
+        let b = registry.get_device("B").unwrap();
+        assert_eq!(b.adapter_id.as_deref(), Some("new-broker"));
+        assert_eq!(b.connection_config.command_topic.as_deref(), Some("cmd/B"));
+        assert_eq!(
+            b.connection_config.extra.get("site"),
+            Some(&serde_json::json!("line-3"))
+        );
+
+        assert!(
+            lookup_topic_device_ids(&*old.topic_to_device.read().await, "device/gw/B/uplink")
+                .is_empty(),
+            "old broker must drop B"
+        );
+        assert!(
+            lookup_topic_device_ids(&*old.topic_to_device.read().await, "shared/data")
+                .contains("A"),
+            "shared topic peer A must stay on old broker if still bound there"
+        );
+        assert!(
+            lookup_topic_device_ids(&*new.topic_to_device.read().await, "shared/data")
+                .contains("B"),
+            "new broker must map B"
+        );
+
+        // Shared-topic traffic: sn=B → B on new; sn=A still works via reload on old.
+        let mut rx = new.event_tx.subscribe();
+        handle(&new, "shared/data", b"{\"sn\":\"B\",\"v\":9}").await;
+        let ids = metric_ids(&drain(&mut rx));
+        assert!(
+            !ids.is_empty() && ids.iter().all(|id| id == "B"),
+            "B must ingest on new broker; got {:?}",
+            ids
+        );
+    }
+
+    /// NM-191: missing adapter → BindIncomplete; config applied; not online.
+    #[tokio::test]
+    async fn bind_missing_adapter_is_incomplete_not_success() {
+        use crate::association_bind::AssociationBindInput;
+        use crate::mdl::DeviceError;
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+
+        let err = service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "B".into(),
+                name: "B".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("missing".into()),
+                telemetry_topic: "t/b".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect_err("missing adapter must fail");
+        match err {
+            DeviceError::BindIncomplete { config_applied, .. } => assert!(config_applied),
+            other => panic!("expected BindIncomplete, got {other}"),
+        }
+        assert!(registry.get_device("B").is_some());
+        assert_eq!(
+            service.get_device_status("B").await.status,
+            crate::adapter::ConnectionStatus::Disconnected
+        );
+    }
+
+    /// NM-191: nested data.sn sticky after bind + reload (1:1 upgrade still binds).
+    #[tokio::test]
+    async fn nested_data_sn_bind_and_legacy_one_to_one_still_ingest() {
+        use crate::association_bind::AssociationBindInput;
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+
+        let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "test-mqtt",
+            "localhost:1883",
+        )));
+        adapter.set_shared_device_registry(registry.clone()).await;
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+        service
+            .register_adapter(
+                "test-mqtt".into(),
+                adapter.clone() as Arc<dyn DeviceAdapter>,
+            )
+            .await;
+
+        service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "NEST-B".into(),
+                name: "Nested".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("test-mqtt".into()),
+                telemetry_topic: "factory/nested".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("data.sn".into()),
+            })
+            .await
+            .expect("nested bind");
+
+        reload_bindings(&adapter).await;
+        let mut rx = adapter.event_tx.subscribe();
+        handle(
+            &adapter,
+            "factory/nested",
+            b"{\"data\":{\"sn\":\"NEST-B\",\"v\":1}}",
+        )
+        .await;
+        assert_eq!(
+            metric_ids(&drain(&mut rx)),
+            vec!["NEST-B".to_string()],
+            "data.sn must match after reload"
+        );
+
+        // Pre-release: legacy 1:1 (no identity field) still binds plain JSON.
+        approve_device(&registry, "LEGACY", "gw", "factory/legacy", None, None).await;
+        reload_bindings(&adapter).await;
+        handle(&adapter, "factory/legacy", b"{\"temperature\":25}").await;
+        let legacy_events = drain(&mut rx);
+        let legacy_ids = metric_ids(&legacy_events);
+        assert!(
+            !legacy_ids.is_empty() && legacy_ids.iter().all(|id| id == "LEGACY"),
+            "1.2.11 1:1 upgrade must still ingest without guessing discovery; got {:?}",
+            legacy_ids
+        );
+        assert!(
+            discovery_ids(&legacy_events).is_empty(),
+            "must not suddenly emit discovery for sole-registrant plain JSON"
+        );
+    }
+
+    /// Real mosquitto smoke (Mac): set `NEOMIND_MQTT_SMOKE_PORT` to a live
+    /// broker port. Verifies bind → subscribe → publish → metric for B.
+    #[tokio::test]
+    async fn real_mosquitto_smoke_bind_subscribe_ingest() {
+        let port: u16 = match std::env::var("NEOMIND_MQTT_SMOKE_PORT") {
+            Ok(p) => p.parse().expect("NEOMIND_MQTT_SMOKE_PORT must be u16"),
+            Err(_) => {
+                eprintln!("skip real_mosquitto_smoke: NEOMIND_MQTT_SMOKE_PORT unset");
+                return;
+            }
+        };
+        use crate::association_bind::AssociationBindInput;
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+
+        let adapter = Arc::new(MqttAdapter::new(
+            MqttAdapterConfig::new("smoke-mqtt", "127.0.0.1").with_port(port),
+        ));
+        adapter.set_shared_device_registry(registry.clone()).await;
+        DeviceAdapter::start(adapter.as_ref())
+            .await
+            .expect("connect mosquitto");
+        // Allow ConnAck + event loop to settle.
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+        service
+            .register_adapter(
+                "smoke-mqtt".into(),
+                adapter.clone() as Arc<dyn DeviceAdapter>,
+            )
+            .await;
+
+        service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "SMOKE-B".into(),
+                name: "Smoke B".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("smoke-mqtt".into()),
+                telemetry_topic: "smoke/assoc/data".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect("smoke bind");
+
+        // Prove runtime map + broker subscription exist after bind.
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, "smoke/assoc/data")
+                .contains("SMOKE-B"),
+            "bind must map SMOKE-B on smoke/assoc/data"
+        );
+        let subscribed = {
+            let clients = adapter.mqtt_clients.read().await;
+            let inner = clients.values().next().expect("broker client");
+            let topics = inner.subscribed_topics.read().await;
+            let hit = topics.contains("smoke/assoc/data");
+            drop(topics);
+            hit
+        };
+        assert!(
+            subscribed,
+            "real broker must have subscribed smoke/assoc/data"
+        );
+
+        // Wait for SUBACK to land (subscribe().await only queues the request).
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        let mut rx = adapter.event_tx.subscribe();
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
+        let mut got = Vec::new();
+        let mut pubs = 0u32;
+        while tokio::time::Instant::now() < deadline {
+            if pubs < 5 {
+                let pub_status = std::process::Command::new("mosquitto_pub")
+                    .args([
+                        "-h",
+                        "127.0.0.1",
+                        "-p",
+                        &port.to_string(),
+                        "-t",
+                        "smoke/assoc/data",
+                        "-m",
+                        r#"{"sn":"SMOKE-B","v":42}"#,
+                    ])
+                    .status()
+                    .expect("mosquitto_pub available");
+                assert!(pub_status.success(), "mosquitto_pub failed");
+                pubs += 1;
+            }
+            got.extend(drain(&mut rx));
+            if !metric_ids(&got).is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        let ids = metric_ids(&got);
+        assert!(
+            !ids.is_empty() && ids.iter().all(|id| id == "SMOKE-B"),
+            "real broker smoke must ingest SMOKE-B; got metrics={:?} discovery={:?} events={}",
+            ids,
+            discovery_ids(&got),
+            got.len()
+        );
+        let _ = DeviceAdapter::stop(adapter.as_ref()).await;
+    }
 }
