@@ -1,4 +1,4 @@
-/// Mobile workspace drawer — wider panel with chats + System hub exit.
+/// Mobile workspace drawer — shortcuts on top, chats middle, search/new bottom.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -46,7 +46,7 @@ describe('SessionSidebar mobile workspace drawer', () => {
     } as never)
   })
 
-  it('renders a wide workspace drawer with recent chats and a System exit', () => {
+  it('renders top workspace shortcuts and bottom search/new controls', () => {
     const onClose = vi.fn()
     render(
       <MemoryRouter>
@@ -58,10 +58,27 @@ describe('SessionSidebar mobile workspace drawer', () => {
     expect(drawer.className).toContain('w-[min(28rem,calc(100vw-2.75rem))]')
     expect(screen.getByText('NeoMind')).toBeTruthy()
     expect(screen.getByText('温室巡检')).toBeTruthy()
+    expect(screen.getByTestId('session-drawer-shortcut-devices')).toBeTruthy()
+    expect(screen.getByTestId('session-drawer-shortcut-agents')).toBeTruthy()
     expect(screen.getByTestId('session-drawer-workspace')).toBeTruthy()
+    expect(screen.getByTestId('session-drawer-new-chat')).toBeTruthy()
+    expect(screen.getByPlaceholderText(/search|搜索/i)).toBeTruthy()
   })
 
-  it('closes then navigates to /system from the workspace footer', () => {
+  it('navigates from a top shortcut after closing the drawer', () => {
+    const onClose = vi.fn()
+    render(
+      <MemoryRouter>
+        <SessionSidebar open onClose={onClose} isDesktop={false} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('session-drawer-shortcut-devices'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(navigateMock).toHaveBeenCalledWith('/devices')
+  })
+
+  it('opens the full workspace hub from the more-entries row', () => {
     const onClose = vi.fn()
     render(
       <MemoryRouter>

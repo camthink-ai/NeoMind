@@ -774,9 +774,10 @@
     "retry": "重试连接"
   },
   "system": {
-    "pageTitle": "系统",
+    "pageTitle": "工作台",
     "menu": "菜单",
     "openWorkspace": "工作台",
+    "moreEntries": "全部入口",
     "workspaceHint": "设备、智能体、看板与设置",
     "sectionBusiness": "业务",
     "sectionSystem": "系统",

@@ -774,9 +774,10 @@
     "retry": "Retry connection"
   },
   "system": {
-    "pageTitle": "System",
+    "pageTitle": "Workspace",
     "menu": "Menu",
     "openWorkspace": "Workspace",
+    "moreEntries": "All destinations",
     "workspaceHint": "Devices, agents, dashboards, and settings",
     "sectionBusiness": "Business",
     "sectionSystem": "System",

@@ -29,6 +29,10 @@ import {
   Loader2,
   ChevronRight,
   LayoutGrid,
+  Cpu,
+  Bot,
+  LayoutDashboard,
+  Bell,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -497,19 +501,26 @@ export function SessionSidebar({
     </>
   )
 
-  // Mobile drawer — wider workspace panel: brand + chats + system exit.
-  // Not framed as "chat-only"; sessions are one section inside a broader menu.
+  const goWorkspace = (path: string) => {
+    onClose()
+    navigate(path)
+  }
+
+  const workspaceShortcuts = [
+    { id: 'devices', path: '/devices', icon: Cpu, labelKey: 'nav.devices' },
+    { id: 'agents', path: '/agents', icon: Bot, labelKey: 'nav.agents' },
+    { id: 'dashboard', path: '/visual-dashboard', icon: LayoutDashboard, labelKey: 'nav.visual-dashboard' },
+    { id: 'messages', path: '/messages', icon: Bell, labelKey: 'nav.messages' },
+  ] as const
+
+  // Mobile drawer — workspace shortcuts on top, recent chats in the middle,
+  // compact search/new chat pinned to the bottom to free vertical space.
   const MobileDrawerContent = () => (
     <>
-      <div className="flex items-start justify-between gap-3 px-5 pb-4 pt-2">
-        <div className="min-w-0 pt-0.5">
-          <h2 className="truncate text-xl font-semibold tracking-[-0.03em] text-foreground">
-            NeoMind
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t('system.workspaceHint')}
-          </p>
-        </div>
+      <div className="flex items-center justify-between gap-3 px-5 pb-3 pt-2">
+        <h2 className="min-w-0 truncate text-xl font-semibold tracking-[-0.03em] text-foreground">
+          NeoMind
+        </h2>
         <Button
           variant="ghost"
           size="icon"
@@ -521,26 +532,42 @@ export function SessionSidebar({
         </Button>
       </div>
 
-      <div className="space-y-3 px-5 pb-5">
-        <Button
-          onClick={handleNewSession}
-          disabled={isCreating}
-          className="h-11 w-full rounded-2xl text-sm font-medium"
-        >
-          <Plus className="mr-1.5 h-4 w-4" strokeWidth={2.25} />
-          {t('session.newChat')}
-        </Button>
-        <div className="relative">
-          <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            ref={searchInputRef}
-            type="text"
-            placeholder={t('session.search')}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-11 rounded-2xl border-border bg-muted-50 pl-10 text-sm"
-          />
+      <div className="px-5 pb-4">
+        <div className="grid grid-cols-4 gap-2">
+          {workspaceShortcuts.map(({ id, path, icon: Icon, labelKey }) => (
+            <button
+              key={id}
+              type="button"
+              data-testid={`session-drawer-shortcut-${id}`}
+              onClick={() => goWorkspace(path)}
+              className="flex min-h-[4.25rem] flex-col items-center justify-center gap-1.5 rounded-2xl bg-muted-50 px-1 py-2 text-center transition-colors active:bg-muted"
+            >
+              <Icon className="h-5 w-5 text-foreground" strokeWidth={1.8} aria-hidden="true" />
+              <span className="max-w-full truncate text-[0.6875rem] leading-tight text-muted-foreground">
+                {t(labelKey)}
+              </span>
+            </button>
+          ))}
         </div>
+        <button
+          type="button"
+          data-testid="session-drawer-workspace"
+          onClick={() => goWorkspace('/system')}
+          className="mt-2 flex w-full items-center gap-2.5 rounded-2xl border border-border px-3 py-2.5 text-left transition-colors active:bg-muted"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
+            <LayoutGrid className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-foreground">
+              {t('system.moreEntries')}
+            </span>
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {t('system.pageTitle')}
+            </span>
+          </span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        </button>
       </div>
 
       <div className="px-5 pb-2">
@@ -556,28 +583,30 @@ export function SessionSidebar({
       </ScrollArea>
 
       <div className="shrink-0 border-t border-border px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-3">
-        <button
-          type="button"
-          data-testid="session-drawer-workspace"
-          onClick={() => {
-            onClose()
-            navigate('/system')
-          }}
-          className="flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-colors active:bg-muted"
-        >
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-muted text-foreground">
-            <LayoutGrid className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[0.9375rem] font-medium text-foreground">
-              {t('system.openWorkspace')}
-            </span>
-            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-              {t('system.workspaceHint')}
-            </span>
-          </span>
-          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              ref={searchInputRef}
+              type="text"
+              placeholder={t('session.search')}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-10 rounded-2xl border-border bg-muted-50 pl-9 text-sm"
+            />
+          </div>
+          <Button
+            type="button"
+            onClick={handleNewSession}
+            disabled={isCreating}
+            size="icon"
+            className="h-10 w-10 shrink-0 rounded-2xl"
+            aria-label={t('session.newChat')}
+            data-testid="session-drawer-new-chat"
+          >
+            <Plus className="h-4 w-4" strokeWidth={2.25} />
+          </Button>
+        </div>
       </div>
     </>
   )
