@@ -369,6 +369,7 @@ export interface DraftDevice {
   id: string
   device_id: string
   source: string
+  original_topic?: string
   status: string
   samples?: DeviceSample[]  // Original raw samples
   sample_count: number
@@ -379,6 +380,13 @@ export interface DraftDevice {
   error_message?: string
   user_name?: string
   user_description?: string
+  /** MQTT association exception — needs confirm-association, not ordinary approve. */
+  association_exception?: boolean
+  association_exception_kind?: string
+  blocked_device_ids?: string[]
+  claimed_identity?: string
+  /** First sample payload preview for conflict UX. */
+  sample_preview?: Record<string, unknown> | null
 }
 
 /**

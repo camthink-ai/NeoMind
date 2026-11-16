@@ -256,6 +256,26 @@ pub async fn approve_draft_device(
         ErrorResponse::not_found(format!("Draft device '{}' not found", device_id))
     })?;
 
+    // Association-exception drafts use a placeholder id (`pending-assoc-*`).
+    // Ordinary approve would register that placeholder as a real device and
+    // leave later traffic still A/B-ambiguous. Require the confirm-association
+    // path with an explicit real identity + parse field instead.
+    if draft.association_exception
+        || neomind_devices::adapters::mqtt::is_pending_association_candidate_id(&device_id)
+    {
+        return Err(ErrorResponse::bad_request(
+            "This draft is an MQTT association exception. Use POST \
+             /api/devices/drafts/{id}/confirm-association with an explicit \
+             real device_id and identity_field (never pending-assoc-*). \
+             Ordinary approve is refused so the placeholder cannot become a \
+             registered device.",
+        )
+        .with_hint(
+            "Open the pending conflict UI, confirm the real identity and parse \
+             field, or dismiss/reject the draft.",
+        ));
+    }
+
     let _draft_id = draft.id.clone();
 
     // Get device name from request (user-provided name for this device instance)
@@ -589,6 +609,267 @@ pub async fn reject_draft_device(
 
     ok(SuccessResponse {
         message: format!("Draft device '{}' rejected", device_id),
+    })
+}
+
+/// Confirm a real device identity for an MQTT association-exception draft.
+///
+/// Ordinary `/approve` is refused for these drafts (placeholder `pending-assoc-*`
+/// must never become a registered device). This endpoint requires an explicit
+/// real `device_id` + payload `identity_field`, registers/attaches that device
+/// on the draft's topic, and leaves blocked devices untouched unless
+/// `overwrite_blocked` is set.
+#[utoipa::path(
+    post,
+    path = "/api/devices/drafts/{device_id}/confirm-association",
+    tag = "drafts",
+    params(
+        ("device_id" = String, Path, description = "Association-exception draft id"),
+    ),
+    request_body = ConfirmAssociationRequest,
+    responses(
+        (status = 200, description = "Real identity confirmed; device attached"),
+        (status = 400, description = "Missing/invalid identity or ordinary approve path"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn confirm_association_draft(
+    State(state): State<ServerState>,
+    Path(draft_key): Path<String>,
+    Json(request): Json<ConfirmAssociationRequest>,
+) -> HandlerResult<ApproveDraftResponse> {
+    let manager = get_auto_onboard_manager(&state).await?;
+    let device_service = state.devices.service.clone();
+
+    let draft = manager.get_draft(&draft_key).await.ok_or_else(|| {
+        ErrorResponse::not_found(format!("Draft device '{}' not found", draft_key))
+    })?;
+
+    if !draft.association_exception
+        && !neomind_devices::adapters::mqtt::is_pending_association_candidate_id(&draft_key)
+    {
+        return Err(ErrorResponse::bad_request(
+            "Draft is not an association exception — use POST .../approve instead",
+        ));
+    }
+
+    let real_id = request.device_id.trim().to_string();
+    if real_id.is_empty() {
+        return Err(ErrorResponse::bad_request(
+            "device_id is required — confirm the real device identity explicitly",
+        )
+        .with_hint("Do not reuse the pending-assoc-* placeholder."));
+    }
+    if neomind_devices::adapters::mqtt::is_pending_association_candidate_id(&real_id) {
+        return Err(ErrorResponse::bad_request(
+            "device_id must not be a pending-assoc-* placeholder",
+        )
+        .with_hint(
+            "Enter the real device identity from the payload (e.g. sn value) or an existing id.",
+        ));
+    }
+
+    let identity_field = {
+        let trimmed = request.identity_field.trim();
+        if trimmed.is_empty() {
+            return Err(ErrorResponse::bad_request(
+                "identity_field is required — name the JSON parse field that identifies the device",
+            )
+            .with_hint("Example: sn, device_id, mac"));
+        }
+        trimmed.to_string()
+    };
+
+    let overwrite_blocked = request.overwrite_blocked.unwrap_or(false);
+    if draft.blocked_device_ids.iter().any(|id| id == &real_id) && !overwrite_blocked {
+        return Err(ErrorResponse::bad_request(format!(
+            "Device '{}' is blocked by this association exception — confirming it would \
+             overwrite that device's identity binding. Pass overwrite_blocked=true only if \
+             you intentionally want to retarget that device.",
+            real_id
+        ))
+        .with_hint(
+            "Prefer confirming a different real identity (e.g. the conflicting sn value) \
+             so blocked devices keep their current binding.",
+        ));
+    }
+
+    let topic = draft
+        .original_topic
+        .clone()
+        .unwrap_or_else(|| draft.source.clone());
+    let adapter_type = draft.source.clone();
+    let default_adapter_id = format!("internal-{}", adapter_type);
+    let identity_source = request
+        .identity_source
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("auto_payload")
+        .to_string();
+
+    let mut connection_config = if adapter_type == "webhook" {
+        ConnectionConfig::default()
+    } else {
+        ConnectionConfig {
+            telemetry_topic: Some(topic.clone()),
+            ..Default::default()
+        }
+    };
+    connection_config.extra.insert(
+        neomind_devices::adapters::mqtt::MQTT_IDENTITY_SOURCE_KEY.to_string(),
+        serde_json::Value::String(identity_source),
+    );
+    connection_config.extra.insert(
+        neomind_devices::adapters::mqtt::MQTT_IDENTITY_FIELD_KEY.to_string(),
+        serde_json::Value::String(identity_field.clone()),
+    );
+
+    let device_instance_name = request
+        .device_name
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("Device {}", real_id));
+
+    let existing = device_service.get_device(&real_id);
+    let (device_type, message) = if let Some(mut existing_cfg) = existing {
+        // Attach: update topic + sticky identity on the existing device.
+        existing_cfg.name = device_instance_name.clone();
+        existing_cfg.connection_config = connection_config;
+        if existing_cfg.adapter_id.is_none() {
+            existing_cfg.adapter_id = draft.adapter_id.clone().or(Some(default_adapter_id));
+        }
+        let device_type = existing_cfg.device_type.clone();
+        device_service
+            .register_device(existing_cfg)
+            .await
+            .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        (
+            device_type,
+            format!(
+                "Attached topic '{}' to existing device '{}' with identity_field='{}'",
+                topic, real_id, identity_field
+            ),
+        )
+    } else {
+        // Register a new device under the confirmed real identity.
+        let use_existing_type = request.existing_type.as_ref().filter(|s| !s.is_empty());
+        let new_type_info = request.new_type.as_ref();
+
+        let (device_type, type_message) = if let Some(existing_type) = use_existing_type {
+            (
+                existing_type.clone(),
+                format!("existing type '{}'", existing_type),
+            )
+        } else if let Some(new_info) = new_type_info {
+            let gen_type = draft.generated_type.as_ref();
+            let type_id = new_info.device_type.clone();
+            let type_name = if new_info.name.trim().is_empty() {
+                type_id.clone()
+            } else {
+                new_info.name.clone()
+            };
+            let type_description = new_info.description.clone();
+            let mode = match gen_type {
+                Some(g) if !g.metrics.is_empty() => DeviceTypeMode::Full,
+                _ => DeviceTypeMode::Simple,
+            };
+            let metrics = gen_type
+                .map(|g| convert_metrics_to_template(&g.metrics))
+                .unwrap_or_default();
+            let template = DeviceTypeTemplate {
+                device_type: type_id.clone(),
+                name: type_name,
+                description: type_description,
+                categories: Vec::new(),
+                mode,
+                metrics,
+                commands: Vec::new(),
+                uplink_samples: Vec::new(),
+                default_offline_timeout_secs: None,
+                store_raw: None,
+                builtin_version: None,
+                ct_prov: None,
+            };
+            device_service
+                .register_template(template)
+                .await
+                .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+            (type_id, "new type".to_string())
+        } else if let Some(blocked) = draft.blocked_device_ids.first() {
+            // Convenience: reuse the blocked peer's type when the operator
+            // only confirms identity (same family on a shared/conflict topic).
+            if let Some(peer) = device_service.get_device(blocked) {
+                (
+                    peer.device_type.clone(),
+                    format!(
+                        "type '{}' copied from blocked peer '{}'",
+                        peer.device_type, blocked
+                    ),
+                )
+            } else {
+                return Err(ErrorResponse::bad_request(
+                    "existing_type or new_type is required when confirming a new device",
+                ));
+            }
+        } else {
+            return Err(ErrorResponse::bad_request(
+                "existing_type or new_type is required when confirming a new device",
+            ));
+        };
+
+        let device_config = DeviceConfig {
+            device_id: real_id.clone(),
+            name: device_instance_name,
+            device_type: device_type.clone(),
+            adapter_type,
+            connection_config,
+            adapter_id: draft.adapter_id.clone().or(Some(default_adapter_id)),
+            last_seen: chrono::Utc::now().timestamp(),
+            offline_timeout_secs: None,
+        };
+        device_service
+            .register_device(device_config)
+            .await
+            .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        (
+            device_type,
+            format!(
+                "Registered device '{}' ({}) with identity_field='{}' on topic '{}'",
+                real_id, type_message, identity_field, topic
+            ),
+        )
+    };
+
+    device_service
+        .update_device_status(&real_id, ConnectionStatus::Connected)
+        .await;
+
+    if let Some(event_bus) = state.core.event_bus.as_ref() {
+        let _ = event_bus
+            .publish(neomind_core::NeoMindEvent::DeviceOnline {
+                device_id: real_id.clone(),
+                device_type: device_type.clone(),
+                timestamp: chrono::Utc::now().timestamp(),
+            })
+            .await;
+    }
+
+    // Consume the placeholder draft (never register it).
+    manager
+        .remove_draft(&draft_key)
+        .await
+        .map_err(draft_error_to_response)?;
+
+    ok(ApproveDraftResponse {
+        original_device_id: draft_key,
+        system_device_id: real_id,
+        device_type,
+        recommended_topic: topic,
+        registered: true,
+        message,
     })
 }
 
@@ -997,6 +1278,9 @@ pub struct DraftDeviceDto {
     pub blocked_device_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claimed_identity: Option<String>,
+    /// First sample payload preview (association-exception conflict UX).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_preview: Option<serde_json::Value>,
 }
 
 impl From<crate::automation::DraftDevice> for DraftDeviceDto {
@@ -1011,6 +1295,8 @@ impl From<crate::automation::DraftDevice> for DraftDeviceDto {
             crate::automation::DraftDeviceStatus::Rejected => "rejected",
             crate::automation::DraftDeviceStatus::Failed => "failed",
         };
+
+        let sample_preview = draft.samples.first().and_then(|s| s.parsed.clone());
 
         Self {
             id: draft.id,
@@ -1029,6 +1315,7 @@ impl From<crate::automation::DraftDevice> for DraftDeviceDto {
             association_exception_kind: draft.association_exception_kind,
             blocked_device_ids: draft.blocked_device_ids,
             claimed_identity: draft.claimed_identity,
+            sample_preview,
         }
     }
 }
@@ -1134,6 +1421,31 @@ pub struct ApproveDraftDeviceRequest {
     /// Device instance name (user-friendly name for this specific device)
     #[serde(default)]
     pub device_name: Option<String>,
+}
+
+/// Confirm real identity for an MQTT association-exception draft.
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
+pub struct ConfirmAssociationRequest {
+    /// Real device identity to register or attach (never `pending-assoc-*`).
+    pub device_id: String,
+    /// JSON field used to parse identity on later messages (e.g. `sn`).
+    pub identity_field: String,
+    /// Sticky identity source; defaults to `auto_payload` when omitted.
+    #[serde(default)]
+    pub identity_source: Option<String>,
+    /// Optional existing device type when registering a new device.
+    #[serde(default)]
+    pub existing_type: Option<String>,
+    /// Optional new type details when registering a new device.
+    #[serde(default)]
+    pub new_type: Option<NewTypeDetails>,
+    /// Display name for the device instance.
+    #[serde(default)]
+    pub device_name: Option<String>,
+    /// Explicitly allow targeting a blocked device id (default false — never
+    /// silently overwrite A).
+    #[serde(default)]
+    pub overwrite_blocked: Option<bool>,
 }
 
 /// Details for creating a new device type

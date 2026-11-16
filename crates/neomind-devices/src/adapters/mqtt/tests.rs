@@ -1484,6 +1484,75 @@ mod handling_path {
         );
     }
 
+    /// After human confirm of real identity B + parse field sn on the conflict
+    /// topic, later messages with sn=B route to B (A stays on its own topic).
+    #[tokio::test]
+    async fn after_confirm_real_identity_routes_to_confirmed_device() {
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        // Pre-existing A — blocked peer; remains on gateway/data with sn.
+        approve_device(
+            &registry,
+            "A",
+            "gw",
+            "gateway/data",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+        // Confirm path result: B registered on the conflict topic with sn.
+        approve_device(
+            &registry,
+            "B",
+            "gw",
+            "device/gw/A/uplink",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry).await;
+        reload_bindings(&adapter).await;
+
+        let conflict_topic = "device/gw/A/uplink";
+        let mut rx = adapter.event_tx.subscribe();
+        handle(
+            &adapter,
+            conflict_topic,
+            b"{\"sn\":\"B\",\"device_id\":\"A\",\"v\":2}",
+        )
+        .await;
+        let events = drain(&mut rx);
+        let ids = metric_ids(&events);
+        assert!(
+            !ids.is_empty() && ids.iter().all(|id| id == "B"),
+            "post-confirm traffic with sn=B must route to B, not A; got {:?}",
+            ids
+        );
+        assert!(discovery_ids(&events).is_empty());
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, conflict_topic)
+                .contains("B"),
+            "B must stay formally mapped on the confirmed topic"
+        );
+        assert!(
+            !lookup_topic_device_ids(&*adapter.topic_to_device.read().await, conflict_topic)
+                .contains("A"),
+            "confirm must not remap A onto the conflict topic"
+        );
+
+        // A still receives matching sn on its original topic.
+        handle(&adapter, "gateway/data", b"{\"sn\":\"A\",\"v\":3}").await;
+        let a_events = drain(&mut rx);
+        let a_ids = metric_ids(&a_events);
+        assert!(
+            !a_ids.is_empty() && a_ids.iter().all(|id| id == "A"),
+            "A must keep ingesting on its own topic; got {:?}",
+            a_ids
+        );
+    }
+
     #[tokio::test]
     async fn delete_interleave_cannot_relearn_while_registry_still_has_device() {
         // Controllable delete window: adapter teardown done (uncollectable +

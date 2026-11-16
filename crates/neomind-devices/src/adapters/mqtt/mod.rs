@@ -242,9 +242,10 @@ pub async fn test_mqtt_connection(
 
 pub use config::MqttAdapterConfig;
 pub use identity::{
-    pending_association_candidate_id, AssociationExceptionKind, MQTT_ASSOCIATION_EXCEPTION_KEY,
-    MQTT_ASSOCIATION_KIND_KEY, MQTT_BLOCKED_DEVICE_IDS_KEY, MQTT_CLAIMED_IDENTITY_KEY,
-    MQTT_IDENTITY_FIELD_KEY, MQTT_IDENTITY_SOURCE_KEY, MQTT_PENDING_CANDIDATE_ID_KEY,
+    is_pending_association_candidate_id, pending_association_candidate_id,
+    AssociationExceptionKind, MQTT_ASSOCIATION_EXCEPTION_KEY, MQTT_ASSOCIATION_KIND_KEY,
+    MQTT_BLOCKED_DEVICE_IDS_KEY, MQTT_CLAIMED_IDENTITY_KEY, MQTT_IDENTITY_FIELD_KEY,
+    MQTT_IDENTITY_SOURCE_KEY, MQTT_PENDING_CANDIDATE_ID_KEY, PENDING_ASSOCIATION_ID_PREFIX,
 };
 
 // Domain submodules — impl blocks live across these files.

@@ -74,8 +74,10 @@ describe('api surface (post-split composition)', () => {
   // (POST /api/builtin-llm/stop, backed by the persisted stop flag).
   // 283 -> 284 when Rule detail gained `getRuleExplain`
   // (GET /api/rules/:id/explain, why-not-triggered UI).
-  it('member count grows only by deliberate additions (284)', () => {
+  // 284 -> 285 when MQTT association-exception confirm landed
+  // (`confirmAssociationDraft`, POST .../confirm-association).
+  it('member count grows only by deliberate additions (285)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(284)
+    expect(keys.length).toBe(285)
   })
 })

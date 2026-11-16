@@ -63,6 +63,13 @@ export function PendingDevicesList({
   // Reject confirmation dialog state
   const [rejectDialogDraft, setRejectDialogDraft] = useState<DraftDevice | null>(null)
 
+  // Association-exception confirm dialog (separate from ordinary approve)
+  const [assocDraft, setAssocDraft] = useState<DraftDevice | null>(null)
+  const [assocDeviceId, setAssocDeviceId] = useState('')
+  const [assocIdentityField, setAssocIdentityField] = useState('')
+  const [assocDeviceName, setAssocDeviceName] = useState('')
+  const [assocErrors, setAssocErrors] = useState<{ deviceId?: string; identityField?: string }>({})
+
   // Unified dialog state
   const [showApproveDialog, setShowApproveDialog] = useState(false)
   const [selectedDraftForApproval, setSelectedDraftForApproval] = useState<DraftDevice | null>(null)
@@ -299,8 +306,78 @@ export function PendingDevicesList({
     return () => clearInterval(interval)
   }, [isConnected])
 
+  const openAssociationDialog = (draft: DraftDevice) => {
+    setAssocDraft(draft)
+    setAssocErrors({})
+    // Never prefill pending-assoc / blocked ids — operator must type the real identity.
+    setAssocDeviceId('')
+    const preview = draft.sample_preview
+    const hintedField =
+      (preview && typeof preview === 'object' && 'sn' in preview && 'sn') ||
+      (preview && typeof preview === 'object' && 'device_sn' in preview && 'device_sn') ||
+      'sn'
+    setAssocIdentityField(typeof hintedField === 'string' ? hintedField : 'sn')
+    setAssocDeviceName('')
+  }
+
+  const closeAssociationDialog = useCallback(() => {
+    setAssocDraft(null)
+    setAssocDeviceId('')
+    setAssocIdentityField('')
+    setAssocDeviceName('')
+    setAssocErrors({})
+  }, [])
+
+  const handleConfirmAssociation = async () => {
+    if (!assocDraft) return
+    const errors: { deviceId?: string; identityField?: string } = {}
+    const realId = assocDeviceId.trim()
+    const field = assocIdentityField.trim()
+    if (!realId) {
+      errors.deviceId = t('devices:pending.associationException.pleaseEnterRealId')
+    } else if (realId.startsWith('pending-assoc-')) {
+      errors.deviceId = t('devices:pending.associationException.pendingIdForbidden')
+    }
+    if (!field) {
+      errors.identityField = t('devices:pending.associationException.pleaseEnterField')
+    }
+    setAssocErrors(errors)
+    if (Object.keys(errors).length > 0) return
+
+    setProcessing(assocDraft.id)
+    try {
+      const result = await api.confirmAssociationDraft(assocDraft.device_id, {
+        device_id: realId,
+        identity_field: field,
+        identity_source: 'auto_payload',
+        device_name: assocDeviceName.trim() || undefined,
+      })
+      toast({
+        title: t('common:success'),
+        description: t('devices:pending.associationException.confirmed', {
+          deviceId: result.system_device_id,
+        }),
+      })
+      closeAssociationDialog()
+      await fetchDrafts()
+      onRefresh?.()
+    } catch (error) {
+      handleError(error, {
+        operation: 'Confirm association',
+        showToast: true,
+        fallbackMessage: t('devices:pending.associationException.confirmFailed'),
+      })
+    } finally {
+      setProcessing(null)
+    }
+  }
+
   // Approve draft device - open approval dialog with type suggestions
   const handleApproveClick = async (draft: DraftDevice) => {
+    if (draft.association_exception) {
+      openAssociationDialog(draft)
+      return
+    }
     setSelectedDraftForApproval(draft)
     setShowApproveDialog(true)
     setSelectedSampleIndex(0)
@@ -451,16 +528,21 @@ export function PendingDevicesList({
     setRejectDialogDraft(draft)
   }
 
-  // Confirm rejection
+  // Confirm rejection / dismiss association exception
   const confirmReject = async () => {
     if (!rejectDialogDraft) return
 
+    const wasAssoc = !!rejectDialogDraft.association_exception
     setProcessing(rejectDialogDraft.id)
     try {
-      await api.rejectDraftDevice(rejectDialogDraft.device_id, { reason: 'User rejected' })
+      await api.rejectDraftDevice(rejectDialogDraft.device_id, {
+        reason: wasAssoc ? 'Association exception dismissed' : 'User rejected',
+      })
       toast({
         title: t('common:success'),
-        description: t('devices:pending.rejected', { deviceId: rejectDialogDraft.device_id }),
+        description: wasAssoc
+          ? t('devices:pending.associationException.dismissed')
+          : t('devices:pending.rejected', { deviceId: rejectDialogDraft.device_id }),
       })
       await fetchDrafts()
       onRefresh?.()  // Also refresh device and device type lists
@@ -632,7 +714,12 @@ export function PendingDevicesList({
 
             case 'status':
               return (
-                <div className="flex justify-center">
+                <div className="flex justify-center items-center gap-1.5 flex-wrap">
+                  {draft.association_exception && (
+                    <span className="inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium bg-warning-light text-warning">
+                      {t('devices:pending.associationException.badge')}
+                    </span>
+                  )}
                   {getStatusBadge(draft.status)}
                 </div>
               )
@@ -656,8 +743,30 @@ export function PendingDevicesList({
               )
 
             case 'actions':
-              // Row-level actions — reject used to be reachable only from
-              // inside the approve dialog's footer (the least visible spot).
+              // Association exceptions are actionable even before analysis settles;
+              // ordinary drafts still wait for waiting_processing.
+              if (draft.association_exception) {
+                return (
+                  <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                    <Button
+                      size="sm"
+                      onClick={() => openAssociationDialog(draft)}
+                      disabled={processing === draft.id}
+                    >
+                      {t('devices:pending.associationException.resolve')}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-error hover:text-error hover:bg-error-light"
+                      onClick={() => handleReject(draft)}
+                      disabled={processing === draft.id}
+                    >
+                      {t('devices:pending.associationException.dismiss')}
+                    </Button>
+                  </div>
+                )
+              }
               if (draft.status !== 'waiting_processing') return null
               return (
                 <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
@@ -730,17 +839,31 @@ export function PendingDevicesList({
                 </span>
               </div>
 
+              {draft.association_exception && (
+                <p className="text-xs text-warning">
+                  {draft.association_exception_kind === 'unverifiable'
+                    ? t('devices:pending.associationException.kindUnverifiable')
+                    : t('devices:pending.associationException.kindConflict')}
+                </p>
+              )}
+
               {/* Row-level actions — same affordance as the desktop table's
                   actions column (the card itself opens the approve dialog). */}
-              {draft.status === 'waiting_processing' && (
+              {(draft.association_exception || draft.status === 'waiting_processing') && (
                 <div className="flex gap-2 pt-1">
                   <Button
                     size="sm"
                     className="flex-1"
-                    onClick={(e) => { e.stopPropagation(); handleApproveClick(draft) }}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (draft.association_exception) openAssociationDialog(draft)
+                      else handleApproveClick(draft)
+                    }}
                     disabled={processing === draft.id}
                   >
-                    {t('devices:pending.register')}
+                    {draft.association_exception
+                      ? t('devices:pending.associationException.resolve')
+                      : t('devices:pending.register')}
                   </Button>
                   <Button
                     variant="outline"
@@ -749,7 +872,9 @@ export function PendingDevicesList({
                     onClick={(e) => { e.stopPropagation(); handleReject(draft) }}
                     disabled={processing === draft.id}
                   >
-                    {t('devices:pending.reject')}
+                    {draft.association_exception
+                      ? t('devices:pending.associationException.dismiss')
+                      : t('devices:pending.reject')}
                   </Button>
                 </div>
               )}
@@ -758,7 +883,8 @@ export function PendingDevicesList({
         }}
         onRowClick={(rowData) => {
           const draft = rowData
-          handleApproveClick(draft)
+          if (draft.association_exception) openAssociationDialog(draft)
+          else handleApproveClick(draft)
         }}
       />
 
@@ -1283,6 +1409,145 @@ export function PendingDevicesList({
           </div>
           )}
 
+        </UnifiedFormDialog>
+      )}
+
+      {/* Association-exception: confirm real identity then attach */}
+      {assocDraft && (
+        <UnifiedFormDialog
+          open={!!assocDraft}
+          onOpenChange={(open) => { if (!open) closeAssociationDialog() }}
+          title={t('devices:pending.associationException.title')}
+          width="lg"
+          onSubmit={handleConfirmAssociation}
+          isSubmitting={processing === assocDraft.id}
+          submitLabel={t('devices:pending.associationException.confirm')}
+          submitDisabled={processing === assocDraft.id}
+          footer={
+            <div className="flex flex-wrap items-center gap-2 justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-error hover:text-error hover:bg-error-light"
+                onClick={() => {
+                  const draft = assocDraft
+                  closeAssociationDialog()
+                  if (draft) handleReject(draft)
+                }}
+                disabled={processing === assocDraft.id}
+              >
+                {t('devices:pending.associationException.dismiss')}
+              </Button>
+              <Button variant="outline" size="sm" onClick={closeAssociationDialog}>
+                {t('common:cancel')}
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleConfirmAssociation}
+                disabled={processing === assocDraft.id}
+              >
+                {processing === assocDraft.id
+                  ? t('common:processing')
+                  : t('devices:pending.associationException.confirm')}
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {assocDraft.association_exception_kind === 'unverifiable'
+                ? t('devices:pending.associationException.kindUnverifiable')
+                : assocDraft.association_exception_kind === 'conflict'
+                  ? t('devices:pending.associationException.kindConflict')
+                  : t('devices:pending.associationException.kindGeneric')}
+            </p>
+
+            <div className="rounded-lg border border-border bg-muted-30 p-3 space-y-2 text-sm">
+              {assocDraft.claimed_identity && (
+                <div className="flex justify-between gap-3">
+                  <span className="text-muted-foreground shrink-0">
+                    {t('devices:pending.associationException.claimedIdentity')}
+                  </span>
+                  <code className="font-mono text-xs truncate">{assocDraft.claimed_identity}</code>
+                </div>
+              )}
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground shrink-0">
+                  {t('devices:pending.associationException.blocked')}
+                </span>
+                <code className="font-mono text-xs truncate text-right">
+                  {(assocDraft.blocked_device_ids || []).join(', ') || '—'}
+                </code>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground shrink-0">
+                  {t('devices:pending.associationException.topic')}
+                </span>
+                <code className="font-mono text-xs truncate text-right">
+                  {assocDraft.original_topic || assocDraft.source}
+                </code>
+              </div>
+            </div>
+
+            {assocDraft.sample_preview && (
+              <div className="space-y-1.5">
+                <Label>{t('devices:pending.associationException.sample')}</Label>
+                <pre className="text-xs bg-muted-30 border border-border rounded-lg p-3 overflow-x-auto max-h-40">
+                  {JSON.stringify(assocDraft.sample_preview, null, 2)}
+                </pre>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label htmlFor="assoc-device-id">
+                {t('devices:pending.associationException.realDeviceId')}
+              </Label>
+              <Input
+                id="assoc-device-id"
+                value={assocDeviceId}
+                onChange={(e) => setAssocDeviceId(e.target.value)}
+                placeholder="B"
+                autoComplete="off"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('devices:pending.associationException.realDeviceIdHint')}
+              </p>
+              {assocErrors.deviceId && (
+                <p className="text-xs text-error">{assocErrors.deviceId}</p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="assoc-identity-field">
+                {t('devices:pending.associationException.identityField')}
+              </Label>
+              <Input
+                id="assoc-identity-field"
+                value={assocIdentityField}
+                onChange={(e) => setAssocIdentityField(e.target.value)}
+                placeholder="sn"
+                autoComplete="off"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('devices:pending.associationException.identityFieldHint')}
+              </p>
+              {assocErrors.identityField && (
+                <p className="text-xs text-error">{assocErrors.identityField}</p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="assoc-device-name">
+                {t('devices:pending.associationException.deviceName')}
+              </Label>
+              <Input
+                id="assoc-device-name"
+                value={assocDeviceName}
+                onChange={(e) => setAssocDeviceName(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+          </div>
         </UnifiedFormDialog>
       )}
 

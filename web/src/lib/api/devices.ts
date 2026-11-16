@@ -73,6 +73,7 @@ export const devicesApi = {
       id: string
       device_id: string
       source: string
+      original_topic?: string
       status: string
       sample_count: number
       max_samples: number
@@ -103,6 +104,11 @@ export const devicesApi = {
       updated_at: number
       error_message?: string
       user_name?: string
+      association_exception?: boolean
+      association_exception_kind?: string
+      blocked_device_ids?: string[]
+      claimed_identity?: string
+      sample_preview?: Record<string, unknown> | null
     }>; count: number }>('/devices/drafts'),
 
   // Get a specific draft device
@@ -228,5 +234,29 @@ export const devicesApi = {
       body: JSON.stringify(body),
     })
   },
+
+  // Confirm real identity for an MQTT association-exception draft
+  confirmAssociationDraft: (
+    draftId: string,
+    request: {
+      device_id: string
+      identity_field: string
+      identity_source?: string
+      existing_type?: string
+      device_name?: string
+      overwrite_blocked?: boolean
+    }
+  ) =>
+    fetchAPI<{
+      original_device_id: string
+      system_device_id: string
+      device_type: string
+      recommended_topic: string
+      registered: boolean
+      message: string
+    }>(`/devices/drafts/${draftId}/confirm-association`, {
+      method: 'POST',
+      body: JSON.stringify(request),
+    }),
 
 }

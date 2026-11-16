@@ -63,18 +63,27 @@ impl AssociationExceptionKind {
     }
 }
 
+/// Prefix for association-exception draft ids. Never a formal registered id.
+pub const PENDING_ASSOCIATION_ID_PREFIX: &str = "pending-assoc-";
+
 /// Stable, non-registered draft id for association-exception candidacy.
 ///
 /// Does **not** invent an id from another payload field (e.g. conflicting `sn`)
-/// — that would look like auto-registration via a side channel. Human approve
-/// remains the only path to a formal device id / topic map.
+/// — that would look like auto-registration via a side channel. Human confirm
+/// with an explicit real identity remains the only path to a formal device id /
+/// topic map.
 pub fn pending_association_candidate_id(topic: &str, claimed_identity: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
     topic.hash(&mut hasher);
     claimed_identity.hash(&mut hasher);
-    format!("pending-assoc-{:x}", hasher.finish())
+    format!("{PENDING_ASSOCIATION_ID_PREFIX}{:x}", hasher.finish())
+}
+
+/// True when `id` is a placeholder association-exception draft key.
+pub fn is_pending_association_candidate_id(id: &str) -> bool {
+    id.starts_with(PENDING_ASSOCIATION_ID_PREFIX)
 }
 
 /// How a device identity was derived for a message (and frozen on the draft/device).

@@ -736,6 +736,11 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "POST",
+        path: "/api/devices/drafts/:device_id/confirm-association",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "POST",
         path: "/api/devices/drafts/:device_id/reject",
         auth: "jwt-or-api-key",
     },

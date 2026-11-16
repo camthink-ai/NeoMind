@@ -562,6 +562,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             post(devices::approve_draft_device),
         )
         .route(
+            "/api/devices/drafts/:device_id/confirm-association",
+            post(devices::confirm_association_draft),
+        )
+        .route(
             "/api/devices/drafts/:device_id/reject",
             post(devices::reject_draft_device),
         )

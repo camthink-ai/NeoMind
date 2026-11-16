@@ -82,6 +82,7 @@ route index (including not-yet-schematized endpoints): /api/docs/routes.json."
         crate::handlers::devices::auto_onboard::get_draft_device,
         crate::handlers::devices::auto_onboard::update_draft_device,
         crate::handlers::devices::auto_onboard::approve_draft_device,
+        crate::handlers::devices::auto_onboard::confirm_association_draft,
         crate::handlers::devices::auto_onboard::reject_draft_device,
         crate::handlers::devices::auto_onboard::trigger_draft_analysis,
         crate::handlers::devices::auto_onboard::enhance_draft_with_llm,

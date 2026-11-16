@@ -2,6 +2,11 @@
 //! association-exception draft through the auto-onboard event listener — not a
 //! silent drop when the claimed identity is already registered.
 //!
+//! NM-189: Ordinary `/approve` must refuse association-exception drafts (no
+//! `pending-assoc-*` registration). Explicit `/confirm-association` with a
+//! real device id + parse field registers/attaches that identity; later
+//! routing for that shape is covered in `neomind-devices` handling_path.
+//!
 //! Handling-path (no metrics / no formal map / pending discovery id) is covered
 //! in `neomind-devices` `handling_path::*`. These tests pin the **listener →
 //! visible draft** half that the prior suite never checked.
@@ -11,7 +16,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::extract::{Path, State};
+use axum::Json;
 use neomind_api::automation::discovery::auto_onboard::AutoOnboardManager;
+use neomind_api::handlers::devices::auto_onboard::{
+    approve_draft_device, confirm_association_draft, ApproveDraftDeviceRequest,
+    ConfirmAssociationRequest,
+};
 use neomind_api::handlers::ServerState;
 use neomind_core::llm::backend::{
     BackendCapabilities, BackendId, FinishReason, LlmError, LlmInput, LlmOutput, LlmRuntime,
@@ -282,4 +293,203 @@ async fn listener_registered_id_without_exception_still_skipped() {
     .await;
     assert!(!accepted);
     assert!(manager.get_drafts().await.is_empty());
+}
+
+async fn seed_conflict_pending(state: &ServerState) -> String {
+    approve_registered_a(state).await;
+    let topic = "device/gw/A/uplink";
+    let claimed = "A";
+    let pending = pending_association_candidate_id(topic, claimed);
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    let accepted = ServerState::process_device_discovered_for_onboarding(
+        manager.as_ref(),
+        state.devices.service.as_ref(),
+        pending.clone(),
+        "mqtt".to_string(),
+        Some("test".to_string()),
+        &json!({
+            "original_topic": topic,
+            MQTT_ASSOCIATION_EXCEPTION_KEY: true,
+            MQTT_ASSOCIATION_KIND_KEY: "conflict",
+            MQTT_CLAIMED_IDENTITY_KEY: claimed,
+            MQTT_PENDING_CANDIDATE_ID_KEY: pending,
+            "mqtt_blocked_device_ids": ["A"],
+            "mqtt_identity_source": "topic_strong",
+        }),
+        &json!({"sn": "B", "device_id": "A", "v": 1}),
+        false,
+    )
+    .await;
+    assert!(accepted);
+    wait_for_draft(manager.as_ref(), &pending).await;
+    pending
+}
+
+/// NM-189: ordinary approve of association-exception draft must fail; placeholder
+/// must never become a registered device.
+#[tokio::test]
+async fn ordinary_approve_of_association_exception_refused() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+
+    let result = approve_draft_device(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(Some(ApproveDraftDeviceRequest {
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("Should Fail".to_string()),
+        })),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "ordinary approve must refuse association-exception drafts"
+    );
+
+    assert!(
+        state.devices.service.get_device(&pending).is_none(),
+        "placeholder pending-assoc-* must not be registered"
+    );
+    assert!(
+        state.devices.service.get_device("A").is_some(),
+        "blocked device A must remain"
+    );
+    assert!(
+        state.devices.service.get_device("B").is_none(),
+        "failed approve must not invent B either"
+    );
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    assert!(
+        manager.get_draft(&pending).await.is_some(),
+        "draft stays for confirm/dismiss after refused approve"
+    );
+}
+
+/// NM-189: confirm with pending-assoc as device_id is refused.
+#[tokio::test]
+async fn confirm_rejects_pending_assoc_as_real_identity() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+
+    let result = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: pending.clone(),
+            identity_field: "sn".to_string(),
+            identity_source: None,
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: None,
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(result.is_err());
+    assert!(state.devices.service.get_device(&pending).is_none());
+}
+
+/// NM-189: confirm without overwrite must not retarget blocked A.
+#[tokio::test]
+async fn confirm_refuses_default_overwrite_of_blocked_a() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+
+    let result = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "A".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: None,
+            existing_type: None,
+            new_type: None,
+            device_name: None,
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(result.is_err(), "must not default-overwrite blocked A");
+
+    let a = state.devices.service.get_device("A").expect("A remains");
+    assert_eq!(
+        a.connection_config
+            .extra
+            .get(MQTT_IDENTITY_FIELD_KEY)
+            .and_then(|v| v.as_str()),
+        Some("sn")
+    );
+    assert_eq!(
+        a.connection_config.telemetry_topic.as_deref(),
+        Some("gateway/data"),
+        "A's topic must stay unchanged"
+    );
+}
+
+/// NM-189: explicit confirm of B + sn registers B; placeholder gone; A untouched.
+#[tokio::test]
+async fn confirm_real_identity_registers_b_not_placeholder() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let topic = "device/gw/A/uplink";
+
+    let result = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("Device B".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await
+    .expect("confirm B+sn must succeed");
+    let resp = result.0.data.expect("confirm response");
+    assert!(resp.registered);
+    assert_eq!(resp.system_device_id, "B");
+    assert_eq!(resp.original_device_id, pending);
+    assert_eq!(resp.recommended_topic, topic);
+
+    assert!(
+        state.devices.service.get_device(&pending).is_none(),
+        "placeholder must never be registered"
+    );
+    let b = state
+        .devices
+        .service
+        .get_device("B")
+        .expect("B registered after confirm");
+    assert_eq!(b.name, "Device B");
+    assert_eq!(b.connection_config.telemetry_topic.as_deref(), Some(topic));
+    assert_eq!(
+        b.connection_config
+            .extra
+            .get(MQTT_IDENTITY_FIELD_KEY)
+            .and_then(|v| v.as_str()),
+        Some("sn")
+    );
+    assert_eq!(
+        b.connection_config
+            .extra
+            .get(MQTT_IDENTITY_SOURCE_KEY)
+            .and_then(|v| v.as_str()),
+        Some("auto_payload")
+    );
+
+    let a = state.devices.service.get_device("A").expect("A untouched");
+    assert_eq!(
+        a.connection_config.telemetry_topic.as_deref(),
+        Some("gateway/data")
+    );
+
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    assert!(
+        manager.get_draft(&pending).await.is_none(),
+        "pending draft consumed after confirm"
+    );
 }
