@@ -501,11 +501,15 @@ pub enum ExecutionMethod {
 /// Delivery routes the user rejected for the current task.
 ///
 /// General classes only — never product-specific (eink / weather / …).
+/// Negation is scoped to the **rejected** side of an explicit relation
+/// (“don’t use X, use Y”) — preferring webhook must not ban webhook.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExcludedRoute {
     /// Notification, data-push, or webhook configuration/delivery paths.
     NotificationOrWebhook,
+    /// Device-native command path (`device_command` / device control).
+    DeviceNativeCommand,
 }
 
 /// Provenance ladder for goal results (config ≠ dispatch ≠ ACK ≠ physical).
@@ -1531,8 +1535,9 @@ impl TaskState {
                 content,
             } => {
                 self.goal = Some(goal);
-                if object.is_some() {
-                    self.object = object;
+                if let Some(o) = object {
+                    // Keep caller form; verdicts compare via goal_objects_equivalent.
+                    self.object = Some(o);
                 }
                 if content.is_some() {
                     self.content = content;
@@ -1574,8 +1579,14 @@ impl TaskState {
                         self.excluded_routes.push(route);
                     }
                 }
-                // Target device change invalidates prior goal evidence.
-                if self.object != prior_object {
+                // Target device change invalidates prior goal evidence
+                // (compare canonical type+id, not display wrappers).
+                let object_changed = match (&prior_object, &self.object) {
+                    (Some(a), Some(b)) => !goal_objects_equivalent(a, b),
+                    (None, Some(_)) | (Some(_), None) => true,
+                    (None, None) => false,
+                };
+                if object_changed {
                     self.goal_evidences.clear();
                 }
                 self.next_action = None;
@@ -1695,6 +1706,10 @@ impl TaskState {
                     ExcludedRoute::NotificationOrWebhook => {
                         "excluded=notification_or_webhook (do not configure or send via \
                          push/message/webhook for this goal)"
+                    }
+                    ExcludedRoute::DeviceNativeCommand => {
+                        "excluded=device_native_command (do not use device_command / \
+                         device control for this goal — prefer the allowed route)"
                     }
                 };
                 out.push_str(&format!("  - {line}\n"));
@@ -2095,10 +2110,12 @@ const DEVICE_NATIVE_TERMS: &[&str] = &[
     "device_command",
     "device command",
     "native command",
+    "device control",
+    "device",
     "设备原生",
     "设备命令",
     "原生命令",
-    "device control",
+    "设备",
 ];
 const REJECT_CUES: &[&str] = &[
     "不是",
@@ -2107,6 +2124,7 @@ const REJECT_CUES: &[&str] = &[
     "别走",
     "别再",
     "别搞",
+    "不用",
     "not ",
     "don't",
     "do not",
@@ -2115,6 +2133,27 @@ const REJECT_CUES: &[&str] = &[
     "no more",
     "stop using",
     "without ",
+];
+/// Prefer / switch-to cues. Bare Chinese 「用」 is handled via
+/// [`STRONG_REJECT_PREFIXES`] so 「不要用设备」 stays a reject.
+const PREFER_CUES: &[&str] = &[
+    "改用", "改成", "用", "走", "via ", "use ", "prefer ", "with ", "through ",
+];
+/// Immediate reject compounds that swallow a trailing prefer verb
+/// (「不要用…」 / "don't use …").
+const STRONG_REJECT_PREFIXES: &[&str] = &[
+    "不要用",
+    "别用",
+    "不用",
+    "不要走",
+    "别走",
+    "don't use ",
+    "do not use ",
+    "stop using ",
+    "instead of ",
+    "rather than ",
+    "without ",
+    "not ",
 ];
 
 #[derive(Debug, Default)]
@@ -2125,8 +2164,106 @@ struct ParsedCorrectionConstraints {
     content: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoutePolarity {
+    Rejected,
+    Preferred,
+    Neutral,
+}
+
 fn text_has_any(hay: &str, needles: &[&str]) -> bool {
     needles.iter().any(|n| hay.contains(n))
+}
+
+/// Find `term` in `hay` with ASCII word boundaries (Chinese terms unrestricted).
+fn find_term(hay: &str, term: &str) -> Option<usize> {
+    if term.is_empty() {
+        return None;
+    }
+    let non_ascii = term.chars().any(|c| !c.is_ascii());
+    let mut start = 0;
+    while let Some(rel) = hay[start..].find(term) {
+        let idx = start + rel;
+        if non_ascii {
+            return Some(idx);
+        }
+        let before_ok = idx == 0
+            || hay
+                .as_bytes()
+                .get(idx - 1)
+                .map(|b| !b.is_ascii_alphanumeric())
+                .unwrap_or(true);
+        let after = idx + term.len();
+        let after_ok = after >= hay.len()
+            || hay
+                .as_bytes()
+                .get(after)
+                .map(|b| !b.is_ascii_alphanumeric())
+                .unwrap_or(true);
+        if before_ok && after_ok {
+            return Some(idx);
+        }
+        start = idx + term.len().max(1);
+    }
+    None
+}
+
+/// Polarity of a route-class mention: cue window immediately before the
+/// matched term. Strong reject compounds (「不要用」/ "don't use") beat a
+/// bare prefer verb in the same window so opposite corrections stay scoped.
+fn route_polarity(hay_lower: &str, terms: &[&str]) -> RoutePolarity {
+    // Longest term first so "device-native" wins over "device".
+    let mut terms_sorted: Vec<&str> = terms.to_vec();
+    terms_sorted.sort_by_key(|t| std::cmp::Reverse(t.len()));
+    let Some(idx) = terms_sorted.iter().find_map(|t| find_term(hay_lower, t)) else {
+        return RoutePolarity::Neutral;
+    };
+    let start = idx.saturating_sub(28);
+    let window = &hay_lower[start..idx];
+    if STRONG_REJECT_PREFIXES
+        .iter()
+        .any(|p| window.ends_with(p) || window.contains(p))
+    {
+        // Prefer the last strong-reject vs last prefer: 「用 webhook」 after
+        // comma is a new window; 「不要用设备」 ends with strong reject.
+        let reject_at = STRONG_REJECT_PREFIXES
+            .iter()
+            .filter_map(|c| window.rfind(c).map(|i| i + c.len()))
+            .max()
+            .unwrap_or(0);
+        let prefer_at = PREFER_CUES
+            .iter()
+            .filter_map(|c| window.rfind(c).map(|i| i + c.len()))
+            .max()
+            .unwrap_or(0);
+        if reject_at >= prefer_at {
+            return RoutePolarity::Rejected;
+        }
+    }
+    let preferred = text_has_any(window, PREFER_CUES);
+    let rejected = text_has_any(window, REJECT_CUES);
+    match (rejected, preferred) {
+        (true, false) => RoutePolarity::Rejected,
+        (false, true) => RoutePolarity::Preferred,
+        (true, true) => {
+            let reject_at = REJECT_CUES
+                .iter()
+                .filter_map(|c| window.rfind(c))
+                .max()
+                .unwrap_or(0);
+            let prefer_at = PREFER_CUES
+                .iter()
+                .filter_map(|c| window.rfind(c))
+                .max()
+                .unwrap_or(0);
+            if prefer_at >= reject_at {
+                RoutePolarity::Preferred
+            } else {
+                RoutePolarity::Rejected
+            }
+        }
+        (false, false) => RoutePolarity::Neutral,
+    }
 }
 
 /// True when the utterance rejects/prefers delivery route classes (not a
@@ -2152,27 +2289,104 @@ fn parse_correction_constraints(text: &str) -> ParsedCorrectionConstraints {
         content: extract_content_fragment(text),
         ..Default::default()
     };
-    let has_notify = text_has_any(&lower, NOTIFY_WEBHOOK_TERMS);
-    let has_device = text_has_any(&lower, DEVICE_NATIVE_TERMS);
-    let has_reject = text_has_any(&lower, REJECT_CUES);
-    if has_notify && has_reject {
+    let notify = route_polarity(&lower, NOTIFY_WEBHOOK_TERMS);
+    let device = route_polarity(&lower, DEVICE_NATIVE_TERMS);
+
+    // Only exclude the route that is explicitly rejected — never the preferred one.
+    if notify == RoutePolarity::Rejected {
         out.exclude_routes
             .push(ExcludedRoute::NotificationOrWebhook);
     }
-    if has_device {
+    if device == RoutePolarity::Rejected {
+        out.exclude_routes.push(ExcludedRoute::DeviceNativeCommand);
+    }
+    // Prefer device-native only when device is preferred (or mentioned without
+    // being rejected while notify is rejected — classic "not webhook, use device").
+    if device == RoutePolarity::Preferred
+        || (device == RoutePolarity::Neutral
+            && notify == RoutePolarity::Rejected
+            && text_has_any(&lower, DEVICE_NATIVE_TERMS))
+    {
         out.method = Some(ExecutionMethod::DeviceNativeCommand);
     }
     out
 }
 
+/// Canonical goal-object form: `device:<id>`. Display names are not stored;
+/// bare ids / `device:id` / `@`-style tokens normalize to the same key.
+pub fn canonicalize_goal_object(raw: &str) -> String {
+    let t = raw.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    let lower = t.to_lowercase();
+    // 【device `id`】 / device:`id` / device:id
+    if let Some(rest) = lower
+        .strip_prefix("device:")
+        .or_else(|| lower.strip_prefix("device/"))
+        .or_else(|| lower.strip_prefix("@device:"))
+        .or_else(|| lower.strip_prefix("@device/"))
+        .or_else(|| lower.strip_prefix("@device "))
+    {
+        let id = rest
+            .trim()
+            .trim_matches('`')
+            .trim_matches('"')
+            .trim_matches('\'')
+            .trim();
+        if !id.is_empty() {
+            return format!("device:{id}");
+        }
+    }
+    // Bare device-like id (cam-1, EK410, green_01).
+    if t.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && t.len() >= 2
+    {
+        return format!("device:{}", t.to_lowercase());
+    }
+    // Fallback: keep trimmed original (display-only residue).
+    t.to_string()
+}
+
+/// True when two object strings name the same device (type+id), ignoring
+/// display-name wrappers.
+pub fn goal_objects_equivalent(a: &str, b: &str) -> bool {
+    let ca = canonicalize_goal_object(a);
+    let cb = canonicalize_goal_object(b);
+    if ca.is_empty() || cb.is_empty() {
+        return false;
+    }
+    if ca == cb {
+        return true;
+    }
+    let bare = |s: &str| s.strip_prefix("device:").unwrap_or(s).trim().to_lowercase();
+    bare(&ca) == bare(&cb)
+}
+
 fn extract_object(text: &str) -> Option<String> {
-    // Prefer device-like tokens (EK410, green-01, …).
+    // Prefer device-like tokens (EK410, green-01, …). Store bare id;
+    // [`goal_objects_equivalent`] treats name / id / `device:id` / `@` alike.
     for token in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
         if token.len() >= 3
             && token.chars().any(|c| c.is_ascii_digit())
             && token.chars().any(|c| c.is_ascii_alphabetic())
         {
             return Some(token.to_string());
+        }
+    }
+    // `device:id` / @device id already in text → bare id.
+    let lower = text.to_lowercase();
+    for prefix in ["device:", "@device:", "@device/", "device/"] {
+        if let Some(idx) = lower.find(prefix) {
+            let rest = &text[idx + prefix.len()..];
+            let id: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                .collect();
+            if !id.is_empty() {
+                return Some(id);
+            }
         }
     }
     None
@@ -2200,9 +2414,9 @@ pub fn mutating_call_excluded_route(
     arguments: &serde_json::Value,
 ) -> Option<ExcludedRoute> {
     let real = crate::tools::resolve_tool_name(tool_name);
-    // Structured device command is never a notify/webhook route.
+    // Structured device command maps to the device-native exclusion class.
     if real == "device_command" {
-        return None;
+        return Some(ExcludedRoute::DeviceNativeCommand);
     }
     let canonical = canonicalize_tool_arguments(tool_name, arguments);
     let cmd = canonical
@@ -2210,6 +2424,9 @@ pub fn mutating_call_excluded_route(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_lowercase();
+    if !cmd.is_empty() && cmd.contains("neomind device control") {
+        return Some(ExcludedRoute::DeviceNativeCommand);
+    }
     if cmd.is_empty() {
         // Non-shell structured tools: treat message/push-shaped names as notify.
         if real == "message" || real.contains("push") || real.contains("webhook") {
@@ -2271,20 +2488,40 @@ impl TaskState {
         if !self.excluded_routes.contains(&route) {
             return None;
         }
-        let method_hint = match self.method {
-            Some(ExecutionMethod::DeviceNativeCommand) => {
-                " Use device_command (or device control) for the goal device instead."
+        match route {
+            ExcludedRoute::NotificationOrWebhook => {
+                let method_hint = match self.method {
+                    Some(ExecutionMethod::DeviceNativeCommand) => {
+                        " Use device_command (or device control) for the goal device instead."
+                    }
+                    None => " Follow the Active Task State constraints.",
+                };
+                Some(format!(
+                    "Write blocked: user correction excluded notification/webhook/push routes \
+                     for this task.{method_hint}"
+                ))
             }
-            None => " Follow the Active Task State constraints.",
-        };
-        Some(format!(
-            "Write blocked: user correction excluded notification/webhook/push routes \
-             for this task.{method_hint}"
-        ))
+            ExcludedRoute::DeviceNativeCommand => Some(
+                "Write blocked: user correction excluded device-native command routes \
+                 for this task. Use the preferred non-device path (e.g. webhook/push) instead."
+                    .into(),
+            ),
+        }
     }
 
     /// Whether claims/completion must be backed by a target device command.
+    ///
+    /// True when the charter constrains delivery **or** structured
+    /// `device_command` evidence was already observed (ordinary NL turns —
+    /// no hand-seeded SetGoal required).
     pub fn goal_needs_device_command_evidence(&self) -> bool {
+        if self
+            .goal_evidences
+            .iter()
+            .any(|e| e.level >= GoalEvidenceLevel::CommandDispatched)
+        {
+            return true;
+        }
         if self.goal.is_none() {
             return false;
         }
@@ -2293,16 +2530,6 @@ impl TaskState {
                 .excluded_routes
                 .contains(&ExcludedRoute::NotificationOrWebhook)
             || self.object.is_some()
-    }
-
-    /// Operation id used for goal-claim matching (current Operation).
-    pub fn goal_claim_operation_id(&self) -> Option<&str> {
-        let id = self.current_operation_id.as_str();
-        if id.is_empty() {
-            None
-        } else {
-            Some(id)
-        }
     }
 
     /// Evidence stored for a specific Operation (no cross-op fallback).
@@ -2315,14 +2542,104 @@ impl TaskState {
             .find(|e| e.operation_id.as_deref() == Some(op))
     }
 
-    /// Evidence for the current Operation only.
-    pub fn current_goal_evidence(&self) -> Option<&GoalEvidence> {
-        self.goal_evidence_for(self.goal_claim_operation_id())
+    /// Whether `ev` belongs to the goal's device-command Operation set.
+    fn evidence_in_goal_device_command_set(&self, ev: &GoalEvidence) -> bool {
+        if ev.level < GoalEvidenceLevel::CommandDispatched {
+            return false;
+        }
+        match (&self.object, ev.device_id.as_deref()) {
+            (Some(need), Some(got)) => goal_objects_equivalent(need, got),
+            (Some(_), None) => false,
+            (None, _) => true,
+        }
     }
 
-    /// Whether `claim` is allowed for the **current** Operation's evidence.
+    /// Best evidence among the goal device-command Operation set (not
+    /// last [`Self::current_operation_id`]).
+    pub fn primary_goal_evidence(&self) -> Option<&GoalEvidence> {
+        self.goal_evidences
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| self.evidence_in_goal_device_command_set(e))
+            .max_by(|(ia, a), (ib, b)| {
+                // Highest level wins; later entry preferred on ties.
+                a.level.cmp(&b.level).then_with(|| ia.cmp(ib))
+            })
+            .map(|(_, e)| e)
+    }
+
+    /// Evidence for the current Operation only (prompt / per-op diagnostics).
+    pub fn current_goal_evidence(&self) -> Option<&GoalEvidence> {
+        let id = self.current_operation_id.as_str();
+        if id.is_empty() {
+            None
+        } else {
+            self.goal_evidence_for(Some(id))
+        }
+    }
+
+    /// Whether `claim` is allowed for the **goal device-command Operation set**.
+    ///
+    /// Does **not** key off last [`Self::current_operation_id`] alone — a later
+    /// config/queued op must not hide prior device-command evidence for the
+    /// goal device. Per-op checks use [`Self::evaluate_goal_claim_for`].
     pub fn evaluate_goal_claim(&self, claim: GoalClaimKind) -> Result<(), String> {
-        self.evaluate_goal_claim_for(claim, self.goal_claim_operation_id())
+        if !self.goal_needs_device_command_evidence() {
+            return Ok(());
+        }
+        let set: Vec<&GoalEvidence> = self
+            .goal_evidences
+            .iter()
+            .filter(|e| self.evidence_in_goal_device_command_set(e))
+            .collect();
+        if set.is_empty() {
+            // Fall back: maybe only config evidence exists on current op.
+            if self
+                .goal_evidences
+                .iter()
+                .any(|e| e.level == GoalEvidenceLevel::ConfigSuccess)
+            {
+                return Err(
+                    "config/push/webhook success is not a target device command — \
+                     cannot claim sent or complete this goal"
+                        .into(),
+                );
+            }
+            return Err(
+                "need command_dispatched (or stronger) to the goal device on a \
+                 device-command Operation before claiming sent / completing"
+                    .into(),
+            );
+        }
+        let best = set
+            .iter()
+            .map(|e| e.level)
+            .max()
+            .unwrap_or(GoalEvidenceLevel::None);
+        match claim {
+            GoalClaimKind::CommandSent | GoalClaimKind::TaskComplete => {
+                if best >= GoalEvidenceLevel::CommandDispatched {
+                    Ok(())
+                } else {
+                    Err(
+                        "need command_dispatched (or stronger) to the goal device on a \
+                         device-command Operation before claiming sent / completing"
+                            .into(),
+                    )
+                }
+            }
+            GoalClaimKind::PhysicalEffect => {
+                if best >= GoalEvidenceLevel::PhysicalEffectVerified {
+                    Ok(())
+                } else {
+                    Err(
+                        "queued / adapter_accepted / device_ack ≠ physical effect — \
+                         cannot claim screen refreshed or physical update for this goal"
+                            .into(),
+                    )
+                }
+            }
+        }
     }
 
     /// Whether `claim` is allowed for evidence bound to `operation_id`.
@@ -2340,7 +2657,7 @@ impl TaskState {
         let ev = self.goal_evidence_for(operation_id);
         let level = ev.map(|e| e.level).unwrap_or(GoalEvidenceLevel::None);
         let device_ok = match (&self.object, ev.and_then(|e| e.device_id.as_deref())) {
-            (Some(need), Some(got)) => need == got,
+            (Some(need), Some(got)) => goal_objects_equivalent(need, got),
             (Some(_), None) => false,
             (None, _) => true,
         };
@@ -2399,7 +2716,8 @@ impl TaskState {
     /// System-judged goal status for the final response (evidence only).
     ///
     /// Does **not** inspect assistant prose. Model NL may describe outcomes
-    /// only within this structured limit.
+    /// only within this structured limit. Status binds to the goal
+    /// device-command Operation set (not last current_operation_id alone).
     pub fn system_goal_status(&self) -> SystemGoalStatus {
         match &self.status {
             TaskStatus::Cancelled => return SystemGoalStatus::Cancelled,
@@ -2418,9 +2736,9 @@ impl TaskState {
         if !self.goal_needs_device_command_evidence() {
             return SystemGoalStatus::NotApplicable;
         }
-        let op_id = self.goal_claim_operation_id().map(|s| s.to_string());
-        let ev = self.current_goal_evidence();
-        let level = ev.map(|e| e.level).unwrap_or(GoalEvidenceLevel::None);
+        // Claims bind to the goal device-command set; display level may fall
+        // back to best any evidence (e.g. ConfigSuccess-only Incomplete).
+        let primary = self.primary_goal_evidence();
         let task_complete_ok = self
             .evaluate_goal_claim(GoalClaimKind::TaskComplete)
             .is_ok();
@@ -2428,9 +2746,10 @@ impl TaskState {
             .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
             .is_ok();
         if task_complete_ok {
+            let ev = primary;
             SystemGoalStatus::CompleteEligible {
-                level,
-                operation_id: op_id.or_else(|| ev.and_then(|e| e.operation_id.clone())),
+                level: ev.map(|e| e.level).unwrap_or(GoalEvidenceLevel::None),
+                operation_id: ev.and_then(|e| e.operation_id.clone()),
                 device_id: ev.and_then(|e| e.device_id.clone()),
                 command: ev.and_then(|e| e.command.clone()),
                 delivery: ev.and_then(|e| e.delivery.clone()),
@@ -2438,21 +2757,26 @@ impl TaskState {
                 physical_ok,
             }
         } else {
+            let display = primary.or_else(|| {
+                self.goal_evidences
+                    .iter()
+                    .max_by(|a, b| a.level.cmp(&b.level))
+            });
             let reason = self
                 .evaluate_goal_claim(GoalClaimKind::TaskComplete)
                 .err()
                 .unwrap_or_else(|| "incomplete".into());
             SystemGoalStatus::Incomplete {
                 reason,
-                level,
-                operation_id: op_id,
+                level: display.map(|e| e.level).unwrap_or(GoalEvidenceLevel::None),
+                operation_id: display.and_then(|e| e.operation_id.clone()),
                 task_complete_ok: false,
                 physical_ok,
             }
         }
     }
 
-    /// Whether structured TaskComplete is allowed for the current Operation.
+    /// Whether structured TaskComplete is allowed for the goal Operation set.
     pub fn structured_completion_allowed(&self) -> bool {
         self.evaluate_goal_claim(GoalClaimKind::TaskComplete)
             .is_ok()
@@ -2492,10 +2816,35 @@ impl TaskState {
         } else {
             obs.operation_id = None;
         }
-        // Constrained target: ignore evidence for a different device.
+        // Constrained target: ignore evidence for a different device (type+id).
         if let (Some(need), Some(got)) = (&self.object, &obs.device_id) {
-            if need != got && obs.level >= GoalEvidenceLevel::CommandDispatched {
+            if !goal_objects_equivalent(need, got)
+                && obs.level >= GoalEvidenceLevel::CommandDispatched
+            {
                 return;
+            }
+        }
+        // Ordinary NL → executed device_command: bind a lightweight charter so
+        // End.goalStatus is useful without hand-seeded SetGoal / TaskState.
+        if obs.level >= GoalEvidenceLevel::CommandDispatched {
+            if self.goal.is_none() {
+                let cmd = obs.command.as_deref().unwrap_or("command");
+                self.goal = Some(format!("device_command:{cmd}"));
+            }
+            if self.object.is_none() {
+                if let Some(ref id) = obs.device_id {
+                    self.object = Some(id.clone());
+                }
+            }
+            if self.method.is_none()
+                && !self
+                    .excluded_routes
+                    .contains(&ExcludedRoute::DeviceNativeCommand)
+            {
+                self.method = Some(ExecutionMethod::DeviceNativeCommand);
+            }
+            if matches!(self.status, TaskStatus::Idle) {
+                self.status = TaskStatus::Active;
             }
         }
         // Per-operation slot — never reuse another op's higher level.
@@ -3895,6 +4244,7 @@ mod tests {
             }) => {
                 assert_eq!(method, Some(ExecutionMethod::DeviceNativeCommand));
                 assert!(exclude_routes.contains(&ExcludedRoute::NotificationOrWebhook));
+                assert!(!exclude_routes.contains(&ExcludedRoute::DeviceNativeCommand));
             }
             other => panic!("expected route Correct, got {other:?}"),
         }
@@ -3906,12 +4256,238 @@ mod tests {
             }) => {
                 assert_eq!(method, Some(ExecutionMethod::DeviceNativeCommand));
                 assert!(exclude_routes.contains(&ExcludedRoute::NotificationOrWebhook));
+                assert!(!exclude_routes.contains(&ExcludedRoute::DeviceNativeCommand));
             }
             other => panic!("expected zh route Correct, got {other:?}"),
         }
         // Ordinary goal statements stay Turns (no reject cue).
         assert!(parse_user_directive("把天气写到屏幕").is_none());
         assert!(parse_user_directive("configure the webhook for weather").is_none());
+    }
+
+    #[test]
+    fn correction_opposite_does_not_ban_preferred_webhook() {
+        // EN: reject device, prefer webhook — must NOT exclude webhook.
+        match parse_user_directive("don't use device, use webhook") {
+            Some(TaskDirective::Correct {
+                method,
+                exclude_routes,
+                ..
+            }) => {
+                assert!(
+                    exclude_routes.contains(&ExcludedRoute::DeviceNativeCommand),
+                    "device path must be excluded: {exclude_routes:?}"
+                );
+                assert!(
+                    !exclude_routes.contains(&ExcludedRoute::NotificationOrWebhook),
+                    "preferred webhook must not be banned: {exclude_routes:?}"
+                );
+                assert!(
+                    method.is_none(),
+                    "must not force device-native method when device was rejected"
+                );
+            }
+            other => panic!("expected opposite Correct, got {other:?}"),
+        }
+        // ZH opposite.
+        match parse_user_directive("不要用设备，用 webhook") {
+            Some(TaskDirective::Correct {
+                method,
+                exclude_routes,
+                ..
+            }) => {
+                assert!(exclude_routes.contains(&ExcludedRoute::DeviceNativeCommand));
+                assert!(!exclude_routes.contains(&ExcludedRoute::NotificationOrWebhook));
+                assert!(method.is_none());
+            }
+            other => panic!("expected zh opposite Correct, got {other:?}"),
+        }
+
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::Correct {
+            goal: "don't use device, use webhook".into(),
+            object: None,
+            content: None,
+            method: None,
+            exclude_routes: vec![ExcludedRoute::DeviceNativeCommand],
+        });
+        let call_site = s.note_user_turn();
+        let dc_args = serde_json::json!({
+            "device": "cam-1",
+            "command": "render_text",
+            "params": {"text": "x"}
+        });
+        let fp = crate::agent::streaming::mutating_write_fingerprint("device_command", &dc_args)
+            .expect("device_command write");
+        match evaluate_mutating_gate(&mut s, "device_command", &dc_args, &fp, None, call_site) {
+            MutatingGateOutcome::Block { message, .. } => {
+                assert!(
+                    message.contains("device-native") || message.contains("excluded"),
+                    "{message}"
+                );
+            }
+            other => {
+                panic!("device_command must be blocked after opposite correction, got {other:?}")
+            }
+        }
+        let push_args = serde_json::json!({
+            "command": "neomind push start weather-screen"
+        });
+        let fp_push = crate::agent::streaming::mutating_write_fingerprint("shell", &push_args)
+            .expect("push write");
+        match evaluate_mutating_gate(&mut s, "shell", &push_args, &fp_push, None, call_site) {
+            MutatingGateOutcome::Proceed { .. } => {}
+            other => panic!("preferred webhook/push must proceed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn goal_object_name_id_at_same_device_same_verdict() {
+        assert!(goal_objects_equivalent("cam-1", "device:cam-1"));
+        assert!(goal_objects_equivalent("cam-1", "@device:cam-1"));
+        assert!(goal_objects_equivalent("device:cam-1", "CAM-1"));
+        assert!(!goal_objects_equivalent("cam-1", "cam-2"));
+
+        let mut s = TaskState::default();
+        // Object as display-ish id form from @ / device: prefix — same device.
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "update screen".into(),
+            object: Some("device:cam-1".into()),
+            content: None,
+        });
+        s.method = Some(ExecutionMethod::DeviceNativeCommand);
+        s.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({"device": "cam-1", "command": "render_text"}),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "cam-1",
+                "command": "render_text",
+                "delivery": "adapter_accepted"
+            }),
+            Some("op-at"),
+        );
+        assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_ok());
+
+        // Bare id object vs same evidence.
+        let mut s2 = TaskState::default();
+        s2.apply_directive(TaskDirective::SetGoal {
+            goal: "update screen".into(),
+            object: Some("cam-1".into()),
+            content: None,
+        });
+        s2.method = Some(ExecutionMethod::DeviceNativeCommand);
+        s2.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({"device": "cam-1", "command": "render_text"}),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "cam-1",
+                "command": "render_text",
+                "delivery": "adapter_accepted"
+            }),
+            Some("op-bare"),
+        );
+        assert_eq!(
+            s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_ok(),
+            s2.evaluate_goal_claim(GoalClaimKind::CommandSent).is_ok()
+        );
+        match (s.system_goal_status(), s2.system_goal_status()) {
+            (
+                SystemGoalStatus::CompleteEligible {
+                    task_complete_ok: true,
+                    ..
+                },
+                SystemGoalStatus::CompleteEligible {
+                    task_complete_ok: true,
+                    ..
+                },
+            ) => {}
+            (a, b) => panic!("name/id/@ must yield same verdict: {a:?} vs {b:?}"),
+        }
+    }
+
+    #[test]
+    fn ordinary_device_command_without_set_goal_yields_useful_goal_status() {
+        // NL → tools → End: no prefilled TaskState / SetGoal.
+        let mut s = TaskState::default();
+        assert!(matches!(
+            s.system_goal_status(),
+            SystemGoalStatus::NotApplicable
+        ));
+        s.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({"device": "cam-1", "command": "reboot"}),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "cam-1",
+                "command": "reboot",
+                "delivery": "adapter_accepted"
+            }),
+            Some("op-nl-1"),
+        );
+        assert!(s.goal.is_some(), "auto-bind goal from device_command");
+        assert_eq!(s.object.as_deref(), Some("cam-1"));
+        assert_eq!(s.method, Some(ExecutionMethod::DeviceNativeCommand));
+        let status = s.system_goal_status();
+        match &status {
+            SystemGoalStatus::CompleteEligible {
+                task_complete_ok: true,
+                level: GoalEvidenceLevel::CommandDispatched,
+                operation_id: Some(op),
+                ..
+            } => assert_eq!(op, "op-nl-1"),
+            other => panic!("expected useful CompleteEligible from device_command, got {other:?}"),
+        }
+        // Later unrelated current_operation_id must not hide the goal set.
+        s.current_operation_id = "op-other".into();
+        match s.system_goal_status() {
+            SystemGoalStatus::CompleteEligible {
+                operation_id: Some(op),
+                ..
+            } => assert_eq!(op, "op-nl-1"),
+            other => panic!("goal-set status must ignore stray current op, got {other:?}"),
+        }
+
+        // End → stamp → reload: history keeps goalStatus without TaskState.
+        let mut agent = crate::agent::types::AgentInternalState::new("nl-goal".into());
+        agent.push_message(crate::agent::types::AgentMessage::user(
+            "reboot cam-1 please",
+        ));
+        agent.push_message(crate::agent::types::AgentMessage::assistant(
+            "command dispatched",
+        ));
+        agent.task_state = s;
+        let stamped = agent.task_state.system_goal_status();
+        agent.stamp_final_goal_on_last_assistant(stamped.clone(), StreamEndReason::Normal);
+        let snap = agent.memory.clone();
+        // Simulate reload: restore messages only — no TaskState / SetGoal seed.
+        let mut reloaded = crate::agent::types::AgentInternalState::new("nl-goal".into());
+        reloaded.restore_memory(snap);
+        assert!(
+            matches!(
+                reloaded.task_state.system_goal_status(),
+                SystemGoalStatus::NotApplicable
+            ),
+            "reload must not recompute from empty TaskState"
+        );
+        let last = reloaded
+            .memory
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .expect("assistant");
+        assert_eq!(last.goal_status.as_ref(), Some(&stamped));
+        assert_eq!(last.end_reason, Some(StreamEndReason::Normal));
+        match last.goal_status.as_ref().unwrap() {
+            SystemGoalStatus::CompleteEligible {
+                task_complete_ok: true,
+                level: GoalEvidenceLevel::CommandDispatched,
+                operation_id: Some(op),
+                ..
+            } => assert_eq!(op, "op-nl-1"),
+            other => panic!("reloaded history goalStatus must stay useful, got {other:?}"),
+        }
     }
 
     #[test]
@@ -4682,24 +5258,30 @@ mod tests {
             s.current_goal_evidence().map(|e| e.level),
             Some(GoalEvidenceLevel::CommandDispatched)
         );
-        assert!(s
-            .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
-            .is_err());
+        // Goal-set claim: op-A physical counts for the goal device set
+        // (not keyed off last current_operation_id = op-B).
+        assert!(s.evaluate_goal_claim(GoalClaimKind::PhysicalEffect).is_ok());
         assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_ok());
+        // Per-op: op-B alone still must not look physically verified.
+        assert!(s
+            .evaluate_goal_claim_for(GoalClaimKind::PhysicalEffect, Some("op-B"))
+            .is_err());
         assert!(s
             .evaluate_goal_claim_for(GoalClaimKind::PhysicalEffect, Some("op-A"))
             .is_ok());
-        assert!(!s.complete_with_evidence("screen-refreshed"));
         match s.system_goal_status() {
             SystemGoalStatus::CompleteEligible {
-                physical_ok: false,
+                physical_ok: true,
                 task_complete_ok: true,
-                level: GoalEvidenceLevel::CommandDispatched,
+                level: GoalEvidenceLevel::PhysicalEffectVerified,
                 operation_id: Some(op),
                 ..
-            } => assert_eq!(op, "op-B"),
-            other => panic!("expected CompleteEligible(dispatched,op-B), got {other:?}"),
+            } => assert_eq!(op, "op-A"),
+            other => {
+                panic!("expected CompleteEligible(physical,op-A) from goal op set, got {other:?}")
+            }
         }
+        assert!(s.complete_with_evidence("screen-refreshed"));
     }
 
     #[test]
