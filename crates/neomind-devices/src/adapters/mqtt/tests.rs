@@ -245,6 +245,43 @@ fn test_standard_uplink_topic_has_no_metric_name() {
     );
 }
 
+#[test]
+fn test_ct_prov_bare_topic_extracts_device_id_not_type() {
+    // Regression: BLE provision wrote mqtt.topic=`device/{type}/{id}` and
+    // firmware published exactly that (no /uplink). Strong extract used to
+    // require 4 segments, so weak extract returned the TYPE as device_id and
+    // flooded drafts as `ne101_camera`.
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let topic = "device/ne101_camera/000012e186d30000";
+    assert!(is_neomind_device_telemetry_topic(topic));
+    assert_eq!(
+        extract_device_id_from_topic_strong(topic, &cfg).as_deref(),
+        Some("000012e186d30000")
+    );
+    assert_eq!(
+        extract_device_type_from_topic(topic).as_deref(),
+        Some("ne101_camera")
+    );
+    assert_eq!(
+        extract_device_id_from_topic_strong(
+            "device/ne101_camera/000012e186d30000/uplink",
+            &cfg
+        )
+        .as_deref(),
+        Some("000012e186d30000")
+    );
+
+    let mut map = std::collections::HashMap::new();
+    map.insert(
+        "device/ne101_camera/000012e186d30000/uplink".to_string(),
+        "000012e186d30000".to_string(),
+    );
+    assert_eq!(
+        lookup_topic_device_id(&map, topic).map(|s| s.as_str()),
+        Some("000012e186d30000")
+    );
+}
+
 #[cfg(test)]
 #[test]
 fn test_default_parse_value() {

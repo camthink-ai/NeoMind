@@ -103,22 +103,34 @@ describe('ct-prov model stubs', () => {
     expect(modelToDeviceType('NE503')).toBe('ne503_camera')
   })
 
-  it('builds mqtt section from resolve response', () => {
+  it('builds mqtt section with full uplink topic (firmware publishes exactly)', () => {
     expect(
       mqttSectionFromResolve({
         host: 'mqtt.example.com',
         port: 8883,
         username: 'u',
         password: 'p',
-        topic_prefix: 'neomind/',
-        client_id: 'dev-1',
+        topic_prefix: 'device/ne101_camera/000012e186d30000',
+        client_id: '000012e186d30000',
       }),
     ).toMatchObject({
       enable: true,
       host: 'mqtt.example.com',
       port: 8883,
       tls: true,
-      client_id: 'dev-1',
+      client_id: '000012e186d30000',
+      topic: 'device/ne101_camera/000012e186d30000/uplink',
     })
+    // Already-suffixed prefix must not double /uplink
+    expect(
+      mqttSectionFromResolve({
+        host: 'h',
+        port: 1883,
+        username: '',
+        password: '',
+        topic_prefix: 'device/t/id/uplink',
+        client_id: 'id',
+      }).topic,
+    ).toBe('device/t/id/uplink')
   })
 })

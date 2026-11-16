@@ -262,10 +262,30 @@ impl DeviceAdapter for MqttAdapter {
                 "Subscribed to device {} telemetry topic: {}",
                 device_id, topic
             );
+            // CT-Prov / some firmwares publish to the bare `device/{type}/{id}`
+            // path (exact `mqtt.topic` without `/uplink`). Alias-map + subscribe
+            // so telemetry associates to the registered device instead of
+            // spawning a draft under device_id=<type>.
+            let bare_prefix = topic
+                .strip_suffix("/uplink")
+                .map(|s| s.to_string())
+                .filter(|s| s.starts_with("device/"));
+            if let Some(ref bare) = bare_prefix {
+                if bare != &topic {
+                    let _ = self.subscribe_topic(bare).await;
+                    info!(
+                        "Also subscribed to CT-Prov bare topic alias: {} -> {}",
+                        bare, device_id
+                    );
+                }
+            }
             // Store topic-to-device mapping for message routing
             {
                 let mut mapping = self.topic_to_device.write().await;
                 mapping.insert(topic.clone(), device_id.to_string());
+                if let Some(bare) = bare_prefix {
+                    mapping.insert(bare, device_id.to_string());
+                }
                 info!("Stored topic mapping: {} -> {}", topic, device_id);
             }
 
@@ -316,9 +336,19 @@ impl DeviceAdapter for MqttAdapter {
                     "Unsubscribed from device {} telemetry topic: {}",
                     device_id, telemetry_topic
                 );
-                // Remove topic-to-device mapping
+                let bare = telemetry_topic
+                    .strip_suffix("/uplink")
+                    .map(|s| s.to_string())
+                    .filter(|s| s.starts_with("device/"));
+                if let Some(ref bare_topic) = bare {
+                    let _ = self.unsubscribe_topic(bare_topic).await;
+                }
+                // Remove topic-to-device mapping (uplink + bare alias)
                 let mut mapping = self.topic_to_device.write().await;
                 mapping.remove(telemetry_topic);
+                if let Some(bare_topic) = bare {
+                    mapping.remove(&bare_topic);
+                }
             }
         }
 

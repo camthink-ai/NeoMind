@@ -192,8 +192,22 @@ export function modelNameFromCode(
   return undefined
 }
 
-/** Build CT `mqtt` section from NeoMind resolve response. */
+/**
+ * Build CT `mqtt` section from NeoMind resolve response.
+ *
+ * Firmware treats `topic` as the **exact publish topic** (not a prefix).
+ * NeoMind registers/subscribes `device/{type}/{id}/uplink`, so we must write
+ * the full uplink path — writing only the prefix caused devices to publish
+ * `device/{type}/{id}` and auto-discovery to mis-parse device_id as the type.
+ */
 export function mqttSectionFromResolve(cfg: CtMqttConfig): Record<string, unknown> {
+  const prefix = (cfg.topic_prefix || '').replace(/\/+$/, '')
+  const topic =
+    !prefix
+      ? undefined
+      : prefix.endsWith('/uplink')
+        ? prefix
+        : `${prefix}/uplink`
   return {
     enable: true,
     host: cfg.host,
@@ -202,7 +216,7 @@ export function mqttSectionFromResolve(cfg: CtMqttConfig): Record<string, unknow
     password: cfg.password || undefined,
     client_id: cfg.client_id,
     tls: cfg.port === 8883,
-    topic: cfg.topic_prefix || undefined,
+    topic,
   }
 }
 

@@ -287,10 +287,10 @@ impl MqttAdapter {
                     return;
                 }
 
-                // Check if this is a standard uplink format first
-                let parts: Vec<&str> = topic.split('/').collect();
-                let mut is_standard_uplink =
-                    parts.len() >= 4 && parts[0] == "device" && parts.get(3) == Some(&"uplink");
+                // NeoMind family topics: `device/{type}/{id}/uplink` OR bare
+                // `device/{type}/{id}` (CT-Prov writes `topic` as the exact
+                // publish path; older provision omitted `/uplink`).
+                let mut is_standard_uplink = is_neomind_device_telemetry_topic(&topic);
 
                 // If the topic is in standard uplink format but the device is NOT registered,
                 // treat it as a discovery candidate so it falls through to the auto-onboarding
@@ -298,7 +298,9 @@ impl MqttAdapter {
                 // dropped (UnifiedExtractor returns 0 metrics for unknown device types) and never
                 // appear in the Pending Devices list.
                 if is_standard_uplink {
-                    let is_registered = topic_to_device.read().await.contains_key(&topic);
+                    let mapping = topic_to_device.read().await;
+                    let is_registered = lookup_topic_device_id(&mapping, &topic).is_some();
+                    drop(mapping);
                     if !is_registered {
                         info!(
                             "Standard uplink topic '{}' has no registered device, falling through to auto-onboarding",
@@ -483,21 +485,44 @@ impl MqttAdapter {
                     // otherwise a device whose telemetry_topic happens to contain
                     // a `status` segment or end with `online`/`offline` (common in
                     // IoT firmware) would have its telemetry silently dropped.
-                    let device_id_opt = {
+                    let mut device_id_opt = {
                         let mapping = topic_to_device.read().await;
                         debug!(
                             "Checking topic_to_device mapping for topic '{}': {} entries",
                             topic,
                             mapping.len()
                         );
-                        if !mapping.contains_key(&topic) {
-                            debug!(
-                                "Topic '{}' not found in mapping, triggering auto-onboarding",
-                                topic
-                            );
-                        }
-                        mapping.get(&topic).cloned()
+                        lookup_topic_device_id(&mapping, &topic).cloned()
                     };
+
+                    // CT-Prov bare-topic / stale map: strong-extract id already
+                    // registered → associate + learn the topic, do NOT draft.
+                    if device_id_opt.is_none() {
+                        if let Some(id) = extract_device_id_from_topic_strong(&topic, config)
+                            .and_then(sanitize_auto_device_id)
+                        {
+                            let known = {
+                                let types = device_types.read().await;
+                                types.contains_key(&id)
+                            };
+                            if known {
+                                let mut mapping = topic_to_device.write().await;
+                                mapping.insert(topic.clone(), id.clone());
+                                info!(
+                                    "Learned topic mapping for registered device {} from '{}'",
+                                    id, topic
+                                );
+                                device_id_opt = Some(id);
+                            }
+                        }
+                    }
+
+                    if device_id_opt.is_none() {
+                        debug!(
+                            "Topic '{}' not found in mapping, triggering auto-onboarding",
+                            topic
+                        );
+                    }
 
                     if let Some(ref device_id) = device_id_opt {
                         debug!(

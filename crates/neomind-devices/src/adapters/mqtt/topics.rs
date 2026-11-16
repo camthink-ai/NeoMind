@@ -182,16 +182,19 @@ pub(crate) fn extract_device_id_from_topic(
         .or_else(|| extract_device_id_from_topic_weak(topic))
 }
 
-/// High-confidence topic extraction: `device/{type}/{id}/...` or a matching
-/// subscription pattern (`+` at index 1 is the device id).
+/// High-confidence topic extraction: `device/{type}/{id}` or
+/// `device/{type}/{id}/{direction}` (CT-Prov may omit the `/uplink` suffix),
+/// or a matching subscription pattern (`+` at index 1 is the device id).
 pub(crate) fn extract_device_id_from_topic_strong(
     topic: &str,
     config: &MqttAdapterConfig,
 ) -> Option<String> {
     let parts: Vec<&str> = topic.split('/').collect();
 
-    // Try device/{device_type}/{device_id}/{direction} format first
-    if parts.len() >= 4 && parts[0] == "device" {
+    // device/{type}/{id}[/uplink|downlink|…] — id is always the 3rd segment.
+    // Requiring 4 segments previously forced 3-segment CT-Prov publishes onto
+    // the weak extractor, which returned the TYPE (`ne101_camera`) as device_id.
+    if parts.len() >= 3 && parts[0] == "device" && !parts[2].is_empty() {
         return Some(parts[2].to_string());
     }
 
@@ -202,6 +205,43 @@ pub(crate) fn extract_device_id_from_topic_strong(
         }
     }
 
+    None
+}
+
+/// True for NeoMind family topics: `device/{type}/{id}` or `…/uplink` / `…/downlink`.
+pub(crate) fn is_neomind_device_telemetry_topic(topic: &str) -> bool {
+    let parts: Vec<&str> = topic.split('/').collect();
+    if parts.len() == 3 && parts[0] == "device" && !parts[1].is_empty() && !parts[2].is_empty() {
+        return true;
+    }
+    parts.len() >= 4
+        && parts[0] == "device"
+        && !parts[1].is_empty()
+        && !parts[2].is_empty()
+        && matches!(parts[3], "uplink" | "downlink")
+}
+
+/// Lookup helpers for topic→device maps that may store only the `/uplink` form.
+pub(crate) fn lookup_topic_device_id<'a>(
+    mapping: &'a std::collections::HashMap<String, String>,
+    topic: &str,
+) -> Option<&'a String> {
+    if let Some(id) = mapping.get(topic) {
+        return Some(id);
+    }
+    // CT-Prov exact-topic publish without `/uplink` → registered uplink key.
+    if !topic.ends_with("/uplink") && !topic.ends_with("/downlink") {
+        let uplink = format!("{topic}/uplink");
+        if let Some(id) = mapping.get(&uplink) {
+            return Some(id);
+        }
+    }
+    // Inverse: message on `/uplink` but map only has the bare prefix (legacy).
+    if let Some(prefix) = topic.strip_suffix("/uplink") {
+        if let Some(id) = mapping.get(prefix) {
+            return Some(id);
+        }
+    }
     None
 }
 
@@ -405,10 +445,10 @@ pub(crate) fn extract_metric_name_from_topic(topic: &str) -> Option<String> {
 }
 
 /// Helper function to extract device type from topic.
-/// For topic format device/{device_type}/{device_id}/{direction}
+/// Accepts `device/{type}/{id}` and `device/{type}/{id}/{direction}`.
 pub(crate) fn extract_device_type_from_topic(topic: &str) -> Option<String> {
     let parts: Vec<&str> = topic.split('/').collect();
-    if parts.len() >= 4 && parts[0] == "device" {
+    if parts.len() >= 3 && parts[0] == "device" && !parts[1].is_empty() {
         Some(parts[1].to_string())
     } else {
         None
