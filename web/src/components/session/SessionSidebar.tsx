@@ -533,7 +533,7 @@ export function SessionSidebar({
 
       <div className="px-5 pb-4">
         <div className="overflow-hidden rounded-2xl bg-muted-50">
-          <div className="grid grid-cols-4 gap-px">
+          <div className="grid grid-cols-4">
             {workspaceShortcuts.map(({ id, path, icon: Icon, labelKey }) => (
               <button
                 key={id}
@@ -553,7 +553,7 @@ export function SessionSidebar({
             type="button"
             data-testid="session-drawer-workspace"
             onClick={() => goWorkspace('/system')}
-            className="flex w-full items-center gap-2.5 border-t border-border px-3 py-2.5 text-left transition-colors active:bg-muted"
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors active:bg-muted"
           >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-background text-foreground">
               <LayoutGrid className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
