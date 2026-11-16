@@ -572,7 +572,7 @@ export function SessionSidebar({
       </div>
 
       <div className="px-5 pb-2">
-        <h3 className="text-sm font-medium text-muted-foreground">
+        <h3 className="text-base font-medium text-muted-foreground">
           {t('session.recent')}
         </h3>
       </div>
