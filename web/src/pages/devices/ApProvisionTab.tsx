@@ -129,9 +129,6 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
         <div className="w-14 h-14 mx-auto rounded-xl bg-primary-light flex items-center justify-center">
           <Wifi className="w-7 h-7 text-primary" />
         </div>
-        <p className="text-xs font-medium text-muted-foreground tracking-wide">
-          {t('devices:ctProv.productName')}
-        </p>
         <h3 className="text-lg font-medium">{t('devices:ap.joinTitle')}</h3>
         <p className="text-sm text-muted-foreground">{t('devices:ap.joinDesc')}</p>
       </div>

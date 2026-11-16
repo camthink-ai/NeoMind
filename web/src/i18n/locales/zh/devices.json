@@ -951,18 +951,18 @@
   },
   "ble": {
     "tabTitle": "蓝牙配网",
-    "tabDesc": "经蓝牙使用 CamThink CT-Prov",
+    "tabDesc": "经蓝牙配置网络与 MQTT",
     "connectingTitle": "正在连接设备...",
     "scanTitle": "蓝牙设备配网",
-    "scanDesc": "扫描 CamThink CT-Prov 设备，经蓝牙配置网络与 MQTT。",
-    "scanBtn": "扫描 CT-Prov 设备",
-    "prepStep1": "确保设备已通电且刷写 CT-Prov/1 固件",
+    "scanDesc": "扫描附近设备，经蓝牙配置网络与 MQTT。",
+    "scanBtn": "扫描设备",
+    "prepStep1": "确保设备已通电并处于可配网状态",
     "prepStep2": "按下设备拍照按键，等待指示灯进入可配网模式",
-    "prepStep3": "设备广播 CamThink CT-Prov 服务（名称形如 NE101-A1B2C3）",
+    "prepStep3": "设备广播可配网蓝牙名称（形如 NE101-A1B2C3）",
     "prepTitle": "准备工作",
     "busy": "忙碌中 — 不可配网",
     "scanning": "扫描中...",
-    "scanningHint": "正在搜索附近的 CT-Prov 蓝牙设备（最多 10 秒）...",
+    "scanningHint": "正在搜索附近的蓝牙设备（最多 10 秒）...",
     "noDevices": "未发现设备",
     "selectDevice": "选择设备",
     "foundDevices": "发现 {{count}} 个设备",
@@ -1003,7 +1003,7 @@
       "done": "配网完成",
       "failed": "失败"
     },
-    "scanDescShort": "扫描附近的 CamThink CT-Prov 蓝牙设备。",
+    "scanDescShort": "扫描附近蓝牙设备以配置网络与 MQTT。",
     "scanHint": "先让设备进入可配网模式，再开始扫描。"
   },
   "auto": {

@@ -110,9 +110,6 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
     return (
       <div className="min-h-[420px] sm:min-h-[480px] flex flex-col px-4 py-6">
         <div className="text-center mb-6">
-          <p className="text-xs font-medium text-muted-foreground tracking-wide mb-1">
-            {t('devices:ctProv.productName')}
-          </p>
           <h3 className="text-lg font-medium">{t('devices:ble.selectDevice')}</h3>
           <p className="text-sm text-muted-foreground mt-1">
             {t('devices:ble.foundDevices', { count: ct.scannedDevices.length })}
@@ -145,7 +142,9 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{label}</p>
                   <p className="text-xs text-muted-foreground">
-                    {busy ? t('devices:ble.busy') : t('devices:ctProv.productName')}
+                    {busy
+                      ? t('devices:ble.busy')
+                      : codeName || t('devices:ble.tabTitle')}
                     {dev.discovered?.macSuffix ? ` · ${dev.discovered.macSuffix}` : ''}
                   </p>
                 </div>
@@ -175,9 +174,6 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
         <Bluetooth className="w-8 h-8 text-primary" />
       </div>
       <div className="text-center max-w-sm space-y-2">
-        <p className="text-xs font-medium text-muted-foreground tracking-wide">
-          {t('devices:ctProv.productName')}
-        </p>
         <h3 className="text-lg font-medium">{t('devices:ble.scanTitle')}</h3>
         <p className="text-sm text-muted-foreground">{t('devices:ble.scanDescShort')}</p>
       </div>

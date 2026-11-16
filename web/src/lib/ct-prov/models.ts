@@ -125,11 +125,18 @@ export function softapEndpointForHost(host: string): string {
   return `http://${host}/api/v1/ctprov`
 }
 
-/** Models that advertise SoftAP discovery in DeviceTypes (fallback: seeded families). */
+/**
+ * SoftAP model families for the AP tab dropdown.
+ *
+ * Always includes the seeded families (NE101/NE301/NE302/NE503/EK410).
+ * DeviceTypes `ct_prov` overlays host/device_type when present — a store that
+ * only has one SoftAP-capable type must NOT shrink the dropdown to a single
+ * item (that was the live UX bug).
+ */
 export function listApProvisionModels(
   deviceTypes?: CtProvDeviceTypeRef[] | null,
 ): Array<{ model: string; host: string; deviceType: string }> {
-  const out: Array<{ model: string; host: string; deviceType: string }> = []
+  const fromTypes = new Map<string, { model: string; host: string; deviceType: string }>()
   if (deviceTypes?.length) {
     for (const t of deviceTypes) {
       const ct = t.ct_prov
@@ -137,21 +144,36 @@ export function listApProvisionModels(
       const discovery = ct.supported_discovery ?? []
       // Accept both `ap` and `softap` (EK410 DeviceTypes uses softap).
       if (discovery.length > 0 && !supportsApDiscovery(discovery)) continue
-      const model = ct.model_name || ct.ap_ssid_families?.[0]
-      if (!model) continue
-      out.push({
-        model,
-        host: ct.softap_default_host || softapHostForModel(model, deviceTypes),
+      const raw = (ct.model_name || ct.ap_ssid_families?.[0] || '').trim()
+      if (!raw) continue
+      const key = normalizeModel(raw)
+      // Collapse NE503C → NE503 when it matches a seeded family.
+      const family =
+        FALLBACK_AP_MODELS.find((f) => key === f || key.startsWith(f)) ?? key
+      fromTypes.set(family, {
+        model: family,
+        host: ct.softap_default_host?.trim() || softapHostForModel(family, deviceTypes),
         deviceType: t.device_type,
       })
     }
   }
-  if (out.length > 0) return out
-  return FALLBACK_AP_MODELS.map((model) => ({
-    model,
-    host: softapHostForModel(model),
-    deviceType: modelToDeviceType(model)!,
-  }))
+
+  const seeded = FALLBACK_AP_MODELS.map((model) => {
+    const hit = fromTypes.get(model)
+    if (hit) return hit
+    return {
+      model,
+      host: softapHostForModel(model, deviceTypes),
+      deviceType: modelToDeviceType(model, deviceTypes)!,
+    }
+  })
+
+  // Extra SoftAP families from DeviceTypes beyond the seeded five (rare).
+  const extras = [...fromTypes.entries()]
+    .filter(([k]) => !(FALLBACK_AP_MODELS as readonly string[]).includes(k))
+    .map(([, v]) => v)
+
+  return [...seeded, ...extras]
 }
 
 /** Resolve model string from BLE advertising model_code via DeviceTypes. */

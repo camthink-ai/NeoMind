@@ -951,18 +951,18 @@
   },
   "ble": {
     "tabTitle": "BLE Provision",
-    "tabDesc": "CamThink CT-Prov over Bluetooth",
+    "tabDesc": "Configure network + MQTT over Bluetooth",
     "connectingTitle": "Connecting to device...",
     "scanTitle": "Bluetooth Device Provisioning",
-    "scanDesc": "Scan for CamThink CT-Prov devices and configure network + MQTT over Bluetooth.",
-    "scanBtn": "Scan CT-Prov Devices",
-    "prepStep1": "Ensure the device is powered on with CT-Prov/1 firmware",
+    "scanDesc": "Scan for nearby devices and configure network + MQTT over Bluetooth.",
+    "scanBtn": "Scan Devices",
+    "prepStep1": "Ensure the device is powered on and ready to provision",
     "prepStep2": "Press the capture button and wait for the LED (pairing / provisionable mode)",
-    "prepStep3": "Device advertises the CamThink CT-Prov service (name like NE101-A1B2C3)",
+    "prepStep3": "Device advertises a provisionable BLE name (like NE101-A1B2C3)",
     "prepTitle": "Before you start",
     "busy": "Busy — not provisionable",
     "scanning": "Scanning...",
-    "scanningHint": "Looking for CT-Prov BLE devices nearby (up to 10 seconds)...",
+    "scanningHint": "Looking for BLE devices nearby (up to 10 seconds)...",
     "noDevices": "No devices found",
     "selectDevice": "Select a device",
     "foundDevices": "Found {{count}} device(s)",
@@ -1003,7 +1003,7 @@
       "done": "Provisioning complete",
       "failed": "Failed"
     },
-    "scanDescShort": "Scan nearby CamThink CT-Prov devices over Bluetooth.",
+    "scanDescShort": "Scan nearby devices over Bluetooth to configure network and MQTT.",
     "scanHint": "Put the device in provisionable mode, then scan."
   },
   "auto": {

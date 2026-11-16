@@ -105,4 +105,36 @@ describe('ct-prov DeviceTypes metadata resolution', () => {
       'EK410',
     ])
   })
+
+  it('keeps all seeded SoftAP families when DeviceTypes only has one SoftAP type', () => {
+    const partial: CtProvDeviceTypeRef[] = [
+      {
+        device_type: 'ek410_Eink',
+        ct_prov: {
+          model_name: 'EK410',
+          ap_ssid_families: ['EK410'],
+          softap_default_host: '192.168.4.1',
+          supported_discovery: ['softap'],
+        },
+      },
+      // Present but BLE-only — must not shrink the SoftAP family list.
+      {
+        device_type: 'ne101_camera',
+        ct_prov: {
+          model_name: 'NE101',
+          supported_discovery: ['ble'],
+        },
+      },
+    ]
+    const models = listApProvisionModels(partial)
+    expect(models.map((m) => m.model)).toEqual([
+      'NE101',
+      'NE301',
+      'NE302',
+      'NE503',
+      'EK410',
+    ])
+    expect(models.find((m) => m.model === 'EK410')?.host).toBe('192.168.4.1')
+    expect(models.find((m) => m.model === 'EK410')?.deviceType).toBe('ek410_Eink')
+  })
 })
