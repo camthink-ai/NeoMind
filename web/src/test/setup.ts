@@ -20,6 +20,43 @@ if (typeof (globalThis as { CSS?: { supports?: unknown } }).CSS?.supports !== 'f
   }
 }
 
+// jsdom document.elementFromPoint is missing — ProseMirror posAtCoords on
+// mousedown throws unhandled TypeError (ChatComposerMention click/type paths).
+if (typeof document.elementFromPoint !== 'function') {
+  document.elementFromPoint = () => null
+}
+
+// jsdom Range lacks getClientRects / getBoundingClientRect — TipTap/ProseMirror
+// scrollToSelection throws unhandled TypeError without these (ChatComposerMention).
+if (typeof Range !== 'undefined') {
+  const emptyRect = (): DOMRect =>
+    ({
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      toJSON() {
+        return this
+      },
+    }) as DOMRect
+  if (typeof Range.prototype.getBoundingClientRect !== 'function') {
+    Range.prototype.getBoundingClientRect = emptyRect
+  }
+  if (typeof Range.prototype.getClientRects !== 'function') {
+    Range.prototype.getClientRects = function getClientRects() {
+      return {
+        length: 0,
+        item: () => null,
+        [Symbol.iterator]: function* () {},
+      } as DOMRectList
+    }
+  }
+}
+
 // jsdom lacks matchMedia (used by ThemeProvider / breakpoints)
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

@@ -721,6 +721,9 @@ export function ChatComposer({
             onSuggestionExit={closeMention}
             onSuggestionKeyDown={(props) => handleMentionNavKeys(props.event)}
             onKeyDown={handleTipTapKeyDown}
+            onCompositionChange={(composing) => {
+              isComposing.current = composing
+            }}
             onFocus={() => {
               if (isMobile) setMobileExpanded(true)
             }}

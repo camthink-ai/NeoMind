@@ -59,6 +59,12 @@ export interface InlineMentionEditorProps {
   onBlur?: () => void
   /** Bump to insert `@` at the caret (toolbar). */
   openMentionRequest?: number
+  /** TipTap composition lifecycle — host uses this for IME Enter/mention guards. */
+  onCompositionChange?: (composing: boolean) => void
+}
+
+function contentNodesKey(nodes: ChatContentNode[] | undefined): string {
+  return nodes?.length ? JSON.stringify(nodes) : ""
 }
 
 function toSuggestionApi(
@@ -97,6 +103,7 @@ export function InlineMentionEditor({
   onFocus,
   onBlur,
   openMentionRequest = 0,
+  onCompositionChange,
 }: InlineMentionEditorProps) {
   const suggestionKeyDownRef = useRef(onSuggestionKeyDown)
   const onSuggestionStartRef = useRef(onSuggestionStart)
@@ -104,8 +111,12 @@ export function InlineMentionEditor({
   const onSuggestionExitRef = useRef(onSuggestionExit)
   const onPayloadChangeRef = useRef(onPayloadChange)
   const onKeyDownRef = useRef(onKeyDown)
+  const onCompositionChangeRef = useRef(onCompositionChange)
   const skipEmit = useRef(false)
+  const isComposing = useRef(false)
   const lastPlain = useRef(value)
+  // Empty until the first sync/emit — initial contentNodes (history fill) must
+  // still enter via setContent; only post-emit echoes share this key.
   const lastNodesKey = useRef("")
   const lastOpenMention = useRef(openMentionRequest)
   const hostDivRef = useRef<HTMLDivElement | null>(null)
@@ -117,6 +128,7 @@ export function InlineMentionEditor({
     onSuggestionExitRef.current = onSuggestionExit
     onPayloadChangeRef.current = onPayloadChange
     onKeyDownRef.current = onKeyDown
+    onCompositionChangeRef.current = onCompositionChange
   })
 
   const mentionExtension = useMemo(
@@ -218,10 +230,15 @@ export function InlineMentionEditor({
       },
     },
     onUpdate: ({ editor: ed }) => {
-      if (skipEmit.current) return
+      // Mid-IME: ProseMirror may fire updates for intermediate marks; do not
+      // push those to the controlled parent (echo setContent kills composition).
+      if (skipEmit.current || isComposing.current) return
       const doc = tipTapJsonToInlineDoc(ed.getJSON())
       const payload = inlineDocToChatPayload(doc)
       lastPlain.current = payload.message
+      // Mark this snapshot as already applied so the controlled contentNodes
+      // prop does not bounce back through setContent on every keystroke.
+      lastNodesKey.current = contentNodesKey(payload.contentNodes)
       onPayloadChangeRef.current({ ...payload, doc })
     },
     onFocus: () => onFocus?.(),
@@ -243,12 +260,39 @@ export function InlineMentionEditor({
     }
   }, [editor, listboxId, mentionOpen])
 
-  // Sync external clear / welcome prompt / draft restore.
+  // CJK/Japanese IME: never rewrite the document while composing.
   useEffect(() => {
     if (!editor) return
-    const nodesKey = contentNodes?.length
-      ? JSON.stringify(contentNodes)
-      : ""
+    const dom = editor.view.dom
+    const onStart = () => {
+      isComposing.current = true
+      onCompositionChangeRef.current?.(true)
+    }
+    const onEnd = () => {
+      isComposing.current = false
+      onCompositionChangeRef.current?.(false)
+      if (skipEmit.current) return
+      const doc = tipTapJsonToInlineDoc(editor.getJSON())
+      const payload = inlineDocToChatPayload(doc)
+      lastPlain.current = payload.message
+      lastNodesKey.current = contentNodesKey(payload.contentNodes)
+      onPayloadChangeRef.current({ ...payload, doc })
+    }
+    dom.addEventListener("compositionstart", onStart)
+    dom.addEventListener("compositionend", onEnd)
+    return () => {
+      dom.removeEventListener("compositionstart", onStart)
+      dom.removeEventListener("compositionend", onEnd)
+    }
+  }, [editor])
+
+  // Sync external clear / welcome prompt / draft restore.
+  // Own emits update lastPlain/lastNodesKey first so they never re-enter here.
+  useEffect(() => {
+    if (!editor) return
+    // setContent mid-composition aborts the IME session (CJK input breaks).
+    if (isComposing.current) return
+    const nodesKey = contentNodesKey(contentNodes)
     if (contentNodes && contentNodes.length > 0 && nodesKey !== lastNodesKey.current) {
       const fromNodes = contentNodesToInlineDoc(contentNodes)
       const fromPayload = inlineDocToChatPayload(fromNodes)
