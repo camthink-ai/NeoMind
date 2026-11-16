@@ -321,45 +321,42 @@ impl DeviceAdapter for MqttAdapter {
     }
 
     async fn unsubscribe_device(&self, device_id: &str) -> AdapterResult<()> {
-        // Get the device configuration to find its telemetry topic
-        let device_opt = self.device_registry.read().await.get_device(device_id);
-        if let Some(device) = device_opt {
-            if let Some(ref telemetry_topic) = device.connection_config.telemetry_topic {
-                let bare = telemetry_topic
-                    .strip_suffix("/uplink")
-                    .map(|s| s.to_string())
-                    .filter(|s| s.starts_with("device/"));
+        // Live registry is source of truth after delete. Clear the type cache
+        // first so a late uplink cannot treat a cache hit as "still registered"
+        // and re-learn the topic (wildcard uplink keep-writing bug).
+        {
+            let mut types = self.device_types.write().await;
+            types.remove(device_id);
+        }
+        {
+            let mut cache = self.metric_cache.write().await;
+            cache.remove(device_id);
+        }
 
-                // Drop only this device's association. Keep the MQTT
-                // subscription while other devices still share the topic.
-                let (topic_still_used, bare_still_used) = {
-                    let mut mapping = self.topic_to_device.write().await;
-                    let topic_still = topic_map_remove(&mut mapping, telemetry_topic, device_id);
-                    let bare_still = if let Some(ref bare_topic) = bare {
-                        topic_map_remove(&mut mapping, bare_topic, device_id)
-                    } else {
-                        false
-                    };
-                    (topic_still, bare_still)
-                };
-
-                if !topic_still_used {
-                    self.unsubscribe_topic(telemetry_topic).await?;
-                    info!(
-                        "Unsubscribed from device {} telemetry topic: {} (no remaining devices)",
-                        device_id, telemetry_topic
+        // Drop ALL learned topic associations for this device (not only the
+        // configured telemetry_topic — CT-Prov / aliases may have added more).
+        let cleared = {
+            let mut mapping = self.topic_to_device.write().await;
+            topic_map_remove_device_all(&mut mapping, device_id)
+        };
+        for (topic, still_used) in &cleared {
+            if !still_used {
+                if let Err(e) = self.unsubscribe_topic(topic).await {
+                    warn!(
+                        "Failed to unsubscribe emptied topic {} after removing {}: {}",
+                        topic, device_id, e
                     );
                 } else {
                     info!(
-                        "Removed device {} from shared topic {}; keeping MQTT subscribe",
-                        device_id, telemetry_topic
+                        "Unsubscribed from topic {} (no remaining devices after removing {})",
+                        topic, device_id
                     );
                 }
-                if let Some(ref bare_topic) = bare {
-                    if !bare_still_used {
-                        let _ = self.unsubscribe_topic(bare_topic).await;
-                    }
-                }
+            } else {
+                info!(
+                    "Removed device {} from shared topic {}; keeping MQTT subscribe",
+                    device_id, topic
+                );
             }
         }
 

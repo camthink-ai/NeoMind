@@ -32,6 +32,7 @@ use tokio::sync::{broadcast, RwLock};
 use tracing::{debug, error, info, warn};
 
 use super::identity::{
+    approved_identity_from_extra, lookup_topic_device_ids, match_by_approved_identity,
     match_registered_device, resolve_mqtt_device_identity, topic_map_insert, OutboundEchoBuffer,
     TopicDeviceMap, MQTT_IDENTITY_FIELD_KEY, MQTT_IDENTITY_SOURCE_KEY, OUTBOUND_ECHO_TTL,
 };
@@ -221,7 +222,7 @@ impl MqttAdapter {
             RwLock<HashMap<String, HashMap<String, (MetricValue, chrono::DateTime<chrono::Utc>)>>>,
         >,
         telemetry_storage: &Arc<RwLock<Option<Arc<TimeSeriesStorage>>>>,
-        _device_registry: &Arc<RwLock<Arc<DeviceRegistry>>>,
+        device_registry: &Arc<RwLock<Arc<DeviceRegistry>>>,
         _connection_status: &Arc<RwLock<ConnectionStatus>>,
         broker_id: &str,
         extractor: &Arc<UnifiedExtractor>,
@@ -304,14 +305,25 @@ impl MqttAdapter {
                     }
                 }
 
-                // True protocol special: NeoMind family downlink command channel.
-                // Custom topics whose name merely contains "downlink"/"status" stay eligible.
-                if looks_like_non_telemetry_topic(&topic) {
-                    debug!("Skipping protocol-special non-telemetry topic: {}", topic);
+                // Bound devices on this topic (explicit telemetry wins over shape).
+                let bound_devices = {
+                    let mapping = topic_to_device.read().await;
+                    lookup_topic_device_ids(&mapping, &topic)
+                };
+
+                // NeoMind-shaped downlink is protocol-special only when unbound.
+                // Explicit telemetry config on `device/{type}/{id}/downlink` continues.
+                // Unbound command-channel noise is still dropped (echo covers our own sends).
+                if looks_like_non_telemetry_topic(&topic) && bound_devices.is_empty() {
+                    debug!(
+                        "Skipping unbound protocol-special non-telemetry topic: {}",
+                        topic
+                    );
                     return;
                 }
 
-                // ONE shared identity rule set for discover + ingest.
+                // Discovery-rule identity (adapter config / auto-detect). Used for
+                // unknown identities and as fallback when no approved per-device rule.
                 let identity = resolve_mqtt_device_identity(&topic, &payload, config);
                 info!(
                     "Resolved MQTT identity topic='{}' id='{}' source={} field={:?}",
@@ -321,21 +333,40 @@ impl MqttAdapter {
                     identity.field
                 );
 
-                // Lookup approved device for this (topic, identity). Never attribute
-                // an unknown identity to the sole registrant on a shared topic.
+                // Registered devices: prefer each device's approved identity rule
+                // (sticky source/field from draft/approve). Then discovery match +
+                // explicit 1:1 bind compat. Never "sole registrant gets everything"
+                // when the message claims an unknown JSON identity.
                 let mut device_id_opt = {
-                    let mapping = topic_to_device.read().await;
-                    match_registered_device(&mapping, &topic, &identity)
+                    let registry = device_registry.read().await;
+                    if let Some(id) = match_by_approved_identity(
+                        &bound_devices,
+                        &topic,
+                        &payload,
+                        config,
+                        |dev_id| {
+                            registry
+                                .get_device(dev_id)
+                                .and_then(|d| approved_identity_from_extra(&d.connection_config.extra))
+                        },
+                    ) {
+                        Some(id)
+                    } else {
+                        let mapping = topic_to_device.read().await;
+                        match_registered_device(&mapping, &topic, &identity)
+                    }
                 };
 
-                // CT-Prov bare-topic / stale map: strong-extract id already
-                // registered → associate + learn the topic, do NOT draft.
+                // CT-Prov bare-topic / stale map: strong-extract id already in the
+                // **live registry** → associate + learn the topic, do NOT draft.
+                // device_types cache alone is NOT proof of registration (delete
+                // must not leave stale cache hits that re-learn and keep ingesting).
                 if device_id_opt.is_none()
                     && identity.source == super::identity::MqttIdentitySource::TopicStrong
                 {
                     let known = {
-                        let types = device_types.read().await;
-                        types.contains_key(&identity.device_id)
+                        let registry = device_registry.read().await;
+                        registry.get_device(&identity.device_id).is_some()
                     };
                     if known {
                         let mut mapping = topic_to_device.write().await;

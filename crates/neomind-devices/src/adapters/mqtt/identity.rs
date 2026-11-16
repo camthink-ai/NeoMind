@@ -51,6 +51,80 @@ impl MqttIdentitySource {
             Self::TopicHash => "topic_hash",
         }
     }
+
+    /// Parse a persisted `mqtt_identity_source` string from draft/device extra.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "configured_payload" => Some(Self::ConfiguredPayload),
+            "auto_payload" => Some(Self::AutoPayload),
+            "topic_strong" => Some(Self::TopicStrong),
+            "topic_weak" => Some(Self::TopicWeak),
+            "topic_hash" => Some(Self::TopicHash),
+            _ => None,
+        }
+    }
+}
+
+/// Read approved identity rule from `ConnectionConfig.extra` (draft/approve persist).
+pub fn approved_identity_from_extra(
+    extra: &HashMap<String, serde_json::Value>,
+) -> Option<(MqttIdentitySource, Option<String>)> {
+    let source = extra
+        .get(MQTT_IDENTITY_SOURCE_KEY)
+        .and_then(|v| v.as_str())
+        .and_then(MqttIdentitySource::parse)?;
+    let field = extra
+        .get(MQTT_IDENTITY_FIELD_KEY)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty());
+    Some((source, field))
+}
+
+/// Extract an id using a device's **approved** identity rule (sticky on ingest).
+///
+/// Returns `None` when the rule cannot produce a value from this message
+/// (caller falls through to discovery resolution / 1:1 compat).
+pub fn extract_with_approved_rule(
+    topic: &str,
+    payload: &[u8],
+    source: MqttIdentitySource,
+    field: Option<&str>,
+    config: &MqttAdapterConfig,
+) -> Option<String> {
+    match source {
+        MqttIdentitySource::ConfiguredPayload | MqttIdentitySource::AutoPayload => {
+            let field = field?;
+            let json: serde_json::Value = serde_json::from_slice(payload).ok()?;
+            let obj = json.as_object()?;
+            let raw = lookup_id_field(obj, field)?;
+            sanitize_auto_device_id(raw)
+        }
+        MqttIdentitySource::TopicStrong => {
+            extract_device_id_from_topic_strong(topic, config).and_then(sanitize_auto_device_id)
+        }
+        MqttIdentitySource::TopicWeak => {
+            extract_device_id_from_topic_weak(topic).and_then(sanitize_auto_device_id)
+        }
+        MqttIdentitySource::TopicHash => {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            topic.hash(&mut hasher);
+            Some(format!("mqtt_{:x}", hasher.finish()))
+        }
+    }
+}
+
+/// Payload / strong-topic identities are real claims that can conflict with an
+/// explicit 1:1 topic bind. TopicWeak / TopicHash are discovery fallbacks only.
+pub fn identity_conflicts_with_explicit_bind(identity: &ResolvedMqttIdentity) -> bool {
+    matches!(
+        identity.source,
+        MqttIdentitySource::ConfiguredPayload
+            | MqttIdentitySource::AutoPayload
+            | MqttIdentitySource::TopicStrong
+    )
 }
 
 /// Resolved identity for one MQTT publish.
@@ -157,12 +231,13 @@ pub(crate) fn extract_auto_payload_id(payload: &[u8]) -> Option<(String, String)
     if let Some(hit) = scan(obj) {
         return Some(hit);
     }
+    // Nested hit → persist the full path (`data.sn`) so approve/ingest stay sticky.
     for w in ID_WRAPPER_KEYS {
         let Some(inner) = obj.get(*w).and_then(serde_json::Value::as_object) else {
             continue;
         };
-        if let Some(hit) = scan(inner) {
-            return Some(hit);
+        if let Some((id, field)) = scan(inner) {
+            return Some((id, format!("{w}.{field}")));
         }
     }
     None
@@ -262,6 +337,27 @@ pub fn topic_map_remove(map: &mut TopicDeviceMap, topic: &str, device_id: &str) 
     still_used
 }
 
+/// Remove `device_id` from **every** learned topic association.
+///
+/// Returns `(topic, still_used)` pairs for topics that contained the device
+/// so the caller can unsubscribe only when a topic empties.
+pub fn topic_map_remove_device_all(
+    map: &mut TopicDeviceMap,
+    device_id: &str,
+) -> Vec<(String, bool)> {
+    let topics: Vec<String> = map
+        .iter()
+        .filter(|(_, set)| set.contains(device_id))
+        .map(|(topic, _)| topic.clone())
+        .collect();
+    let mut out = Vec::with_capacity(topics.len());
+    for topic in topics {
+        let still_used = topic_map_remove(map, &topic, device_id);
+        out.push((topic, still_used));
+    }
+    out
+}
+
 /// Collect registered device ids for a publish topic, honoring bare↔`/uplink` alias.
 pub fn lookup_topic_device_ids(map: &TopicDeviceMap, topic: &str) -> HashSet<String> {
     let mut out = HashSet::new();
@@ -284,8 +380,14 @@ pub fn lookup_topic_device_ids(map: &TopicDeviceMap, topic: &str) -> HashSet<Str
 
 /// Match resolved identity against the multi-device topic map.
 ///
-/// Only returns a device when the resolved identity is an explicit member of
-/// the topic's device set. Never falls back to "sole registrant on topic".
+/// Rules:
+/// 1. Exact identity membership always wins.
+/// 2. Explicit **1:1** topic bind + message with **no conflicting identity
+///    claim** (no payload/strong-topic id that differs) → sole registrant
+///    (compat for manual binds like `sensor-A` on `factory/temperature`
+///    with `{"temperature":25}`).
+/// 3. Shared topic / unknown JSON identity → `None` (discovery). Never
+///    "sole registrant gets everything" when the message claims another id.
 pub fn match_registered_device(
     map: &TopicDeviceMap,
     topic: &str,
@@ -293,10 +395,42 @@ pub fn match_registered_device(
 ) -> Option<String> {
     let devices = lookup_topic_device_ids(map, topic);
     if devices.contains(&identity.device_id) {
-        Some(identity.device_id.clone())
-    } else {
-        None
+        return Some(identity.device_id.clone());
     }
+    if devices.len() == 1 && !identity_conflicts_with_explicit_bind(identity) {
+        return devices.into_iter().next();
+    }
+    None
+}
+
+/// Try each bound device's **approved** identity rule against this payload.
+/// First exact match wins (shared-topic split stays order-stable per insert).
+pub fn match_by_approved_identity<F>(
+    bound_devices: &HashSet<String>,
+    topic: &str,
+    payload: &[u8],
+    config: &MqttAdapterConfig,
+    mut rule_for: F,
+) -> Option<String>
+where
+    F: FnMut(&str) -> Option<(MqttIdentitySource, Option<String>)>,
+{
+    // Deterministic order for shared topics.
+    let mut ids: Vec<&String> = bound_devices.iter().collect();
+    ids.sort();
+    for device_id in ids {
+        let Some((source, field)) = rule_for(device_id) else {
+            continue;
+        };
+        if let Some(extracted) =
+            extract_with_approved_rule(topic, payload, source, field.as_deref(), config)
+        {
+            if extracted == *device_id {
+                return Some(device_id.clone());
+            }
+        }
+    }
+    None
 }
 
 // ---------- Outbound echo suppression (topic + payload + short TTL) ----------
