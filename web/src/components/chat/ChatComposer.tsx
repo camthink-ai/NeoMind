@@ -1092,8 +1092,13 @@ export function ChatComposer({
 
           {/* Context usage — progress ring; hover for the breakdown card */}
           {contextUsage && (() => {
-            const ratio = Math.min(1, contextUsage.used / contextUsage.max)
-            const color = ratio > 0.9 ? 'var(--error)' : ratio > 0.7 ? 'var(--warning)' : 'var(--muted-foreground)'
+            const pending = !!contextUsage.pending
+            // Pending must not look like an empty/broken ring — show a soft
+            // indeterminate arc. Measured overrun clamps to a full ring.
+            const ratio = pending ? 0.28 : Math.min(1, contextUsage.used / Math.max(contextUsage.max, 1))
+            const color = pending
+              ? 'var(--muted-foreground)'
+              : ratio > 0.9 ? 'var(--error)' : ratio > 0.7 ? 'var(--warning)' : 'var(--muted-foreground)'
             const R = 7
             const C = 2 * Math.PI * R
             // One unit per card, decided by the window size — mixing raw
@@ -1105,7 +1110,7 @@ export function ChatComposer({
               const k = n / 1000
               return `${k >= 10 ? k.toFixed(1) : k.toFixed(2)}K`
             }
-            const pct = Math.round(ratio * 100)
+            const pct = pending ? null : Math.round(Math.min(1, contextUsage.used / Math.max(contextUsage.max, 1)) * 100)
             const rows: Array<{ label: string; value?: number; color: string; suffix?: string }> = [
               { label: t('chat:context.systemPrompt', 'System prompt'), value: contextUsage.system, color: 'var(--primary)' },
               { label: t('chat:context.toolDefs', 'Tool definitions'), value: contextUsage.tools, color: 'var(--accent-cyan)' },
@@ -1120,19 +1125,23 @@ export function ChatComposer({
                     <button
                       type="button"
                       className="shrink-0 h-8 flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors"
-                      aria-label={`${t('chat:context.title', 'Context usage')}: ${contextUsage.pending ? t('chat:context.awaitingMeasurement', 'Waiting for request context measurement') : `${pct}%`}`}
+                      aria-label={`${t('chat:context.title', 'Context usage')}: ${pending ? t('chat:context.awaitingMeasurement', 'Waiting for request context measurement') : `${pct}%`}`}
                     >
-                      <svg width="20" height="20" viewBox="0 0 20 20" className="-rotate-90">
+                      <svg width="20" height="20" viewBox="0 0 20 20" className={cn("-rotate-90", pending && "animate-pulse")}>
                         <circle cx="10" cy="10" r={R} fill="none" stroke="var(--border)" strokeWidth="2.5" />
                         <circle
                           cx="10" cy="10" r={R} fill="none"
                           stroke={color} strokeWidth="2.5" strokeLinecap="round"
-                          strokeDasharray={C} strokeDashoffset={C * (1 - ratio)}
+                          strokeDasharray={pending ? `${C * 0.2} ${C * 0.8}` : C}
+                          strokeDashoffset={pending ? C * 0.05 : C * (1 - ratio)}
                           className="transition-all duration-500"
                         />
                       </svg>
-                      <span className={cn("text-xs tabular-nums", ratio > 0.9 ? "text-error" : ratio > 0.7 ? "text-warning" : "text-muted-foreground")}>
-                        {contextUsage.pending ? "—" : fmt(contextUsage.used)}
+                      <span className={cn(
+                        "text-xs tabular-nums",
+                        !pending && pct != null && pct > 90 ? "text-error" : !pending && pct != null && pct > 70 ? "text-warning" : "text-muted-foreground",
+                      )}>
+                        {pending ? "…" : fmt(contextUsage.used)}
                       </span>
                     </button>
                   </TooltipTrigger>
@@ -1141,16 +1150,16 @@ export function ChatComposer({
                       <div>
                         <p className="text-xs font-semibold text-foreground">{t('chat:context.title', 'Context usage')}</p>
                         <p className="mt-1 text-lg font-semibold tabular-nums leading-none text-foreground">
-                          {contextUsage.pending ? "—" : fmt(contextUsage.used)}
+                          {pending ? "…" : fmt(contextUsage.used)}
                           <span className="text-xs font-normal text-muted-foreground"> / {fmt(contextUsage.max)}</span>
                         </p>
                       </div>
                       <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums text-foreground">
-                        {contextUsage.pending ? "—" : pct}%
+                        {pending ? "…" : `${pct}%`}
                       </span>
                     </div>
-                    <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={contextUsage.pending ? 0 : pct} aria-valuemin={0} aria-valuemax={100}>
-                      <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${contextUsage.pending ? 0 : pct}%`, backgroundColor: color }} />
+                    <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={pending ? 0 : (pct ?? 0)} aria-valuemin={0} aria-valuemax={100}>
+                      <div className="h-full rounded-full transition-[width] duration-500" style={{ width: `${pending ? 28 : (pct ?? 0)}%`, backgroundColor: color }} />
                     </div>
                     {availableRows.length > 0 ? <div className="space-y-2 pt-1">
                       {availableRows.map(r => (

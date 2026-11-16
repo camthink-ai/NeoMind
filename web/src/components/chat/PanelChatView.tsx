@@ -114,6 +114,16 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // persistence (seconds-precision timestamps), reset-on-error, and the
   // post-end reconciliation against the server's canonical history.
   const [contextTokens, setContextTokens] = useState<ContextTokenUsage | null>(null)
+  const [contextAction, setContextAction] = useState<{
+    phase: "running" | "done" | "failed"
+    summarizedCount?: number
+  } | null>(null)
+
+  useEffect(() => {
+    if (contextAction?.phase !== "done" && contextAction?.phase !== "failed") return
+    const timer = window.setTimeout(() => setContextAction(null), 3200)
+    return () => window.clearTimeout(timer)
+  }, [contextAction])
 
   const {
     isStreaming,
@@ -135,7 +145,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   } = useChatStream({
     onContextCompacted: (count) => {
       // Post-compact tokenUsage is applied via onTokenUsage when present.
-      toast({ description: t('chat:context.compactDone', { count }) })
+      setContextAction({ phase: "done", summarizedCount: count })
     },
     onTokenUsage: (usage) => setContextTokens(usage),
     // Drop events from other sessions — the chat page shares this socket.
@@ -708,30 +718,30 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // Manual context compaction / clear — same contract as the chat page's
   // usage-card actions (the panel shares ChatComposer).
   const [isCompacting, setIsCompacting] = useState(false)
+
   const handleCompact = useCallback(async () => {
     const sid = panelSessionIdRef.current
     if (!sid || isCompacting) return
     setIsCompacting(true)
+    setContextAction({ phase: "running" })
     try {
       const r = await api.compactSession(sid)
       if (r.summarizedMessages > 0) {
         if (r.tokenUsage && Number.isFinite(r.tokenUsage.promptTokens)) {
           setContextTokens(r.tokenUsage)
-        } else {
-          setContextTokens(null)
         }
+        // Keep prior meter when API omits tokenUsage — clearing paints empty ring.
       }
-      toast({
-        description: r.summarizedMessages > 0
-          ? t("chat:context.compactDone", { count: r.summarizedMessages })
-          : t("chat:context.compactNothing"),
+      setContextAction({
+        phase: "done",
+        summarizedCount: r.summarizedMessages,
       })
     } catch {
-      toast({ title: t("chat:context.compactFailed"), variant: "destructive" })
+      setContextAction({ phase: "failed" })
     } finally {
       setIsCompacting(false)
     }
-  }, [isCompacting, t, toast])
+  }, [isCompacting])
 
   const handleClearContext = useCallback(async () => {
     const sid = panelSessionIdRef.current
@@ -933,6 +943,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
               streamingMessageId={pendingAssistantMessageIdRef.current || streamingMessageId}
               streamingPlaceholder={sendPhase === "preparing" ? t("panelStatus.preparing") : undefined}
               endRef={messagesEndRef}
+              contextAction={contextAction}
               onReuseUserMessage={(message) => {
                 const nodes =
                   normalizeContentNodes(message.contentNodes) ??

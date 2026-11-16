@@ -128,6 +128,17 @@ export function ChatPage() {
   const [input, setInput] = useState("")
   const [lastTokenUsage, setLastTokenUsage] = useState<{ promptTokens: number; systemPromptTokens?: number; toolTokens?: number; maxContextTokens?: number } | null>(null)
   const [isCompacting, setIsCompacting] = useState(false)
+  const [contextAction, setContextAction] = useState<{
+    phase: "running" | "done" | "failed"
+    summarizedCount?: number
+  } | null>(null)
+
+  // Auto-dismiss compact "done" chip so the thread stays quiet.
+  useEffect(() => {
+    if (contextAction?.phase !== "done" && contextAction?.phase !== "failed") return
+    const t = window.setTimeout(() => setContextAction(null), 3200)
+    return () => window.clearTimeout(t)
+  }, [contextAction])
 
   // Token usage survives reloads/session switches — the context it measured
   // is unchanged until the next reply, so a restored session shows real
@@ -197,7 +208,8 @@ export function ChatPage() {
     onContextCompacted: (count, _sid) => {
       // tokenUsage (if any) already applied via onTokenUsage from the WS
       // ContextCompacted frame — do not clear the meter to pending.
-      toast({ description: t('chat:context.compactDone', { count }) })
+      // In-thread status instead of a toast popup.
+      setContextAction({ phase: "done", summarizedCount: count })
     },
     // Drop events from other sessions — the side panel shares this socket.
     // Welcome mode binds a sentinel matching NO session: navigating to bare
@@ -1045,28 +1057,27 @@ export function ChatPage() {
 
   // Manual context compaction — force a summary now (backend bypasses the
   // auto threshold). Prefer the response's post-compact tokenUsage so the
-  // ring updates immediately; only fall back to pending if the API omitted it.
+  // ring updates immediately. If the API omits tokenUsage, KEEP the previous
+  // meter (clearing it paints an empty pending ring that looks broken).
   const handleCompact = async () => {
     if (!sessionId || isCompacting) return
     setIsCompacting(true)
+    setContextAction({ phase: "running" })
     try {
       const r = await api.compactSession(sessionId)
       if (r.summarizedMessages > 0) {
         if (r.tokenUsage && Number.isFinite(r.tokenUsage.promptTokens)) {
           setLastTokenUsage(r.tokenUsage)
           persistTokenUsage(sessionId, r.tokenUsage)
-        } else {
-          setLastTokenUsage(null)
-          persistTokenUsage(sessionId, null)
         }
+        // else: keep lastTokenUsage as-is — next ContextUsage will refresh.
       }
-      toast({
-        description: r.summarizedMessages > 0
-          ? t('chat:context.compactDone', { count: r.summarizedMessages })
-          : t('chat:context.compactNothing'),
+      setContextAction({
+        phase: "done",
+        summarizedCount: r.summarizedMessages,
       })
     } catch (e) {
-      toast({ title: t('chat:context.compactFailed'), variant: 'destructive' })
+      setContextAction({ phase: "failed" })
     } finally {
       setIsCompacting(false)
     }
@@ -1434,6 +1445,7 @@ export function ChatPage() {
                 onLoadEarlier={handleLoadEarlier}
                 endRef={messagesEndRef}
                 onReuseUserMessage={handleReuseUserMessage}
+                contextAction={contextAction}
               />
             </div>
             <ChatScrollPill

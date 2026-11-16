@@ -24,6 +24,7 @@ import {
   inlineDocToTipTapJson,
   tipTapJsonToInlineDoc,
 } from "./docBridge"
+import { mentionChipHostSelectors } from "@/components/chat/mentionChipStyles"
 
 export type MentionSuggestionApi = {
   query: string
@@ -383,13 +384,7 @@ export function InlineMentionEditor({
         "[&_.is-editor-empty:first-child::before]:h-0",
         "[&_.is-editor-empty:first-child::before]:text-muted-foreground",
         "[&_.is-editor-empty:first-child::before]:content-[attr(data-placeholder)]",
-        "[&_.nm-mention]:inline-flex [&_.nm-mention]:items-center",
-        "[&_.nm-mention]:rounded-full [&_.nm-mention]:border [&_.nm-mention]:border-border",
-        "[&_.nm-mention]:bg-muted [&_.nm-mention]:px-1.5 [&_.nm-mention]:py-px",
-        "[&_.nm-mention]:text-xs [&_.nm-mention]:align-baseline",
-        "[&_.nm-mention[data-invalid=true]]:border-error",
-        "[&_.nm-mention[data-invalid=true]]:bg-error-light",
-        "[&_.nm-mention[data-invalid=true]]:text-error",
+        mentionChipHostSelectors,
         disabled && "opacity-60",
         className,
       )}

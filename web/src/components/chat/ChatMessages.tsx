@@ -64,6 +64,14 @@ interface ChatMessagesProps {
    * Used for “edit again / resend” after history redraws inline chips.
    */
   onReuseUserMessage?: (message: Message) => void
+  /**
+   * In-thread context compaction status (manual or auto). Prefer this over
+   * toast popups so the chat itself shows waiting / done.
+   */
+  contextAction?: {
+    phase: "running" | "done" | "failed"
+    summarizedCount?: number
+  } | null
 }
 
 /** Image gallery for user messages */
@@ -109,6 +117,7 @@ export function ChatMessages({
   loadingEarlier,
   onLoadEarlier,
   onReuseUserMessage,
+  contextAction = null,
 }: ChatMessagesProps) {
   const { t } = useTranslation("chat")
 
@@ -426,6 +435,37 @@ export function ChatMessages({
           </div>
         )
       })}
+
+      {contextAction && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-context-action={contextAction.phase}
+          className={cn(
+            "mx-auto flex max-w-md items-center justify-center gap-2 rounded-full border px-3 py-1.5 text-xs",
+            contextAction.phase === "failed"
+              ? "border-error bg-error-light text-error"
+              : "border-border bg-card text-muted-foreground",
+          )}
+        >
+          {contextAction.phase === "running" && (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              <span>{t("context.compacting", "Compacting…")}</span>
+            </>
+          )}
+          {contextAction.phase === "done" && (
+            <span>
+              {typeof contextAction.summarizedCount === "number" && contextAction.summarizedCount > 0
+                ? t("context.compactDone", { count: contextAction.summarizedCount })
+                : t("context.compactNothing")}
+            </span>
+          )}
+          {contextAction.phase === "failed" && (
+            <span>{t("context.compactFailed")}</span>
+          )}
+        </div>
+      )}
 
       <div ref={endRef} />
     </div>

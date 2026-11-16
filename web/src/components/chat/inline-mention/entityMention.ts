@@ -57,7 +57,12 @@ export const EntityMention = Mention.extend<
         class: "nm-mention",
         contenteditable: "false",
       }),
-      `@${label}`,
+      // Type badge + label (not "@label") — matches history chips and keeps
+      // readable contrast via host CSS (never inherits bubble text color).
+      entityType
+        ? ["span", { class: `nm-mention-type nm-mention-type--${entityType}` }, entityType]
+        : "",
+      label,
     ]
   },
 })

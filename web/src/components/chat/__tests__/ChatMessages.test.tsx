@@ -213,8 +213,31 @@ describe('ChatMessages', () => {
     expect(chips[0].getAttribute('data-id')).toBe('green-01')
     expect(chips[1].getAttribute('data-id')).toBe('green-02')
     expect(chips[0].textContent).toContain('温室A')
+    // Explicit card/foreground — never inherit bubble text (breaks light+dark).
+    expect(chips[0].className).toContain('bg-card')
+    expect(chips[0].className).toContain('text-foreground')
     // Plain markdown path must not swallow the ordered nodes.
     expect(screen.queryByText('把 @温室A 复制给 @温室B')).toBeNull()
+  })
+
+  it('shows in-thread compacting status instead of relying on toasts', () => {
+    render(
+      <ChatMessages
+        messages={[]}
+        user={null}
+        isStreaming={false}
+        streamingContent=""
+        streamingThinking=""
+        streamingRoundThinking={{}}
+        streamingToolCalls={[]}
+        roundContents={{}}
+        currentRound={1}
+        contextAction={{ phase: 'running' }}
+      />,
+    )
+    const status = document.querySelector('[data-context-action="running"]')
+    expect(status).toBeTruthy()
+    expect(status!.textContent).toMatch(/Compacting|压缩|context\.compacting/i)
   })
 
   it('reuse button fills the composer via onReuseUserMessage', () => {
