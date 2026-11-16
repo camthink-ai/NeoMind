@@ -1689,6 +1689,23 @@ async fn send_session_history(
                             obj.insert("system_notes".to_string(), serde_json::json!(sn));
                         }
                     }
+                    // Stored End snapshot — return as-is (do not recompute TaskState)
+                    if let Some(ref gs) = msg.goal_status {
+                        if let Some(obj) = history_json.as_object_mut() {
+                            obj.insert(
+                                "goalStatus".to_string(),
+                                serde_json::to_value(gs).unwrap_or(serde_json::Value::Null),
+                            );
+                        }
+                    }
+                    if let Some(ref er) = msg.end_reason {
+                        if let Some(obj) = history_json.as_object_mut() {
+                            obj.insert(
+                                "endReason".to_string(),
+                                serde_json::to_value(er).unwrap_or(serde_json::Value::Null),
+                            );
+                        }
+                    }
                     let history_msg = history_json.to_string();
 
                     if socket.send(AxumMessage::Text(history_msg)).await.is_err() {

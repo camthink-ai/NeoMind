@@ -121,19 +121,23 @@ export function mergeMessagesForDisplay(rawMessages: Message[]): Message[] {
       if (cur.round_thinking) {
         roundThinking = { ...roundThinking, ...cur.round_thinking }
       }
-      if (cur.goalStatus) {
-        goalStatus = cur.goalStatus
-      }
-      if (cur.endReason) {
-        endReason = cur.endReason
-      }
-      // Raw API messages carry the backend's snake_case field (Message's
-      // other history fields keep snake_case; systemNotes is the camelCase
-      // UI field).
       {
-        const rawNotes = (cur as Message & { system_notes?: string[] }).system_notes
-        if (rawNotes) {
-          systemNotes = [...systemNotes, ...rawNotes]
+        const raw = cur as Message & {
+          system_notes?: string[]
+          goal_status?: Message['goalStatus']
+          end_reason?: Message['endReason']
+        }
+        if (cur.goalStatus || raw.goal_status) {
+          goalStatus = cur.goalStatus ?? raw.goal_status
+        }
+        if (cur.endReason || raw.end_reason) {
+          endReason = cur.endReason ?? raw.end_reason
+        }
+        // Raw API messages carry the backend's snake_case field (Message's
+        // other history fields keep snake_case; systemNotes is the camelCase
+        // UI field).
+        if (raw.system_notes) {
+          systemNotes = [...systemNotes, ...raw.system_notes]
         }
       }
 

@@ -107,6 +107,18 @@ pub struct SessionMessage {
     /// `content`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_notes: Option<Vec<String>>,
+    /// Persisted End.goalStatus snapshot (opaque JSON). History returns
+    /// this as-is — never recomputed from live TaskState. Wire key
+    /// `goalStatus` (camelCase, matches the live End event).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "goalStatus"
+    )]
+    pub goal_status: Option<serde_json::Value>,
+    /// Persisted End.endReason (`normal` / `interrupted` / …).
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "endReason")]
+    pub end_reason: Option<String>,
     /// Ordered content nodes (v1 inline-@ protocol). Opaque JSON matching
     /// the API `ChatContentNode` shape; camelCase on the wire for the
     /// history client (`contentNodes`).
@@ -151,6 +163,8 @@ impl SessionMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -170,6 +184,8 @@ impl SessionMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -189,6 +205,8 @@ impl SessionMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -208,6 +226,8 @@ impl SessionMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -227,6 +247,8 @@ impl SessionMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -1362,6 +1384,8 @@ mod tests {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -1377,6 +1401,8 @@ mod tests {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -1470,6 +1496,8 @@ mod tests {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: 12345,
@@ -1480,6 +1508,44 @@ mod tests {
         assert_eq!(deserialized.role, "user");
         assert_eq!(deserialized.content, "Hello");
         assert_eq!(deserialized.timestamp, 12345);
+    }
+
+    #[test]
+    fn session_message_goal_status_round_trip_camel_case() {
+        let msg = SessionMessage {
+            role: "assistant".to_string(),
+            content: "trying".to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_call_name: None,
+            thinking: None,
+            images: None,
+            round_contents: None,
+            round_thinking: None,
+            system_notes: None,
+            goal_status: Some(serde_json::json!({
+                "status": "incomplete",
+                "reason": "missing delivery",
+                "level": "none",
+                "operation_id": "op-1",
+                "task_complete_ok": false,
+                "physical_ok": false
+            })),
+            end_reason: Some("normal".to_string()),
+            content_nodes: None,
+            content_version: None,
+            timestamp: 42,
+        };
+        let v: serde_json::Value =
+            serde_json::from_slice(&serde_json::to_vec(&msg).unwrap()).unwrap();
+        assert!(v.get("goalStatus").is_some(), "wire key must be camelCase");
+        assert_eq!(v["goalStatus"]["status"], "incomplete");
+        assert_eq!(v["endReason"], "normal");
+        assert!(v.get("goal_status").is_none());
+
+        let back: SessionMessage = serde_json::from_value(v).unwrap();
+        assert_eq!(back.goal_status.as_ref().unwrap()["status"], "incomplete");
+        assert_eq!(back.end_reason.as_deref(), Some("normal"));
     }
 
     #[test]
@@ -1495,6 +1561,8 @@ mod tests {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: Some(vec![
                 serde_json::json!({"kind":"text","text":"检查"}),
                 serde_json::json!({
@@ -1877,7 +1945,10 @@ mod tests {
         );
 
         let loaded = store.load_op_ledger("race-session").unwrap().unwrap();
-        assert_eq!(loaded, newer, "newer write intent must survive stale snapshot");
+        assert_eq!(
+            loaded, newer,
+            "newer write intent must survive stale snapshot"
+        );
     }
 
     #[test]
@@ -1891,10 +1962,7 @@ mod tests {
         let err = store
             .save_op_ledger("corrupt-session", newer)
             .expect_err("unreadable on-disk ledger must block overwrite");
-        assert!(
-            err.to_string().contains("unreadable"),
-            "got: {err}"
-        );
+        assert!(err.to_string().contains("unreadable"), "got: {err}");
         let loaded = store.load_op_ledger("corrupt-session").unwrap().unwrap();
         assert_eq!(loaded, b"not-json{{{");
         // Explicit clear/recover unlocks writes.

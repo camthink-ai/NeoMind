@@ -953,12 +953,12 @@ pub async fn process_stream_events_with_safeguards(
                             }
                             yield AgentEvent::content("\n\n[Interrupted]");
                             {
-                                let state = internal_state.read().await;
-                                yield AgentEvent::final_end(
-                                    &state.task_state,
-                                    crate::agent::task_continuity::StreamEndReason::Interrupted,
-                                    None,
-                                );
+                                let mut state = internal_state.write().await;
+                                let reason =
+                                    crate::agent::task_continuity::StreamEndReason::Interrupted;
+                                let goal = state.task_state.system_goal_status();
+                state.stamp_final_goal_on_last_assistant(goal, reason);
+                                yield AgentEvent::final_end(&state.task_state, reason, None);
                             }
                             return;
                         }
@@ -1019,12 +1019,12 @@ pub async fn process_stream_events_with_safeguards(
                         }
                         yield AgentEvent::content("\n\n[Interrupted]");
                         {
-                            let state = internal_state.read().await;
-                            yield AgentEvent::final_end(
-                                &state.task_state,
-                                crate::agent::task_continuity::StreamEndReason::Interrupted,
-                                None,
-                            );
+                            let mut state = internal_state.write().await;
+                            let reason =
+                                crate::agent::task_continuity::StreamEndReason::Interrupted;
+                            let goal = state.task_state.system_goal_status();
+                state.stamp_final_goal_on_last_assistant(goal, reason);
+                            yield AgentEvent::final_end(&state.task_state, reason, None);
                         }
                         return;
                     }
@@ -1812,12 +1812,11 @@ pub async fn process_stream_events_with_safeguards(
                                     }
                                     yield AgentEvent::content("\n\n[Interrupted]");
                                     {
-                                        let state = internal_state.read().await;
-                                        yield AgentEvent::final_end(
-                                            &state.task_state,
-                                            crate::agent::task_continuity::StreamEndReason::Interrupted,
-                                            None,
-                                        );
+                                        let mut state = internal_state.write().await;
+                                        let reason = crate::agent::task_continuity::StreamEndReason::Interrupted;
+                                        let goal = state.task_state.system_goal_status();
+                state.stamp_final_goal_on_last_assistant(goal, reason);
+                                        yield AgentEvent::final_end(&state.task_state, reason, None);
                                     }
                                     return;
                                 }
@@ -3144,8 +3143,10 @@ pub async fn process_stream_events_with_safeguards(
                 None => None,
             };
             // Unified End: system goal status + reason (never bare end()).
+            // Stamp the same snapshot onto the turn's last assistant message
+            // so history reload returns stored values as-is (no TaskState recompute).
             let end = {
-                let state = internal_state.read().await;
+                let mut state = internal_state.write().await;
                 let reason = match &state.task_state.status {
                     crate::agent::task_continuity::TaskStatus::Halted { .. } => {
                         crate::agent::task_continuity::StreamEndReason::CannotContinue
@@ -3155,6 +3156,8 @@ pub async fn process_stream_events_with_safeguards(
                     }
                     _ => crate::agent::task_continuity::StreamEndReason::Normal,
                 };
+                let goal = state.task_state.system_goal_status();
+                state.stamp_final_goal_on_last_assistant(goal, reason);
                 AgentEvent::final_end(&state.task_state, reason, usage)
             };
             yield end;

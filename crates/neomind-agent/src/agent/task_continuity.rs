@@ -540,7 +540,7 @@ pub enum GoalClaimKind {
 }
 
 /// Why the stream ended (orthogonal to [`SystemGoalStatus`] evidence).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamEndReason {
     /// Normal final reply after tools / text.

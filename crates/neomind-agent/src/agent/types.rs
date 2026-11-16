@@ -501,6 +501,18 @@ pub struct AgentMessage {
     /// spent, …) — rendered as callouts, never merged into `content`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system_notes: Option<Vec<String>>,
+    /// Final End.goalStatus snapshot for this assistant turn (evidence only).
+    /// Persisted so history reload shows the same panel callout — never
+    /// recomputed from live TaskState.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "goalStatus"
+    )]
+    pub goal_status: Option<super::task_continuity::SystemGoalStatus>,
+    /// Final End.endReason for this assistant turn.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "endReason")]
+    pub end_reason: Option<super::task_continuity::StreamEndReason>,
     /// Ordered content nodes (v1) — opaque JSON matching API ChatContentNode.
     /// Persisted via SessionMessage; not injected into the LLM prompt
     /// (model sees the prepared plain/`【type `id`】` text instead).
@@ -588,6 +600,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -607,6 +621,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -626,6 +642,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -648,6 +666,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -667,6 +687,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -686,6 +708,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -705,6 +729,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -728,6 +754,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -878,6 +906,8 @@ impl AgentMessage {
             round_contents: None,
             round_thinking: None,
             system_notes: None,
+            goal_status: None,
+            end_reason: None,
             content_nodes: None,
             content_version: None,
             timestamp: chrono::Utc::now().timestamp(),
@@ -2474,6 +2504,26 @@ impl AgentInternalState {
         self.session.increment_messages();
     }
 
+    /// Persist the final End goal snapshot onto this turn's last assistant
+    /// message (after the latest user). History reload reads these fields
+    /// as-is — never recomputes from live [`Self::task_state`].
+    pub fn stamp_final_goal_on_last_assistant(
+        &mut self,
+        goal_status: super::task_continuity::SystemGoalStatus,
+        end_reason: super::task_continuity::StreamEndReason,
+    ) {
+        let last_user_idx = self.memory.iter().rposition(|m| m.role == "user");
+        let start = last_user_idx.map(|i| i + 1).unwrap_or(0);
+        if let Some(msg) = self.memory[start..]
+            .iter_mut()
+            .rev()
+            .find(|m| m.role == "assistant")
+        {
+            msg.goal_status = Some(goal_status);
+            msg.end_reason = Some(end_reason);
+        }
+    }
+
     /// Restore memory from a list of messages.
     ///
     /// Does **not** restore [`Self::task_state`] — callers that reload a
@@ -2671,6 +2721,43 @@ mod tests {
             } => {}
             other => panic!("expected NotApplicable normal End, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn stamp_final_goal_on_current_turn_assistant_only() {
+        use super::super::task_continuity::{GoalEvidenceLevel, StreamEndReason, SystemGoalStatus};
+
+        let mut state = AgentInternalState::new("s-stamp".into());
+        state.push_message(AgentMessage::user("prev"));
+        state.push_message(AgentMessage::assistant("prev reply"));
+        state.push_message(AgentMessage::user("now"));
+        // No assistant yet this turn — must not touch previous turn.
+        state.stamp_final_goal_on_last_assistant(
+            SystemGoalStatus::NotApplicable,
+            StreamEndReason::Interrupted,
+        );
+        assert!(
+            state.memory[1].goal_status.is_none(),
+            "must not stamp previous turn"
+        );
+
+        state.push_message(AgentMessage::assistant("trying"));
+        let incomplete = SystemGoalStatus::Incomplete {
+            reason: "no delivery".into(),
+            level: GoalEvidenceLevel::None,
+            operation_id: Some("op-1".into()),
+            task_complete_ok: false,
+            physical_ok: false,
+        };
+        state.stamp_final_goal_on_last_assistant(incomplete.clone(), StreamEndReason::Normal);
+        assert_eq!(state.memory[3].goal_status.as_ref(), Some(&incomplete));
+        assert_eq!(state.memory[3].end_reason, Some(StreamEndReason::Normal));
+        assert!(state.memory[1].goal_status.is_none());
+
+        // Wire shape on AgentMessage uses camelCase keys.
+        let wire = serde_json::to_value(&state.memory[3]).unwrap();
+        assert_eq!(wire["goalStatus"]["status"], "incomplete");
+        assert_eq!(wire["endReason"], "normal");
     }
 
     #[test]

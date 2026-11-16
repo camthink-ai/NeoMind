@@ -674,6 +674,11 @@ impl SessionManager {
                     round_contents: msg.round_contents.clone(),
                     round_thinking: msg.round_thinking.clone(),
                     system_notes: msg.system_notes.clone(),
+                    goal_status: msg
+                        .goal_status
+                        .as_ref()
+                        .and_then(|g| serde_json::to_value(g).ok()),
+                    end_reason: msg.end_reason.as_ref().map(|r| r.as_str().to_string()),
                     content_nodes: msg.content_nodes.clone(),
                     content_version: msg.content_version,
                     timestamp: msg.timestamp,
@@ -764,6 +769,10 @@ impl SessionManager {
                     round_contents: sm.round_contents,
                     round_thinking: sm.round_thinking,
                     system_notes: sm.system_notes,
+                    goal_status: sm.goal_status.and_then(|v| serde_json::from_value(v).ok()),
+                    end_reason: sm
+                        .end_reason
+                        .and_then(|s| serde_json::from_value(serde_json::Value::String(s)).ok()),
                     content_nodes: sm.content_nodes,
                     content_version: sm.content_version,
                     timestamp: sm.timestamp,
@@ -2788,6 +2797,71 @@ fn mime_to_ext(mime: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// End → save → reload: stored goalStatus/endReason come back as-is.
+    /// History must NOT recompute from live TaskState (fresh session has
+    /// empty TaskState that would otherwise claim not_applicable).
+    #[tokio::test]
+    async fn goal_status_end_reason_persist_across_reload_as_is() {
+        use crate::agent::task_continuity::{GoalEvidenceLevel, StreamEndReason, SystemGoalStatus};
+
+        let manager = create_temp_manager();
+        let sid = manager.create_session().await.unwrap();
+
+        let stored = SystemGoalStatus::Incomplete {
+            reason: "missing delivery".into(),
+            level: GoalEvidenceLevel::None,
+            operation_id: Some("op-42".into()),
+            task_complete_ok: false,
+            physical_ok: false,
+        };
+        let mut assistant = AgentMessage::assistant("done for now");
+        assistant.goal_status = Some(stored.clone());
+        assistant.end_reason = Some(StreamEndReason::Normal);
+
+        manager
+            .save_history(
+                &sid,
+                &[AgentMessage::user("please complete the task"), assistant],
+            )
+            .unwrap();
+
+        // Evict so get_history restores from DB (empty live TaskState).
+        manager.sessions.write().await.remove(&sid);
+        manager.session_messages.write().await.remove(&sid);
+
+        let client = manager.get_history_for_client(&sid).await.unwrap();
+        let last = client.last().expect("assistant message");
+        assert_eq!(last.role, "assistant");
+        assert_eq!(last.end_reason.as_deref(), Some("normal"));
+        let gs = last.goal_status.as_ref().expect("goalStatus stored");
+        assert_eq!(gs["status"], "incomplete");
+        assert_eq!(gs["reason"], "missing delivery");
+        assert_eq!(gs["level"], "none");
+        assert_eq!(gs["operation_id"], "op-42");
+
+        let wire = serde_json::to_value(last).unwrap();
+        assert!(
+            wire.get("goalStatus").is_some(),
+            "history wire key must be camelCase goalStatus"
+        );
+        assert!(wire.get("endReason").is_some());
+        assert!(wire.get("goal_status").is_none());
+
+        let agent_msgs = manager.get_history(&sid).await.unwrap();
+        let am = agent_msgs.last().unwrap();
+        assert_eq!(am.goal_status.as_ref(), Some(&stored));
+        assert_eq!(am.end_reason, Some(StreamEndReason::Normal));
+
+        // Reloaded TaskState is default — must NOT overwrite stored message fields.
+        let agent = manager.get_session(&sid).await.unwrap();
+        let live = agent.history().await;
+        assert_eq!(
+            live.last().and_then(|m| m.goal_status.clone()),
+            Some(stored),
+            "reload must echo stored goalStatus, not recompute from TaskState"
+        );
+    }
 
     /// [crash window] The user's message must be on disk at TURN START —
     /// before any stream events are consumed. Pre-fix, everything lived in
