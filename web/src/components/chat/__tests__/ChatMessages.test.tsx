@@ -213,10 +213,8 @@ describe('ChatMessages', () => {
     expect(chips[0].getAttribute('data-id')).toBe('green-01')
     expect(chips[1].getAttribute('data-id')).toBe('green-02')
     expect(chips[0].textContent).toContain('温室A')
-    // Explicit card/foreground — never inherit bubble text (breaks light+dark).
-    expect(chips[0].className).toContain('bg-card')
-    expect(chips[0].className).toContain('text-foreground')
-    // Type is color-only (no nested badge fill that mis-aligns the line).
+    // No chip fill — type is color-only; name inherits bubble/composer text.
+    expect(chips[0].className).not.toMatch(/\bbg-card\b|\bbg-muted\b/)
     const typeEl = chips[0].querySelector('span')
     expect(typeEl?.className ?? '').toContain('text-accent-cyan')
     expect(typeEl?.className ?? '').not.toMatch(/bg-accent-/)

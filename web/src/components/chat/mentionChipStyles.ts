@@ -1,9 +1,10 @@
 /**
  * Shared @-mention chip styles for TipTap composer + history bubbles.
  *
- * Chips must set their own fg/bg — never inherit from the user bubble.
- * Type is color-only (no nested badge fill): a second background + smaller
- * type size made the label look vertically offset in the line.
+ * No fill / no nested badge — type is color-only; the name inherits the
+ * surrounding text color (composer foreground or user-bubble text). That
+ * avoids the old “muted chip + inherited bubble text” contrast bug without
+ * painting a second background that reads as a tag.
  */
 import { cn } from "@/lib/utils"
 import type { MentionType } from "@/lib/api/mentions"
@@ -15,16 +16,16 @@ const TYPE_TEXT: Record<MentionType, string> = {
   agent: "text-accent-emerald",
 }
 
-/** Outer chip shell — solid card surface + explicit foreground. */
+/** Inline mention shell — transparent, same metrics as surrounding text. */
 export function mentionChipClass(extra?: string): string {
   return cn(
-    "nm-mention inline-flex items-center gap-1 rounded-full border border-border",
-    "bg-card px-1.5 py-0.5 text-xs font-medium leading-none text-foreground align-middle",
+    "nm-mention inline-flex items-center gap-1 rounded-sm",
+    "px-0.5 text-xs font-medium leading-none align-middle",
     extra,
   )
 }
 
-/** Type label: same size as the name, color only (no fill). */
+/** Type label: same size as the name, accent color only. */
 export function mentionTypeBadgeClass(type: MentionType | string): string {
   const color = TYPE_TEXT[type as MentionType] ?? "text-muted-foreground"
   return cn("shrink-0 leading-none", color)
@@ -33,16 +34,14 @@ export function mentionTypeBadgeClass(type: MentionType | string): string {
 /** TipTap host descendant selectors (ProseMirror renders the node). */
 export const mentionChipHostSelectors = cn(
   "[&_.nm-mention]:inline-flex [&_.nm-mention]:items-center [&_.nm-mention]:gap-1",
-  "[&_.nm-mention]:rounded-full [&_.nm-mention]:border [&_.nm-mention]:border-border",
-  "[&_.nm-mention]:bg-card [&_.nm-mention]:px-1.5 [&_.nm-mention]:py-0.5",
+  "[&_.nm-mention]:rounded-sm [&_.nm-mention]:px-0.5",
   "[&_.nm-mention]:text-xs [&_.nm-mention]:font-medium [&_.nm-mention]:leading-none",
-  "[&_.nm-mention]:text-foreground [&_.nm-mention]:align-middle",
+  "[&_.nm-mention]:align-middle [&_.nm-mention]:bg-transparent",
   "[&_.nm-mention-type]:shrink-0 [&_.nm-mention-type]:leading-none",
   "[&_.nm-mention-type--device]:text-accent-cyan",
   "[&_.nm-mention-type--rule]:text-accent-orange",
   "[&_.nm-mention-type--transform]:text-accent-purple",
   "[&_.nm-mention-type--agent]:text-accent-emerald",
-  "[&_.nm-mention[data-invalid=true]]:border-error",
-  "[&_.nm-mention[data-invalid=true]]:bg-error-light",
   "[&_.nm-mention[data-invalid=true]]:text-error",
+  "[&_.nm-mention[data-invalid=true]]:underline",
 )
