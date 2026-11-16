@@ -25,6 +25,58 @@ use std::time::{Duration, Instant};
 pub const MQTT_IDENTITY_SOURCE_KEY: &str = "mqtt_identity_source";
 pub const MQTT_IDENTITY_FIELD_KEY: &str = "mqtt_identity_field";
 
+/// Discovery metadata: this candidate is an association exception (human confirm),
+/// not a formal map / silent drop against an already-registered identity.
+pub const MQTT_ASSOCIATION_EXCEPTION_KEY: &str = "mqtt_association_exception";
+/// `conflict` | `unverifiable` — why formal association was refused.
+pub const MQTT_ASSOCIATION_KIND_KEY: &str = "mqtt_association_kind";
+/// JSON array of registered device ids that must not be overwritten / remapped.
+pub const MQTT_BLOCKED_DEVICE_IDS_KEY: &str = "mqtt_blocked_device_ids";
+/// Resolved discovery identity that collided with an approved rule (e.g. topic A).
+pub const MQTT_CLAIMED_IDENTITY_KEY: &str = "mqtt_claimed_identity";
+/// Stable pending draft key when the claimed identity is already registered.
+pub const MQTT_PENDING_CANDIDATE_ID_KEY: &str = "mqtt_pending_candidate_id";
+
+/// Why a message could not formally associate to a registered device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssociationExceptionKind {
+    /// Approved rule extracted a different identity than the registered device.
+    Conflict,
+    /// Approved rule present but message could not verify it (missing/null/invalid).
+    Unverifiable,
+}
+
+impl AssociationExceptionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Conflict => "conflict",
+            Self::Unverifiable => "unverifiable",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            "conflict" => Some(Self::Conflict),
+            "unverifiable" => Some(Self::Unverifiable),
+            _ => None,
+        }
+    }
+}
+
+/// Stable, non-registered draft id for association-exception candidacy.
+///
+/// Does **not** invent an id from another payload field (e.g. conflicting `sn`)
+/// — that would look like auto-registration via a side channel. Human approve
+/// remains the only path to a formal device id / topic map.
+pub fn pending_association_candidate_id(topic: &str, claimed_identity: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    topic.hash(&mut hasher);
+    claimed_identity.hash(&mut hasher);
+    format!("pending-assoc-{:x}", hasher.finish())
+}
+
 /// How a device identity was derived for a message (and frozen on the draft/device).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

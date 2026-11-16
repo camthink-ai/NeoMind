@@ -25,7 +25,9 @@ pub mod structure_analyzer;
 pub mod types;
 pub mod virtual_metric;
 
-pub use auto_onboard::{AutoOnboardManager, RegistrationResult, TypeSignature};
+pub use auto_onboard::{
+    AssociationExceptionDraft, AutoOnboardManager, RegistrationResult, TypeSignature,
+};
 pub use hex_analyzer::{
     compute_stats as hex_compute_stats, hex_to_bytes, is_hex_string, HexAnalyzer, HexInfo,
     HexProbability, MetricInterpretation, SuggestedType,

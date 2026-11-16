@@ -225,6 +225,8 @@ pub(crate) fn is_neomind_device_telemetry_topic(topic: &str) -> bool {
 }
 
 /// True for NeoMind family command topics: `device/{type}/{id}/downlink`.
+/// Classification helper for tests — hot path no longer drops by topic name.
+#[allow(dead_code)]
 pub(crate) fn is_neomind_device_downlink_topic(topic: &str) -> bool {
     let parts: Vec<&str> = topic.split('/').collect();
     parts.len() >= 4
@@ -418,6 +420,8 @@ pub(crate) fn extract_device_type_from_topic(topic: &str) -> Option<String> {
 /// Outbound command echoes are suppressed by topic+payload+TTL matching.
 /// Explicit telemetry binds on a downlink-shaped topic still ingest via the
 /// topic map. `$SYS` presence synthesis short-circuits earlier in handling.
+/// Kept for classification tests; ingest no longer calls this as a drop filter.
+#[allow(dead_code)]
 pub(crate) fn looks_like_non_telemetry_topic(topic: &str) -> bool {
     topic.starts_with("$SYS")
 }

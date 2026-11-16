@@ -988,6 +988,15 @@ pub struct DraftDeviceDto {
     pub updated_at: i64,
     pub error_message: Option<String>,
     pub user_name: Option<String>,
+    /// MQTT association exception pending human confirm (not silent drop).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub association_exception: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub association_exception_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_device_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claimed_identity: Option<String>,
 }
 
 impl From<crate::automation::DraftDevice> for DraftDeviceDto {
@@ -1016,6 +1025,10 @@ impl From<crate::automation::DraftDevice> for DraftDeviceDto {
             updated_at: draft.updated_at,
             error_message: draft.error_message,
             user_name: draft.user_name,
+            association_exception: draft.association_exception,
+            association_exception_kind: draft.association_exception_kind,
+            blocked_device_ids: draft.blocked_device_ids,
+            claimed_identity: draft.claimed_identity,
         }
     }
 }

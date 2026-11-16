@@ -3081,7 +3081,6 @@ impl ServerState {
             tracing::info!("Auto-onboarding event listener started");
 
             while let Some((event, _metadata)) = rx.recv().await {
-                // Check if this is a device discovered event
                 if let neomind_core::NeoMindEvent::DeviceDiscovered {
                     device_id,
                     source,
@@ -3092,73 +3091,17 @@ impl ServerState {
                     timestamp: _,
                 } = event
                 {
-                    // Extract the actual payload data from sample
-                    let payload_data = sample.get("data").unwrap_or(&sample);
-
-                    // Check if device is already registered - skip auto-onboarding if it is
-                    if device_service_clone.get_device(&device_id).is_some() {
-                        tracing::debug!(
-                            "Device {} already registered, skipping auto-onboarding",
-                            device_id
-                        );
-                        continue;
-                    }
-
-                    tracing::info!(
-                        "Processing discovered device from {}: device_id={}, is_binary={}",
-                        source,
+                    Self::process_device_discovered_for_onboarding(
+                        manager.as_ref(),
+                        device_service_clone.as_ref(),
                         device_id,
-                        is_binary
-                    );
-
-                    // Extract original_topic if available (for MQTT devices)
-                    let original_topic = metadata
-                        .get("original_topic")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let mqtt_identity_source = metadata
-                        .get("mqtt_identity_source")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let mqtt_identity_field = metadata
-                        .get("mqtt_identity_field")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-
-                    // Process the payload data through auto-onboarding
-                    match manager
-                        .process_unknown_device_with_topic(
-                            &device_id,
-                            &source,
-                            payload_data,
-                            is_binary,
-                            original_topic,
-                            adapter_id,
-                            mqtt_identity_source,
-                            mqtt_identity_field,
-                        )
-                        .await
-                    {
-                        Ok(true) => {
-                            tracing::info!(
-                                "Successfully processed discovered device: {}",
-                                device_id
-                            );
-                        }
-                        Ok(false) => {
-                            tracing::debug!(
-                                "Discovered device not accepted (disabled or at capacity): {}",
-                                device_id
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to process discovered device {}: {}",
-                                device_id,
-                                e
-                            );
-                        }
-                    }
+                        source,
+                        adapter_id,
+                        &metadata,
+                        &sample,
+                        is_binary,
+                    )
+                    .await;
                 }
             }
         });
@@ -3166,6 +3109,149 @@ impl ServerState {
         tracing::info!(
             "Auto-onboarding event listener initialized - MQTT unknown devices will trigger auto-onboarding"
         );
+    }
+
+    /// Handle one `DeviceDiscovered` for auto-onboarding (listener + tests).
+    ///
+    /// Ordinary registered ids are skipped. Association-exception events
+    /// (Conflict / Unverifiable against a registered identity) stay visible as
+    /// pending drafts under a non-colliding candidate id — never silent drop,
+    /// never auto-overwrite the blocked device.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn process_device_discovered_for_onboarding(
+        manager: &crate::automation::AutoOnboardManager,
+        device_service: &neomind_devices::DeviceService,
+        device_id: String,
+        source: String,
+        adapter_id: Option<String>,
+        metadata: &serde_json::Value,
+        sample: &serde_json::Value,
+        is_binary: bool,
+    ) -> bool {
+        use neomind_devices::adapters::mqtt::{
+            pending_association_candidate_id, MQTT_ASSOCIATION_EXCEPTION_KEY,
+            MQTT_ASSOCIATION_KIND_KEY, MQTT_BLOCKED_DEVICE_IDS_KEY, MQTT_CLAIMED_IDENTITY_KEY,
+            MQTT_PENDING_CANDIDATE_ID_KEY,
+        };
+
+        let payload_data = sample.get("data").unwrap_or(sample);
+        let is_exception = metadata
+            .get(MQTT_ASSOCIATION_EXCEPTION_KEY)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let original_topic = metadata
+            .get("original_topic")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let mqtt_identity_source = metadata
+            .get("mqtt_identity_source")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let mqtt_identity_field = metadata
+            .get("mqtt_identity_field")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let mut effective_id = device_id.clone();
+        let mut exception_draft = None;
+
+        if is_exception {
+            let claimed = metadata
+                .get(MQTT_CLAIMED_IDENTITY_KEY)
+                .and_then(|v| v.as_str())
+                .unwrap_or(device_id.as_str())
+                .to_string();
+            let pending = metadata
+                .get(MQTT_PENDING_CANDIDATE_ID_KEY)
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    let topic = original_topic.as_deref().unwrap_or("");
+                    pending_association_candidate_id(topic, &claimed)
+                });
+            // Defense: even if the emitter still sent a registered id, remap.
+            if device_service.get_device(&effective_id).is_some() {
+                tracing::info!(
+                    claimed = %claimed,
+                    pending = %pending,
+                    "Association exception against registered identity — pending candidate (no overwrite)"
+                );
+                effective_id = pending;
+            } else if effective_id != pending {
+                // Prefer the stable pending key from metadata when present.
+                if metadata.get(MQTT_PENDING_CANDIDATE_ID_KEY).is_some() {
+                    effective_id = pending;
+                }
+            }
+
+            let blocked: Vec<String> = metadata
+                .get(MQTT_BLOCKED_DEVICE_IDS_KEY)
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_else(|| vec![claimed.clone()]);
+            exception_draft = Some(crate::automation::AssociationExceptionDraft {
+                kind: metadata
+                    .get(MQTT_ASSOCIATION_KIND_KEY)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                blocked_device_ids: blocked,
+                claimed_identity: Some(claimed),
+            });
+        } else if device_service.get_device(&device_id).is_some() {
+            tracing::debug!(
+                "Device {} already registered, skipping auto-onboarding",
+                device_id
+            );
+            return false;
+        }
+
+        tracing::info!(
+            "Processing discovered device from {}: device_id={}, is_binary={}, association_exception={}",
+            source,
+            effective_id,
+            is_binary,
+            is_exception
+        );
+
+        match manager
+            .process_unknown_device_with_topic_ex(
+                &effective_id,
+                &source,
+                payload_data,
+                is_binary,
+                original_topic,
+                adapter_id,
+                mqtt_identity_source,
+                mqtt_identity_field,
+                exception_draft,
+            )
+            .await
+        {
+            Ok(true) => {
+                tracing::info!("Successfully processed discovered device: {}", effective_id);
+                true
+            }
+            Ok(false) => {
+                tracing::debug!(
+                    "Discovered device not accepted (disabled or at capacity): {}",
+                    effective_id
+                );
+                false
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to process discovered device {}: {}",
+                    effective_id,
+                    e
+                );
+                false
+            }
+        }
     }
 
     /// Save LLM configuration to database.

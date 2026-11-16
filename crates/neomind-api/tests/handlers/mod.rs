@@ -15,6 +15,7 @@ pub mod extensions;
 pub mod e2e_scenarios;
 pub mod message_channels;
 pub mod messages_chain;
+pub mod mqtt_assoc_exception;
 pub mod onboarding;
 pub mod rules;
 pub mod sessions;

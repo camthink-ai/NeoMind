@@ -135,6 +135,18 @@ impl Default for AutoOnboardConfig {
     }
 }
 
+/// MQTT association-exception context attached to a pending draft.
+///
+/// Used when Conflict / Unverifiable refused a formal map against an already
+/// registered identity — the draft is customer-visible pending confirm, not
+/// an auto-register / overwrite of the blocked device.
+#[derive(Debug, Clone, Default)]
+pub struct AssociationExceptionDraft {
+    pub kind: Option<String>,
+    pub blocked_device_ids: Vec<String>,
+    pub claimed_identity: Option<String>,
+}
+
 /// Auto-onboarding manager for zero-config device discovery
 pub struct AutoOnboardManager {
     /// LLM runtime for AI analysis
@@ -248,6 +260,35 @@ impl AutoOnboardManager {
         mqtt_identity_source: Option<String>,
         mqtt_identity_field: Option<String>,
     ) -> Result<bool> {
+        self.process_unknown_device_with_topic_ex(
+            device_id,
+            source,
+            data,
+            is_binary,
+            original_topic,
+            adapter_id,
+            mqtt_identity_source,
+            mqtt_identity_field,
+            None,
+        )
+        .await
+    }
+
+    /// Like [`Self::process_unknown_device_with_topic`], with optional MQTT
+    /// association-exception context (Conflict / Unverifiable pending confirm).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn process_unknown_device_with_topic_ex(
+        &self,
+        device_id: &str,
+        source: &str,
+        data: &serde_json::Value,
+        is_binary: bool,
+        original_topic: Option<String>,
+        adapter_id: Option<String>,
+        mqtt_identity_source: Option<String>,
+        mqtt_identity_field: Option<String>,
+        association_exception: Option<AssociationExceptionDraft>,
+    ) -> Result<bool> {
         // Check if device is blocked (spam detected)
         {
             let blocked = self.blocked_devices.read().await;
@@ -336,6 +377,7 @@ impl AutoOnboardManager {
             adapter_id,
             mqtt_identity_source,
             mqtt_identity_field,
+            association_exception,
         )
         .await
     }
@@ -352,6 +394,7 @@ impl AutoOnboardManager {
         adapter_id: Option<String>,
         mqtt_identity_source: Option<String>,
         mqtt_identity_field: Option<String>,
+        association_exception: Option<AssociationExceptionDraft>,
     ) -> Result<bool> {
         let mut drafts = self.drafts.write().await;
 
@@ -366,6 +409,16 @@ impl AutoOnboardManager {
         draft.adapter_id = adapter_id;
         draft.mqtt_identity_source = mqtt_identity_source;
         draft.mqtt_identity_field = mqtt_identity_field;
+        if let Some(exc) = association_exception {
+            draft.association_exception = true;
+            draft.association_exception_kind = exc.kind;
+            draft.blocked_device_ids = exc.blocked_device_ids;
+            draft.claimed_identity = exc.claimed_identity;
+            if draft.user_name.is_none() {
+                let claimed = draft.claimed_identity.as_deref().unwrap_or(device_id);
+                draft.user_name = Some(format!("Association exception ({claimed})"));
+            }
+        }
 
         // Mark as binary if applicable
         if is_binary {

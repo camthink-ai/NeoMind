@@ -28,10 +28,10 @@ pub use error::{AutomationError, Result};
 
 // Re-export discovery module
 pub use discovery::{
-    AutoOnboardManager, DataPathExtractor, DeviceCategory, DeviceSample, DiscoveredMetric,
-    DiscoveredPath, DraftDevice, DraftDeviceStatus, FieldSemantic, GeneratedDeviceType,
-    InferenceContext, ProcessingSummary, RegistrationResult, SemanticInference, SemanticType,
-    TypeSignature, VirtualMetricGenerator,
+    AssociationExceptionDraft, AutoOnboardManager, DataPathExtractor, DeviceCategory, DeviceSample,
+    DiscoveredMetric, DiscoveredPath, DraftDevice, DraftDeviceStatus, FieldSemantic,
+    GeneratedDeviceType, InferenceContext, ProcessingSummary, RegistrationResult,
+    SemanticInference, SemanticType, TypeSignature, VirtualMetricGenerator,
 };
 
 // Re-export transform-specific types

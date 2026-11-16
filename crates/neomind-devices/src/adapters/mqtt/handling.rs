@@ -33,9 +33,12 @@ use tracing::{debug, error, info, warn};
 
 use super::identity::{
     approved_identity_from_extra, lookup_topic_device_ids, match_by_approved_identity,
-    match_registered_device, match_registered_device_except, resolve_mqtt_device_identity,
-    topic_map_insert, topic_map_remove_device_all, ApprovedIdentityOutcome, OutboundEchoBuffer,
-    TopicDeviceMap, MQTT_IDENTITY_FIELD_KEY, MQTT_IDENTITY_SOURCE_KEY, OUTBOUND_ECHO_TTL,
+    match_registered_device, match_registered_device_except, pending_association_candidate_id,
+    resolve_mqtt_device_identity, topic_map_insert, topic_map_remove_device_all,
+    ApprovedIdentityOutcome, AssociationExceptionKind, OutboundEchoBuffer, TopicDeviceMap,
+    MQTT_ASSOCIATION_EXCEPTION_KEY, MQTT_ASSOCIATION_KIND_KEY, MQTT_BLOCKED_DEVICE_IDS_KEY,
+    MQTT_CLAIMED_IDENTITY_KEY, MQTT_IDENTITY_FIELD_KEY, MQTT_IDENTITY_SOURCE_KEY,
+    MQTT_PENDING_CANDIDATE_ID_KEY, OUTBOUND_ECHO_TTL,
 };
 
 impl MqttAdapter {
@@ -333,6 +336,7 @@ impl MqttAdapter {
                 // other bound devices may still route. Missing approved field is
                 // Unverifiable (not NoRule).
                 let mut approved_blocked = HashSet::new();
+                let mut association_exception_kind: Option<AssociationExceptionKind> = None;
                 let mut device_id_opt = {
                     let registry = device_registry.read().await;
                     match match_by_approved_identity(
@@ -351,9 +355,21 @@ impl MqttAdapter {
                             let mapping = topic_to_device.read().await;
                             match_registered_device(&mapping, &topic, &identity)
                         }
-                        ApprovedIdentityOutcome::Conflict { blocked }
-                        | ApprovedIdentityOutcome::Unverifiable { blocked } => {
+                        ApprovedIdentityOutcome::Conflict { blocked } => {
                             approved_blocked = blocked;
+                            association_exception_kind = Some(AssociationExceptionKind::Conflict);
+                            let mapping = topic_to_device.read().await;
+                            match_registered_device_except(
+                                &mapping,
+                                &topic,
+                                &identity,
+                                &approved_blocked,
+                            )
+                        }
+                        ApprovedIdentityOutcome::Unverifiable { blocked } => {
+                            approved_blocked = blocked;
+                            association_exception_kind =
+                                Some(AssociationExceptionKind::Unverifiable);
                             let mapping = topic_to_device.read().await;
                             match_registered_device_except(
                                 &mapping,
@@ -400,9 +416,18 @@ impl MqttAdapter {
                                     ) {
                                         ApprovedIdentityOutcome::Match(_)
                                         | ApprovedIdentityOutcome::NoRule => true,
-                                        ApprovedIdentityOutcome::Conflict { blocked }
-                                        | ApprovedIdentityOutcome::Unverifiable { blocked } => {
+                                        ApprovedIdentityOutcome::Conflict { blocked } => {
                                             approved_blocked.extend(blocked);
+                                            association_exception_kind =
+                                                Some(AssociationExceptionKind::Conflict);
+                                            false
+                                        }
+                                        ApprovedIdentityOutcome::Unverifiable { blocked } => {
+                                            approved_blocked.extend(blocked);
+                                            if association_exception_kind.is_none() {
+                                                association_exception_kind =
+                                                    Some(AssociationExceptionKind::Unverifiable);
+                                            }
                                             false
                                         }
                                     }
@@ -651,10 +676,36 @@ impl MqttAdapter {
                     return;
                 }
 
-                // Unregistered identity → discovery candidate (human approve gate).
+                // No formal route → discovery / association-exception candidate.
+                // If the resolved identity is already registered (Conflict /
+                // Unverifiable learn gate, etc.), do NOT emit that registered id
+                // — the server listener would skip auto-onboarding and the
+                // customer would see a silent drop. Emit a pending candidate
+                // that keeps topic/sample/conflict info for human confirm.
+                // Never invent a formal id from another payload field.
+                // Registered claimed identity + no formal route ⇒ association
+                // exception (server would otherwise skip DeviceDiscovered(A)).
+                let identity_registered = {
+                    let registry = device_registry.read().await;
+                    registry.get_device(&identity.device_id).is_some()
+                };
+                let is_association_exception = identity_registered;
+                let auto_device_id = if is_association_exception {
+                    pending_association_candidate_id(&topic, &identity.device_id)
+                } else {
+                    identity.device_id.clone()
+                };
+
                 info!(
-                    "Triggering auto-onboarding for unregistered identity '{}' on topic {}",
-                    identity.device_id, topic
+                    "Triggering auto-onboarding for {} '{}' (claimed='{}') on topic {}",
+                    if is_association_exception {
+                        "association-exception candidate"
+                    } else {
+                        "unregistered identity"
+                    },
+                    auto_device_id,
+                    identity.device_id,
+                    topic
                 );
 
                 if payload.len() > MAX_AUTOONBOARD_SAMPLE_BYTES {
@@ -667,7 +718,6 @@ impl MqttAdapter {
                     return;
                 }
 
-                let auto_device_id = identity.device_id.clone();
                 let (sample_data, is_binary, data_format) =
                     if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload) {
                         let actual_data = json_data.get("data").unwrap_or(&json_data);
@@ -678,13 +728,17 @@ impl MqttAdapter {
 
                 tracing::info!(
                     topic = %topic,
-                    "Unregistered MQTT device: telemetry not recorded (discovery event only) — register the device to start recording"
+                    claimed = %identity.device_id,
+                    candidate = %auto_device_id,
+                    association_exception = is_association_exception,
+                    "MQTT discovery event only (no formal telemetry) — pending human confirm"
                 );
 
                 {
                     let adapter_id = config.name.clone();
                     let mut sample = serde_json::json!({
                         "device_id": auto_device_id,
+                        "claimed_identity": identity.device_id,
                         "timestamp": chrono::Utc::now().timestamp(),
                         "topic": topic,
                         "data": sample_data,
@@ -714,6 +768,38 @@ impl MqttAdapter {
                     });
                     if let Some(obj) = meta.as_object_mut() {
                         obj.extend(identity.to_metadata_map());
+                        if is_association_exception {
+                            obj.insert(
+                                MQTT_ASSOCIATION_EXCEPTION_KEY.to_string(),
+                                serde_json::Value::Bool(true),
+                            );
+                            let kind = association_exception_kind
+                                .unwrap_or(AssociationExceptionKind::Conflict);
+                            obj.insert(
+                                MQTT_ASSOCIATION_KIND_KEY.to_string(),
+                                serde_json::Value::String(kind.as_str().to_string()),
+                            );
+                            obj.insert(
+                                MQTT_CLAIMED_IDENTITY_KEY.to_string(),
+                                serde_json::Value::String(identity.device_id.clone()),
+                            );
+                            obj.insert(
+                                MQTT_PENDING_CANDIDATE_ID_KEY.to_string(),
+                                serde_json::Value::String(auto_device_id.clone()),
+                            );
+                            let mut blocked: Vec<String> =
+                                approved_blocked.iter().cloned().collect();
+                            if blocked.is_empty() {
+                                blocked.push(identity.device_id.clone());
+                            }
+                            blocked.sort();
+                            obj.insert(
+                                MQTT_BLOCKED_DEVICE_IDS_KEY.to_string(),
+                                serde_json::Value::Array(
+                                    blocked.into_iter().map(serde_json::Value::String).collect(),
+                                ),
+                            );
+                        }
                     }
 
                     let discovered = crate::adapter::DiscoveredDeviceInfo {
@@ -723,7 +809,7 @@ impl MqttAdapter {
                         endpoint: Some(topic.to_string()),
                         capabilities: vec![],
                         timestamp: chrono::Utc::now().timestamp(),
-                        metadata: meta,
+                        metadata: meta.clone(),
                     };
 
                     let _ = event_tx
@@ -736,6 +822,19 @@ impl MqttAdapter {
                         });
                         if let Some(obj) = bus_meta.as_object_mut() {
                             obj.extend(identity.to_metadata_map());
+                            if let Some(meta_obj) = meta.as_object() {
+                                for key in [
+                                    MQTT_ASSOCIATION_EXCEPTION_KEY,
+                                    MQTT_ASSOCIATION_KIND_KEY,
+                                    MQTT_BLOCKED_DEVICE_IDS_KEY,
+                                    MQTT_CLAIMED_IDENTITY_KEY,
+                                    MQTT_PENDING_CANDIDATE_ID_KEY,
+                                ] {
+                                    if let Some(v) = meta_obj.get(key) {
+                                        obj.insert(key.to_string(), v.clone());
+                                    }
+                                }
+                            }
                         }
                         bus.publish(NeoMindEvent::DeviceDiscovered {
                             device_id: auto_device_id,

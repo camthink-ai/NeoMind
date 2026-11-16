@@ -1387,10 +1387,46 @@ mod handling_path {
             lookup_topic_device_ids(&*adapter.topic_to_device.read().await, new_topic).is_empty(),
             "Conflict must not create formal topic association"
         );
-        // Message may still become a discovery candidate.
-        assert!(
-            !discovery_ids(&events).is_empty(),
-            "Conflict on learn gate must still allow discovery candidacy"
+        // Pending association-exception candidate (not registered id A — that
+        // would be silently dropped by the auto-onboard listener).
+        let expected_pending = pending_association_candidate_id(new_topic, "A");
+        assert_eq!(
+            discovery_ids(&events),
+            vec![expected_pending.clone()],
+            "Conflict must emit pending candidate, not registered A"
+        );
+        let DeviceEvent::Discovery { device } = &events
+            .iter()
+            .find(|e| matches!(e, DeviceEvent::Discovery { .. }))
+            .expect("discovery event")
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            device
+                .metadata
+                .get(MQTT_ASSOCIATION_EXCEPTION_KEY)
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            device
+                .metadata
+                .get(MQTT_ASSOCIATION_KIND_KEY)
+                .and_then(|v| v.as_str()),
+            Some("conflict")
+        );
+        assert_eq!(
+            device
+                .metadata
+                .get(MQTT_CLAIMED_IDENTITY_KEY)
+                .and_then(|v| v.as_str()),
+            Some("A")
+        );
+        assert_ne!(device.device_id, "A");
+        assert_ne!(
+            device.device_id, "B",
+            "must not auto-register via conflicting sn"
         );
     }
 
@@ -1426,9 +1462,25 @@ mod handling_path {
             lookup_topic_device_ids(&*adapter.topic_to_device.read().await, new_topic).is_empty(),
             "Unverifiable must not create formal topic association"
         );
-        assert!(
-            !discovery_ids(&events).is_empty(),
-            "Unverifiable learn gate must still allow discovery candidacy"
+        let expected_pending = pending_association_candidate_id(new_topic, "A");
+        assert_eq!(
+            discovery_ids(&events),
+            vec![expected_pending],
+            "Unverifiable must emit pending candidate, not registered A"
+        );
+        let DeviceEvent::Discovery { device } = &events
+            .iter()
+            .find(|e| matches!(e, DeviceEvent::Discovery { .. }))
+            .expect("discovery event")
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            device
+                .metadata
+                .get(MQTT_ASSOCIATION_KIND_KEY)
+                .and_then(|v| v.as_str()),
+            Some("unverifiable")
         );
     }
 
