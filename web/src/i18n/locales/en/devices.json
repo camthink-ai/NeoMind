@@ -902,7 +902,27 @@
   "ctProv": {
     "productName": "CamThink CT-Prov",
     "firmwareHint": "Requires CamThink CT-Prov/1 firmware. Older JSON-on-GATT BLE firmwares are not supported.",
-    "closingSession": "Closing session..."
+    "closingSession": "Closing session...",
+    "stepInfo": "Info",
+    "stepCapabilities": "Capabilities",
+    "stepConfigure": "Configure",
+    "stepInfoTitle": "Device information",
+    "stepInfoDesc": "Confirm this is the device you want to provision.",
+    "stepCapsTitle": "What this device can configure",
+    "stepCapsDesc": "Network and service sections reported by CT-Prov.",
+    "stepEditTitle": "Configure & register",
+    "stepEditDesc": "Set a name and network, then write config to the device.",
+    "continue": "Continue",
+    "serialNumber": "Serial number",
+    "model": "Model",
+    "firmware": "Firmware",
+    "currentNetwork": "Current network: {{network}}",
+    "showCapabilities": "Show all sections",
+    "configurable": "editable",
+    "noSections": "No capability sections reported.",
+    "advancedMqtt": "MQTT broker (advanced)",
+    "mqttAdvancedHint": "Default uses the NeoMind built-in broker. Change only if you need an external broker.",
+    "applyingHint": "Writing config and registering the device…"
   },
   "ap": {
     "tabTitle": "AP Provision",
@@ -919,7 +939,13 @@
     "host": "SoftAP gateway address",
     "connectBtn": "Connect over SoftAP",
     "connectingTitle": "Contacting device SoftAP...",
-    "unreachableHint": "Make sure this computer is joined to the device hotspot, then retry."
+    "unreachableHint": "Make sure this computer is joined to the device hotspot, then retry.",
+    "joinTitle": "Join the device hotspot",
+    "joinDesc": "Open system Wi‑Fi settings, connect to the device SoftAP, then return here.",
+    "ssidPatternLabel": "Look for an SSID like",
+    "ssidPatternHint": "Also accepts legacy names such as NE101_… / NE301_… / NE503_…",
+    "joinedContinue": "I’ve joined — continue",
+    "advancedOptions": "Advanced: SSID, model, gateway"
   },
   "ble": {
     "tabTitle": "BLE Provision",
@@ -974,7 +1000,8 @@
       "writingMqtt": "Writing MQTT config...",
       "done": "Provisioning complete",
       "failed": "Failed"
-    }
+    },
+    "scanDescShort": "Scan nearby CamThink CT-Prov devices over Bluetooth."
   },
   "auto": {
     "title": "Auto Discovery",

@@ -902,7 +902,27 @@
   "ctProv": {
     "productName": "CamThink CT-Prov",
     "firmwareHint": "需要 CamThink CT-Prov/1 固件。旧版 JSON-on-GATT 蓝牙固件已不再支持。",
-    "closingSession": "正在结束会话..."
+    "closingSession": "正在结束会话...",
+    "stepInfo": "信息",
+    "stepCapabilities": "能力",
+    "stepConfigure": "配置",
+    "stepInfoTitle": "设备信息",
+    "stepInfoDesc": "确认这是你要配网的设备。",
+    "stepCapsTitle": "设备可配置项",
+    "stepCapsDesc": "CT-Prov 上报的网络与服务分区。",
+    "stepEditTitle": "配置并注册",
+    "stepEditDesc": "设置名称与网络，然后将配置写入设备。",
+    "continue": "继续",
+    "serialNumber": "序列号",
+    "model": "型号",
+    "firmware": "固件",
+    "currentNetwork": "当前网络：{{network}}",
+    "showCapabilities": "查看全部分区",
+    "configurable": "可配置",
+    "noSections": "未上报能力分区。",
+    "advancedMqtt": "MQTT 服务器（高级）",
+    "mqttAdvancedHint": "默认使用 NeoMind 内置服务器。仅在需要外部 Broker 时修改。",
+    "applyingHint": "正在写入配置并注册设备…"
   },
   "ap": {
     "tabTitle": "AP 配网",
@@ -919,7 +939,13 @@
     "host": "SoftAP 网关地址",
     "connectBtn": "经 SoftAP 连接",
     "connectingTitle": "正在访问设备 SoftAP...",
-    "unreachableHint": "请确认本机已加入设备热点后再重试。"
+    "unreachableHint": "请确认本机已加入设备热点后再重试。",
+    "joinTitle": "先加入设备热点",
+    "joinDesc": "打开系统 Wi‑Fi 设置，连接到设备 SoftAP，然后回到此处。",
+    "ssidPatternLabel": "热点名称通常形如",
+    "ssidPatternHint": "也兼容 NE101_… / NE301_… / NE503_… 等遗留命名",
+    "joinedContinue": "我已加入 — 继续",
+    "advancedOptions": "高级：SSID、型号、网关"
   },
   "ble": {
     "tabTitle": "蓝牙配网",
@@ -974,7 +1000,8 @@
       "writingMqtt": "正在写入 MQTT 配置...",
       "done": "配网完成",
       "failed": "失败"
-    }
+    },
+    "scanDescShort": "扫描附近的 CamThink CT-Prov 蓝牙设备。"
   },
   "auto": {
     "title": "自动发现",
