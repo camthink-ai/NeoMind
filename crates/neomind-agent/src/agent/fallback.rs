@@ -171,9 +171,11 @@ fn build_response_from_template(template: &str, data: &Value) -> String {
     // Replace {latest} - latest data point
     if result.contains("{latest}") {
         if let Some(arr) = data["data"].as_array() {
-            if !arr.is_empty() {
-                let last_value = arr[arr.len() - 1]["value"].as_f64().unwrap_or(0.0);
-                result = result.replace("{latest}", &format!("最新温度值: {:.1}°C", last_value));
+            if let Some(last) = arr.last() {
+                result = result.replace(
+                    "{latest}",
+                    &format_metric_point_zh("最新", last.get("value")),
+                );
             } else {
                 result = result.replace("{latest}", "无最新数据");
             }
@@ -185,9 +187,11 @@ fn build_response_from_template(template: &str, data: &Value) -> String {
     // Replace {earliest} - earliest data point
     if result.contains("{earliest}") {
         if let Some(arr) = data["data"].as_array() {
-            if !arr.is_empty() {
-                let first_value = arr[0]["value"].as_f64().unwrap_or(0.0);
-                result = result.replace("{earliest}", &format!("最早温度值: {:.1}°C", first_value));
+            if let Some(first) = arr.first() {
+                result = result.replace(
+                    "{earliest}",
+                    &format_metric_point_zh("最早", first.get("value")),
+                );
             } else {
                 result = result.replace("{earliest}", "无最早数据");
             }
@@ -197,6 +201,17 @@ fn build_response_from_template(template: &str, data: &Value) -> String {
     }
 
     result
+}
+
+/// Format a telemetry point for fallback templates.
+///
+/// Missing / null / non-numeric values must NOT become a silent `0.0`
+/// (that reads as a real measurement). Prefer an explicit unknown.
+fn format_metric_point_zh(kind: &str, value: Option<&Value>) -> String {
+    match value.and_then(|v| v.as_f64()) {
+        Some(n) if n.is_finite() => format!("{kind}温度值: {:.1}°C", n),
+        _ => format!("{kind}温度值: 未知（无有效数值）"),
+    }
 }
 
 /// Default help message when no keywords match.
@@ -260,5 +275,31 @@ mod tests {
         assert!(result.contains("3 devices"));
         assert!(result.contains("Device1"));
         assert!(result.contains("sensor"));
+    }
+
+    #[test]
+    fn missing_metric_value_is_unknown_not_zero_placeholder() {
+        let data = serde_json::json!({
+            "data": [
+                {"value": null},
+                {"value": "n/a"}
+            ]
+        });
+        let latest = build_response_from_template("{latest}", &data);
+        let earliest = build_response_from_template("{earliest}", &data);
+        assert!(
+            latest.contains("未知") && !latest.contains("0.0"),
+            "null must not become 0.0: {latest}"
+        );
+        assert!(
+            earliest.contains("未知") && !earliest.contains("0.0"),
+            "non-numeric must not become 0.0: {earliest}"
+        );
+
+        let ok = build_response_from_template(
+            "{latest}",
+            &serde_json::json!({ "data": [{ "value": 23.5 }] }),
+        );
+        assert!(ok.contains("23.5"), "finite values still render: {ok}");
     }
 }

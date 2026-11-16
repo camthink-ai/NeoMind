@@ -175,10 +175,10 @@ pub fn nodes_for_persistence(
 ) -> Option<(Vec<serde_json::Value>, u32)> {
     if let Some(nodes) = content_nodes {
         if !nodes.is_empty() {
-            let values: Vec<serde_json::Value> = nodes
-                .iter()
-                .filter_map(|n| serde_json::to_value(n).ok())
-                .collect();
+            // Persist path must honor the same MAX_REFERENCES discipline as
+            // prepare/model context — never store an uncapped chip dump while
+            // the LLM only saw the first 20.
+            let values = persistable_content_node_values(nodes);
             if !values.is_empty() {
                 return Some((values, content_version.unwrap_or(CONTENT_VERSION_V1)));
             }
@@ -189,7 +189,8 @@ pub fn nodes_for_persistence(
     if !message.is_empty() {
         values.push(serde_json::json!({ "kind": "text", "text": message }));
     }
-    for r in refs {
+    // Legacy chip synthesis: mirror preamble truncation (first MAX_REFERENCES).
+    for r in refs.iter().take(MAX_REFERENCES) {
         values.push(serde_json::json!({
             "kind": "reference",
             "type": r.r#type,
@@ -201,6 +202,25 @@ pub fn nodes_for_persistence(
         return None;
     }
     Some((values, CONTENT_VERSION_V1))
+}
+
+/// Serialize content nodes for history, keeping all text nodes and at most
+/// [`MAX_REFERENCES`] reference nodes (in order).
+fn persistable_content_node_values(nodes: &[ChatContentNode]) -> Vec<serde_json::Value> {
+    let mut values = Vec::with_capacity(nodes.len().min(MAX_CONTENT_NODES));
+    let mut ref_kept = 0usize;
+    for n in nodes.iter().take(MAX_CONTENT_NODES) {
+        if n.kind == "reference" {
+            if ref_kept >= MAX_REFERENCES {
+                continue;
+            }
+            ref_kept += 1;
+        }
+        if let Ok(v) = serde_json::to_value(n) {
+            values.push(v);
+        }
+    }
+    values
 }
 
 /// Build persistable content nodes to pass into atomic
@@ -722,6 +742,60 @@ mod tests {
         assert_eq!(vals[1]["labelSnapshot"], "温湿度");
 
         assert!(nodes_for_persistence("plain", None, None, None).is_none());
+    }
+
+    #[test]
+    fn nodes_for_persistence_caps_legacy_refs_at_max_references() {
+        let refs: Vec<ChatReference> = (0..(MAX_REFERENCES + 7))
+            .map(|i| ChatReference {
+                r#type: "device".into(),
+                id: format!("dev-{i}"),
+                label: Some(format!("d{i}")),
+            })
+            .collect();
+        let (vals, _) =
+            nodes_for_persistence("hi", None, None, Some(&refs)).expect("synth capped");
+        let ref_nodes: Vec<_> = vals
+            .iter()
+            .filter(|v| v["kind"] == "reference")
+            .collect();
+        assert_eq!(
+            ref_nodes.len(),
+            MAX_REFERENCES,
+            "persist must match model-context cap, got {}",
+            ref_nodes.len()
+        );
+        assert_eq!(ref_nodes[0]["id"], "dev-0");
+        assert_eq!(
+            ref_nodes[MAX_REFERENCES - 1]["id"],
+            format!("dev-{}", MAX_REFERENCES - 1)
+        );
+    }
+
+    #[test]
+    fn nodes_for_persistence_caps_content_node_refs_at_max_references() {
+        let mut nodes = vec![ChatContentNode {
+            kind: "text".into(),
+            text: Some("prefix".into()),
+            r#type: None,
+            id: None,
+            label_snapshot: None,
+        }];
+        for i in 0..(MAX_REFERENCES + 5) {
+            nodes.push(ChatContentNode {
+                kind: "reference".into(),
+                text: None,
+                r#type: Some("device".into()),
+                id: Some(format!("n-{i}")),
+                label_snapshot: Some(format!("L{i}")),
+            });
+        }
+        let (vals, _) =
+            nodes_for_persistence("ignored", Some(&nodes), Some(1), None).expect("nodes");
+        let ref_count = vals.iter().filter(|v| v["kind"] == "reference").count();
+        let text_count = vals.iter().filter(|v| v["kind"] == "text").count();
+        assert_eq!(text_count, 1, "text nodes must be kept");
+        assert_eq!(ref_count, MAX_REFERENCES);
     }
 
     #[test]

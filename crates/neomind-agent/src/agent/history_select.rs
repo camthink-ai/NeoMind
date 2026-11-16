@@ -466,7 +466,7 @@ fn compress_group(group: &[Message], max_tokens: usize) -> Option<Vec<Message>> 
 }
 
 fn tool_result_stub(text: &str, evidence: &[String]) -> String {
-    let header = text.lines().next().unwrap_or("[Tool result]");
+    let (header, _body) = split_tool_result_header(text);
     // Prefer Operation details_ref / $cached:op: so packer keeps critical
     // feedback under budget pressure (never a bare truncated body as fact).
     let needle_line = if evidence.is_empty() {
@@ -494,6 +494,42 @@ fn tool_result_stub(text: &str, evidence: &[String]) -> String {
             "{header}{needle_line}{unknown}\n[truncated: full tool output omitted — context budget exhausted]"
         )
     }
+}
+
+/// Max chars for a recognized `[Tool: …]` / `Tool '…'` header line.
+/// Anything longer is treated as body (single-line JSON must not become the header).
+const TOOL_HEADER_MAX_CHARS: usize = 200;
+
+/// Split a tool-result into a short header + body.
+///
+/// Single-line payloads (common for large JSON tool returns) used to make
+/// `lines().next()` consume the entire body as "header", so compression
+/// could not shrink the message. Only a short tool-label line counts.
+fn split_tool_result_header(text: &str) -> (&str, &str) {
+    match text.find('\n') {
+        Some(i) => {
+            let first = &text[..i];
+            let rest = &text[i + 1..];
+            if is_short_tool_header(first) {
+                (first, rest)
+            } else {
+                ("[Tool result]", text)
+            }
+        }
+        None => {
+            if is_short_tool_header(text) {
+                (text, "")
+            } else {
+                ("[Tool result]", text)
+            }
+        }
+    }
+}
+
+fn is_short_tool_header(line: &str) -> bool {
+    let trimmed = line.trim_end();
+    (trimmed.starts_with("[Tool:") || trimmed.starts_with("Tool '"))
+        && trimmed.chars().count() <= TOOL_HEADER_MAX_CHARS
 }
 
 /// Last-resort stub: needles come from system metadata when present, else a
@@ -547,7 +583,7 @@ fn compress_tool_result_message(msg: &mut Message, max_chars: usize) {
 }
 
 fn format_compressed_tool_result(text: &str, max_chars: usize, needles: &[String]) -> String {
-    let header = text.lines().next().unwrap_or("").to_string();
+    let (header, body_src) = split_tool_result_header(text);
     // Prefer an intact Operation details_ref over a truncated body prefix.
     let details_line = extract_details_ref_stub(text)
         .map(|r| format!("\ndetails_ref={r}"))
@@ -569,11 +605,7 @@ fn format_compressed_tool_result(text: &str, max_chars: usize, needles: &[String
         .saturating_sub(needle_line.chars().count())
         .saturating_sub(unknown_line.chars().count())
         .saturating_sub(48);
-    let body: String = text
-        .chars()
-        .skip(header.chars().count())
-        .take(budget)
-        .collect();
+    let body: String = body_src.chars().take(budget).collect();
     format!("{header}{details_line}{needle_line}{unknown_line}\n{body}…\n[truncated]")
 }
 
@@ -589,9 +621,7 @@ fn trusted_compress_evidence(msg: &Message) -> Vec<String> {
 /// True when evidence already carries a concrete success/fail binding
 /// (`success=true` / `success=false`), not a bare keyword.
 fn evidence_has_structured_outcome(needles: &[String]) -> bool {
-    needles
-        .iter()
-        .any(|n| n.starts_with("success=") || n.starts_with("failed="))
+    evidence_bool(needles, "success").is_some() || evidence_bool(needles, "failed").is_some()
 }
 
 /// Pull structured success/fail values and object IDs from a tool-result body.
@@ -1118,6 +1148,53 @@ mod tests {
         );
         assert!(got.used_tokens <= budget);
         assert!(!has_orphan_tool_result(&got.messages));
+    }
+
+    #[test]
+    fn compresses_single_line_json_tool_result() {
+        // Giant single-line JSON (no newlines in the body). Old code treated the
+        // whole line as the "header", so compression could not shrink.
+        let payload = format!(
+            r#"{{"success":true,"device_id":"cam-single-01","blob":"{}"}}"#,
+            "中文blob".repeat(8_000)
+        );
+        assert!(
+            !payload.contains('\n'),
+            "fixture must stay single-line"
+        );
+        let history = vec![
+            user("读大 JSON"),
+            assistant("In a previous turn I called the shell tool."),
+            // Intentionally omit the usual `\n` after the tool label so the
+            // entire message is one line — the pathological case.
+            Message::user(format!("[Tool: shell returned]{payload}")),
+        ];
+        let before = history[2].content.as_text().chars().count();
+        assert!(before > 20_000, "fixture must be large, got {before}");
+
+        let mut msg = history[2].clone();
+        compress_tool_result_message(&mut msg, 400);
+        let after = msg.content.as_text().chars().count();
+        assert!(
+            after < before / 4,
+            "single-line compress must shrink substantially: before={before} after={after}"
+        );
+        assert!(
+            after <= 800,
+            "compressed single-line should fit a small budget envelope, got {after}"
+        );
+        let text = msg.content.as_text();
+        assert!(
+            text.contains("[truncated]") || text.contains("details_ref="),
+            "compressed form should mark truncation: {text}"
+        );
+
+        // Budget selection path must also fit.
+        let assistant_tokens = message_tokens(&history[1]);
+        let budget = assistant_tokens + 500;
+        let got = select_messages_for_history_budget(&history, budget);
+        assert!(got.truncated || got.used_tokens <= budget);
+        assert!(got.used_tokens <= budget);
     }
 
     #[test]
