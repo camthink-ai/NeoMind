@@ -367,6 +367,11 @@ impl MqttAdapter {
 
                 // CT-Prov bare-topic / stale map: strong-extract id already in the
                 // **live registry** → associate + learn the topic, do NOT draft.
+                // Before learning, verify the **target** device's approved identity
+                // rule against this message (bound-topic check above only covers
+                // devices already mapped to the current topic). Rule present →
+                // must Match; Conflict / Unverifiable → no formal association
+                // (discovery may still proceed). NoRule keeps prior compat.
                 // Learn + ban share one sync boundary: hold `uncollectable` write
                 // through the map insert so unsubscribe cannot clear-then-lose to
                 // a re-insert race.
@@ -378,11 +383,33 @@ impl MqttAdapter {
                     // ban+clear cannot interleave (same lock order).
                     let banned_guard = uncollectable.write().await;
                     if !banned_guard.contains(&identity.device_id) {
-                        let known = {
+                        let learn_allowed = {
                             let registry = device_registry.read().await;
-                            registry.get_device(&identity.device_id).is_some()
+                            match registry.get_device(&identity.device_id) {
+                                None => false,
+                                Some(dev) => {
+                                    let candidates: HashSet<String> =
+                                        std::iter::once(identity.device_id.clone()).collect();
+                                    let extra = &dev.connection_config.extra;
+                                    match match_by_approved_identity(
+                                        &candidates,
+                                        &topic,
+                                        &payload,
+                                        config,
+                                        |_| approved_identity_from_extra(extra),
+                                    ) {
+                                        ApprovedIdentityOutcome::Match(_)
+                                        | ApprovedIdentityOutcome::NoRule => true,
+                                        ApprovedIdentityOutcome::Conflict { blocked }
+                                        | ApprovedIdentityOutcome::Unverifiable { blocked } => {
+                                            approved_blocked.extend(blocked);
+                                            false
+                                        }
+                                    }
+                                }
+                            }
                         };
-                        if known {
+                        if learn_allowed {
                             let mut mapping = topic_to_device.write().await;
                             topic_map_insert(&mut mapping, &topic, &identity.device_id);
                             info!(

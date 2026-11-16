@@ -1306,6 +1306,132 @@ mod handling_path {
         );
     }
 
+    /// New unbound CT-Prov topic + target approved field Matches → may associate.
+    #[tokio::test]
+    async fn new_topic_approved_field_match_may_associate() {
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        // Registered on a different topic; new TopicStrong topic is unbound.
+        approve_device(
+            &registry,
+            "A",
+            "gw",
+            "gateway/data",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry).await;
+        let new_topic = "device/gw/A/uplink";
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, new_topic).is_empty()
+        );
+
+        let mut rx = adapter.event_tx.subscribe();
+        handle(&adapter, new_topic, b"{\"sn\":\"A\",\"temperature\":21}").await;
+        let events = drain(&mut rx);
+        assert!(
+            metric_ids(&events).iter().any(|id| id == "A"),
+            "approved sn Match on new TopicStrong topic may associate+ingest; got {:?}",
+            metric_ids(&events)
+        );
+        assert!(
+            metric_ids(&events).iter().all(|id| id == "A"),
+            "Match must only attribute to A; got {:?}",
+            metric_ids(&events)
+        );
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, new_topic)
+                .contains("A"),
+            "Match must learn the new topic mapping"
+        );
+        assert!(discovery_ids(&events).is_empty());
+    }
+
+    /// New unbound topic + approved field Conflict → no associate, no write to A.
+    #[tokio::test]
+    async fn new_topic_approved_field_conflict_no_associate() {
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "A",
+            "gw",
+            "gateway/data",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry).await;
+        let new_topic = "device/gw/A/uplink";
+
+        let mut rx = adapter.event_tx.subscribe();
+        // TopicStrong extracts A; approved sn=B conflicts — must not write B into A.
+        handle(
+            &adapter,
+            new_topic,
+            b"{\"sn\":\"B\",\"device_id\":\"A\",\"v\":1}",
+        )
+        .await;
+        let events = drain(&mut rx);
+        assert!(
+            metric_ids(&events).is_empty(),
+            "Conflict must not formally ingest to A; got {:?}",
+            metric_ids(&events)
+        );
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, new_topic).is_empty(),
+            "Conflict must not create formal topic association"
+        );
+        // Message may still become a discovery candidate.
+        assert!(
+            !discovery_ids(&events).is_empty(),
+            "Conflict on learn gate must still allow discovery candidacy"
+        );
+    }
+
+    /// New unbound topic + approved field missing → cannot bypass via topic ID.
+    #[tokio::test]
+    async fn new_topic_approved_field_missing_no_bypass_via_topic_id() {
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "A",
+            "gw",
+            "gateway/data",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry).await;
+        let new_topic = "device/gw/A/uplink";
+
+        let mut rx = adapter.event_tx.subscribe();
+        // TopicStrong=A; sn absent → Unverifiable — must not learn via topic id alone.
+        handle(&adapter, new_topic, b"{\"device_id\":\"A\",\"v\":1}").await;
+        let events = drain(&mut rx);
+        assert!(
+            metric_ids(&events).is_empty(),
+            "missing approved sn must not ingest to A via TopicStrong id; got {:?}",
+            metric_ids(&events)
+        );
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, new_topic).is_empty(),
+            "Unverifiable must not create formal topic association"
+        );
+        assert!(
+            !discovery_ids(&events).is_empty(),
+            "Unverifiable learn gate must still allow discovery candidacy"
+        );
+    }
+
     #[tokio::test]
     async fn delete_interleave_cannot_relearn_while_registry_still_has_device() {
         // Controllable delete window: adapter teardown done (uncollectable +
