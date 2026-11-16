@@ -89,8 +89,9 @@ async fn state_with_listener() -> ServerState {
     state
 }
 
-/// Register a real MQTT adapter under the draft's source id (`test`) so confirm's
-/// subscribe switch can succeed (no broker needed — empty clients still update maps).
+/// Register a real MQTT adapter under the draft's source id so confirm's
+/// subscribe switch can succeed. Installs a synthetic broker slot (clients
+/// non-empty) without a live TCP session — empty clients now fail closed.
 async fn register_confirm_adapter(state: &ServerState, adapter_id: &str) -> Arc<MqttAdapter> {
     let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
         adapter_id,
@@ -99,6 +100,34 @@ async fn register_confirm_adapter(state: &ServerState, adapter_id: &str) -> Arc<
     adapter
         .set_shared_device_registry(state.devices.registry.clone())
         .await;
+    adapter.install_test_broker_slot(adapter_id).await;
+    state
+        .devices
+        .service
+        .register_adapter(
+            adapter_id.to_string(),
+            adapter.clone() as Arc<dyn DeviceAdapter>,
+        )
+        .await;
+    adapter
+}
+
+/// Real MqttAdapter registered but **not** connected (empty mqtt_clients).
+async fn register_disconnected_mqtt_adapter(
+    state: &ServerState,
+    adapter_id: &str,
+) -> Arc<MqttAdapter> {
+    let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+        adapter_id,
+        "localhost:1883",
+    )));
+    adapter
+        .set_shared_device_registry(state.devices.registry.clone())
+        .await;
+    assert!(
+        adapter.list_brokers().await.is_empty(),
+        "test requires disconnected adapter"
+    );
     state
         .devices
         .service
@@ -1083,4 +1112,212 @@ async fn confirm_cross_broker_uses_draft_adapter_and_preserves_fields() {
         b.connection_config.extra.get("site"),
         Some(&json!("line-3"))
     );
+}
+
+/// NM-195: real MqttAdapter registered but not connected → not fake success;
+/// draft kept; retry after installing a broker slot recovers.
+#[tokio::test]
+async fn confirm_disconnected_mqtt_adapter_keeps_draft_then_recovers() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let adapter = register_disconnected_mqtt_adapter(&state, "test").await;
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+
+    let first = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("B".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(
+        first.is_err(),
+        "empty mqtt_clients must not claim subscription_ready / delete draft"
+    );
+    assert!(manager.get_draft(&pending).await.is_some());
+    assert!(state.devices.service.get_device("B").is_some());
+    assert_eq!(
+        state.devices.service.get_device_status("B").await.status,
+        ConnectionStatus::Disconnected
+    );
+
+    // Connect the same real adapter (synthetic slot) and retry.
+    adapter.install_test_broker_slot("test").await;
+    let second = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("B".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await
+    .expect("retry after broker slot must succeed");
+    assert!(second.0.data.expect("resp").subscription_ready);
+    assert!(manager.get_draft(&pending).await.is_none());
+}
+
+/// NM-195: concurrent same-draft confirms — exactly one success; draft consumed
+/// once; failed/losing call does not overwrite; retry after fail still works.
+#[tokio::test]
+async fn confirm_concurrent_same_draft_serializes() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let _adapter = register_confirm_adapter(&state, "test").await;
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+
+    let req = ConfirmAssociationRequest {
+        device_id: "B".to_string(),
+        identity_field: "sn".to_string(),
+        identity_source: Some("auto_payload".to_string()),
+        existing_type: Some("gw".to_string()),
+        new_type: None,
+        device_name: Some("Concurrent B".to_string()),
+        overwrite_blocked: None,
+    };
+
+    let s1 = state.clone();
+    let s2 = state.clone();
+    let p1 = pending.clone();
+    let p2 = pending.clone();
+    let r1 = req.clone();
+    let r2 = req.clone();
+
+    let (a, b) = tokio::join!(
+        confirm_association_draft(State(s1), Path(p1), Json(r1)),
+        confirm_association_draft(State(s2), Path(p2), Json(r2)),
+    );
+
+    let successes = [&a, &b].iter().filter(|r| r.is_ok()).count();
+    let failures = [&a, &b].iter().filter(|r| r.is_err()).count();
+    assert_eq!(successes, 1, "exactly one concurrent confirm must succeed");
+    assert_eq!(failures, 1, "loser must see consumed draft / not re-exec");
+    assert!(manager.get_draft(&pending).await.is_none());
+    let device = state.devices.service.get_device("B").expect("B once");
+    assert_eq!(device.name, "Concurrent B");
+
+    // After success the draft is gone — a later retry is a clean 404, not a hang.
+    let again =
+        confirm_association_draft(State(state.clone()), Path(pending.clone()), Json(req)).await;
+    assert!(again.is_err());
+}
+
+/// NM-195: concurrent confirms targeting the same device id from two drafts
+/// are serialized via the per-device bind lock (no interleaved corruption).
+#[tokio::test]
+async fn confirm_concurrent_same_device_from_two_drafts_coordinates() {
+    let state = state_with_listener().await;
+    let _adapter = register_confirm_adapter(&state, "test").await;
+    approve_registered_a(&state).await;
+
+    // Two association drafts that both want to attach real id B.
+    let topic_a = "device/gw/A/uplink";
+    let topic_c = "device/gw/C/uplink";
+    let pending_a = pending_association_candidate_id(topic_a, "A");
+    let pending_c = pending_association_candidate_id(topic_c, "C");
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+
+    for (pending, topic, claimed) in [
+        (pending_a.clone(), topic_a, "A"),
+        (pending_c.clone(), topic_c, "C"),
+    ] {
+        let accepted = ServerState::process_device_discovered_for_onboarding(
+            manager.as_ref(),
+            state.devices.service.as_ref(),
+            pending.clone(),
+            "mqtt".to_string(),
+            Some("test".to_string()),
+            &json!({
+                "original_topic": topic,
+                MQTT_ASSOCIATION_EXCEPTION_KEY: true,
+                MQTT_ASSOCIATION_KIND_KEY: "conflict",
+                MQTT_CLAIMED_IDENTITY_KEY: claimed,
+                MQTT_PENDING_CANDIDATE_ID_KEY: pending,
+                "mqtt_blocked_device_ids": [claimed],
+                "mqtt_identity_source": "auto_payload",
+                "mqtt_identity_field": "sn",
+            }),
+            &json!({
+                "device_id": pending,
+                "topic": topic,
+                "data": {"sn": "B", "v": 1},
+                "format": "json",
+                "is_binary": false,
+            }),
+            false,
+        )
+        .await;
+        assert!(accepted);
+        let _ = wait_for_draft(manager.as_ref(), &pending).await;
+    }
+
+    let req_a = ConfirmAssociationRequest {
+        device_id: "B".to_string(),
+        identity_field: "sn".to_string(),
+        identity_source: Some("auto_payload".to_string()),
+        existing_type: Some("gw".to_string()),
+        new_type: None,
+        device_name: Some("From A draft".to_string()),
+        overwrite_blocked: None,
+    };
+    let req_c = ConfirmAssociationRequest {
+        device_id: "B".to_string(),
+        identity_field: "sn".to_string(),
+        identity_source: Some("auto_payload".to_string()),
+        existing_type: Some("gw".to_string()),
+        new_type: None,
+        device_name: Some("From C draft".to_string()),
+        overwrite_blocked: None,
+    };
+
+    let (ra, rc) = tokio::join!(
+        confirm_association_draft(State(state.clone()), Path(pending_a.clone()), Json(req_a)),
+        confirm_association_draft(State(state.clone()), Path(pending_c.clone()), Json(req_c)),
+    );
+
+    // Both may succeed (serialized updates in place) or one may fail if sample
+    // validation races — but we must never leave two B devices / panic / hang,
+    // and a subsequent retry on any remaining draft must be possible.
+    assert!(
+        ra.is_ok() || rc.is_ok(),
+        "at least one same-device confirm must complete"
+    );
+    assert!(state.devices.service.get_device("B").is_some());
+    assert!(state.devices.service.get_device("B2").is_none());
+
+    // Whichever draft remains (if any) must still be retryable after a fail.
+    for (pending, name) in [(pending_a, "Retry A"), (pending_c, "Retry C")] {
+        if manager.get_draft(&pending).await.is_some() {
+            let retry = confirm_association_draft(
+                State(state.clone()),
+                Path(pending.clone()),
+                Json(ConfirmAssociationRequest {
+                    device_id: "B".to_string(),
+                    identity_field: "sn".to_string(),
+                    identity_source: Some("auto_payload".to_string()),
+                    existing_type: Some("gw".to_string()),
+                    new_type: None,
+                    device_name: Some(name.to_string()),
+                    overwrite_blocked: None,
+                }),
+            )
+            .await;
+            assert!(
+                retry.is_ok(),
+                "remaining draft {pending} must be retryable after concurrent same-device bind"
+            );
+        }
+    }
 }

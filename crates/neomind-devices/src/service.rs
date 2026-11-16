@@ -6,9 +6,10 @@
 //! - Data querying
 //! - Integration with adapters and telemetry storage
 
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio::time::{interval, Duration};
 
 use super::adapter::{ConnectionStatus, DeviceAdapter};
@@ -327,6 +328,8 @@ pub struct DeviceService {
     /// Extension command router for extension-registered devices
     /// When set, commands for devices with adapter_type="extension" are routed through this callback
     extension_command_router: Arc<RwLock<Option<ExtensionCommandRouterFn>>>,
+    /// Per-device association-bind locks (serialize concurrent confirms / binds).
+    pub(crate) association_bind_locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
 }
 
 /// What a successful [`DeviceService::send_command`] actually proves about
@@ -382,6 +385,7 @@ impl DeviceService {
             heartbeat_config: HeartbeatConfig::default(),
             heartbeat_running: Arc::new(RwLock::new(false)),
             extension_command_router: Arc::new(RwLock::new(None)),
+            association_bind_locks: Arc::new(DashMap::new()),
         }
     }
 
@@ -403,6 +407,7 @@ impl DeviceService {
             heartbeat_config,
             heartbeat_running: Arc::new(RwLock::new(false)),
             extension_command_router: Arc::new(RwLock::new(None)),
+            association_bind_locks: Arc::new(DashMap::new()),
         }
     }
 
@@ -464,6 +469,10 @@ impl DeviceService {
 
         // Migrate last_seen for old devices that have telemetry data but last_seen == 1 (sentinel)
         self.migrate_last_seen_from_telemetry().await;
+
+        // 1.2.11 → 1.3.0: stamp explicit 1:1 MQTT topic binds that never got an
+        // identity rule so upgrade keeps sole-topic ownership (not discovery).
+        self.migrate_legacy_mqtt_topic_binds().await;
 
         let event_bus = self.event_bus.clone();
         let device_status = self.device_status.clone();
@@ -943,6 +952,68 @@ pub struct DeviceHealth {
 }
 
 impl DeviceService {
+    /// Stamp pre-1.3.0 MQTT devices that have an explicit telemetry topic but
+    /// no `mqtt_identity_*` rule with `legacy_topic_bind`, so upgrade keeps
+    /// 1.2.11 sole-topic ownership (payload `device_id=…` must not force discovery).
+    async fn migrate_legacy_mqtt_topic_binds(&self) {
+        use crate::adapters::mqtt::{MqttIdentitySource, MQTT_IDENTITY_SOURCE_KEY};
+
+        let mut stamped = 0u32;
+        for mut device in self.registry.list_devices() {
+            if device.adapter_type != "mqtt" {
+                continue;
+            }
+            let topic = match device
+                .connection_config
+                .telemetry_topic
+                .as_deref()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+            {
+                Some(t) => t.to_string(),
+                None => continue,
+            };
+            if device
+                .connection_config
+                .extra
+                .get(MQTT_IDENTITY_SOURCE_KEY)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .is_some()
+            {
+                continue;
+            }
+            device.connection_config.extra.insert(
+                MQTT_IDENTITY_SOURCE_KEY.to_string(),
+                serde_json::Value::String(MqttIdentitySource::LegacyTopicBind.as_str().into()),
+            );
+            let device_id = device.device_id.clone();
+            if let Err(e) = self.registry.update_device(&device_id, device).await {
+                tracing::warn!(
+                    device_id = %device_id,
+                    error = %e,
+                    "Failed to stamp legacy_topic_bind on 1.2.11 MQTT upgrade"
+                );
+                continue;
+            }
+            stamped += 1;
+            tracing::info!(
+                category = "upgrade",
+                device_id = %device_id,
+                telemetry_topic = %topic,
+                "1.2.11 upgrade: MQTT device keeps legacy 1:1 topic bind (stamped mqtt_identity_source=legacy_topic_bind); payload identity fields will not divert sole-topic ingest to discovery"
+            );
+        }
+        if stamped > 0 {
+            tracing::info!(
+                category = "upgrade",
+                stamped,
+                "1.2.11 → 1.3.0 MQTT legacy 1:1 topic-bind upgrade complete"
+            );
+        }
+    }
+
     /// Migrate last_seen for old devices: if last_seen == 1 (sentinel from registry migration),
     /// try to get the real timestamp from telemetry storage.
     async fn migrate_last_seen_from_telemetry(&self) {

@@ -100,6 +100,9 @@ pub enum MqttIdentitySource {
     TopicWeak,
     /// Hash of the topic (last resort).
     TopicHash,
+    /// Pre-1.3.0 explicit 1:1 topic ownership (DB upgrade stamp). Not a
+    /// payload claim — ingest uses sole-registrant 1:1 remap like 1.2.11.
+    LegacyTopicBind,
 }
 
 impl MqttIdentitySource {
@@ -110,6 +113,7 @@ impl MqttIdentitySource {
             Self::TopicStrong => "topic_strong",
             Self::TopicWeak => "topic_weak",
             Self::TopicHash => "topic_hash",
+            Self::LegacyTopicBind => "legacy_topic_bind",
         }
     }
 
@@ -121,6 +125,7 @@ impl MqttIdentitySource {
             "topic_strong" => Some(Self::TopicStrong),
             "topic_weak" => Some(Self::TopicWeak),
             "topic_hash" => Some(Self::TopicHash),
+            "legacy_topic_bind" => Some(Self::LegacyTopicBind),
             _ => None,
         }
     }
@@ -250,11 +255,18 @@ pub fn extract_with_approved_rule(
             topic.hash(&mut hasher);
             Some(format!("mqtt_{:x}", hasher.finish()))
         }
+        // Marker only — match_by_approved_identity treats this as non-claiming
+        // so sole-registrant 1:1 remap (1.2.11) applies via NoRule.
+        MqttIdentitySource::LegacyTopicBind => None,
     }
 }
 
 /// Payload / strong-topic identities are real claims that can conflict with an
 /// explicit 1:1 topic bind. TopicWeak / TopicHash are discovery fallbacks only.
+///
+/// Sole-registrant remap no longer consults this (1.2.11 upgrade compat); kept
+/// for association-aware tests and callers that classify claim strength.
+#[allow(dead_code)]
 pub fn identity_conflicts_with_explicit_bind(identity: &ResolvedMqttIdentity) -> bool {
     matches!(
         identity.source,
@@ -519,12 +531,14 @@ pub fn lookup_topic_device_ids(map: &TopicDeviceMap, topic: &str) -> HashSet<Str
 ///
 /// Rules:
 /// 1. Exact identity membership always wins.
-/// 2. Explicit **1:1** topic bind + message with **no conflicting identity
-///    claim** (no payload/strong-topic id that differs) → sole registrant
-///    (compat for manual binds like `sensor-A` on `factory/temperature`
-///    with `{"temperature":25}`).
-/// 3. Shared topic / unknown JSON identity → `None` (discovery). Never
-///    "sole registrant gets everything" when the message claims another id.
+/// 2. Explicit **1:1** topic bind (sole registrant after excludes) → that
+///    device. Matches 1.2.11 topic-map ownership: payloads may carry a
+///    different auto-detected `device_id` (e.g. `hardware-001`) and still
+///    ingest to the bound device (`sensor-A`). Shared topics (len > 1) never
+///    use this remap — unknown JSON identity becomes discovery instead.
+/// 3. Approved-rule Conflict / Unverifiable peers are excluded by the caller
+///    via [`match_registered_device_except`] so sticky identity still wins
+///    over legacy 1:1 remap for those devices.
 pub fn match_registered_device(
     map: &TopicDeviceMap,
     topic: &str,
@@ -549,7 +563,10 @@ pub fn match_registered_device_except(
     if devices.contains(&identity.device_id) {
         return Some(identity.device_id.clone());
     }
-    if devices.len() == 1 && !identity_conflicts_with_explicit_bind(identity) {
+    // 1.2.11 upgrade compat: sole explicit bind owns the topic regardless of
+    // payload/strong-topic auto-detect claims (those matter for shared topics
+    // and for devices with sticky approved rules, handled above / via exclude).
+    if devices.len() == 1 {
         return devices.into_iter().next();
     }
     None
@@ -586,7 +603,8 @@ fn is_claiming_approved_source(source: MqttIdentitySource) -> bool {
         source,
         MqttIdentitySource::ConfiguredPayload
             | MqttIdentitySource::AutoPayload
-            | MqttIdentitySource::TopicStrong
+            | MqttIdentitySource::TopicStrong // LegacyTopicBind / TopicWeak / TopicHash are not sticky claims —
+                                              // they must not block 1:1 sole-registrant remap.
     )
 }
 

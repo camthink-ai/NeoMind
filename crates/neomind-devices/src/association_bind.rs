@@ -9,11 +9,18 @@
 
 use std::sync::Arc;
 
+use tokio::sync::Mutex;
+
 use super::adapter::DeviceAdapter;
 use super::mdl::DeviceError;
 use super::registry::DeviceConfig;
 use super::service::DeviceService;
 use crate::adapters::mqtt::{MQTT_IDENTITY_FIELD_KEY, MQTT_IDENTITY_SOURCE_KEY};
+
+/// Persisted list of adapter ids whose unsubscribe still needs to finish after
+/// a prior incomplete association switch (config may already point at the new
+/// adapter_id). Cleared only when every listed unsubscribe succeeds.
+const MQTT_PENDING_UNSUB_ADAPTERS_KEY: &str = "mqtt_pending_unsub_adapters";
 
 /// Input for the unified association bind / subscribe-switch operation.
 #[derive(Debug, Clone)]
@@ -42,18 +49,30 @@ pub struct AssociationBindOutcome {
     pub cleared_adapter_ids: Vec<String>,
     /// Adapter that received the new subscribe.
     pub subscribed_adapter_id: Option<String>,
+    /// True when every required old-source unsubscribe completed.
+    pub old_source_cleanup_ok: bool,
 }
 
 impl DeviceService {
+    /// Per-device lock so concurrent association binds / confirms for the same
+    /// real device id cannot interleave config + subscribe switches.
+    pub(crate) fn association_bind_lock_for(&self, device_id: &str) -> Arc<Mutex<()>> {
+        self.association_bind_locks
+            .entry(device_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
     /// Apply association config and switch runtime subscriptions.
     ///
     /// - Preserves unrelated connection fields (command topic, non-identity extra).
     /// - Uses the confirmed `adapter_id` (clears old adapter on cross-broker).
     /// - Shared-topic unsubscribe only drops this device (adapter `unsubscribe_device`).
     /// - Does **not** mark the device online / Connected.
-    /// - On adapter missing or subscribe failure: config may already be persisted;
-    ///   returns [`DeviceError::BindIncomplete`] so the caller keeps the draft and
-    ///   surfaces a retry path (idempotent — no double-register).
+    /// - On adapter missing, subscribe failure, **or incomplete old-source cleanup**:
+    ///   config may already be persisted; returns [`DeviceError::BindIncomplete`]
+    ///   so the caller keeps the draft and surfaces a retry path (idempotent —
+    ///   no double-register). New subscribe alone is not full switch success.
     pub async fn apply_association_bind(
         &self,
         input: AssociationBindInput,
@@ -63,6 +82,10 @@ impl DeviceService {
                 "association bind is not supported for extension-managed devices".into(),
             ));
         }
+
+        // Serialize same-device binds (cross-draft / retry races).
+        let device_lock = self.association_bind_lock_for(&input.device_id);
+        let _device_guard = device_lock.lock().await;
 
         let existing = self.get_device(&input.device_id);
         let was_existing = existing.is_some();
@@ -135,13 +158,47 @@ impl DeviceService {
         // Clear old adapter runtime maps when source broker changes (or always
         // clear previous matching adapters before re-subscribe on the target).
         let mut cleared_adapter_ids = Vec::new();
-        let old_to_clear = collect_adapters_to_clear(
+        let mut cleanup_errors: Vec<String> = Vec::new();
+        let mut pending_unsub: Vec<String> = existing
+            .as_ref()
+            .and_then(|d| {
+                d.connection_config
+                    .extra
+                    .get(MQTT_PENDING_UNSUB_ADAPTERS_KEY)
+            })
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut old_to_clear = collect_adapters_to_clear(
             self,
             &input.adapter_type,
             previous_adapter_id.as_deref(),
             input.adapter_id.as_deref(),
         )
         .await;
+        // Retry path: config may already list the new adapter_id while prior
+        // old-source unsubscribes are still outstanding — finish those too.
+        if !pending_unsub.is_empty() {
+            let adapters = self.adapters.read().await;
+            for id in &pending_unsub {
+                if old_to_clear
+                    .iter()
+                    .any(|(existing_id, _)| existing_id == id)
+                {
+                    continue;
+                }
+                if let Some(adapter) = adapters.get(id) {
+                    old_to_clear.push((id.clone(), adapter.clone()));
+                } else {
+                    cleanup_errors.push(format!("{id}: pending cleanup adapter not registered"));
+                }
+            }
+        }
 
         for (adapter_id, adapter) in &old_to_clear {
             if let Err(e) = adapter.unsubscribe_device(&input.device_id).await {
@@ -151,10 +208,13 @@ impl DeviceService {
                     error = %e,
                     "Failed to unsubscribe device from previous adapter during association bind"
                 );
-                // Continue — subscribe on the new target is the success criterion;
-                // a soft unsubscribe miss must not fake overall success later.
+                cleanup_errors.push(format!("{adapter_id}: {e}"));
+                if !pending_unsub.iter().any(|id| id == adapter_id) {
+                    pending_unsub.push(adapter_id.clone());
+                }
             } else {
                 cleared_adapter_ids.push(adapter_id.clone());
+                pending_unsub.retain(|id| id != adapter_id);
             }
         }
 
@@ -190,8 +250,13 @@ impl DeviceService {
                         error = %e,
                         "Failed to clear prior subscription before association re-subscribe"
                     );
+                    cleanup_errors.push(format!("{adapter_id}: {e}"));
+                    if !pending_unsub.iter().any(|id| id == adapter_id) {
+                        pending_unsub.push(adapter_id.clone());
+                    }
                 } else {
                     cleared_adapter_ids.push(adapter_id.clone());
+                    pending_unsub.retain(|id| id != adapter_id);
                 }
             }
             match adapter.subscribe_device(&input.device_id).await {
@@ -220,6 +285,44 @@ impl DeviceService {
             });
         }
 
+        // Persist / clear the pending-unsub marker so retries finish cleanup
+        // even after adapter_id already points at the new source.
+        if let Some(mut dev) = self.get_device(&input.device_id) {
+            if pending_unsub.is_empty() {
+                dev.connection_config
+                    .extra
+                    .remove(MQTT_PENDING_UNSUB_ADAPTERS_KEY);
+            } else {
+                dev.connection_config.extra.insert(
+                    MQTT_PENDING_UNSUB_ADAPTERS_KEY.to_string(),
+                    serde_json::Value::Array(
+                        pending_unsub
+                            .iter()
+                            .map(|id| serde_json::Value::String(id.clone()))
+                            .collect(),
+                    ),
+                );
+            }
+            let _ = self.registry.update_device(&input.device_id, dev).await;
+        }
+
+        // New subscribe alone is not a full switch — old source must be cleared.
+        if !cleanup_errors.is_empty() {
+            let detail = cleanup_errors.join("; ");
+            let hint = format!(
+                "Config for device '{}' is saved and the new adapter subscribed (topic='{}'), but old-source cleanup is incomplete ({detail}). Retry confirm-association to finish clearing previous maps — retry will not double-register.",
+                input.device_id, input.telemetry_topic
+            );
+            return Err(DeviceError::BindIncomplete {
+                message: format!(
+                    "Association switch incomplete for device '{}': old source cleanup failed ({detail})",
+                    input.device_id
+                ),
+                config_applied,
+                retry_hint: hint,
+            });
+        }
+
         Ok(AssociationBindOutcome {
             device_id: input.device_id,
             was_existing,
@@ -229,6 +332,7 @@ impl DeviceService {
             subscribe_ok: true,
             cleared_adapter_ids,
             subscribed_adapter_id,
+            old_source_cleanup_ok: true,
         })
     }
 }
@@ -261,6 +365,7 @@ async fn collect_adapters_to_clear(
     new_adapter_id: Option<&str>,
 ) -> Vec<(String, Arc<dyn DeviceAdapter>)> {
     // Same explicit adapter → cleared in the subscribe loop instead.
+    // Outstanding cross-broker cleanup uses `mqtt_pending_unsub_adapters`.
     if previous_adapter_id.is_some() && previous_adapter_id == new_adapter_id {
         return Vec::new();
     }

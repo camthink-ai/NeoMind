@@ -47,11 +47,16 @@ impl MqttAdapter {
     pub async fn subscribe_topic(&self, topic: &str) -> AdapterResult<()> {
         let clients = self.mqtt_clients.read().await;
         if clients.is_empty() {
+            // Honest not-ready: adapter may be registered while no broker session
+            // exists yet. Returning Ok here previously made association confirm
+            // claim subscription_ready and consume the draft with no live sub.
             warn!(
                 "No MQTT brokers connected, cannot subscribe to topic: {}",
                 topic
             );
-            return Ok(());
+            return Err(AdapterError::Communication(format!(
+                "No MQTT brokers connected; cannot subscribe to '{topic}' — retry when the adapter is connected"
+            )));
         }
 
         let mut subscribed_count = 0;

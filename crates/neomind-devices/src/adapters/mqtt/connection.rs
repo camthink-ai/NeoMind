@@ -1124,6 +1124,42 @@ impl MqttAdapter {
         self.mqtt_clients.read().await.keys().cloned().collect()
     }
 
+    /// Test/helper: install a synthetic broker client slot so `subscribe_topic`
+    /// can succeed without a live TCP session. The request channel stays open;
+    /// the event loop is held (not polled) so no connection is attempted.
+    ///
+    /// Production paths only insert clients after a real ConnAck — an empty
+    /// `mqtt_clients` map remains the honest "not connected" signal.
+    pub async fn install_test_broker_slot(&self, broker_id: &str) {
+        use rumqttc::{AsyncClient, MqttOptions};
+        use std::time::Duration;
+
+        if self.mqtt_clients.read().await.contains_key(broker_id) {
+            return;
+        }
+        let mut opts = MqttOptions::new(
+            format!("neomind-test-slot-{broker_id}"),
+            "127.0.0.1",
+            9, // unused — event loop is never polled
+        );
+        opts.set_keep_alive(Duration::from_secs(5));
+        let (client, eventloop) = AsyncClient::new(opts, 16);
+        // Hold the eventloop so the client request channel stays alive; do not
+        // poll (avoids connection attempts / disconnect cleanup races).
+        std::mem::forget(eventloop);
+        self.mqtt_clients.write().await.insert(
+            broker_id.to_string(),
+            MqttClientInner {
+                _broker_id: broker_id.to_string(),
+                _broker_addr: "test-slot".to_string(),
+                client,
+                running: Arc::new(RwLock::new(true)),
+                subscribed_topics: Arc::new(RwLock::new(std::collections::HashSet::new())),
+            },
+        );
+        *self.connection_status.write().await = ConnectionStatus::Connected;
+    }
+
     /// Update overall connection status based on connected brokers.
     pub(crate) async fn update_connection_status(&self) {
         let has_connected = !self.mqtt_clients.read().await.is_empty();

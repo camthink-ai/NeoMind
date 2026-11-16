@@ -501,18 +501,37 @@ fn acceptance_same_topic_different_json_ids_separate_discovery() {
 
 #[test]
 fn acceptance_approve_a_then_b_stays_pending_not_attributed() {
+    // Association-aware A (sticky auto_payload/device_id): B's message Conflicts
+    // and must not remap via sole-registrant 1:1. Legacy sole binds without a
+    // claiming rule still 1:1-ingest (see acceptance_legacy_one_to_one_*).
     let cfg = MqttAdapterConfig::new("test", "localhost:1883");
     let topic = "gateway/data";
     let mut map = TopicDeviceMap::new();
-    // A approved on shared topic.
     topic_map_insert(&mut map, topic, "A");
+    let bound = std::collections::HashSet::from(["A".to_string()]);
 
-    let b = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"B\",\"v\":2}", &cfg);
+    let payload_b = b"{\"device_id\":\"B\",\"v\":2}";
+    let b = resolve_mqtt_device_identity(topic, payload_b, &cfg);
     assert_eq!(b.device_id, "B");
-    // Must NOT match A — becomes a discovery candidate.
-    assert!(match_registered_device(&map, topic, &b).is_none());
-    // A's own uplink still routes to A.
-    let a = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"A\",\"v\":1}", &cfg);
+    let outcome = match_by_approved_identity(&bound, topic, payload_b, &cfg, |_| {
+        Some((
+            MqttIdentitySource::AutoPayload,
+            Some("device_id".to_string()),
+        ))
+    });
+    match outcome {
+        ApprovedIdentityOutcome::Conflict { blocked } => {
+            assert!(blocked.contains("A"));
+            assert!(
+                match_registered_device_except(&map, topic, &b, &blocked).is_none(),
+                "approved Conflict must keep B as discovery, not remap to A"
+            );
+        }
+        other => panic!("expected Conflict for B vs approved A, got {:?}", other),
+    }
+    // A's own uplink still routes to A (exact / Match).
+    let payload_a = b"{\"device_id\":\"A\",\"v\":1}";
+    let a = resolve_mqtt_device_identity(topic, payload_a, &cfg);
     assert_eq!(
         match_registered_device(&map, topic, &a).as_deref(),
         Some("A")
@@ -690,11 +709,35 @@ fn acceptance_explicit_one_to_one_bind_without_identity_routes_to_device() {
 }
 
 #[test]
-fn acceptance_sole_registrant_unknown_json_identity_is_discovery() {
+fn acceptance_legacy_one_to_one_with_payload_device_id_still_ingests() {
+    // 1.2.11 upgrade: sole bind sensor-A + payload device_id=hardware-001 still
+    // routes to sensor-A (topic ownership), not discovery.
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let topic = "factory/temperature";
+    let mut map = TopicDeviceMap::new();
+    topic_map_insert(&mut map, topic, "sensor-A");
+    let claimed = resolve_mqtt_device_identity(
+        topic,
+        b"{\"device_id\":\"hardware-001\",\"temperature\":25}",
+        &cfg,
+    );
+    assert_eq!(claimed.device_id, "hardware-001");
+    assert!(identity_conflicts_with_explicit_bind(&claimed));
+    assert_eq!(
+        match_registered_device(&map, topic, &claimed).as_deref(),
+        Some("sensor-A"),
+        "legacy 1:1 sole bind must ingest even when JSON claims another id"
+    );
+}
+
+#[test]
+fn acceptance_shared_topic_unknown_json_identity_is_discovery() {
+    // Shared topic (len > 1): unknown JSON id must not remap to a peer.
     let cfg = MqttAdapterConfig::new("test", "localhost:1883");
     let topic = "gateway/data";
     let mut map = TopicDeviceMap::new();
     topic_map_insert(&mut map, topic, "A");
+    topic_map_insert(&mut map, topic, "C");
     let b = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"B\",\"v\":1}", &cfg);
     assert!(identity_conflicts_with_explicit_bind(&b));
     assert!(match_registered_device(&map, topic, &b).is_none());
@@ -1519,6 +1562,7 @@ mod handling_path {
             "localhost:1883",
         )));
         adapter.set_shared_device_registry(registry.clone()).await;
+        adapter.install_test_broker_slot("test").await;
         // Seed stale runtime maps as if B had been subscribed on the old topic.
         {
             let mut map = adapter.topic_to_device.write().await;
@@ -1553,6 +1597,8 @@ mod handling_path {
             extra,
             ..Default::default()
         };
+        // update_device_and_refresh_adapters matches by adapter_type when
+        // adapter_id is unset — the sole mqtt adapter above is enough.
         service
             .update_device_and_refresh_adapters("B", b_cfg)
             .await
@@ -1900,6 +1946,8 @@ mod handling_path {
         )));
         old.set_shared_device_registry(registry.clone()).await;
         new.set_shared_device_registry(registry.clone()).await;
+        old.install_test_broker_slot("old-broker").await;
+        new.install_test_broker_slot("new-broker").await;
         {
             let mut map = old.topic_to_device.write().await;
             topic_map_insert(&mut map, "device/gw/B/uplink", "B");
@@ -1928,6 +1976,7 @@ mod handling_path {
             .await
             .expect("cross-broker bind");
         assert!(outcome.subscribe_ok && outcome.config_applied);
+        assert!(outcome.old_source_cleanup_ok);
         assert_eq!(outcome.subscribed_adapter_id.as_deref(), Some("new-broker"));
 
         let b = registry.get_device("B").unwrap();
@@ -2016,6 +2065,7 @@ mod handling_path {
             "localhost:1883",
         )));
         adapter.set_shared_device_registry(registry.clone()).await;
+        adapter.install_test_broker_slot("test-mqtt").await;
         let service = DeviceService::new(registry.clone(), EventBus::new());
         service
             .register_adapter(
@@ -2066,6 +2116,264 @@ mod handling_path {
         assert!(
             discovery_ids(&legacy_events).is_empty(),
             "must not suddenly emit discovery for sole-registrant plain JSON"
+        );
+
+        // Extend beyond no-identity-field: payload claims hardware-001 ≠ LEGACY.
+        handle(
+            &adapter,
+            "factory/legacy",
+            b"{\"device_id\":\"hardware-001\",\"temperature\":26}",
+        )
+        .await;
+        let hw_events = drain(&mut rx);
+        assert_eq!(
+            metric_ids(&hw_events),
+            vec!["LEGACY".to_string()],
+            "1.2.11 1:1 upgrade must still ingest when JSON carries a different device_id"
+        );
+        assert!(
+            discovery_ids(&hw_events).is_empty(),
+            "sole legacy bind must not divert to discovery on payload device_id"
+        );
+    }
+
+    /// NM-195: real MqttAdapter registered but not connected → subscribe not Ok.
+    #[tokio::test]
+    async fn bind_registered_but_not_connected_is_incomplete() {
+        use crate::association_bind::AssociationBindInput;
+        use crate::mdl::DeviceError;
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "disc-mqtt",
+            "localhost:1883",
+        )));
+        adapter.set_shared_device_registry(registry.clone()).await;
+        // Intentionally do NOT install_test_broker_slot / start — empty clients.
+        assert!(adapter.list_brokers().await.is_empty());
+
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+        service
+            .register_adapter(
+                "disc-mqtt".into(),
+                adapter.clone() as Arc<dyn DeviceAdapter>,
+            )
+            .await;
+
+        let err = service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "B".into(),
+                name: "B".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("disc-mqtt".into()),
+                telemetry_topic: "t/b".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect_err("empty mqtt_clients must not fake subscribe success");
+        match err {
+            DeviceError::BindIncomplete { config_applied, .. } => assert!(config_applied),
+            other => panic!("expected BindIncomplete, got {other}"),
+        }
+        assert!(registry.get_device("B").is_some());
+        assert_eq!(
+            service.get_device_status("B").await.status,
+            crate::adapter::ConnectionStatus::Disconnected
+        );
+    }
+
+    /// NM-195: old-source unsubscribe failure → incomplete even if new sub ok.
+    #[tokio::test]
+    async fn bind_old_unsubscribe_failure_is_incomplete_despite_new_sub() {
+        use crate::adapter::AdapterResult;
+        use crate::association_bind::AssociationBindInput;
+        use crate::mdl::DeviceError;
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+        use std::pin::Pin;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        struct FlakyUnsubAdapter {
+            name: String,
+            fail_unsub: AtomicBool,
+            unsub_calls: AtomicUsize,
+            sub_calls: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl DeviceAdapter for FlakyUnsubAdapter {
+            fn name(&self) -> &str {
+                &self.name
+            }
+            fn adapter_type(&self) -> &'static str {
+                "mqtt"
+            }
+            fn is_running(&self) -> bool {
+                true
+            }
+            async fn start(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn stop(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            fn subscribe(&self) -> Pin<Box<dyn futures::Stream<Item = DeviceEvent> + Send + '_>> {
+                Box::pin(futures::stream::empty())
+            }
+            fn device_count(&self) -> usize {
+                0
+            }
+            fn list_devices(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            async fn send_command(
+                &self,
+                _device_id: &str,
+                _command_name: &str,
+                _payload: String,
+                _topic: Option<String>,
+            ) -> AdapterResult<()> {
+                Ok(())
+            }
+            fn connection_status(&self) -> crate::adapter::ConnectionStatus {
+                crate::adapter::ConnectionStatus::Connected
+            }
+            async fn subscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                self.sub_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            async fn unsubscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                self.unsub_calls.fetch_add(1, Ordering::SeqCst);
+                if self.fail_unsub.load(Ordering::SeqCst) {
+                    Err(crate::adapter::AdapterError::Communication(
+                        "forced unsubscribe failure".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "B",
+            "gw",
+            "old/topic",
+            Some("topic_strong"),
+            None,
+        )
+        .await;
+        {
+            let mut b = registry.get_device("B").unwrap();
+            b.adapter_id = Some("old".into());
+            registry.update_device("B", b).await.unwrap();
+        }
+
+        let old = Arc::new(FlakyUnsubAdapter {
+            name: "old".into(),
+            fail_unsub: AtomicBool::new(true),
+            unsub_calls: AtomicUsize::new(0),
+            sub_calls: AtomicUsize::new(0),
+        });
+        let new = Arc::new(FlakyUnsubAdapter {
+            name: "new".into(),
+            fail_unsub: AtomicBool::new(false),
+            unsub_calls: AtomicUsize::new(0),
+            sub_calls: AtomicUsize::new(0),
+        });
+
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+        service
+            .register_adapter("old".into(), old.clone() as Arc<dyn DeviceAdapter>)
+            .await;
+        service
+            .register_adapter("new".into(), new.clone() as Arc<dyn DeviceAdapter>)
+            .await;
+
+        let err = service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "B".into(),
+                name: "B".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("new".into()),
+                telemetry_topic: "new/topic".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect_err("old unsubscribe fail must not claim full switch success");
+        match err {
+            DeviceError::BindIncomplete { config_applied, .. } => assert!(config_applied),
+            other => panic!("expected BindIncomplete, got {other}"),
+        }
+        assert!(old.unsub_calls.load(Ordering::SeqCst) >= 1);
+        assert!(new.sub_calls.load(Ordering::SeqCst) >= 1);
+
+        // Retry after old cleanup works → full success.
+        old.fail_unsub.store(false, Ordering::SeqCst);
+        let ok = service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "B".into(),
+                name: "B".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("new".into()),
+                telemetry_topic: "new/topic".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect("retry after cleanup fix");
+        assert!(ok.subscribe_ok && ok.old_source_cleanup_ok);
+    }
+
+    /// NM-195: handling-path legacy 1:1 with payload device_id=hardware-001.
+    #[tokio::test]
+    async fn legacy_one_to_one_payload_device_id_still_ingests() {
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "temp_sensor").await;
+        // No mqtt_identity_* — mirrors pre-upgrade DB row.
+        approve_device(
+            &registry,
+            "sensor-A",
+            "temp_sensor",
+            "factory/temperature",
+            None,
+            None,
+        )
+        .await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry).await;
+        reload_bindings(&adapter).await;
+
+        let mut rx = adapter.event_tx.subscribe();
+        handle(
+            &adapter,
+            "factory/temperature",
+            b"{\"device_id\":\"hardware-001\",\"temperature\":25}",
+        )
+        .await;
+        let events = drain(&mut rx);
+        assert_eq!(
+            metric_ids(&events),
+            vec!["sensor-A".to_string()],
+            "1.2.11 sole bind must ingest sensor-A despite payload device_id"
+        );
+        assert!(
+            discovery_ids(&events).is_empty(),
+            "must not invent hardware-001 discovery for sole legacy bind"
         );
     }
 

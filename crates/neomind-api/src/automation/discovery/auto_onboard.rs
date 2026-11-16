@@ -8,12 +8,13 @@
 
 use super::types::*;
 use super::{MetricEnhancement, SemanticInference};
+use dashmap::DashMap;
 use neomind_core::{EventBus, LlmRuntime};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 use base64::{engine::general_purpose, Engine as _};
 
@@ -171,6 +172,8 @@ pub struct AutoOnboardManager {
     blocked_devices: Arc<RwLock<HashMap<String, (Instant, String)>>>,
     /// Semantic inference
     semantic_inference: SemanticInference,
+    /// Per-draft confirm locks — serialize concurrent confirms of the same draft.
+    confirm_draft_locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
 }
 
 /// Result of device registration with enhancement
@@ -207,7 +210,17 @@ impl AutoOnboardManager {
             rate_limiters: Arc::new(RwLock::new(HashMap::new())),
             blocked_devices: Arc::new(RwLock::new(HashMap::new())),
             semantic_inference,
+            confirm_draft_locks: Arc::new(DashMap::new()),
         }
+    }
+
+    /// Serialize concurrent `/confirm-association` calls for the same draft key.
+    /// Lock is released on both success and failure so retries can proceed.
+    pub fn confirm_draft_lock_for(&self, draft_key: &str) -> Arc<Mutex<()>> {
+        self.confirm_draft_locks
+            .entry(draft_key.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     /// Set configuration (returns a new manager with updated config)
@@ -1634,6 +1647,7 @@ impl AutoOnboardManager {
             rate_limiters: self.rate_limiters.clone(),
             blocked_devices: self.blocked_devices.clone(),
             semantic_inference: SemanticInference::new(self.llm.clone()),
+            confirm_draft_locks: self.confirm_draft_locks.clone(),
         }
     }
 }

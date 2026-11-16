@@ -643,6 +643,13 @@ pub async fn confirm_association_draft(
     let manager = get_auto_onboard_manager(&state).await?;
     let device_service = state.devices.service.clone();
 
+    // Serialize same-draft confirms; release on both Ok and Err so failed
+    // attempts remain retryable. Same-device bind coordination lives inside
+    // `apply_association_bind` (per-device mutex).
+    let draft_lock = manager.confirm_draft_lock_for(&draft_key);
+    let _draft_guard = draft_lock.lock().await;
+
+    // Re-read after lock — a concurrent confirm may have consumed the draft.
     let draft = manager.get_draft(&draft_key).await.ok_or_else(|| {
         ErrorResponse::not_found(format!("Draft device '{}' not found", draft_key))
     })?;
@@ -1471,7 +1478,7 @@ pub struct ApproveDraftDeviceRequest {
 }
 
 /// Confirm real identity for an MQTT association-exception draft.
-#[derive(utoipa::ToSchema, Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Deserialize)]
 pub struct ConfirmAssociationRequest {
     /// Real device identity to register or attach (never `pending-assoc-*`).
     pub device_id: String,
@@ -1496,7 +1503,7 @@ pub struct ConfirmAssociationRequest {
 }
 
 /// Details for creating a new device type
-#[derive(utoipa::ToSchema, Debug, Deserialize)]
+#[derive(utoipa::ToSchema, Debug, Clone, Deserialize)]
 pub struct NewTypeDetails {
     /// Device type ID (user-specified)
     pub device_type: String,
