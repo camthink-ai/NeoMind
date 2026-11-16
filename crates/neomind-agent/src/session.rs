@@ -8,6 +8,108 @@ use futures::{Stream, StreamExt};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+/// Drop-safe mid-clear mark: removes `session_id` from `clearing_sessions` on
+/// Drop so a cancelled/panicked `clear_history` Future cannot leave the
+/// session permanently refusing new turns.
+struct ClearingGuard {
+    clearing_sessions: Arc<std::sync::Mutex<HashMap<String, ()>>>,
+    session_id: String,
+}
+
+impl ClearingGuard {
+    fn arm(
+        clearing_sessions: Arc<std::sync::Mutex<HashMap<String, ()>>>,
+        session_id: &str,
+    ) -> Self {
+        clearing_sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(session_id.to_string(), ());
+        Self {
+            clearing_sessions,
+            session_id: session_id.to_string(),
+        }
+    }
+}
+
+impl Drop for ClearingGuard {
+    fn drop(&mut self) {
+        self.clearing_sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.session_id);
+    }
+}
+
+/// Optional barriers used only by session persist/clear race tests.
+///
+/// Kept on [`SessionManager`] (not process globals) so parallel `cargo test`
+/// workers cannot steal each other's pauses.
+#[derive(Default)]
+struct PersistClearHooks {
+    /// After persist snapshots messages/gen, before `history_io`.
+    persist_after_snapshot: std::sync::Mutex<Option<PersistClearPause>>,
+    /// After clearing mark is armed, before durable clear IO.
+    clear_after_mark: std::sync::Mutex<Option<PersistClearPause>>,
+}
+
+struct PersistClearPause {
+    entered: Arc<tokio::sync::Notify>,
+    resume: Arc<tokio::sync::Notify>,
+}
+
+impl PersistClearHooks {
+    fn install_persist_pause(&self) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        *self
+            .persist_after_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(PersistClearPause {
+            entered: entered.clone(),
+            resume: resume.clone(),
+        });
+        (entered, resume)
+    }
+
+    fn install_clear_hold(&self) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        *self
+            .clear_after_mark
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(PersistClearPause {
+            entered: entered.clone(),
+            resume: resume.clone(),
+        });
+        (entered, resume)
+    }
+
+    async fn yield_after_persist_snapshot(&self) {
+        let pause = self
+            .persist_after_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(p) = pause {
+            p.entered.notify_one();
+            p.resume.notified().await;
+        }
+    }
+
+    async fn yield_after_clear_mark(&self) {
+        let hold = self
+            .clear_after_mark
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(h) = hold {
+            h.entered.notify_one();
+            h.resume.notified().await;
+        }
+    }
+}
+
 use crate::llm::{BackendRequestDefaults, LlmInterface};
 
 use neomind_storage::SessionStore;
@@ -271,7 +373,18 @@ pub struct SessionManager {
     cancel_senders: Arc<RwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
     /// Sessions mid-`clear_history`: new turns are refused until clear finishes
     /// (cancel + await stream → memory wipe → durable deletes).
-    clearing_sessions: Arc<RwLock<HashMap<String, ()>>>,
+    ///
+    /// `std::sync::Mutex` (not tokio) so [`ClearingGuard`] can release the mark
+    /// from `Drop` when a clear Future is cancelled mid-flight.
+    clearing_sessions: Arc<std::sync::Mutex<HashMap<String, ()>>>,
+    /// Serializes durable history IO: `persist_history` (generation recheck →
+    /// `save_history`) and `clear_history` (generation bump → store clear /
+    /// ledger delete). Closes the generation-check → unlock → save race with
+    /// clear without relying on a post-save undo that could wipe a newer turn.
+    history_io: Arc<tokio::sync::Mutex<()>>,
+    /// Per-manager test barriers for persist/clear interleave + mid-cancel
+    /// coverage (production paths leave these empty).
+    persist_clear_hooks: Arc<PersistClearHooks>,
     /// Per-session event subscribers. ChatSessionCapabilityProvider
     /// registers one mpsc::Sender per session-stream subscription. Each
     /// AgentEvent yielded by `process_message_events` is teed (best-effort,
@@ -496,7 +609,9 @@ impl SessionManager {
             tool_registry: Arc::new(RwLock::new(None)),
             skill_registry: crate::skills::create_shared_registry(None),
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
-            clearing_sessions: Arc::new(RwLock::new(HashMap::new())),
+            clearing_sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            history_io: Arc::new(tokio::sync::Mutex::new(())),
+            persist_clear_hooks: Arc::new(PersistClearHooks::default()),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -517,7 +632,9 @@ impl SessionManager {
             tool_registry: Arc::new(RwLock::new(None)),
             skill_registry: crate::skills::create_shared_registry(Some(data_dir)),
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
-            clearing_sessions: Arc::new(RwLock::new(HashMap::new())),
+            clearing_sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            history_io: Arc::new(tokio::sync::Mutex::new(())),
+            persist_clear_hooks: Arc::new(PersistClearHooks::default()),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -2464,13 +2581,16 @@ Assistant: {ar}\n"
     }
 
     /// Whether this session is mid-clear (new turns must refuse).
-    async fn is_clearing(&self, session_id: &str) -> bool {
-        self.clearing_sessions.read().await.contains_key(session_id)
+    fn is_clearing(&self, session_id: &str) -> bool {
+        self.clearing_sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains_key(session_id)
     }
 
     /// Refuse new turns while `clear_history` is in flight.
     async fn refuse_if_clearing(&self, session_id: &str) -> Result<()> {
-        if self.is_clearing(session_id).await {
+        if self.is_clearing(session_id) {
             return Err(NeoMindError::validation(
                 "Session history is being cleared — wait for clear to finish before sending a new message",
             ));
@@ -2506,74 +2626,76 @@ Assistant: {ar}\n"
     /// Clear conversation history for a session.
     ///
     /// Order (ledger-consistency): mark clearing (block new turns) → cancel
-    /// + await in-flight stream → bump history generation + wipe memory →
-    /// durable history clear → durable op-ledger delete. DB failures
-    /// propagate to the caller (no silent Ok). Stale stream persists that
-    /// observed a pre-clear generation are no-ops.
+    /// + await in-flight stream → acquire [`Self::history_io`] → bump history
+    /// generation + wipe memory → durable history clear → durable op-ledger
+    /// delete. DB failures propagate to the caller (no silent Ok). The
+    /// clearing mark is Drop-safe ([`ClearingGuard`]) so Future cancel cannot
+    /// leave the session stuck. Stale stream persists that observed a
+    /// pre-clear generation are no-ops under `history_io`.
     pub async fn clear_history(&self, session_id: &str) -> Result<()> {
         let agent = self.get_session(session_id).await?;
 
-        self.clearing_sessions
+        // Armed for the whole Future — Drop releases even on abort/cancel.
+        let _clearing = ClearingGuard::arm(self.clearing_sessions.clone(), session_id);
+
+        self.cancel_and_await_stream(session_id).await;
+
+        self.persist_clear_hooks.yield_after_clear_mark().await;
+
+        // Serialize with persist_history so a snapshotted pre-clear generation
+        // cannot save_history after we wipe disk.
+        let _io = self.history_io.lock().await;
+
+        // Generation bump happens inside clear_memory — any concurrent /
+        // late persist_history that snapshotted the old generation skips
+        // once it rechecks under history_io.
+        agent.clear_history().await;
+
+        self.session_messages
             .write()
             .await
-            .insert(session_id.to_string(), ());
+            .insert(session_id.to_string(), Vec::new());
 
-        let clear_result = async {
-            self.cancel_and_await_stream(session_id).await;
+        self.store
+            .clear_history(session_id)
+            .map_err(|e| NeoMindError::Storage(format!("Failed to clear session history: {e}")))?;
 
-            // Generation bump happens inside clear_memory — any concurrent /
-            // late persist_history that snapshotted the old generation skips.
-            agent.clear_history().await;
+        self.store.delete_op_ledger(session_id).map_err(|e| {
+            NeoMindError::Storage(format!("Failed to clear op ledger on history clear: {e}"))
+        })?;
 
-            self.session_messages
-                .write()
-                .await
-                .insert(session_id.to_string(), Vec::new());
-
-            self.store.clear_history(session_id).map_err(|e| {
-                NeoMindError::Storage(format!("Failed to clear session history: {e}"))
-            })?;
-
-            self.store.delete_op_ledger(session_id).map_err(|e| {
-                NeoMindError::Storage(format!("Failed to clear op ledger on history clear: {e}"))
-            })?;
-
-            // [ghost-summary fix] Reset conversation summary so a cleared
-            // session starts truly fresh.
-            match self.store.get_session_metadata(session_id) {
-                Ok(mut meta) => {
-                    if meta.conversation_summary.is_some() || meta.summary_up_to_index.is_some() {
-                        meta.conversation_summary = None;
-                        meta.summary_up_to_index = None;
-                        if let Err(e) = self.store.save_session_metadata(session_id, &meta) {
-                            tracing::error!(
-                                session_id = %session_id,
-                                error = %e,
-                                message = "Failed to reset conversation summary on clear"
-                            );
-                        }
+        // [ghost-summary fix] Reset conversation summary so a cleared
+        // session starts truly fresh.
+        match self.store.get_session_metadata(session_id) {
+            Ok(mut meta) => {
+                if meta.conversation_summary.is_some() || meta.summary_up_to_index.is_some() {
+                    meta.conversation_summary = None;
+                    meta.summary_up_to_index = None;
+                    if let Err(e) = self.store.save_session_metadata(session_id, &meta) {
+                        tracing::error!(
+                            session_id = %session_id,
+                            error = %e,
+                            message = "Failed to reset conversation summary on clear"
+                        );
                     }
                 }
-                Err(e) => {
-                    tracing::debug!(
-                        session_id = %session_id,
-                        error = %e,
-                        "No session metadata to reset on clear"
-                    );
-                }
             }
-
-            Ok(())
+            Err(e) => {
+                tracing::debug!(
+                    session_id = %session_id,
+                    error = %e,
+                    "No session metadata to reset on clear"
+                );
+            }
         }
-        .await;
 
-        self.clearing_sessions.write().await.remove(session_id);
-        clear_result
+        Ok(())
+        // _clearing Drop unmarks here (and on cancel/panic).
     }
 
     /// Persist the current history for a session to the database.
     pub async fn persist_history(&self, session_id: &str) -> Result<()> {
-        if self.is_clearing(session_id).await {
+        if self.is_clearing(session_id) {
             tracing::debug!(
                 session_id = %session_id,
                 "Skipping persist_history — session clear in progress"
@@ -2589,6 +2711,24 @@ Assistant: {ar}\n"
         } else {
             return Ok(());
         };
+
+        // Optional test pause after snapshot / before history_io so clear can
+        // interleave (the production race window this fix closes).
+        self.persist_clear_hooks
+            .yield_after_persist_snapshot()
+            .await;
+
+        // Hold history_io across generation recheck + save_history so clear
+        // cannot wipe-and-lose to a stale rewrite that checked gen unlocked.
+        let _io = self.history_io.lock().await;
+
+        if self.is_clearing(session_id) {
+            tracing::debug!(
+                session_id = %session_id,
+                "Skipping persist_history — session clear in progress (under history_io)"
+            );
+            return Ok(());
+        }
 
         // Stale stream after clear: generation bumped → refuse rewrite.
         if let Some((agent, generation)) = generation.as_ref() {
@@ -2774,7 +2914,9 @@ impl Default for SessionManager {
                 tool_registry: Arc::new(RwLock::new(None)),
                 skill_registry: crate::skills::create_shared_registry(None),
                 cancel_senders: Arc::new(RwLock::new(HashMap::new())),
-                clearing_sessions: Arc::new(RwLock::new(HashMap::new())),
+                clearing_sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+                history_io: Arc::new(tokio::sync::Mutex::new(())),
+                persist_clear_hooks: Arc::new(PersistClearHooks::default()),
                 event_subscribers: Arc::new(RwLock::new(HashMap::new())),
             }
         })
@@ -3008,7 +3150,9 @@ mod tests {
             tool_registry: Arc::new(RwLock::new(None)),
             skill_registry: crate::skills::create_shared_registry(None),
             cancel_senders: Arc::new(RwLock::new(HashMap::new())),
-            clearing_sessions: Arc::new(RwLock::new(HashMap::new())),
+            clearing_sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            history_io: Arc::new(tokio::sync::Mutex::new(())),
+            persist_clear_hooks: Arc::new(PersistClearHooks::default()),
             event_subscribers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -3509,8 +3653,8 @@ mod tests {
         let session_id = manager.create_session().await.unwrap();
         manager
             .clearing_sessions
-            .write()
-            .await
+            .lock()
+            .unwrap()
             .insert(session_id.clone(), ());
         match manager
             .process_message_events(&session_id, "hello during clear")
@@ -3522,7 +3666,11 @@ mod tests {
             ),
             Ok(_) => panic!("new turns must refuse mid-clear"),
         }
-        manager.clearing_sessions.write().await.remove(&session_id);
+        manager
+            .clearing_sessions
+            .lock()
+            .unwrap()
+            .remove(&session_id);
     }
 
     /// GPT tip af5e3548: clear cancels + awaits stream; stale persist cannot
@@ -3555,6 +3703,8 @@ mod tests {
             skill_registry: manager.skill_registry.clone(),
             cancel_senders: manager.cancel_senders.clone(),
             clearing_sessions: manager.clearing_sessions.clone(),
+            history_io: manager.history_io.clone(),
+            persist_clear_hooks: manager.persist_clear_hooks.clone(),
             event_subscribers: manager.event_subscribers.clone(),
         };
         let sid = session_id.clone();
@@ -3604,6 +3754,121 @@ mod tests {
             }),
             "post-clear persist must not resurrect pre-clear or stale cache text: {disk:?}"
         );
+    }
+
+    /// Workstream 2: real interleave — persist snapshots pre-clear generation,
+    /// clear runs in the unlock gap, persist must not resurrect after recheck
+    /// under `history_io` (not merely clear-then-persist).
+    #[tokio::test]
+    async fn persist_clear_interleaved_snapshot_does_not_resurrect() {
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        let seed = AgentMessage::user("before clear race");
+        manager.save_history(&session_id, &[seed.clone()]).unwrap();
+
+        // Live agent memory holds the pre-clear turn (persist will snapshot it).
+        let agent = manager.get_session(&session_id).await.unwrap();
+        agent.restore_history(vec![seed.clone()]).await;
+        assert_eq!(agent.history_generation().await, 0);
+
+        let (entered, resume) = manager.persist_clear_hooks.install_persist_pause();
+        let mgr = SessionManager {
+            sessions: manager.sessions.clone(),
+            session_messages: manager.session_messages.clone(),
+            store: manager.store.clone(),
+            default_config: manager.default_config.clone(),
+            default_llm_backend: manager.default_llm_backend.clone(),
+            tool_registry: manager.tool_registry.clone(),
+            skill_registry: manager.skill_registry.clone(),
+            cancel_senders: manager.cancel_senders.clone(),
+            clearing_sessions: manager.clearing_sessions.clone(),
+            history_io: manager.history_io.clone(),
+            persist_clear_hooks: manager.persist_clear_hooks.clone(),
+            event_subscribers: manager.event_subscribers.clone(),
+        };
+        let sid = session_id.clone();
+        let persist_task = tokio::spawn(async move { mgr.persist_history(&sid).await });
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .expect("persist must reach post-snapshot pause");
+
+        // Clear runs while persist holds a stale snapshot outside history_io.
+        manager.clear_history(&session_id).await.unwrap();
+        assert!(agent.history().await.is_empty());
+        assert!(manager.load_history(&session_id).unwrap().is_empty());
+        assert!(agent.history_generation().await >= 1);
+
+        resume.notify_one();
+        persist_task
+            .await
+            .expect("join")
+            .expect("persist_history must succeed (as no-op)");
+
+        let disk = manager.load_history(&session_id).unwrap();
+        assert!(
+            disk.iter()
+                .all(|m| m.content.as_ref() != "before clear race"),
+            "interleaved stale persist must not resurrect pre-clear history: {disk:?}"
+        );
+        assert!(disk.is_empty(), "disk must stay cleared: {disk:?}");
+    }
+
+    /// Workstream 2: clearing mark is Drop-safe — abort mid-clear unmarks.
+    #[tokio::test]
+    async fn clear_history_mark_drop_safe_on_future_cancel() {
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        manager
+            .save_history(&session_id, &[AgentMessage::user("seed")])
+            .unwrap();
+
+        let (entered, _resume) = manager.persist_clear_hooks.install_clear_hold();
+        let mgr = SessionManager {
+            sessions: manager.sessions.clone(),
+            session_messages: manager.session_messages.clone(),
+            store: manager.store.clone(),
+            default_config: manager.default_config.clone(),
+            default_llm_backend: manager.default_llm_backend.clone(),
+            tool_registry: manager.tool_registry.clone(),
+            skill_registry: manager.skill_registry.clone(),
+            cancel_senders: manager.cancel_senders.clone(),
+            clearing_sessions: manager.clearing_sessions.clone(),
+            history_io: manager.history_io.clone(),
+            persist_clear_hooks: manager.persist_clear_hooks.clone(),
+            event_subscribers: manager.event_subscribers.clone(),
+        };
+        let sid = session_id.clone();
+        let clear_task = tokio::spawn(async move { mgr.clear_history(&sid).await });
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+            .await
+            .expect("clear must arm mark then hold");
+        assert!(
+            manager.is_clearing(&session_id),
+            "mark must be armed during mid-clear hold"
+        );
+
+        clear_task.abort();
+        let join = clear_task.await;
+        assert!(join.is_err(), "aborted clear Future must report cancel");
+
+        assert!(
+            !manager.is_clearing(&session_id),
+            "ClearingGuard Drop must release mark after Future cancel"
+        );
+
+        // New turns must not see a leaked mid-clear refusal.
+        match manager
+            .process_message_events(&session_id, "after aborted clear")
+            .await
+        {
+            Err(e) => assert!(
+                !e.to_string().to_lowercase().contains("being cleared"),
+                "leaked clearing mark: {e}"
+            ),
+            Ok(_) => {}
+        }
     }
 
     /// GPT tip af5e3548 P1: stale snapshot-then-write must not clobber a newer
@@ -3687,7 +3952,7 @@ mod tests {
             "got: {err}"
         );
         // Clearing flag must be released even on failure.
-        assert!(!manager.is_clearing(&session_id).await);
+        assert!(!manager.is_clearing(&session_id));
         // New turns allowed again after failed clear unmarks.
         let stream = manager.process_message_events(&session_id, "after failed clear");
         // May succeed or fail on LLM — must not be the mid-clear refusal.
