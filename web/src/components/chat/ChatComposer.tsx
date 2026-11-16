@@ -188,6 +188,19 @@ export function ChatComposer({
   const mentionTrigger = useRef<{ start: number } | null>(null)
   /** Suppress TipTap onExit→close while an option pointerdown is selecting. */
   const suppressMentionExitClose = useRef(false)
+  /**
+   * Mobile scroll-vs-tap: pointerdown on an option used to preventDefault +
+   * select immediately, so any scroll gesture that started on a row became a
+   * mistaken pick. Track movement; only select on pointerup within slop.
+   */
+  const mentionGestureRef = useRef<{
+    pointerId: number
+    x: number
+    y: number
+    opt: MentionOption
+    index: number
+    moved: boolean
+  } | null>(null)
   const canMention = !!onReferencesChange
   const canAttach = !!onAttachmentsChange
   const inputDisabled = disabled || isStreaming
@@ -198,10 +211,24 @@ export function ChatComposer({
   const modelSheetOpenRef = useRef(false)
   /** Delayed mobile collapse — touch blurs often report null relatedTarget. */
   const mobileCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const MENTION_TAP_SLOP_PX = 12
 
   useEffect(() => {
     mentionOpenRef.current = mentionQuery !== null
   }, [mentionQuery])
+
+  /** Latest mention search context (query + type filter). loadMoreMentions
+   *  snapshots it at request time and discards its own response when the
+   *  context moved on (retyped query / switched filter / closed picker) — a
+   *  stale page must not merge into the new list or stomp its pagination /
+   *  loading state (E17). */
+  const mentionSearchCtxRef = useRef<{ query: string | null; filter: MentionType | "all" }>({
+    query: null,
+    filter: "all",
+  })
+  useEffect(() => {
+    mentionSearchCtxRef.current = { query: mentionQuery, filter: mentionTypeFilter }
+  }, [mentionQuery, mentionTypeFilter])
 
   useEffect(() => {
     modelSheetOpenRef.current = modelSheetOpen
@@ -261,14 +288,21 @@ export function ChatComposer({
 
   const loadMoreMentions = async () => {
     if (mentionQuery === null || mentionNextOffset == null || mentionLoading) return
+    // Snapshot the search context at request time — the response must land
+    // in the list it was requested for, never in a newer query's (E17).
+    const ctx = { query: mentionQuery, filter: mentionTypeFilter }
+    const isStale = () =>
+      mentionSearchCtxRef.current.query !== ctx.query ||
+      mentionSearchCtxRef.current.filter !== ctx.filter
     setMentionLoading(true)
     try {
       const result = await searchMentions({
-        query: mentionQuery,
-        types: mentionTypeFilter === "all" ? "all" : [mentionTypeFilter],
+        query: ctx.query,
+        types: ctx.filter === "all" ? "all" : [ctx.filter],
         limit: 20,
         offset: mentionNextOffset,
       })
+      if (isStale()) return
       setMentionOptions((prev) => {
         const seen = new Set(prev.map((o) => mentionKey(o.type, o.id)))
         const merged = [...prev]
@@ -286,7 +320,10 @@ export function ChatComposer({
     } catch {
       // keep existing page
     } finally {
-      setMentionLoading(false)
+      // A newer context owns the loading flag (its own effect set it); only
+      // clear it when still current, or when the picker closed and nobody
+      // else will.
+      if (!isStale() || mentionSearchCtxRef.current.query === null) setMentionLoading(false)
     }
   }
 
@@ -583,16 +620,86 @@ export function ChatComposer({
   const canSend = (value.trim().length > 0 || hasAttachments) && !inputDisabled
 
   const pickMentionOption = (opt: MentionOption) => {
-    // pointerdown path: select before blur/TipTap exit can clear the command.
+    // Select while the stored TipTap command is still valid (may outlive blur
+    // when suppressMentionExitClose kept the host menu open).
     selectMention(opt)
+  }
+
+  const releaseMentionSuppress = () => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        suppressMentionExitClose.current = false
+      })
+    })
+  }
+
+  const clearMentionGesture = (pointerId?: number) => {
+    const g = mentionGestureRef.current
+    if (!g) return
+    if (pointerId != null && g.pointerId !== pointerId) return
+    mentionGestureRef.current = null
+    releaseMentionSuppress()
+  }
+
+  const finishMentionGesture = (pointerId: number) => {
+    const g = mentionGestureRef.current
+    if (!g || g.pointerId !== pointerId) return
+    const shouldSelect = !g.moved
+    const { opt, index } = g
+    mentionGestureRef.current = null
+    if (shouldSelect) {
+      setMentionActive(index)
+      pickMentionOption(opt)
+    }
+    releaseMentionSuppress()
+  }
+
+  const startMobileMentionGesture = (
+    e: { pointerId: number; clientX: number; clientY: number },
+    opt: MentionOption,
+    index: number,
+  ) => {
+    // jsdom's fireEvent may omit pointerId (MouseEvent fallback); default to 1.
+    const pointerId = typeof e.pointerId === "number" ? e.pointerId : 1
+    suppressMentionExitClose.current = true
+    mentionGestureRef.current = {
+      pointerId,
+      x: e.clientX,
+      y: e.clientY,
+      opt,
+      index,
+      moved: false,
+    }
+    // Window listeners survive when the finger leaves the row while scrolling.
+    const onMove = (ev: PointerEvent) => {
+      const g = mentionGestureRef.current
+      if (!g || g.pointerId !== pointerId || g.moved) return
+      const x = typeof ev.clientX === "number" ? ev.clientX : 0
+      const y = typeof ev.clientY === "number" ? ev.clientY : 0
+      if (Math.hypot(x - g.x, y - g.y) > MENTION_TAP_SLOP_PX) {
+        g.moved = true
+      }
+    }
+    const onEnd = (ev: PointerEvent) => {
+      const endId = typeof ev.pointerId === "number" ? ev.pointerId : pointerId
+      if (endId !== pointerId) return
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onEnd)
+      window.removeEventListener("pointercancel", onEnd)
+      if (ev.type === "pointercancel") clearMentionGesture(pointerId)
+      else finishMentionGesture(pointerId)
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onEnd)
+    window.addEventListener("pointercancel", onEnd)
   }
 
   const renderMentionPickerBody = () => (
     <>
       <div
         className={cn(
-          "flex flex-wrap gap-1.5 border-b border-border",
-          isMobile ? "px-4 py-3" : "px-3 py-2.5",
+          "flex shrink-0 flex-wrap gap-1.5 border-b border-border",
+          isMobile ? "px-4 py-2.5" : "px-3 py-2.5",
         )}
         role="tablist"
         aria-label={t("chat:mention.filterTypes", "按类型筛选")}
@@ -625,13 +732,19 @@ export function ChatComposer({
         })}
       </div>
       {mentionTypeErrors.length > 0 && (
-        <div className="border-b border-border px-3 py-2 text-nano text-warning" role="status">
+        <div className="shrink-0 border-b border-border px-3 py-2 text-nano text-warning" role="status">
           {t("chat:mention.partialFailure", "部分类型加载失败")}
           {": "}
           {mentionTypeErrors.join("; ")}
         </div>
       )}
-      <div className={cn("overflow-y-auto", isMobile ? "max-h-[50vh]" : "max-h-64")}>
+      <div
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+          isMobile ? "touch-pan-y" : "max-h-64",
+        )}
+        data-mention-scroll
+      >
         {mentionLoading && mentionOptions.length === 0 ? (
           <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground" role="status">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -666,9 +779,17 @@ export function ChatComposer({
                   ]
                     .filter(Boolean)
                     .join(" ")}
-                  onMouseEnter={() => setMentionActive(i)}
+                  onMouseEnter={() => {
+                    if (!isMobile) setMentionActive(i)
+                  }}
                   onPointerDown={(e) => {
-                    // Keep editor focus / run select before TipTap suggestion exits.
+                    if (isMobile) {
+                      // Do NOT preventDefault — that blocks native list scrolling.
+                      startMobileMentionGesture(e, opt, i)
+                      return
+                    }
+                    // Desktop: keep editor focus and select immediately.
+                    suppressMentionExitClose.current = true
                     e.preventDefault()
                     setMentionActive(i)
                     pickMentionOption(opt)
@@ -776,13 +897,18 @@ export function ChatComposer({
               : undefined
           }
           data-mention-menu
+          onPointerDown={() => {
+            // Touching the menu blurs the editor; keep the TipTap suggestion
+            // command alive so a later tap can still insert.
+            suppressMentionExitClose.current = true
+          }}
           className={cn(
-            "absolute bottom-full left-0 right-0 z-[200] mb-2 overflow-hidden rounded-xl border border-border bg-popover shadow-lg",
-            isMobile ? "max-h-[min(45vh,18rem)]" : "max-h-80",
+            "absolute bottom-full left-0 right-0 z-[200] mb-2 flex flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-lg",
+            isMobile ? "max-h-[min(60dvh,24rem)]" : "max-h-80",
           )}
         >
           {isMobile && (
-            <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+            <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
               <AtSign className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
               <span className="text-sm font-medium text-foreground">
                 {t("chat:mention.title", "选择要引用的对象")}

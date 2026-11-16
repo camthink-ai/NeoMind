@@ -73,7 +73,22 @@ describe('ChatComposer mobile @-mentions', () => {
     expect(screen.getByRole('listbox')).toBeTruthy()
   })
 
-  it('selects via pointerdown on mobile anchored options', async () => {
+  const pickedDevice = (onRefs: ReturnType<typeof vi.fn>) =>
+    onRefs.mock.calls.some(
+      (call) => Array.isArray(call[0]) && call[0].some((r: { id?: string }) => r?.id === 'sensor-001'),
+    )
+
+  // jsdom lacks PointerEvent — synthesize a bubbling Event with pointer fields.
+  const dispatchWindowPointer = (
+    type: 'pointermove' | 'pointerup' | 'pointercancel',
+    init: { pointerId: number; clientX: number; clientY: number },
+  ) => {
+    const ev = new Event(type, { bubbles: true })
+    Object.assign(ev, init)
+    window.dispatchEvent(ev)
+  }
+
+  it('selects on pointerup when the gesture did not scroll', async () => {
     const onRefs = vi.fn()
     function SelectHost() {
       const [value, setValue] = useState('')
@@ -100,12 +115,48 @@ describe('ChatComposer mobile @-mentions', () => {
     await userEvent.click(btn)
     const options = await screen.findAllByRole('option')
     await act(async () => {
-      fireEvent.pointerDown(options[0])
+      // Mobile must NOT select on pointerdown alone — that blocked scrolling.
+      fireEvent.pointerDown(options[0], { pointerId: 1, clientX: 20, clientY: 40 })
     })
-    await waitFor(() => {
-      expect(onRefs).toHaveBeenCalledWith([
-        expect.objectContaining({ type: 'device', id: 'sensor-001' }),
-      ])
+    expect(pickedDevice(onRefs)).toBe(false)
+    await act(async () => {
+      dispatchWindowPointer('pointerup', { pointerId: 1, clientX: 22, clientY: 42 })
     })
+    await waitFor(() => expect(pickedDevice(onRefs)).toBe(true))
+  })
+
+  it('does not select when the pointer moved like a scroll gesture', async () => {
+    const onRefs = vi.fn()
+    function SelectHost() {
+      const [value, setValue] = useState('')
+      const [refs, setRefs] = useState<import('@/types').ChatReference[]>([])
+      const [nodes, setNodes] = useState<import('@/types').ChatContentNode[]>([])
+      return (
+        <ChatComposer
+          value={value}
+          onChange={setValue}
+          onSend={vi.fn()}
+          references={refs}
+          contentNodes={nodes}
+          onReferencesChange={(r) => {
+            onRefs(r)
+            setRefs(r)
+          }}
+          onContentNodesChange={setNodes}
+        />
+      )
+    }
+    render(<SelectHost />)
+    await waitFor(() => expect(document.querySelector('.ProseMirror')).toBeTruthy())
+    const btn = await screen.findByRole('button', { name: /插入引用|chat:mention.insert/i })
+    await userEvent.click(btn)
+    const options = await screen.findAllByRole('option')
+    await act(async () => {
+      fireEvent.pointerDown(options[0], { pointerId: 7, clientX: 20, clientY: 40 })
+      dispatchWindowPointer('pointermove', { pointerId: 7, clientX: 20, clientY: 80 })
+      dispatchWindowPointer('pointerup', { pointerId: 7, clientX: 20, clientY: 120 })
+    })
+    expect(pickedDevice(onRefs)).toBe(false)
+    expect(screen.getByRole('listbox')).toBeTruthy()
   })
 })
