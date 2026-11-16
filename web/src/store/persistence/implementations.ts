@@ -337,9 +337,14 @@ export class ApiDashboardStorage implements DashboardStorage {
         // Backend returns full Dashboard
         return { data: fromDashboardDTO(result), error: null }
       } else {
-        // Dashboard doesn't exist on server - try to create it
+        // Dashboard doesn't exist on server - re-create it (the server
+        // issues a FRESH id). Strip the dead id first: the DTO's
+        // Omit<'id'> only catches object literals, and a variable carrying
+        // the stale id let clones pile up under the dead cache entry on
+        // every retry.
         try {
-          const createDto = toCreateDashboardDTO(dashboard)
+          const { id: _deadId, createdAt: _deadCreatedAt, updatedAt: _deadUpdatedAt, ...dashboardForRecreate } = dashboard
+          const createDto = toCreateDashboardDTO(dashboardForRecreate)
           const result = await api.createDashboard(createDto)
           return { data: fromDashboardDTO(result), error: null }
         } catch (createError) {
@@ -632,7 +637,14 @@ export class HybridDashboardStorage implements DashboardStorage {
 
       const localOnly = local.filter(d =>
         d && typeof d === 'object' && typeof d.id === 'string' &&
-        !serverIds.has(d.id) && !this.localToServerId.has(d.id),
+        !serverIds.has(d.id) && !this.localToServerId.has(d.id) &&
+        // Server-born dashboards (dashboard_* ids) NEVER enter the id
+        // mapping — a board absent from a successful server response was
+        // deleted server-side (another client / recreated data dir). Without
+        // this arm it resurrected as "localOnly" forever: every edit PUT the
+        // dead id (the 404 the UI surfaces) and every background sync
+        // cloned a duplicate server-side (the recreate result was discarded).
+        !d.id.startsWith('dashboard_'),
       )
       return localOnly.length > 0 ? [...merged, ...localOnly] : merged
     } catch {
@@ -740,6 +752,17 @@ export class HybridDashboardStorage implements DashboardStorage {
         const apiResult = await this.apiStorage.sync(payload)
         if (!apiResult.error) {
           lastServerSyncFailureAt = 0
+          // Dead-id re-issue adoption: the server just re-created this board
+          // under a NEW id (the old one was deleted elsewhere / data reset).
+          // Swap the cache entry — delete the dead id, save the server copy —
+          // so the dead id stops resurfacing and stops cloning a duplicate
+          // on every background sync. In-memory store state heals through
+          // the DashboardUpdated realtime refetch the server-side create
+          // emits.
+          if (apiResult.data && apiResult.data.id !== dashboard.id) {
+            await this.localStorage.delete(dashboard.id).catch(() => {})
+            await this.localStorage.sync(apiResult.data).catch(() => {})
+          }
           return localResult
         }
         console.warn('[HybridStorage] API sync error for dashboard:', dashboard.id, apiResult.error)
