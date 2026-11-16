@@ -51,7 +51,11 @@ export interface InlineMentionEditorProps {
   }) => void
   onSuggestionStart: (api: MentionSuggestionApi) => void
   onSuggestionUpdate: (api: MentionSuggestionApi) => void
-  onSuggestionExit: () => void
+  /**
+   * TipTap suggestion exited. `editorFocused` distinguishes blur (mobile Sheet
+   * / option tap) from an in-editor dismiss (deleted `@`, Escape).
+   */
+  onSuggestionExit: (meta?: { editorFocused: boolean }) => void
   onSuggestionKeyDown?: (props: SuggestionKeyDownProps) => boolean
   /** Return true to claim the key (e.g. Enter-to-send). */
   onKeyDown?: (event: KeyboardEvent) => boolean | void
@@ -156,8 +160,10 @@ export function InlineMentionEditor({
             onUpdate: (props) => {
               onSuggestionUpdateRef.current(toSuggestionApi(props))
             },
-            onExit: () => {
-              onSuggestionExitRef.current()
+            onExit: (props) => {
+              onSuggestionExitRef.current({
+                editorFocused: props.editor.view.hasFocus(),
+              })
             },
             onKeyDown: (props) => {
               if (suggestionKeyDownRef.current) {

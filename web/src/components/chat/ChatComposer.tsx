@@ -10,7 +10,24 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
-import { Archive, ArrowUp, AtSign, Check, Eye, Image as ImageIcon, Loader2, Plus, Sparkles, Trash2, Wrench, X } from "lucide-react"
+import {
+  Archive,
+  ArrowUp,
+  AtSign,
+  Bot,
+  Check,
+  Cpu,
+  Eye,
+  GitBranch,
+  Image as ImageIcon,
+  Loader2,
+  Plus,
+  Sparkles,
+  Trash2,
+  Wrench,
+  X,
+  Zap,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useConfirm } from "@/components/ui/use-confirm"
 import {
@@ -37,6 +54,16 @@ import {
   InlineMentionEditor,
   type MentionSuggestionApi,
 } from "@/components/chat/inline-mention"
+
+const MENTION_TYPE_META: Record<
+  MentionType,
+  { icon: typeof Cpu; badge: string }
+> = {
+  device: { icon: Cpu, badge: "bg-accent-cyan-light text-accent-cyan" },
+  rule: { icon: Zap, badge: "bg-accent-orange-light text-accent-orange" },
+  transform: { icon: GitBranch, badge: "bg-accent-purple-light text-accent-purple" },
+  agent: { icon: Bot, badge: "bg-accent-emerald-light text-accent-emerald" },
+}
 
 interface ChatComposerProps {
   value: string
@@ -159,6 +186,8 @@ export function ChatComposer({
   const mentionCommandRef = useRef<MentionSuggestionApi["command"] | null>(null)
   /** Legacy textarea path only (hosts without onReferencesChange). */
   const mentionTrigger = useRef<{ start: number } | null>(null)
+  /** Suppress TipTap onExit→close while an option pointerdown is selecting. */
+  const suppressMentionExitClose = useRef(false)
   const canMention = !!onReferencesChange
   const canAttach = !!onAttachmentsChange
   const inputDisabled = disabled || isStreaming
@@ -312,6 +341,16 @@ export function ChatComposer({
     scanMentionTrigger(next)
   }
 
+  const handleSuggestionExit = (meta?: { editorFocused: boolean }) => {
+    if (suppressMentionExitClose.current) return
+    // Mobile Sheet / option tap moves focus out of the editor; TipTap exits the
+    // suggestion plugin but the host menu must stay open with the last command.
+    if (isMobile && mentionOpenRef.current && meta?.editorFocused === false) {
+      return
+    }
+    closeMention()
+  }
+
   const selectMention = (opt: MentionOption) => {
     // TipTap path: insert an in-sentence mention atom (duplicates allowed).
     if (mentionCommandRef.current) {
@@ -319,11 +358,16 @@ export function ChatComposer({
         closeMention()
         return
       }
-      mentionCommandRef.current({
-        id: opt.id,
-        label: opt.label,
-        entityType: opt.type,
-      })
+      suppressMentionExitClose.current = true
+      try {
+        mentionCommandRef.current({
+          id: opt.id,
+          label: opt.label,
+          entityType: opt.type,
+        })
+      } finally {
+        suppressMentionExitClose.current = false
+      }
       closeMention()
       return
     }
@@ -522,6 +566,148 @@ export function ChatComposer({
   const hasAttachments = attachments.length > 0
   const canSend = (value.trim().length > 0 || hasAttachments) && !inputDisabled
 
+  const pickMentionOption = (opt: MentionOption) => {
+    // pointerdown path: select before blur/TipTap exit can clear the command.
+    selectMention(opt)
+  }
+
+  const renderMentionPickerBody = () => (
+    <>
+      <div
+        className={cn(
+          "flex flex-wrap gap-1.5 border-b border-border",
+          isMobile ? "px-4 py-3" : "px-3 py-2.5",
+        )}
+        role="tablist"
+        aria-label={t("chat:mention.filterTypes", "按类型筛选")}
+      >
+        {(["all", "device", "rule", "transform", "agent"] as const).map((tab) => {
+          const selected = mentionTypeFilter === tab
+          const meta = tab === "all" ? null : MENTION_TYPE_META[tab]
+          const Icon = meta?.icon
+          return (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-nano transition-colors",
+                selected
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted-30 text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setMentionTypeFilter(tab)}
+            >
+              {Icon && <Icon className="h-3 w-3" aria-hidden="true" />}
+              {tab === "all"
+                ? t("chat:mention.filterAll", "全部")
+                : t(`chat:mention.${tab}`, tab)}
+            </button>
+          )
+        })}
+      </div>
+      {mentionTypeErrors.length > 0 && (
+        <div className="border-b border-border px-3 py-2 text-nano text-warning" role="status">
+          {t("chat:mention.partialFailure", "部分类型加载失败")}
+          {": "}
+          {mentionTypeErrors.join("; ")}
+        </div>
+      )}
+      <div className={cn("overflow-y-auto", isMobile ? "max-h-[50vh]" : "max-h-64")}>
+        {mentionLoading && mentionOptions.length === 0 ? (
+          <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground" role="status">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            {t("chat:mention.searching", "搜索中…")}
+          </div>
+        ) : mentionSearchFailed ? (
+          <div className="px-3 py-3 text-xs text-error" role="alert">
+            {t("chat:mention.searchFailed", "搜索失败，请重试")}
+          </div>
+        ) : mentionOptions.length === 0 ? (
+          <div className="px-3 py-3 text-xs text-muted-foreground" role="status">
+            {t("chat:mention.noResults", "没有匹配的对象")}
+          </div>
+        ) : (
+          <>
+            {mentionOptions.map((opt, i) => {
+              const meta = MENTION_TYPE_META[opt.type]
+              const TypeIcon = meta.icon
+              const active = i === mentionActive
+              return (
+                <button
+                  key={mentionKey(opt.type, opt.id)}
+                  id={`chat-mention-opt-${i}`}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  aria-label={[
+                    t(`chat:mention.${opt.type}`, opt.type),
+                    opt.label,
+                    opt.duplicateName ? opt.shortId || opt.id.slice(0, 8) : "",
+                    opt.hint || "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                  onMouseEnter={() => setMentionActive(i)}
+                  onPointerDown={(e) => {
+                    // Keep editor focus / run select before TipTap suggestion exits.
+                    e.preventDefault()
+                    setMentionActive(i)
+                    pickMentionOption(opt)
+                  }}
+                  className={cn(
+                    "flex w-full items-start gap-2.5 px-3 text-left text-sm transition-colors",
+                    isMobile ? "min-h-12 py-3" : "py-2.5",
+                    active ? "bg-muted" : "hover:bg-muted-30",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-nano font-medium",
+                      meta.badge,
+                    )}
+                  >
+                    <TypeIcon className="h-3 w-3" aria-hidden="true" />
+                    {t(`chat:mention.${opt.type}`, opt.type)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium text-foreground">{opt.label}</span>
+                    {(opt.duplicateName || opt.hint) && (
+                      <span className="mt-0.5 block truncate text-mini text-muted-foreground">
+                        {[opt.shortId || opt.id.slice(0, 8), opt.hint].filter(Boolean).join(" · ")}
+                      </span>
+                    )}
+                  </span>
+                  {!opt.duplicateName && !opt.hint && (
+                    <span className="max-w-32 shrink-0 truncate text-mini text-muted-foreground">
+                      {opt.shortId || opt.id}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+            {mentionHasMore && (
+              <button
+                type="button"
+                className="flex w-full items-center justify-center gap-1 border-t border-border px-3 py-2.5 text-xs text-muted-foreground hover:bg-muted-30"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => void loadMoreMentions()}
+                disabled={mentionLoading}
+              >
+                {mentionLoading && (
+                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                )}
+                {t("chat:mention.loadMore", "加载更多")}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </>
+  )
+
   // Single root: hosts apply `space-y-*` to their direct children, which
   // would otherwise insert a gap between the preview strip and the box.
   return (
@@ -558,8 +744,8 @@ export function ChatComposer({
           Mobile: radius + shadow live on this same node; avoid overflow:hidden
           here (it squares the soft shadow). Prefer an upward-biased shadow so
           ancestors that clip the bottom edge don't leave hard corner ledges. */}
-      {/* @-mention picker — anchored above the input, listbox semantics */}
-      {mentionQuery !== null && (
+      {/* Desktop @-mention picker — floating above the input */}
+      {!isMobile && mentionQuery !== null && (
         <div
           role="listbox"
           id="chat-mention-listbox"
@@ -571,113 +757,53 @@ export function ChatComposer({
               : undefined
           }
           data-mention-menu
-          className="absolute bottom-full left-0 right-0 z-50 mb-2 max-h-72 overflow-y-auto rounded-lg border border-border bg-popover shadow-md"
+          className="absolute bottom-full left-0 right-0 z-[200] mb-2 max-h-80 overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
         >
-          <div
-            className="flex flex-wrap gap-1 border-b border-border px-2 py-1.5"
-            role="tablist"
-            aria-label={t("chat:mention.filterTypes", "按类型筛选")}
-          >
-            {(["all", "device", "rule", "transform", "agent"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                role="tab"
-                aria-selected={mentionTypeFilter === tab}
-                className={cn(
-                  "rounded px-1.5 py-0.5 text-nano",
-                  mentionTypeFilter === tab
-                    ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:bg-muted-30",
-                )}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => setMentionTypeFilter(tab)}
-              >
-                {tab === "all"
-                  ? t("chat:mention.filterAll", "全部")
-                  : t(`chat:mention.${tab}`, tab)}
-              </button>
-            ))}
-          </div>
-          {mentionTypeErrors.length > 0 && (
-            <div className="border-b border-border px-3 py-1.5 text-nano text-warning" role="status">
-              {t("chat:mention.partialFailure", "部分类型加载失败")}
-              {": "}
-              {mentionTypeErrors.join("; ")}
-            </div>
-          )}
-          {mentionLoading && mentionOptions.length === 0 ? (
-            <div className="flex items-center gap-2 px-3 py-2.5 text-xs text-muted-foreground" role="status">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              {t("chat:mention.searching", "搜索中…")}
-            </div>
-          ) : mentionSearchFailed ? (
-            <div className="px-3 py-2.5 text-xs text-error" role="alert">
-              {t("chat:mention.searchFailed", "搜索失败，请重试")}
-            </div>
-          ) : mentionOptions.length === 0 ? (
-            <div className="px-3 py-2.5 text-xs text-muted-foreground" role="status">
-              {t("chat:mention.noResults", "没有匹配的对象")}
-            </div>
-          ) : (
-            <>
-              {mentionOptions.map((opt, i) => (
-                <button
-                  key={mentionKey(opt.type, opt.id)}
-                  id={`chat-mention-opt-${i}`}
-                  type="button"
-                  role="option"
-                  aria-selected={i === mentionActive}
-                  aria-label={[
-                    t(`chat:mention.${opt.type}`, opt.type),
-                    opt.label,
-                    opt.duplicateName ? opt.shortId || opt.id.slice(0, 8) : "",
-                    opt.hint || "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  onMouseEnter={() => setMentionActive(i)}
-                  onClick={() => selectMention(opt)}
-                  className={cn(
-                    "flex w-full items-start gap-2 px-3 py-2 text-left text-sm",
-                    i === mentionActive && "bg-muted",
-                  )}
-                >
-                  <span className="mt-0.5 shrink-0 rounded bg-muted px-1 py-px text-nano text-muted-foreground">
-                    {t(`chat:mention.${opt.type}`, opt.type)}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{opt.label}</span>
-                    {(opt.duplicateName || opt.hint) && (
-                      <span className="mt-0.5 block truncate text-mini text-muted-foreground">
-                        {[opt.shortId || opt.id.slice(0, 8), opt.hint].filter(Boolean).join(" · ")}
-                      </span>
-                    )}
-                  </span>
-                  {!opt.duplicateName && !opt.hint && (
-                    <span className="max-w-32 shrink-0 truncate text-mini text-muted-foreground">
-                      {opt.shortId || opt.id}
-                    </span>
-                  )}
-                </button>
-              ))}
-              {mentionHasMore && (
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-center gap-1 border-t border-border px-3 py-2 text-xs text-muted-foreground hover:bg-muted-30"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => void loadMoreMentions()}
-                  disabled={mentionLoading}
-                >
-                  {mentionLoading && (
-                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                  )}
-                  {t("chat:mention.loadMore", "加载更多")}
-                </button>
-              )}
-            </>
-          )}
+          {renderMentionPickerBody()}
         </div>
+      )}
+
+      {/* Mobile @-mention picker — bottom sheet (avoids blur/collapse races) */}
+      {isMobile && (
+        <Sheet
+          open={mentionQuery !== null}
+          onOpenChange={(open) => {
+            if (!open) closeMention()
+          }}
+        >
+          <SheetContent
+            side="bottom"
+            className="z-[110] max-h-[70vh] overflow-hidden rounded-t-2xl p-0"
+          >
+            <SheetTitle className="sr-only">
+              {t("chat:mention.title", "选择要引用的对象")}
+            </SheetTitle>
+            <SheetDescription className="sr-only">
+              {t("chat:mention.mobileSheet", "从列表中选择要引用的对象")}
+            </SheetDescription>
+            <div
+              role="listbox"
+              id="chat-mention-listbox"
+              aria-label={t("chat:mention.title", "选择要引用的对象")}
+              aria-busy={mentionLoading || undefined}
+              aria-activedescendant={
+                mentionOptions[mentionActive]
+                  ? `chat-mention-opt-${mentionActive}`
+                  : undefined
+              }
+              data-mention-menu
+              className="flex max-h-[70vh] flex-col overflow-hidden"
+            >
+              <div className="flex items-center gap-2 border-b border-border px-4 pb-2 pt-1">
+                <AtSign className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                <span className="text-sm font-medium text-foreground">
+                  {t("chat:mention.title", "选择要引用的对象")}
+                </span>
+              </div>
+              {renderMentionPickerBody()}
+            </div>
+          </SheetContent>
+        </Sheet>
       )}
       <div className={cn(
         "rounded-lg border border-input bg-card shadow-sm transition-colors",
@@ -699,6 +825,9 @@ export function ChatComposer({
       }}
       onBlur={(event) => {
         if (!isMobile) return
+        // Keep expanded while the mention sheet/menu is open — otherwise a tap
+        // on an option collapses the composer mid-gesture and drops the click.
+        if (mentionOpenRef.current) return
         const next = event.relatedTarget as Node | null
         if (!next || !event.currentTarget.contains(next)) setMobileExpanded(false)
       }}>
@@ -718,7 +847,7 @@ export function ChatComposer({
             onPayloadChange={handleTipTapPayload}
             onSuggestionStart={handleSuggestionStart}
             onSuggestionUpdate={handleSuggestionUpdate}
-            onSuggestionExit={closeMention}
+            onSuggestionExit={handleSuggestionExit}
             onSuggestionKeyDown={(props) => handleMentionNavKeys(props.event)}
             onKeyDown={handleTipTapKeyDown}
             onCompositionChange={(composing) => {

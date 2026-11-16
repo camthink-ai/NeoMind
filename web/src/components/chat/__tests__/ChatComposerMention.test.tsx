@@ -140,6 +140,22 @@ describe('ChatComposer TipTap @-mentions', () => {
     )
   })
 
+  it('pointerdown selects a mention (mobile-safe; does not wait for click after blur)', async () => {
+    const { onReferencesChange } = setup()
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await openMentionViaToolbar()
+    const options = await screen.findAllByRole('option')
+    await act(async () => {
+      fireEvent.pointerDown(options[0])
+    })
+    await waitFor(() => {
+      expect(onReferencesChange).toHaveBeenCalledWith([
+        expect.objectContaining({ type: 'device', id: 'sensor-001' }),
+      ])
+    })
+    expect(screen.queryByRole('listbox')).toBeNull()
+  })
+
   it('keyboard-selects a mention into an inline atom (contentNodes)', async () => {
     const { onReferencesChange, onContentNodesChange } = setup()
     await waitFor(() => expect(getEditor()).toBeTruthy())
@@ -203,7 +219,8 @@ describe('ChatComposer TipTap @-mentions', () => {
       fireEvent.keyDown(getEditor(), { key: 'Enter' })
     })
     await waitFor(() => {
-      const last = onContentNodesChange.mock.calls.at(-1)?.[0] as
+      const calls = onContentNodesChange.mock.calls
+      const last = calls[calls.length - 1]?.[0] as
         | Array<{ kind: string }>
         | undefined
       const refs = (last ?? []).filter((n) => n.kind === 'reference')
