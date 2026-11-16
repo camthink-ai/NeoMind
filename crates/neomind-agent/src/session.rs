@@ -2798,6 +2798,100 @@ fn mime_to_ext(mime: &str) -> &'static str {
 mod tests {
     use super::*;
 
+    /// Real stream: cancel before first assistant → stamp terminal → save →
+    /// reload keeps panel goalStatus/endReason (not lost when stamp would
+    /// previously no-op with no assistant row).
+    #[cfg(feature = "test-utils")]
+    #[tokio::test]
+    async fn early_interrupt_stream_save_reload_keeps_goal_status() {
+        use crate::agent::task_continuity::StreamEndReason;
+        use crate::agent::types::AgentInternalState;
+        use crate::agent::StreamSafeguards;
+        use crate::testing_helpers::mock_llm::{MockLlmRuntime, MockResponse};
+        use crate::toolkit::registry::ToolRegistry;
+        use futures::StreamExt;
+        use neomind_core::llm::backend::LlmRuntime;
+
+        let rt = MockLlmRuntime::new(vec![MockResponse::text(
+            "should not land — cancel precedes first token",
+        )]);
+        let iface = crate::llm::LlmInterface::default();
+        futures::executor::block_on(iface.set_llm(Arc::new(rt) as Arc<dyn LlmRuntime>));
+        let state = Arc::new(tokio::sync::RwLock::new(AgentInternalState::new(
+            "early-end-session".into(),
+        )));
+        state
+            .write()
+            .await
+            .push_message(AgentMessage::user("please start the task"));
+
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        cancel_tx.send(true).expect("pre-cancel");
+
+        let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+            Arc::new(iface),
+            state.clone(),
+            Arc::new(ToolRegistry::new()),
+            "please start the task",
+            StreamSafeguards::default().with_interrupt_signal(cancel_rx),
+            None,
+            None,
+            0,
+        )
+        .await
+        .expect("stream");
+        let mut saw_interrupted_end = false;
+        let mut stream = stream;
+        while let Some(ev) = stream.next().await {
+            if let crate::agent::AgentEvent::End {
+                end_reason: Some(StreamEndReason::Interrupted),
+                goal_status: Some(_),
+                ..
+            } = ev
+            {
+                saw_interrupted_end = true;
+            }
+        }
+        assert!(
+            saw_interrupted_end,
+            "live End must carry Interrupted + goal_status"
+        );
+
+        let memory = state.read().await.memory.clone();
+        let last_live = memory
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .expect("terminal assistant in memory");
+        assert_eq!(last_live.end_reason, Some(StreamEndReason::Interrupted));
+        assert!(last_live.goal_status.is_some());
+
+        let manager = create_temp_manager();
+        let sid = manager.create_session().await.unwrap();
+        manager.save_history(&sid, &memory).unwrap();
+        manager.sessions.write().await.remove(&sid);
+        manager.session_messages.write().await.remove(&sid);
+
+        let client = manager.get_history_for_client(&sid).await.unwrap();
+        let last = client
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .expect("terminal assistant after early End");
+        assert_eq!(last.end_reason.as_deref(), Some("interrupted"));
+        assert!(
+            last.goal_status
+                .as_ref()
+                .and_then(|v| v.get("status"))
+                .is_some(),
+            "reload must keep stored goalStatus: {:?}",
+            last.goal_status
+        );
+        let wire = serde_json::to_value(last).unwrap();
+        assert_eq!(wire["endReason"], "interrupted");
+        assert!(wire.get("goalStatus").is_some());
+    }
+
     /// End → save → reload: stored goalStatus/endReason come back as-is.
     /// History must NOT recompute from live TaskState (fresh session has
     /// empty TaskState that would otherwise claim not_applicable).

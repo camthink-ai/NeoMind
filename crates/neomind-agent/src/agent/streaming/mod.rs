@@ -740,4 +740,7 @@ mod tests {
 mod nudge_tests;
 
 #[cfg(all(test, feature = "test-utils"))]
+mod early_end_persist_tests;
+
+#[cfg(all(test, feature = "test-utils"))]
 mod cached_read_chain_tests;

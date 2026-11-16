@@ -2507,6 +2507,10 @@ impl AgentInternalState {
     /// Persist the final End goal snapshot onto this turn's last assistant
     /// message (after the latest user). History reload reads these fields
     /// as-is — never recomputes from live [`Self::task_state`].
+    ///
+    /// When cancel/fail ends the turn **before** any assistant row exists,
+    /// creates a minimal terminal assistant record so reload keeps the panel
+    /// status (live End alone would otherwise be lost).
     pub fn stamp_final_goal_on_last_assistant(
         &mut self,
         goal_status: super::task_continuity::SystemGoalStatus,
@@ -2521,7 +2525,21 @@ impl AgentInternalState {
         {
             msg.goal_status = Some(goal_status);
             msg.end_reason = Some(end_reason);
+            return;
         }
+        let content = match end_reason {
+            super::task_continuity::StreamEndReason::Interrupted
+            | super::task_continuity::StreamEndReason::Cancelled => "[Interrupted]",
+            super::task_continuity::StreamEndReason::Timeout => "[Timeout]",
+            super::task_continuity::StreamEndReason::Error => "[Error]",
+            super::task_continuity::StreamEndReason::CannotContinue => "[Cannot continue]",
+            super::task_continuity::StreamEndReason::Normal => "",
+        };
+        let mut terminal = AgentMessage::assistant(content);
+        terminal.goal_status = Some(goal_status);
+        terminal.end_reason = Some(end_reason);
+        self.memory.push(terminal);
+        self.session.increment_messages();
     }
 
     /// Restore memory from a list of messages.
@@ -2731,7 +2749,7 @@ mod tests {
         state.push_message(AgentMessage::user("prev"));
         state.push_message(AgentMessage::assistant("prev reply"));
         state.push_message(AgentMessage::user("now"));
-        // No assistant yet this turn — must not touch previous turn.
+        // No assistant yet this turn — create a terminal row; never touch previous turn.
         state.stamp_final_goal_on_last_assistant(
             SystemGoalStatus::NotApplicable,
             StreamEndReason::Interrupted,
@@ -2740,7 +2758,23 @@ mod tests {
             state.memory[1].goal_status.is_none(),
             "must not stamp previous turn"
         );
+        assert_eq!(
+            state.memory.len(),
+            4,
+            "early End creates a terminal assistant"
+        );
+        assert_eq!(state.memory[3].role, "assistant");
+        assert_eq!(&*state.memory[3].content, "[Interrupted]");
+        assert_eq!(
+            state.memory[3].goal_status,
+            Some(SystemGoalStatus::NotApplicable)
+        );
+        assert_eq!(
+            state.memory[3].end_reason,
+            Some(StreamEndReason::Interrupted)
+        );
 
+        // A later assistant on the same turn is stamped in place (no second terminal).
         state.push_message(AgentMessage::assistant("trying"));
         let incomplete = SystemGoalStatus::Incomplete {
             reason: "no delivery".into(),
@@ -2750,12 +2784,17 @@ mod tests {
             physical_ok: false,
         };
         state.stamp_final_goal_on_last_assistant(incomplete.clone(), StreamEndReason::Normal);
-        assert_eq!(state.memory[3].goal_status.as_ref(), Some(&incomplete));
-        assert_eq!(state.memory[3].end_reason, Some(StreamEndReason::Normal));
+        assert_eq!(state.memory[4].goal_status.as_ref(), Some(&incomplete));
+        assert_eq!(state.memory[4].end_reason, Some(StreamEndReason::Normal));
         assert!(state.memory[1].goal_status.is_none());
+        // Prior early-terminal keeps its Interrupted snapshot.
+        assert_eq!(
+            state.memory[3].end_reason,
+            Some(StreamEndReason::Interrupted)
+        );
 
         // Wire shape on AgentMessage uses camelCase keys.
-        let wire = serde_json::to_value(&state.memory[3]).unwrap();
+        let wire = serde_json::to_value(&state.memory[4]).unwrap();
         assert_eq!(wire["goalStatus"]["status"], "incomplete");
         assert_eq!(wire["endReason"], "normal");
     }

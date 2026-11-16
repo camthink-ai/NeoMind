@@ -280,6 +280,15 @@ pub async fn process_stream_events_with_safeguards(
             "上下文窗口不足：系统提示与工具定义约 {prompt_overhead} tokens，而模型窗口只有 {max_context} tokens。请提高上下文设置（例如 NEOMIND_BUILTIN_LLM_CTX=32768）或减少工具/技能。"
         );
         tracing::error!(max_context, prompt_overhead, "{}", message);
+        // Fail before first assistant output — still persist a terminal row
+        // so history reload keeps End.goalStatus / endReason.
+        {
+            let mut state = internal_state.write().await;
+            state.stamp_final_goal_on_last_assistant(
+                crate::agent::task_continuity::SystemGoalStatus::NotApplicable,
+                crate::agent::task_continuity::StreamEndReason::Error,
+            );
+        }
         return Ok(Box::pin(async_stream::stream! {
             yield AgentEvent::Error { message };
             // No task state yet — still emit explicit status+reason.
