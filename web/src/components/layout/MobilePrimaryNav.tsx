@@ -1,4 +1,4 @@
-import { LayoutGrid, MessageSquare } from "lucide-react"
+import { Compass, MessageSquare } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
@@ -6,7 +6,7 @@ import { useIsMobile } from "@/hooks/useMobile"
 
 const items = [
   { id: "chat", path: "/chat", icon: MessageSquare, label: "nav.dashboard" },
-  { id: "system", path: "/system", icon: LayoutGrid, label: "system.pageTitle" },
+  { id: "system", path: "/system", icon: Compass, label: "system.pageTitle" },
 ] as const
 
 function activeItem(pathname: string) {

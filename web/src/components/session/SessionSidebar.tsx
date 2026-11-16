@@ -28,7 +28,7 @@ import {
   Check,
   Loader2,
   ChevronRight,
-  LayoutGrid,
+  Compass,
   Cpu,
   Bot,
   LayoutDashboard,
@@ -555,9 +555,7 @@ export function SessionSidebar({
             onClick={() => goWorkspace('/system')}
             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors active:bg-muted"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-background text-foreground">
-              <LayoutGrid className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
-            </span>
+            <Compass className="h-5 w-5 shrink-0 text-foreground" strokeWidth={1.8} aria-hidden="true" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-foreground">
                 {t('system.moreEntries')}
