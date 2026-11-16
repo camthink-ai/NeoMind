@@ -2216,11 +2216,20 @@ pub struct AcceptedTurnContext {
 
 /// Pre-[`AgentInternalState::accept_user_message`] snapshot so a failed
 /// turn-start history save can restore memory / Turn / auth exactly.
+///
+/// Bound to history generation and the accept's `call_site_turn`.
+/// [`AgentInternalState::clear_memory`] invalidates the pending token; rollback
+/// also refuses when generation/Turn no longer match so a clear mid-flight
+/// never restores pre-clear ops/auth.
 #[derive(Debug, Clone)]
 struct AcceptRollback {
     memory_len: usize,
     message_count: usize,
     task_state: super::task_continuity::TaskState,
+    /// [`AgentInternalState::history_generation`] at accept time.
+    history_generation: u64,
+    /// Turn allocated by this accept (`note_user_turn`).
+    call_site_turn: u64,
 }
 
 impl AgentInternalState {
@@ -2456,12 +2465,12 @@ impl AgentInternalState {
             message.role, "user",
             "accept_user_message is for user Turns only"
         );
-        // Snapshot before Turn/auth/memory mutate so save failure can restore.
-        self.pending_accept_rollback = Some(AcceptRollback {
-            memory_len: self.memory.len(),
-            message_count: self.session.message_count,
-            task_state: self.task_state.clone(),
-        });
+        // Capture pre-accept memory/auth + generation; Turn id filled after
+        // note_user_turn so rollback can refuse a stale (cleared / later) accept.
+        let snap_memory_len = self.memory.len();
+        let snap_message_count = self.session.message_count;
+        let snap_task_state = self.task_state.clone();
+        let snap_generation = self.history_generation;
         if let Some((nodes, ver)) = content_nodes {
             message.content_nodes = Some(nodes);
             message.content_version = Some(ver);
@@ -2515,6 +2524,13 @@ impl AgentInternalState {
         }
         self.memory.push(message);
         self.session.increment_messages();
+        self.pending_accept_rollback = Some(AcceptRollback {
+            memory_len: snap_memory_len,
+            message_count: snap_message_count,
+            task_state: snap_task_state,
+            history_generation: snap_generation,
+            call_site_turn,
+        });
         AcceptedTurnContext { call_site_turn }
     }
 
@@ -2525,6 +2541,11 @@ impl AgentInternalState {
 
     /// Restore memory / Turn / auth to the pre-accept snapshot (save failure).
     ///
+    /// Applies only when the snapshot is still current: same
+    /// [`Self::history_generation`] and `call_site_turn == turn_count`. After
+    /// [`Self::clear_memory`] the pending token is cleared and generation
+    /// advances — rollback must not revive pre-clear state.
+    ///
     /// Also clears chat `user_image*` large-data entries so a multimodal retry
     /// does not keep a half-applied accept cache. Returns whether a snapshot
     /// was applied.
@@ -2532,6 +2553,19 @@ impl AgentInternalState {
         let Some(snap) = self.pending_accept_rollback.take() else {
             return false;
         };
+        if snap.history_generation != self.history_generation
+            || snap.call_site_turn != self.task_state.turn_count
+        {
+            tracing::debug!(
+                session_id = %self.session_id,
+                snap_generation = snap.history_generation,
+                live_generation = self.history_generation,
+                snap_turn = snap.call_site_turn,
+                live_turn = self.task_state.turn_count,
+                "accept rollback refused — snapshot not current (cleared or superseded)"
+            );
+            return false;
+        }
         self.memory.truncate(snap.memory_len);
         self.session.message_count = snap.message_count;
         self.task_state = snap.task_state;
@@ -2620,9 +2654,12 @@ impl AgentInternalState {
     /// Clear the memory.
     ///
     /// Bumps [`Self::history_generation`] first so any in-flight persist that
-    /// snapshotted the pre-clear generation is rejected.
+    /// snapshotted the pre-clear generation is rejected. Also drops
+    /// [`Self::pending_accept_rollback`] so a later save-fail path cannot
+    /// restore pre-clear ops/auth.
     pub fn clear_memory(&mut self) {
         self.history_generation = self.history_generation.saturating_add(1);
+        self.pending_accept_rollback = None;
         self.memory.clear();
         self.task_state = super::task_continuity::TaskState::default();
         // Fresh empty ledger after explicit clear is authoritative again.
@@ -2941,6 +2978,97 @@ mod tests {
             "confirm must be restored for retry"
         );
         assert!(!state.rollback_pending_accept(), "pending consumed once");
+    }
+
+    /// accept confirm → clear history → save-fail rollback must stay cleared
+    /// (never restore pre-clear ops/auth).
+    #[test]
+    fn accept_rollback_refuses_after_clear_history() {
+        use super::super::task_continuity::{
+            write_fingerprint, AuthorizeNewOpSubmit, StructuredResult,
+        };
+
+        let mut state = AgentInternalState::new("rollback-clear".into());
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = state.task_state.begin_new_operation(
+            "run_now",
+            None,
+            r#"{"agent_id":"A"}"#,
+            Some(fp.clone()),
+        );
+        state.task_state.mark_operation_running(&op);
+        state.task_state.complete_operation_unknown(
+            &op,
+            StructuredResult {
+                success: false,
+                summary: "interrupted".into(),
+                body: String::new(),
+                details_ref: None,
+            },
+        );
+        let req = state
+            .task_state
+            .issue_or_reuse_confirm_request(&op, &fp, "run_now", None);
+        let submit = AuthorizeNewOpSubmit {
+            request_id: req.request_id.clone(),
+            prior_operation_id: req.prior_operation_id.clone(),
+            write_fingerprint: req.write_fingerprint.clone(),
+        };
+
+        let _ = state.accept_user_message(
+            AgentMessage::user("confirm re-run"),
+            Some(submit),
+            None,
+        );
+        assert!(state.task_state.user_authorized_new_op.is_some());
+        assert_eq!(state.memory.len(), 1);
+
+        let gen_after_accept = state.history_generation;
+        state.clear_memory();
+        assert!(state.memory.is_empty());
+        assert!(state.task_state.operations.is_empty());
+        assert!(state.task_state.user_authorized_new_op.is_none());
+        assert!(state.task_state.pending_confirm_requests.is_empty());
+        assert!(state.history_generation > gen_after_accept);
+
+        // SessionManager save-fail path would call this next — must no-op.
+        assert!(
+            !state.rollback_pending_accept(),
+            "clear must invalidate accept rollback"
+        );
+        assert!(state.memory.is_empty(), "history must stay cleared");
+        assert!(
+            state.task_state.operations.is_empty(),
+            "ops must stay cleared"
+        );
+        assert!(
+            state.task_state.user_authorized_new_op.is_none(),
+            "auth must stay cleared"
+        );
+        assert!(state.task_state.pending_confirm_requests.is_empty());
+        assert_eq!(state.task_state.turn_count, 0);
+    }
+
+    /// Generation/Turn gate: stale snapshot must not apply even if pending
+    /// was not explicitly cleared (defensive vs clear-invalidate).
+    #[test]
+    fn accept_rollback_refuses_when_generation_or_turn_stale() {
+        let mut state = AgentInternalState::new("rollback-stale".into());
+        let _ = state.accept_user_message(AgentMessage::user("hello"), None, None);
+        assert_eq!(state.memory.len(), 1);
+        // Simulate clear bumping generation without going through clear_memory's
+        // pending drop (generation gate alone must refuse).
+        state.history_generation = state.history_generation.saturating_add(1);
+        assert!(!state.rollback_pending_accept());
+        assert_eq!(state.memory.len(), 1, "stale rollback must not truncate");
+
+        let mut state2 = AgentInternalState::new("rollback-turn".into());
+        let accepted = state2.accept_user_message(AgentMessage::user("t1"), None, None);
+        // Later Turn without a fresh accept overwrite of pending.
+        let later = state2.task_state.note_user_turn();
+        assert_ne!(accepted.call_site_turn, later);
+        assert!(!state2.rollback_pending_accept());
+        assert_eq!(state2.memory.len(), 1);
     }
 
     #[test]

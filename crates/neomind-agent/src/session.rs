@@ -4101,6 +4101,76 @@ mod tests {
         assert_eq!(user_hits, 1);
     }
 
+    /// accept confirm → clear history → save-fail rollback must leave
+    /// history/ops/auth cleared (generation-bound AcceptRollback).
+    #[tokio::test]
+    async fn accept_clear_save_fail_rollback_stays_cleared() {
+        use crate::agent::task_continuity::{
+            write_fingerprint, AuthorizeNewOpSubmit, StructuredResult,
+        };
+
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        let agent = manager.get_session(&session_id).await.unwrap();
+
+        let submit = agent
+            .test_with_task_state_mut(|ts| {
+                let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+                let op = ts.begin_new_operation(
+                    "run_now",
+                    None,
+                    r#"{"agent_id":"A"}"#,
+                    Some(fp.clone()),
+                );
+                ts.mark_operation_running(&op);
+                ts.complete_operation_unknown(
+                    &op,
+                    StructuredResult {
+                        success: false,
+                        summary: "interrupted".into(),
+                        body: String::new(),
+                        details_ref: None,
+                    },
+                );
+                let req = ts.issue_or_reuse_confirm_request(&op, &fp, "run_now", None);
+                AuthorizeNewOpSubmit {
+                    request_id: req.request_id,
+                    prior_operation_id: req.prior_operation_id,
+                    write_fingerprint: req.write_fingerprint,
+                }
+            })
+            .await;
+
+        agent
+            .test_accept_user_message(AgentMessage::user("confirm re-run"), Some(submit))
+            .await;
+        agent
+            .test_with_task_state_mut(|ts| {
+                assert!(ts.user_authorized_new_op.is_some());
+                assert!(!ts.operations.is_empty());
+            })
+            .await;
+        assert_eq!(agent.history().await.len(), 1);
+
+        manager.clear_history(&session_id).await.unwrap();
+        assert!(agent.history().await.is_empty());
+
+        // Save-fail path after clear: rollback must refuse / stay cleared.
+        assert!(
+            !agent.rollback_pending_accept().await,
+            "clear invalidates accept rollback"
+        );
+        assert!(agent.history().await.is_empty());
+        agent
+            .test_with_task_state_mut(|ts| {
+                assert!(ts.operations.is_empty(), "ops stay cleared");
+                assert!(ts.user_authorized_new_op.is_none(), "auth stay cleared");
+                assert!(ts.pending_confirm_requests.is_empty());
+                assert_eq!(ts.turn_count, 0);
+            })
+            .await;
+    }
+
     /// GPT tip af5e3548: clear cancels + awaits stream; stale persist cannot
     /// rewrite history/ledger after generation bump.
     #[tokio::test]

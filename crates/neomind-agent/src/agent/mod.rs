@@ -1073,6 +1073,19 @@ impl Agent {
         let mut state = self.internal_state.write().await;
         f(&mut state.task_state)
     }
+
+    /// Test helper: atomic accept (same path as stream), for clear/rollback races.
+    pub(crate) async fn test_accept_user_message(
+        &self,
+        message: crate::agent::types::AgentMessage,
+        authorization: Option<task_continuity::AuthorizeNewOpSubmit>,
+    ) -> crate::agent::types::AcceptedTurnContext {
+        self.internal_state.write().await.accept_user_message(
+            message,
+            authorization,
+            None,
+        )
+    }
 }
 /// Apply storage-derived `BackendCapabilities` to a freshly-constructed
 /// `CloudRuntime`, so that cloud backends in the chat / configure_llm flow
