@@ -2294,7 +2294,9 @@ fn route_polarity(hay_lower: &str, terms: &[&str]) -> RoutePolarity {
     let Some(idx) = terms_sorted.iter().find_map(|t| find_term(hay_lower, t)) else {
         return RoutePolarity::Neutral;
     };
-    let start = idx.saturating_sub(28);
+    // Byte-window lookback must land on a UTF-8 boundary — CJK before
+    // ASCII terms like "webhook" used to panic mid-char (`saturating_sub(28)`).
+    let start = hay_lower.floor_char_boundary(idx.saturating_sub(28));
     let window = &hay_lower[start..idx];
     if STRONG_REJECT_PREFIXES
         .iter()
@@ -4386,6 +4388,35 @@ mod tests {
         assert!(parse_user_directive("confirm re-run").is_none());
         assert!(is_authorize_new_operation_phrase("确认重跑"));
         assert!(is_authorize_new_operation_phrase("confirm re-run"));
+    }
+
+    #[test]
+    fn route_polarity_chinese_prefix_before_webhook_is_char_boundary_safe() {
+        // 10 CJK chars = 30 bytes before "webhook". A raw `idx - 28` byte
+        // window lands mid-char and used to panic on slice.
+        let padded = "一二三四五六七八九十webhook";
+        assert_eq!(
+            route_polarity(&padded.to_lowercase(), NOTIFY_WEBHOOK_TERMS),
+            RoutePolarity::Neutral
+        );
+        let rejected = "一二三四五六七八九十不要用webhook";
+        assert_eq!(
+            route_polarity(&rejected.to_lowercase(), NOTIFY_WEBHOOK_TERMS),
+            RoutePolarity::Rejected
+        );
+        // Full directive path must also survive the same UTF-8 lookback.
+        match parse_user_directive("一二三四五六七八九十不是 webhook，用设备原生命令")
+        {
+            Some(TaskDirective::Correct {
+                method,
+                exclude_routes,
+                ..
+            }) => {
+                assert_eq!(method, Some(ExecutionMethod::DeviceNativeCommand));
+                assert!(exclude_routes.contains(&ExcludedRoute::NotificationOrWebhook));
+            }
+            other => panic!("expected zh padded route Correct, got {other:?}"),
+        }
     }
 
     #[test]

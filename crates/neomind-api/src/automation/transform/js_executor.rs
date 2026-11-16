@@ -16,6 +16,163 @@ use neomind_core::extension::registry::ExtensionRegistry;
 
 pub struct JsTransformExecutor;
 
+/// Escape a string for safe embedding as a JavaScript property-access key.
+///
+/// Single-key auto-unwrap used to interpolate the key raw into
+/// `__obj['{key}']`, so a metric name containing `'` / `\` / newlines
+/// broke the generated script (or escaped the quote). JSON-string form
+/// is a valid JS expression for bracket access (`__obj["a'b"]`).
+pub(crate) fn js_string_literal(s: &str) -> String {
+    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+/// Params argument of `extensions.invoke(...)` after host-side parsing.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum InvokeParams {
+    /// Valid JSON object / value body.
+    Json(Value),
+    /// Non-JSON `{...}` body — evaluate as a JS expression in-context.
+    JsExpr(String),
+    /// Missing / unparsable params → empty object.
+    Empty,
+}
+
+impl InvokeParams {
+    pub(crate) fn into_value_or_expr(self) -> (Value, Option<String>) {
+        match self {
+            InvokeParams::Json(v) => (v, None),
+            InvokeParams::JsExpr(s) => (serde_json::json!({}), Some(s)),
+            InvokeParams::Empty => (serde_json::json!({}), None),
+        }
+    }
+}
+
+/// Parse `extensions.invoke(ext_id, command, params)` argument list after `(`.
+///
+/// Walks with [`str::char_indices`] so CJK extension IDs never mix char
+/// offsets into byte slices (the old `chars().nth(parse_pos)` +
+/// `after_open[start..end]` path panicked on multi-byte IDs).
+pub(crate) fn parse_extensions_invoke_args(
+    after_open: &str,
+) -> Option<(String, String, InvokeParams)> {
+    let mut iter = after_open.char_indices().peekable();
+
+    // Skip leading whitespace.
+    while matches!(iter.peek(), Some((_, c)) if c.is_whitespace()) {
+        iter.next();
+    }
+
+    let (_, quote) = iter.next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    let ext_start = iter.peek().map(|(i, _)| *i).unwrap_or(after_open.len());
+    let mut ext_end = ext_start;
+    let mut found_ext_close = false;
+    for (i, c) in iter.by_ref() {
+        if c == quote {
+            ext_end = i;
+            found_ext_close = true;
+            break;
+        }
+    }
+    if !found_ext_close {
+        return None;
+    }
+    let ext_id = after_open[ext_start..ext_end].to_string();
+
+    // Skip whitespace / comma before command.
+    while matches!(iter.peek(), Some((_, c)) if c.is_whitespace() || *c == ',') {
+        iter.next();
+    }
+
+    let (_, cmd_quote) = iter.next()?;
+    if cmd_quote != '\'' && cmd_quote != '"' {
+        return None;
+    }
+    let cmd_start = iter.peek().map(|(i, _)| *i).unwrap_or(after_open.len());
+    let mut cmd_end = cmd_start;
+    let mut found_cmd_close = false;
+    for (i, c) in iter.by_ref() {
+        if c == cmd_quote {
+            cmd_end = i;
+            found_cmd_close = true;
+            break;
+        }
+    }
+    if !found_cmd_close {
+        return None;
+    }
+    let cmd_str = after_open[cmd_start..cmd_end].to_string();
+
+    // Skip whitespace / comma before params.
+    while matches!(iter.peek(), Some((_, c)) if c.is_whitespace() || *c == ',') {
+        iter.next();
+    }
+
+    let params = match iter.peek().copied() {
+        Some((_, '{')) => {
+            let mut brace_count = 0isize;
+            let params_start = iter.peek().map(|(i, _)| *i).unwrap_or(after_open.len());
+            let mut params_end = params_start;
+            let mut closed = false;
+            for (i, c) in iter.by_ref() {
+                match c {
+                    '{' => brace_count += 1,
+                    '}' => {
+                        brace_count -= 1;
+                        if brace_count == 0 {
+                            params_end = i + c.len_utf8();
+                            closed = true;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if !closed || params_end <= params_start + 1 {
+                InvokeParams::Empty
+            } else {
+                let params_str = after_open[params_start + 1..params_end - 1].trim();
+                if params_str.is_empty() {
+                    InvokeParams::Empty
+                } else if let Ok(v) = serde_json::from_str::<Value>(&format!("{{{}}}", params_str))
+                {
+                    // Wrap back into object — body was the inside of `{...}`.
+                    InvokeParams::Json(v)
+                } else if let Ok(v) = serde_json::from_str(params_str) {
+                    InvokeParams::Json(v)
+                } else {
+                    InvokeParams::JsExpr(params_str.to_string())
+                }
+            }
+        }
+        Some((_, q)) if q == '\'' || q == '"' => {
+            let _ = iter.next();
+            let str_start = iter.peek().map(|(i, _)| *i).unwrap_or(after_open.len());
+            let mut str_end = str_start;
+            let mut closed = false;
+            for (i, c) in iter.by_ref() {
+                if c == q {
+                    str_end = i;
+                    closed = true;
+                    break;
+                }
+            }
+            if !closed {
+                InvokeParams::Empty
+            } else if let Ok(s) = serde_json::from_str::<Value>(&after_open[str_start..str_end]) {
+                InvokeParams::Json(s)
+            } else {
+                InvokeParams::Empty
+            }
+        }
+        _ => InvokeParams::Empty,
+    };
+
+    Some((ext_id, cmd_str, params))
+}
+
 /// Outcome of a JavaScript transform run.
 ///
 /// `extension_invoke_blocked` is a host-side signal: the dry-run stub sets
@@ -119,7 +276,12 @@ impl JsTransformExecutor {
                     // Single-key object: unwrap it
                     // e.g. {"value": 42} → input = 42 (auto-unwrapped)
                     // Multi-key objects like {"temperature": 25, "humidity": 60} stay as-is
-                    format!("var __obj = {}; var input = __obj['{}'];", input_json, key)
+                    // Key must be a JS string literal — raw embed broke on quotes/CJK escapes.
+                    format!(
+                        "var __obj = {}; var input = __obj[{}];",
+                        input_json,
+                        js_string_literal(key)
+                    )
                 } else {
                     format!("var input = {};", input_json)
                 }
@@ -268,177 +430,35 @@ impl JsTransformExecutor {
                     // Find opening parenthesis
                     if let Some(open_pos) = remaining.find('(') {
                         let after_open = &remaining[open_pos + 1..];
-
-                        // Find first quote (extension_id)
-                        let mut parse_pos = 0;
                         let mut found_calls = false;
 
-                        // Skip whitespace
-                        while parse_pos < after_open.len()
-                            && after_open
-                                .chars()
-                                .nth(parse_pos)
-                                .is_some_and(|c| c.is_whitespace())
+                        if let Some((ext_id, cmd_str, params_kind)) =
+                            parse_extensions_invoke_args(after_open)
                         {
-                            parse_pos += 1;
-                        }
-
-                        // Try to find extension_id (single or double quoted)
-                        if after_open[parse_pos..].find(['\'', '"']).is_some() {
-                            let quote_char = after_open
-                                .chars()
-                                .nth(parse_pos)
-                                .expect("parse_pos within bounds verified by find");
-                            let ext_id_start = parse_pos + 1;
-                            parse_pos = ext_id_start;
-
-                            // Find closing quote
-                            let mut ext_id_end = None;
-                            while parse_pos < after_open.len() {
-                                if after_open.chars().nth(parse_pos) == Some(quote_char) {
-                                    ext_id_end = Some(parse_pos);
-                                    parse_pos += 1;
-                                    break;
-                                }
-                                parse_pos += 1;
-                            }
-
-                            if let Some(eid) = ext_id_end {
-                                let ext_id = after_open[ext_id_start..eid].to_string();
-
-                                // Skip to command
-                                while parse_pos < after_open.len()
-                                    && after_open
-                                        .chars()
-                                        .nth(parse_pos)
-                                        .is_some_and(|c| c.is_whitespace() || c == ',')
-                                {
-                                    parse_pos += 1;
-                                }
-
-                                // Find command quote
-                                if after_open[parse_pos..].find(['\'', '"']).is_some() {
-                                    let cmd_quote_char = after_open
-                                        .chars()
-                                        .nth(parse_pos)
-                                        .expect("parse_pos within bounds verified by find");
-                                    let cmd_start = parse_pos + 1;
-                                    parse_pos = cmd_start;
-
-                                    // Find closing quote for command
-                                    let mut cmd_end = None;
-                                    while parse_pos < after_open.len() {
-                                        if after_open.chars().nth(parse_pos) == Some(cmd_quote_char)
-                                        {
-                                            cmd_end = Some(parse_pos);
-                                            parse_pos += 1;
-                                            break;
+                            let (mut params_val, js_expr) = params_kind.into_value_or_expr();
+                            if let Some(params_str) = js_expr {
+                                // Fallback: evaluate as JavaScript expression
+                                // (input_raw, __imageData, etc. are already in context)
+                                let eval_expr = format!("JSON.stringify({{{}}})", params_str);
+                                match context.eval(Source::from_bytes(eval_expr.as_bytes())) {
+                                    Ok(val) => {
+                                        if let Some(s) = val.as_string() {
+                                            let std_str = s.to_std_string_escaped();
+                                            if let Ok(v) = serde_json::from_str::<Value>(&std_str) {
+                                                params_val = v;
+                                            }
                                         }
-                                        parse_pos += 1;
                                     }
-
-                                    if let Some(cd) = cmd_end {
-                                        let cmd_str = after_open[cmd_start..cd].to_string();
-
-                                        // Try to parse params (object or null)
-                                        #[allow(clippy::never_loop)]
-                                        let params_val = loop {
-                                            while parse_pos < after_open.len()
-                                                && after_open
-                                                    .chars()
-                                                    .nth(parse_pos)
-                                                    .is_some_and(|c| c.is_whitespace() || c == ',')
-                                            {
-                                                parse_pos += 1;
-                                            }
-
-                                            if parse_pos >= after_open.len() {
-                                                break serde_json::json!({});
-                                            }
-
-                                            let next_char = after_open.chars().nth(parse_pos);
-                                            if next_char == Some('{') {
-                                                // Find matching closing brace
-                                                let mut brace_count = 1;
-                                                parse_pos += 1;
-                                                let params_start = parse_pos;
-
-                                                while parse_pos < after_open.len()
-                                                    && brace_count > 0
-                                                {
-                                                    if after_open.chars().nth(parse_pos)
-                                                        == Some('{')
-                                                    {
-                                                        brace_count += 1;
-                                                    } else if after_open.chars().nth(parse_pos)
-                                                        == Some('}')
-                                                    {
-                                                        brace_count -= 1;
-                                                    }
-                                                    parse_pos += 1;
-                                                }
-
-                                                let params_str =
-                                                    after_open[params_start..parse_pos - 1].trim();
-                                                if let Ok(v) = serde_json::from_str(params_str) {
-                                                    break v;
-                                                }
-                                                // Fallback: evaluate as JavaScript expression
-                                                // (input_raw, __imageData, etc. are already in context)
-                                                let eval_expr =
-                                                    format!("JSON.stringify({{{}}})", params_str);
-                                                match context
-                                                    .eval(Source::from_bytes(eval_expr.as_bytes()))
-                                                {
-                                                    Ok(val) => {
-                                                        if let Some(s) = val.as_string() {
-                                                            let std_str = s.to_std_string_escaped();
-                                                            if let Ok(v) =
-                                                                serde_json::from_str::<Value>(
-                                                                    &std_str,
-                                                                )
-                                                            {
-                                                                break v;
-                                                            }
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        tracing::debug!("Failed to evaluate extension params as JS: {}", e);
-                                                    }
-                                                }
-                                                break serde_json::json!({});
-                                            } else if next_char == Some('\'')
-                                                || next_char == Some('"')
-                                            {
-                                                // String parameter - could be nested JSON
-                                                let quote = next_char
-                                                    .expect("quote position verified by find");
-                                                parse_pos += 1;
-                                                let str_start = parse_pos;
-
-                                                while parse_pos < after_open.len()
-                                                    && after_open.chars().nth(parse_pos)
-                                                        != Some(quote)
-                                                {
-                                                    parse_pos += 1;
-                                                }
-
-                                                if let Ok(s) = serde_json::from_str::<Value>(
-                                                    &after_open[str_start..parse_pos],
-                                                ) {
-                                                    break s;
-                                                }
-                                                break serde_json::json!({});
-                                            } else {
-                                                break serde_json::json!({});
-                                            }
-                                        };
-
-                                        pending_calls.push((ext_id, cmd_str, params_val));
-                                        found_calls = true;
+                                    Err(e) => {
+                                        tracing::debug!(
+                                            "Failed to evaluate extension params as JS: {}",
+                                            e
+                                        );
                                     }
                                 }
                             }
+                            pending_calls.push((ext_id, cmd_str, params_val));
+                            found_calls = true;
                         }
 
                         if found_calls {
@@ -819,5 +839,61 @@ impl JsTransformExecutor {
 impl Default for JsTransformExecutor {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod unicode_safety_tests {
+    use super::{js_string_literal, parse_extensions_invoke_args, InvokeParams};
+    use serde_json::json;
+
+    #[test]
+    fn parse_invoke_cjk_extension_id_uses_byte_safe_indices() {
+        // Multi-byte ID must not panic (old chars().nth + byte slice mix).
+        let after = "'天气扩展', 'get_current', { \"location\": \"北京\" })";
+        let (ext, cmd, params) =
+            parse_extensions_invoke_args(after).expect("CJK invoke args parse");
+        assert_eq!(ext, "天气扩展");
+        assert_eq!(cmd, "get_current");
+        match params {
+            InvokeParams::Json(v) => assert_eq!(v["location"], "北京"),
+            other => panic!("expected Json params, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_invoke_ascii_still_works() {
+        let after = "\"weather.ext\", \"get\", {\"k\": 1})";
+        let (ext, cmd, params) = parse_extensions_invoke_args(after).expect("ascii invoke");
+        assert_eq!(ext, "weather.ext");
+        assert_eq!(cmd, "get");
+        assert_eq!(params, InvokeParams::Json(json!({"k": 1})));
+    }
+
+    #[test]
+    fn parse_invoke_js_expr_params_preserved() {
+        let after = "'ext', 'cmd', { location: input_raw.city })";
+        let (_, _, params) = parse_extensions_invoke_args(after).expect("js expr");
+        match params {
+            InvokeParams::JsExpr(s) => assert!(s.contains("input_raw.city")),
+            other => panic!("expected JsExpr, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn js_string_literal_escapes_quotes_and_backslash() {
+        assert_eq!(js_string_literal("plain"), "\"plain\"");
+        assert_eq!(js_string_literal("a'b"), "\"a'b\"");
+        assert_eq!(js_string_literal("a\"b"), "\"a\\\"b\"");
+        assert_eq!(js_string_literal("a\\b"), "\"a\\\\b\"");
+        // Generated unwrap must be valid JS property access.
+        let key = "temp'ure";
+        let code = format!(
+            "var __obj = {}; var input = __obj[{}];",
+            r#"{"temp'ure": 1}"#,
+            js_string_literal(key)
+        );
+        assert!(code.contains(r#"__obj["temp'ure"]"#), "code={code}");
+        assert!(!code.contains("__obj['temp'ure']"));
     }
 }

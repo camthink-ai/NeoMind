@@ -1583,9 +1583,37 @@ fn receive_ack_reject_reason(err: &dyn std::fmt::Display) -> &'static str {
     }
 }
 
+/// After `MessageReceived:rejected`, the client stream machine only resets on
+/// a terminal `Error` + `end` (Error alone still spins). Callers must emit both
+/// and must NOT continue into a tool-capable non-stream fallback — that path
+/// used raw `task_user_message` and bypassed structured refs / authorize.
+fn ws_reject_terminal_frames(session_id: &str, message: &str) -> (String, String) {
+    let err = json!({
+        "type": "Error",
+        "message": message,
+        "sessionId": session_id,
+    })
+    .to_string();
+    let end = json!({
+        "type": "end",
+        "sessionId": session_id,
+    })
+    .to_string();
+    (err, end)
+}
+
+/// Policy pin: a receive-ack `rejected` never continues into non-stream tools.
+fn ws_rejected_blocks_nonstream_fallback() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod receive_ack_reason_tests {
-    use super::receive_ack_reject_reason;
+    use super::{
+        message_received_frame, receive_ack_reject_reason, ws_reject_terminal_frames,
+        ws_rejected_blocks_nonstream_fallback,
+    };
+    use serde_json::Value;
 
     #[test]
     fn maps_busy_clearing_save_and_protocol() {
@@ -1611,6 +1639,34 @@ mod receive_ack_reason_tests {
             receive_ack_reject_reason(&"Validation error: contentNodes exceed cap"),
             "rejected"
         );
+    }
+
+    #[test]
+    fn rejected_ack_requires_terminal_error_and_end_no_nonstream() {
+        assert!(
+            ws_rejected_blocks_nonstream_fallback(),
+            "after MessageReceived:rejected must not fall into non-stream tool execution"
+        );
+        let (err, end) = ws_reject_terminal_frames("sess-1", "stream setup failed");
+        let err_v: Value = serde_json::from_str(&err).expect("Error frame JSON");
+        let end_v: Value = serde_json::from_str(&end).expect("end frame JSON");
+        assert_eq!(err_v["type"], "Error");
+        assert_eq!(err_v["sessionId"], "sess-1");
+        assert_eq!(err_v["message"], "stream setup failed");
+        assert_eq!(end_v["type"], "end");
+        assert_eq!(end_v["sessionId"], "sess-1");
+
+        // Rejected ack + terminal pair is the only allowed closeout after reject
+        // (busy/save already used Error+end; empty/prepare/generic reject must too).
+        let ack: Value = serde_json::from_str(&message_received_frame(
+            "req-1",
+            "rejected",
+            Some("sess-1"),
+            Some("rejected"),
+        ))
+        .expect("ack JSON");
+        assert_eq!(ack["status"], "rejected");
+        assert_eq!(ack["requestId"], "req-1");
     }
 }
 
@@ -2112,7 +2168,9 @@ async fn handle_ws_socket(
                                     // message"). Route everything to the LLM.
                                     let message = chat_req.message.trim();
                                     if message.is_empty() && chat_req.images.as_ref().is_none_or(|i| i.is_empty()) {
-                                        // Nothing to send at all (no text, no images) — skip.
+                                        // Nothing to send at all (no text, no images) — reject
+                                        // with a terminal Error+end so the client stream
+                                        // machine / draft ACK wait does not stick.
                                         if let Some(ref rid) = chat_req.client_request_id {
                                             let ack = message_received_frame(
                                                 rid,
@@ -2123,6 +2181,16 @@ async fn handle_ws_socket(
                                             if socket.send(AxumMessage::Text(ack)).await.is_err() {
                                                 return;
                                             }
+                                        }
+                                        let (err_frame, end_frame) = ws_reject_terminal_frames(
+                                            &session_id,
+                                            "empty_message",
+                                        );
+                                        if socket.send(AxumMessage::Text(err_frame)).await.is_err() {
+                                            return;
+                                        }
+                                        if socket.send(AxumMessage::Text(end_frame)).await.is_err() {
+                                            return;
                                         }
                                         continue;
                                     }
@@ -2176,7 +2244,9 @@ async fn handle_ws_socket(
                                                         Some(&session_id),
                                                         Some(&err.code),
                                                     );
-                                                    let _ = socket.send(AxumMessage::Text(ack)).await;
+                                                    if socket.send(AxumMessage::Text(ack)).await.is_err() {
+                                                        return;
+                                                    }
                                                 }
                                                 let err_frame = json!({
                                                     "type": "Error",
@@ -2187,7 +2257,18 @@ async fn handle_ws_socket(
                                                     "sessionId": session_id,
                                                 })
                                                 .to_string();
-                                                let _ = socket.send(AxumMessage::Text(err_frame)).await;
+                                                if socket.send(AxumMessage::Text(err_frame)).await.is_err() {
+                                                    return;
+                                                }
+                                                // Terminal end: Error alone left the client spinning.
+                                                let end = json!({
+                                                    "type": "end",
+                                                    "sessionId": session_id,
+                                                })
+                                                .to_string();
+                                                if socket.send(AxumMessage::Text(end)).await.is_err() {
+                                                    return;
+                                                }
                                                 continue;
                                             }
                                         };
@@ -2223,14 +2304,12 @@ async fn handle_ws_socket(
                                         );
 
                                         // Use streaming for multimodal messages.
-                                        // The clone here is the ONE deliberate copy:
-                                        // `images` must stay alive for the
-                                        // non-streaming fallback below if stream
-                                        // setup fails.
+                                        // On stream-setup failure we reject + Error+end —
+                                        // no non-stream fallback (that bypassed refs/auth).
                                         match task_state.agents.session_manager.process_message_multimodal_with_backend_stream_authorize(
                                             &task_session_id,
                                             &final_message,
-                                            images.clone(),
+                                            images,
                                             backend_id_str.as_deref(),
                                             authorize_submit,
                                             content_nodes_arg,
@@ -2259,6 +2338,10 @@ async fn handle_ws_socket(
                                                 });
                                             }
                                             Err(e) => {
+                                                // Reject ack already implies no tool execution —
+                                                // never fall into non-stream (that path used raw
+                                                // chat_req.message and bypassed refs/authorize).
+                                                debug_assert!(ws_rejected_blocks_nonstream_fallback());
                                                 if let Some(ref rid) = client_request_id {
                                                     let ack = message_received_frame(
                                                         rid,
@@ -2266,73 +2349,29 @@ async fn handle_ws_socket(
                                                         Some(&task_session_id),
                                                         Some(receive_ack_reject_reason(&e)),
                                                     );
-                                                    let _ = socket.send(AxumMessage::Text(ack)).await;
+                                                    if socket.send(AxumMessage::Text(ack)).await.is_err() {
+                                                        return;
+                                                    }
                                                 }
                                                 let err_str = e.to_string();
-                                                if err_str.contains("already being generated")
-                                                    || err_str.to_lowercase().contains("being cleared")
-                                                    || err_str.contains("Failed to save user message")
-                                                {
-                                                    let err_frame = json!({
-                                                        "type": "Error",
-                                                        "message": err_str,
-                                                        "sessionId": task_session_id,
-                                                    })
-                                                    .to_string();
-                                                    let _ = socket.send(AxumMessage::Text(err_frame)).await;
-                                                    continue;
-                                                }
-                                                // Fallback to non-streaming on error
-                                                tracing::error!(error = %e, session_id = %task_session_id, backend_id = ?backend_id_str, "Streaming multimodal failed, falling back to non-streaming");
-                                                // The frame-receipt snapshot must not outlive this
-                                                // fallback turn — the Ok arm's end-of-turn cleanup
-                                                // (inside process_stream_to_channel) never runs here.
-                                                // (json! below moves task_session_id — clone first.)
-                                                let snapshot_cleanup_id = task_session_id.clone();
-                                                let (response, terminal_error) = match task_state.agents.session_manager.process_message_multimodal_with_backend(
-                                                    &task_session_id,
-                                                    &chat_req.message,
-                                                    images,
-                                                    backend_id_str.as_deref(),
-                                                ).await {
-                                                    Ok(resp) => (json!({
-                                                        "type": "response",
-                                                        "content": resp.message.content,
-                                                        "sessionId": task_session_id.clone(),
-                                                        "toolsUsed": resp.tools_used,
-                                                        "processingTimeMs": resp.processing_time_ms,
-                                                    }).to_string(), false),
-                                                    Err(inner_e) => (json!({
-                                                        "type": "Error",
-                                                        "message": inner_e.to_string(),
-                                                        "sessionId": task_session_id.clone(),
-                                                    }).to_string(), true),
-                                                };
+                                                tracing::error!(
+                                                    error = %e,
+                                                    session_id = %task_session_id,
+                                                    backend_id = ?backend_id_str,
+                                                    "Streaming multimodal failed — rejecting without non-stream fallback"
+                                                );
                                                 let _ = task_state
                                                     .agents
                                                     .session_manager
                                                     .session_store()
-                                                    .delete_pending_stream(&snapshot_cleanup_id);
-
-                                                if socket.send(AxumMessage::Text(response)).await.is_err() {
-                                                    break;
+                                                    .delete_pending_stream(&task_session_id);
+                                                let (err_frame, end_frame) =
+                                                    ws_reject_terminal_frames(&task_session_id, &err_str);
+                                                if socket.send(AxumMessage::Text(err_frame)).await.is_err() {
+                                                    return;
                                                 }
-                                                if terminal_error {
-                                                    // Terminal frame: the client only resets on
-                                                    // end/cancelled.
-                                                    let end = json!({
-                                                        "type": "end",
-                                                        "sessionId": task_session_id,
-                                                    }).to_string();
-                                                    if socket.send(AxumMessage::Text(end)).await.is_err() {
-                                                        break;
-                                                    }
-                                                } else {
-                                                    let _ = task_state
-                                                        .agents
-                                                        .session_manager
-                                                        .persist_history(&task_session_id)
-                                                        .await;
+                                                if socket.send(AxumMessage::Text(end_frame)).await.is_err() {
+                                                    return;
                                                 }
                                             }
                                         }
@@ -2358,7 +2397,9 @@ async fn handle_ws_socket(
                                                         Some(&session_id),
                                                         Some(&err.code),
                                                     );
-                                                    let _ = socket.send(AxumMessage::Text(ack)).await;
+                                                    if socket.send(AxumMessage::Text(ack)).await.is_err() {
+                                                        return;
+                                                    }
                                                 }
                                                 let err_frame = json!({
                                                     "type": "Error",
@@ -2369,7 +2410,17 @@ async fn handle_ws_socket(
                                                     "sessionId": session_id,
                                                 })
                                                 .to_string();
-                                                let _ = socket.send(AxumMessage::Text(err_frame)).await;
+                                                if socket.send(AxumMessage::Text(err_frame)).await.is_err() {
+                                                    return;
+                                                }
+                                                let end = json!({
+                                                    "type": "end",
+                                                    "sessionId": session_id,
+                                                })
+                                                .to_string();
+                                                if socket.send(AxumMessage::Text(end)).await.is_err() {
+                                                    return;
+                                                }
                                                 continue;
                                             }
                                         };
@@ -2381,13 +2432,13 @@ async fn handle_ws_socket(
                                         // be awaited INLINE in this select arm: during the initial LLM
                                         // request (tens of seconds on local models before the first
                                         // chunk) no pings were sent and `__CANCEL__` frames could not
-                                        // be processed — the whole socket looked stalled. The entire
-                                        // creation + fallback path now runs in a spawned task; the
-                                        // fallback response is delivered through the event channel
-                                        // like any other stream event, so this loop keeps serving
+                                        // be processed — the whole socket looked stalled. Creation
+                                        // now runs in a spawned task so this loop keeps serving
                                         // ping/pong and cancel frames immediately.
                                         // MessageReceived:accepted is emitted from the task only
-                                        // after process_* returns Ok (user message saved).
+                                        // after process_* returns Ok (user message saved). On Err
+                                        // the task emits rejected + Error+end and never falls into
+                                        // a tool-capable non-stream path.
                                         {
                                             let task_tx = stream_tx.clone();
                                             let task_session_id = session_id.clone();
@@ -2460,6 +2511,15 @@ async fn handle_ws_socket(
                                                         .await;
                                                     }
                                                     Err(e) => {
+                                                        // Any stream-setup failure: reject + Error+end.
+                                                        // Never fall into non-stream tool execution —
+                                                        // that used raw task_user_message and bypassed
+                                                        // structured refs / authorize (and the busy
+                                                        // mutex). busy/save already terminated; other
+                                                        // rejects must too.
+                                                        debug_assert!(
+                                                            ws_rejected_blocks_nonstream_fallback()
+                                                        );
                                                         if let Some(ref rid) = task_client_request_id {
                                                             let _ = task_tx
                                                                 .send(StreamEvent {
@@ -2472,102 +2532,25 @@ async fn handle_ws_socket(
                                                                 })
                                                                 .await;
                                                         }
-                                                        // [single-stream mutex] A rejection because a turn is
-                                                        // already running (e.g. the previous turn is still
-                                                        // completing in the background after the client
-                                                        // detached) must NOT fall into the non-streaming
-                                                        // fallback: that path bypasses the per-session mutex
-                                                        // and would run CONCURRENTLY on the same internal
-                                                        // state — interleaved history writes, out-of-order
-                                                        // replies. Surface an actionable error instead.
                                                         let err_str = e.to_string();
-                                                        if err_str.contains("already being generated")
-                                                            || err_str.to_lowercase().contains("being cleared")
-                                                            || err_str.contains("Failed to save user message")
-                                                            || err_str.contains("cleared during turn")
-                                                        {
-                                                            let _ = task_tx
-                                                                .send(StreamEvent {
-                                                                    json: json!({
-                                                                        "type": "Error",
-                                                                        "message": err_str,
-                                                                        "sessionId": task_session_id.clone(),
-                                                                    })
-                                                                    .to_string(),
-                                                                })
-                                                                .await;
-                                                            // Terminal frame: the client stream
-                                                            // machine only resets on end/cancelled;
-                                                            // an Error alone left it spinning.
-                                                            let _ = task_tx
-                                                                .send(StreamEvent {
-                                                                    json: json!({
-                                                                        "type": "end",
-                                                                        "sessionId": task_session_id,
-                                                                    })
-                                                                    .to_string(),
-                                                                })
-                                                                .await;
-                                                            return;
-                                                        }
-                                                        // Fallback to non-streaming on error
-                                                        tracing::error!(error = %e, session_id = %task_session_id, backend_id = ?task_req_backend, "Streaming text failed, falling back to non-streaming");
-                                                        // The frame-receipt snapshot must not outlive this
-                                                        // fallback turn — the Ok arm's end-of-turn cleanup
-                                                        // (inside process_stream_to_channel) never runs here.
-                                                        // (json! below moves task_session_id — clone first.)
+                                                        tracing::error!(
+                                                            error = %e,
+                                                            session_id = %task_session_id,
+                                                            backend_id = ?task_req_backend,
+                                                            "Streaming text failed — rejecting without non-stream fallback"
+                                                        );
                                                         let snapshot_cleanup_id = task_session_id.clone();
-                                                        let (response, terminal_error) = match task_state
-                                                            .agents
-                                                            .session_manager
-                                                            .process_message_with_backend(
+                                                        let (err_frame, end_frame) =
+                                                            ws_reject_terminal_frames(
                                                                 &task_session_id,
-                                                                &task_user_message,
-                                                                task_req_backend.as_deref(),
-                                                            )
-                                                            .await
-                                                        {
-                                                            Ok(resp) => (json!({
-                                                                "type": "response",
-                                                                "content": resp.message.content,
-                                                                "sessionId": task_session_id.clone(),
-                                                                "toolsUsed": resp.tools_used,
-                                                                "processingTimeMs": resp.processing_time_ms,
-                                                            })
-                                                            .to_string(), false),
-                                                            Err(inner_e) => (json!({
-                                                                "type": "Error",
-                                                                "message": inner_e.to_string(),
-                                                                "sessionId": task_session_id.clone(),
-                                                            })
-                                                            .to_string(), true),
-                                                        };
+                                                                &err_str,
+                                                            );
                                                         let _ = task_tx
-                                                            .send(StreamEvent { json: response })
+                                                            .send(StreamEvent { json: err_frame })
                                                             .await;
-                                                        // Terminal frame on failure: the client
-                                                        // only resets on end/cancelled.
-                                                        if terminal_error {
-                                                            let _ = task_tx
-                                                                .send(StreamEvent {
-                                                                    json: json!({
-                                                                        "type": "end",
-                                                                        "sessionId": task_session_id.clone(),
-                                                                    })
-                                                                    .to_string(),
-                                                                })
-                                                                .await;
-                                                        } else {
-                                                            // The non-streaming path does not run
-                                                            // process_stream_to_channel's persist
-                                                            // step; without this the fallback reply
-                                                            // vanished on refresh.
-                                                            let _ = task_state
-                                                                .agents
-                                                                .session_manager
-                                                                .persist_history(&task_session_id)
-                                                                .await;
-                                                        }
+                                                        let _ = task_tx
+                                                            .send(StreamEvent { json: end_frame })
+                                                            .await;
                                                         let _ = task_state
                                                             .agents
                                                             .session_manager
