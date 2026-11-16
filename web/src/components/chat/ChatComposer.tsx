@@ -195,10 +195,23 @@ export function ChatComposer({
   // open the picker — only post-composition changes count.
   const isComposing = useRef(false)
   const mentionOpenRef = useRef(false)
+  const modelSheetOpenRef = useRef(false)
+  /** Delayed mobile collapse — touch blurs often report null relatedTarget. */
+  const mobileCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     mentionOpenRef.current = mentionQuery !== null
   }, [mentionQuery])
+
+  useEffect(() => {
+    modelSheetOpenRef.current = modelSheetOpen
+  }, [modelSheetOpen])
+
+  useEffect(() => {
+    return () => {
+      if (mobileCollapseTimerRef.current) clearTimeout(mobileCollapseTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     if (mentionQuery === null) return
@@ -799,11 +812,22 @@ export function ChatComposer({
       }}
       onBlur={(event) => {
         if (!isMobile) return
-        // Keep expanded while the mention sheet/menu is open — otherwise a tap
-        // on an option collapses the composer mid-gesture and drops the click.
-        if (mentionOpenRef.current) return
+        // Keep expanded while the mention menu / model sheet is open —
+        // otherwise a tap collapses the composer mid-gesture and drops the click.
+        if (mentionOpenRef.current || modelSheetOpenRef.current) return
         const next = event.relatedTarget as Node | null
-        if (!next || !event.currentTarget.contains(next)) setMobileExpanded(false)
+        if (next && event.currentTarget.contains(next)) return
+        // Touch taps on the action row often blur with relatedTarget=null
+        // before click. Collapse only after the gesture finishes so the
+        // toolbar does not reflow out from under the finger.
+        const surface = event.currentTarget
+        if (mobileCollapseTimerRef.current) clearTimeout(mobileCollapseTimerRef.current)
+        mobileCollapseTimerRef.current = setTimeout(() => {
+          mobileCollapseTimerRef.current = null
+          if (mentionOpenRef.current || modelSheetOpenRef.current) return
+          if (surface.contains(document.activeElement)) return
+          setMobileExpanded(false)
+        }, 0)
       }}>
         {canMention ? (
           <InlineMentionEditor
@@ -828,7 +852,12 @@ export function ChatComposer({
               isComposing.current = composing
             }}
             onFocus={() => {
-              if (isMobile) setMobileExpanded(true)
+              if (!isMobile) return
+              if (mobileCollapseTimerRef.current) {
+                clearTimeout(mobileCollapseTimerRef.current)
+                mobileCollapseTimerRef.current = null
+              }
+              setMobileExpanded(true)
             }}
             className={cn(
               isMobile && mobileExpanded && "min-w-0 px-3 pb-1.5 pt-2.5",
@@ -850,7 +879,14 @@ export function ChatComposer({
                   : el.value.length
               scanMentionTrigger(el.value, caret)
             }}
-            onFocus={() => { if (isMobile) setMobileExpanded(true) }}
+            onFocus={() => {
+              if (!isMobile) return
+              if (mobileCollapseTimerRef.current) {
+                clearTimeout(mobileCollapseTimerRef.current)
+                mobileCollapseTimerRef.current = null
+              }
+              setMobileExpanded(true)
+            }}
             onKeyDown={handleKeyDownInternal}
             role="textbox"
             placeholder={isStreaming && streamingPlaceholder ? streamingPlaceholder : placeholder}
@@ -875,10 +911,21 @@ export function ChatComposer({
         )}
 
         {/* Bottom toolbar — left: image + model + context, right: send */}
-        <div className={isMobile
-          ? (mobileExpanded ? "flex w-full items-center gap-0.5 px-0.5 pb-0.5" : "contents")
-          : "flex items-center gap-1 px-2 pb-2"
-        }>
+        <div
+          className={isMobile
+            ? (mobileExpanded ? "flex w-full items-center gap-0.5 px-0.5 pb-0.5" : "contents")
+            : "flex items-center gap-1 px-2 pb-2"
+          }
+          onPointerDown={(event) => {
+            // Keep the editor focused while tapping actions so the expanded
+            // layout does not collapse between pointerdown and click.
+            if (!isMobile || !mobileExpanded) return
+            const target = event.target as HTMLElement
+            if (target.closest("button, [role='button'], input, label")) {
+              event.preventDefault()
+            }
+          }}
+        >
           {/* @ mention toolbar — TipTap inserts trigger at caret */}
           {canMention && (
             <Button

@@ -67,7 +67,7 @@ describe('ChatComposer', () => {
     expect(preview.closest('.mb-1')?.nextElementSibling).toBe(box)
   })
 
-  it('moves mobile actions below the textarea only while composing', () => {
+  it('moves mobile actions below the textarea only while composing', async () => {
     const previousWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
     const { unmount } = render(
@@ -82,7 +82,36 @@ describe('ChatComposer', () => {
     expect(box.classList.contains('flex-col')).toBe(true)
 
     fireEvent.blur(textarea, { relatedTarget: null })
-    expect(box.classList.contains('flex-col')).toBe(false)
+    // Collapse is deferred so a same-gesture toolbar tap can land first.
+    await waitFor(() => expect(box.classList.contains('flex-col')).toBe(false))
+    unmount()
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
+  })
+
+  it('keeps expanded mobile action buttons clickable across a null-relatedTarget blur', async () => {
+    // Mobile browsers often blur the input with relatedTarget=null when the
+    // finger lands on a toolbar button. Collapsing synchronously used to move
+    // the button out from under the tap before click fired.
+    const previousWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 })
+    const onSend = vi.fn()
+    const { unmount } = render(
+      <ChatComposer value="go" onChange={vi.fn()} onSend={onSend} />,
+    )
+    const textarea = screen.getByRole('textbox')
+    const box = textarea.parentElement as HTMLElement
+    fireEvent.focus(textarea)
+    expect(box.classList.contains('flex-col')).toBe(true)
+
+    const sendBtn = screen.getAllByRole('button').find((b) =>
+      b.querySelector('svg.lucide-arrow-up, svg'),
+    )!
+    fireEvent.blur(textarea, { relatedTarget: null })
+    // Still expanded for the click that follows in the same gesture.
+    expect(box.classList.contains('flex-col')).toBe(true)
+    fireEvent.click(sendBtn)
+    expect(onSend).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(box.classList.contains('flex-col')).toBe(false))
     unmount()
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: previousWidth })
   })
