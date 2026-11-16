@@ -27,9 +27,13 @@ import type {
   Message,
 } from "@/types"
 import {
+  clearSessionDraft,
   contentNodesToComposerFields,
+  loadSessionDraft,
   normalizeContentNodes,
+  pruneSessionDrafts,
   saveSessionDraft,
+  validateSendContent,
 } from "@/lib/chat/contentProtocol"
 import {
   resolveAuthorizeNewOperationForSend,
@@ -427,6 +431,65 @@ export function ChatPage() {
     restoreTokenUsage(urlSessionId)
   }, [urlSessionId, switchSession, handleError, clearMessages])
 
+  // Draft lifecycle (E15): per-conversation drafts. On SWITCHING away, the
+  // current composer content is parked under the OLD session's key and the
+  // composer is cleared — session A's half-typed text can never be sent to
+  // session B. On entering, the target session's draft (refresh / failed
+  // send / previous switch) is restored unless a ?q= onboarding prefill is
+  // present (prefill wins). A successful send clears the key (handleSend),
+  // so a sent draft cannot resurrect.
+  const composerDraftRef = useRef({
+    input: "",
+    references: [] as ChatReference[],
+    nodes: [] as ChatContentNode[],
+  })
+  composerDraftRef.current = { input, references: chatReferences, nodes: chatContentNodes }
+  const prevDraftSessionRef = useRef<string | null>(null)
+  useEffect(() => {
+    // One-time growth bound: nothing deletes drafts of removed sessions.
+    pruneSessionDrafts()
+  }, [])
+  useEffect(() => {
+    const target = urlSessionId ?? "new"
+    const prev = prevDraftSessionRef.current
+    prevDraftSessionRef.current = target
+    if (prev === target) return
+    if (prev !== null) {
+      // Switching conversations: park the old draft, never inherit it.
+      const cur = composerDraftRef.current
+      if (cur.input !== "" || cur.references.length > 0 || cur.nodes.length > 0) {
+        saveSessionDraft({
+          sessionId: prev,
+          message: cur.input,
+          references: cur.references,
+          contentNodes: cur.nodes.length > 0 ? cur.nodes : undefined,
+          updatedAt: Date.now(),
+        })
+      }
+      setInput("")
+      setChatReferences([])
+      setChatContentNodes([])
+    }
+    // ?q= onboarding prefill wins over a restored draft.
+    if (searchParams.get("q")) return
+    const draft = loadSessionDraft(target)
+    if (!draft || (!draft.message && draft.references.length === 0)) return
+    if (prev !== null) {
+      // Switch path: composer was just cleared — always restore.
+      setInput(draft.message)
+      setChatReferences(draft.references)
+      setChatContentNodes(draft.contentNodes ?? [])
+    } else {
+      // Initial mount: never clobber in-progress typing (HMR / late mount).
+      const cur = composerDraftRef.current
+      if (cur.input !== "" || cur.references.length > 0 || cur.nodes.length > 0) return
+      setInput(draft.message)
+      setChatReferences(draft.references)
+      setChatContentNodes(draft.contentNodes ?? [])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlSessionId])
+
   // Handle deleted session redirects and root path
   useEffect(() => {
     if (!sessionsLoaded) return
@@ -744,14 +807,45 @@ export function ChatPage() {
     const trimmedInput = (overrides?.message ?? input).trim()
     if ((!trimmedInput && attachedImages.length === 0) || isStreaming || isLoadingSession) return
 
+    // Authorize-confirm sends (E16) ride ONLY the phrase text + the
+    // authorizeNewOperation payload: no staged images / references / inline
+    // nodes are attached, and the user's in-progress draft is never cleared.
+    const isOverrideSend = overrides?.message !== undefined
+    // Draft key of THIS conversation (welcome mode has no session id yet) —
+    // save / restore / clear all use the same derivation (E15).
+    const draftSession = urlSessionId ?? "new"
+
     // Check if images are attached but current model doesn't support vision
-    if (attachedImages.length > 0 && !imagesAllowed) {
+    if (!isOverrideSend && attachedImages.length > 0 && !imagesAllowed) {
       toast({ title: t('chat:model.visionError'), variant: "destructive" })
       return
     }
 
+    // Client mirror of the server's content-node caps (E14): an over-cap
+    // draft (e.g. 21 total inline mentions of one entity — in-sentence
+    // duplicates are legal, so the unique-count insertion guard does not
+    // catch them) must fail HERE with the composer intact, not as a 400
+    // after the composer was already cleared.
+    if (!isOverrideSend && chatContentNodes.some((n) => n.kind === "reference")) {
+      const capCode = validateSendContent(chatContentNodes)
+      if (capCode) {
+        // Keep editable draft (nodes + chips) for fix-and-resend.
+        saveSessionDraft({
+          sessionId: draftSession,
+          message: input,
+          references: chatReferences,
+          contentNodes: chatContentNodes.length > 0 ? chatContentNodes : undefined,
+          updatedAt: Date.now(),
+        })
+        toast({ title: t('chat:mention.contentOverLimit'), variant: "destructive" })
+        return
+      }
+    }
+
     // Preflight invalid/stale references — keep draft, mark chips, do not send.
-    if (chatReferences.length > 0) {
+    // Confirm sends carry no references, so they skip the preflight and keep
+    // any invalid-ref marks on the untouched draft.
+    if (!isOverrideSend && chatReferences.length > 0) {
       try {
         const resolved = await resolveMentions(chatReferences)
         if (!resolved.ok) {
@@ -762,7 +856,7 @@ export function ChatPage() {
           setInvalidRefs(next)
           // Keep editable draft (nodes + chips) for fix-and-resend after refresh.
           saveSessionDraft({
-            sessionId: sessionId || "new",
+            sessionId: draftSession,
             message: input,
             references: chatReferences,
             contentNodes: chatContentNodes.length > 0 ? chatContentNodes : undefined,
@@ -780,7 +874,7 @@ export function ChatPage() {
         // re-resolves and spells NOT FOUND into the model context.
         setInvalidRefs({})
       }
-    } else {
+    } else if (!isOverrideSend) {
       setInvalidRefs({})
     }
 
@@ -803,15 +897,16 @@ export function ChatPage() {
 
     // Prepare message content
     const messageContent = trimmedInput || (attachedImages.length > 0 ? "[Image]" : "")
-    const sentReferences = chatReferences.length > 0 ? [...chatReferences] : undefined
-    const hasInlineRefs = chatContentNodes.some((n) => n.kind === "reference")
+    const sentImages = !isOverrideSend && attachedImages.length > 0 ? [...attachedImages] : undefined
+    const sentReferences = !isOverrideSend && chatReferences.length > 0 ? [...chatReferences] : undefined
+    const hasInlineRefs = !isOverrideSend && chatContentNodes.some((n) => n.kind === "reference")
     const sentContentNodes = hasInlineRefs ? [...chatContentNodes] : undefined
     const userMessage: Message = {
       id: generateId(),
       role: "user",
       content: messageContent,
       timestamp: Date.now(),
-      images: attachedImages.length > 0 ? [...attachedImages] : undefined,
+      images: sentImages,
       contentNodes: sentContentNodes,
     }
     addMessage(userMessage)
@@ -822,15 +917,20 @@ export function ChatPage() {
     isPinnedToBottomRef.current = true
     setShowScrollPill(false)
 
-    setInput("")
-    setAttachedImages([])
-    setChatReferences([])
-    setChatContentNodes([])
-    setInvalidRefs({})
+    if (!isOverrideSend) {
+      setInput("")
+      setAttachedImages([])
+      setChatReferences([])
+      setChatContentNodes([])
+      setInvalidRefs({})
+      // Draft lifecycle (E15): the send consumed the composer — drop the
+      // persisted draft so it cannot resurrect after a refresh.
+      clearSessionDraft(draftSession)
 
-    // Reset textarea height when the legacy host is active.
-    if (inputRef.current) {
-      inputRef.current.style.height = "40px"
+      // Reset textarea height when the legacy host is active.
+      if (inputRef.current) {
+        inputRef.current.style.height = "40px"
+      }
     }
 
     // Set WebSocket session and send message
@@ -849,7 +949,7 @@ export function ChatPage() {
       undefined
     ws.sendMessage(
       trimmedInput,
-      attachedImages.length > 0 ? attachedImages : undefined,
+      sentImages,
       undefined,
       undefined,
       sentReferences,

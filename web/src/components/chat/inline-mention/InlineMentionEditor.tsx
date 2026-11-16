@@ -4,7 +4,7 @@
  * Owns the ProseMirror surface + mention atoms. Suggestion search UI stays in
  * ChatComposer (listbox / type filters / pagination / IME guards).
  */
-import { useEffect, useMemo, useRef } from "react"
+import { useCallback, useEffect, useMemo, useRef } from "react"
 import { EditorContent, useEditor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 import Placeholder from "@tiptap/extension-placeholder"
@@ -121,6 +121,17 @@ export function InlineMentionEditor({
   const skipEmit = useRef(false)
   const isComposing = useRef(false)
   const lastPlain = useRef(value)
+  /**
+   * External value/contentNodes update that arrived while an IME composition
+   * was active. setContent mid-composition aborts CJK input, so the sync is
+   * DEFERRED (not dropped): applied once on compositionend, after the
+   * composition's own flush. Without this a draft restore / message reuse
+   * racing an active IME session was silently lost forever.
+   */
+  const pendingSyncRef = useRef<{
+    value: string
+    contentNodes?: ChatContentNode[]
+  } | null>(null)
   // Empty until the first sync/emit — initial contentNodes (history fill) must
   // still enter via setContent; only post-emit echoes share this key.
   const lastNodesKey = useRef("")
@@ -280,12 +291,28 @@ export function InlineMentionEditor({
     const onEnd = () => {
       isComposing.current = false
       onCompositionChangeRef.current?.(false)
-      if (skipEmit.current) return
-      const doc = tipTapJsonToInlineDoc(editor.getJSON())
-      const payload = inlineDocToChatPayload(doc)
-      lastPlain.current = payload.message
-      lastNodesKey.current = contentNodesKey(payload.contentNodes)
-      onPayloadChangeRef.current({ ...payload, doc })
+      if (!skipEmit.current) {
+        const doc = tipTapJsonToInlineDoc(editor.getJSON())
+        const payload = inlineDocToChatPayload(doc)
+        lastPlain.current = payload.message
+        lastNodesKey.current = contentNodesKey(payload.contentNodes)
+        onPayloadChangeRef.current({ ...payload, doc })
+      }
+      // Replay an external value/nodes update that arrived mid-composition
+      // (deferred, not dropped — see pendingSyncRef). The replay must also
+      // re-broadcast the applied content: the flush above just emitted the
+      // PRE-restore doc, and the controlled host's now-stale (empty) props
+      // would otherwise clobber the replayed content on the next render.
+      const pending = pendingSyncRef.current
+      pendingSyncRef.current = null
+      if (pending) {
+        applyExternalSyncRef.current(pending.value, pending.contentNodes)
+        const doc = tipTapJsonToInlineDoc(editor.getJSON())
+        const payload = inlineDocToChatPayload(doc)
+        lastPlain.current = payload.message
+        lastNodesKey.current = contentNodesKey(payload.contentNodes)
+        onPayloadChangeRef.current({ ...payload, doc })
+      }
     }
     dom.addEventListener("compositionstart", onStart)
     dom.addEventListener("compositionend", onEnd)
@@ -297,43 +324,62 @@ export function InlineMentionEditor({
 
   // Sync external clear / welcome prompt / draft restore.
   // Own emits update lastPlain/lastNodesKey first so they never re-enter here.
+  const applyExternalSync = useCallback(
+    (value: string, contentNodes?: ChatContentNode[]) => {
+      if (!editor) return
+      const nodesKey = contentNodesKey(contentNodes)
+      if (contentNodes && contentNodes.length > 0 && nodesKey !== lastNodesKey.current) {
+        const fromNodes = contentNodesToInlineDoc(contentNodes)
+        const fromPayload = inlineDocToChatPayload(fromNodes)
+        skipEmit.current = true
+        editor.commands.setContent(inlineDocToTipTapJson(fromNodes), {
+          emitUpdate: false,
+        })
+        skipEmit.current = false
+        lastPlain.current = fromPayload.message
+        lastNodesKey.current = nodesKey
+        return
+      }
+      if (value !== lastPlain.current) {
+        const current = inlineDocToChatPayload(tipTapJsonToInlineDoc(editor.getJSON()))
+        if (value !== current.message) {
+          skipEmit.current = true
+          if (!value.trim()) {
+            editor.commands.clearContent(true)
+          } else {
+            editor.commands.setContent(
+              inlineDocToTipTapJson({
+                nodes: [{ kind: "text", text: value }],
+              }),
+              { emitUpdate: false },
+            )
+          }
+          skipEmit.current = false
+        }
+        lastPlain.current = value
+        if (!value) lastNodesKey.current = ""
+      }
+    },
+    [editor],
+  )
+
+  // Keep the compositionend handler on the freshest sync fn (the listener
+  // effect only re-subscribes when `editor` changes).
+  const applyExternalSyncRef = useRef(applyExternalSync)
+  useEffect(() => {
+    applyExternalSyncRef.current = applyExternalSync
+  }, [applyExternalSync])
+
   useEffect(() => {
     if (!editor) return
     // setContent mid-composition aborts the IME session (CJK input breaks).
-    if (isComposing.current) return
-    const nodesKey = contentNodesKey(contentNodes)
-    if (contentNodes && contentNodes.length > 0 && nodesKey !== lastNodesKey.current) {
-      const fromNodes = contentNodesToInlineDoc(contentNodes)
-      const fromPayload = inlineDocToChatPayload(fromNodes)
-      skipEmit.current = true
-      editor.commands.setContent(inlineDocToTipTapJson(fromNodes), {
-        emitUpdate: false,
-      })
-      skipEmit.current = false
-      lastPlain.current = fromPayload.message
-      lastNodesKey.current = nodesKey
+    // Defer: stash the latest external props and let compositionend replay.
+    if (isComposing.current) {
+      pendingSyncRef.current = { value, contentNodes }
       return
     }
-    if (value !== lastPlain.current) {
-      const current = inlineDocToChatPayload(tipTapJsonToInlineDoc(editor.getJSON()))
-      if (value !== current.message) {
-        skipEmit.current = true
-        if (!value.trim()) {
-          editor.commands.clearContent(true)
-        } else {
-          editor.commands.setContent(
-            inlineDocToTipTapJson({
-              nodes: [{ kind: "text", text: value }],
-            }),
-            { emitUpdate: false },
-          )
-        }
-        skipEmit.current = false
-      }
-      lastPlain.current = value
-      if (!value) lastNodesKey.current = ""
-    }
-  }, [editor, value, contentNodes])
+    applyExternalSync(value, contentNodes)
+  }, [editor, value, contentNodes, applyExternalSync])
 
   useEffect(() => {
     if (!editor) return

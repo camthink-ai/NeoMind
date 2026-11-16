@@ -49,4 +49,32 @@ describe("inline-mention docBridge", () => {
       true,
     )
   })
+
+  it("drops mention nodes with invalid/missing entityType instead of coercing to device (E18)", () => {
+    const json = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "看 " },
+            // Pasted HTML with a bogus data-entity-type — must not become a device ref.
+            { type: "mention", attrs: { id: "bogus-1", label: "假设备", entityType: "bogus" } },
+            // Missing entityType entirely — same rule.
+            { type: "mention", attrs: { id: "missing-1", label: "无类型" } },
+            // Valid entityType survives.
+            { type: "mention", attrs: { id: "rule-9", label: "高温报警", entityType: "rule" } },
+          ],
+        },
+      ],
+    }
+    const doc = tipTapJsonToInlineDoc(json)
+    const refs = doc.nodes.filter(
+      (n): n is Extract<typeof n, { kind: "reference" }> => n.kind === "reference",
+    )
+    expect(refs.map((r) => r.id)).toEqual(["rule-9"])
+    expect(refs[0].entityType).toBe("rule")
+    expect(doc.nodes.some((n) => n.kind === "reference" && n.id === "bogus-1")).toBe(false)
+    expect(doc.nodes.some((n) => n.kind === "reference" && n.id === "missing-1")).toBe(false)
+  })
 })

@@ -170,6 +170,24 @@ export function validateContentNodes(nodes: ChatContentNode[]): void {
   }
 }
 
+/**
+ * Pre-send cap check for the production composers: mirror the server's
+ * content-node caps client-side so an over-cap draft (e.g. 21 total inline
+ * mentions of one entity — in-sentence duplicates are legal, so the
+ * unique-count insertion guard does not catch them) fails HERE, toast +
+ * composer kept, instead of a hard 400 after the composer was cleared.
+ * Returns the failing cap code, or null when the nodes are sendable.
+ */
+export function validateSendContent(nodes: ChatContentNode[]): CapCode | null {
+  try {
+    validateContentNodes(nodes)
+    return null
+  } catch (e) {
+    if (e instanceof ContentProtocolError) return e.code
+    throw e
+  }
+}
+
 /** Build a WS/HTTP chat payload from an InlineDoc (prototype / future composer). */
 export function buildChatRequestFromDoc(
   doc: InlineDoc,
@@ -277,6 +295,35 @@ export function saveSessionDraft(draft: SessionChatDraft): void {
 export function clearSessionDraft(sessionId: string): void {
   if (typeof localStorage === "undefined") return
   localStorage.removeItem(draftKey(sessionId))
+}
+
+/**
+ * Bound draft growth: keep only the `keep` most recently updated draft keys.
+ * Nothing deletes drafts for removed sessions, so without a cap the
+ * `neomind:chat-draft:v1:*` namespace grows forever (each key ≤ ~8KB, but
+ * unbounded in count). Best-effort: unreadable entries count as oldest.
+ */
+export function pruneSessionDrafts(keep = 30): void {
+  if (typeof localStorage === "undefined") return
+  const entries: { key: string; updatedAt: number }[] = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (!key || !key.startsWith(DRAFT_PREFIX)) continue
+    let updatedAt = 0
+    try {
+      const raw = localStorage.getItem(key)
+      const parsed = raw ? (JSON.parse(raw) as SessionChatDraft) : null
+      updatedAt = parsed?.updatedAt ?? 0
+    } catch {
+      updatedAt = 0
+    }
+    entries.push({ key, updatedAt })
+  }
+  if (entries.length <= keep) return
+  entries.sort((a, b) => a.updatedAt - b.updatedAt)
+  for (const e of entries.slice(0, entries.length - keep)) {
+    localStorage.removeItem(e.key)
+  }
 }
 
 /** Restore draft after a send failure (cap / network). Does not clear. */

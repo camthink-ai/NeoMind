@@ -36,9 +36,13 @@ import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
 import {
+  clearSessionDraft,
   contentNodesToComposerFields,
+  loadSessionDraft,
+  markDraftForRetry,
   normalizeContentNodes,
   saveSessionDraft,
+  validateSendContent,
 } from "@/lib/chat/contentProtocol"
 import {
   resolveAuthorizeNewOperationForSend,
@@ -221,6 +225,10 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   const [input, setInput] = useState("")
   const [panelReferences, setPanelReferences] = useState<ChatReference[]>([])
   const [panelContentNodes, setPanelContentNodes] = useState<ChatContentNode[]>([])
+  /** Latest composer state — the page-change draft restore reads it without
+   *  re-running on every keystroke (E15). */
+  const panelComposerRef = useRef({ input, references: panelReferences, nodes: panelContentNodes })
+  panelComposerRef.current = { input, references: panelReferences, nodes: panelContentNodes }
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const editorHostRef = useRef<HTMLElement | null>(null)
   const [sendPhase, setSendPhase] = useState<"idle" | "preparing" | "waiting">("idle")
@@ -477,6 +485,19 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     let initCancelled = false
     const persistedId = readStoredPanelSession(pageKey, sessionFingerprint)
     if (persistedId) {
+      // Draft lifecycle (E15): entering this page's conversation with an
+      // EMPTY composer restores its persisted draft (failed-send / refresh
+      // recovery). In-progress typing is never clobbered; a successful send
+      // clears the key (handleSend).
+      const cur = panelComposerRef.current
+      if (cur.input === "" && cur.references.length === 0 && cur.nodes.length === 0) {
+        const draft = loadSessionDraft(persistedId)
+        if (draft && (draft.message || draft.references.length > 0)) {
+          setInput(draft.message)
+          setPanelReferences(draft.references)
+          setPanelContentNodes(draft.contentNodes ?? [])
+        }
+      }
       // Load history for this page's persisted session
       api.getSessionHistory(persistedId, undefined, { skipErrorToast: true }).then(result => {
         if (initCancelled) return
@@ -622,10 +643,37 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     const text = (overrides?.message ?? input).trim()
     if ((!text && attachedImages.length === 0) || isStreaming || sendInProgressRef.current || isHistoryLoading) return
 
+    // Authorize-confirm sends (E16) ride ONLY the phrase text + the
+    // authorizeNewOperation payload: no staged images / references / inline
+    // nodes are attached, and the user's in-progress draft is never cleared.
+    const isOverrideSend = overrides?.message !== undefined
+
     // Images need a vision-capable backend
-    if (attachedImages.length > 0 && !imagesAllowed) {
+    if (!isOverrideSend && attachedImages.length > 0 && !imagesAllowed) {
       toast({ title: t("model.visionError"), variant: "destructive" })
       return
+    }
+
+    // Client mirror of the server's content-node caps (E14): an over-cap
+    // draft must fail HERE with the composer intact, not as a 400 after the
+    // composer was already cleared.
+    if (!isOverrideSend && panelContentNodes.some((n) => n.kind === "reference")) {
+      const capCode = validateSendContent(panelContentNodes)
+      if (capCode) {
+        // Keep editable draft for fix-and-resend — only under a real panel
+        // session (the session-less "new" bucket belongs to the chat page).
+        if (panelSessionIdRef.current) {
+          saveSessionDraft({
+            sessionId: panelSessionIdRef.current,
+            message: input,
+            references: panelReferences,
+            contentNodes: panelContentNodes.length > 0 ? panelContentNodes : undefined,
+            updatedAt: Date.now(),
+          })
+        }
+        toast({ title: t("mention.contentOverLimit"), variant: "destructive" })
+        return
+      }
     }
 
     // Echo the user's message immediately. Session setup happens in the
@@ -634,13 +682,13 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     const pendingAssistantMessageId = generateId()
     pendingAssistantMessageIdRef.current = pendingAssistantMessageId
     const sendEpoch = sendEpochRef.current
-    const sentImages = attachedImages.length > 0 ? [...attachedImages] : undefined
+    const sentImages = !isOverrideSend && attachedImages.length > 0 ? [...attachedImages] : undefined
     sendInProgressRef.current = true
     sendStartedAtRef.current = Date.now()
     setSendElapsedSeconds(0)
     setSendPhase("preparing")
-    const sentReferences = panelReferences.length > 0 ? [...panelReferences] : undefined
-    const hasInlineRefs = panelContentNodes.some((n) => n.kind === "reference")
+    const sentReferences = !isOverrideSend && panelReferences.length > 0 ? [...panelReferences] : undefined
+    const hasInlineRefs = !isOverrideSend && panelContentNodes.some((n) => n.kind === "reference")
     const sentContentNodes = hasInlineRefs ? [...panelContentNodes] : undefined
     addPanelMessage({
       id: pendingUserMessageId,
@@ -651,11 +699,19 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       contentNodes: sentContentNodes,
     })
 
-    setAttachedImages([])
-    setInput("")
-    setPanelReferences([])
-    setPanelContentNodes([])
-    if (inputRef.current) inputRef.current.style.height = "auto"
+    // Draft key captured BEFORE createPanelSession mints a new id — the
+    // persisted draft lives under the session the draft was saved under.
+    const draftSession = panelSessionIdRef.current
+    if (!isOverrideSend) {
+      setAttachedImages([])
+      setInput("")
+      setPanelReferences([])
+      setPanelContentNodes([])
+      if (inputRef.current) inputRef.current.style.height = "auto"
+      // Draft lifecycle (E15): the send consumed the composer — drop the
+      // persisted draft so it cannot resurrect after a refresh.
+      if (draftSession) clearSessionDraft(draftSession)
+    }
 
     // Ensure we have a session before sending. This await used to happen
     // before any UI feedback, making the first message feel unresponsive.
@@ -664,8 +720,23 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     if (sendEpoch !== sendEpochRef.current) return
     if (!sessionId) {
       setPanelMessages(prev => prev.filter(message => message.id !== pendingUserMessageId))
-      setInput(text)
-      setAttachedImages(sentImages || [])
+      if (!isOverrideSend) {
+        // Failed send: restore the FULL composer state (the clear above took
+        // references + nodes too) and persist them for refresh recovery (E15).
+        // Session-less buckets are not persisted — the "new" draft key
+        // belongs to the chat page's welcome composer.
+        setInput(text)
+        setAttachedImages(sentImages || [])
+        setPanelReferences(sentReferences ?? [])
+        setPanelContentNodes(sentContentNodes ?? [])
+        if (draftSession) {
+          markDraftForRetry(draftSession, {
+            message: text,
+            references: sentReferences ?? [],
+            contentNodes: sentContentNodes,
+          })
+        }
+      }
       setSendPhase("idle")
       sendInProgressRef.current = false
       toast({ title: t("errors.sendMessage"), variant: "destructive" })
@@ -952,14 +1023,19 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
                 setInput(fields.message)
                 setPanelReferences(fields.references)
                 setPanelContentNodes(fields.contentNodes)
-                const draftSession = panelSessionIdRef.current || "new"
-                saveSessionDraft({
-                  sessionId: draftSession,
-                  message: fields.message,
-                  references: fields.references,
-                  contentNodes: fields.contentNodes,
-                  updatedAt: Date.now(),
-                })
+                // Draft persistence is session-scoped by design — the panel
+                // never writes the shared welcome-mode "new" bucket (chat
+                // welcome restore reads it; a panel reuse draft surfacing
+                // there would be cross-context bleed). Skip when sessionless.
+                if (panelSessionIdRef.current) {
+                  saveSessionDraft({
+                    sessionId: panelSessionIdRef.current,
+                    message: fields.message,
+                    references: fields.references,
+                    contentNodes: fields.contentNodes,
+                    updatedAt: Date.now(),
+                  })
+                }
                 requestAnimationFrame(() => {
                   const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
                   if (pm) pm.focus()

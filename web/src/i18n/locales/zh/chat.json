@@ -245,6 +245,7 @@
     "agent": "代理",
     "invalid": "引用无效",
     "invalidSend": "部分引用无效，请修正后重发",
+    "contentOverLimit": "消息内容超出单条上限（引用最多 20 个、文本 8000 字），请删减后重发",
     "reuseInComposer": "填回输入框",
     "filterTypes": "按类型筛选",
     "filterAll": "全部",

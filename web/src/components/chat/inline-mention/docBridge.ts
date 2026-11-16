@@ -16,7 +16,8 @@ import { inlineDocToContentNodes } from "@/lib/chat/contentProtocol"
 
 const ENTITY_TYPES: EntityType[] = ["device", "rule", "transform", "agent"]
 
-function isEntityType(v: unknown): v is EntityType {
+/** Valid entity-type guard shared with the paste parser (entityMention). */
+export function isEntityType(v: unknown): v is EntityType {
   return typeof v === "string" && (ENTITY_TYPES as string[]).includes(v)
 }
 
@@ -41,14 +42,15 @@ export function tipTapJsonToInlineDoc(json: JSONContent | null | undefined): Inl
         pushText("\n")
       } else if (n.type === "mention") {
         const id = typeof n.attrs?.id === "string" ? n.attrs.id : ""
-        const label =
-          typeof n.attrs?.label === "string"
-            ? n.attrs.label
-            : id
-        const entityType = isEntityType(n.attrs?.entityType)
-          ? n.attrs.entityType
-          : "device"
-        if (id) {
+        // An invalid/missing entityType must NOT silently coerce to a device
+        // reference (pasted HTML with a bogus/absent data-entity-type) —
+        // drop the mention node instead (E18).
+        const entityType = n.attrs?.entityType
+        if (id && isEntityType(entityType)) {
+          const label =
+            typeof n.attrs?.label === "string"
+              ? n.attrs.label
+              : id
           nodes.push({
             kind: "reference",
             entityType,

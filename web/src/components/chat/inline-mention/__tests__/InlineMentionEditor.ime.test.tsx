@@ -84,6 +84,11 @@ describe('InlineMentionEditor IME / controlled sync', () => {
       fireEvent.compositionEnd(ed)
     })
     expect(onCompositionChange).toHaveBeenCalledWith(false)
+    // Deferred, not dropped: the external update applies once composition
+    // ended (it used to be silently lost forever).
+    await waitFor(() =>
+      expect(ed.textContent ?? '').toContain('外部注入应被忽略'),
+    )
   })
 
   it('controlled contentNodes seed + echo keep editor text', async () => {

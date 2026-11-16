@@ -353,6 +353,12 @@ export function ChatComposer({
       closeMention()
       return
     }
+    // Same cap as handleSuggestionStart: without it the picker opens at the
+    // reference cap and a pick silently closes with no feedback.
+    if (references.length >= MAX_REFERENCES) {
+      closeMention()
+      return
+    }
     mentionCommandRef.current = api.command
     mentionOpenRef.current = true
     setMentionQuery(api.query)
@@ -899,8 +905,13 @@ export function ChatComposer({
           data-mention-menu
           onPointerDown={() => {
             // Touching the menu blurs the editor; keep the TipTap suggestion
-            // command alive so a later tap can still insert.
+            // command alive so a later tap can still insert. Self-release on
+            // the next frames — a stuck-true flag would permanently block
+            // handleSuggestionExit (desktop picks bubble into this handler
+            // AFTER selectMention's finally has already reset the flag, so
+            // without the release the menu can never close again).
             suppressMentionExitClose.current = true
+            releaseMentionSuppress()
           }}
           className={cn(
             "absolute bottom-full left-0 right-0 z-[200] mb-2 flex flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-lg",

@@ -11,8 +11,10 @@ import {
   loadSessionDraft,
   markDraftForRetry,
   normalizeContentNodes,
+  pruneSessionDrafts,
   saveSessionDraft,
   validateContentNodes,
+  validateSendContent,
 } from "../contentProtocol"
 import { emptyDoc, insertReference, setTextNode } from "@/prototypes/inline-at/model"
 import { CHAT_CONTENT_VERSION_V1 } from "@/types"
@@ -30,6 +32,10 @@ describe("contentProtocol", () => {
         store.delete(k)
       },
       clear: () => store.clear(),
+      get length() {
+        return store.size
+      },
+      key: (i: number) => Array.from(store.keys())[i] ?? null,
     })
     clearSessionDraft("s1")
     clearSessionDraft("new")
@@ -110,6 +116,77 @@ describe("contentProtocol", () => {
     expect(loadSessionDraft("s1")?.contentNodes?.length).toBe(2)
   })
 
+  it("validateSendContent mirrors the server caps for the send path (E14)", () => {
+    expect(validateSendContent([])).toBeNull()
+    expect(validateSendContent([{ kind: "text", text: "hello" }])).toBeNull()
+
+    // 20 duplicate inline mentions of ONE entity: the unique-count insertion
+    // guard passes and the total ref-node cap is exactly at its boundary —
+    // still sendable.
+    const twentyDup = [
+      { kind: "text" as const, text: "x " },
+      ...Array.from({ length: 20 }, () => ({
+        kind: "reference" as const,
+        type: "device" as const,
+        id: "same-1",
+        labelSnapshot: "同一设备",
+      })),
+    ]
+    expect(validateSendContent(twentyDup)).toBeNull()
+
+    // 21 total nodes of the same entity — the exact client gap that used to
+    // pass insertion-time checks and hit the server 400 after the composer
+    // was cleared.
+    const twentyOneDup = [...twentyDup, twentyDup[1]]
+    expect(validateSendContent(twentyOneDup)).toBe("content_ref_nodes_cap")
+
+    // 21 UNIQUE references are equally over the total ref-node cap.
+    const unique21 = Array.from({ length: 21 }, (_, i) => ({
+      kind: "reference" as const,
+      type: "device" as const,
+      id: `d-${i}`,
+      labelSnapshot: `D${i}`,
+    }))
+    expect(validateSendContent(unique21)).toBe("content_ref_nodes_cap")
+
+    // Text char cap: 8000 boundary passes, 8001 fails (with refs attached so
+    // the nodes are actually sent).
+    const boundary = [
+      { kind: "reference" as const, type: "rule" as const, id: "r-1", labelSnapshot: "R" },
+      { kind: "text" as const, text: "a".repeat(8000) },
+    ]
+    expect(validateSendContent(boundary)).toBeNull()
+    const over = [
+      boundary[0],
+      { kind: "text" as const, text: "a".repeat(8001) },
+    ]
+    expect(validateSendContent(over)).toBe("content_text_cap")
+  })
+
+  it("draft lifecycle: save → load restores composer fields, clear removes the key (E15)", () => {
+    saveSessionDraft({
+      sessionId: "s9",
+      message: "检查 @温湿度",
+      references: [{ type: "device", id: "sensor-001", label: "温湿度" }],
+      contentNodes: [
+        { kind: "text", text: "检查 " },
+        { kind: "reference", type: "device", id: "sensor-001", labelSnapshot: "温湿度" },
+      ],
+      updatedAt: 1,
+    })
+    const loaded = loadSessionDraft("s9")
+    expect(loaded?.message).toBe("检查 @温湿度")
+    expect(loaded?.references).toHaveLength(1)
+    expect(loaded?.contentNodes).toHaveLength(2)
+    // Sessions stay isolated — the neighboring key is untouched.
+    expect(loadSessionDraft("s10")).toBeNull()
+    // Successful-send cleanup: the key is gone after clear.
+    clearSessionDraft("s9")
+    expect(loadSessionDraft("s9")).toBeNull()
+    // Clearing a missing key (send after draft expiry) is a no-op.
+    expect(() => clearSessionDraft("s9")).not.toThrow()
+  })
+
   it("normalizeContentNodes accepts camelCase and snake_case aliases", () => {
     const nodes = normalizeContentNodes([
       { kind: "text", text: "把 " },
@@ -144,5 +221,32 @@ describe("contentProtocol", () => {
     expect(normalizeContentNodes([])).toBeUndefined()
     expect(normalizeContentNodes([{ kind: "reference", type: "nope", id: "x" }])).toBeUndefined()
     expect(normalizeContentNodes(null)).toBeUndefined()
+  })
+
+  it("pruneSessionDrafts keeps the newest N draft keys and drops the rest", () => {
+    // Seed 6 drafts, then patch deterministic timestamps (saveSessionDraft
+    // stamps Date.now(), which would make the ordering ambiguous).
+    const ids = ["s0", "s1", "s2", "s3", "s4", "new"]
+    ids.forEach((id) =>
+      saveSessionDraft({ sessionId: id, message: `m-${id}`, references: [], updatedAt: Date.now() }),
+    )
+    ids.forEach((id, i) => {
+      const key = `neomind:chat-draft:v1:${id}`
+      const raw = localStorage.getItem(key)
+      if (raw) {
+        localStorage.setItem(key, JSON.stringify({ ...JSON.parse(raw), updatedAt: 1000 * (i + 1) }))
+      }
+    })
+    pruneSessionDrafts(3)
+    expect(loadSessionDraft("s0")).toBeNull()
+    expect(loadSessionDraft("s1")).toBeNull()
+    expect(loadSessionDraft("s2")).toBeNull()
+    expect(loadSessionDraft("s3")).not.toBeNull()
+    expect(loadSessionDraft("s4")).not.toBeNull()
+    expect(loadSessionDraft("new")).not.toBeNull()
+    // Non-draft keys untouched.
+    localStorage.setItem("neomind:other", "x")
+    pruneSessionDrafts(0)
+    expect(localStorage.getItem("neomind:other")).toBe("x")
   })
 })

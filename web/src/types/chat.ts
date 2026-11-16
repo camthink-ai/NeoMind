@@ -177,7 +177,8 @@ export type ServerMessage =
       priorOperationId: string
       writeFingerprint: string
       toolName?: string
-      target?: string
+      /** Backend `Option<String>` — JSON null when absent. */
+      target?: string | null
       validUntilMs: number
       sessionId: string
     }

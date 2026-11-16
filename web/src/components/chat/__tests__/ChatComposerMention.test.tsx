@@ -196,6 +196,36 @@ describe('ChatComposer TipTap @-mentions', () => {
     ).toHaveLength(0)
   })
 
+  /// Regression (suppressor stuck): after a POINTER pick, the pick's own
+  /// pointerdown bubbles into the listbox container, which re-armed
+  /// suppressMentionExitClose AFTER selectMention's finally had reset it —
+  /// nothing ever cleared it again, so every LATER suggestion exit (typing a
+  /// space after `@`, deleting the trigger, send clearing the doc) was
+  /// blocked and the menu floated forever. The container handler now
+  /// self-releases; a subsequent exit must close the menu.
+  it('suggestion exit still closes the menu after a pointer pick', async () => {
+    vi.useRealTimers()
+    setup()
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await openMentionViaToolbar()
+    const options = await screen.findAllByRole('option')
+    await act(async () => {
+      fireEvent.pointerDown(options[0])
+    })
+    await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
+
+    // New picker session: type @, wait for options, then exit WITHOUT
+    // picking — a space kills the suggestion range → onExit must close.
+    await userEvent.click(getEditor())
+    await userEvent.keyboard('@')
+    await screen.findAllByRole('option')
+    await userEvent.keyboard(' ')
+    await waitFor(
+      () => expect(screen.queryByRole('listbox')).toBeNull(),
+      { timeout: 3000 },
+    )
+  }, 15000)
+
   it('allows the same entity twice in-sentence (no chip dedupe)', async () => {
     const { onContentNodesChange } = setup({
       initial: {
@@ -350,5 +380,63 @@ describe('ChatComposer TipTap @-mentions', () => {
     expect(searchMock).not.toHaveBeenCalled()
     expect(screen.queryByRole('listbox')).toBeNull()
     expect(onChange).toHaveBeenCalledWith('普通消息 @某物')
+  })
+
+  it('loadMore discards a stale page that lands after the query changed (E17)', async () => {
+    type SearchResult = Awaited<ReturnType<typeof searchMentions>>
+    const result = (
+      items: Array<{ type: 'device' | 'rule'; id: string; label: string }>,
+      hasMore = false,
+      nextOffset: number | null = null,
+    ): SearchResult => ({
+      items,
+      total: items.length,
+      limit: 20,
+      offset: 0,
+      hasMore,
+      nextOffset,
+      typeErrors: {},
+    })
+    let resolveStale!: (v: SearchResult) => void
+    searchMock
+      // Page 1 of the initial (empty) query — hasMore true so 加载更多 shows.
+      .mockImplementationOnce(async () =>
+        result(
+          [
+            { type: 'device', id: 'sensor-001', label: '设备甲' },
+            { type: 'device', id: 'sensor-002', label: '设备乙' },
+          ],
+          true,
+          20,
+        ),
+      )
+      // Page 2 of the SAME query — held pending to simulate a slow response.
+      .mockImplementationOnce(() => new Promise<SearchResult>((res) => { resolveStale = res }))
+      // Fresh search for the retyped query.
+      .mockImplementationOnce(async () => result([{ type: 'rule', id: 'rule-9', label: '规则丙' }]))
+    setup()
+    await waitFor(() => expect(getEditor()).toBeTruthy())
+    await openMentionViaToolbar()
+    await screen.findAllByRole('option')
+    const more = await screen.findByRole('button', { name: /加载更多|load more|mention\.loadMore/i })
+    await act(async () => {
+      fireEvent.click(more)
+    })
+    // Retype while page 2 is in flight — the picker now belongs to 规则丙.
+    await userEvent.keyboard('规则')
+    await waitFor(() => {
+      const options = screen.getAllByRole('option')
+      expect(options).toHaveLength(1)
+      expect(options[0].textContent).toContain('规则丙')
+    })
+    // The stale page-2 response lands NOW — it must NOT merge into the new
+    // query's list nor corrupt its pagination.
+    await act(async () => {
+      resolveStale(result([{ type: 'device', id: 'sensor-003', label: '设备丁' }]))
+    })
+    await new Promise((r) => setTimeout(r, 60))
+    const options = screen.getAllByRole('option')
+    expect(options).toHaveLength(1)
+    expect(options[0].textContent).toContain('规则丙')
   })
 })

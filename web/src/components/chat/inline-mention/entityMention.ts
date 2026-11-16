@@ -6,6 +6,7 @@ import Mention from "@tiptap/extension-mention"
 import type { MentionOptions } from "@tiptap/extension-mention"
 import { mergeAttributes } from "@tiptap/core"
 import type { EntityType } from "@/prototypes/inline-at/model"
+import { isEntityType } from "@/components/chat/inline-mention/docBridge"
 
 export type EntityMentionAttrs = {
   id: string | null
@@ -52,7 +53,20 @@ export const EntityMention = Mention.extend<
   },
 
   parseHTML() {
-    return [{ tag: 'span[data-type="mention"]' }]
+    return [
+      {
+        tag: 'span[data-type="mention"]',
+        getAttrs: (el) => {
+          // Reject pasted/foreign mentions with an unknown entity type:
+          // converting them would either coerce a wrong type (the old
+          // everything-is-a-device bug) or render a chip that is silently
+          // dropped at send (visible-vs-sent divergence). Returning false
+          // lets the span fall through as plain text instead.
+          const t = (el as HTMLElement).getAttribute('data-entity-type') ?? ''
+          return isEntityType(t) ? null : false
+        },
+      },
+    ]
   },
 
   renderHTML({ node, HTMLAttributes }) {

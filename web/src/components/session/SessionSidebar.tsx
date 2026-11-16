@@ -96,6 +96,20 @@ export function SessionSidebar({
   const editInputRef = useRef<HTMLInputElement>(null)
   const scrollViewportRef = useRef<HTMLDivElement>(null)
   const savedScrollTop = useRef<number>(0)
+  const drawerRef = useRef<HTMLDivElement>(null)
+
+  // Close-time focus handoff: if focus is still inside the (now hidden)
+  // drawer, return it to the opener (chat hamburger) — otherwise typed keys
+  // keep landing in the invisible search field. Falls back to blur.
+  useEffect(() => {
+    if (open) return
+    const root = drawerRef.current
+    if (root && root.contains(document.activeElement)) {
+      const opener = document.querySelector<HTMLElement>('[data-testid="chat-drawer-button"]')
+      if (opener) opener.focus()
+      else (document.activeElement as HTMLElement | null)?.blur()
+    }
+  }, [open])
 
   // Save scroll position before re-render caused by session switch
   useEffect(() => {
@@ -130,15 +144,19 @@ export function SessionSidebar({
 
   // Sessions with an in-flight generation (server truth — a session left
   // mid-turn keeps generating server-side; local streaming state dies on
-  // navigation). Polled while the sidebar is mounted; stale pending entries
-  // (>10 min, hard-killed servers) are already filtered server-side.
+  // navigation). Polled only while the sidebar is VISIBLE (desktop is always
+  // mounted/visible; the mobile drawer polls while open — an always-mounted
+  // closed drawer must not keep a permanent 5s background loop, e.g. in
+  // welcome mode). Stale pending entries (>10 min, hard-killed servers) are
+  // already filtered server-side.
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
   useEffect(() => {
+    if (!(isDesktop || open)) return
     let stopped = false
     // Circuit breaker: an old backend predating the endpoint 404s forever
     // (the legacy router even matches /sessions/:id with id="pending").
     // Three consecutive failures = no endpoint there — stop polling until
-    // the sidebar remounts; transient failures reset the count.
+    // the sidebar remounts/reopens; transient failures reset the count.
     let failures = 0
     const poll = () => {
       if (stopped || failures >= 3) return
@@ -156,7 +174,7 @@ export function SessionSidebar({
     poll()
     const timer = setInterval(poll, 5000)
     return () => { stopped = true; clearInterval(timer) }
-  }, [])
+  }, [isDesktop, open])
 
   // Filter and sort sessions - memoized to prevent unnecessary re-renders
   const sortedSessions = useMemo(() => {
@@ -678,9 +696,14 @@ export function SessionSidebar({
       )}
 
       {/* Wide workspace drawer — nearly full-bleed with a thin chat peek so
-          the panel reads as app chrome, not a narrow chat-history strip. */}
+          the panel reads as app chrome, not a narrow chat-history strip.
+          `inert` when closed: the offscreen panel is aria-hidden but its
+          search input / shortcut buttons stayed keyboard-focusable, and
+          focus could remain inside the hidden panel after close (typed
+          input landing in the invisible search field). */}
       <div
         id="session-workspace-drawer"
+        ref={drawerRef}
         className={cn(
           "fixed top-0 left-0 z-50 flex h-full w-[min(28rem,calc(100vw-2.75rem))] flex-col border-r border-border bg-background shadow-xl lg:hidden",
           "safe-top transform transition-transform duration-slow ease-out",
@@ -688,6 +711,7 @@ export function SessionSidebar({
         )}
         data-testid="session-workspace-drawer"
         aria-hidden={!open}
+        {...(!open ? ({ inert: '' } as Record<string, string>) : {})}
       >
         {mobileDrawerContent}
       </div>
