@@ -172,6 +172,11 @@ pub struct Message {
     /// Optional timestamp.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    /// System-generated compress evidence (needles). In-process only — never
+    /// serialized to the LLM wire or disk. Body markers like `[kept evidence]`
+    /// cannot mint trusted identity; only this field can.
+    #[serde(skip)]
+    pub compress_evidence: Option<Vec<String>>,
 }
 
 impl Message {
@@ -182,6 +187,7 @@ impl Message {
             content: content.into(),
             tool_name: None,
             timestamp: Some(chrono::Utc::now()),
+            compress_evidence: None,
         }
     }
 
@@ -192,6 +198,7 @@ impl Message {
             content: Content::text(content),
             tool_name: Some(tool_name.into()),
             timestamp: Some(chrono::Utc::now()),
+            compress_evidence: None,
         }
     }
 

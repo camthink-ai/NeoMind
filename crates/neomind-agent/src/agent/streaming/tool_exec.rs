@@ -3,7 +3,32 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use super::cache::{is_tool_cacheable, ToolResultCache};
+use super::context::ToolExecutionResult;
 use super::resolve::resolve_tool_name;
+
+/// Shared shell deny-list gate for every multimodal execute entry
+/// (first pass / list-only continuation / narration nudge). Returns a
+/// blocked [`ToolExecutionResult`] when the command is on the catastrophic
+/// deny list; `None` means proceed to normal execution.
+pub(crate) fn shell_policy_block(
+    name: &str,
+    arguments: &serde_json::Value,
+) -> Option<ToolExecutionResult> {
+    if name != "shell" {
+        return None;
+    }
+    let cmd = arguments.get("command").and_then(|v| v.as_str())?;
+    let reason = crate::toolkit::policy::deny_reason(cmd)?;
+    tracing::warn!("Multimodal tool call blocked by safety policy: {reason}");
+    Some(ToolExecutionResult {
+        _name: name.to_string(),
+        arguments: arguments.clone(),
+        result: Err(crate::toolkit::error::ToolError::Execution(format!(
+            "Blocked by safety policy: {reason}"
+        ))),
+        operation_id: None,
+    })
+}
 
 /// Execute a tool with retry logic for transient errors and caching.
 pub(crate) async fn execute_tool_with_retry(

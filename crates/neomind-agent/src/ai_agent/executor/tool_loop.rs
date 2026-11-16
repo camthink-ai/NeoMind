@@ -1291,6 +1291,7 @@ mod response_budget_tests {
             content: Content::Text("知".repeat(28_000)),
             tool_name: None,
             timestamp: None,
+            compress_evidence: None,
         };
         let hist_tokens = estimate(&[big]);
         let budget = executor_response_budget(ctx, overhead, hist_tokens);
@@ -1301,6 +1302,7 @@ mod response_budget_tests {
             content: Content::Text("hello".to_string()),
             tool_name: None,
             timestamp: None,
+            compress_evidence: None,
         };
         let hist_small = estimate(&[small]);
         let budget2 = executor_response_budget(ctx, overhead, hist_small);
@@ -1319,6 +1321,7 @@ mod response_budget_tests {
             content: Content::Text("知".repeat(2_000)),
             tool_name: None,
             timestamp: None,
+            compress_evidence: None,
         };
         let history = estimate(&[system]);
         let tools = 3_000usize;

@@ -330,6 +330,7 @@ pub fn compact_messages(
                         )),
                         tool_name: msg.tool_name.clone(),
                         timestamp: msg.timestamp,
+                        compress_evidence: msg.compress_evidence.clone(),
                     };
                     current_tokens += estimate_message_tokens(&summary_msg.content);
                     result.push(summary_msg);
@@ -864,6 +865,7 @@ mod protection_cap_tests {
             content: Content::Text("知".repeat(8_000)),
             tool_name: Some("shell".to_string()),
             timestamp: None,
+            compress_evidence: None,
         };
         let messages = vec![Message::user("hi"), big_tool];
         let config = CompactionConfig::for_context_size(8192);
@@ -905,6 +907,7 @@ mod protection_cap_tests {
                 content: Content::Text(big.clone()),
                 tool_name: Some(format!("t{i}")),
                 timestamp: None,
+                compress_evidence: None,
             })
             .collect();
         let config = CompactionConfig {
@@ -951,6 +954,7 @@ mod protection_cap_tests {
             content: Content::Text("知".repeat(20_000)),
             tool_name: Some("shell".to_string()),
             timestamp: None,
+            compress_evidence: None,
         }];
         let config = CompactionConfig::for_context_size(32_768);
         let budget = config.max_history_tokens(32_768);
@@ -987,6 +991,7 @@ mod protection_cap_tests {
                 content: Content::Text("知".repeat(4_000)),
                 tool_name: Some(format!("t{i}")),
                 timestamp: None,
+                compress_evidence: None,
             })
             .collect();
         let config = CompactionConfig {
@@ -1030,6 +1035,7 @@ mod protection_cap_tests {
                 content: Content::Text("知".repeat(4_000)),
                 tool_name: Some(format!("t{i}")),
                 timestamp: None,
+                compress_evidence: None,
             });
         }
         let config = CompactionConfig {

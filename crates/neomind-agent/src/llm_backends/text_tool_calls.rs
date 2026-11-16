@@ -131,6 +131,7 @@ mod tests {
             content: Content::Parts(vec![ContentPart::image_url("http://x/img.png")]),
             tool_name: None,
             timestamp: None,
+            compress_evidence: None,
         }];
         let prepared = prepare_messages(messages, Some(&tools), false);
         match &prepared[0].content {

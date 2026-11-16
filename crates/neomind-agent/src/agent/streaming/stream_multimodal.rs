@@ -18,7 +18,7 @@ use super::result_format::format_tool_results;
 use super::sanitize::sanitize_tool_result_for_prompt;
 use super::stream_core::StreamSafeguards;
 use super::tool_detect::detect_json_tool_calls;
-use super::tool_exec::execute_tool_with_retry;
+use super::tool_exec::{execute_tool_with_retry, shell_policy_block};
 use crate::agent::tool_parser::{
     is_degenerate_final_output, parse_tool_calls, remove_tool_calls_from_response,
 };
@@ -401,33 +401,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
                 async move {
                     use super::super::task_continuity::MutatingGateOutcome;
-                    // Shell policy check — same deny-list as the text loop
-                    // (stream_core) and the scheduled loop (tool_loop). Blocks
-                    // catastrophic commands (rm -rf /, dd, mkfs, …) before
-                    // the write gate: multimodal turns must not be the gap.
-                    if name == "shell" {
-                        if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
-                            if let Some(reason) = crate::toolkit::policy::deny_reason(cmd) {
-                                tracing::warn!(
-                                    "Multimodal tool call blocked by safety policy: {}",
-                                    reason
-                                );
-                                return (
-                                    name.clone(),
-                                    ToolExecutionResult {
-                                        _name: name.clone(),
-                                        arguments: arguments.clone(),
-                                        result: Err(
-                                            crate::toolkit::error::ToolError::Execution(format!(
-                                                "Blocked by safety policy: {}",
-                                                reason
-                                            )),
-                                        ),
-                                        operation_id: None,
-                                    },
-                                );
-                            }
-                        }
+                    // Shared deny entry — first / continuation / nudge all
+                    // call shell_policy_block before the write gate.
+                    if let Some(blocked) = shell_policy_block(&name, &arguments) {
+                        return (name.clone(), blocked);
                     }
                     let mut tracked_operation_id: Option<String> = None;
                     let result = match cached_read {
@@ -863,6 +840,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             let call_site_turn = call_site_turn_for_cont;
                             async move {
                                 use super::super::task_continuity::MutatingGateOutcome;
+                                if let Some(blocked) = shell_policy_block(&name, &arguments) {
+                                    return (name.clone(), blocked);
+                                }
                                 let mut tracked_operation_id: Option<String> = None;
                                 let result = match cached_read {
                                     Some(output) => Ok(output),
@@ -1257,6 +1237,9 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             let call_site_turn = call_site_turn_for_nudge;
                             async move {
                                 use super::super::task_continuity::MutatingGateOutcome;
+                                if let Some(blocked) = shell_policy_block(&name, &arguments) {
+                                    return (name.clone(), blocked);
+                                }
                                 let mut tracked_operation_id: Option<String> = None;
                                 let result = match cached_read {
                                     Some(output) => Ok(output),

@@ -290,33 +290,50 @@ export class ChatWebSocket {
     }
   }
 
-  sendRequest(request: ClientChatMessage) {
+  /**
+   * Hand a chat request to the wire or the pending queue.
+   * @returns true when the request was sent or queued; false when the send
+   *   itself threw (caller should restore any stashed draft).
+   */
+  sendRequest(request: ClientChatMessage): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(request))
-      this.removeFromStorage(request)  // Remove from storage on successful send
-    } else {
-      // Queue message for when connected
-      // P0: Prevent unbounded growth - evict oldest if limit reached
-      if (this.pendingMessages.length >= this.MAX_PENDING_MESSAGES) {
-        // Remove oldest message (FIFO)
-        const dropped = this.pendingMessages.shift()
-        if (dropped) {
-          const preview = typeof dropped.message === 'string'
-            ? dropped.message.slice(0, 50)
-            : '(non-text message)'
-          console.warn(`[WebSocket] Pending limit (${this.MAX_PENDING_MESSAGES}) reached, dropping oldest: "${preview}..."`)
-          // Notify UI that a message was dropped
-          this.setState({
-            ...this.currentState,
-            errorMessage: `A queued message was dropped due to connection issues: "${preview}"`,
-          })
-        }
+      try {
+        this.ws.send(JSON.stringify(request))
+        this.removeFromStorage(request)  // Remove from storage on successful send
+        return true
+      } catch (err) {
+        console.warn('[WebSocket] send failed:', err)
+        this.setState({
+          ...this.currentState,
+          status: 'error',
+          errorMessage: 'Failed to send message',
+        })
+        return false
       }
-      this.pendingMessages.push(request)
-      this.persistPendingMessages()  // Immediately persist to storage
     }
+    // Queue message for when connected
+    // P0: Prevent unbounded growth - evict oldest if limit reached
+    if (this.pendingMessages.length >= this.MAX_PENDING_MESSAGES) {
+      // Remove oldest message (FIFO)
+      const dropped = this.pendingMessages.shift()
+      if (dropped) {
+        const preview = typeof dropped.message === 'string'
+          ? dropped.message.slice(0, 50)
+          : '(non-text message)'
+        console.warn(`[WebSocket] Pending limit (${this.MAX_PENDING_MESSAGES}) reached, dropping oldest: "${preview}..."`)
+        // Notify UI that a message was dropped
+        this.setState({
+          ...this.currentState,
+          errorMessage: `A queued message was dropped due to connection issues: "${preview}"`,
+        })
+      }
+    }
+    this.pendingMessages.push(request)
+    this.persistPendingMessages()  // Immediately persist to storage
+    return true
   }
 
+  /** @returns true when the request was accepted (sent or queued). */
   sendMessage(
     content: string,
     images?: ChatImage[],
@@ -325,8 +342,8 @@ export class ChatWebSocket {
     references?: ChatReference[],
     contentNodes?: import("@/types").ChatContentNode[],
     authorizeNewOperation?: import("@/types").AuthorizeNewOperationRequest,
-  ) {
-    this.sendRequest({
+  ): boolean {
+    return this.sendRequest({
       message: content,
       images: images,
       sessionId: this.sessionId || undefined,

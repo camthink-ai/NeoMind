@@ -116,6 +116,24 @@ describe("contentProtocol", () => {
     expect(loadSessionDraft("s1")?.contentNodes?.length).toBe(2)
   })
 
+  it("failed-send stash restores via markDraftForRetry without requiring a prior clear (P2)", () => {
+    // Mimic the composer stash→clear-UI→send-fail path: nothing was cleared
+    // from storage yet; markDraftForRetry must still write a recoverable draft.
+    clearSessionDraft("side-chat")
+    expect(loadSessionDraft("side-chat")).toBeNull()
+    const stashed = markDraftForRetry("side-chat", {
+      message: "panel draft",
+      references: [{ type: "agent", id: "ag-1", label: "巡检" }],
+      contentNodes: [
+        { kind: "text", text: "panel " },
+        { kind: "reference", type: "agent", id: "ag-1", labelSnapshot: "巡检" },
+      ],
+    })
+    expect(stashed.message).toBe("panel draft")
+    expect(loadSessionDraft("side-chat")?.references).toHaveLength(1)
+    expect(loadSessionDraft("side-chat")?.contentNodes).toHaveLength(2)
+  })
+
   it("validateSendContent mirrors the server caps for the send path (E14)", () => {
     expect(validateSendContent([])).toBeNull()
     expect(validateSendContent([{ kind: "text", text: "hello" }])).toBeNull()

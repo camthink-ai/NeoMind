@@ -1133,3 +1133,120 @@ async fn recovery_channels_failed_followup_does_not_expose_reasoning() {
     )
     .await;
 }
+
+/// Multimodal shell deny must cover first pass, list-only continuation, and
+/// narration nudge — first-path-only coverage is not enough to close the gap.
+mod multimodal_shell_deny {
+    use super::{collect, harness, ProgressShell};
+    use crate::agent::types::AgentEvent;
+    use crate::testing_helpers::mock_llm::{MockLlmRuntime, MockResponse};
+    use crate::toolkit::registry::ToolRegistry;
+    use std::sync::{Arc, Mutex};
+
+    const DENIED: &str = "rm -rf /";
+
+    fn denied_shell() -> MockResponse {
+        MockResponse::tool_call("shell", serde_json::json!({ "command": DENIED }))
+    }
+
+    async fn run_mm(
+        rt: &MockLlmRuntime,
+        user: &str,
+    ) -> (Vec<AgentEvent>, Vec<String>) {
+        let (iface, state, _) = harness(rt);
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(ProgressShell {
+            commands: commands.clone(),
+        }));
+        let stream = crate::agent::streaming::process_multimodal_stream_events_with_safeguards(
+            iface,
+            state,
+            Arc::new(registry),
+            user,
+            vec![],
+            crate::agent::StreamSafeguards::default(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("stream");
+        let events = collect(stream).await;
+        let executed = commands.lock().unwrap().clone();
+        (events, executed)
+    }
+
+    fn blocked_in_events(events: &[AgentEvent]) -> bool {
+        events.iter().any(|e| match e {
+            AgentEvent::ToolCallEnd { result, success, .. } => {
+                !*success && result.contains("Blocked by safety policy")
+            }
+            _ => false,
+        })
+    }
+
+    #[tokio::test]
+    async fn first_pass_blocks_denied_shell() {
+        let rt = MockLlmRuntime::new(vec![
+            denied_shell(),
+            MockResponse::text("cannot run that"),
+        ]);
+        let (events, executed) = run_mm(&rt, "清理系统盘").await;
+        assert!(
+            executed.is_empty(),
+            "denied shell must not execute on first pass, got {executed:?}"
+        );
+        assert!(
+            blocked_in_events(&events),
+            "first-pass deny must surface Blocked by safety policy"
+        );
+    }
+
+    #[tokio::test]
+    async fn continuation_blocks_denied_shell() {
+        // Multimodal list-only dead-end passes streak=1, so one read-only round
+        // already triggers continuation — then the model asks for a catastrophic
+        // shell which must be denied on the continuation execute entry.
+        let rt = MockLlmRuntime::new(vec![
+            MockResponse::tool_call(
+                "shell",
+                serde_json::json!({ "command": "neomind device list" }),
+            ),
+            denied_shell(),
+            MockResponse::text("stopped"),
+        ]);
+        let (events, executed) = run_mm(&rt, "创建一个温湿度仪表盘").await;
+        assert!(
+            !executed.iter().any(|c| c.contains("rm -rf")),
+            "continuation must not execute denied shell, got {executed:?}"
+        );
+        assert!(
+            executed.iter().any(|c| c.contains("device list")),
+            "read-only list on first pass should still run, got {executed:?}"
+        );
+        assert!(
+            blocked_in_events(&events),
+            "continuation deny must surface Blocked by safety policy; events missing it"
+        );
+    }
+
+    #[tokio::test]
+    async fn nudge_blocks_denied_shell() {
+        let rt = MockLlmRuntime::new(vec![
+            MockResponse::text("我现在使用 shell 工具清理系统。"),
+            denied_shell(),
+            MockResponse::text("stopped"),
+        ]);
+        let (events, executed) = run_mm(&rt, "帮我清理一下").await;
+        assert!(
+            executed.is_empty(),
+            "nudge path must not execute denied shell, got {executed:?}"
+        );
+        assert!(
+            blocked_in_events(&events),
+            "nudge deny must surface Blocked by safety policy"
+        );
+    }
+}

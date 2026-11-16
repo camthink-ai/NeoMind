@@ -30,6 +30,7 @@ import {
   clearSessionDraft,
   contentNodesToComposerFields,
   loadSessionDraft,
+  markDraftForRetry,
   normalizeContentNodes,
   pruneSessionDrafts,
   saveSessionDraft,
@@ -917,15 +918,24 @@ export function ChatPage() {
     isPinnedToBottomRef.current = true
     setShowScrollPill(false)
 
+    // Stash the outgoing composer payload BEFORE clearing UI so a failed
+    // wire send can restore it. Authorize-confirm (isOverrideSend) never
+    // touches the user's draft.
+    const draftStash = !isOverrideSend
+      ? {
+          message: input,
+          references: chatReferences,
+          contentNodes: chatContentNodes.length > 0 ? chatContentNodes : undefined,
+          images: attachedImages,
+        }
+      : null
+
     if (!isOverrideSend) {
       setInput("")
       setAttachedImages([])
       setChatReferences([])
       setChatContentNodes([])
       setInvalidRefs({})
-      // Draft lifecycle (E15): the send consumed the composer — drop the
-      // persisted draft so it cannot resurrect after a refresh.
-      clearSessionDraft(draftSession)
 
       // Reset textarea height when the legacy host is active.
       if (inputRef.current) {
@@ -935,6 +945,17 @@ export function ChatPage() {
 
     // Set WebSocket session and send message
     if (!targetSessionId) {
+      if (draftStash) {
+        setInput(draftStash.message)
+        setAttachedImages(draftStash.images)
+        setChatReferences(draftStash.references)
+        setChatContentNodes(draftStash.contentNodes ?? [])
+        markDraftForRetry(draftSession, {
+          message: draftStash.message,
+          references: draftStash.references,
+          contentNodes: draftStash.contentNodes,
+        })
+      }
       handleError(new Error('No valid session ID'), { operation: 'Send message', showToast: false })
       return
     }
@@ -947,7 +968,7 @@ export function ChatPage() {
       overrides?.authorizeNewOperation ??
       resolveAuthorizeNewOperationForSend(trimmedInput, pendingAuthorizeConfirms) ??
       undefined
-    ws.sendMessage(
+    const accepted = ws.sendMessage(
       trimmedInput,
       sentImages,
       undefined,
@@ -956,6 +977,26 @@ export function ChatPage() {
       sentContentNodes,
       authorizeNewOperation,
     )
+
+    if (!isOverrideSend) {
+      if (accepted) {
+        // Draft lifecycle (E15): only clear after the request was accepted
+        // by the socket / pending queue — a failed send must not lose the
+        // draft across refresh.
+        clearSessionDraft(draftSession)
+      } else if (draftStash) {
+        setInput(draftStash.message)
+        setAttachedImages(draftStash.images)
+        setChatReferences(draftStash.references)
+        setChatContentNodes(draftStash.contentNodes ?? [])
+        markDraftForRetry(draftSession, {
+          message: draftStash.message,
+          references: draftStash.references,
+          contentNodes: draftStash.contentNodes,
+        })
+        toast({ title: t('chat:errors.sendMessage'), variant: "destructive" })
+      }
+    }
 
     requestAnimationFrame(() => {
       const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")

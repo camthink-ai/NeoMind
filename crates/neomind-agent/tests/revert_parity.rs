@@ -58,6 +58,7 @@ fn msg(role: MessageRole, text: String) -> Message {
         content: Content::Text(text),
         tool_name: None,
         timestamp: None,
+        compress_evidence: None,
     }
 }
 

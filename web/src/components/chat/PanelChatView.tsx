@@ -701,16 +701,23 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
 
     // Draft key captured BEFORE createPanelSession mints a new id — the
     // persisted draft lives under the session the draft was saved under.
+    // Stash until wire ack so a failed send can restore (authorize-confirm
+    // never touches the user's draft).
     const draftSession = panelSessionIdRef.current
+    const draftStash = !isOverrideSend
+      ? {
+          message: input,
+          references: panelReferences,
+          contentNodes: panelContentNodes.length > 0 ? panelContentNodes : undefined,
+          images: attachedImages,
+        }
+      : null
     if (!isOverrideSend) {
       setAttachedImages([])
       setInput("")
       setPanelReferences([])
       setPanelContentNodes([])
       if (inputRef.current) inputRef.current.style.height = "auto"
-      // Draft lifecycle (E15): the send consumed the composer — drop the
-      // persisted draft so it cannot resurrect after a refresh.
-      if (draftSession) clearSessionDraft(draftSession)
     }
 
     // Ensure we have a session before sending. This await used to happen
@@ -720,20 +727,19 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
     if (sendEpoch !== sendEpochRef.current) return
     if (!sessionId) {
       setPanelMessages(prev => prev.filter(message => message.id !== pendingUserMessageId))
-      if (!isOverrideSend) {
-        // Failed send: restore the FULL composer state (the clear above took
-        // references + nodes too) and persist them for refresh recovery (E15).
-        // Session-less buckets are not persisted — the "new" draft key
-        // belongs to the chat page's welcome composer.
-        setInput(text)
-        setAttachedImages(sentImages || [])
-        setPanelReferences(sentReferences ?? [])
-        setPanelContentNodes(sentContentNodes ?? [])
+      if (draftStash) {
+        // Failed send: restore the FULL composer state and persist for
+        // refresh recovery (E15). Session-less buckets are not persisted —
+        // the "new" draft key belongs to the chat page's welcome composer.
+        setInput(draftStash.message)
+        setAttachedImages(draftStash.images)
+        setPanelReferences(draftStash.references)
+        setPanelContentNodes(draftStash.contentNodes ?? [])
         if (draftSession) {
           markDraftForRetry(draftSession, {
-            message: text,
-            references: sentReferences ?? [],
-            contentNodes: sentContentNodes,
+            message: draftStash.message,
+            references: draftStash.references,
+            contentNodes: draftStash.contentNodes,
           })
         }
       }
@@ -752,7 +758,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       overrides?.authorizeNewOperation ??
       resolveAuthorizeNewOperationForSend(text, pendingAuthorizeConfirms) ??
       undefined
-    ws.sendMessage(
+    const accepted = ws.sendMessage(
       text,
       sentImages,
       skillIds,
@@ -761,6 +767,28 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       sentContentNodes,
       authorizeNewOperation,
     )
+    if (!isOverrideSend) {
+      if (accepted) {
+        if (draftSession) clearSessionDraft(draftSession)
+      } else if (draftStash) {
+        setPanelMessages(prev => prev.filter(message => message.id !== pendingUserMessageId))
+        setInput(draftStash.message)
+        setAttachedImages(draftStash.images)
+        setPanelReferences(draftStash.references)
+        setPanelContentNodes(draftStash.contentNodes ?? [])
+        if (draftSession) {
+          markDraftForRetry(draftSession, {
+            message: draftStash.message,
+            references: draftStash.references,
+            contentNodes: draftStash.contentNodes,
+          })
+        }
+        setSendPhase("idle")
+        sendInProgressRef.current = false
+        toast({ title: t("errors.sendMessage"), variant: "destructive" })
+        return
+      }
+    }
     requestAnimationFrame(() => {
       const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
       if (pm) pm.focus()
