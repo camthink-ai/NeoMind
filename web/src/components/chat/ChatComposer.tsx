@@ -278,6 +278,7 @@ export function ChatComposer({
   }
 
   const closeMention = () => {
+    mentionOpenRef.current = false
     mentionTrigger.current = null
     mentionCommandRef.current = null
     setMentionQuery(null)
@@ -292,6 +293,8 @@ export function ChatComposer({
     if (inputDisabled) return
     if (references.length >= MAX_REFERENCES) return
     mentionCommandRef.current = api.command
+    // Eager flag — Sheet/blur races used to read a stale false before useEffect.
+    mentionOpenRef.current = true
     setMentionQuery(api.query)
   }
 
@@ -301,6 +304,7 @@ export function ChatComposer({
       return
     }
     mentionCommandRef.current = api.command
+    mentionOpenRef.current = true
     setMentionQuery(api.query)
   }
 
@@ -329,6 +333,7 @@ export function ChatComposer({
     const m = /(^|[^@\w])@([^@\n]{0,40})$/.exec(before)
     if (m) {
       mentionTrigger.current = { start: caret - m[2].length - 1 }
+      mentionOpenRef.current = true
       setMentionQuery(m[2])
     } else {
       closeMention()
@@ -341,13 +346,10 @@ export function ChatComposer({
     scanMentionTrigger(next)
   }
 
-  const handleSuggestionExit = (meta?: { editorFocused: boolean }) => {
+  const handleSuggestionExit = (_meta?: { editorFocused: boolean }) => {
     if (suppressMentionExitClose.current) return
-    // Mobile Sheet / option tap moves focus out of the editor; TipTap exits the
-    // suggestion plugin but the host menu must stay open with the last command.
-    if (isMobile && mentionOpenRef.current && meta?.editorFocused === false) {
-      return
-    }
+    // Anchored picker (desktop + mobile) keeps editor focus, so TipTap exit
+    // means the `@` match is gone — close the host menu.
     closeMention()
   }
 
@@ -744,8 +746,11 @@ export function ChatComposer({
           Mobile: radius + shadow live on this same node; avoid overflow:hidden
           here (it squares the soft shadow). Prefer an upward-biased shadow so
           ancestors that clip the bottom edge don't leave hard corner ledges. */}
-      {/* Desktop @-mention picker — floating above the input */}
-      {!isMobile && mentionQuery !== null && (
+      {/* @-mention picker — anchored above the input on desktop AND mobile.
+          Do NOT use a focus-trapping Sheet here: on phones it dismisses the
+          soft keyboard and Radix often closes on the same gesture that typed
+          `@`, so the composer flickers with no visible menu. */}
+      {mentionQuery !== null && (
         <div
           role="listbox"
           id="chat-mention-listbox"
@@ -757,53 +762,21 @@ export function ChatComposer({
               : undefined
           }
           data-mention-menu
-          className="absolute bottom-full left-0 right-0 z-[200] mb-2 max-h-80 overflow-hidden rounded-xl border border-border bg-popover shadow-lg"
+          className={cn(
+            "absolute bottom-full left-0 right-0 z-[200] mb-2 overflow-hidden rounded-xl border border-border bg-popover shadow-lg",
+            isMobile ? "max-h-[min(45vh,18rem)]" : "max-h-80",
+          )}
         >
+          {isMobile && (
+            <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+              <AtSign className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+              <span className="text-sm font-medium text-foreground">
+                {t("chat:mention.title", "选择要引用的对象")}
+              </span>
+            </div>
+          )}
           {renderMentionPickerBody()}
         </div>
-      )}
-
-      {/* Mobile @-mention picker — bottom sheet (avoids blur/collapse races) */}
-      {isMobile && (
-        <Sheet
-          open={mentionQuery !== null}
-          onOpenChange={(open) => {
-            if (!open) closeMention()
-          }}
-        >
-          <SheetContent
-            side="bottom"
-            className="z-[110] max-h-[70vh] overflow-hidden rounded-t-2xl p-0"
-          >
-            <SheetTitle className="sr-only">
-              {t("chat:mention.title", "选择要引用的对象")}
-            </SheetTitle>
-            <SheetDescription className="sr-only">
-              {t("chat:mention.mobileSheet", "从列表中选择要引用的对象")}
-            </SheetDescription>
-            <div
-              role="listbox"
-              id="chat-mention-listbox"
-              aria-label={t("chat:mention.title", "选择要引用的对象")}
-              aria-busy={mentionLoading || undefined}
-              aria-activedescendant={
-                mentionOptions[mentionActive]
-                  ? `chat-mention-opt-${mentionActive}`
-                  : undefined
-              }
-              data-mention-menu
-              className="flex max-h-[70vh] flex-col overflow-hidden"
-            >
-              <div className="flex items-center gap-2 border-b border-border px-4 pb-2 pt-1">
-                <AtSign className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                <span className="text-sm font-medium text-foreground">
-                  {t("chat:mention.title", "选择要引用的对象")}
-                </span>
-              </div>
-              {renderMentionPickerBody()}
-            </div>
-          </SheetContent>
-        </Sheet>
       )}
       <div className={cn(
         "rounded-lg border border-input bg-card shadow-sm transition-colors",
