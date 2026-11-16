@@ -412,8 +412,7 @@ impl neomind_core::extension::system::Extension for CountingExt {
         _command: &str,
         _args: &serde_json::Value,
     ) -> neomind_core::extension::system::Result<serde_json::Value> {
-        self.calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(json!({"out": 42.0}))
     }
 
@@ -439,8 +438,8 @@ async fn engine_with_counting_ext(
     registry.register(id.to_string(), ext).await.unwrap();
 
     let store = Arc::new(SharedAutomationStore::memory().unwrap());
-    let engine = TransformEngine::with_extension_registry(registry)
-        .with_automation_store(store.clone());
+    let engine =
+        TransformEngine::with_extension_registry(registry).with_automation_store(store.clone());
     (engine, store, calls)
 }
 
@@ -624,8 +623,7 @@ impl neomind_core::extension::system::Extension for FailingExt {
         _command: &str,
         _args: &serde_json::Value,
     ) -> neomind_core::extension::system::Result<serde_json::Value> {
-        self.calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Err(
             neomind_core::extension::system::ExtensionError::ExecutionFailed(
                 "nested fail".to_string(),
@@ -655,8 +653,8 @@ async fn engine_with_failing_ext(
     registry.register(id.to_string(), ext).await.unwrap();
 
     let store = Arc::new(SharedAutomationStore::memory().unwrap());
-    let engine = TransformEngine::with_extension_registry(registry)
-        .with_automation_store(store.clone());
+    let engine =
+        TransformEngine::with_extension_registry(registry).with_automation_store(store.clone());
     (engine, store, calls)
 }
 
@@ -679,10 +677,7 @@ async fn multioutput_nested_extension_production_success() {
     assert!(
         prod.metrics.len() >= 2,
         "Single + Extension outputs: {:?}",
-        prod.metrics
-            .iter()
-            .map(|m| &m.metric)
-            .collect::<Vec<_>>()
+        prod.metrics.iter().map(|m| &m.metric).collect::<Vec<_>>()
     );
     assert!(prod.unverified.is_empty());
     let records = store.get_executions("mo-ok", 10).await.unwrap();

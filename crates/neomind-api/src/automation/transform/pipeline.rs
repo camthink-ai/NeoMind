@@ -782,13 +782,7 @@ impl TransformEngine {
                         }]),
                         TransformOperation::Extension { .. } => {
                             Box::pin(self.execute_operation(
-                                op,
-                                device_id,
-                                timestamp,
-                                raw_data,
-                                warnings,
-                                unverified,
-                                mode,
+                                op, device_id, timestamp, raw_data, warnings, unverified, mode,
                             ))
                             .await
                         }
