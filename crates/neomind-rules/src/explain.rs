@@ -393,24 +393,42 @@ fn explain_condition(
                 .iter()
                 .map(|c| explain_condition(c, provider, unified, now_ms))
                 .collect();
-            let result = children.iter().fold(
-                match operator {
-                    LogicalOperator::And => EvalOutcome::True,
-                    LogicalOperator::Or => EvalOutcome::False,
-                    LogicalOperator::Not => EvalOutcome::False,
-                },
-                |acc, child| match operator {
-                    LogicalOperator::And => acc.kleene_and(child.result),
-                    LogicalOperator::Or => acc.kleene_or(child.result),
-                    // NOT: true only when no sub-condition is met (mirrors
-                    // RuleCondition::evaluate); unknown propagates.
-                    LogicalOperator::Not => match child.result {
-                        EvalOutcome::True => EvalOutcome::False,
-                        EvalOutcome::False => acc.kleene_or(EvalOutcome::True),
-                        EvalOutcome::Unknown => acc.kleene_or(EvalOutcome::Unknown),
-                    },
-                },
-            );
+            // NOT is NOR over the children and must short-circuit: any True
+            // child makes the result definitively False regardless of order
+            // or of remaining children (mirrors RuleCondition::evaluate's
+            // `!any`). Folding instead made [True, False] surface True and
+            // [True, Unknown] surface Unknown.
+            //
+            // INTENTIONAL divergence from the evaluator: a missing sensor
+            // value evaluates as NOT-met there (2-valued), so children like
+            // [Unknown, False] make the evaluator FIRE while this view
+            // reports Unknown. Explain is the honest surface — it tells the
+            // user the rule fired on incomplete data rather than pretending
+            // certainty. Do not "fix" either side to match the other without
+            // deciding the product semantics for missing-value firing.
+            let result = match operator {
+                LogicalOperator::And => children
+                    .iter()
+                    .fold(EvalOutcome::True, |acc, c| acc.kleene_and(c.result)),
+                LogicalOperator::Or => children
+                    .iter()
+                    .fold(EvalOutcome::False, |acc, c| acc.kleene_or(c.result)),
+                LogicalOperator::Not => {
+                    if children
+                        .iter()
+                        .any(|c| matches!(c.result, EvalOutcome::True))
+                    {
+                        EvalOutcome::False
+                    } else if children
+                        .iter()
+                        .any(|c| matches!(c.result, EvalOutcome::Unknown))
+                    {
+                        EvalOutcome::Unknown
+                    } else {
+                        EvalOutcome::True
+                    }
+                }
+            };
             ConditionExplanation {
                 kind: "logical".to_string(),
                 result,
@@ -564,6 +582,87 @@ mod tests {
             exp.condition_met,
             Some(EvalOutcome::False),
             "false dominates unknown in AND"
+        );
+    }
+
+    /// Regression (order-dependent NOT fold): multi-child NOT is NOR — any
+    /// True child makes the result definitively False regardless of position
+    /// or remaining children. The old fold surfaced True for [True, False]
+    /// and Unknown for [True, Unknown].
+    #[tokio::test]
+    async fn explain_multi_child_not_short_circuits_on_true() {
+        async fn not_outcome(a: Option<f64>, b: Option<f64>) -> EvalOutcome {
+            let p = provider();
+            let engine = RuleEngine::new(p.clone());
+            let mut rule = CompiledRule::new("NOT rule");
+            rule.condition = Some(RuleCondition::Logical {
+                operator: LogicalOperator::Not,
+                conditions: vec![
+                    RuleCondition::Comparison {
+                        source: DataSourceId::device("s1", "a"),
+                        operator: ComparisonOperator::GreaterThan,
+                        threshold: 1.0,
+                        threshold_value: None,
+                    },
+                    RuleCondition::Comparison {
+                        source: DataSourceId::device("s1", "b"),
+                        operator: ComparisonOperator::GreaterThan,
+                        threshold: 1.0,
+                        threshold_value: None,
+                    },
+                ],
+            });
+            rule.trigger = RuleTrigger::Manual;
+            rule.actions = vec![];
+            rule.finalize();
+            let id = rule.id.clone();
+            engine.add_rule(rule).await.unwrap();
+            if let Some(v) = a {
+                p.update_value("device", "s1", "a", v).await;
+            }
+            if let Some(v) = b {
+                p.update_value("device", "s1", "b", v).await;
+            }
+            engine
+                .explain_rule(&id)
+                .await
+                .unwrap()
+                .condition_met
+                .unwrap()
+        }
+
+        // Any True child anywhere → definitively False (order-independent).
+        assert_eq!(
+            not_outcome(Some(5.0), Some(0.0)).await,
+            EvalOutcome::False,
+            "[True, False] must be False (old fold returned True)"
+        );
+        assert_eq!(
+            not_outcome(Some(0.0), Some(5.0)).await,
+            EvalOutcome::False,
+            "[False, True] must be False"
+        );
+        assert_eq!(
+            not_outcome(Some(5.0), None).await,
+            EvalOutcome::False,
+            "[True, Unknown] must be False (old fold returned Unknown)"
+        );
+        assert_eq!(
+            not_outcome(None, Some(5.0)).await,
+            EvalOutcome::False,
+            "[Unknown, True] must be False"
+        );
+        // No True child, at least one Unknown → Unknown.
+        assert_eq!(
+            not_outcome(None, Some(0.0)).await,
+            EvalOutcome::Unknown,
+            "[Unknown, False] must stay Unknown"
+        );
+        // All children False → True.
+        assert_eq!(
+            not_outcome(Some(0.0), Some(0.0)).await,
+            EvalOutcome::True,
+            "[False, False] must be True"
         );
     }
 

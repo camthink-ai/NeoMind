@@ -250,12 +250,24 @@ impl AgentExecutor {
                 let budget = crate::llm::skill_bodies_token_budget(context_window);
                 let (outcome, piece) =
                     crate::llm::plan_skill_body_append(skill_reference, &result_text, budget);
+                // Acknowledge per ACTUAL outcome — a Skipped retrieval
+                // appended zero bytes, and telling the model a guide backs
+                // its behavior when none exists in context is exactly the
+                // dishonest status this release removes.
                 match outcome {
                     crate::llm::SkillBodyAppendOutcome::Skipped => {
                         tracing::warn!(
                             budget_tokens = budget,
                             "executor skill reference skipped: total skill body budget exhausted"
                         );
+                        messages.push(Message::new(
+                            MessageRole::User,
+                            Content::text(
+                                "Skill reference budget is exhausted — the guide content is \
+                                 NOT in your context. Do not claim to follow it; answer from \
+                                 general knowledge or ask the user.",
+                            ),
+                        ));
                     }
                     crate::llm::SkillBodyAppendOutcome::Truncated => {
                         tracing::warn!(
@@ -263,16 +275,22 @@ impl AgentExecutor {
                             "executor skill reference truncated to fit total skill body budget"
                         );
                         skill_reference.push_str(&piece);
+                        messages.push(Message::new(
+                            MessageRole::User,
+                            Content::text(
+                                "Skill guide partially retrieved (truncated to fit the \
+                                 reference budget) and will be used as reference.",
+                            ),
+                        ));
                     }
                     crate::llm::SkillBodyAppendOutcome::Full => {
                         skill_reference.push_str(&piece);
+                        messages.push(Message::new(
+                            MessageRole::User,
+                            Content::text("Skill guide retrieved and will be used as reference."),
+                        ));
                     }
                 }
-                // Add a concise acknowledgment to messages so LLM knows the skill was retrieved
-                messages.push(Message::new(
-                    MessageRole::User,
-                    Content::text("Skill guide retrieved and will be used as reference."),
-                ));
             } else {
                 // Use sanitized name for LLM message so it matches what the LLM used
                 let msg_name = original_to_sanitized

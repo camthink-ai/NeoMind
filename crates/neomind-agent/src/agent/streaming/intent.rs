@@ -614,7 +614,9 @@ pub(crate) fn mutating_write_fingerprint(
             ))
         }
         other => {
-            let args = serde_json::to_string(&canonical).unwrap_or_default();
+            // Sorted-key JSON — preserve_order must not let key insertion
+            // order mint divergent fingerprints for the same write.
+            let args = super::super::task_continuity::stable_json_string(&canonical);
             Some(super::super::task_continuity::write_fingerprint(
                 other, &args,
             ))
@@ -1478,6 +1480,36 @@ mod tests {
         assert!(
             mutating_write_fingerprint("my_custom_extension_tool", &ext).is_some(),
             "unknown tools must not skip the write gate"
+        );
+    }
+
+    #[test]
+    fn fingerprint_ignores_json_object_key_order() {
+        // preserve_order: insertion order survives to_string unless we sort.
+        let a = serde_json::json!({"agent_id": "A", "param": "x"});
+        let b = serde_json::json!({"param": "x", "agent_id": "A"});
+        assert_ne!(
+            serde_json::to_string(&a).unwrap(),
+            serde_json::to_string(&b).unwrap(),
+            "precondition: preserve_order yields different strings"
+        );
+        let fp_a = mutating_write_fingerprint("run_now", &a).expect("a");
+        let fp_b = mutating_write_fingerprint("run_now", &b).expect("b");
+        assert_eq!(fp_a, fp_b, "reordered keys must share one fingerprint");
+
+        let nested_a = serde_json::json!({
+            "device_id": "D",
+            "params": {"z": 1, "a": 2}
+        });
+        let nested_b = serde_json::json!({
+            "params": {"a": 2, "z": 1},
+            "device_id": "D"
+        });
+        let fp_na = mutating_write_fingerprint("device_command", &nested_a).expect("na");
+        let fp_nb = mutating_write_fingerprint("device_command", &nested_b).expect("nb");
+        assert_eq!(
+            fp_na, fp_nb,
+            "nested key order must not diverge fingerprints"
         );
     }
 

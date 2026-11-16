@@ -127,10 +127,15 @@ fn sanitize_id(raw: &str) -> String {
 }
 
 fn not_found(r: &ChatReference, detail: &str) -> String {
+    // `detail` may carry a backend error Display (legacy resolve_one arms) —
+    // sanitize it like every other client/DB-derived fragment so store
+    // errors (which can echo stored JSON with newlines/backticks) cannot
+    // break the preamble's data-line structure.
     format!(
-        "- {} `{}`: NOT FOUND ({detail}) — it may be deleted, renamed or the id/type is wrong. Do NOT substitute a similar-named object; tell the user this reference is stale.",
+        "- {} `{}`: NOT FOUND ({}) — it may be deleted, renamed or the id/type is wrong. Do NOT substitute a similar-named object; tell the user this reference is stale.",
         sanitize_type(&r.r#type),
-        sanitize_id(&r.id)
+        sanitize_id(&r.id),
+        sanitize_text(detail, 80)
     )
 }
 
@@ -307,11 +312,25 @@ pub async fn prepare_chat_input(
 
 /// Resolve each reference against current state (auth already applied on the
 /// request path). Shared by send-time prepare and `POST /api/mentions/resolve`.
+///
+/// Hard-bounded to [`MAX_REFERENCES`]: the array is client-supplied, and an
+/// unbounded loop would fan out one store lookup per fabricated unique id
+/// (the 20-cap discipline enforced everywhere else on this path).
 pub async fn resolve_references(state: &ServerState, refs: &[ChatReference]) -> Vec<RefResolution> {
-    let mut out = Vec::with_capacity(refs.len());
+    let bounded: &[ChatReference] = if refs.len() > MAX_REFERENCES {
+        tracing::warn!(
+            count = refs.len(),
+            cap = MAX_REFERENCES,
+            "reference resolution bounded — client sent more references than the cap"
+        );
+        &refs[..MAX_REFERENCES]
+    } else {
+        refs
+    };
+    let mut out = Vec::with_capacity(bounded.len());
     let mut cache: std::collections::HashMap<String, (bool, String, String)> =
         std::collections::HashMap::new();
-    for (index, r) in refs.iter().enumerate() {
+    for (index, r) in bounded.iter().enumerate() {
         let key = format!("{}:{}", r.r#type, r.id);
         let (ok, detail, _) = if let Some(hit) = cache.get(&key) {
             hit.clone()

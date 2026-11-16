@@ -858,10 +858,21 @@ impl SessionStore {
             let _ = meta_table.remove(session_id); // Ignore error if not exists
         }
 
-        // Delete op ledger (table may not exist on older DBs)
-        {
-            if let Ok(mut ledger_table) = write_txn.open_table(OP_LEDGER_TABLE) {
-                let _ = ledger_table.remove(session_id);
+        // Delete op ledger (table may not exist on older DBs). Errors
+        // propagate — mirroring delete_op_ledger's fail-closed contract — so
+        // a partially-deleted session can never silently leave ledger rows
+        // under a dead session id.
+        match write_txn.open_table(OP_LEDGER_TABLE) {
+            Ok(mut ledger_table) => {
+                ledger_table.remove(session_id)?;
+            }
+            Err(redb::TableError::TableDoesNotExist(_)) => {
+                // Nothing to delete on older DBs.
+            }
+            Err(e) => {
+                return Err(Error::Storage(format!(
+                    "Failed to open op_ledgers table for delete: {e}"
+                )));
             }
         }
 

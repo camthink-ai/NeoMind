@@ -389,13 +389,12 @@ pub fn strip_new_operation_flag(arguments: &mut serde_json::Value) {
 /// schemas so models can find “run again / new execution” without a hidden
 /// manual flag. Idempotent.
 pub fn inject_new_operation_protocol(defs: &mut [crate::toolkit::tool::ToolDefinition]) {
-    let desc = format!(
-        "Set true to begin a NEW Operation with the same business args after a \
+    let desc = "Set true to begin a NEW Operation with the same business args after a \
          prior known terminal result (Succeeded/Failed). After Unknown outcome, \
          this flag alone is not enough — the user must authorize a re-run \
          (confirm re-run). Default false = resume PreferKnown / block; never \
          auto-replay. Lifecycle-only; stripped before tool execution."
-    );
+        .to_string();
     for def in defs.iter_mut() {
         if !NEW_OPERATION_PROTOCOL_TOOLS.contains(&def.name.as_str()) {
             continue;
@@ -1213,12 +1212,29 @@ impl Drop for StreamLeaseGuard {
                 .abandon_owned_operations_on_interrupt(&owner, reason);
             return;
         }
-        tokio::spawn(async move {
-            let mut guard = state.write().await;
-            guard
-                .task_state
-                .abandon_owned_operations_on_interrupt(&owner, reason);
-        });
+        // Contended: defer to a spawned task — but only when a Tokio runtime
+        // exists. Dropping outside a runtime (shutdown teardown, sync test
+        // harnesses holding the last Arc) would panic inside Drop and abort
+        // the process; instead leave the op Running — the restore path
+        // already sanitizes stale Running ops to Unknown on next load.
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    let mut guard = state.write().await;
+                    guard
+                        .task_state
+                        .abandon_owned_operations_on_interrupt(&owner, reason);
+                });
+            }
+            Err(extracted) => {
+                tracing::error!(
+                    error = %extracted,
+                    owner = %owner,
+                    "StreamLeaseGuard dropped outside a Tokio runtime — deferring abandon \
+                     to restore-time Running→Unknown sanitization"
+                );
+            }
+        }
     }
 }
 
@@ -1314,10 +1330,58 @@ impl TaskState {
         let mut operations = ledger.operations;
         Self::sanitize_ops_for_persist(&mut operations);
         Self::sanitize_details_ref_after_restore(&mut operations);
+        let mut write_ledger = ledger.write_ledger;
+        Self::migrate_fingerprints_to_sorted(&mut operations, &mut write_ledger);
         self.operations = operations;
-        self.write_ledger = ledger.write_ledger;
+        self.write_ledger = write_ledger;
         self.current_operation_id = ledger.current_operation_id;
         self.turn_count = ledger.turn_count;
+    }
+
+    /// One-time upgrade seam for the sorted-fingerprint format.
+    ///
+    /// Fingerprints persisted before key-sorting (`stable_json_string`) were
+    /// serialized in JSON insertion order, so a post-upgrade live lookup for
+    /// the same logical call would MISS the persisted op — turning a durable
+    /// Unknown/Failed into "no prior op" and re-executing it without the
+    /// Unknown-inquire user gate. Recompute every op's fingerprint from its
+    /// stored arguments through the canonicalizer, then rewrite ledger facts
+    /// via the op-id → new-fingerprint map so `WriteFact`s stay aligned.
+    /// Idempotent: already-sorted fingerprints recompute to themselves.
+    fn migrate_fingerprints_to_sorted(
+        operations: &mut [OperationRecord],
+        write_ledger: &mut [WriteFact],
+    ) {
+        let mut remap: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for op in operations.iter_mut() {
+            if op.write_fingerprint.as_deref().unwrap_or("").is_empty() {
+                continue;
+            }
+            let Some(args) = serde_json::from_str::<serde_json::Value>(&op.arguments).ok() else {
+                // Unparseable stored args: keep the old fingerprint rather
+                // than dropping the record's replay protection entirely.
+                continue;
+            };
+            let Some(new) =
+                crate::agent::streaming::mutating_write_fingerprint(&op.tool_name, &args)
+            else {
+                continue;
+            };
+            if new != op.write_fingerprint.as_deref().unwrap_or("") {
+                remap.insert(op.operation_id.clone(), new.clone());
+                op.write_fingerprint = Some(new);
+            }
+        }
+        if remap.is_empty() {
+            return;
+        }
+        for fact in write_ledger.iter_mut() {
+            if let Some(new) = remap.get(&fact.operation_id) {
+                if &fact.fingerprint != new {
+                    fact.fingerprint = new.clone();
+                }
+            }
+        }
     }
 
     /// Latest operation whose write fingerprint matches (if any).
@@ -1460,7 +1524,10 @@ impl TaskState {
             op.write_fingerprint.clone()
         };
         if let Some(fp) = fp {
-            self.record_successful_write(fp);
+            // Attribute the write fact to the COMPLETING operation, not the
+            // shared current_operation_id pointer (concurrent sibling writes
+            // in one batch would otherwise mis-file facts).
+            self.record_successful_write(operation_id, fp);
         }
     }
 
@@ -1876,22 +1943,31 @@ impl TaskState {
         }
     }
 
-    /// Record a successful mutating write on the **current** operation.
+    /// Record a successful mutating write on the named operation.
     /// Facts are appended to the ledger and never wiped for re-authorization.
-    pub fn record_successful_write(&mut self, write_fingerprint: impl Into<String>) {
+    ///
+    /// Attribution is explicit: `operation_id` must be the operation that
+    /// actually completed the write (complete_operation_succeeded passes its
+    /// own id) — never the shared current_operation_id pointer, which a
+    /// concurrent sibling write may have overwritten.
+    pub fn record_successful_write(
+        &mut self,
+        operation_id: &str,
+        write_fingerprint: impl Into<String>,
+    ) {
         let fingerprint = write_fingerprint.into();
-        if self.current_operation_id.is_empty() {
+        if operation_id.is_empty() {
             return;
         }
         if self
             .write_ledger
             .iter()
-            .any(|w| w.operation_id == self.current_operation_id && w.fingerprint == fingerprint)
+            .any(|w| w.operation_id == operation_id && w.fingerprint == fingerprint)
         {
             return;
         }
         self.write_ledger.push(WriteFact {
-            operation_id: self.current_operation_id.clone(),
+            operation_id: operation_id.to_string(),
             fingerprint,
         });
     }
@@ -2180,7 +2256,7 @@ fn find_term(hay: &str, term: &str) -> Option<usize> {
     if term.is_empty() {
         return None;
     }
-    let non_ascii = term.chars().any(|c| !c.is_ascii());
+    let non_ascii = !term.is_ascii();
     let mut start = 0;
     while let Some(rel) = hay[start..].find(term) {
         let idx = start + rel;
@@ -2482,9 +2558,7 @@ impl TaskState {
         if self.excluded_routes.is_empty() {
             return None;
         }
-        let Some(route) = mutating_call_excluded_route(tool_name, arguments) else {
-            return None;
-        };
+        let route = mutating_call_excluded_route(tool_name, arguments)?;
         if !self.excluded_routes.contains(&route) {
             return None;
         }
@@ -2534,9 +2608,7 @@ impl TaskState {
 
     /// Evidence stored for a specific Operation (no cross-op fallback).
     pub fn goal_evidence_for(&self, operation_id: Option<&str>) -> Option<&GoalEvidence> {
-        let Some(op) = operation_id.filter(|s| !s.is_empty()) else {
-            return None;
-        };
+        let op = operation_id.filter(|s| !s.is_empty())?;
         self.goal_evidences
             .iter()
             .find(|e| e.operation_id.as_deref() == Some(op))
@@ -2922,12 +2994,11 @@ pub fn classify_goal_evidence(
     }
     // Structured delivery payload without a device_command tool name
     // (e.g. nested CLI JSON) — still requires exact enum + bound ids.
-    if result_data.get("delivery").is_some() {
-        if result_data.get("sent").and_then(|v| v.as_bool()) == Some(true)
-            || result_data.get("device_id").is_some()
-        {
-            return evidence_from_device_command_result(&canonical, result_data);
-        }
+    if result_data.get("delivery").is_some()
+        && (result_data.get("sent").and_then(|v| v.as_bool()) == Some(true)
+            || result_data.get("device_id").is_some())
+    {
+        return evidence_from_device_command_result(&canonical, result_data);
     }
     None
 }
@@ -3127,7 +3198,7 @@ fn parse_exact_delivery(raw: Option<&serde_json::Value>) -> ExactDelivery {
             "extension_accepted" => ExactDelivery::ExtensionAccepted,
             "device_acknowledged" => ExactDelivery::DeviceAcknowledged,
             "physical_effect_verified" => ExactDelivery::PhysicalEffectVerified,
-            other if other.is_empty() => ExactDelivery::Missing,
+            "" => ExactDelivery::Missing,
             other => ExactDelivery::Unknown(other.to_string()),
         };
     }
@@ -3139,7 +3210,7 @@ fn parse_exact_delivery(raw: Option<&serde_json::Value>) -> ExactDelivery {
                 "extension_accepted" => ExactDelivery::ExtensionAccepted,
                 "device_acknowledged" => ExactDelivery::DeviceAcknowledged,
                 "physical_effect_verified" => ExactDelivery::PhysicalEffectVerified,
-                other if other.is_empty() => ExactDelivery::Missing,
+                "" => ExactDelivery::Missing,
                 other => ExactDelivery::Unknown(other.to_string()),
             };
         }
@@ -3175,6 +3246,36 @@ fn command_from_control_cmd(cmd_lower: &str) -> Option<String> {
 /// Stable fingerprint for a mutating write (tool + canonical args).
 pub fn write_fingerprint(tool: &str, args_canonical: &str) -> String {
     format!("{tool}|{args_canonical}")
+}
+
+/// Recursively sort object keys so fingerprint strings are order-independent.
+///
+/// Workspace `serde_json` enables `preserve_order` (ABI). `to_string` then
+/// follows insertion order — two equal maps built with different key order
+/// would mint different write fingerprints and bypass Unknown / anti-replay.
+pub fn sort_json_keys(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let mut sorted = serde_json::Map::with_capacity(map.len());
+            for k in keys {
+                if let Some(v) = map.get(k) {
+                    sorted.insert(k.clone(), sort_json_keys(v));
+                }
+            }
+            serde_json::Value::Object(sorted)
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(sort_json_keys).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// Stable JSON serialization for write fingerprints (sorted object keys).
+pub fn stable_json_string(value: &serde_json::Value) -> String {
+    serde_json::to_string(&sort_json_keys(value)).unwrap_or_default()
 }
 
 /// Fingerprint a tool result body for evidence (length-capped).
@@ -3424,9 +3525,22 @@ pub fn derive_tool_capability_resolved(
             // unknown side-effects. Keyword absence is NOT proven read-only.
             crate::toolkit::shell::classify_shell_capability(cmd)
         }
-        "file_read" | "web_search" | "web_fetch" | "vision" | "skill" | "memory" => {
+        "file_read" | "web_search" | "web_fetch" | "vision" | "skill" => {
             ToolCapability::read_query()
         }
+        // Memory is polymorphic: most actions write durable facts. Classify
+        // by `action` so add/rewrite/replace/remove/create enter the write
+        // gate (a blanket read_query let 5/7 actions skip it).
+        "memory" => match canonical_arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+        {
+            "read" | "list" => ToolCapability::read_query(),
+            "add" | "rewrite" | "replace" | "remove" | "create" => ToolCapability::mutating_write(),
+            // Missing / unknown action: fail closed into the gate.
+            _ => ToolCapability::mutating_unknown_sensitive(),
+        },
         "file_write" | "file_edit" | "image_edit" | "run_now" | "device_command" => {
             ToolCapability::mutating_write()
         }
@@ -3569,7 +3683,42 @@ pub fn prepare_mutating_dispatch(
     // protocol bit; InquireStatus (Unknown) also requires a consumed user grant.
     if authorize_new {
         match &dispatch {
-            WriteDispatch::PreferKnown { .. } | WriteDispatch::BlockedSucceeded { .. } => {
+            WriteDispatch::PreferKnown {
+                operation_id,
+                result,
+            } => {
+                // Retry cap (wires the declared capability policy in):
+                // a Failed write may re-open only while its retry budget
+                // allows — OnFailure{max_attempts} counts prior Failed ops,
+                // Never/unknown capability never retries a failure.
+                // Exhausted → resume the known failed result instead of
+                // silently re-executing a non-idempotent write.
+                let latest_failed = state
+                    .latest_op_for_fingerprint(write_fingerprint)
+                    .is_some_and(|o| o.status == OperationStatus::Failed);
+                if latest_failed && !state.write_failure_may_retry(write_fingerprint) {
+                    tracing::warn!(
+                        fingerprint = write_fingerprint,
+                        "new-operation re-run refused: retry policy exhausted for failed write"
+                    );
+                    return Err(WriteDispatch::PreferKnown {
+                        operation_id: operation_id.clone(),
+                        result: result.clone(),
+                    });
+                }
+                let mut clean = arguments.clone();
+                strip_new_operation_flag(&mut clean);
+                let args = serde_json::to_string(&clean).unwrap_or_else(|_| "{}".into());
+                let id = state.begin_new_operation_for_owner(
+                    tool_name,
+                    extract_operation_target(&clean),
+                    args,
+                    Some(write_fingerprint.to_string()),
+                    stream_owner,
+                );
+                return Ok(id);
+            }
+            WriteDispatch::BlockedSucceeded { .. } => {
                 let mut clean = arguments.clone();
                 strip_new_operation_flag(&mut clean);
                 let args = serde_json::to_string(&clean).unwrap_or_else(|_| "{}".into());
@@ -3834,6 +3983,7 @@ pub fn in_progress_tool_output(operation_id: &str) -> crate::toolkit::tool::Tool
 /// Build a structured result and, when large, store the full body in
 /// [`crate::agent::types::LargeDataCache`] under `op:<id>` **before**
 /// publishing `details_ref=$cached:op:<id>`.
+#[allow(clippy::too_many_arguments)]
 pub fn build_structured_result_with_cache(
     cache: &mut crate::agent::types::LargeDataCache,
     operation_id: &str,
@@ -4012,6 +4162,12 @@ pub fn outcome_is_unknown(
             matches!(e, crate::toolkit::error::ToolError::Timeout)
                 || l.contains("timed out")
                 || l.contains("timeout")
+                // Replay-unsafe cancels / transient errors return
+                // Err(Execution(err + outcome_unknown_guidance())) — the
+                // guidance marker is appended ONLY when the effect may have
+                // already landed, so matching it here classifies exactly the
+                // must-inquire cases. Clean failures (no marker) stay Failed.
+                || l.contains("outcome unknown")
         }
     }
 }
@@ -4514,7 +4670,7 @@ mod tests {
 
         s.note_user_turn();
         s.apply_directive(TaskDirective::Continue);
-        assert_eq!(s.goal.as_deref().unwrap().contains("device-native"), true);
+        assert!(s.goal.as_deref().unwrap().contains("device-native"));
         assert_eq!(s.object.as_deref(), Some("cam-1"));
         assert_eq!(s.content.as_deref(), Some("晴"));
         assert_eq!(s.method, Some(ExecutionMethod::DeviceNativeCommand));
@@ -5539,6 +5695,76 @@ mod tests {
         )));
     }
 
+    /// Regression (canceled-mid-effect classification): replay-unsafe cancels
+    /// and transient network errors return Err(Execution(err +
+    /// outcome_unknown_guidance())) — those MUST classify as Unknown so the
+    /// re-run needs user confirmation. Clean failures without the marker stay
+    /// Failed (re-runnable via _new_operation without confirm).
+    #[test]
+    fn outcome_is_unknown_err_branch_honors_guidance_marker() {
+        use crate::toolkit::tool::outcome_unknown_guidance;
+        // Replay-unsafe cancel: error carries the guidance marker → Unknown.
+        let canceled = crate::toolkit::error::ToolError::Execution(format!(
+            "Operation canceled{}",
+            outcome_unknown_guidance()
+        ));
+        assert!(
+            outcome_is_unknown(&Err(canceled)),
+            "cancel-with-guidance (effect may have landed) must be Unknown"
+        );
+        // Plain execution failure: no marker → stays Failed.
+        let plain = crate::toolkit::error::ToolError::Execution("exit code 1".into());
+        assert!(
+            !outcome_is_unknown(&Err(plain)),
+            "clean failure without the marker must stay Failed"
+        );
+    }
+
+    /// Regression (write-fact attribution): the fact for a completing
+    /// operation is recorded under THAT operation's id, not under the shared
+    /// current_operation_id pointer that a concurrently-begun sibling has
+    /// already overwritten.
+    #[test]
+    fn write_fact_attributes_to_completing_operation_not_current_pointer() {
+        let mut s = TaskState {
+            status: TaskStatus::Active,
+            ..TaskState::default()
+        };
+
+        let op_a = s.begin_new_operation(
+            "device_command",
+            Some("dev-1".into()),
+            r#"{"command":"reboot"}"#,
+            Some("device_command|{\"command\":\"reboot\"}".into()),
+        );
+        // Sibling write begins BEFORE op-A's result is finalized — the
+        // current_operation_id pointer now names op-B.
+        let op_b = s.begin_new_operation(
+            "file_write",
+            Some("/tmp/x".into()),
+            r#"{"path":"/tmp/x"}"#,
+            Some("file_write|{\"path\":\"/tmp/x\"}".into()),
+        );
+        assert_ne!(op_a, op_b);
+        assert_eq!(s.current_operation_id, op_b);
+
+        s.complete_operation_succeeded(
+            &op_a,
+            StructuredResult::with_body(true, "reboot dispatched", "{}", None),
+            std::iter::empty(),
+        );
+
+        let fact = s
+            .write_ledger
+            .iter()
+            .find(|w| w.fingerprint == "device_command|{\"command\":\"reboot\"}")
+            .expect("write fact recorded");
+        assert_eq!(
+            fact.operation_id, op_a,
+            "fact must be attributed to the completing op-A, not current pointer op-B"
+        );
+    }
+
     #[test]
     fn structured_summary_is_not_body_prefix_and_sets_details_ref() {
         let op = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -5642,6 +5868,130 @@ mod tests {
     }
 
     #[test]
+    fn memory_tool_capability_classifies_by_action() {
+        for action in ["read", "list"] {
+            let cap = derive_tool_capability(
+                "memory",
+                &serde_json::json!({"action": action, "target": "user"}),
+            );
+            assert!(
+                cap.read_only,
+                "{action} must stay read_query (skip write gate)"
+            );
+        }
+        for action in ["add", "rewrite", "replace", "remove", "create"] {
+            let cap = derive_tool_capability(
+                "memory",
+                &serde_json::json!({"action": action, "target": "user", "content": "x"}),
+            );
+            assert!(
+                !cap.read_only,
+                "{action} must enter the mutating write gate"
+            );
+        }
+        let missing = derive_tool_capability("memory", &serde_json::json!({}));
+        assert!(
+            !missing.read_only,
+            "missing action must fail closed into the write gate"
+        );
+    }
+
+    /// Regression (retry-cap wiring): `_new_operation` re-runs of a Failed
+    /// write consult the declared capability policy — OnFailure{2} allows
+    /// ONE retry, then the dispatch resumes the known failed result instead
+    /// of silently re-executing.
+    #[test]
+    fn failed_write_new_operation_respects_retry_policy() {
+        let mut s = TaskState {
+            status: TaskStatus::Active,
+            ..TaskState::default()
+        };
+        let args = serde_json::json!({"path":"/tmp/a"});
+        let fp = "file_write|{\"path\":\"/tmp/a\"}".to_string();
+
+        // First attempt fails.
+        let op1 = prepare_mutating_dispatch(&mut s, "file_write", &args, &fp, None, 1).unwrap();
+        s.complete_operation_failed(&op1, StructuredResult::with_body(false, "boom", "", None));
+
+        // Retry 1 (within OnFailure{max_attempts: 2}) opens a fresh op.
+        let mut retry_args = args.clone();
+        retry_args["_new_operation"] = serde_json::json!(true);
+        let op2 =
+            prepare_mutating_dispatch(&mut s, "file_write", &retry_args, &fp, None, 2).unwrap();
+        assert_ne!(op1, op2, "first retry must open a new Operation");
+        s.complete_operation_failed(
+            &op2,
+            StructuredResult::with_body(false, "boom again", "", None),
+        );
+
+        // Retry 2: budget exhausted → known failed result, no re-execution.
+        let err =
+            prepare_mutating_dispatch(&mut s, "file_write", &retry_args, &fp, None, 3).unwrap_err();
+        assert!(
+            matches!(err, WriteDispatch::PreferKnown { .. }),
+            "exhausted retry must resume the known failed result, got {err:?}"
+        );
+    }
+
+    /// Regression (fingerprint format migration): a ledger persisted under
+    /// the pre-sorting insertion-order format must still gate post-upgrade
+    /// lookups — restore recomputes fingerprints from stored args and
+    /// rewrites the ledger facts, so a durable Unknown cannot become an
+    /// invisible "no prior op" that re-executes without user confirm.
+    #[test]
+    fn restore_migrates_insertion_order_fingerprints_to_sorted() {
+        let old_fp = "device_command|{\"device_id\":\"D\",\"params\":{\"z\":1,\"a\":2}}";
+        let mut s = TaskState::default();
+        let op = OperationRecord {
+            operation_id: "op-mig-1".into(),
+            origin_turn_id: 1,
+            tool_name: "device_command".into(),
+            target: Some("D".into()),
+            arguments: r#"{"device_id":"D","params":{"z":1,"a":2}}"#.into(),
+            status: OperationStatus::Unknown,
+            result: None,
+            evidence: vec![],
+            write_fingerprint: Some(old_fp.into()),
+            capability: None,
+            owner_id: None,
+        };
+        s.restore_op_ledger(PersistedOpLedger {
+            version: 1,
+            operations: vec![op],
+            write_ledger: vec![WriteFact {
+                operation_id: "op-mig-1".into(),
+                fingerprint: old_fp.into(),
+            }],
+            current_operation_id: String::new(),
+            turn_count: 1,
+        });
+
+        // Live lookup with ANY key order now finds the persisted Unknown op.
+        let sorted_fp = crate::agent::streaming::mutating_write_fingerprint(
+            "device_command",
+            &serde_json::json!({"params": {"a": 2, "z": 1}, "device_id": "D"}),
+        )
+        .expect("fingerprint");
+        assert_eq!(
+            s.latest_op_for_fingerprint(&sorted_fp).map(|o| &o.status),
+            Some(&OperationStatus::Unknown),
+            "sorted-format lookup must hit the migrated op"
+        );
+        // The old insertion-order string no longer matches (single format).
+        assert!(
+            s.latest_op_for_fingerprint(old_fp).is_none(),
+            "old-format fingerprint must not linger as a second key"
+        );
+        // Ledger fact rewritten to the same sorted fingerprint.
+        assert!(
+            s.write_ledger
+                .iter()
+                .any(|f| f.operation_id == "op-mig-1" && f.fingerprint == sorted_fp),
+            "write facts must follow the migrated fingerprint"
+        );
+    }
+
+    #[test]
     fn write_failure_retry_policy_and_unknown_inquire() {
         let mut s = TaskState::default();
         // Must parse as a proven CLI mutation (OnFailure), not an unparsed
@@ -5703,12 +6053,12 @@ mod tests {
         // Changing evidence under timed allow → Allow even if identical_rounds
         // would otherwise look scary (caller passes results_changed=true).
         assert_eq!(
-            progress_loop_decision(0, 3, &[poll.clone()], true, 2, None),
+            progress_loop_decision(0, 3, std::slice::from_ref(&poll), true, 2, None),
             ProgressDecision::Allow
         );
         // Same query same result hits limit → Halt.
         assert_eq!(
-            progress_loop_decision(3, 3, &[poll.clone()], false, 0, None),
+            progress_loop_decision(3, 3, std::slice::from_ref(&poll), false, 0, None),
             ProgressDecision::HaltNoProgress {
                 identical_rounds: 3
             }
@@ -6092,7 +6442,7 @@ mod tests {
         // Status-poll changing evidence allowed; identical → halt writes Halted.
         let poll = write_fingerprint("shell", "neomind device status EK410");
         assert_eq!(
-            progress_loop_decision(0, 3, &[poll.clone()], true, 1, None),
+            progress_loop_decision(0, 3, std::slice::from_ref(&poll), true, 1, None),
             ProgressDecision::Allow
         );
         let halt_dec = progress_loop_decision(3, 3, &[poll], false, 0, None);
@@ -6102,14 +6452,18 @@ mod tests {
                 identical_rounds: 3
             }
         ));
-        let mut text_state = TaskState::default();
-        text_state.status = TaskStatus::Active;
+        let mut text_state = TaskState {
+            status: TaskStatus::Active,
+            ..TaskState::default()
+        };
         assert!(apply_progress_stop(&mut text_state, &halt_dec));
         assert!(matches!(text_state.status, TaskStatus::Halted { .. }));
 
         // Image/text stop paths share apply_progress_stop — unknown write → Halted.
-        let mut image_state = TaskState::default();
-        image_state.status = TaskStatus::Active;
+        let mut image_state = TaskState {
+            status: TaskStatus::Active,
+            ..TaskState::default()
+        };
         let inquire = ProgressDecision::InquireUnknown {
             operation_id: "op-unknown-1".into(),
         };
@@ -7743,7 +8097,8 @@ mod tests {
         state.set_op_ledger_commit(Some(sink.clone()));
 
         let args = serde_json::json!({"command":"neomind device command send --id cam-cw"});
-        let fp = write_fingerprint("shell", &args.to_string());
+        let fp = crate::agent::streaming::mutating_write_fingerprint("shell", &args)
+            .expect("shell fingerprint");
         let MutatingGateOutcome::Proceed { operation_id } =
             state.evaluate_mutating_gate_durable("shell", &args, &fp, Some("owner-cw"), 1)
         else {
@@ -7794,7 +8149,8 @@ mod tests {
         state.set_op_ledger_commit(Some(sink));
 
         let args = serde_json::json!({"command":"neomind device command send --id cam-fail"});
-        let fp = write_fingerprint("shell", &args.to_string());
+        let fp = crate::agent::streaming::mutating_write_fingerprint("shell", &args)
+            .expect("shell fingerprint");
         match state.evaluate_mutating_gate_durable("shell", &args, &fp, Some("owner-f"), 1) {
             MutatingGateOutcome::Block { message, confirm } => {
                 assert!(
@@ -7827,7 +8183,8 @@ mod tests {
         state.set_op_ledger_commit(Some(sink.clone()));
 
         let args = serde_json::json!({"command":"neomind device command send --id cam-ok"});
-        let fp = write_fingerprint("shell", &args.to_string());
+        let fp = crate::agent::streaming::mutating_write_fingerprint("shell", &args)
+            .expect("shell fingerprint");
         let MutatingGateOutcome::Proceed { operation_id } =
             state.evaluate_mutating_gate_durable("shell", &args, &fp, Some("owner-t"), 1)
         else {
@@ -7867,7 +8224,8 @@ mod tests {
         assert!(state.task_state.operations.is_empty());
 
         let args = serde_json::json!({"command":"neomind device command send --id cam-bad"});
-        let fp = write_fingerprint("shell", &args.to_string());
+        let fp = crate::agent::streaming::mutating_write_fingerprint("shell", &args)
+            .expect("shell fingerprint");
         match state.evaluate_mutating_gate_durable("shell", &args, &fp, None, 1) {
             MutatingGateOutcome::Block { message, .. } => {
                 assert!(
@@ -7955,7 +8313,8 @@ mod tests {
         state.set_op_ledger_commit(Some(sink.clone()));
 
         let args = serde_json::json!({"command":"neomind device command send --id cam-race"});
-        let fp = write_fingerprint("shell", &args.to_string());
+        let fp = crate::agent::streaming::mutating_write_fingerprint("shell", &args)
+            .expect("shell fingerprint");
         let MutatingGateOutcome::Proceed { .. } =
             state.evaluate_mutating_gate_durable("shell", &args, &fp, Some("owner-race"), 1)
         else {

@@ -155,7 +155,6 @@ pub async fn process_stream_events_with_safeguards(
     // Passed locally — never re-read from shared agent state after awaits.
     call_site_turn: u64,
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
-    let call_site_turn = call_site_turn;
     // New user turn: drop transient skill bodies; TaskState (goal / writes)
     // survives on AgentInternalState (accept already applied directives).
     // Later ReAct rounds in THIS turn may reload skills under the total budget.
@@ -1978,14 +1977,13 @@ pub async fn process_stream_events_with_safeguards(
                                     summary,
                                 );
                                 if let Ok(out) = &execution.result {
-                                    let op_id = {
-                                        let id = state.task_state.current_operation_id.as_str();
-                                        if id.is_empty() {
-                                            None
-                                        } else {
-                                            Some(id.to_string())
-                                        }
-                                    };
+                                    // Bind goal evidence to THIS execution's
+                                    // Operation (never the shared
+                                    // current_operation_id pointer, which a
+                                    // concurrent sibling write already
+                                    // overwrote — parallel tool batches run
+                                    // up to 6 wide).
+                                    let op_id = execution.operation_id.clone();
                                     state.task_state.observe_tool_result_for_goal(
                                         &crate::tools::resolve_tool_name(&name),
                                         &exec_arguments,

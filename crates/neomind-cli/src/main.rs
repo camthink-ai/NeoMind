@@ -457,6 +457,10 @@ async fn run_chat(session_id: Option<String>) -> Result<()> {
                             println!("[Continuing...]");
                         }
                         neomind_agent::AgentEvent::ContextUsage { .. } => {}
+                        // Host/UI confirm chips — no interactive surface in
+                        // the terminal chat path; ignore so the stream continues.
+                        neomind_agent::AgentEvent::AuthorizeConfirmRequest { .. }
+                        | neomind_agent::AgentEvent::AuthorizeConfirmRemoved { .. } => {}
                         neomind_agent::AgentEvent::End { .. } => {
                             break;
                         }

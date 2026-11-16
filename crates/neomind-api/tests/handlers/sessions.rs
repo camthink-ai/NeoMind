@@ -142,6 +142,7 @@ mod tests {
             content_version: None,
             content_nodes: None,
             session_config: None,
+            authorize_new_operation: None,
         };
         let result = chat_handler(
             State(state),
@@ -184,6 +185,7 @@ mod tests {
             content_version: None,
             content_nodes: None,
             session_config: None,
+            authorize_new_operation: None,
         };
         let result = chat_handler(State(state), Path(session_id.clone()), Json(req)).await;
         // Either Ok with timeout message or Err with something other than NOT_FOUND
@@ -243,6 +245,7 @@ mod tests {
             content_version: None,
             content_nodes: None,
             session_config: None,
+            authorize_new_operation: None,
         };
         assert_eq!(req.message, "Test message");
         assert_eq!(req.session_id.unwrap(), "session123");

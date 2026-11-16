@@ -237,3 +237,29 @@ async fn resolve_marks_missing_and_ok_refs() {
     assert!(resp.resolutions[1].detail.contains("no device"));
     assert!(!resp.resolutions[2].ok);
 }
+
+/// Regression (resolve fan-out bound): a preflight with more references than
+/// the MAX_REFERENCES cap is explicitly rejected (400), never silently
+/// bounded — and never resolved one-lookup-per-fabricated-id.
+#[tokio::test]
+async fn resolve_rejects_more_references_than_cap() {
+    let state = state().await;
+    seed_two_same_name_devices(&state).await;
+
+    let references: Vec<ChatReference> = (0..21)
+        .map(|i| ChatReference {
+            r#type: "device".into(),
+            id: format!("fabricated-{i}"),
+            label: None,
+        })
+        .collect();
+    let body = MentionResolveRequest { references };
+
+    let err = resolve_mentions_handler(State(state), Json(body))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("reference cap"),
+        "over-cap preflight must be a 400 naming the cap, got: {err}"
+    );
+}

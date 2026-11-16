@@ -375,6 +375,12 @@ impl RuleCondition {
                 LogicalOperator::Not => {
                     // NOT: true only when NONE of the sub-conditions are met.
                     // For a single condition this is standard logical NOT.
+                    //
+                    // 2-valued on purpose: a missing value evaluates as
+                    // NOT-met here, so NOT fires on incomplete data. The
+                    // explain view (rules/src/explain.rs) is 3-valued and
+                    // surfaces Unknown for the same rule — an intentional
+                    // honesty divergence, documented there.
                     !conditions.iter().any(|c| c.evaluate(provider))
                 }
             },

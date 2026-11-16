@@ -24,6 +24,22 @@ use crate::AgentEvent;
 
 use neomind_core::llm::backend::{LlmInput, LlmRuntime};
 
+/// Slim-layer `$cached:` key for a tool payload (excludes write-gate
+/// `op:<uuid>` bodies that also land in [`LargeDataCache`]).
+fn slim_tool_cache_key(keys: &[String]) -> String {
+    let slim: Vec<_> = keys
+        .iter()
+        .filter(|k| !k.starts_with("op:"))
+        .cloned()
+        .collect();
+    assert_eq!(
+        slim.len(),
+        1,
+        "exactly one slim tool-output cache entry; keys={keys:?}"
+    );
+    slim.into_iter().next().expect("slim key")
+}
+
 /// Non-repetitive payload: 65,600 chars of UNIQUE blocks (each embeds its
 /// block index), ≈78KB UTF-8 — over the 64KiB slim threshold, and a wrong
 /// window offset can never reproduce the expected text.
@@ -160,10 +176,10 @@ async fn big_output_refs_are_readable_next_turn_through_real_dispatch() {
     );
 
     // The REAL reference the slim layer generated (extracted from session
-    // state — no key-derivation shortcuts).
+    // state — no key-derivation shortcuts). Write-gate may also store
+    // `op:<uuid>` bodies in the same cache; pick the slim tool key.
     let keys = state.read().await.large_data_cache.entry_keys();
-    assert_eq!(keys.len(), 1, "exactly one cache entry after slim");
-    let reference = format!("$cached:{}", keys[0]);
+    let reference = format!("$cached:{}", slim_tool_cache_key(&keys));
 
     // ── Turn 2 (same session): the model reads the reference back through
     // file_read, following next_char_offset to the END, via the same
@@ -393,8 +409,7 @@ async fn multi_window_readback_keeps_next_turn_request_in_budget() {
     }
     let reference = {
         let keys = state.read().await.large_data_cache.entry_keys();
-        assert_eq!(keys.len(), 1);
-        format!("$cached:{}", keys[0])
+        format!("$cached:{}", slim_tool_cache_key(&keys))
     };
 
     let rt1 = MockLlmRuntime::new(vec![
@@ -526,7 +541,7 @@ async fn cross_window_synthesis_with_revisit_stays_coherent() {
     }
     let reference = {
         let keys = state.read().await.large_data_cache.entry_keys();
-        format!("$cached:{}", keys[0])
+        format!("$cached:{}", slim_tool_cache_key(&keys))
     };
 
     // w1 → w2 → revisit w1 → final answer.

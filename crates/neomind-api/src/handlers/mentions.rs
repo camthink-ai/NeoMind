@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::handlers::chat_refs::{resolve_references, RefResolution};
 use crate::handlers::common::{ok, HandlerResult};
 use crate::handlers::ServerState;
+use crate::models::error::ErrorResponse;
 use crate::models::ChatReference;
 use neomind_storage::agents::AgentFilter;
 
@@ -161,6 +162,15 @@ pub async fn resolve_mentions_handler(
     State(state): State<ServerState>,
     Json(body): Json<MentionResolveRequest>,
 ) -> HandlerResult<MentionResolveResponse> {
+    // Entry-point rejection (not silent bounding): a preflight over the cap
+    // is a client bug — reject explicitly so it cannot masquerade as ok_all.
+    if body.references.len() > crate::handlers::chat_refs::MAX_REFERENCES {
+        return Err(ErrorResponse::bad_request(format!(
+            "references exceed the {}-reference cap (got {})",
+            crate::handlers::chat_refs::MAX_REFERENCES,
+            body.references.len()
+        )));
+    }
     let resolutions = resolve_references(&state, &body.references).await;
     let ok_all = resolutions.iter().all(|r| r.ok);
     ok(MentionResolveResponse {

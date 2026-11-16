@@ -59,6 +59,7 @@ struct PersistClearPause {
 }
 
 impl PersistClearHooks {
+    #[cfg(test)]
     fn install_persist_pause(&self) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
         let entered = Arc::new(tokio::sync::Notify::new());
         let resume = Arc::new(tokio::sync::Notify::new());
@@ -72,6 +73,7 @@ impl PersistClearHooks {
         (entered, resume)
     }
 
+    #[cfg(test)]
     fn install_clear_hold(&self) -> (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>) {
         let entered = Arc::new(tokio::sync::Notify::new());
         let resume = Arc::new(tokio::sync::Notify::new());
@@ -296,8 +298,15 @@ pub struct SessionInfo {
     pub memory_enabled: bool,
 }
 
-/// Type alias for the cancel-sender map shared between manager and stream wrappers.
-type CancelSenderMap = Arc<RwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>;
+/// Type alias for the cancel-sender map shared between manager and stream
+/// wrappers. The `u64` is a per-registration identity token: removals are
+/// owner-checked so a timed-out clear's zombie cleanup can never evict a
+/// NEWER stream's registration (remove by identity, never by bare session
+/// key — the same class of bug the stream-lease owner token fixed).
+type CancelSenderMap = Arc<RwLock<HashMap<String, (u64, tokio::sync::watch::Sender<bool>)>>>;
+
+/// Monotonic identity tokens for cancel-sender registrations.
+static CANCEL_SENDER_TOKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// RAII guard that ensures a registered cancel sender is removed from the
 /// `cancel_senders` map when the stream wrapper is dropped — regardless of
@@ -313,16 +322,20 @@ type CancelSenderMap = Arc<RwLock<HashMap<String, tokio::sync::watch::Sender<boo
 struct CancelSenderGuard {
     senders: CancelSenderMap,
     session_id: String,
+    /// Registration identity captured at sign-up; `Drop` removes only when
+    /// the map still holds THIS token.
+    token: u64,
     /// Set to true once the natural-end cleanup has run, so `Drop` doesn't
     /// double-spawn a redundant removal.
     cleaned_up: bool,
 }
 
 impl CancelSenderGuard {
-    fn new(senders: CancelSenderMap, session_id: String) -> Self {
+    fn new(senders: CancelSenderMap, session_id: String, token: u64) -> Self {
         Self {
             senders,
             session_id,
+            token,
             cleaned_up: false,
         }
     }
@@ -342,8 +355,9 @@ impl Drop for CancelSenderGuard {
         }
         let senders = self.senders.clone();
         let session_id = std::mem::take(&mut self.session_id);
+        let token = self.token;
         tokio::spawn(async move {
-            senders.write().await.remove(&session_id);
+            SessionManager::remove_cancel_sender_if_token(&senders, &session_id, token).await;
         });
     }
 }
@@ -369,8 +383,9 @@ pub struct SessionManager {
     tool_registry: Arc<RwLock<Option<Arc<crate::toolkit::ToolRegistry>>>>,
     /// Skill registry for scenario-driven prompt injection
     skill_registry: crate::skills::SharedSkillRegistry,
-    /// Cancel signal senders for active streaming sessions (session_id → watch::Sender)
-    cancel_senders: Arc<RwLock<HashMap<String, tokio::sync::watch::Sender<bool>>>>,
+    /// Cancel signal senders for active streaming sessions
+    /// (session_id → (identity token, watch::Sender))
+    cancel_senders: CancelSenderMap,
     /// Sessions mid-`clear_history`: new turns are refused until clear finishes
     /// (cancel + await stream → memory wipe → durable deletes).
     ///
@@ -1094,28 +1109,49 @@ impl SessionManager {
     /// Register a cancel signal sender for an active streaming session.
     /// The sender is stored so that `cancel_session` can interrupt the stream.
     ///
-    /// [single-stream mutex] Returns `false` WITHOUT registering when a
+    /// [single-stream mutex] Returns `None` WITHOUT registering when a
     /// stream is already active for the session — the registration doubles
     /// as the per-session mutual exclusion. Previously a second concurrent
     /// stream silently OVERWROTE the first's sender (making it
     /// uncancellable) and interleaved history writes into the same
     /// AgentInternalState.
+    ///
+    /// On success returns the registration's identity token; all removals
+    /// must present it ([`Self::remove_cancel_sender_if_token`]) so a stale
+    /// wrapper can never evict a newer stream's sender.
     pub async fn register_cancel_sender(
         &self,
         session_id: &str,
         sender: tokio::sync::watch::Sender<bool>,
-    ) -> bool {
+    ) -> Option<u64> {
         let mut map = self.cancel_senders.write().await;
         if map.contains_key(session_id) {
-            return false;
+            return None;
         }
-        map.insert(session_id.to_string(), sender);
-        true
+        let token = CANCEL_SENDER_TOKEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        map.insert(session_id.to_string(), (token, sender));
+        Some(token)
+    }
+
+    /// Remove the session's cancel sender only when `token` still identifies
+    /// the registered entry. Identity-checked: a zombie wrapper left over
+    /// from a timed-out clear holds an older token and must NOT evict a
+    /// newer stream's registration.
+    async fn remove_cancel_sender_if_token(
+        senders: &CancelSenderMap,
+        session_id: &str,
+        token: u64,
+    ) {
+        let mut map = senders.write().await;
+        if map.get(session_id).is_some_and(|(t, _)| *t == token) {
+            map.remove(session_id);
+        }
     }
 
     /// Remove a cancel sender (called when streaming ends naturally).
-    pub async fn remove_cancel_sender(&self, session_id: &str) {
-        self.cancel_senders.write().await.remove(session_id);
+    /// Identity-checked: only removes when `token` matches the registration.
+    pub async fn remove_cancel_sender(&self, session_id: &str, token: u64) {
+        Self::remove_cancel_sender_if_token(&self.cancel_senders, session_id, token).await;
     }
 
     // ---- Direct event subscribers (Phase 2: ChatSession direct routing) ----
@@ -1182,7 +1218,7 @@ impl SessionManager {
     /// Returns true if a stream was active and interrupted.
     pub async fn cancel_session(&self, session_id: &str) -> bool {
         let mut senders = self.cancel_senders.write().await;
-        if let Some(sender) = senders.remove(session_id) {
+        if let Some((_, sender)) = senders.remove(session_id) {
             // Send the interrupt signal
             let _ = sender.send(true);
             tracing::info!(session_id = %session_id, "Sent interrupt signal to streaming session");
@@ -2159,11 +2195,11 @@ Assistant: {ar}\n"
 
         // Create a cancel signal channel so the stream can be interrupted
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        if !self.register_cancel_sender(session_id, cancel_tx).await {
+        let Some(cancel_token) = self.register_cancel_sender(session_id, cancel_tx).await else {
             return Err(NeoMindError::validation(
                 "A response is already being generated for this session — wait for it to finish or cancel it first",
             ));
-        }
+        };
 
         let safeguards = super::agent::StreamSafeguards::default().with_interrupt_signal(cancel_rx);
 
@@ -2186,31 +2222,29 @@ Assistant: {ar}\n"
         // ran at stream end / disconnect the whole exchange lived only in
         // RAM — a kill -9 mid-turn (window up to the 1200s stream timeout)
         // silently dropped the user's words. Best-effort: the end-of-turn
-        // persist remains the authoritative write.
-        {
-            let messages = agent.history().await;
-            let converted = Self::agent_messages_to_session_messages(&messages);
-            if let Err(e) = self.store.save_history(session_id, &converted) {
-                tracing::debug!(
-                    session_id = %session_id,
-                    error = %e,
-                    "turn-start history snapshot failed (end-of-turn persist still authoritative)"
-                );
-            }
-        }
+        // persist remains the authoritative write. Same persist/clear
+        // guards as persist_history so a concurrent clear cannot race a
+        // bare save_history past is_clearing / generation.
+        self.snapshot_history_at_turn_start(session_id).await;
 
         // Wrap the stream with a scopeguard so the cancel sender is removed
         // even if the consumer drops the stream early (client disconnect,
         // downstream error). The guard lives inside the async block, so it
         // drops naturally on both natural-end and early-drop paths.
         let cleanup_stream = Box::pin(async_stream::stream! {
-            let mut guard = CancelSenderGuard::new(cancel_senders.clone(), session_id_owned.clone());
+            let mut guard = CancelSenderGuard::new(
+                cancel_senders.clone(),
+                session_id_owned.clone(),
+                cancel_token,
+            );
             let mut stream = stream;
             while let Some(event) = stream.next().await {
                 yield event;
             }
-            // Stream ended naturally — remove the cancel sender inline.
-            cancel_senders.write().await.remove(&session_id_owned);
+            // Stream ended naturally — remove the cancel sender inline
+            // (identity-checked: a newer registration is left alone).
+            Self::remove_cancel_sender_if_token(&cancel_senders, &session_id_owned, cancel_token)
+                .await;
             guard.mark_cleaned_up();
         });
 
@@ -2474,11 +2508,11 @@ Assistant: {ar}\n"
 
         // Create a cancel signal channel
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-        if !self.register_cancel_sender(session_id, cancel_tx).await {
+        let Some(cancel_token) = self.register_cancel_sender(session_id, cancel_tx).await else {
             return Err(NeoMindError::validation(
                 "A response is already being generated for this session — wait for it to finish or cancel it first",
             ));
-        }
+        };
 
         let safeguards = super::agent::StreamSafeguards::default().with_interrupt_signal(cancel_rx);
 
@@ -2497,33 +2531,40 @@ Assistant: {ar}\n"
 
         // [crash window] The multimodal path pushes the user message into
         // memory on the stream's FIRST poll, so the snapshot is taken on the
-        // first yielded event (same rationale as the text path above).
+        // first yielded event (same rationale + persist/clear guards as the
+        // text path above).
         let snapshot_store = self.store.clone();
+        let snapshot_history_io = self.history_io.clone();
+        let snapshot_clearing = self.clearing_sessions.clone();
         let snapshot_agent = agent.clone();
         let snapshot_session_id = session_id.to_string();
 
         // Wrap with scopeguard so cancel sender is removed on both natural
         // stream end and early drop (matches the text streaming path above).
         let cleanup_stream = Box::pin(async_stream::stream! {
-            let mut guard = CancelSenderGuard::new(cancel_senders.clone(), session_id_owned.clone());
+            let mut guard = CancelSenderGuard::new(
+                cancel_senders.clone(),
+                session_id_owned.clone(),
+                cancel_token,
+            );
             let mut stream = stream;
             let mut turn_start_persisted = false;
             while let Some(event) = stream.next().await {
                 if !turn_start_persisted {
                     turn_start_persisted = true;
-                    let messages = snapshot_agent.history().await;
-                    let converted = Self::agent_messages_to_session_messages(&messages);
-                    if let Err(e) = snapshot_store.save_history(&snapshot_session_id, &converted) {
-                        tracing::debug!(
-                            session_id = %snapshot_session_id,
-                            error = %e,
-                            "turn-start history snapshot failed (multimodal)"
-                        );
-                    }
+                    Self::guarded_turn_start_save(
+                        &snapshot_store,
+                        &snapshot_history_io,
+                        &snapshot_clearing,
+                        &snapshot_agent,
+                        &snapshot_session_id,
+                    )
+                    .await;
                 }
                 yield event;
             }
-            cancel_senders.write().await.remove(&session_id_owned);
+            Self::remove_cancel_sender_if_token(&cancel_senders, &session_id_owned, cancel_token)
+                .await;
             guard.mark_cleaned_up();
         });
 
@@ -2615,7 +2656,10 @@ Assistant: {ar}\n"
                     "clear_history: stream cancel await timed out — proceeding with generation bump"
                 );
                 // Force-drop the registration so new turns are not stuck
-                // behind a zombie sender after clear unmarks.
+                // behind a zombie sender after clear unmarks. Safe to be
+                // unconditional: tokens are monotonic, so the zombie's own
+                // later cleanup (old token) can never evict whatever newer
+                // stream registers here.
                 self.cancel_senders.write().await.remove(session_id);
                 break;
             }
@@ -2625,13 +2669,15 @@ Assistant: {ar}\n"
 
     /// Clear conversation history for a session.
     ///
-    /// Order (ledger-consistency): mark clearing (block new turns) → cancel
-    /// + await in-flight stream → acquire [`Self::history_io`] → bump history
-    /// generation + wipe memory → durable history clear → durable op-ledger
-    /// delete. DB failures propagate to the caller (no silent Ok). The
-    /// clearing mark is Drop-safe ([`ClearingGuard`]) so Future cancel cannot
-    /// leave the session stuck. Stale stream persists that observed a
-    /// pre-clear generation are no-ops under `history_io`.
+    /// Order (ledger-consistency): mark clearing (block new turns), cancel and
+    /// await in-flight stream, acquire [`Self::history_io`], bump history
+    /// generation and wipe memory, durable history clear, then durable
+    /// op-ledger delete.
+    ///
+    /// DB failures propagate to the caller (no silent Ok). The clearing mark
+    /// is Drop-safe ([`ClearingGuard`]) so Future cancel cannot leave the
+    /// session stuck. Stale stream persists that observed a pre-clear
+    /// generation are no-ops under `history_io`.
     pub async fn clear_history(&self, session_id: &str) -> Result<()> {
         let agent = self.get_session(session_id).await?;
 
@@ -2693,6 +2739,76 @@ Assistant: {ar}\n"
         // _clearing Drop unmarks here (and on cancel/panic).
     }
 
+    /// Best-effort turn-start history snapshot under the same guards as
+    /// [`Self::persist_history`]: skip while clearing, hold `history_io`,
+    /// and refuse if history generation advanced (cleared mid-flight).
+    ///
+    /// Closes the review finding that crash-window saves called
+    /// `store.save_history` bare and could rewrite disk past a concurrent
+    /// clear.
+    async fn snapshot_history_at_turn_start(&self, session_id: &str) {
+        let Ok(agent) = self.get_session(session_id).await else {
+            return;
+        };
+        Self::guarded_turn_start_save(
+            &self.store,
+            &self.history_io,
+            &self.clearing_sessions,
+            &agent,
+            session_id,
+        )
+        .await;
+    }
+
+    /// Shared crash-window / multimodal turn-start save (Arcs for stream move).
+    async fn guarded_turn_start_save(
+        store: &Arc<SessionStore>,
+        history_io: &Arc<tokio::sync::Mutex<()>>,
+        clearing_sessions: &Arc<std::sync::Mutex<HashMap<String, ()>>>,
+        agent: &Arc<Agent>,
+        session_id: &str,
+    ) {
+        let clearing = || {
+            clearing_sessions
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(session_id)
+        };
+        if clearing() {
+            tracing::debug!(
+                session_id = %session_id,
+                "Skipping turn-start history snapshot — session clear in progress"
+            );
+            return;
+        }
+        let generation = agent.history_generation().await;
+        let messages = agent.history().await;
+        let converted = Self::agent_messages_to_session_messages(&messages);
+
+        let _io = history_io.lock().await;
+        if clearing() {
+            tracing::debug!(
+                session_id = %session_id,
+                "Skipping turn-start history snapshot — session clear in progress (under history_io)"
+            );
+            return;
+        }
+        if agent.history_generation().await != generation {
+            tracing::debug!(
+                session_id = %session_id,
+                "Skipping turn-start history snapshot — history generation advanced (cleared)"
+            );
+            return;
+        }
+        if let Err(e) = store.save_history(session_id, &converted) {
+            tracing::debug!(
+                session_id = %session_id,
+                error = %e,
+                "turn-start history snapshot failed (end-of-turn persist still authoritative)"
+            );
+        }
+    }
+
     /// Persist the current history for a session to the database.
     pub async fn persist_history(&self, session_id: &str) -> Result<()> {
         if self.is_clearing(session_id) {
@@ -2741,11 +2857,16 @@ Assistant: {ar}\n"
             }
         }
 
+        // Authoritative end-of-turn persist. A failure here loses the
+        // exchange on crash — log at ERROR so silent durability gaps are
+        // visible. Still Ok(()) on purpose: the turn already reached the
+        // user, and failing it now would misreport a delivered answer; the
+        // pre-side-effect write-INTENT path stays the fail-closed one.
         if let Err(e) = self.save_history(session_id, &messages) {
-            tracing::debug!(
+            tracing::error!(
                 session_id = %session_id,
                 error = %e,
-                "Failed to persist history"
+                "DURABILITY: end-of-turn history persist failed — exchange may be lost on crash"
             );
         }
 
@@ -2766,10 +2887,13 @@ Assistant: {ar}\n"
                     "Skipping op ledger persist — untrusted until clear/recover"
                 );
             } else if let Err(e) = agent.commit_op_ledger_now().await {
-                tracing::debug!(
+                // Distinct from history loss above: the durable ledger is
+                // now staler than memory until the next successful persist
+                // (write-intent commits before side effects are unaffected).
+                tracing::error!(
                     session_id = %session_id,
                     error = %e,
-                    "Failed to persist op ledger via commit path"
+                    "DURABILITY: op-ledger terminal persist failed — ledger stale until next persist"
                 );
             }
         }
@@ -3477,8 +3601,11 @@ mod tests {
 
         // Re-register and remove manually (simulating stream end)
         let (tx2, _rx2) = tokio::sync::watch::channel(false);
-        manager.register_cancel_sender("stream-session", tx2).await;
-        manager.remove_cancel_sender("stream-session").await;
+        let token2 = manager
+            .register_cancel_sender("stream-session", tx2)
+            .await
+            .expect("re-register");
+        manager.remove_cancel_sender("stream-session", token2).await;
 
         // Now cancel should return false
         let cancelled = manager.cancel_session("stream-session").await;
@@ -3564,13 +3691,17 @@ mod tests {
 
         // Register a sender
         let (tx, _rx) = tokio::sync::watch::channel(false);
-        manager.register_cancel_sender("dropped-session", tx).await;
+        let token = manager
+            .register_cancel_sender("dropped-session", tx)
+            .await
+            .expect("register");
 
         // Drop a guard WITHOUT calling mark_cleaned_up — simulating early drop
         {
             let _guard = CancelSenderGuard::new(
                 manager.cancel_senders.clone(),
                 "dropped-session".to_string(),
+                token,
             );
             // _guard goes out of scope here → Drop spawns a removal task
         }
@@ -3586,6 +3717,65 @@ mod tests {
         );
     }
 
+    /// Regression (identity-scoped cancel senders): a zombie wrapper left
+    /// over from a timed-out clear holds an OLD token. When it finally ends,
+    /// its cleanup must NOT evict a newer stream's registration — removal is
+    /// owner-checked. Before the token fix both removed by bare session key,
+    /// so the zombie could delete the next turn's sender (making it
+    /// uncancellable) and let a third stream register concurrently.
+    #[tokio::test]
+    async fn test_stale_cancel_guard_cannot_evict_newer_registration() {
+        let manager = create_temp_manager();
+
+        // Stream 1 registers, then a timed-out clear force-drops the entry.
+        let (tx1, _rx1) = tokio::sync::watch::channel(false);
+        let stale_token = manager
+            .register_cancel_sender("race-session", tx1)
+            .await
+            .expect("first registration");
+        manager.cancel_senders.write().await.remove("race-session");
+
+        // Stream 2 (the next turn) registers while stream 1's wrapper is
+        // still alive.
+        let (tx2, rx2) = tokio::sync::watch::channel(false);
+        manager
+            .register_cancel_sender("race-session", tx2)
+            .await
+            .expect("newer registration must succeed after force-drop");
+
+        // Stream 1's wrapper finally ends: identity-checked cleanup runs with
+        // the STALE token. It must leave stream 2's registration alone.
+        SessionManager::remove_cancel_sender_if_token(
+            &manager.cancel_senders,
+            "race-session",
+            stale_token,
+        )
+        .await;
+        assert!(
+            manager
+                .cancel_senders
+                .read()
+                .await
+                .contains_key("race-session"),
+            "stale-token cleanup must not evict the newer registration"
+        );
+
+        // The newer stream stays cancellable.
+        assert!(manager.cancel_session("race-session").await);
+        assert!(*rx2.borrow());
+
+        // And the matching token still removes normally.
+        manager.cancel_senders.write().await.remove("race-session");
+        assert!(
+            !manager
+                .cancel_senders
+                .read()
+                .await
+                .contains_key("race-session"),
+            "force/unconditional removal (clear path) still evicts"
+        );
+    }
+
     /// Regression: when the stream completes naturally and we call
     /// `mark_cleaned_up`, the Drop handler must NOT double-spawn a removal.
     #[tokio::test]
@@ -3593,13 +3783,19 @@ mod tests {
         let manager = create_temp_manager();
 
         let (tx, _rx) = tokio::sync::watch::channel(false);
-        manager.register_cancel_sender("clean-session", tx).await;
+        let token = manager
+            .register_cancel_sender("clean-session", tx)
+            .await
+            .expect("register");
 
         // Simulate natural stream end: explicit removal + mark_cleaned_up
         {
-            let mut guard =
-                CancelSenderGuard::new(manager.cancel_senders.clone(), "clean-session".to_string());
-            manager.remove_cancel_sender("clean-session").await;
+            let mut guard = CancelSenderGuard::new(
+                manager.cancel_senders.clone(),
+                "clean-session".to_string(),
+                token,
+            );
+            manager.remove_cancel_sender("clean-session", token).await;
             guard.mark_cleaned_up();
             // guard drops here — Drop should be a no-op
         }
@@ -3691,7 +3887,10 @@ mod tests {
             .unwrap();
 
         let (tx, mut rx) = tokio::sync::watch::channel(false);
-        assert!(manager.register_cancel_sender(&session_id, tx).await);
+        let token = manager
+            .register_cancel_sender(&session_id, tx)
+            .await
+            .expect("register");
 
         let mgr = SessionManager {
             sessions: manager.sessions.clone(),
@@ -3716,7 +3915,7 @@ mod tests {
             .expect("clear must cancel the active stream")
             .expect("watch channel");
         assert!(*rx.borrow());
-        manager.remove_cancel_sender(&session_id).await;
+        manager.remove_cancel_sender(&session_id, token).await;
 
         clear_task
             .await
@@ -3764,7 +3963,9 @@ mod tests {
         let manager = create_temp_manager();
         let session_id = manager.create_session().await.unwrap();
         let seed = AgentMessage::user("before clear race");
-        manager.save_history(&session_id, &[seed.clone()]).unwrap();
+        manager
+            .save_history(&session_id, std::slice::from_ref(&seed))
+            .unwrap();
 
         // Live agent memory holds the pre-clear turn (persist will snapshot it).
         let agent = manager.get_session(&session_id).await.unwrap();
@@ -3859,15 +4060,14 @@ mod tests {
         );
 
         // New turns must not see a leaked mid-clear refusal.
-        match manager
+        if let Err(e) = manager
             .process_message_events(&session_id, "after aborted clear")
             .await
         {
-            Err(e) => assert!(
+            assert!(
                 !e.to_string().to_lowercase().contains("being cleared"),
                 "leaked clearing mark: {e}"
-            ),
-            Ok(_) => {}
+            )
         }
     }
 

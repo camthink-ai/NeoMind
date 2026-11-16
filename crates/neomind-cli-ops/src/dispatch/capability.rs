@@ -143,14 +143,12 @@ fn classify_device(device_cmd: &DeviceCommand) -> CliSideEffect {
         | DeviceCommand::Latest { .. }
         | DeviceCommand::History { .. }
         | DeviceCommand::WebhookUrl { .. } => ProvenReadOnly,
-        DeviceCommand::Types { type_cmd } => match type_cmd {
-            DeviceTypeCommand::List | DeviceTypeCommand::Get { .. } => ProvenReadOnly,
-            _ => Mutating,
-        },
-        DeviceCommand::Drafts { draft_cmd } => match draft_cmd {
-            DraftCommand::List { .. } | DraftCommand::Get { .. } => ProvenReadOnly,
-            _ => Mutating,
-        },
+        DeviceCommand::Types {
+            type_cmd: DeviceTypeCommand::List | DeviceTypeCommand::Get { .. },
+        }
+        | DeviceCommand::Drafts {
+            draft_cmd: DraftCommand::List { .. } | DraftCommand::Get { .. },
+        } => ProvenReadOnly,
         _ => Mutating,
     }
 }
@@ -186,7 +184,10 @@ mod tests {
             classify_line("rule explain r1"),
             CliSideEffect::ProvenReadOnly
         );
-        assert_eq!(classify_line("dashboard list"), CliSideEffect::ProvenReadOnly);
+        assert_eq!(
+            classify_line("dashboard list"),
+            CliSideEffect::ProvenReadOnly
+        );
         assert_eq!(classify_line("health"), CliSideEffect::ProvenReadOnly);
         assert_eq!(classify_line("llm models"), CliSideEffect::ProvenReadOnly);
     }

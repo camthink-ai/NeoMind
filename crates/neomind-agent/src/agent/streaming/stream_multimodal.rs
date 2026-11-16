@@ -401,6 +401,34 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
                 async move {
                     use super::super::task_continuity::MutatingGateOutcome;
+                    // Shell policy check — same deny-list as the text loop
+                    // (stream_core) and the scheduled loop (tool_loop). Blocks
+                    // catastrophic commands (rm -rf /, dd, mkfs, …) before
+                    // the write gate: multimodal turns must not be the gap.
+                    if name == "shell" {
+                        if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
+                            if let Some(reason) = crate::toolkit::policy::deny_reason(cmd) {
+                                tracing::warn!(
+                                    "Multimodal tool call blocked by safety policy: {}",
+                                    reason
+                                );
+                                return (
+                                    name.clone(),
+                                    ToolExecutionResult {
+                                        _name: name.clone(),
+                                        arguments: arguments.clone(),
+                                        result: Err(
+                                            crate::toolkit::error::ToolError::Execution(format!(
+                                                "Blocked by safety policy: {}",
+                                                reason
+                                            )),
+                                        ),
+                                        operation_id: None,
+                                    },
+                                );
+                            }
+                        }
+                    }
                     let mut tracked_operation_id: Option<String> = None;
                     let result = match cached_read {
                         Some(output) => Ok(output),
@@ -613,14 +641,11 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                 &result_fp,
                                 summary,
                             );
-                            let op_id = {
-                                let id = state.task_state.current_operation_id.as_str();
-                                if id.is_empty() {
-                                    None
-                                } else {
-                                    Some(id.to_string())
-                                }
-                            };
+                            // Bind goal evidence to THIS execution's Operation
+                            // (never the shared current_operation_id pointer,
+                            // which a concurrent sibling write already
+                            // overwrote — parallel tool batches run to 6 wide).
+                            let op_id = execution.operation_id.clone();
                             state.task_state.observe_tool_result_for_goal(
                                 &crate::tools::resolve_tool_name(&name),
                                 &exec_arguments,
@@ -1482,7 +1507,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     }))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "test-utils"))]
 mod drop_lease_tests {
     use super::*;
     use crate::agent::task_continuity::{
@@ -1541,8 +1566,10 @@ mod drop_lease_tests {
         let state = Arc::new(tokio::sync::RwLock::new(AgentInternalState::new(
             "drop-lease".into(),
         )));
-        let mut safeguards = StreamSafeguards::default();
-        safeguards.heartbeat_interval = std::time::Duration::from_millis(10);
+        let safeguards = StreamSafeguards {
+            heartbeat_interval: std::time::Duration::from_millis(10),
+            ..StreamSafeguards::default()
+        };
 
         let mut stream = process_multimodal_stream_events_with_safeguards(
             iface,
@@ -1673,8 +1700,10 @@ mod drop_lease_tests {
             .with_max_context(32768);
         let iface = Arc::new(crate::llm::LlmInterface::default());
         iface.set_llm(Arc::new(rt) as Arc<dyn LlmRuntime>).await;
-        let mut safeguards = StreamSafeguards::default();
-        safeguards.heartbeat_interval = std::time::Duration::from_millis(10);
+        let safeguards = StreamSafeguards {
+            heartbeat_interval: std::time::Duration::from_millis(10),
+            ..StreamSafeguards::default()
+        };
         let mut stream_b = process_multimodal_stream_events_with_safeguards(
             iface,
             state.clone(),

@@ -264,6 +264,7 @@ struct TransientSkillContext {
 ///
 /// Scales with the model window (`ctx/8`), clamped to `[2_000, 6_000]`:
 /// - 8K → 2K, 32K → 4K, 64K+ → 6K.
+///
 /// Enough for a few full guides; not enough for the whole builtin catalog.
 /// Independent of per-skill `token_budget` metadata and auto-match
 /// [`crate::skills::TokenBudgetConfig`].
