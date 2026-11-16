@@ -10,8 +10,12 @@
   <key>NSMicrophoneUsageDescription</key>
   <string>This app may need microphone access for future voice features.</string>
 
-  <!-- Bluetooth access description -->
+  <!-- Bluetooth access description (macOS 10.15+ / modern CoreBluetooth) -->
   <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>NeoMind uses Bluetooth to discover, provision, and communicate with IoT devices.</string>
+
+  <!-- Legacy Bluetooth peripheral usage (older toolchains / pre-Always key consumers) -->
+  <key>NSBluetoothPeripheralUsageDescription</key>
   <string>NeoMind uses Bluetooth to discover, provision, and communicate with IoT devices.</string>
 
   <!-- Local network access description -->
