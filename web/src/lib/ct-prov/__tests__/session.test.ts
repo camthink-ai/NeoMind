@@ -1,0 +1,67 @@
+import { describe, expect, it } from 'vitest'
+
+import { ProvOp } from '../ops'
+import { CtSessionClient, ProvSessionError } from '../session'
+import { FakeTransport } from '../transport'
+import { NEOLINK_REF_COMMIT, CT_PROV_PRODUCT_NAME } from '../constants'
+import { NEOLINK_VECTORS_REF } from '../vectors'
+
+describe('ct-prov FakeTransport session path', () => {
+  it('pins the neolink reference commit used for golden vectors', () => {
+    expect(NEOLINK_REF_COMMIT).toBe(NEOLINK_VECTORS_REF.commit)
+    expect(CT_PROV_PRODUCT_NAME).toBe('CamThink CT-Prov')
+  })
+
+  it('runs device.info.get → capabilities.get → config.set → session.close', async () => {
+    const transport = new FakeTransport({ model: 'NE101' })
+    const client = new CtSessionClient(transport)
+
+    const result = await client.runProvisioningPath({
+      wifi: { ssid: 'Office-2.4G', password: 'example-password' },
+      mqtt: {
+        enable: true,
+        host: 'mqtt.example.com',
+        port: 8883,
+        username: 'device',
+        password: 'example-secret',
+        tls: true,
+      },
+    })
+
+    expect(result.deviceInfo.model).toBe('NE101')
+    expect(result.deviceInfo.protocolVersion).toBe(1)
+    expect(result.capabilities.sections.map((s) => s.name)).toContain('wifi')
+    expect(result.configSet.stored).toEqual(['wifi', 'mqtt'])
+    expect(result.configSet.apply).toBe('reconnect')
+
+    expect(transport.opLog).toEqual([
+      ProvOp.deviceInfoGet,
+      ProvOp.communicationCapabilitiesGet,
+      ProvOp.configSet,
+      ProvOp.sessionClose,
+    ])
+    expect(transport.lastConfigSet).toMatchObject({
+      wifi: { ssid: 'Office-2.4G' },
+      mqtt: { host: 'mqtt.example.com', port: 8883 },
+    })
+    expect(transport.disconnectedAfterClose).toBe(true)
+
+    await client.dispose()
+    expect(transport.closed).toBe(true)
+  })
+
+  it('surfaces config.set rejection without closing the session', async () => {
+    const transport = new FakeTransport({
+      rejectConfigSet: 'FIELD_NOT_SUPPORTED',
+    })
+    const client = new CtSessionClient(transport)
+    await client.open()
+    await client.fetchDeviceInfo()
+    await client.fetchCapabilities()
+    await expect(
+      client.setConfig({ wifi: { ssid: 'x', bssid: 'aa:bb' } }),
+    ).rejects.toBeInstanceOf(ProvSessionError)
+    expect(transport.opLog).not.toContain(ProvOp.sessionClose)
+    await client.dispose()
+  })
+})
