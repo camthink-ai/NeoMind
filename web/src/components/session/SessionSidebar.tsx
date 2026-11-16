@@ -432,31 +432,43 @@ export function SessionSidebar({
     )
   }
 
-  const SessionList = ({ roomy }: { roomy: boolean }) => (
-    <>
-      {sortedSessions.length === 0 ? (
-        <div className={cn("text-center", roomy ? "px-2 py-12" : "py-8")}>
-          <MessageSquare className={cn("mx-auto mb-2 text-muted-foreground", roomy ? "h-9 w-9" : "h-8 w-8")} />
-          <p className={cn("text-muted-foreground", roomy ? "text-sm" : "text-xs")}>
-            {searchQuery ? t('session.noMatch') : t('session.noSessions')}
-          </p>
-        </div>
-      ) : (
-        <>
-          {sortedSessions.map((session) => renderSessionRow(session, { roomy }))}
-          <div ref={loadMoreTriggerRef} className="h-1" />
-          {sessionsLoading && (
-            <div className="flex items-center justify-center py-3">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-            </div>
-          )}
-        </>
-      )}
-    </>
+  const renderSessionList = (roomy: boolean) => (
+    sortedSessions.length === 0 ? (
+      <div className={cn("text-center", roomy ? "px-2 py-12" : "py-8")}>
+        <MessageSquare className={cn("mx-auto mb-2 text-muted-foreground", roomy ? "h-9 w-9" : "h-8 w-8")} />
+        <p className={cn("text-muted-foreground", roomy ? "text-sm" : "text-xs")}>
+          {searchQuery ? t('session.noMatch') : t('session.noSessions')}
+        </p>
+      </div>
+    ) : (
+      <>
+        {sortedSessions.map((session) => renderSessionRow(session, { roomy }))}
+        <div ref={loadMoreTriggerRef} className="h-1" />
+        {sessionsLoading && (
+          <div className="flex items-center justify-center py-3">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          </div>
+        )}
+      </>
+    )
   )
 
-  // Desktop content — compact fixed rail.
-  const DesktopContent = () => (
+  const goWorkspace = (path: string) => {
+    onClose()
+    navigate(path)
+  }
+
+  const workspaceShortcuts = [
+    { id: 'devices', path: '/devices', icon: Cpu, labelKey: 'nav.devices' },
+    { id: 'agents', path: '/agents', icon: Bot, labelKey: 'nav.agents' },
+    { id: 'dashboard', path: '/visual-dashboard', icon: LayoutDashboard, labelKey: 'nav.visual-dashboard' },
+    { id: 'messages', path: '/messages', icon: Bell, labelKey: 'nav.messages' },
+  ] as const
+
+  // IMPORTANT: keep these as JSX values, not inner components. Defining
+  // MobileDrawerContent/DesktopContent as nested function components remounts
+  // the search input on every keystroke and breaks continuous typing/delete.
+  const desktopContent = (
     <>
       <div
         className="relative z-[1] flex items-center justify-between px-3 py-2"
@@ -495,27 +507,14 @@ export function SessionSidebar({
 
       <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
         <div className="space-y-0.5 overflow-x-hidden px-2 pb-2">
-          <SessionList roomy={false} />
+          {renderSessionList(false)}
         </div>
       </ScrollArea>
     </>
   )
 
-  const goWorkspace = (path: string) => {
-    onClose()
-    navigate(path)
-  }
-
-  const workspaceShortcuts = [
-    { id: 'devices', path: '/devices', icon: Cpu, labelKey: 'nav.devices' },
-    { id: 'agents', path: '/agents', icon: Bot, labelKey: 'nav.agents' },
-    { id: 'dashboard', path: '/visual-dashboard', icon: LayoutDashboard, labelKey: 'nav.visual-dashboard' },
-    { id: 'messages', path: '/messages', icon: Bell, labelKey: 'nav.messages' },
-  ] as const
-
-  // Mobile drawer — workspace shortcuts on top, recent chats in the middle,
-  // compact search/new chat pinned to the bottom to free vertical space.
-  const MobileDrawerContent = () => (
+  // Mobile: one borderless workspace card on top, recent chats, compact bottom bar.
+  const mobileDrawerContent = (
     <>
       <div className="flex items-center justify-between gap-3 px-5 pb-3 pt-2">
         <h2 className="min-w-0 truncate text-xl font-semibold tracking-[-0.03em] text-foreground">
@@ -533,41 +532,43 @@ export function SessionSidebar({
       </div>
 
       <div className="px-5 pb-4">
-        <div className="grid grid-cols-4 gap-2">
-          {workspaceShortcuts.map(({ id, path, icon: Icon, labelKey }) => (
-            <button
-              key={id}
-              type="button"
-              data-testid={`session-drawer-shortcut-${id}`}
-              onClick={() => goWorkspace(path)}
-              className="flex min-h-[4.25rem] flex-col items-center justify-center gap-1.5 rounded-2xl bg-muted-50 px-1 py-2 text-center transition-colors active:bg-muted"
-            >
-              <Icon className="h-5 w-5 text-foreground" strokeWidth={1.8} aria-hidden="true" />
-              <span className="max-w-full truncate text-[0.6875rem] leading-tight text-muted-foreground">
-                {t(labelKey)}
+        <div className="overflow-hidden rounded-2xl bg-muted-50">
+          <div className="grid grid-cols-4 gap-px">
+            {workspaceShortcuts.map(({ id, path, icon: Icon, labelKey }) => (
+              <button
+                key={id}
+                type="button"
+                data-testid={`session-drawer-shortcut-${id}`}
+                onClick={() => goWorkspace(path)}
+                className="flex min-h-[4.25rem] flex-col items-center justify-center gap-1.5 bg-transparent px-1 py-2.5 text-center transition-colors active:bg-muted"
+              >
+                <Icon className="h-5 w-5 text-foreground" strokeWidth={1.8} aria-hidden="true" />
+                <span className="max-w-full truncate text-[0.6875rem] leading-tight text-muted-foreground">
+                  {t(labelKey)}
+                </span>
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            data-testid="session-drawer-workspace"
+            onClick={() => goWorkspace('/system')}
+            className="flex w-full items-center gap-2.5 border-t border-border px-3 py-2.5 text-left transition-colors active:bg-muted"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-background text-foreground">
+              <LayoutGrid className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-foreground">
+                {t('system.moreEntries')}
               </span>
-            </button>
-          ))}
+              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                {t('system.pageTitle')}
+              </span>
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </button>
         </div>
-        <button
-          type="button"
-          data-testid="session-drawer-workspace"
-          onClick={() => goWorkspace('/system')}
-          className="mt-2 flex w-full items-center gap-2.5 rounded-2xl border border-border px-3 py-2.5 text-left transition-colors active:bg-muted"
-        >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground">
-            <LayoutGrid className="h-4 w-4" strokeWidth={1.8} aria-hidden="true" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium text-foreground">
-              {t('system.moreEntries')}
-            </span>
-            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-              {t('system.pageTitle')}
-            </span>
-          </span>
-          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        </button>
       </div>
 
       <div className="px-5 pb-2">
@@ -578,21 +579,22 @@ export function SessionSidebar({
 
       <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
         <div className="space-y-1 overflow-x-hidden px-3 pb-3">
-          <SessionList roomy />
+          {renderSessionList(true)}
         </div>
       </ScrollArea>
 
       <div className="shrink-0 border-t border-border px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-3">
-        <div className="flex items-center gap-2">
+        <div className="flex h-11 items-stretch gap-2">
           <div className="relative min-w-0 flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               ref={searchInputRef}
               type="text"
               placeholder={t('session.search')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-10 rounded-2xl border-border bg-muted-50 pl-9 text-sm"
+              className="h-11 rounded-2xl border-border bg-muted-50 pl-9 text-sm sm:h-11"
+              data-testid="session-drawer-search"
             />
           </div>
           <Button
@@ -600,7 +602,7 @@ export function SessionSidebar({
             onClick={handleNewSession}
             disabled={isCreating}
             size="icon"
-            className="h-10 w-10 shrink-0 rounded-2xl"
+            className="h-11 w-11 shrink-0 rounded-2xl sm:h-11 sm:w-11"
             aria-label={t('session.newChat')}
             data-testid="session-drawer-new-chat"
           >
@@ -637,7 +639,7 @@ export function SessionSidebar({
             style={{ height: "calc(env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px) + 2.75rem)" }}
             onMouseDown={handleWindowDragMouseDown}
           />
-          <DesktopContent />
+          {desktopContent}
         </div>
 
         {/* Delete Confirmation Dialog */}
@@ -689,7 +691,7 @@ export function SessionSidebar({
         data-testid="session-workspace-drawer"
         aria-hidden={!open}
       >
-        <MobileDrawerContent />
+        {mobileDrawerContent}
       </div>
 
       {/* Delete Confirmation Dialog */}

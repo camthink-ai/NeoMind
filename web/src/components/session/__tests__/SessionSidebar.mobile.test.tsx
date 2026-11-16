@@ -90,4 +90,23 @@ describe('SessionSidebar mobile workspace drawer', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(navigateMock).toHaveBeenCalledWith('/system')
   })
+
+  it('keeps the search input mounted across successive edits (no remount)', () => {
+    const onClose = vi.fn()
+    render(
+      <MemoryRouter>
+        <SessionSidebar open onClose={onClose} isDesktop={false} />
+      </MemoryRouter>,
+    )
+
+    const input = screen.getByTestId('session-drawer-search') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '温' } })
+    expect(screen.getByTestId('session-drawer-search')).toBe(input)
+    fireEvent.change(input, { target: { value: '温室' } })
+    expect(screen.getByTestId('session-drawer-search')).toBe(input)
+    expect(input.value).toBe('温室')
+    fireEvent.change(input, { target: { value: '温' } })
+    expect(screen.getByTestId('session-drawer-search')).toBe(input)
+    expect(input.value).toBe('温')
+  })
 })
