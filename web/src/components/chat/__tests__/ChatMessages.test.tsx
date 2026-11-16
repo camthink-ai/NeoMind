@@ -216,6 +216,10 @@ describe('ChatMessages', () => {
     // Explicit card/foreground — never inherit bubble text (breaks light+dark).
     expect(chips[0].className).toContain('bg-card')
     expect(chips[0].className).toContain('text-foreground')
+    // Type is color-only (no nested badge fill that mis-aligns the line).
+    const typeEl = chips[0].querySelector('span')
+    expect(typeEl?.className ?? '').toContain('text-accent-cyan')
+    expect(typeEl?.className ?? '').not.toMatch(/bg-accent-/)
     // Plain markdown path must not swallow the ordered nodes.
     expect(screen.queryByText('把 @温室A 复制给 @温室B')).toBeNull()
   })
