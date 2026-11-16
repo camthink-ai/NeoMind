@@ -23,6 +23,8 @@ neomind-cli-ops = { path = "../neomind-cli-ops" }
 # Integration tests drive the rule engine directly to produce the artifacts
 # (alerts carrying an execution reference) the chain endpoint reads back.
 neomind-rules = { path = "../neomind-rules" }
+# Association confirm tests need synthetic MQTT broker slots (not production).
+neomind-devices = { path = "../neomind-devices", features = ["embedded-broker", "test-utils"] }
 tower = { version = "0.5", features = ["util"] }
 
 [features]

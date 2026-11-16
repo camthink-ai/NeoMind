@@ -43,6 +43,8 @@ bcrypt = { workspace = true, optional = true }
 default = ["mqtt"]
 mqtt = ["rumqttc", "rustls", "rustls-pki-types", "rustls-pemfile", "rustls-native-certs", "async-channel"]
 embedded-broker = ["rmqtt", "bcrypt"]
+# Test-only helpers (synthetic broker slots). Never enable in production binaries.
+test-utils = []
 all = ["mqtt", "embedded-broker"]
 
 [dev-dependencies]

@@ -30,6 +30,7 @@ use futures::StreamExt;
 use neomind_core::EventBus;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, RwLock};
@@ -47,6 +48,19 @@ pub(crate) struct MqttClientInner {
     pub(crate) running: Arc<RwLock<bool>>,
     /// Subscribed topics for this broker
     pub(crate) subscribed_topics: Arc<RwLock<std::collections::HashSet<String>>>,
+    /// True only after ConnAck Success; false while created/queued or reconnecting.
+    /// `client.subscribe` may queue before this flips — do not treat queue-Ok as ready.
+    pub(crate) session_ready: AtomicBool,
+}
+
+impl MqttClientInner {
+    pub(crate) fn is_session_ready(&self) -> bool {
+        self.session_ready.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn set_session_ready(&self, ready: bool) {
+        self.session_ready.store(ready, Ordering::SeqCst);
+    }
 }
 
 /// MQTT device adapter.

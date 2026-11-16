@@ -25,6 +25,8 @@ use std::collections::HashMap;
 
 use std::path::PathBuf;
 
+use std::sync::atomic::AtomicBool;
+
 use std::sync::Arc;
 
 use std::time::Duration;
@@ -365,13 +367,15 @@ impl MqttAdapter {
         let client_for_sub = client.clone();
         let subscribed_topics_for_sub = subscribed_topics.clone();
 
-        // Store the client BEFORE spawning the event loop
+        // Store the client BEFORE spawning the event loop. Client insert ≠ ConnAck:
+        // session_ready stays false until ConnAck Success (subscribe may only queue).
         let inner = MqttClientInner {
             _broker_id: broker_id.clone(),
             _broker_addr: broker_addr.clone(),
             client,
             running: running.clone(),
             subscribed_topics,
+            session_ready: AtomicBool::new(false),
         };
         self.mqtt_clients
             .write()
@@ -493,6 +497,13 @@ impl MqttAdapter {
                 match eventloop.poll().await {
                     Ok(notification) => {
                         error_count = 0; // Reset error count on success
+                        Self::apply_session_ready_from_notification(
+                            &mqtt_clients,
+                            &connection_status,
+                            &broker_id_clone,
+                            &notification,
+                        )
+                        .await;
                         if was_disconnected {
                             was_disconnected = false;
                             if let Err(panic) = std::panic::AssertUnwindSafe(
@@ -544,6 +555,15 @@ impl MqttAdapter {
                     Err(e) => {
                         error_count += 1;
                         was_disconnected = true;
+                        // Client remains in map while reconnecting — clear session
+                        // so subscribe_topic cannot claim ready from a queued sub.
+                        Self::set_broker_session_ready(
+                            &mqtt_clients,
+                            &connection_status,
+                            &broker_id_clone,
+                            false,
+                        )
+                        .await;
                         // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
                         // rumqttc handles reconnection internally — just keep polling
                         let backoff = Duration::from_secs((1u64 << error_count.min(5)).min(30));
@@ -724,13 +744,15 @@ impl MqttAdapter {
         let client_for_sub = client.clone();
         let subscribed_topics_for_sub = subscribed_topics.clone();
 
-        // Store the client BEFORE spawning the event loop
+        // Store the client BEFORE spawning the event loop. Client insert ≠ ConnAck:
+        // session_ready stays false until ConnAck Success (subscribe may only queue).
         let inner = MqttClientInner {
             _broker_id: broker_id.clone(),
             _broker_addr: broker_addr.clone(),
             client,
             running: running.clone(),
             subscribed_topics,
+            session_ready: AtomicBool::new(false),
         };
         self.mqtt_clients
             .write()
@@ -789,6 +811,7 @@ impl MqttAdapter {
         let telemetry_storage = self.telemetry_storage.clone();
         let device_registry = self.device_registry.clone();
         let connection_status = self.connection_status.clone();
+        let connection_status_poll = connection_status.clone();
         let mqtt_clients = self.mqtt_clients.clone();
         let broker_id_clone = broker_id.clone();
         let broker_id_clone2 = broker_id.clone();
@@ -847,6 +870,13 @@ impl MqttAdapter {
                 match eventloop.poll().await {
                     Ok(notification) => {
                         error_count = 0;
+                        Self::apply_session_ready_from_notification(
+                            &mqtt_clients,
+                            &connection_status_poll,
+                            &broker_id_clone2,
+                            &notification,
+                        )
+                        .await;
                         if was_disconnected {
                             was_disconnected = false;
                             if let Err(panic) = std::panic::AssertUnwindSafe(
@@ -869,6 +899,13 @@ impl MqttAdapter {
                     Err(e) => {
                         error_count += 1;
                         was_disconnected = true;
+                        Self::set_broker_session_ready(
+                            &mqtt_clients,
+                            &connection_status_poll,
+                            &broker_id_clone2,
+                            false,
+                        )
+                        .await;
                         // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
                         // rumqttc handles reconnection internally — just keep polling
                         let backoff = Duration::from_secs((1u64 << error_count.min(5)).min(30));
@@ -1124,12 +1161,55 @@ impl MqttAdapter {
         self.mqtt_clients.read().await.keys().cloned().collect()
     }
 
-    /// Test/helper: install a synthetic broker client slot so `subscribe_topic`
-    /// can succeed without a live TCP session. The request channel stays open;
-    /// the event loop is held (not polled) so no connection is attempted.
+    /// Mark a broker's MQTT session ready (ConnAck Success) or not (disconnect /
+    /// reconnect window). Drives overall `connection_status`.
+    pub(crate) async fn set_broker_session_ready(
+        mqtt_clients: &Arc<RwLock<HashMap<String, MqttClientInner>>>,
+        connection_status: &Arc<RwLock<ConnectionStatus>>,
+        broker_id: &str,
+        ready: bool,
+    ) {
+        {
+            let clients = mqtt_clients.read().await;
+            if let Some(inner) = clients.get(broker_id) {
+                inner.set_session_ready(ready);
+            }
+        }
+        let any_ready = mqtt_clients
+            .read()
+            .await
+            .values()
+            .any(MqttClientInner::is_session_ready);
+        *connection_status.write().await = if any_ready {
+            ConnectionStatus::Connected
+        } else {
+            ConnectionStatus::Disconnected
+        };
+    }
+
+    /// Apply session_ready from a polled event (ConnAck only).
+    pub(crate) async fn apply_session_ready_from_notification(
+        mqtt_clients: &Arc<RwLock<HashMap<String, MqttClientInner>>>,
+        connection_status: &Arc<RwLock<ConnectionStatus>>,
+        broker_id: &str,
+        notification: &rumqttc::Event,
+    ) {
+        if let rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(ack)) = notification {
+            let ready = ack.code == rumqttc::ConnectReturnCode::Success;
+            Self::set_broker_session_ready(mqtt_clients, connection_status, broker_id, ready)
+                .await;
+        }
+    }
+
+    /// Test/helper: install a synthetic broker client slot with `session_ready=true`
+    /// so `subscribe_topic` can succeed without a live TCP session. The request
+    /// channel stays open; the event loop is held (not polled) so no connection
+    /// is attempted.
     ///
-    /// Production paths only insert clients after a real ConnAck — an empty
-    /// `mqtt_clients` map remains the honest "not connected" signal.
+    /// Production `add_broker` inserts the client **before** ConnAck — the map
+    /// entry alone is "created/queued", not session-ready. `session_ready` flips
+    /// only on ConnAck Success and clears on poll errors during reconnect.
+    #[cfg(any(test, feature = "test-utils"))]
     pub async fn install_test_broker_slot(&self, broker_id: &str) {
         use rumqttc::{AsyncClient, MqttOptions};
         use std::time::Duration;
@@ -1155,15 +1235,36 @@ impl MqttAdapter {
                 client,
                 running: Arc::new(RwLock::new(true)),
                 subscribed_topics: Arc::new(RwLock::new(std::collections::HashSet::new())),
+                // Tests need an honest "session ready" stand-in without ConnAck.
+                session_ready: AtomicBool::new(true),
             },
         );
         *self.connection_status.write().await = ConnectionStatus::Connected;
     }
 
-    /// Update overall connection status based on connected brokers.
+    /// Test/helper: flip session_ready on an installed slot (simulate disconnect
+    /// while the client entry is retained during reconnect).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn set_test_session_ready(&self, broker_id: &str, ready: bool) {
+        Self::set_broker_session_ready(
+            &self.mqtt_clients,
+            &self.connection_status,
+            broker_id,
+            ready,
+        )
+        .await;
+    }
+
+    /// Update overall connection status from session-ready brokers (not mere
+    /// client-map presence — insert-before-ConnAck must not look Connected).
     pub(crate) async fn update_connection_status(&self) {
-        let has_connected = !self.mqtt_clients.read().await.is_empty();
-        *self.connection_status.write().await = if has_connected {
+        let any_ready = self
+            .mqtt_clients
+            .read()
+            .await
+            .values()
+            .any(MqttClientInner::is_session_ready);
+        *self.connection_status.write().await = if any_ready {
             ConnectionStatus::Connected
         } else {
             ConnectionStatus::Disconnected

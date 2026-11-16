@@ -42,12 +42,16 @@ use super::identity::{
 };
 
 impl MqttAdapter {
-    /// Dynamically subscribe to a topic on ALL connected brokers.
+    /// Dynamically subscribe to a topic on ALL session-ready brokers.
     /// This is used when a device is registered with a custom telemetry topic.
+    ///
+    /// Client map presence alone is not enough: production inserts the client
+    /// before ConnAck, and retains it while reconnecting. Only `session_ready`
+    /// (ConnAck Success) may claim a live subscribe path.
     pub async fn subscribe_topic(&self, topic: &str) -> AdapterResult<()> {
         let clients = self.mqtt_clients.read().await;
         if clients.is_empty() {
-            // Honest not-ready: adapter may be registered while no broker session
+            // Honest not-ready: adapter may be registered while no broker client
             // exists yet. Returning Ok here previously made association confirm
             // claim subscription_ready and consume the draft with no live sub.
             warn!(
@@ -59,10 +63,25 @@ impl MqttAdapter {
             )));
         }
 
+        let ready: Vec<_> = clients
+            .iter()
+            .filter(|(_, inner)| inner.is_session_ready())
+            .collect();
+        if ready.is_empty() {
+            // Clients exist (created/queued or reconnecting) but no ConnAck session.
+            warn!(
+                "MQTT broker client(s) present but session not ready; cannot subscribe to topic: {}",
+                topic
+            );
+            return Err(AdapterError::Communication(format!(
+                "MQTT broker session not ready; cannot subscribe to '{topic}' — client may be connecting or reconnecting; retry after ConnAck"
+            )));
+        }
+
         let mut subscribed_count = 0;
         let mut last_error = None;
 
-        for (broker_id, inner) in clients.iter() {
+        for (broker_id, inner) in ready {
             // Check if already subscribed on this broker
             if inner.subscribed_topics.read().await.contains(topic) {
                 debug!(
@@ -859,9 +878,11 @@ impl MqttAdapter {
                 }
             }
             rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(connack)) => {
+                // session_ready is applied in the poll loop (before this handler)
+                // via apply_session_ready_from_notification — ConnAck here is log-only.
                 info!(
-                    "MQTT broker {} connection acknowledged - session present: {}",
-                    broker_id, connack.session_present
+                    "MQTT broker {} connection acknowledged - session present: {}, return={:?}",
+                    broker_id, connack.session_present, connack.code
                 );
             }
             rumqttc::Event::Incoming(rumqttc::Packet::SubAck(suback)) => {

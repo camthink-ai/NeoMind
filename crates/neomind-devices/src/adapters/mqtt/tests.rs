@@ -2338,6 +2338,446 @@ mod handling_path {
         assert!(ok.subscribe_ok && ok.old_source_cleanup_ok);
     }
 
+    /// NM-196: client created before ConnAck (broker unreachable) must not claim ready.
+    #[tokio::test]
+    async fn bind_client_created_before_connack_is_not_ready() {
+        use crate::association_bind::AssociationBindInput;
+        use crate::mdl::DeviceError;
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        // Port 9 is discard — TCP may open or fail; either way no MQTT ConnAck.
+        let adapter = Arc::new(MqttAdapter::new(
+            MqttAdapterConfig::new("disc-mqtt", "127.0.0.1").with_port(9),
+        ));
+        adapter.set_shared_device_registry(registry.clone()).await;
+        adapter
+            .add_broker("disc-mqtt", "127.0.0.1", 9, None, None)
+            .await
+            .expect("add_broker inserts client before ConnAck");
+        assert!(
+            !adapter.list_brokers().await.is_empty(),
+            "client must exist in map"
+        );
+        // Brief wait — ConnAck must not succeed against discard port.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        {
+            let clients = adapter.mqtt_clients.read().await;
+            let inner = clients.values().next().expect("client");
+            assert!(
+                !inner.is_session_ready(),
+                "session_ready must stay false without ConnAck"
+            );
+        }
+
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+        service
+            .register_adapter(
+                "disc-mqtt".into(),
+                adapter.clone() as Arc<dyn DeviceAdapter>,
+            )
+            .await;
+
+        let err = service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "B".into(),
+                name: "B".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("disc-mqtt".into()),
+                telemetry_topic: "t/b".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect_err("queued client without ConnAck must not claim subscription ready");
+        match err {
+            DeviceError::BindIncomplete { config_applied, .. } => assert!(config_applied),
+            other => panic!("expected BindIncomplete, got {other}"),
+        }
+    }
+
+    /// NM-196: was connected, then disconnect (session cleared, client retained)
+    /// — confirm must not claim ready.
+    #[tokio::test]
+    async fn bind_after_disconnect_while_client_retained_is_not_ready() {
+        use crate::association_bind::AssociationBindInput;
+        use crate::mdl::DeviceError;
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "disc-mqtt",
+            "localhost:1883",
+        )));
+        adapter.set_shared_device_registry(registry.clone()).await;
+        adapter.install_test_broker_slot("disc-mqtt").await;
+        assert!(adapter.mqtt_clients.read().await.values().next().unwrap().is_session_ready());
+
+        // Simulate reconnect window: client retained, session not ready.
+        adapter.set_test_session_ready("disc-mqtt", false).await;
+        assert!(!adapter.mqtt_clients.read().await.values().next().unwrap().is_session_ready());
+        assert!(!adapter.list_brokers().await.is_empty());
+
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+        service
+            .register_adapter(
+                "disc-mqtt".into(),
+                adapter.clone() as Arc<dyn DeviceAdapter>,
+            )
+            .await;
+
+        let err = service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "B".into(),
+                name: "B".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("disc-mqtt".into()),
+                telemetry_topic: "t/b".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect_err("disconnect window must not claim subscription ready");
+        match err {
+            DeviceError::BindIncomplete { config_applied, .. } => assert!(config_applied),
+            other => panic!("expected BindIncomplete, got {other}"),
+        }
+    }
+
+    /// NM-196: old unsub fail + new sub fail → pending still has old for retry.
+    #[tokio::test]
+    async fn bind_dual_fail_persists_pending_old_for_retry() {
+        use crate::adapter::AdapterResult;
+        use crate::association_bind::AssociationBindInput;
+        use crate::mdl::DeviceError;
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+        use std::pin::Pin;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        struct DualFailAdapter {
+            name: String,
+            fail_unsub: AtomicBool,
+            fail_sub: AtomicBool,
+            unsub_calls: AtomicUsize,
+            sub_calls: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl DeviceAdapter for DualFailAdapter {
+            fn name(&self) -> &str {
+                &self.name
+            }
+            fn adapter_type(&self) -> &'static str {
+                "mqtt"
+            }
+            fn is_running(&self) -> bool {
+                true
+            }
+            async fn start(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn stop(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            fn subscribe(&self) -> Pin<Box<dyn futures::Stream<Item = DeviceEvent> + Send + '_>> {
+                Box::pin(futures::stream::empty())
+            }
+            fn device_count(&self) -> usize {
+                0
+            }
+            fn list_devices(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            async fn send_command(
+                &self,
+                _device_id: &str,
+                _command_name: &str,
+                _payload: String,
+                _topic: Option<String>,
+            ) -> AdapterResult<()> {
+                Ok(())
+            }
+            fn connection_status(&self) -> crate::adapter::ConnectionStatus {
+                crate::adapter::ConnectionStatus::Connected
+            }
+            async fn subscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                self.sub_calls.fetch_add(1, Ordering::SeqCst);
+                if self.fail_sub.load(Ordering::SeqCst) {
+                    Err(crate::adapter::AdapterError::Communication(
+                        "forced subscribe failure".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            async fn unsubscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                self.unsub_calls.fetch_add(1, Ordering::SeqCst);
+                if self.fail_unsub.load(Ordering::SeqCst) {
+                    Err(crate::adapter::AdapterError::Communication(
+                        "forced unsubscribe failure".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "B",
+            "gw",
+            "old/topic",
+            Some("topic_strong"),
+            None,
+        )
+        .await;
+        {
+            let mut b = registry.get_device("B").unwrap();
+            b.adapter_id = Some("old".into());
+            registry.update_device("B", b).await.unwrap();
+        }
+
+        let old = Arc::new(DualFailAdapter {
+            name: "old".into(),
+            fail_unsub: AtomicBool::new(true),
+            fail_sub: AtomicBool::new(false),
+            unsub_calls: AtomicUsize::new(0),
+            sub_calls: AtomicUsize::new(0),
+        });
+        let new = Arc::new(DualFailAdapter {
+            name: "new".into(),
+            fail_unsub: AtomicBool::new(false),
+            fail_sub: AtomicBool::new(true),
+            unsub_calls: AtomicUsize::new(0),
+            sub_calls: AtomicUsize::new(0),
+        });
+
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+        service
+            .register_adapter("old".into(), old.clone() as Arc<dyn DeviceAdapter>)
+            .await;
+        service
+            .register_adapter("new".into(), new.clone() as Arc<dyn DeviceAdapter>)
+            .await;
+
+        let err = service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "B".into(),
+                name: "B".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("new".into()),
+                telemetry_topic: "new/topic".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect_err("dual fail must be BindIncomplete");
+        match err {
+            DeviceError::BindIncomplete { config_applied, .. } => assert!(config_applied),
+            other => panic!("expected BindIncomplete, got {other}"),
+        }
+
+        let pending = registry
+            .get_device("B")
+            .unwrap()
+            .connection_config
+            .extra
+            .get("mqtt_pending_unsub_adapters")
+            .cloned();
+        let arr = pending
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .expect("pending must be saved after dual fail");
+        assert!(
+            arr.iter().any(|v| v.as_str() == Some("old")),
+            "retry must still see old in pending: {arr:?}"
+        );
+
+        // Retry with both healthy → clears pending.
+        old.fail_unsub.store(false, Ordering::SeqCst);
+        new.fail_sub.store(false, Ordering::SeqCst);
+        let ok = service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "B".into(),
+                name: "B".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("new".into()),
+                telemetry_topic: "new/topic".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect("retry after dual-fail recovery");
+        assert!(ok.subscribe_ok && ok.old_source_cleanup_ok);
+        assert!(registry
+            .get_device("B")
+            .unwrap()
+            .connection_config
+            .extra
+            .get("mqtt_pending_unsub_adapters")
+            .is_none());
+    }
+
+    /// NM-196: pending-unsub persist failure propagates (not ignored).
+    #[tokio::test]
+    async fn bind_pending_unsub_save_failure_propagates() {
+        use crate::adapter::AdapterResult;
+        use crate::association_bind::AssociationBindInput;
+        use crate::mdl::DeviceError;
+        use crate::service::DeviceService;
+        use neomind_core::EventBus;
+        use std::pin::Pin;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct OkSubFailUnsub {
+            name: String,
+            fail_unsub: AtomicBool,
+        }
+
+        #[async_trait::async_trait]
+        impl DeviceAdapter for OkSubFailUnsub {
+            fn name(&self) -> &str {
+                &self.name
+            }
+            fn adapter_type(&self) -> &'static str {
+                "mqtt"
+            }
+            fn is_running(&self) -> bool {
+                true
+            }
+            async fn start(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn stop(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            fn subscribe(&self) -> Pin<Box<dyn futures::Stream<Item = DeviceEvent> + Send + '_>> {
+                Box::pin(futures::stream::empty())
+            }
+            fn device_count(&self) -> usize {
+                0
+            }
+            fn list_devices(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            async fn send_command(
+                &self,
+                _device_id: &str,
+                _command_name: &str,
+                _payload: String,
+                _topic: Option<String>,
+            ) -> AdapterResult<()> {
+                Ok(())
+            }
+            fn connection_status(&self) -> crate::adapter::ConnectionStatus {
+                crate::adapter::ConnectionStatus::Connected
+            }
+            async fn subscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn unsubscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                if self.fail_unsub.load(Ordering::SeqCst) {
+                    Err(crate::adapter::AdapterError::Communication(
+                        "forced unsubscribe failure".into(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "B",
+            "gw",
+            "old/topic",
+            Some("topic_strong"),
+            None,
+        )
+        .await;
+        {
+            let mut b = registry.get_device("B").unwrap();
+            b.adapter_id = Some("old".into());
+            registry.update_device("B", b).await.unwrap();
+        }
+
+        let old = Arc::new(OkSubFailUnsub {
+            name: "old".into(),
+            fail_unsub: AtomicBool::new(true),
+        });
+        let new = Arc::new(OkSubFailUnsub {
+            name: "new".into(),
+            fail_unsub: AtomicBool::new(false),
+        });
+
+        let service = DeviceService::new(registry.clone(), EventBus::new());
+        service
+            .register_adapter("old".into(), old.clone() as Arc<dyn DeviceAdapter>)
+            .await;
+        service
+            .register_adapter("new".into(), new.clone() as Arc<dyn DeviceAdapter>)
+            .await;
+
+        // First config save seeds pending; force the post-cleanup persist to fail.
+        service.fail_next_pending_unsub_persist_for_test();
+        let err = service
+            .apply_association_bind(AssociationBindInput {
+                device_id: "B".into(),
+                name: "B".into(),
+                device_type: "gw".into(),
+                adapter_type: "mqtt".into(),
+                adapter_id: Some("new".into()),
+                telemetry_topic: "new/topic".into(),
+                identity_source: "auto_payload".into(),
+                identity_field: Some("sn".into()),
+            })
+            .await
+            .expect_err("pending save failure must propagate");
+        match err {
+            DeviceError::BindIncomplete { message, .. } => {
+                assert!(
+                    message.contains("persist pending") || message.contains("Forced test"),
+                    "message={message}"
+                );
+            }
+            other => panic!("expected BindIncomplete, got {other}"),
+        }
+        // First save already seeded pending old — retry still has recovery path.
+        let pending = registry
+            .get_device("B")
+            .unwrap()
+            .connection_config
+            .extra
+            .get("mqtt_pending_unsub_adapters")
+            .cloned();
+        assert!(
+            pending
+                .as_ref()
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| a.iter().any(|v| v.as_str() == Some("old"))),
+            "seeded pending must survive failed post-cleanup persist: {pending:?}"
+        );
+    }
+
     /// NM-195: handling-path legacy 1:1 with payload device_id=hardware-001.
     #[tokio::test]
     async fn legacy_one_to_one_payload_device_id_still_ingests() {

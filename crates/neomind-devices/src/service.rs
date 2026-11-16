@@ -330,6 +330,9 @@ pub struct DeviceService {
     extension_command_router: Arc<RwLock<Option<ExtensionCommandRouterFn>>>,
     /// Per-device association-bind locks (serialize concurrent confirms / binds).
     pub(crate) association_bind_locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
+    /// Test hook: next persist of `mqtt_pending_unsub_adapters` fails once.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fail_next_pending_unsub_persist: std::sync::atomic::AtomicBool,
 }
 
 /// What a successful [`DeviceService::send_command`] actually proves about
@@ -386,6 +389,8 @@ impl DeviceService {
             heartbeat_running: Arc::new(RwLock::new(false)),
             extension_command_router: Arc::new(RwLock::new(None)),
             association_bind_locks: Arc::new(DashMap::new()),
+            #[cfg(any(test, feature = "test-utils"))]
+            fail_next_pending_unsub_persist: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -408,7 +413,16 @@ impl DeviceService {
             heartbeat_running: Arc::new(RwLock::new(false)),
             extension_command_router: Arc::new(RwLock::new(None)),
             association_bind_locks: Arc::new(DashMap::new()),
+            #[cfg(any(test, feature = "test-utils"))]
+            fail_next_pending_unsub_persist: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Test hook: force the next `mqtt_pending_unsub_adapters` persist to fail.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn fail_next_pending_unsub_persist_for_test(&self) {
+        self.fail_next_pending_unsub_persist
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Set the extension command router for routing commands to extensions
