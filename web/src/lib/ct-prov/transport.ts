@@ -217,7 +217,10 @@ export class FakeTransport implements ProvTransport {
         ok: true,
         data: {
           section: data.section ?? 'wifi',
-          items: [],
+          items: [
+            { ssid: 'Office-2.4G', rssi: -48, security: 'wpa2' },
+            { ssid: 'Guest', rssi: -72, security: 'open' },
+          ],
           more: false,
           cursor: '',
         },

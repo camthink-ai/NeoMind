@@ -196,28 +196,38 @@ export function AddDeviceGlobalDialog({
             />
           )}
           {/* Main scrollable content */}
-          <FullScreenDialogMain>
-            <div className={cn("max-w-2xl mx-auto", isMobile ? "px-3 py-4" : "px-5 py-6 md:px-8")}>
+          <FullScreenDialogMain className="flex flex-col">
+            <div
+              className={cn(
+                'max-w-2xl mx-auto w-full flex-1 flex flex-col',
+                isMobile ? 'px-3 py-4' : 'px-5 py-6 md:px-8',
+                (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0',
+              )}
+            >
 
               {/* Tab content */}
               {activeTab === 'ble' && open && (
-                <BleProvisionTab
-                  onComplete={() => {
-                    fetchCache.invalidate('devices')
-                    fetchDevices()
-                    onOpenChange(false)
-                  }}
-                />
+                <div className="flex-1 flex flex-col min-h-0">
+                  <BleProvisionTab
+                    onComplete={() => {
+                      fetchCache.invalidate('devices')
+                      fetchDevices()
+                      onOpenChange(false)
+                    }}
+                  />
+                </div>
               )}
 
               {activeTab === 'ap' && open && (
-                <ApProvisionTab
-                  onComplete={() => {
-                    fetchCache.invalidate('devices')
-                    fetchDevices()
-                    onOpenChange(false)
-                  }}
-                />
+                <div className="flex-1 flex flex-col min-h-0">
+                  <ApProvisionTab
+                    onComplete={() => {
+                      fetchCache.invalidate('devices')
+                      fetchDevices()
+                      onOpenChange(false)
+                    }}
+                  />
+                </div>
               )}
 
               {activeTab === 'manual' && open && (

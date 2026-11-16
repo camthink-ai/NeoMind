@@ -922,7 +922,13 @@
     "noSections": "未上报能力分区。",
     "advancedMqtt": "MQTT 服务器（高级）",
     "mqttAdvancedHint": "默认使用 NeoMind 内置服务器。仅在需要外部 Broker 时修改。",
-    "applyingHint": "正在写入配置并注册设备…"
+    "applyingHint": "正在写入配置并注册设备…",
+    "wifiNetwork": "Wi‑Fi 网络",
+    "wifiSelectPlaceholder": "选择网络",
+    "wifiManual": "手动输入 SSID",
+    "scanningWifi": "正在通过设备扫描附近网络…",
+    "rescanWifi": "重新扫描",
+    "wifiScanEmpty": "未扫到网络 — 请手动输入 SSID。"
   },
   "ap": {
     "tabTitle": "AP 配网",
@@ -942,12 +948,24 @@
     "unreachableHint": "请确认本机已加入设备热点后再重试。",
     "joinTitle": "经 SoftAP 连接",
     "joinDesc": "先选择设备型号与网关，在系统 Wi‑Fi 中加入设备热点，再回到此处继续。",
+    "joinDescStrong": "NeoMind 无法代你加入 Wi‑Fi。请打开系统设置 → Wi‑Fi，加入设备热点后，再回到此处继续。",
     "ssidPatternLabel": "热点名称通常形如",
     "ssidPatternHint": "也支持较新的 CT-AP-… 命名。",
     "joinedContinue": "我已加入 — 继续",
-    "advancedOptions": "高级：SSID、型号、网关",
+    "advancedOptions": "高级：SoftAP SSID 与网关",
     "ssidPatternPrimary": "NE101-… · NE301-… · NE302-… · NE503-… · EK410-…",
-    "handJoinHint": "打开系统 Wi‑Fi，加入设备热点后点继续。多数平台无法由 NeoMind 代你加入 Wi‑Fi。"
+    "handJoinHint": "打开系统 Wi‑Fi，加入设备热点后点继续。多数平台无法由 NeoMind 代你加入 Wi‑Fi。",
+    "handStep1": "将设备置于 SoftAP / 配网模式",
+    "handStep2": "打开「系统设置 → Wi‑Fi」，加入 {{ssid}}（设备热点）",
+    "handStep3": "回到此处勾选确认，再点继续",
+    "noProgrammaticJoin": "在 macOS、Tauri 与浏览器中，NeoMind 都不会自动加入 Wi‑Fi。",
+    "joinedAck": "我已在本机系统设置中加入 {{ssid}}",
+    "probingTitle": "正在检测 SoftAP 是否可达…",
+    "probingHint": "先确认本机已能访问 SoftAP 网关，再开始 CT-Prov。",
+    "errorNotOnSoftap": "本机似乎还未加入设备 SoftAP 网络（网关不可达 / 超时）。请先在系统设置中加入热点，再重试。",
+    "errorHttp": "已到达 SoftAP 网关，但 HTTP 失败。请核对该型号的网关地址后重试。",
+    "errorProtocol": "SoftAP 有响应，但 CT-Prov 报文无效。请检查固件 / SoftAP 模式。",
+    "errorHostHint": "预期热点 {{ssid}} · 网关 {{host}}"
   },
   "ble": {
     "tabTitle": "蓝牙配网",

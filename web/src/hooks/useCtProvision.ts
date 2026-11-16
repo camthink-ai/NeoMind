@@ -8,17 +8,20 @@ import {
   BleGattCtTransport,
   CtSessionClient,
   SoftapHttpCtTransport,
+  SoftapTransportError,
   isTauriEnv,
   mqttSectionFromResolve,
   openCtGattChannel,
   parseApSsid,
   scanCtDevicesWithWebStash,
+  softapFailureKind,
   softapHostForModel,
   type CapabilitiesResult,
   type CtMqttConfig,
   type CtScanDevice,
   type DeviceInfoResult,
   type JsonObject,
+  type NetworkScanItem,
   type ProvTransport,
   type SetConfigResult,
 } from '@/lib/ct-prov'
@@ -46,7 +49,11 @@ export interface UseCtProvisionReturn {
   scan: () => Promise<CtScanDevice[]>
   selectBleDevice: (device: CtScanDevice) => Promise<boolean>
   /** SoftAP: set SSID (optional) + model/host, then open HTTP session. */
-  connectAp: (opts: { ssid?: string; model?: string; host?: string }) => Promise<boolean>
+  connectAp: (opts: {
+    ssid?: string
+    model?: string
+    host?: string
+  }) => Promise<{ ok: true } | { ok: false; error: string; kind: ReturnType<typeof softapFailureKind> }>
   setApSsidInput: (v: string) => void
   setApHost: (v: string) => void
   setApModelHint: (v: string | null) => void
@@ -57,6 +64,8 @@ export interface UseCtProvisionReturn {
     mqtt: CtMqttConfig
     networkSection?: string
   }) => Promise<SetConfigResult | null>
+  /** Device-side Wi-Fi / HaLow scan when the section is scannable. */
+  scanWifiNetworks: (section?: string) => Promise<NetworkScanItem[]>
   disconnect: () => void
   clearError: () => void
 }
@@ -205,14 +214,20 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
   )
 
   const connectAp = useCallback(
-    async (opts: { ssid?: string; model?: string; host?: string }): Promise<boolean> => {
+    async (opts: {
+      ssid?: string
+      model?: string
+      host?: string
+    }): Promise<
+      { ok: true } | { ok: false; error: string; kind: ReturnType<typeof softapFailureKind> }
+    > => {
       setConnecting(true)
       setError(null)
       setDeviceInfo(null)
       setCapabilities(null)
       try {
         let model = opts.model ?? apModelHint ?? undefined
-        let host = opts.host ?? apHost
+        let host = (opts.host ?? apHost).trim()
         const ssid = opts.ssid ?? apSsidInput
         if (ssid) {
           const parsed = parseApSsid(ssid.trim())
@@ -232,18 +247,56 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
             setApHost(host)
           }
         }
-        const transport = new SoftapHttpCtTransport({ host, model: model ?? undefined })
-        return await openWithTransport(transport)
+        if (!host && model) {
+          host = softapHostForModel(model)
+          setApHost(host)
+        }
+        const transport = new SoftapHttpCtTransport({
+          host: host || undefined,
+          model: model ?? undefined,
+        })
+        const opened = await openWithTransport(transport)
+        if (!opened) {
+          const msg = 'Failed to open SoftAP session'
+          setError(msg)
+          return { ok: false, error: msg, kind: 'other' }
+        }
+        return { ok: true }
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : String(err))
+        const msg =
+          err instanceof SoftapTransportError || err instanceof Error
+            ? err.message
+            : String(err)
+        setError(msg)
         setConnected(false)
         await disposeSession()
-        return false
+        return { ok: false, error: msg, kind: softapFailureKind(err) }
       } finally {
         setConnecting(false)
       }
     },
     [apHost, apModelHint, apSsidInput, disposeSession, openWithTransport],
+  )
+
+  const scanWifiNetworks = useCallback(
+    async (section = 'wifi'): Promise<NetworkScanItem[]> => {
+      const client = clientRef.current
+      if (!client) {
+        setError('Not connected')
+        return []
+      }
+      try {
+        return await withTimeout(
+          client.scanNetworks(section),
+          25_000,
+          'communication.scan',
+        )
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : String(err))
+        return []
+      }
+    },
+    [],
   )
 
   const applyConfig = useCallback(
@@ -336,6 +389,7 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
     scan,
     selectBleDevice,
     connectAp,
+    scanWifiNetworks,
     setApSsidInput,
     setApHost,
     setApModelHint,

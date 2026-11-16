@@ -64,4 +64,18 @@ describe('ct-prov FakeTransport session path', () => {
     expect(transport.opLog).not.toContain(ProvOp.sessionClose)
     await client.dispose()
   })
+
+  it('scans wifi via communication.scan and sorts by rssi', async () => {
+    const transport = new FakeTransport({ model: 'NE101' })
+    const client = new CtSessionClient(transport)
+    await client.open()
+    const caps = await client.fetchCapabilities()
+    const wifi = caps.sections.find((s) => s.name === 'wifi')
+    expect(wifi?.scannable).toBe(true)
+    const networks = await client.scanNetworks('wifi')
+    expect(networks.map((n) => n.ssid)).toEqual(['Office-2.4G', 'Guest'])
+    expect(networks[0]?.rssi).toBeGreaterThan(networks[1]?.rssi ?? -999)
+    expect(transport.opLog).toContain(ProvOp.communicationScan)
+    await client.dispose()
+  })
 })

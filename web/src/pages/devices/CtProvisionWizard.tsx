@@ -25,7 +25,11 @@ import { Label } from '@/components/ui/label'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { UseCtProvisionReturn } from '@/hooks/useCtProvision'
-import { modelToDeviceType, type CtMqttConfig } from '@/lib/ct-prov'
+import {
+  modelToDeviceType,
+  type CtMqttConfig,
+  type NetworkScanItem,
+} from '@/lib/ct-prov'
 import { api, fetchAPI } from '@/lib/api'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
@@ -48,6 +52,7 @@ export interface CtProvisionWizardProps {
 }
 
 const STEP_ORDER: CtWizardStep[] = ['info', 'capabilities', 'edit']
+const WIFI_MANUAL = '__manual__'
 
 function StepDots({ current }: { current: CtWizardStep }) {
   const { t } = useTranslation('devices')
@@ -58,17 +63,25 @@ function StepDots({ current }: { current: CtWizardStep }) {
     t('ctProv.stepConfigure'),
   ]
   return (
-    <div className="flex items-center justify-center gap-2 mb-6" aria-hidden={idx < 0}>
-      {STEP_ORDER.map((step, i) => {
-        const active = i === idx
-        const done = idx > i
-        return (
-          <div key={step} className="flex items-center gap-2">
-            {i > 0 && <div className={cn('h-px w-4', done || active ? 'bg-primary' : 'bg-border')} />}
-            <div className="flex flex-col items-center gap-1">
+    <div className="mb-6" aria-hidden={idx < 0}>
+      {/* Circles + connectors on one baseline (labels below, not in the flex row). */}
+      <div className="flex items-center justify-center gap-0">
+        {STEP_ORDER.map((step, i) => {
+          const active = i === idx
+          const done = idx > i
+          return (
+            <div key={step} className="flex items-center">
+              {i > 0 && (
+                <div
+                  className={cn(
+                    'h-px w-6 sm:w-10 shrink-0',
+                    done || active ? 'bg-primary' : 'bg-border',
+                  )}
+                />
+              )}
               <div
                 className={cn(
-                  'w-6 h-6 rounded-lg text-xs font-medium flex items-center justify-center',
+                  'w-7 h-7 rounded-full text-xs font-medium flex items-center justify-center shrink-0',
                   done && 'bg-success-light text-success',
                   active && 'bg-primary text-primary-foreground',
                   !done && !active && 'bg-muted text-muted-foreground',
@@ -76,18 +89,23 @@ function StepDots({ current }: { current: CtWizardStep }) {
               >
                 {i + 1}
               </div>
-              <span
-                className={cn(
-                  'text-[10px] hidden sm:block',
-                  active ? 'text-foreground' : 'text-muted-foreground',
-                )}
-              >
-                {labels[i]}
-              </span>
             </div>
-          </div>
-        )
-      })}
+          )
+        })}
+      </div>
+      <div className="mt-2 hidden sm:grid grid-cols-3 gap-2 text-center">
+        {labels.map((label, i) => (
+          <span
+            key={label}
+            className={cn(
+              'text-[10px] leading-tight',
+              i === idx ? 'text-foreground font-medium' : 'text-muted-foreground',
+            )}
+          >
+            {label}
+          </span>
+        ))}
+      </div>
     </div>
   )
 }
@@ -102,7 +120,8 @@ export function CtProvisionCenter({
   return (
     <div
       className={cn(
-        'min-h-[420px] sm:min-h-[480px] flex flex-col items-center justify-center gap-6 px-4 py-6',
+        // Fill the add-device panel so spinners sit in the visual center, not under the tab strip.
+        'min-h-[min(60vh,520px)] h-full flex flex-col items-center justify-center gap-6 px-4 py-6',
         className,
       )}
     >
@@ -133,6 +152,10 @@ export function CtProvisionWizard({
   const [isReprovision, setIsReprovision] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [capsDetailOpen, setCapsDetailOpen] = useState(false)
+  const [wifiNetworks, setWifiNetworks] = useState<NetworkScanItem[]>([])
+  const [wifiScanning, setWifiScanning] = useState(false)
+  const [wifiSelect, setWifiSelect] = useState<string>(WIFI_MANUAL)
+  const [wifiScanAttempted, setWifiScanAttempted] = useState(false)
 
   useEffect(() => {
     if (ct.deviceInfo?.deviceName && !deviceName) {
@@ -162,6 +185,39 @@ export function CtProvisionWizard({
     return null
   }, [ct.capabilities])
   const needsWifi = wifiSection !== null
+  const wifiScannable = useMemo(() => {
+    if (!wifiSection) return false
+    return !!ct.capabilities?.sections.find(
+      (s) => s.name === wifiSection && s.configurable && s.scannable,
+    )
+  }, [ct.capabilities, wifiSection])
+
+  const refreshWifiScan = useCallback(async () => {
+    if (!wifiSection || !wifiScannable) return
+    setWifiScanning(true)
+    setWifiScanAttempted(true)
+    try {
+      const items = await ct.scanWifiNetworks(wifiSection)
+      setWifiNetworks(items)
+      if (items.length > 0) {
+        setWifiSelect((prev) => {
+          if (prev !== WIFI_MANUAL && items.some((n) => n.ssid === prev)) return prev
+          const top = items[0]!.ssid
+          setWifiSsid(top)
+          return top
+        })
+      } else {
+        setWifiSelect(WIFI_MANUAL)
+      }
+    } finally {
+      setWifiScanning(false)
+    }
+  }, [ct, wifiSection, wifiScannable])
+
+  useEffect(() => {
+    if (step !== 'edit' || !wifiScannable || wifiScanAttempted) return
+    void refreshWifiScan()
+  }, [step, wifiScannable, wifiScanAttempted, refreshWifiScan])
 
   const handleApply = useCallback(async () => {
     if (!ct.deviceInfo) return
@@ -418,22 +474,85 @@ export function CtProvisionWizard({
 
           {needsWifi && (
             <div className="rounded-xl border bg-card p-4 space-y-3">
-              <div className="flex items-center gap-2">
-                <Wifi className="w-4 h-4 text-primary" />
-                <span className="text-sm font-medium">
-                  {wifiSection === 'halow'
-                    ? t('devices:ble.wifiConfigHalow')
-                    : t('devices:ble.wifiConfig')}
-                </span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Wifi className="w-4 h-4 text-primary" />
+                  <span className="text-sm font-medium">
+                    {wifiSection === 'halow'
+                      ? t('devices:ble.wifiConfigHalow')
+                      : t('devices:ble.wifiConfig')}
+                  </span>
+                </div>
+                {wifiScannable && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 px-2 text-xs"
+                    onClick={() => void refreshWifiScan()}
+                    disabled={wifiScanning || ct.provisioning}
+                  >
+                    {wifiScanning ? (
+                      <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                    ) : (
+                      <Signal className="w-3.5 h-3.5 mr-1" />
+                    )}
+                    {t('devices:ctProv.rescanWifi')}
+                  </Button>
+                )}
               </div>
-              <div>
-                <Label>{t('devices:ble.ssid')}</Label>
-                <Input
-                  value={wifiSsid}
-                  onChange={(e) => setWifiSsid(e.target.value)}
-                  placeholder={t('devices:ble.ssidPlaceholder')}
-                />
-              </div>
+              {wifiScannable && (
+                <div>
+                  <Label>{t('devices:ctProv.wifiNetwork')}</Label>
+                  {wifiScanning && wifiNetworks.length === 0 ? (
+                    <div className="flex items-center justify-center gap-2 rounded-lg border bg-muted-30 py-6 text-sm text-muted-foreground">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      {t('devices:ctProv.scanningWifi')}
+                    </div>
+                  ) : (
+                    <Select
+                      value={wifiSelect}
+                      onValueChange={(v) => {
+                        setWifiSelect(v)
+                        if (v === WIFI_MANUAL) return
+                        setWifiSsid(v)
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('devices:ctProv.wifiSelectPlaceholder')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {wifiNetworks.map((n) => (
+                          <SelectItem key={`${n.ssid}:${n.bssid ?? ''}`} value={n.ssid}>
+                            {n.rssi != null ? `${n.ssid} (${n.rssi} dBm)` : n.ssid}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value={WIFI_MANUAL}>
+                          {t('devices:ctProv.wifiManual')}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                  {wifiScanAttempted && !wifiScanning && wifiNetworks.length === 0 && (
+                    <p className="text-xs text-muted-foreground mt-1.5">
+                      {t('devices:ctProv.wifiScanEmpty')}
+                    </p>
+                  )}
+                </div>
+              )}
+              {(!wifiScannable || wifiSelect === WIFI_MANUAL) && (
+                <div>
+                  <Label>{t('devices:ble.ssid')}</Label>
+                  <Input
+                    value={wifiSsid}
+                    onChange={(e) => {
+                      setWifiSsid(e.target.value)
+                      setWifiSelect(WIFI_MANUAL)
+                    }}
+                    placeholder={t('devices:ble.ssidPlaceholder')}
+                  />
+                </div>
+              )}
               <div>
                 <Label>{t('devices:ble.password')}</Label>
                 <PasswordInput

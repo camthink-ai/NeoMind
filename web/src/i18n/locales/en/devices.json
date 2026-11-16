@@ -922,7 +922,13 @@
     "noSections": "No capability sections reported.",
     "advancedMqtt": "MQTT broker (advanced)",
     "mqttAdvancedHint": "Default uses the NeoMind built-in broker. Change only if you need an external broker.",
-    "applyingHint": "Writing config and registering the device…"
+    "applyingHint": "Writing config and registering the device…",
+    "wifiNetwork": "Wi‑Fi network",
+    "wifiSelectPlaceholder": "Select a network",
+    "wifiManual": "Enter SSID manually",
+    "scanningWifi": "Scanning networks on the device…",
+    "rescanWifi": "Rescan",
+    "wifiScanEmpty": "No networks reported — enter the SSID manually."
   },
   "ap": {
     "tabTitle": "AP Provision",
@@ -942,12 +948,24 @@
     "unreachableHint": "Make sure this computer is joined to the device hotspot, then retry.",
     "joinTitle": "Connect over SoftAP",
     "joinDesc": "Pick the device family and gateway, join its Wi‑Fi hotspot in system settings, then continue here.",
+    "joinDescStrong": "NeoMind cannot join Wi‑Fi for you. Open System Settings → Wi‑Fi, join the device hotspot, then continue here.",
     "ssidPatternLabel": "Look for an SSID like",
     "ssidPatternHint": "Also supports newer CT-AP-… names.",
     "joinedContinue": "I’ve joined — continue",
-    "advancedOptions": "Advanced: SSID, model, gateway",
+    "advancedOptions": "Advanced: SoftAP SSID & gateway",
     "ssidPatternPrimary": "NE101-… · NE301-… · NE302-… · NE503-… · EK410-…",
-    "handJoinHint": "Open system Wi‑Fi, join the device hotspot, then tap continue. NeoMind cannot join Wi‑Fi for you on most platforms."
+    "handJoinHint": "Open system Wi‑Fi, join the device hotspot, then tap continue. NeoMind cannot join Wi‑Fi for you on most platforms.",
+    "handStep1": "Put the device into SoftAP / config mode",
+    "handStep2": "Open System Settings → Wi‑Fi and join {{ssid}} (device hotspot)",
+    "handStep3": "Return here, confirm the checkbox, then Continue",
+    "noProgrammaticJoin": "NeoMind will not join Wi‑Fi automatically on macOS, Tauri, or the browser.",
+    "joinedAck": "I joined {{ssid}} in System Settings on this computer",
+    "probingTitle": "Checking SoftAP reachability…",
+    "probingHint": "Confirming this computer can reach the SoftAP gateway before starting CT-Prov.",
+    "errorNotOnSoftap": "This computer does not appear to be on the device SoftAP network (gateway unreachable / timed out). Join the hotspot in System Settings, then retry.",
+    "errorHttp": "Reached the SoftAP gateway, but HTTP failed. Check the gateway address for this model family, then retry.",
+    "errorProtocol": "SoftAP responded, but the CT-Prov envelope was invalid. Check firmware / SoftAP mode.",
+    "errorHostHint": "Expected hotspot {{ssid}} · gateway {{host}}"
   },
   "ble": {
     "tabTitle": "BLE Provision",

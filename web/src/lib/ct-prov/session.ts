@@ -47,6 +47,21 @@ export interface SetConfigResult {
   apply?: string
 }
 
+/** One Wi-Fi / HaLow network from `communication.scan`. */
+export interface NetworkScanItem {
+  ssid: string
+  rssi?: number
+  bssid?: string
+  security?: string
+}
+
+export interface NetworkScanPage {
+  section: string
+  items: NetworkScanItem[]
+  more: boolean
+  cursor: string | null
+}
+
 function sectionKindFromWire(name: string): ConfigSectionKind | null {
   if (name === 'network' || name === 'selector' || name === 'service') return name
   return null
@@ -169,6 +184,44 @@ function parseSection(entry: unknown): ConfigSection {
   }
 }
 
+export function parseNetworkScan(response: ProvResponse): NetworkScanPage {
+  if (!response.ok) {
+    throw new ProvSessionError(
+      response.error?.codeName?.toLowerCase() ?? 'scan_error',
+      `${response.error?.codeName}: ${response.error?.message}`,
+    )
+  }
+  const accepted = new Set([
+    resultOpName(ProvOp.communicationScan),
+    'communication.scan.result',
+  ])
+  if (!accepted.has(response.opName)) {
+    throw new ProvSessionError('scan_op', response.opName)
+  }
+  const data = response.data ?? {}
+  const section = typeof data.section === 'string' ? data.section : 'wifi'
+  const rawItems = data.items
+  if (!Array.isArray(rawItems)) {
+    throw new ProvSessionError('scan_shape', 'items must be an array')
+  }
+  const items: NetworkScanItem[] = []
+  for (const entry of rawItems) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const obj = entry as JsonObject
+    const ssid = obj.ssid
+    if (typeof ssid !== 'string' || !ssid.trim()) continue
+    const item: NetworkScanItem = { ssid: ssid.trim() }
+    if (typeof obj.rssi === 'number') item.rssi = obj.rssi
+    if (typeof obj.bssid === 'string') item.bssid = obj.bssid
+    if (typeof obj.security === 'string') item.security = obj.security
+    items.push(item)
+  }
+  const more = data.more === true
+  const cursor =
+    typeof data.cursor === 'string' && data.cursor.length > 0 ? data.cursor : null
+  return { section, items, more, cursor }
+}
+
 export function parseSetConfig(response: ProvResponse): SetConfigResult {
   if (!response.ok) {
     throw new ProvSessionError(
@@ -249,6 +302,40 @@ export class CtSessionClient {
       { timeoutMs },
     )
     return parseCapabilities(response)
+  }
+
+  /**
+   * Scan networks for a scannable section (wifi / halow). Follows `more`+`cursor`
+   * until complete or `maxPages` (devices can keep paging forever).
+   */
+  async scanNetworks(
+    section: string,
+    opts?: { timeoutMs?: number; maxPages?: number },
+  ): Promise<NetworkScanItem[]> {
+    const timeoutMs = opts?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    const maxPages = opts?.maxPages ?? 8
+    const seen = new Set<string>()
+    const out: NetworkScanItem[] = []
+    let cursor: string | undefined
+    for (let page = 0; page < maxPages; page++) {
+      const data: JsonObject = { section }
+      if (cursor) data.cursor = cursor
+      const response = await this.requireTransport().sendRequest(
+        this.nextRequest(ProvOp.communicationScan, data),
+        { timeoutMs },
+      )
+      const parsed = parseNetworkScan(response)
+      for (const item of parsed.items) {
+        const key = item.bssid ? `${item.ssid}\0${item.bssid}` : item.ssid
+        if (seen.has(key)) continue
+        seen.add(key)
+        out.push(item)
+      }
+      if (!parsed.more || !parsed.cursor) break
+      cursor = parsed.cursor
+    }
+    out.sort((a, b) => (b.rssi ?? -200) - (a.rssi ?? -200))
+    return out
   }
 
   async setConfig(
