@@ -1,5 +1,5 @@
-// Web Bluetooth API type declarations for BLE provisioning
-// Minimal types required by useBleProvision hook
+// Web Bluetooth API type declarations for CamThink CT-Prov BLE provisioning
+// Minimal types required by ct-prov ble-channel (Web Bluetooth path)
 
 interface BluetoothDevice extends EventTarget {
   readonly gatt?: BluetoothRemoteGATTServer

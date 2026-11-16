@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  Bluetooth, Pencil, Search, RefreshCw, Cpu, 
+  Bluetooth, Pencil, Search, RefreshCw, Cpu,
   Wifi, Globe, Radio, Puzzle, Plug, Network,
   CheckCircle2, XCircle, Loader2,
   Copy, LucideIcon, KeyRound, Download, Lock, ShieldCheck,
@@ -31,6 +31,7 @@ import {
 import { FormField } from '@/components/ui/field'
 import { FormSection, FormSectionGroup } from '@/components/ui/form-section'
 import { BleProvisionTab } from './BleProvisionTab'
+import { ApProvisionTab } from './ApProvisionTab'
 const EXT_TAB_ICONS: Record<string, typeof Puzzle> = {
   wifi: Wifi, radio: Radio, plug: Plug, network: Network, puzzle: Puzzle,
 }
@@ -56,7 +57,7 @@ interface AddDeviceGlobalDialogProps {
   adding: boolean
 }
 
-type TabValue = 'ble' | 'manual' | 'auto' | string
+type TabValue = 'ble' | 'ap' | 'manual' | 'auto' | string
 
 interface TabItem {
   value: TabValue
@@ -71,6 +72,7 @@ interface TabItem {
 
 const TABS: TabItem[] = [
   { value: 'ble', icon: Bluetooth, labelKey: 'devices:ble.tabTitle', descKey: 'devices:ble.tabDesc' },
+  { value: 'ap', icon: Wifi, labelKey: 'devices:ap.tabTitle', descKey: 'devices:ap.tabDesc' },
   { value: 'manual', icon: Pencil, labelKey: 'devices:add.title', descKey: 'devices:add.tabDesc' },
   { value: 'auto', icon: Search, labelKey: 'devices:auto.title', descKey: 'devices:auto.tabDesc' },
 ]
@@ -200,6 +202,16 @@ export function AddDeviceGlobalDialog({
               {/* Tab content */}
               {activeTab === 'ble' && open && (
                 <BleProvisionTab
+                  onComplete={() => {
+                    fetchCache.invalidate('devices')
+                    fetchDevices()
+                    onOpenChange(false)
+                  }}
+                />
+              )}
+
+              {activeTab === 'ap' && open && (
+                <ApProvisionTab
                   onComplete={() => {
                     fetchCache.invalidate('devices')
                     fetchDevices()

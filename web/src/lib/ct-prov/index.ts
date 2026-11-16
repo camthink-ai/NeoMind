@@ -13,6 +13,10 @@ export * from './envelope'
 export * from './discovery'
 export * from './transport'
 export * from './session'
+export * from './models'
+export * from './ble-channel'
+export * from './gatt-transport'
+export * from './softap-transport'
 export {
   FRAGMENT_VECTORS,
   ENVELOPE_VECTORS,

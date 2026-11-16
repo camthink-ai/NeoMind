@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bluetooth, Wifi, Loader2, CheckCircle2, XCircle,
@@ -10,16 +10,9 @@ import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useBleProvision } from '@/hooks/useBleProvision'
-import { parseBleDeviceName, modelToDeviceType, NETMOD_LABELS } from '@/lib/ble-protocol'
-import type { BleMqttConfig } from '@/lib/ble-protocol'
+import { useCtProvision } from '@/hooks/useCtProvision'
+import { isTauriEnv, modelToDeviceType, type CtMqttConfig, type CtScanDevice } from '@/lib/ct-prov'
 import { api, fetchAPI } from '@/lib/api'
-import { isTauriEnv } from '@/lib/ble-transport'
-import type { BleTransportDevice } from '@/lib/ble-transport'
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface BrokerOption {
   id: string
@@ -32,13 +25,9 @@ interface BleProvisionTabProps {
 
 type Phase = 'scan' | 'connecting' | 'config' | 'provisioning' | 'done' | 'failed'
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
   const { t } = useTranslation(['common', 'devices'])
-  const ble = useBleProvision()
+  const ct = useCtProvision('ble')
 
   const [phase, setPhase] = useState<Phase>('scan')
   const [wifiSsid, setWifiSsid] = useState('')
@@ -50,13 +39,11 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
   const [registerError, setRegisterError] = useState<string | null>(null)
   const [isReprovision, setIsReprovision] = useState(false)
 
-  // Pre-fill SSID and device name from BLE READ
   useEffect(() => {
-    if (ble.deviceConfig) {
-      if (ble.deviceNetmod !== 'cat1' && ble.deviceConfig.ssid && !wifiSsid) setWifiSsid(ble.deviceConfig.ssid)
-      if (ble.deviceConfig.device_name && !deviceName) setDeviceName(ble.deviceConfig.device_name)
+    if (ct.deviceInfo?.deviceName && !deviceName) {
+      setDeviceName(ct.deviceInfo.deviceName)
     }
-  }, [ble.deviceConfig])
+  }, [ct.deviceInfo, deviceName])
 
   useEffect(() => {
     api.get<{ brokers: Array<{ id: string; name: string; broker: string }> }>('/brokers')
@@ -68,50 +55,50 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
         setBrokers(list)
       })
       .catch((err) => {
-        console.warn('[BLE] Failed to load broker list:', err)
+        console.warn('[CT-Prov] Failed to load broker list:', err)
       })
   }, [t])
 
-  // --- Scan ---
+  const wifiSection = useMemo(() => {
+    const sections = ct.capabilities?.sections ?? []
+    const wifi = sections.find((s) => s.name === 'wifi' && s.configurable)
+    if (wifi) return 'wifi'
+    const halow = sections.find((s) => s.name === 'halow' && s.configurable)
+    if (halow) return 'halow'
+    return null
+  }, [ct.capabilities])
+
+  const needsWifi = wifiSection !== null
+
   const handleScan = useCallback(async () => {
-    await ble.scan()
-  }, [ble])
+    await ct.scan()
+  }, [ct])
 
-  // --- Select device → connect immediately ---
-  const handleSelectDevice = useCallback(async (dev: BleTransportDevice) => {
+  const handleSelectDevice = useCallback(async (dev: CtScanDevice) => {
     setPhase('connecting')
-    const ok = await ble.selectDevice(dev)
-    if (ok) {
-      setPhase('config')
-    } else {
-      setPhase('failed')
-    }
-  }, [ble])
+    const ok = await ct.selectBleDevice(dev)
+    setPhase(ok ? 'config' : 'failed')
+  }, [ct])
 
-  // --- Apply: resolve MQTT → write config → register ---
   const handleApply = useCallback(async () => {
-    if (!ble.device) return
-
-    const modelName = ble.deviceModel || parseBleDeviceName(ble.device.name || '')?.model
-    if (!modelName) {
-      ble.disconnect()
+    if (!ct.deviceInfo) return
+    const modelName = ct.deviceInfo.model
+    const deviceType = modelToDeviceType(modelName)
+    if (!deviceType) {
+      setRegisterError(`Unknown model: ${modelName}`)
       setPhase('failed')
       return
     }
-
-    // Use device-provided SN or MAC (read from BLE characteristic), fallback to name
-    const sn = ble.deviceSn || ble.deviceMac || ble.device.name || modelName
-
-    const deviceType = modelToDeviceType(modelName)
-    const name = deviceName || ble.device.name || modelName
+    const sn = ct.deviceInfo.serialNumber
+    const name = deviceName || ct.deviceInfo.deviceName || modelName
 
     setPhase('provisioning')
     setRegisterError(null)
 
     try {
-      // Phase 1: Resolve MQTT config
-      const resp = await fetchAPI<{ device_id: string; mqtt_config: BleMqttConfig }>(
-        '/devices/ble-provision', {
+      const resp = await fetchAPI<{ device_id: string; mqtt_config: CtMqttConfig }>(
+        '/devices/ble-provision',
+        {
           method: 'POST',
           body: JSON.stringify({
             model: modelName,
@@ -124,17 +111,21 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
         },
       )
 
-      // Phase 2: Write config via existing BLE connection
-      const ok = await ble.writeConfig(wifiSsid, wifiPassword, resp.mqtt_config, name)
-      if (!ok) {
+      const setResult = await ct.applyConfig({
+        wifiSsid: needsWifi ? wifiSsid : undefined,
+        wifiPassword: needsWifi ? wifiPassword : undefined,
+        mqtt: resp.mqtt_config,
+        networkSection: wifiSection ?? undefined,
+      })
+      if (!setResult) {
         setPhase('failed')
         return
       }
 
-      // Phase 3: Register device (non-critical — BLE write already succeeded)
       try {
         const regResp = await fetchAPI<{ device_id: string; already_exists?: boolean }>(
-          '/devices/ble-provision', {
+          '/devices/ble-provision',
+          {
             method: 'POST',
             body: JSON.stringify({
               model: modelName,
@@ -149,39 +140,30 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
         setDeviceId(regResp.device_id)
         if (regResp.already_exists) setIsReprovision(true)
       } catch (regErr) {
-        console.warn('[BLE] Device registration failed (BLE write succeeded):', regErr)
+        console.warn('[CT-Prov] Device registration failed (config.set succeeded):', regErr)
         setDeviceId(resp.device_id)
       }
 
       setPhase('done')
     } catch (err) {
-      console.error('[BLE] Provisioning failed:', err)
+      console.error('[CT-Prov] Provisioning failed:', err)
       setRegisterError(err instanceof Error ? err.message : String(err))
       setPhase('failed')
     }
-  }, [ble, wifiSsid, wifiPassword, deviceName, brokerId, onComplete])
+  }, [ct, wifiSsid, wifiPassword, deviceName, brokerId, needsWifi, wifiSection])
 
   const reset = useCallback(() => {
-    ble.disconnect()
+    ct.disconnect()
     setPhase('scan')
     setDeviceId(null)
     setRegisterError(null)
     setIsReprovision(false)
-  }, [ble])
-
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
+  }, [ct])
 
   const bleSupported = isTauriEnv() || (typeof navigator !== 'undefined' && !!navigator.bluetooth)
 
-  const modelName = ble.deviceModel || parseBleDeviceName(ble.device?.name || '')?.model
-  const _macSuffix = ble.deviceMac || parseBleDeviceName(ble.device?.name || '')?.macSuffix
-
-  // --- Scan phase ---
-  if (phase === 'scan' && !ble.device) {
-    // Scanning: show loading state
-    if (ble.scanning) {
+  if (phase === 'scan' && !ct.connected && !ct.deviceInfo) {
+    if (ct.scanning) {
       return (
         <div className="min-h-[480px] flex flex-col items-center justify-center gap-6 px-4">
           <div className="w-16 h-16 rounded-xl bg-primary-light flex items-center justify-center">
@@ -195,35 +177,39 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
       )
     }
 
-    // Scan results: show device list
-    if (ble.scannedDevices.length > 0) {
+    if (ct.scannedDevices.length > 0) {
       return (
         <div className="min-h-[480px] flex flex-col px-4 py-6">
           <div className="text-center mb-6">
             <h3 className="text-lg font-medium">{t('devices:ble.selectDevice')}</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              {t('devices:ble.foundDevices', { count: ble.scannedDevices.length })}
+              {t('devices:ble.foundDevices', { count: ct.scannedDevices.length })}
             </p>
           </div>
           <div className="space-y-2 max-w-md mx-auto w-full">
-            {ble.scannedDevices.map((dev) => {
-              const parsed = dev.name ? parseBleDeviceName(dev.name) : null
+            {ct.scannedDevices.map((dev) => {
+              const busy = dev.discovered?.busy
+              const label =
+                dev.discovered?.displayName ||
+                dev.name ||
+                dev.discovered?.modelCodeName ||
+                dev.id
               return (
                 <button
                   key={dev.id}
-                  onClick={() => handleSelectDevice(dev)}
-                  className="w-full flex items-center gap-3 rounded-xl border bg-card p-3 hover:bg-muted-30 transition-colors text-left"
+                  onClick={() => !busy && handleSelectDevice(dev)}
+                  disabled={!!busy}
+                  className="w-full flex items-center gap-3 rounded-xl border bg-card p-3 hover:bg-muted-30 transition-colors text-left disabled:opacity-50"
                 >
                   <div className="w-10 h-10 rounded-lg bg-primary-light flex items-center justify-center shrink-0">
                     <Bluetooth className="w-5 h-5 text-primary" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{parsed ? parsed.model : dev.name}</p>
-                    {parsed && (
-                      <p className="text-xs text-muted-foreground">
-                        {parsed.mac}
-                      </p>
-                    )}
+                    <p className="text-sm font-medium truncate">{label}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {busy ? t('devices:ble.busy') : t('devices:ctProv.productName')}
+                      {dev.discovered?.macSuffix ? ` · ${dev.discovered.macSuffix}` : ''}
+                    </p>
                   </div>
                   {dev.rssi != null && (
                     <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0">
@@ -236,7 +222,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
             })}
           </div>
           <div className="flex justify-center mt-6">
-            <Button variant="outline" onClick={handleScan} disabled={ble.scanning}>
+            <Button variant="outline" onClick={handleScan} disabled={ct.scanning}>
               <Bluetooth className="w-4 h-4 mr-2" />
               {t('devices:ble.rescan')}
             </Button>
@@ -245,7 +231,6 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
       )
     }
 
-    // Idle: show scan button
     return (
       <div className="min-h-[480px] flex flex-col items-center justify-center gap-6 px-4">
         <div className="w-16 h-16 rounded-xl bg-primary-light flex items-center justify-center">
@@ -255,9 +240,10 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
           <h3 className="text-lg font-medium">{t('devices:ble.scanTitle')}</h3>
           <p className="text-sm text-muted-foreground mt-1">{t('devices:ble.scanDesc')}</p>
         </div>
-        {/* Preparation guide */}
         <div className="max-w-sm w-full rounded-xl border bg-card p-4 space-y-2.5">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t('devices:ble.prepTitle')}</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            {t('devices:ble.prepTitle')}
+          </p>
           <div className="flex items-start gap-2.5">
             <Check className="w-4 h-4 text-success mt-0.5 shrink-0" />
             <p className="text-sm">{t('devices:ble.prepStep1')}</p>
@@ -270,6 +256,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
             <Check className="w-4 h-4 text-success mt-0.5 shrink-0" />
             <p className="text-sm text-muted-foreground">{t('devices:ble.prepStep3')}</p>
           </div>
+          <p className="text-xs text-muted-foreground pt-1">{t('devices:ctProv.firmwareHint')}</p>
         </div>
         {!bleSupported ? (
           <div className="text-center space-y-3 max-w-sm">
@@ -282,13 +269,12 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
             {t('devices:ble.scanBtn')}
           </Button>
         )}
-        {ble.error && <p className="text-sm text-error text-center max-w-sm">{ble.error}</p>}
+        {ct.error && <p className="text-sm text-error text-center max-w-sm">{ct.error}</p>}
       </div>
     )
   }
 
-  // --- Connecting phase (selecting device) ---
-  if (phase === 'connecting' || (ble.connecting && phase !== 'provisioning')) {
+  if (phase === 'connecting' || (ct.connecting && phase !== 'provisioning')) {
     return (
       <div className="min-h-[480px] flex flex-col items-center justify-center gap-6 px-4">
         <div className="w-16 h-16 rounded-xl bg-primary-light flex items-center justify-center">
@@ -296,13 +282,14 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
         </div>
         <div className="text-center space-y-2">
           <h3 className="text-lg font-medium">{t('devices:ble.connectingTitle')}</h3>
-          <p className="text-sm text-muted-foreground">{ble.device?.name}</p>
+          <p className="text-sm text-muted-foreground">
+            {ct.selectedScan?.name || ct.selectedScan?.id}
+          </p>
         </div>
       </div>
     )
   }
 
-  // --- Done ---
   if (phase === 'done') {
     return (
       <div className="min-h-[480px] flex flex-col items-center justify-center gap-4 px-4">
@@ -317,15 +304,21 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
             {isReprovision ? t('devices:ble.reprovisionDesc') : t('devices:ble.successDesc')}
           </p>
         </div>
-        {deviceId && !isReprovision && <p className="text-sm text-success">{t('devices:ble.registered', { id: deviceId })}</p>}
-        <Button variant="outline" onClick={() => { if (deviceId) onComplete?.(deviceId) }}>
+        {deviceId && !isReprovision && (
+          <p className="text-sm text-success">{t('devices:ble.registered', { id: deviceId })}</p>
+        )}
+        <Button
+          variant="outline"
+          onClick={() => {
+            if (deviceId) onComplete?.(deviceId)
+          }}
+        >
           {t('common:close')}
         </Button>
       </div>
     )
   }
 
-  // --- Failed ---
   if (phase === 'failed') {
     return (
       <div className="min-h-[480px] flex flex-col items-center justify-center gap-6 px-4">
@@ -334,17 +327,15 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
         </div>
         <div className="text-center">
           <h3 className="text-lg font-medium">{t('devices:ble.failedTitle')}</h3>
-          <p className="text-sm text-muted-foreground mt-1">{ble.error || registerError}</p>
+          <p className="text-sm text-muted-foreground mt-1">{ct.error || registerError}</p>
         </div>
         <Button onClick={reset}>{t('common:retry')}</Button>
       </div>
     )
   }
 
-  // --- Config or provisioning ---
   return (
     <div className="max-w-md mx-auto py-4 space-y-4">
-      {/* Device info header — show connection status */}
       <div className="rounded-xl border bg-card p-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-lg bg-success-light flex items-center justify-center shrink-0">
@@ -352,55 +343,57 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate">
-              {ble.deviceModel || parseBleDeviceName(ble.device?.name || '')?.model || ble.device?.name}
+              {ct.deviceInfo?.deviceName || ct.deviceInfo?.model}
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               <span className="text-success">{t('devices:ble.connected')}</span>
-              {ble.deviceSn && <span className="ml-2">SN: {ble.deviceSn}</span>}
-              {!ble.deviceSn && ble.deviceMac && <span className="ml-2">MAC: {ble.deviceMac}</span>}
-              {ble.deviceNetmod && (
-                <span className="ml-2">{NETMOD_LABELS[ble.deviceNetmod]}</span>
+              {ct.deviceInfo?.serialNumber && (
+                <span className="ml-2">SN: {ct.deviceInfo.serialNumber}</span>
               )}
+              {ct.deviceInfo?.model && <span className="ml-2">{ct.deviceInfo.model}</span>}
             </p>
           </div>
         </div>
       </div>
 
-      {/* Device name */}
       <div className="rounded-xl border bg-card p-4 space-y-2">
         <Label className="text-xs text-muted-foreground">{t('devices:ble.deviceName')}</Label>
         <Input
           value={deviceName}
           onChange={(e) => setDeviceName(e.target.value)}
-          placeholder={modelName || 'Camera'}
+          placeholder={ct.deviceInfo?.model || 'Camera'}
           className="text-base"
         />
       </div>
 
-      {/* WiFi config — hidden for Cat.1 devices */}
-      {(!ble.deviceNetmod || ble.deviceNetmod !== 'cat1') && (
+      {needsWifi && (
         <div className="rounded-xl border bg-card p-4 space-y-3">
           <div className="flex items-center gap-2">
             <Wifi className="w-4 h-4 text-primary" />
             <span className="text-sm font-medium">
-              {ble.deviceNetmod === 'halow'
-                ? t('devices:ble.wifiConfigHalow')
-                : t('devices:ble.wifiConfig')}
+              {wifiSection === 'halow' ? t('devices:ble.wifiConfigHalow') : t('devices:ble.wifiConfig')}
             </span>
           </div>
           <div>
             <Label>{t('devices:ble.ssid')}</Label>
-            <Input value={wifiSsid} onChange={(e) => setWifiSsid(e.target.value)} placeholder={t('devices:ble.ssidPlaceholder')} />
+            <Input
+              value={wifiSsid}
+              onChange={(e) => setWifiSsid(e.target.value)}
+              placeholder={t('devices:ble.ssidPlaceholder')}
+            />
           </div>
           <div>
             <Label>{t('devices:ble.password')}</Label>
-            <PasswordInput value={wifiPassword} onChange={(e) => setWifiPassword(e.target.value)} placeholder={t('devices:ble.passwordPlaceholder')} />
+            <PasswordInput
+              value={wifiPassword}
+              onChange={(e) => setWifiPassword(e.target.value)}
+              placeholder={t('devices:ble.passwordPlaceholder')}
+            />
           </div>
         </div>
       )}
 
-      {/* Cat.1 info notice */}
-      {ble.deviceNetmod === 'cat1' && (
+      {!needsWifi && (
         <div className="rounded-xl border bg-card p-4 space-y-2">
           <div className="flex items-center gap-2">
             <Signal className="w-4 h-4 text-primary" />
@@ -410,7 +403,6 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
         </div>
       )}
 
-      {/* MQTT broker */}
       <div className="rounded-xl border bg-card p-4 space-y-3">
         <div className="flex items-center gap-2">
           <Server className="w-4 h-4 text-primary" />
@@ -419,28 +411,32 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
         <div>
           <Label>{t('devices:ble.broker')}</Label>
           <Select value={brokerId} onValueChange={setBrokerId}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               {brokers.map((b) => (
-                <SelectItem key={b.id} value={b.id}>{b.label}</SelectItem>
+                <SelectItem key={b.id} value={b.id}>
+                  {b.label}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
       </div>
 
-      {/* Apply button */}
       <Button
         className="w-full"
         onClick={handleApply}
-        disabled={(ble.deviceNetmod !== 'cat1' && !wifiSsid) || ble.provisioning}
+        disabled={(needsWifi && !wifiSsid) || ct.provisioning}
       >
-        {ble.provisioning ? (
+        {ct.provisioning ? (
           <>
             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            {ble.provisioningStep === 'writingMqtt' && t('devices:ble.status.writingMqtt')}
-            {ble.provisioningStep === 'done' && t('devices:ble.status.done')}
-            {(!ble.provisioningStep || (ble.provisioningStep !== 'writingMqtt' && ble.provisioningStep !== 'done')) && t('devices:ble.provisioning')}
+            {ct.provisioningStep === 'writingConfig' && t('devices:ble.status.writingMqtt')}
+            {ct.provisioningStep === 'closing' && t('devices:ctProv.closingSession')}
+            {ct.provisioningStep === 'done' && t('devices:ble.status.done')}
+            {!ct.provisioningStep && t('devices:ble.provisioning')}
           </>
         ) : (
           <>
@@ -450,11 +446,7 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
         )}
       </Button>
 
-      {ble.error && (
-        <div className="text-center text-sm text-error">
-          {ble.error}
-        </div>
-      )}
+      {ct.error && <div className="text-center text-sm text-error">{ct.error}</div>}
     </div>
   )
 }

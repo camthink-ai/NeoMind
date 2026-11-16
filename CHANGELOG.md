@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through contentNodes, honest automation/device/agent status surfaces, and offline eval freezes (Plan E/F). Product version is now **1.3.0** across Cargo/Web/Tauri/locks. Live Plan E 9/10, tip 138, Appliance, and 5-person usability remain open — see `docs/development/1.3.0-release-prep-2026-11-14.md`.
 
 ### Upgrade notes
+- **CamThink CT-Prov hard cut:** add-device BLE provisioning now speaks CT-Prov/1 only (GATT service `7B1E0001-…`); SoftAP HTTP (`POST /api/v1/ctprov`) is a new **AP** tab. Old JSON-on-GATT / ESP protobuf (`0xFFFE` / `0xFF53`) firmwares can no longer be provisioned — flash CT-Prov/1 first. MQTT draft **auto** discovery is unchanged and is not SoftAP.
 - Builtin llama.cpp runtime pin (official-asset platforms) moves **b12024 → b12359** (= llama.cpp **v1.0.0**, 2026-11-13). Semver tag `v1.0.0` ships binaries under nightly build `b12359`; NeoMind keeps the `bNNNN` cache/URL shape. Jetson and Linux-x64-CUDA self-hosted pins stay at **b12024** until matching `NeoMind-Runtimes` assets exist. `--defrag-thold` was never used by NeoMind; spawn sampling flags (`--temp`/`--top-p`/`--top-k`/`--min-p`/`--repeat-penalty`) unchanged.
 - Chat composer can attach typed `@` mentions via server search (`GET /api/mentions/search`) and send-time resolve (`POST /api/mentions/resolve`); invalid refs stay in the draft marked invalid instead of silently dropping.
 - Messages may carry ordered `contentNodes` (v1); old `references` preamble path still works for prior clients/sessions.
@@ -22,6 +23,7 @@ Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through conten
 - Dry-run Transform policy: legacy Extension ops stay gated; caught dry-run invoke is host-flagged; MultiOutput Production nested Extension tests do not pretend Production ran.
 
 ### Added
+- CamThink CT-Prov client library (`web/src/lib/ct-prov/`), BLE+SoftAP transports, rewritten BLE provision tab, and SoftAP **AP** add-device tab (hand-join SSID guide); shared session path info→capabilities→config.set→close then existing two-phase `/devices/ble-provision` register.
 - Inline-@ editor prototype at `/dev/inline-at` (`InlineDoc` model) plus production ChatComposer mention search, type filters, load-more, IME Enter guards, and listbox/option/tablist ARIA.
 - `contentNodes` v1 in-place protocol on HTTP/WS/image paths; draft persistence in localStorage; hard 400/Error on oversize.
 - Production chip composer sends `contentNodes` (text + trailing refs); SessionMessage/AgentMessage persist `contentNodes`/`contentVersion` for history reload (legacy chips synthesize nodes when nodes omitted).
