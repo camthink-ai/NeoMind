@@ -1944,10 +1944,19 @@ pub async fn process_stream_events_with_safeguards(
                                     summary,
                                 );
                                 if let Ok(out) = &execution.result {
+                                    let op_id = {
+                                        let id = state.task_state.current_operation_id.as_str();
+                                        if id.is_empty() {
+                                            None
+                                        } else {
+                                            Some(id.to_string())
+                                        }
+                                    };
                                     state.task_state.observe_tool_result_for_goal(
                                         &crate::tools::resolve_tool_name(&name),
                                         &exec_arguments,
                                         &out.data,
+                                        op_id.as_deref(),
                                     );
                                 }
                                 // write_ledger is filled by complete_operation_succeeded

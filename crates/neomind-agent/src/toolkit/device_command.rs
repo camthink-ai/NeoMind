@@ -41,6 +41,9 @@ pub struct CommandCapability {
 }
 
 /// Parameter schema surfaced to the model when discovery / validation fails.
+///
+/// Constraint fields mirror the device-type template (`ParameterDefinition`) —
+/// no parallel rules system. Absent fields mean the template did not declare them.
 #[derive(Debug, Clone)]
 pub struct ParamCapability {
     pub name: String,
@@ -48,6 +51,16 @@ pub struct ParamCapability {
     pub data_type: String,
     pub required: bool,
     pub description: String,
+    /// Allowed values from the template (`allowed_values` and/or Enum options).
+    pub allowed_values: Option<Vec<Value>>,
+    /// Numeric minimum (template `min`).
+    pub min: Option<f64>,
+    /// Numeric maximum (template `max`).
+    pub max: Option<f64>,
+    /// Template default when the caller omits the param.
+    pub default: Option<Value>,
+    /// Unit label when present.
+    pub unit: Option<String>,
 }
 
 /// Resolve device + list template commands (capability discovery).
@@ -84,26 +97,188 @@ impl DeviceCommandTool {
     }
 }
 
+fn param_schema_hint(p: &ParamCapability) -> Value {
+    let mut obj = json!({
+        "name": p.name,
+        "display_name": p.display_name,
+        "type": p.data_type,
+        "required": p.required,
+        "description": p.description,
+    });
+    if let Some(map) = obj.as_object_mut() {
+        if let Some(vals) = &p.allowed_values {
+            map.insert("allowed_values".into(), Value::Array(vals.clone()));
+        }
+        if let Some(min) = p.min {
+            map.insert("min".into(), json!(min));
+        }
+        if let Some(max) = p.max {
+            map.insert("max".into(), json!(max));
+        }
+        if let Some(default) = &p.default {
+            map.insert("default".into(), default.clone());
+        }
+        if let Some(unit) = &p.unit {
+            if !unit.is_empty() {
+                map.insert("unit".into(), json!(unit));
+            }
+        }
+    }
+    obj
+}
+
 fn command_schema_hint(cmd: &CommandCapability) -> Value {
-    let params: Vec<Value> = cmd
-        .parameters
-        .iter()
-        .map(|p| {
-            json!({
-                "name": p.name,
-                "display_name": p.display_name,
-                "type": p.data_type,
-                "required": p.required,
-                "description": p.description,
-            })
-        })
-        .collect();
+    let params: Vec<Value> = cmd.parameters.iter().map(param_schema_hint).collect();
     json!({
         "command": cmd.name,
         "display_name": cmd.display_name,
         "description": cmd.description,
         "parameters": params,
     })
+}
+
+/// Preflight against template constraints already on [`ParamCapability`].
+///
+/// Mirrors DeviceService::validate_command_params for the checks the model
+/// can correct immediately (unknown key / type / enum / range). Does not
+/// invent extra rules — only what the catalog already carried from the
+/// device-type template.
+fn preflight_params(
+    cmd: &CommandCapability,
+    params: &HashMap<String, Value>,
+) -> std::result::Result<(), String> {
+    let known: std::collections::HashSet<&str> =
+        cmd.parameters.iter().map(|p| p.name.as_str()).collect();
+    let unknown: Vec<&str> = params
+        .keys()
+        .filter(|k| !known.contains(k.as_str()))
+        .map(|k| k.as_str())
+        .collect();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "Unknown param(s) for command '{}': {}. Allowed: {}.",
+            cmd.name,
+            unknown.join(", "),
+            if known.is_empty() {
+                "(none)".into()
+            } else {
+                known.into_iter().collect::<Vec<_>>().join(", ")
+            }
+        ));
+    }
+
+    for p in &cmd.parameters {
+        let Some(raw) = params.get(&p.name) else {
+            continue; // required checked separately
+        };
+        if raw.is_null() {
+            continue;
+        }
+        if let Some(msg) = type_mismatch_message(p, raw) {
+            return Err(msg);
+        }
+        if let Some(allowed) = &p.allowed_values {
+            if !allowed.is_empty() && !allowed.iter().any(|a| json_values_loosely_equal(a, raw)) {
+                return Err(format!(
+                    "Parameter '{}' value {} is not in allowed_values {:?}.",
+                    p.name, raw, allowed
+                ));
+            }
+        }
+        if p.data_type == "integer" || p.data_type == "float" {
+            let num = raw.as_f64().or_else(|| raw.as_i64().map(|i| i as f64));
+            if let Some(n) = num {
+                if let Some(min) = p.min {
+                    if n < min {
+                        return Err(format!(
+                            "Parameter '{}' value {} is below minimum {}{}.",
+                            p.name,
+                            n,
+                            min,
+                            p.unit.as_deref().unwrap_or("")
+                        ));
+                    }
+                }
+                if let Some(max) = p.max {
+                    if n > max {
+                        return Err(format!(
+                            "Parameter '{}' value {} is above maximum {}{}.",
+                            p.name,
+                            n,
+                            max,
+                            p.unit.as_deref().unwrap_or("")
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn type_mismatch_message(p: &ParamCapability, raw: &Value) -> Option<String> {
+    let ok = match p.data_type.as_str() {
+        "integer" => {
+            raw.is_i64() || raw.is_u64() || raw.as_str().is_some_and(|s| s.parse::<i64>().is_ok())
+        }
+        "float" => {
+            raw.is_f64()
+                || raw.is_i64()
+                || raw.is_u64()
+                || raw.as_str().is_some_and(|s| s.parse::<f64>().is_ok())
+        }
+        "boolean" => {
+            raw.is_boolean()
+                || raw.as_str().is_some_and(|s| {
+                    matches!(
+                        s.to_lowercase().as_str(),
+                        "true" | "false" | "1" | "0" | "yes" | "no" | "on" | "off"
+                    )
+                })
+        }
+        "string" | "enum" | "binary" => raw.is_string() || raw.is_number() || raw.is_boolean(),
+        "array" => raw.is_array(),
+        _ => true, // unknown type label — don't invent a hard fail
+    };
+    if ok {
+        None
+    } else {
+        Some(format!(
+            "Parameter '{}' expects type '{}', got {}.",
+            p.name, p.data_type, raw
+        ))
+    }
+}
+
+fn json_values_loosely_equal(a: &Value, b: &Value) -> bool {
+    if a == b {
+        return true;
+    }
+    match (a, b) {
+        (Value::String(s), Value::Number(n)) | (Value::Number(n), Value::String(s)) => {
+            if let Some(i) = n.as_i64() {
+                return s.parse::<i64>().ok() == Some(i);
+            }
+            if let Some(f) = n.as_f64() {
+                return s
+                    .parse::<f64>()
+                    .ok()
+                    .is_some_and(|x| (x - f).abs() < f64::EPSILON);
+            }
+            false
+        }
+        (Value::Number(n1), Value::Number(n2)) => match (n1.as_f64(), n2.as_f64()) {
+            (Some(a), Some(b)) => (a - b).abs() < f64::EPSILON,
+            _ => false,
+        },
+        (Value::Bool(b), Value::String(s)) | (Value::String(s), Value::Bool(b)) => {
+            matches!(
+                (s.to_lowercase().as_str(), *b),
+                ("true" | "1" | "yes" | "on", true) | ("false" | "0" | "no" | "off", false)
+            )
+        }
+        _ => false,
+    }
 }
 
 fn catalog_commands_summary(catalog: &DeviceCommandCatalog) -> Value {
@@ -223,7 +398,7 @@ impl Tool for DeviceCommandTool {
         let missing: Vec<&str> = cmd_cap
             .parameters
             .iter()
-            .filter(|p| p.required && !params_map.contains_key(&p.name))
+            .filter(|p| p.required && !params_map.contains_key(&p.name) && p.default.is_none())
             .map(|p| p.name.as_str())
             .collect();
         if !missing.is_empty() {
@@ -232,6 +407,16 @@ impl Tool for DeviceCommandTool {
                     "Command '{command}' on device '{}' is missing required params: {}. Schema:",
                     catalog.device_id,
                     missing.join(", ")
+                ),
+                command_schema_hint(cmd_cap),
+            ));
+        }
+
+        if let Err(msg) = preflight_params(cmd_cap, &params_map) {
+            return Ok(ToolOutput::error_with_metadata(
+                format!(
+                    "Command '{command}' on device '{}' rejected params: {msg} Schema:",
+                    catalog.device_id
                 ),
                 command_schema_hint(cmd_cap),
             ));
@@ -291,6 +476,45 @@ mod tests {
                         data_type: "string".into(),
                         required: true,
                         description: "Content to show".into(),
+                        allowed_values: None,
+                        min: None,
+                        max: None,
+                        default: None,
+                        unit: None,
+                    }],
+                },
+                CommandCapability {
+                    name: "set_brightness".into(),
+                    display_name: "Set Brightness".into(),
+                    description: "Adjust display brightness".into(),
+                    parameters: vec![ParamCapability {
+                        name: "level".into(),
+                        display_name: "Level".into(),
+                        data_type: "integer".into(),
+                        required: true,
+                        description: "Brightness level".into(),
+                        allowed_values: None,
+                        min: Some(0.0),
+                        max: Some(100.0),
+                        default: Some(json!(50)),
+                        unit: Some("%".into()),
+                    }],
+                },
+                CommandCapability {
+                    name: "set_mode".into(),
+                    display_name: "Set Mode".into(),
+                    description: "Switch operating mode".into(),
+                    parameters: vec![ParamCapability {
+                        name: "mode".into(),
+                        display_name: "Mode".into(),
+                        data_type: "enum".into(),
+                        required: true,
+                        description: "Operating mode".into(),
+                        allowed_values: Some(vec![json!("auto"), json!("manual"), json!("off")]),
+                        min: None,
+                        max: None,
+                        default: Some(json!("auto")),
+                        unit: None,
                     }],
                 },
                 CommandCapability {
@@ -304,6 +528,11 @@ mod tests {
                             data_type: "string".into(),
                             required: true,
                             description: "Config key".into(),
+                            allowed_values: None,
+                            min: None,
+                            max: None,
+                            default: None,
+                            unit: None,
                         },
                         ParamCapability {
                             name: "value".into(),
@@ -311,6 +540,11 @@ mod tests {
                             data_type: "string".into(),
                             required: true,
                             description: "Config value".into(),
+                            allowed_values: None,
+                            min: None,
+                            max: None,
+                            default: None,
+                            unit: None,
                         },
                     ],
                 },
@@ -338,6 +572,11 @@ mod tests {
                             data_type: "string".into(),
                             required: true,
                             description: "Cue id".into(),
+                            allowed_values: None,
+                            min: None,
+                            max: None,
+                            default: None,
+                            unit: None,
                         }],
                     }];
                     Ok(c)
@@ -351,7 +590,7 @@ mod tests {
                 Ok(DeviceCommandOutcome {
                     device_id,
                     command: format!("{command}:{}", params.len()),
-                    delivery: "AdapterAccepted".into(),
+                    delivery: "adapter_accepted".into(),
                     delivery_note: "delivered to 1 adapter(s) (broker publish); device acknowledgment: none; physical effect unverified".into(),
                 })
             })
@@ -470,5 +709,94 @@ mod tests {
             .unwrap();
         assert!(!out.success);
         assert!(out.error.as_ref().unwrap().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn unknown_param_returns_correctable_schema() {
+        let t = tool_ok();
+        let out = t
+            .execute(json!({
+                "device":"cam-1",
+                "command":"render_text",
+                "params":{"text":"hi","extra_key":1}
+            }))
+            .await
+            .unwrap();
+        assert!(!out.success);
+        let err = out.error.as_ref().unwrap();
+        assert!(err.contains("Unknown param"));
+        assert!(err.contains("extra_key"));
+        assert!(out.data["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "text"));
+    }
+
+    #[tokio::test]
+    async fn wrong_type_returns_correctable_feedback() {
+        let t = tool_ok();
+        let out = t
+            .execute(json!({
+                "device":"cam-1",
+                "command":"set_brightness",
+                "params":{"level":{"nested":true}}
+            }))
+            .await
+            .unwrap();
+        assert!(!out.success);
+        let err = out.error.as_ref().unwrap();
+        assert!(err.contains("expects type 'integer'"));
+        assert_eq!(out.data["parameters"][0]["min"], 0.0);
+        assert_eq!(out.data["parameters"][0]["max"], 100.0);
+        assert_eq!(out.data["parameters"][0]["unit"], "%");
+    }
+
+    #[tokio::test]
+    async fn enum_and_range_violations_surface_allowed_values() {
+        let t = tool_ok();
+        let bad_mode = t
+            .execute(json!({
+                "device":"cam-1",
+                "command":"set_mode",
+                "params":{"mode":"turbo"}
+            }))
+            .await
+            .unwrap();
+        assert!(!bad_mode.success);
+        assert!(bad_mode.error.as_ref().unwrap().contains("allowed_values"));
+        assert!(bad_mode.data["parameters"][0]["allowed_values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "auto"));
+
+        let out_of_range = t
+            .execute(json!({
+                "device":"cam-1",
+                "command":"set_brightness",
+                "params":{"level":150}
+            }))
+            .await
+            .unwrap();
+        assert!(!out_of_range.success);
+        assert!(out_of_range
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("above maximum"));
+    }
+
+    #[tokio::test]
+    async fn schema_hint_includes_template_constraints() {
+        let hint = command_schema_hint(&sample_catalog().commands[2]);
+        assert_eq!(hint["command"], "set_brightness");
+        assert_eq!(hint["parameters"][0]["min"], 0.0);
+        assert_eq!(hint["parameters"][0]["default"], 50);
+        let mode = command_schema_hint(&sample_catalog().commands[3]);
+        assert!(mode["parameters"][0]["allowed_values"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("manual")));
     }
 }

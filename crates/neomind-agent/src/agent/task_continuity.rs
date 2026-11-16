@@ -540,12 +540,21 @@ pub enum GoalClaimKind {
 }
 
 /// Best goal-relevant evidence observed from tool results (not model prose).
+///
+/// Level is derived **only** from a structured exact `delivery` enum
+/// (plus config-route classification). `delivery_note` / free text is
+/// display-only and must never raise the level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalEvidence {
     pub level: GoalEvidenceLevel,
     pub device_id: Option<String>,
     pub command: Option<String>,
+    /// Exact delivery enum tag when known (`adapter_accepted`, …).
     pub delivery: Option<String>,
+    /// Bound Operation id when the observation came from a gated write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+    /// Human-readable note (display-only; not used for level).
     pub summary: String,
 }
 
@@ -1630,13 +1639,14 @@ impl TaskState {
             match &self.goal_evidence {
                 Some(ev) => {
                     out.push_str(&format!(
-                        "  - proven: level={:?} device={} command={} delivery={}\n",
+                        "  - proven: level={:?} device={} command={} delivery={} op={}\n",
                         ev.level,
                         ev.device_id.as_deref().unwrap_or("-"),
                         ev.command.as_deref().unwrap_or("-"),
                         ev.delivery.as_deref().unwrap_or("-"),
+                        ev.operation_id.as_deref().unwrap_or("-"),
                     ));
-                    out.push_str(&format!("  - note: {}\n", ev.summary));
+                    out.push_str(&format!("  - note (display-only): {}\n", ev.summary));
                 }
                 None => {
                     out.push_str("  - proven: none — no target device command observed yet\n");
@@ -2249,20 +2259,26 @@ impl TaskState {
     /// Fold a successful tool result into [`Self::goal_evidence`] (monotonic).
     ///
     /// Config-only routes never raise above [`GoalEvidenceLevel::ConfigSuccess`].
-    /// Device command results raise to the delivery ladder. Wrong-device
-    /// commands do not satisfy a constrained goal object.
+    /// Device command results raise only via exact structured delivery enums.
+    /// Wrong-device commands do not satisfy a constrained goal object.
     pub fn observe_tool_result_for_goal(
         &mut self,
         tool_name: &str,
         arguments: &serde_json::Value,
         result_data: &serde_json::Value,
+        operation_id: Option<&str>,
     ) {
         if matches!(self.status, TaskStatus::Cancelled) {
             return;
         }
-        let Some(obs) = classify_goal_evidence(tool_name, arguments, result_data) else {
+        let Some(mut obs) = classify_goal_evidence(tool_name, arguments, result_data) else {
             return;
         };
+        if let Some(op) = operation_id {
+            if !op.is_empty() {
+                obs.operation_id = Some(op.to_string());
+            }
+        }
         // Constrained target: ignore evidence for a different device.
         if let (Some(need), Some(got)) = (&self.object, &obs.device_id) {
             if need != got && obs.level >= GoalEvidenceLevel::CommandDispatched {
@@ -2274,6 +2290,13 @@ impl TaskState {
             Some(cur) if obs.level > cur.level => self.goal_evidence = Some(obs),
             Some(cur)
                 if obs.level == cur.level && obs.device_id.is_some() && cur.device_id.is_none() =>
+            {
+                self.goal_evidence = Some(obs);
+            }
+            Some(cur)
+                if obs.level == cur.level
+                    && obs.operation_id.is_some()
+                    && cur.operation_id.is_none() =>
             {
                 self.goal_evidence = Some(obs);
             }
@@ -2292,6 +2315,11 @@ fn evidence_id_suggests_physical(evidence_id: &str) -> bool {
 }
 
 /// Classify a tool result into goal-evidence (or None if irrelevant).
+///
+/// Delivery ladder levels come **only** from exact structured enum tags
+/// (`adapter_accepted` / `extension_accepted` / `device_acknowledged` /
+/// `physical_effect_verified`). Descriptive `delivery_note` / prose /
+/// unknown enum strings never raise the level.
 pub fn classify_goal_evidence(
     tool_name: &str,
     arguments: &serde_json::Value,
@@ -2321,15 +2349,19 @@ pub fn classify_goal_evidence(
             device_id: extract_operation_target(&canonical),
             command: None,
             delivery: Some("config_or_notify".into()),
+            operation_id: None,
             summary: "config/push/webhook path succeeded — not a device command".into(),
         });
     }
 
-    // Shell device control (or JSON bodies that look like device_command).
+    // Shell device control: only structured JSON delivery (stdout or body).
+    // Natural-language CLI prose never upgrades the evidence level.
     if real == "shell" && cmd.contains("neomind device control") {
         return evidence_from_device_control_shell(&cmd, result_data);
     }
-    if result_data.get("delivery").is_some() || result_data.get("delivery_note").is_some() {
+    // Structured delivery payload without a device_command tool name
+    // (e.g. nested CLI JSON) — still requires exact enum + bound ids.
+    if result_data.get("delivery").is_some() {
         if result_data.get("sent").and_then(|v| v.as_bool()) == Some(true)
             || result_data.get("device_id").is_some()
         {
@@ -2346,58 +2378,107 @@ fn evidence_from_device_command_result(
     let device_id = result_data
         .get("device_id")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .map(str::to_string)
         .or_else(|| extract_operation_target(arguments));
     let command = result_data
         .get("command")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
         .map(str::to_string)
         .or_else(|| {
             arguments
                 .get("command")
                 .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
                 .map(str::to_string)
         });
-    let delivery = result_data
-        .get("delivery")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_lowercase())
-        .or_else(|| {
-            result_data
-                .get("delivery")
-                .map(|v| v.to_string().to_lowercase())
-        });
+
+    let exact = parse_exact_delivery(result_data.get("delivery"));
+    // Display-only note — never consulted for level.
     let note = result_data
         .get("delivery_note")
         .and_then(|v| v.as_str())
         .unwrap_or("")
-        .to_lowercase();
-    let body = result_data.to_string().to_lowercase();
+        .trim();
 
-    let level = delivery_level(delivery.as_deref(), &note, &body);
-    if level == GoalEvidenceLevel::None {
+    let (level, delivery_tag) = match exact {
+        ExactDelivery::PhysicalEffectVerified => (
+            GoalEvidenceLevel::PhysicalEffectVerified,
+            Some("physical_effect_verified".into()),
+        ),
+        ExactDelivery::DeviceAcknowledged => (
+            GoalEvidenceLevel::DeviceAcknowledged,
+            Some("device_acknowledged".into()),
+        ),
+        ExactDelivery::AdapterAccepted => (
+            GoalEvidenceLevel::CommandDispatched,
+            Some("adapter_accepted".into()),
+        ),
+        ExactDelivery::ExtensionAccepted => (
+            GoalEvidenceLevel::CommandDispatched,
+            Some("extension_accepted".into()),
+        ),
+        ExactDelivery::Unknown(tag) => {
+            // Unknown enum stays at None for ladder purposes — do not
+            // invent a higher level from the tag string or from notes.
+            // If the payload clearly sent a command with bound ids, keep
+            // a floor of CommandDispatched only when `sent: true` is set
+            // AND device+command are bound; otherwise stay None.
+            if result_data.get("sent").and_then(|v| v.as_bool()) == Some(true)
+                && device_id.is_some()
+                && command.is_some()
+            {
+                (GoalEvidenceLevel::CommandDispatched, Some(tag))
+            } else {
+                return None;
+            }
+        }
+        ExactDelivery::Missing => {
+            // No structured delivery: require sent+bound ids → dispatched only.
+            if result_data.get("sent").and_then(|v| v.as_bool()) == Some(true)
+                && device_id.is_some()
+                && command.is_some()
+            {
+                (GoalEvidenceLevel::CommandDispatched, None)
+            } else {
+                return None;
+            }
+        }
+    };
+
+    // CommandDispatched+ always requires bound device + command.
+    if level >= GoalEvidenceLevel::CommandDispatched && (device_id.is_none() || command.is_none()) {
         return None;
     }
-    let summary = match level {
-        GoalEvidenceLevel::PhysicalEffectVerified => {
-            "physical effect verified via state feedback".into()
+
+    let summary = if note.is_empty() {
+        match level {
+            GoalEvidenceLevel::PhysicalEffectVerified => {
+                "physical effect verified via structured delivery".into()
+            }
+            GoalEvidenceLevel::DeviceAcknowledged => {
+                "device acknowledged receipt; physical effect unverified".into()
+            }
+            GoalEvidenceLevel::CommandDispatched => {
+                "command dispatched (adapter/extension accept); device ACK and \
+                 physical effect unverified"
+                    .into()
+            }
+            GoalEvidenceLevel::ConfigSuccess => "config success only".into(),
+            GoalEvidenceLevel::None => return None,
         }
-        GoalEvidenceLevel::DeviceAcknowledged => {
-            "device acknowledged receipt; physical effect unverified".into()
-        }
-        GoalEvidenceLevel::CommandDispatched => {
-            "command dispatched (adapter/extension accept); device ACK and \
-             physical effect unverified"
-                .into()
-        }
-        GoalEvidenceLevel::ConfigSuccess => "config success only".into(),
-        GoalEvidenceLevel::None => return None,
+    } else {
+        // Preserve operator-facing note as display text only.
+        note.to_string()
     };
+
     Some(GoalEvidence {
         level,
         device_id,
         command,
-        delivery,
+        delivery: delivery_tag,
+        operation_id: None,
         summary,
     })
 }
@@ -2406,91 +2487,106 @@ fn evidence_from_device_control_shell(
     cmd_lower: &str,
     result_data: &serde_json::Value,
 ) -> Option<GoalEvidence> {
-    // Prefer nested JSON delivery fields when the CLI echoes them.
-    if result_data.get("delivery").is_some()
-        || result_data.get("delivery_note").is_some()
-        || result_data.get("sent").is_some()
-    {
-        return evidence_from_device_command_result(&serde_json::json!({}), result_data);
+    // Prefer structured JSON delivery fields on the tool result body.
+    if result_data.get("delivery").is_some() || result_data.get("sent").is_some() {
+        let mut args = serde_json::json!({});
+        if let Some(id) = device_id_from_control_cmd(cmd_lower) {
+            args["device"] = serde_json::json!(id);
+        }
+        if let Some(c) = command_from_control_cmd(cmd_lower) {
+            args["command"] = serde_json::json!(c);
+        }
+        if let Some(ev) = evidence_from_device_command_result(&args, result_data) {
+            return Some(ev);
+        }
     }
+    // CLI stdout must be parseable JSON with an exact delivery enum —
+    // natural-language substrings ("physical effect verified", …) are ignored.
     if let Some(stdout) = result_data.get("stdout").and_then(|v| v.as_str()) {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout) {
-            if let Some(ev) = evidence_from_device_command_result(&serde_json::json!({}), &v) {
+            let mut args = serde_json::json!({});
+            if let Some(id) = device_id_from_control_cmd(cmd_lower) {
+                args["device"] = serde_json::json!(id);
+            }
+            if let Some(c) = command_from_control_cmd(cmd_lower) {
+                args["command"] = serde_json::json!(c);
+            }
+            if let Some(ev) = evidence_from_device_command_result(&args, &v) {
                 return Some(ev);
             }
         }
-        let lower = stdout.to_lowercase();
-        if lower.contains("physical effect verified") {
-            return Some(GoalEvidence {
-                level: GoalEvidenceLevel::PhysicalEffectVerified,
-                device_id: device_id_from_control_cmd(cmd_lower),
-                command: command_from_control_cmd(cmd_lower),
-                delivery: Some("physical_effect_verified".into()),
-                summary: "physical effect verified via state feedback".into(),
-            });
-        }
-        if lower.contains("device acknowledged") {
-            return Some(GoalEvidence {
-                level: GoalEvidenceLevel::DeviceAcknowledged,
-                device_id: device_id_from_control_cmd(cmd_lower),
-                command: command_from_control_cmd(cmd_lower),
-                delivery: Some("device_acknowledged".into()),
-                summary: "device acknowledged receipt; physical effect unverified".into(),
-            });
-        }
-        // Successful control with queued / delivered language → dispatched only.
-        if lower.contains("queued")
-            || lower.contains("delivered")
-            || lower.contains("adapter")
-            || lower.contains("command sent")
-            || result_data.get("exit_code").and_then(|v| v.as_i64()) == Some(0)
-        {
-            return Some(GoalEvidence {
-                level: GoalEvidenceLevel::CommandDispatched,
-                device_id: device_id_from_control_cmd(cmd_lower),
-                command: command_from_control_cmd(cmd_lower),
-                delivery: Some("adapter_accepted_or_queued".into()),
-                summary: "command dispatched/queued; physical effect unverified".into(),
-            });
-        }
     }
-    // exit 0 with no body still means at most dispatched (never physical).
+    // exit 0 with no structured delivery → at most dispatched, and only
+    // when device+command can be bound from the CLI argv.
     if result_data.get("exit_code").and_then(|v| v.as_i64()) == Some(0) {
+        let device_id = device_id_from_control_cmd(cmd_lower)?;
+        let command = command_from_control_cmd(cmd_lower)?;
         return Some(GoalEvidence {
             level: GoalEvidenceLevel::CommandDispatched,
-            device_id: device_id_from_control_cmd(cmd_lower),
-            command: command_from_control_cmd(cmd_lower),
-            delivery: Some("cli_exit_0".into()),
+            device_id: Some(device_id),
+            command: Some(command),
+            delivery: None,
+            operation_id: None,
             summary: "device control exited 0; physical effect unverified".into(),
         });
     }
     None
 }
 
-fn delivery_level(delivery: Option<&str>, note: &str, body: &str) -> GoalEvidenceLevel {
-    let d = delivery.unwrap_or("");
-    if d.contains("physical_effect") || note.contains("physical effect verified") {
-        return GoalEvidenceLevel::PhysicalEffectVerified;
+/// Exact CommandDelivery tags accepted for goal-evidence upgrades.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ExactDelivery {
+    AdapterAccepted,
+    ExtensionAccepted,
+    DeviceAcknowledged,
+    PhysicalEffectVerified,
+    /// Present but not one of the four known tags (kept lower / unknown).
+    Unknown(String),
+    Missing,
+}
+
+/// Parse only structured exact delivery enums.
+///
+/// Accepts:
+/// - string: `"adapter_accepted"` / `"extension_accepted"` /
+///   `"device_acknowledged"` / `"physical_effect_verified"`
+/// - single-key object: `{"adapter_accepted": …}` (serde-tagged style)
+///
+/// Rejects / does not upgrade from:
+/// - descriptive prose / delivery_note
+/// - substring matches (`physical_effect_unverified`, `"…physical effect…"`)
+/// - unknown enum tags (returned as [`ExactDelivery::Unknown`])
+fn parse_exact_delivery(raw: Option<&serde_json::Value>) -> ExactDelivery {
+    let Some(v) = raw else {
+        return ExactDelivery::Missing;
+    };
+    if let Some(s) = v.as_str() {
+        return match s.trim() {
+            "adapter_accepted" => ExactDelivery::AdapterAccepted,
+            "extension_accepted" => ExactDelivery::ExtensionAccepted,
+            "device_acknowledged" => ExactDelivery::DeviceAcknowledged,
+            "physical_effect_verified" => ExactDelivery::PhysicalEffectVerified,
+            other if other.is_empty() => ExactDelivery::Missing,
+            other => ExactDelivery::Unknown(other.to_string()),
+        };
     }
-    if d.contains("device_acknowledged") || note.contains("device acknowledged") {
-        return GoalEvidenceLevel::DeviceAcknowledged;
+    if let Some(obj) = v.as_object() {
+        if obj.len() == 1 {
+            let key = obj.keys().next().map(|s| s.as_str()).unwrap_or("");
+            return match key {
+                "adapter_accepted" => ExactDelivery::AdapterAccepted,
+                "extension_accepted" => ExactDelivery::ExtensionAccepted,
+                "device_acknowledged" => ExactDelivery::DeviceAcknowledged,
+                "physical_effect_verified" => ExactDelivery::PhysicalEffectVerified,
+                other if other.is_empty() => ExactDelivery::Missing,
+                other => ExactDelivery::Unknown(other.to_string()),
+            };
+        }
     }
-    if d.contains("adapter_accepted")
-        || d.contains("extension_accepted")
-        || note.contains("broker publish")
-        || note.contains("extension accepted")
-        || note.contains("physical effect unverified")
-        || body.contains("\"sent\":true")
-        || body.contains("\"sent\": true")
-        || body.contains("queued")
-    {
-        return GoalEvidenceLevel::CommandDispatched;
-    }
-    if !d.is_empty() || body.contains("sent") {
-        // Unknown delivery tag on a device command → at most dispatched.
-        return GoalEvidenceLevel::CommandDispatched;
-    }
-    GoalEvidenceLevel::None
+    // Non-string / multi-key / number → treat as unknown, not Missing,
+    // so callers don't invent a level from `sent` alone without a tag
+    // when delivery was present but unparseable.
+    ExactDelivery::Unknown(v.to_string())
 }
 
 fn device_id_from_control_cmd(cmd_lower: &str) -> Option<String> {
@@ -4083,6 +4179,7 @@ mod tests {
             "shell",
             &serde_json::json!({"command": "neomind push start weather-screen"}),
             &serde_json::json!({"exit_code": 0, "stdout": "started"}),
+            None,
         );
         assert_eq!(
             s.goal_evidence.as_ref().map(|e| e.level),
@@ -4122,6 +4219,13 @@ mod tests {
                 "delivery": "adapter_accepted",
                 "delivery_note": "delivered to 1 adapter(s) (broker publish); device acknowledgment: none; physical effect unverified"
             }),
+            Some("op-dispatch-1"),
+        );
+        assert_eq!(
+            s.goal_evidence
+                .as_ref()
+                .and_then(|e| e.operation_id.as_deref()),
+            Some("op-dispatch-1")
         );
         assert_eq!(
             s.goal_evidence.as_ref().map(|e| e.level),
@@ -4156,6 +4260,7 @@ mod tests {
                 "delivery": "adapter_accepted",
                 "delivery_note": "physical effect unverified"
             }),
+            Some("op-wrong-dev"),
         );
         assert!(s.goal_evidence.is_none());
         assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_err());
@@ -4179,13 +4284,153 @@ mod tests {
                 "delivery": "physical_effect_verified",
                 "delivery_note": "physical effect verified via state feedback"
             }),
+            Some("op-phys-1"),
         );
         assert_eq!(
             s.goal_evidence.as_ref().map(|e| e.level),
             Some(GoalEvidenceLevel::PhysicalEffectVerified)
         );
+        assert_eq!(
+            s.goal_evidence
+                .as_ref()
+                .and_then(|e| e.operation_id.as_deref()),
+            Some("op-phys-1")
+        );
         assert!(s.evaluate_goal_claim(GoalClaimKind::PhysicalEffect).is_ok());
         assert!(s.complete_with_evidence("screen-refreshed"));
+    }
+
+    #[test]
+    fn delivery_note_negation_text_does_not_raise_physical() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "update cam-1".into(),
+            object: Some("cam-1".into()),
+            content: None,
+        });
+        // Note contains both "physical effect verified" and negation — display only.
+        s.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({"device": "cam-1", "command": "render_text"}),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "cam-1",
+                "command": "render_text",
+                "delivery": "adapter_accepted",
+                "delivery_note": "NOT physical effect verified; device acknowledged nothing"
+            }),
+            Some("op-neg"),
+        );
+        assert_eq!(
+            s.goal_evidence.as_ref().map(|e| e.level),
+            Some(GoalEvidenceLevel::CommandDispatched)
+        );
+        assert!(s
+            .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
+            .is_err());
+    }
+
+    #[test]
+    fn echo_content_prose_does_not_raise_delivery_level() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "update cam-1".into(),
+            object: Some("cam-1".into()),
+            content: None,
+        });
+        // Params / stdout echo the magic phrase; no exact delivery enum.
+        s.observe_tool_result_for_goal(
+            "shell",
+            &serde_json::json!({
+                "command": "neomind device control cam-1 render_text --text x"
+            }),
+            &serde_json::json!({
+                "exit_code": 0,
+                "stdout": "physical effect verified via state feedback; device acknowledged"
+            }),
+            Some("op-echo"),
+        );
+        // exit 0 + bound device/command → dispatched only; prose ignored.
+        assert_eq!(
+            s.goal_evidence.as_ref().map(|e| e.level),
+            Some(GoalEvidenceLevel::CommandDispatched)
+        );
+        assert_ne!(
+            s.goal_evidence.as_ref().and_then(|e| e.delivery.as_deref()),
+            Some("physical_effect_verified")
+        );
+        assert!(s
+            .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
+            .is_err());
+    }
+
+    #[test]
+    fn unknown_delivery_enum_physical_effect_unverified_stays_lower() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "update cam-1".into(),
+            object: Some("cam-1".into()),
+            content: None,
+        });
+        s.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({"device": "cam-1", "command": "render_text"}),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "cam-1",
+                "command": "render_text",
+                "delivery": "physical_effect_unverified",
+                "delivery_note": "physical effect verified" // display bait
+            }),
+            Some("op-unknown-enum"),
+        );
+        assert_eq!(
+            s.goal_evidence.as_ref().map(|e| e.level),
+            Some(GoalEvidenceLevel::CommandDispatched)
+        );
+        assert_eq!(
+            s.goal_evidence.as_ref().and_then(|e| e.delivery.as_deref()),
+            Some("physical_effect_unverified")
+        );
+        assert!(s
+            .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
+            .is_err());
+        assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_ok());
+    }
+
+    #[test]
+    fn delivery_without_bound_device_or_command_is_ignored() {
+        let ev = classify_goal_evidence(
+            "device_command",
+            &serde_json::json!({}),
+            &serde_json::json!({
+                "sent": true,
+                "delivery": "physical_effect_verified",
+                "delivery_note": "physical effect verified"
+            }),
+        );
+        assert!(ev.is_none(), "unbound physical delivery must not count");
+    }
+
+    #[test]
+    fn parse_exact_delivery_rejects_substring_lookalikes() {
+        assert_eq!(
+            parse_exact_delivery(Some(&serde_json::json!("physical_effect_verified"))),
+            ExactDelivery::PhysicalEffectVerified
+        );
+        assert_eq!(
+            parse_exact_delivery(Some(&serde_json::json!("physical_effect_unverified"))),
+            ExactDelivery::Unknown("physical_effect_unverified".into())
+        );
+        assert_eq!(
+            parse_exact_delivery(Some(&serde_json::json!("device acknowledged"))),
+            ExactDelivery::Unknown("device acknowledged".into())
+        );
+        assert_eq!(
+            parse_exact_delivery(Some(&serde_json::json!({"physical_effect_verified": null}))),
+            ExactDelivery::PhysicalEffectVerified
+        );
+        assert_eq!(parse_exact_delivery(None), ExactDelivery::Missing);
     }
 
     #[test]

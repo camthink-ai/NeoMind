@@ -2230,28 +2230,44 @@ impl ServerState {
                                     .parameters
                                     .into_iter()
                                     .map(|p| {
-                                        let data_type = match p.data_type {
+                                        let (data_type, enum_options) = match &p.data_type {
                                             neomind_devices::mdl::MetricDataType::Integer => {
-                                                "integer"
+                                                ("integer".to_string(), None)
                                             }
-                                            neomind_devices::mdl::MetricDataType::Float => "float",
+                                            neomind_devices::mdl::MetricDataType::Float => {
+                                                ("float".to_string(), None)
+                                            }
                                             neomind_devices::mdl::MetricDataType::String => {
-                                                "string"
+                                                ("string".to_string(), None)
                                             }
                                             neomind_devices::mdl::MetricDataType::Boolean => {
-                                                "boolean"
+                                                ("boolean".to_string(), None)
                                             }
                                             neomind_devices::mdl::MetricDataType::Binary => {
-                                                "binary"
+                                                ("binary".to_string(), None)
                                             }
                                             neomind_devices::mdl::MetricDataType::Enum {
-                                                ..
-                                            } => "enum",
+                                                options,
+                                            } => ("enum".to_string(), Some(options.clone())),
                                             neomind_devices::mdl::MetricDataType::Array {
                                                 ..
-                                            } => "array",
+                                            } => ("array".to_string(), None),
+                                        };
+                                        // Surface template allowed_values; merge Enum
+                                        // options when the template lists them there.
+                                        let mut allowed: Vec<serde_json::Value> = p
+                                            .allowed_values
+                                            .iter()
+                                            .map(|v| v.to_json_value())
+                                            .collect();
+                                        if let Some(opts) = enum_options {
+                                            for o in opts {
+                                                let v = serde_json::Value::String(o);
+                                                if !allowed.iter().any(|a| a == &v) {
+                                                    allowed.push(v);
+                                                }
+                                            }
                                         }
-                                        .to_string();
                                         neomind_agent::toolkit::ParamCapability {
                                             name: p.name,
                                             display_name: p.display_name,
@@ -2261,6 +2277,19 @@ impl ServerState {
                                                 String::new()
                                             } else {
                                                 p.help_text
+                                            },
+                                            allowed_values: if allowed.is_empty() {
+                                                None
+                                            } else {
+                                                Some(allowed)
+                                            },
+                                            min: p.min,
+                                            max: p.max,
+                                            default: p.default_value.map(|v| v.to_json_value()),
+                                            unit: if p.unit.is_empty() {
+                                                None
+                                            } else {
+                                                Some(p.unit)
                                             },
                                         }
                                     })

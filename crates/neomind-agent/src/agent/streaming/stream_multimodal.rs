@@ -600,10 +600,19 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                 &result_fp,
                                 summary,
                             );
+                            let op_id = {
+                                let id = state.task_state.current_operation_id.as_str();
+                                if id.is_empty() {
+                                    None
+                                } else {
+                                    Some(id.to_string())
+                                }
+                            };
                             state.task_state.observe_tool_result_for_goal(
                                 &crate::tools::resolve_tool_name(&name),
                                 &exec_arguments,
                                 &output.data,
+                                op_id.as_deref(),
                             );
                         }
                         let result_value = output.prompt_value();
