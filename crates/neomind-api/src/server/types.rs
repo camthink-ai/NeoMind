@@ -3116,6 +3116,14 @@ impl ServerState {
                         .get("original_topic")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
+                    let mqtt_identity_source = metadata
+                        .get("mqtt_identity_source")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let mqtt_identity_field = metadata
+                        .get("mqtt_identity_field")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
 
                     // Process the payload data through auto-onboarding
                     match manager
@@ -3126,6 +3134,8 @@ impl ServerState {
                             is_binary,
                             original_topic,
                             adapter_id,
+                            mqtt_identity_source,
+                            mqtt_identity_field,
                         )
                         .await
                     {

@@ -21,7 +21,7 @@ use neomind_core::EventBus;
 
 use serde_json::Value;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use std::path::PathBuf;
 
@@ -62,7 +62,7 @@ impl MqttAdapter {
             telemetry_storage: Arc::new(RwLock::new(None)),
             metric_cache: Arc::new(RwLock::new(HashMap::new())),
             topic_to_device: Arc::new(RwLock::new(HashMap::new())),
-            outbound_command_topics: Arc::new(RwLock::new(HashSet::new())),
+            outbound_echoes: Arc::new(RwLock::new(OutboundEchoBuffer::new())),
             extractor,
             data_dir: Arc::new(RwLock::new(None)),
         }
@@ -132,7 +132,7 @@ impl MqttAdapter {
             telemetry_storage: Arc::new(RwLock::new(None)),
             metric_cache: Arc::new(RwLock::new(HashMap::new())),
             topic_to_device: Arc::new(RwLock::new(HashMap::new())),
-            outbound_command_topics: Arc::new(RwLock::new(HashSet::new())),
+            outbound_echoes: Arc::new(RwLock::new(OutboundEchoBuffer::new())),
             extractor,
             data_dir: Arc::new(RwLock::new(None)),
         }
@@ -402,7 +402,14 @@ impl MqttAdapter {
                 .unwrap_or_else(|| {
                     format!("device/{}/{}/uplink", device.device_type, device.device_id)
                 });
-            topic_mapping.insert(topic.clone(), device.device_id.clone());
+            topic_map_insert(&mut topic_mapping, &topic, &device.device_id);
+            // CT-Prov bare alias for NeoMind uplink topics.
+            if let Some(bare) = topic
+                .strip_suffix("/uplink")
+                .filter(|s| s.starts_with("device/"))
+            {
+                topic_map_insert(&mut topic_mapping, bare, &device.device_id);
+            }
             restored_topic_count += 1;
             debug!(
                 "Restored topic mapping: '{}' -> '{}'",
@@ -442,7 +449,7 @@ impl MqttAdapter {
         let broker_id_clone = broker_id.clone();
         let extractor = self.extractor.clone();
         let topic_to_device = self.topic_to_device.clone();
-        let outbound_command_topics = self.outbound_command_topics.clone();
+        let outbound_echoes = self.outbound_echoes.clone();
         let data_dir_clone = self.data_dir.clone();
 
         info!(
@@ -517,7 +524,7 @@ impl MqttAdapter {
                                 &broker_id_clone,
                                 &extractor,
                                 &topic_to_device,
-                                &outbound_command_topics,
+                                &outbound_echoes,
                                 data_dir_clone.read().await.as_ref(),
                             ))
                             .catch_unwind()
@@ -745,7 +752,13 @@ impl MqttAdapter {
                 .unwrap_or_else(|| {
                     format!("device/{}/{}/uplink", device.device_type, device.device_id)
                 });
-            topic_mapping.insert(topic, device.device_id.clone());
+            topic_map_insert(&mut topic_mapping, &topic, &device.device_id);
+            if let Some(bare) = topic
+                .strip_suffix("/uplink")
+                .filter(|s| s.starts_with("device/"))
+            {
+                topic_map_insert(&mut topic_mapping, bare, &device.device_id);
+            }
             restored_topic_count += 1;
             type_mapping.insert(device.device_id.clone(), device.device_type.clone());
             restored_type_count += 1;
@@ -777,7 +790,7 @@ impl MqttAdapter {
         let broker_id_clone2 = broker_id.clone();
         let extractor = self.extractor.clone();
         let topic_to_device = self.topic_to_device.clone();
-        let outbound_command_topics = self.outbound_command_topics.clone();
+        let outbound_echoes = self.outbound_echoes.clone();
         let data_dir_clone = self.data_dir.clone();
 
         let (eventloop_tx, eventloop_rx) = async_channel::unbounded();
@@ -800,7 +813,7 @@ impl MqttAdapter {
                             &broker_id_clone,
                             &extractor,
                             &topic_to_device,
-                            &outbound_command_topics,
+                            &outbound_echoes,
                             data_dir_clone.read().await.as_ref(),
                         )
                         .await;

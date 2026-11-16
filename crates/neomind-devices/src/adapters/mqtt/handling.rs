@@ -21,7 +21,7 @@ use neomind_core::EventBus;
 
 use neomind_core::NeoMindEvent;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use std::path::PathBuf;
 
@@ -30,6 +30,11 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
 use tracing::{debug, error, info, warn};
+
+use super::identity::{
+    match_registered_device, resolve_mqtt_device_identity, topic_map_insert, OutboundEchoBuffer,
+    TopicDeviceMap, MQTT_IDENTITY_FIELD_KEY, MQTT_IDENTITY_SOURCE_KEY, OUTBOUND_ECHO_TTL,
+};
 
 impl MqttAdapter {
     /// Dynamically subscribe to a topic on ALL connected brokers.
@@ -220,8 +225,8 @@ impl MqttAdapter {
         _connection_status: &Arc<RwLock<ConnectionStatus>>,
         broker_id: &str,
         extractor: &Arc<UnifiedExtractor>,
-        topic_to_device: &Arc<RwLock<HashMap<String, String>>>,
-        outbound_command_topics: &Arc<RwLock<HashSet<String>>>,
+        topic_to_device: &Arc<RwLock<TopicDeviceMap>>,
+        outbound_echoes: &Arc<RwLock<OutboundEchoBuffer>>,
         data_dir: Option<&PathBuf>,
     ) {
         match notification {
@@ -287,564 +292,316 @@ impl MqttAdapter {
                     return;
                 }
 
-                // NeoMind family topics: `device/{type}/{id}/uplink` OR bare
-                // `device/{type}/{id}` (CT-Prov writes `topic` as the exact
-                // publish path; older provision omitted `/uplink`).
-                let mut is_standard_uplink = is_neomind_device_telemetry_topic(&topic);
-
-                // If the topic is in standard uplink format but the device is NOT registered,
-                // treat it as a discovery candidate so it falls through to the auto-onboarding
-                // branch below. Without this, unregistered standard-uplink devices are silently
-                // dropped (UnifiedExtractor returns 0 metrics for unknown device types) and never
-                // appear in the Pending Devices list.
-                if is_standard_uplink {
-                    let mapping = topic_to_device.read().await;
-                    let is_registered = lookup_topic_device_id(&mapping, &topic).is_some();
-                    drop(mapping);
-                    if !is_registered {
-                        info!(
-                            "Standard uplink topic '{}' has no registered device, falling through to auto-onboarding",
+                // Echo suppression: topic + payload + short TTL (not "topic ever outbound").
+                {
+                    let mut echoes = outbound_echoes.write().await;
+                    if echoes.is_echo(&topic, &payload, OUTBOUND_ECHO_TTL) {
+                        debug!(
+                            "Skipping self-echo of outbound command (topic+payload match): {}",
                             topic
                         );
-                        is_standard_uplink = false;
+                        return;
                     }
                 }
 
-                // For standard uplink format, handle normally
-                if is_standard_uplink {
-                    // Extract device ID
-                    let device_id = extract_device_id_from_topic(&topic, config);
-                    if let Some(device_id) = device_id {
-                        info!("Extracted device_id: {} from topic: {}", device_id, topic);
+                // True protocol special: NeoMind family downlink command channel.
+                // Custom topics whose name merely contains "downlink"/"status" stay eligible.
+                if looks_like_non_telemetry_topic(&topic) {
+                    debug!("Skipping protocol-special non-telemetry topic: {}", topic);
+                    return;
+                }
 
-                        // Extract device type from topic
-                        let device_type = extract_device_type_from_topic(&topic);
+                // ONE shared identity rule set for discover + ingest.
+                let identity = resolve_mqtt_device_identity(&topic, &payload, config);
+                info!(
+                    "Resolved MQTT identity topic='{}' id='{}' source={} field={:?}",
+                    topic,
+                    identity.device_id,
+                    identity.source.as_str(),
+                    identity.field
+                );
 
-                        // Check if this is an uplink message with device_type
-                        // Topic format: device/{device_type}/{device_id}/uplink
-                        if let Some(dt) = &device_type {
-                            // Try to parse as JSON
-                            if let Ok(json_value) =
-                                serde_json::from_slice::<serde_json::Value>(&payload)
-                            {
-                                info!(
-                                    "Processing uplink message for device {} (type: {})",
-                                    device_id, dt
-                                );
+                // Lookup approved device for this (topic, identity). Never attribute
+                // an unknown identity to the sole registrant on a shared topic.
+                let mut device_id_opt = {
+                    let mapping = topic_to_device.read().await;
+                    match_registered_device(&mapping, &topic, &identity)
+                };
 
-                                // Client-supplied timestamp (DEF-001): honor
-                                // backfill payloads like the webhook path does;
-                                // fall back to server receive time.
-                                let client_ts = extract_client_timestamp(&json_value);
-
-                                // Use UnifiedExtractor to extract metrics
-                                let result = extractor.extract(&device_id, dt, &json_value).await;
-
-                                debug!(
-                                    "Extraction result for device '{}': mode={:?}, metrics={}",
-                                    device_id,
-                                    result.mode,
-                                    result.metrics.len()
-                                );
-
-                                // Store device type mapping
-                                {
-                                    let mut types = device_types.write().await;
-                                    types.insert(device_id.clone(), dt.to_string());
-                                }
-
-                                // Emit all extracted metrics
-                                for metric in result.metrics {
-                                    let point_ts = client_ts.unwrap_or_else(|| now.timestamp());
-                                    // Convert Binary to URL before storage + event bus (fork point)
-                                    let value = Self::convert_binary_to_url(
-                                        &device_id,
-                                        &metric.name,
-                                        point_ts,
-                                        metric.value.clone(),
-                                        data_dir,
-                                    );
-
-                                    // Update metric cache
-                                    {
-                                        let mut cache = metric_cache.write().await;
-                                        cache
-                                            .entry(device_id.clone())
-                                            .or_default()
-                                            .insert(metric.name.clone(), (value.clone(), now));
-                                    }
-
-                                    // Store in telemetry storage
-                                    if let Some(storage) = telemetry_storage.read().await.as_ref() {
-                                        let data_point = crate::telemetry::DataPoint {
-                                            timestamp: point_ts,
-                                            value: value.clone(),
-                                            quality: None,
-                                            metadata: None,
-                                        };
-                                        if let Err(e) = storage
-                                            .write(
-                                                &format!("device:{}", device_id),
-                                                &metric.name,
-                                                data_point,
-                                            )
-                                            .await
-                                        {
-                                            error!(
-                                                "Failed to write telemetry for {}/{}: {}",
-                                                device_id, metric.name, e
-                                            );
-                                        } else {
-                                            debug!(
-                                                "Stored metric {} = {:?} for device {}",
-                                                metric.name, value, device_id
-                                            );
-                                        }
-                                    }
-
-                                    // Emit to device event channel - event forwarding task will publish to EventBus
-                                    if let Err(e) = event_tx.send(DeviceEvent::Metric {
-                                        device_id: device_id.clone(),
-                                        metric: metric.name.clone(),
-                                        value: value.clone(),
-                                        timestamp: point_ts,
-                                    }) {
-                                        error!(
-                                            "Failed to send metric event to channel: {}/{} - {}",
-                                            device_id, metric.name, e
-                                        );
-                                    }
-
-                                    // Note: Do NOT publish to EventBus here - the event forwarding task
-                                    // in create_mqtt_adapter handles all EventBus publishing to avoid duplicates
-                                }
-
-                                // Publish DeviceOnline event for new devices
-                                if let Some(bus) = event_bus {
-                                    bus.publish(NeoMindEvent::DeviceOnline {
-                                        device_id: device_id.clone(),
-                                        device_type: dt.to_string(),
-                                        timestamp: now.timestamp(),
-                                    })
-                                    .await;
-                                    info!(
-                                        "Publishing DeviceOnline to EventBus: device_id={}, device_type={}",
-                                        device_id, dt
-                                    );
-                                }
-
-                                return;
-                            } else {
-                                // Standard uplink carries structured JSON; metrics live in the
-                                // payload and are extracted by UnifiedExtractor. Dumping the
-                                // raw bytes into a synthetic "value" metric (the old fallback)
-                                // polluted device detail pages — e.g. EK410 telemetry with an
-                                // unescaped quote failed serde_json, then showed up as a
-                                // phantom String metric named `value` containing the whole
-                                // packet. Drop invalid payloads instead.
-                                warn!(
-                                    "Failed to parse uplink payload as JSON for device {} on topic {} — dropping (not storing as 'value')",
-                                    device_id, topic
-                                );
-                                return;
-                            }
-                        } else {
-                            warn!(
-                                "Standard uplink topic missing device_type segment: {}",
-                                topic
-                            );
-                            return;
-                        }
-                    } else {
-                        warn!("Standard uplink topic missing device_id: {}", topic);
-                        return;
-                    }
-                } // Close: if is_standard_uplink
-
-                // Auto-onboarding: For non-standard topics, trigger auto-discovery
-                // This handles arbitrary MQTT topics like "device12asdas"
-                // Supports both JSON and binary/hex data
-                // Only trigger if NOT a standard uplink format (those are handled above).
-                //
-                // Skip two classes of noise that previously polluted the
-                // discovered-device stream:
-                //   * **Self-echo** — the embedded broker reflects our own
-                //     outbound command publishes back through wildcard
-                //     subscriptions (e.g. `ne302/2819FD/down/control`).
-                //     `outbound_command_topics` is populated by
-                //     `send_command` immediately before each publish, so
-                //     we can recognise and drop the echo here.
-                //   * **LWT/status broadcasts** — devices publish
-                //     `aicam/status/offline` and similar on
-                //     connect/disconnect; these are not telemetry and
-                //     would otherwise show up as phantom devices like
-                //     `device_id=status, is_binary=true`.
-                if !is_standard_uplink {
-                    // First check if this topic belongs to a registered device.
-                    // Registered devices MUST be processed before any noise filter —
-                    // otherwise a device whose telemetry_topic happens to contain
-                    // a `status` segment or end with `online`/`offline` (common in
-                    // IoT firmware) would have its telemetry silently dropped.
-                    let mut device_id_opt = {
-                        let mapping = topic_to_device.read().await;
-                        debug!(
-                            "Checking topic_to_device mapping for topic '{}': {} entries",
-                            topic,
-                            mapping.len()
+                // CT-Prov bare-topic / stale map: strong-extract id already
+                // registered → associate + learn the topic, do NOT draft.
+                if device_id_opt.is_none()
+                    && identity.source == super::identity::MqttIdentitySource::TopicStrong
+                {
+                    let known = {
+                        let types = device_types.read().await;
+                        types.contains_key(&identity.device_id)
+                    };
+                    if known {
+                        let mut mapping = topic_to_device.write().await;
+                        topic_map_insert(&mut mapping, &topic, &identity.device_id);
+                        info!(
+                            "Learned topic mapping for registered device {} from '{}'",
+                            identity.device_id, topic
                         );
-                        lookup_topic_device_id(&mapping, &topic).cloned()
+                        device_id_opt = Some(identity.device_id.clone());
+                    }
+                }
+
+                if let Some(device_id) = device_id_opt {
+                    debug!(
+                        "Routing message for registered device {} from topic {}",
+                        device_id, topic
+                    );
+
+                    let device_type_opt = {
+                        let types = device_types.read().await;
+                        types
+                            .get(&device_id)
+                            .cloned()
+                            .or_else(|| extract_device_type_from_topic(&topic))
                     };
 
-                    // CT-Prov bare-topic / stale map: strong-extract id already
-                    // registered → associate + learn the topic, do NOT draft.
-                    // Never auto-learn `/downlink` (command echoes under wide
-                    // subscriptions must not become device metrics). Explicit
-                    // topic→device mappings above still apply independently.
-                    if device_id_opt.is_none() && !is_neomind_device_downlink_topic(&topic) {
-                        if let Some(id) = extract_device_id_from_topic_strong(&topic, config)
-                            .and_then(sanitize_auto_device_id)
-                        {
-                            let known = {
-                                let types = device_types.read().await;
-                                types.contains_key(&id)
-                            };
-                            if known {
-                                let mut mapping = topic_to_device.write().await;
-                                mapping.insert(topic.clone(), id.clone());
-                                info!(
-                                    "Learned topic mapping for registered device {} from '{}'",
-                                    id, topic
+                    // Cache type from topic when present.
+                    if let Some(ref dt) = device_type_opt {
+                        let mut types = device_types.write().await;
+                        types.insert(device_id.clone(), dt.clone());
+                    }
+
+                    if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload) {
+                        let client_ts = extract_client_timestamp(&json_data);
+                        let point_ts = client_ts.unwrap_or_else(|| now.timestamp());
+
+                        if let Some(dt) = device_type_opt {
+                            let result = extractor.extract(&device_id, &dt, &json_data).await;
+                            debug!(
+                                "Extraction result for device '{}': mode={:?}, metrics={}",
+                                device_id,
+                                result.mode,
+                                result.metrics.len()
+                            );
+                            if result.metrics.is_empty() {
+                                warn!(
+                                    "No metrics extracted for device {} (type: {}). raw_stored={}",
+                                    device_id, dt, result.raw_stored
                                 );
-                                device_id_opt = Some(id);
                             }
-                        }
-                    }
 
-                    if device_id_opt.is_none() {
-                        debug!(
-                            "Topic '{}' not found in mapping, triggering auto-onboarding",
-                            topic
-                        );
-                    }
-
-                    if let Some(ref device_id) = device_id_opt {
-                        debug!(
-                            "Routing message for registered device {} from topic {}",
-                            device_id, topic
-                        );
-
-                        // Try to get device type from device_types cache
-                        let device_type_opt = {
-                            let types = device_types.read().await;
-                            types.get(device_id).cloned()
-                        };
-
-                        debug!("Device type for {}: {:?}", device_id, device_type_opt);
-
-                        // Parse payload and process for the registered device
-                        if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload)
-                        {
-                            // Client timestamp (DEF-001) — same policy as the
-                            // registered-type branch above.
-                            let client_ts_fallback = extract_client_timestamp(&json_data);
-                            debug!("Successfully parsed JSON payload for device {}", device_id);
-
-                            // Use UnifiedExtractor with the full JSON data
-                            // The extractor handles dot-notation paths including "data.field" prefixes
-                            // DO NOT pre-extract the "data" field - it causes double-extraction issues
-                            if let Some(dt) = device_type_opt {
-                                let result = extractor.extract(device_id, &dt, &json_data).await;
-                                let point_ts_fb =
-                                    client_ts_fallback.unwrap_or_else(|| now.timestamp());
-                                debug!(
-                                    "Extraction result for device {}: mode={:?}, metrics={}",
-                                    device_id,
-                                    result.mode,
-                                    result.metrics.len()
+                            for metric in result.metrics {
+                                let value = Self::convert_binary_to_url(
+                                    &device_id,
+                                    &metric.name,
+                                    point_ts,
+                                    metric.value.clone(),
+                                    data_dir,
                                 );
 
-                                if result.metrics.is_empty() {
-                                    warn!(
-                                        "No metrics extracted for device {} (type: {}). raw_stored={}",
-                                        device_id, dt, result.raw_stored
-                                    );
+                                {
+                                    let mut cache = metric_cache.write().await;
+                                    cache
+                                        .entry(device_id.clone())
+                                        .or_default()
+                                        .insert(metric.name.clone(), (value.clone(), now));
                                 }
 
-                                for metric in result.metrics {
-                                    // Convert Binary to URL before storage + event bus (fork point).
-                                    // Filename timestamp = the DATA POINT's client timestamp
-                                    // (point_ts_fb) — this branch used to stamp the filename with
-                                    // server receive time while storing the point under the
-                                    // client time, so backfilled frames produced image URLs and
-                                    // data points whose timestamps disagreed (dedup/debug pain).
-                                    let value = Self::convert_binary_to_url(
-                                        device_id,
-                                        &metric.name,
-                                        point_ts_fb,
-                                        metric.value.clone(),
-                                        data_dir,
-                                    );
-
-                                    // Update metric cache
-                                    {
-                                        let mut cache = metric_cache.write().await;
-                                        cache
-                                            .entry(device_id.clone())
-                                            .or_default()
-                                            .insert(metric.name.clone(), (value.clone(), now));
-                                    }
-
-                                    // Store in telemetry storage
-                                    if let Some(storage) = telemetry_storage.read().await.as_ref() {
-                                        let data_point = crate::telemetry::DataPoint {
-                                            timestamp: point_ts_fb,
-                                            value: value.clone(),
-                                            quality: None,
-                                            metadata: None,
-                                        };
-                                        if let Err(e) = storage
-                                            .write(
-                                                &format!("device:{}", device_id),
-                                                &metric.name,
-                                                data_point,
-                                            )
-                                            .await
-                                        {
-                                            error!(
-                                                "Failed to write telemetry for {}/{}: {}",
-                                                device_id, metric.name, e
-                                            );
-                                        }
-                                    }
-
-                                    // Emit to device event channel - event forwarding task will publish to EventBus
-                                    // This ensures single publish path to avoid duplicate events
-                                    if let Err(e) = event_tx.send(DeviceEvent::Metric {
-                                        device_id: device_id.clone(),
-                                        metric: metric.name.clone(),
+                                if let Some(storage) = telemetry_storage.read().await.as_ref() {
+                                    let data_point = crate::telemetry::DataPoint {
+                                        timestamp: point_ts,
                                         value: value.clone(),
-                                        timestamp: point_ts_fb,
-                                    }) {
+                                        quality: None,
+                                        metadata: None,
+                                    };
+                                    if let Err(e) = storage
+                                        .write(
+                                            &format!("device:{}", device_id),
+                                            &metric.name,
+                                            data_point,
+                                        )
+                                        .await
+                                    {
                                         error!(
-                                            "Failed to send metric event to channel: {}/{} - {}",
+                                            "Failed to write telemetry for {}/{}: {}",
                                             device_id, metric.name, e
                                         );
                                     }
                                 }
-                            } else {
-                                // No device type - try simple value extraction
-                                if let Ok(value) = MqttAdapter::default_parse_value(&payload) {
-                                    let metric_name = "value";
 
-                                    // Convert Binary to URL before storage + event bus (fork point)
-                                    let value = Self::convert_binary_to_url(
-                                        device_id,
-                                        metric_name,
-                                        now.timestamp(),
-                                        value,
-                                        data_dir,
+                                if let Err(e) = event_tx.send(DeviceEvent::Metric {
+                                    device_id: device_id.clone(),
+                                    metric: metric.name.clone(),
+                                    value: value.clone(),
+                                    timestamp: point_ts,
+                                }) {
+                                    error!(
+                                        "Failed to send metric event to channel: {}/{} - {}",
+                                        device_id, metric.name, e
                                     );
-
-                                    // Update metric cache
-                                    {
-                                        let mut cache = metric_cache.write().await;
-                                        cache
-                                            .entry(device_id.clone())
-                                            .or_default()
-                                            .insert(metric_name.to_string(), (value.clone(), now));
-                                    }
-
-                                    // Store in telemetry storage
-                                    if let Some(storage) = telemetry_storage.read().await.as_ref() {
-                                        let data_point = crate::telemetry::DataPoint {
-                                            timestamp: now.timestamp(),
-                                            value: value.clone(),
-                                            quality: None,
-                                            metadata: None,
-                                        };
-                                        if let Err(e) = storage
-                                            .write(
-                                                &format!("device:{}", device_id),
-                                                metric_name,
-                                                data_point,
-                                            )
-                                            .await
-                                        {
-                                            tracing::warn!(
-                                                device_id = %device_id,
-                                                error = %e,
-                                                "Failed to write telemetry to time-series storage"
-                                            );
-                                        }
-                                    }
-
-                                    // Emit to device event channel - event forwarding task will publish to EventBus
-                                    if let Err(e) = event_tx.send(DeviceEvent::Metric {
-                                        device_id: device_id.clone(),
-                                        metric: metric_name.to_string(),
-                                        value: value.clone(),
-                                        timestamp: now.timestamp(),
-                                    }) {
-                                        error!(
-                                            "Failed to send metric event to channel: {}/{} - {}",
-                                            device_id, metric_name, e
-                                        );
-                                    }
-                                    // Note: Do NOT publish DeviceMetric to EventBus here - the event forwarding task handles it
                                 }
                             }
-                        }
-                        // Skip auto-onboarding for registered devices - message already handled
-                    } else {
-                        // Unknown topic — apply noise filters BEFORE auto-onboarding
-                        // to prevent phantom discoveries.
-                        //
-                        //   * **Self-echo** — the embedded broker reflects our own
-                        //     outbound command publishes back through wildcard
-                        //     subscriptions (e.g. `ne302/2819FD/down/control`).
-                        //   * **LWT/status broadcasts** — devices publish
-                        //     `aicam/status/offline` and similar on connect/disconnect.
-                        let is_self_echo = {
-                            let outbound = outbound_command_topics.read().await;
-                            outbound.contains(&topic)
-                        };
-                        if is_self_echo {
-                            debug!(
-                                "Skipping auto-onboarding for self-echo of outbound command topic: {}",
-                                topic
-                            );
-                            return;
-                        }
-                        if looks_like_non_telemetry_topic(&topic) {
-                            debug!(
-                                "Skipping auto-onboarding for LWT/status-style topic: {}",
-                                topic
-                            );
-                            return;
-                        }
 
-                        // Trigger auto-onboarding for unknown devices
-                        // User-configured subscribe_topics define WHICH topics to listen on,
-                        // and we should auto-onboard devices from those topics
-                        info!(
-                            "Triggering auto-onboarding for non-standard topic: {}",
-                            topic
-                        );
-
-                        // Generate a device_id for auto-discovery.
-                        // Precedence (gateway case: many devices forwarded on one
-                        // topic need a payload-carried identity):
-                        //   ① high-confidence topic extraction (device/{type}/{id},
-                        //      subscription patterns)
-                        //   ② payload identity (explicit config.device_id_field, or
-                        //      auto-detect common fields device_id/sn/mac/...)
-                        //   ③ weak topic fallback (parts[1])
-                        //   ④ topic hash (last resort)
-                        let auto_device_id = extract_device_id_from_topic_strong(&topic, config)
-                            .and_then(sanitize_auto_device_id)
-                            .or_else(|| extract_device_id_from_payload(&payload, config))
-                            .and_then(sanitize_auto_device_id)
-                            .or_else(|| extract_device_id_from_topic_weak(&topic))
-                            .and_then(sanitize_auto_device_id)
-                            .unwrap_or_else(|| {
-                                // Use topic hash as device_id
-                                format!("mqtt_{}", {
-                                    use std::collections::hash_map::DefaultHasher;
-                                    use std::hash::{Hash, Hasher};
-                                    let mut hasher = DefaultHasher::new();
-                                    topic.hash(&mut hasher);
-                                    format!("{:x}", hasher.finish())
-                                })
-                            });
-
-                        // Bound the discovery sample — a huge payload would be stored
-                        // verbatim as the onboarding sample (audit: no size limit).
-                        if payload.len() > MAX_AUTOONBOARD_SAMPLE_BYTES {
-                            tracing::warn!(
-                                topic = %topic,
-                                size = payload.len(),
-                                limit = MAX_AUTOONBOARD_SAMPLE_BYTES,
-                                "Auto-onboard payload exceeds sample size limit, skipping"
-                            );
-                            return;
-                        }
-
-                        // Determine data format and prepare sample
-                        // Extract the actual device data from payload.data if it exists
-                        let (sample_data, is_binary, data_format) = if let Ok(json_data) =
-                            serde_json::from_slice::<serde_json::Value>(&payload)
-                        {
-                            // Check if payload has a 'data' field containing the actual device data
-                            let actual_data = json_data.get("data").unwrap_or(&json_data);
-                            (actual_data.clone(), false, "json")
-                        } else {
-                            // Not JSON - store as base64 encoded binary data
-                            (serde_json::json!(BASE64.encode(&payload)), true, "base64")
-                        };
-
-                        // [policy asymmetry — deliberate] An UNREGISTERED
-                        // MQTT publisher's telemetry is NOT stored (only this
-                        // discovery sample survives): anyone who can reach
-                        // the broker could fabricate device ids and bloat the
-                        // series store; registration is the gate. The HTTP
-                        // webhook path DOES keep unknown devices' metrics
-                        // (it is authenticated + rate-limited). First frames
-                        // arriving via MQTT before registration are lost on
-                        // purpose — register the device to start recording.
-                        tracing::info!(
-                            topic = %topic,
-                            "Unregistered MQTT device: telemetry not recorded (discovery event only) — register the device to start recording"
-                        );
-                        // Publish DeviceDiscovered event via DeviceEvent::Discovery for auto-onboarding
-                        {
-                            let adapter_id = config.name.clone();
-                            let sample = serde_json::json!({
-                                "device_id": auto_device_id,
-                                "timestamp": chrono::Utc::now().timestamp(),
-                                "topic": topic,
-                                "data": sample_data,
-                                "format": data_format,
-                                "is_binary": is_binary
-                            });
-
-                            let discovered = crate::adapter::DiscoveredDeviceInfo {
-                                device_id: auto_device_id.clone(),
-                                device_type: "unknown".to_string(),
-                                name: None,
-                                endpoint: Some(topic.to_string()),
-                                capabilities: vec![],
-                                timestamp: chrono::Utc::now().timestamp(),
-                                metadata: serde_json::json!({
-                                    "source": "mqtt",
-                                    "broker_id": broker_id,
-                                    "adapter_id": adapter_id,
-                                    "original_topic": topic,
-                                    "sample": sample,
-                                    "is_binary": is_binary,
-                                }),
-                            };
-
-                            let _ = event_tx.send(crate::adapter::DeviceEvent::Discovery {
-                                device: discovered,
-                            });
-
-                            // Also publish directly to event bus if available
                             if let Some(bus) = event_bus {
-                                bus.publish(NeoMindEvent::DeviceDiscovered {
-                                    device_id: auto_device_id,
-                                    source: "mqtt".to_string(),
-                                    adapter_id: Some(adapter_id),
-                                    metadata: serde_json::json!({
-                                        "broker_id": broker_id,
-                                        "original_topic": topic,
-                                    }),
-                                    sample,
-                                    is_binary,
-                                    timestamp: chrono::Utc::now().timestamp(),
+                                bus.publish(NeoMindEvent::DeviceOnline {
+                                    device_id: device_id.clone(),
+                                    device_type: dt,
+                                    timestamp: now.timestamp(),
                                 })
                                 .await;
                             }
+                        } else if let Ok(value) = MqttAdapter::default_parse_value(&payload) {
+                            let metric_name = "value";
+                            let value = Self::convert_binary_to_url(
+                                &device_id,
+                                metric_name,
+                                now.timestamp(),
+                                value,
+                                data_dir,
+                            );
+                            {
+                                let mut cache = metric_cache.write().await;
+                                cache
+                                    .entry(device_id.clone())
+                                    .or_default()
+                                    .insert(metric_name.to_string(), (value.clone(), now));
+                            }
+                            if let Some(storage) = telemetry_storage.read().await.as_ref() {
+                                let data_point = crate::telemetry::DataPoint {
+                                    timestamp: now.timestamp(),
+                                    value: value.clone(),
+                                    quality: None,
+                                    metadata: None,
+                                };
+                                if let Err(e) = storage
+                                    .write(
+                                        &format!("device:{}", device_id),
+                                        metric_name,
+                                        data_point,
+                                    )
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        device_id = %device_id,
+                                        error = %e,
+                                        "Failed to write telemetry to time-series storage"
+                                    );
+                                }
+                            }
+                            if let Err(e) = event_tx.send(DeviceEvent::Metric {
+                                device_id: device_id.clone(),
+                                metric: metric_name.to_string(),
+                                value,
+                                timestamp: now.timestamp(),
+                            }) {
+                                error!(
+                                    "Failed to send metric event to channel: {}/{} - {}",
+                                    device_id, metric_name, e
+                                );
+                            }
                         }
+                    } else if is_neomind_device_telemetry_topic(&topic) {
+                        warn!(
+                            "Failed to parse uplink payload as JSON for device {} on topic {} — dropping",
+                            device_id, topic
+                        );
+                    }
+                    return;
+                }
+
+                // Unregistered identity → discovery candidate (human approve gate).
+                info!(
+                    "Triggering auto-onboarding for unregistered identity '{}' on topic {}",
+                    identity.device_id, topic
+                );
+
+                if payload.len() > MAX_AUTOONBOARD_SAMPLE_BYTES {
+                    tracing::warn!(
+                        topic = %topic,
+                        size = payload.len(),
+                        limit = MAX_AUTOONBOARD_SAMPLE_BYTES,
+                        "Auto-onboard payload exceeds sample size limit, skipping"
+                    );
+                    return;
+                }
+
+                let auto_device_id = identity.device_id.clone();
+                let (sample_data, is_binary, data_format) =
+                    if let Ok(json_data) = serde_json::from_slice::<serde_json::Value>(&payload) {
+                        let actual_data = json_data.get("data").unwrap_or(&json_data);
+                        (actual_data.clone(), false, "json")
+                    } else {
+                        (serde_json::json!(BASE64.encode(&payload)), true, "base64")
+                    };
+
+                tracing::info!(
+                    topic = %topic,
+                    "Unregistered MQTT device: telemetry not recorded (discovery event only) — register the device to start recording"
+                );
+
+                {
+                    let adapter_id = config.name.clone();
+                    let mut sample = serde_json::json!({
+                        "device_id": auto_device_id,
+                        "timestamp": chrono::Utc::now().timestamp(),
+                        "topic": topic,
+                        "data": sample_data,
+                        "format": data_format,
+                        "is_binary": is_binary
+                    });
+                    if let Some(obj) = sample.as_object_mut() {
+                        obj.insert(
+                            MQTT_IDENTITY_SOURCE_KEY.to_string(),
+                            serde_json::Value::String(identity.source.as_str().to_string()),
+                        );
+                        if let Some(ref field) = identity.field {
+                            obj.insert(
+                                MQTT_IDENTITY_FIELD_KEY.to_string(),
+                                serde_json::Value::String(field.clone()),
+                            );
+                        }
+                    }
+
+                    let mut meta = serde_json::json!({
+                        "source": "mqtt",
+                        "broker_id": broker_id,
+                        "adapter_id": adapter_id,
+                        "original_topic": topic,
+                        "sample": sample,
+                        "is_binary": is_binary,
+                    });
+                    if let Some(obj) = meta.as_object_mut() {
+                        obj.extend(identity.to_metadata_map());
+                    }
+
+                    let discovered = crate::adapter::DiscoveredDeviceInfo {
+                        device_id: auto_device_id.clone(),
+                        device_type: "unknown".to_string(),
+                        name: None,
+                        endpoint: Some(topic.to_string()),
+                        capabilities: vec![],
+                        timestamp: chrono::Utc::now().timestamp(),
+                        metadata: meta,
+                    };
+
+                    let _ = event_tx
+                        .send(crate::adapter::DeviceEvent::Discovery { device: discovered });
+
+                    if let Some(bus) = event_bus {
+                        let mut bus_meta = serde_json::json!({
+                            "broker_id": broker_id,
+                            "original_topic": topic,
+                        });
+                        if let Some(obj) = bus_meta.as_object_mut() {
+                            obj.extend(identity.to_metadata_map());
+                        }
+                        bus.publish(NeoMindEvent::DeviceDiscovered {
+                            device_id: auto_device_id,
+                            source: "mqtt".to_string(),
+                            adapter_id: Some(adapter_id),
+                            metadata: bus_meta,
+                            sample,
+                            is_binary,
+                            timestamp: chrono::Utc::now().timestamp(),
+                        })
+                        .await;
                     }
                 }
             }

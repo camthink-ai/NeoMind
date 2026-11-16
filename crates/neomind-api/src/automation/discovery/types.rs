@@ -1038,6 +1038,14 @@ pub struct DraftDevice {
     /// Whether this device sends binary/hex data (not JSON)
     #[serde(default)]
     pub is_binary: bool,
+    /// How MQTT identity was resolved at discovery (`configured_payload`,
+    /// `auto_payload`, `topic_strong`, …). Persisted so approve/ingest reuse
+    /// the same rule (discover ≠ ingest drift).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mqtt_identity_source: Option<String>,
+    /// JSON field name used when identity came from payload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mqtt_identity_field: Option<String>,
 }
 
 /// A generated device type from AI analysis
@@ -1154,6 +1162,8 @@ impl DraftDevice {
             auto_approve: false,
             is_binary: false,
             adapter_id: None,
+            mqtt_identity_source: None,
+            mqtt_identity_field: None,
         }
     }
 

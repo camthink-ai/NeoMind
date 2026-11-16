@@ -174,6 +174,7 @@ pub(crate) fn extract_client_timestamp(json: &serde_json::Value) -> Option<i64> 
     normalize_epoch_seconds(raw)
 }
 
+#[allow(dead_code)] // retained for callers/tests that want strong-or-weak without the full resolver
 pub(crate) fn extract_device_id_from_topic(
     topic: &str,
     config: &MqttAdapterConfig,
@@ -233,7 +234,9 @@ pub(crate) fn is_neomind_device_downlink_topic(topic: &str) -> bool {
         && parts[3] == "downlink"
 }
 
-/// Lookup helpers for topic→device maps that may store only the `/uplink` form.
+/// Legacy 1:1 lookup kept for older unit tests. Prefer
+/// [`super::identity::lookup_topic_device_ids`] for live routing.
+#[allow(dead_code)]
 pub(crate) fn lookup_topic_device_id<'a>(
     mapping: &'a std::collections::HashMap<String, String>,
     topic: &str,
@@ -269,11 +272,6 @@ pub(crate) fn extract_device_id_from_topic_weak(topic: &str) -> Option<String> {
     }
 }
 
-/// Payload-carried device identity. Used when the topic cannot uniquely
-/// identify the device (gateway forwarding many devices on one topic).
-/// ① explicit `config.device_id_field` wins (comma-separated list, tried in
-/// order); ② otherwise auto-detect common fields (device_id / deviceId / sn /
-/// mac / mac_address / ...).
 /// Wrapper keys gateways commonly nest telemetry under. Identity lookup
 /// descends ONE level into these when the field isn't at the top level
 /// (e.g. `{"data": {"device_id": "x"}}`).
@@ -323,81 +321,26 @@ pub(crate) fn id_value_to_string(v: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Payload-carried device identity helper (tests + legacy call sites).
+/// Prefer [`super::identity::resolve_mqtt_device_identity`] for routing —
+/// that applies the full configured-field-beats-topic rule set.
+#[allow(dead_code)]
 pub(crate) fn extract_device_id_from_payload(
     payload: &[u8],
     config: &MqttAdapterConfig,
 ) -> Option<String> {
-    let json: serde_json::Value = serde_json::from_slice(payload).ok()?;
-    let obj = json.as_object()?;
-
-    if let Some(fields) = config.device_id_field.as_deref() {
-        // Candidate list, tried in order — gateway payloads vary per
-        // firmware, so operators can chain fallbacks. Separators: newline
-        // (the UI is one-field-per-line) and comma (API callers). Dotted
-        // paths (`data.sn`) walk nested objects.
-        for field in fields
-            .split([',', '\n', '\r'])
-            .map(str::trim)
-            .filter(|f| !f.is_empty())
-        {
-            if let Some(v) = lookup_id_field(obj, field) {
-                return Some(v);
-            }
-        }
+    use super::identity::{extract_auto_payload_id, extract_configured_payload_id};
+    if let Some((id, _)) = extract_configured_payload_id(payload, config) {
+        return Some(id);
     }
-
-    // Auto-detect common device-identity fields, high confidence first.
-    // Case-insensitive (device_id / deviceId / DeviceID all match).
-    const CANDIDATES: &[&str] = &[
-        "device_id",
-        "deviceid",
-        "dev_id",
-        "devid",
-        "device_sn",
-        "devicesn",
-        "sn",
-        "serial",
-        "serial_number",
-        "serial_no",
-        "mac",
-        "mac_address",
-        "macaddr",
-        "eui",
-        "deveui",
-        "devaddr",
-        "imei",
-        "iccid",
-        "node_id",
-        "nodeid",
-        "sensor_id",
-        "sensorid",
-        "device_uuid",
-        "deviceuuid",
-        "uuid",
-        "device_name",
-        "devicename",
-        "dev_name",
-    ];
-    for key in CANDIDATES {
-        if let Some(v) = obj.iter().find(|(k, _)| k.to_ascii_lowercase() == *key) {
-            if let Some(s) = id_value_to_string(v.1) {
-                return Some(s);
-            }
-        }
-    }
-    // Same candidates one level inside common wrappers — gateways often
-    // nest identity with the telemetry (`{"data":{"device_id":"x"}}`).
-    for w in ID_WRAPPER_KEYS {
-        let Some(inner) = obj.get(*w).and_then(serde_json::Value::as_object) else {
-            continue;
-        };
-        for key in CANDIDATES {
-            if let Some(v) = inner.iter().find(|(k, _)| k.to_ascii_lowercase() == *key) {
-                if let Some(s) = id_value_to_string(v.1) {
-                    return Some(s);
-                }
-            }
-        }
+    let configured_empty = config
+        .device_id_field
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("")
+        .is_empty();
+    if configured_empty {
+        return extract_auto_payload_id(payload).map(|(id, _)| id);
     }
     None
 }
@@ -467,44 +410,16 @@ pub(crate) fn extract_device_type_from_topic(topic: &str) -> Option<String> {
     }
 }
 
-/// Detect topics that are NOT device telemetry and therefore should NOT
-/// trigger auto-onboarding. Two classes:
+/// Topics that must NOT enter discovery / telemetry.
 ///
-/// 1. **LWT / status broadcasts**: many cameras and IoT devices publish
-///    a Last-Will-and-Testament message on connect/disconnect to a
-///    status topic such as `aicam/status/offline` or
-///    `{prefix}/status/online`. These are not per-device telemetry —
-///    treating them as devices creates phantom rows like
-///    `device_id=status, is_binary=true`.
+/// Only true protocol specials remain here:
+/// - MQTT `$SYS/...` broker internals
+/// - NeoMind family command channel `device/{type}/{id}/downlink`
 ///
-/// 2. **Downlink command echoes**: when the platform publishes to a
-///    device's command topic (e.g. `ne302/2819FD/down/control`), the
-///    embedded broker may reflect the publish back through a wildcard
-///    subscription. The inbound handler must skip these so we don't
-///    re-onboard a device we just sent a command to.
+/// Custom topics whose *name* happens to contain `status` / `downlink` /
+/// `offline` stay discoverable (human approve is the gate). Outbound
+/// command echoes are suppressed by topic+payload+TTL matching, not by
+/// topic-word filters.
 pub(crate) fn looks_like_non_telemetry_topic(topic: &str) -> bool {
-    // Fast path: split once, reuse for all checks.
-    let segments: Vec<&str> = topic.split('/').collect();
-
-    // NeoMind (and many firmwares') command / downlink channel — never
-    // auto-onboard or treat as telemetry. Explicit topic→device mappings
-    // still win because they are checked before this filter runs.
-    if is_neomind_device_downlink_topic(topic) || segments.contains(&"downlink") {
-        return true;
-    }
-
-    // LWT-style: any segment is `status`, or topic ends with
-    // `online`/`offline`/`connected`/`disconnected`. These are
-    // near-universal LWT signatures across IoT firmware.
-    if segments.contains(&"status") {
-        return true;
-    }
-    if let Some(last) = segments.last() {
-        matches!(
-            *last,
-            "online" | "offline" | "connected" | "disconnected" | "lwt" | "will"
-        )
-    } else {
-        false
-    }
+    topic.starts_with("$SYS") || is_neomind_device_downlink_topic(topic)
 }

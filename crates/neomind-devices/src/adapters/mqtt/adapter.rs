@@ -163,17 +163,12 @@ impl DeviceAdapter for MqttAdapter {
             }
         };
 
-        // Record this topic as an outbound command channel so the
-        // inbound handler can recognise the broker self-echo (the
-        // embedded broker reflects our own publish back through any
-        // wildcard subscription) and skip auto-onboarding for it.
-        // Without this, every successful `capture`/`sleep` publish
-        // generates a phantom "Triggering auto-onboarding for
-        // non-standard topic: <command-topic>" log entry and a
-        // matching bogus discovered-device row.
+        // Record topic + payload for short-TTL echo suppression. Matching
+        // topic alone would suppress legitimate uplinks on a shared command
+        // topic; we require an exact payload match within OUTBOUND_ECHO_TTL.
         {
-            let mut outbound = self.outbound_command_topics.write().await;
-            outbound.insert(topic.clone());
+            let mut outbound = self.outbound_echoes.write().await;
+            outbound.record(topic.clone(), payload.as_bytes().to_vec());
         }
 
         let mut last_error = None;
@@ -279,12 +274,12 @@ impl DeviceAdapter for MqttAdapter {
                     );
                 }
             }
-            // Store topic-to-device mapping for message routing
+            // Store topic→device association (shared-topic safe: one topic, many devices).
             {
                 let mut mapping = self.topic_to_device.write().await;
-                mapping.insert(topic.clone(), device_id.to_string());
+                topic_map_insert(&mut mapping, &topic, device_id);
                 if let Some(bare) = bare_prefix {
-                    mapping.insert(bare, device_id.to_string());
+                    topic_map_insert(&mut mapping, &bare, device_id);
                 }
                 info!("Stored topic mapping: {} -> {}", topic, device_id);
             }
@@ -329,25 +324,41 @@ impl DeviceAdapter for MqttAdapter {
         // Get the device configuration to find its telemetry topic
         let device_opt = self.device_registry.read().await.get_device(device_id);
         if let Some(device) = device_opt {
-            // Unsubscribe from the device's telemetry topic if configured
             if let Some(ref telemetry_topic) = device.connection_config.telemetry_topic {
-                self.unsubscribe_topic(telemetry_topic).await?;
-                info!(
-                    "Unsubscribed from device {} telemetry topic: {}",
-                    device_id, telemetry_topic
-                );
                 let bare = telemetry_topic
                     .strip_suffix("/uplink")
                     .map(|s| s.to_string())
                     .filter(|s| s.starts_with("device/"));
-                if let Some(ref bare_topic) = bare {
-                    let _ = self.unsubscribe_topic(bare_topic).await;
+
+                // Drop only this device's association. Keep the MQTT
+                // subscription while other devices still share the topic.
+                let (topic_still_used, bare_still_used) = {
+                    let mut mapping = self.topic_to_device.write().await;
+                    let topic_still = topic_map_remove(&mut mapping, telemetry_topic, device_id);
+                    let bare_still = if let Some(ref bare_topic) = bare {
+                        topic_map_remove(&mut mapping, bare_topic, device_id)
+                    } else {
+                        false
+                    };
+                    (topic_still, bare_still)
+                };
+
+                if !topic_still_used {
+                    self.unsubscribe_topic(telemetry_topic).await?;
+                    info!(
+                        "Unsubscribed from device {} telemetry topic: {} (no remaining devices)",
+                        device_id, telemetry_topic
+                    );
+                } else {
+                    info!(
+                        "Removed device {} from shared topic {}; keeping MQTT subscribe",
+                        device_id, telemetry_topic
+                    );
                 }
-                // Remove topic-to-device mapping (uplink + bare alias)
-                let mut mapping = self.topic_to_device.write().await;
-                mapping.remove(telemetry_topic);
-                if let Some(bare_topic) = bare {
-                    mapping.remove(&bare_topic);
+                if let Some(ref bare_topic) = bare {
+                    if !bare_still_used {
+                        let _ = self.unsubscribe_topic(bare_topic).await;
+                    }
                 }
             }
         }

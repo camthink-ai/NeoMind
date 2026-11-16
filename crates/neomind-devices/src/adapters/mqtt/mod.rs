@@ -28,7 +28,7 @@ use crate::unified_extractor::UnifiedExtractor;
 use base64::Engine as _;
 use futures::StreamExt;
 use neomind_core::EventBus;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -79,15 +79,11 @@ pub struct MqttAdapter {
     /// Metric cache (device_id -> metric_name -> (value, timestamp))
     pub(crate) metric_cache:
         Arc<RwLock<HashMap<String, HashMap<String, (MetricValue, chrono::DateTime<chrono::Utc>)>>>>,
-    /// Topic to device ID mapping (for routing messages to registered devices)
-    pub(crate) topic_to_device: Arc<RwLock<HashMap<String, String>>>,
-    /// Topics this adapter has published OUTBOUND command payloads to.
-    /// Used to suppress the broker self-echo — when the embedded broker
-    /// reflects our own publish back through our wildcard subscription,
-    /// the inbound handler must NOT route it through auto-onboarding
-    /// (otherwise every `capture` command creates a phantom "discovered
-    /// device" entry for the command topic).
-    pub(crate) outbound_command_topics: Arc<RwLock<HashSet<String>>>,
+    /// Topic → set of registered device identities (shared-topic safe).
+    pub(crate) topic_to_device: Arc<RwLock<identity::TopicDeviceMap>>,
+    /// Recent outbound command publishes for short-TTL echo suppression
+    /// (match topic + payload + time — not "topic ever used for outbound").
+    pub(crate) outbound_echoes: Arc<RwLock<identity::OutboundEchoBuffer>>,
     /// Unified data extractor
     pub(crate) extractor: Arc<UnifiedExtractor>,
     /// Data directory for image storage (runtime, not config)
@@ -247,7 +243,9 @@ mod adapter;
 pub(crate) mod config;
 mod connection;
 mod handling;
+pub(crate) mod identity;
 pub(crate) mod topics;
+pub(crate) use identity::*;
 pub(crate) use topics::*;
 
 #[cfg(test)]

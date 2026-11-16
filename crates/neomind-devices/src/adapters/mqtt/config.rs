@@ -17,10 +17,10 @@ pub struct MqttAdapterConfig {
     pub discovery_prefix: String,
     /// Enable auto-discovery
     pub auto_discovery: bool,
-    /// Payload field to use as the device identity when the topic cannot
-    /// uniquely identify a device (e.g. a gateway forwarding many devices on
-    /// one topic). `None`/empty → auto-detect common fields (device_id, sn,
-    /// mac, ...). Explicit value wins over auto-detection.
+    /// Payload field(s) for device identity. When set, this **wins over**
+    /// strong topic extraction (shared-topic / topic-id ≠ JSON-id cases).
+    /// `None`/empty → auto-detect common fields for discovery; the chosen
+    /// source is persisted on the draft/device so ingest matches.
     #[serde(default)]
     pub device_id_field: Option<String>,
     /// Storage directory for persistence

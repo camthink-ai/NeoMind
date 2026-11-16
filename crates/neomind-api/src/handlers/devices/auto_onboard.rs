@@ -297,10 +297,23 @@ pub async fn approve_draft_device(
                 // Webhook devices don't need MQTT topic config
                 ConnectionConfig::default()
             } else {
-                ConnectionConfig {
+                let mut connection_config = ConnectionConfig {
                     telemetry_topic: Some(topic.clone()),
                     ..Default::default()
+                };
+                if let Some(ref src) = draft.mqtt_identity_source {
+                    connection_config.extra.insert(
+                        "mqtt_identity_source".to_string(),
+                        serde_json::Value::String(src.clone()),
+                    );
                 }
+                if let Some(ref field) = draft.mqtt_identity_field {
+                    connection_config.extra.insert(
+                        "mqtt_identity_field".to_string(),
+                        serde_json::Value::String(field.clone()),
+                    );
+                }
+                connection_config
             };
 
             // Create device config with the existing type
@@ -401,10 +414,23 @@ pub async fn approve_draft_device(
             let connection_config = if adapter_type == "webhook" {
                 ConnectionConfig::default()
             } else {
-                ConnectionConfig {
+                let mut connection_config = ConnectionConfig {
                     telemetry_topic: Some(topic.clone()),
                     ..Default::default()
+                };
+                if let Some(ref src) = draft.mqtt_identity_source {
+                    connection_config.extra.insert(
+                        "mqtt_identity_source".to_string(),
+                        serde_json::Value::String(src.clone()),
+                    );
                 }
+                if let Some(ref field) = draft.mqtt_identity_field {
+                    connection_config.extra.insert(
+                        "mqtt_identity_field".to_string(),
+                        serde_json::Value::String(field.clone()),
+                    );
+                }
+                connection_config
             };
 
             // Create device config

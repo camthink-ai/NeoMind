@@ -227,13 +227,16 @@ impl AutoOnboardManager {
         data: &serde_json::Value,
         is_binary: bool,
     ) -> Result<bool> {
-        self.process_unknown_device_with_topic(device_id, source, data, is_binary, None, None)
-            .await
+        self.process_unknown_device_with_topic(
+            device_id, source, data, is_binary, None, None, None, None,
+        )
+        .await
     }
 
     /// Process incoming data from an unknown device with original topic
     ///
     /// Returns whether the data was accepted for collection
+    #[allow(clippy::too_many_arguments)]
     pub async fn process_unknown_device_with_topic(
         &self,
         device_id: &str,
@@ -242,6 +245,8 @@ impl AutoOnboardManager {
         is_binary: bool,
         original_topic: Option<String>,
         adapter_id: Option<String>,
+        mqtt_identity_source: Option<String>,
+        mqtt_identity_field: Option<String>,
     ) -> Result<bool> {
         // Check if device is blocked (spam detected)
         {
@@ -329,11 +334,14 @@ impl AutoOnboardManager {
             is_binary,
             original_topic,
             adapter_id,
+            mqtt_identity_source,
+            mqtt_identity_field,
         )
         .await
     }
 
     /// Create a new draft device with original topic
+    #[allow(clippy::too_many_arguments)]
     async fn create_draft_with_topic(
         &self,
         device_id: &str,
@@ -342,6 +350,8 @@ impl AutoOnboardManager {
         is_binary: bool,
         original_topic: Option<String>,
         adapter_id: Option<String>,
+        mqtt_identity_source: Option<String>,
+        mqtt_identity_field: Option<String>,
     ) -> Result<bool> {
         let mut drafts = self.drafts.write().await;
 
@@ -354,6 +364,8 @@ impl AutoOnboardManager {
 
         // Store adapter_id for external broker devices
         draft.adapter_id = adapter_id;
+        draft.mqtt_identity_source = mqtt_identity_source;
+        draft.mqtt_identity_field = mqtt_identity_field;
 
         // Mark as binary if applicable
         if is_binary {

@@ -183,11 +183,10 @@ fn test_extract_device_id_comma_separated_fallback() {
         extract_device_id_from_payload(b"{\"dev_id\":\"D-2\",\"mac\":\"m2\"}", &cfg).as_deref(),
         Some("D-2")
     );
-    // all explicit candidates absent -> falls through to auto-detect
-    // (device_id candidate)
+    // all explicit candidates absent → None (no auto-guess when field is configured)
     assert_eq!(
         extract_device_id_from_payload(b"{\"device_id\":\"auto-3\"}", &cfg).as_deref(),
-        Some("auto-3")
+        None
     );
     // spaces around commas are trimmed
     let cfg_spaced = MqttAdapterConfig {
@@ -212,22 +211,17 @@ fn test_extract_device_id_comma_separated_fallback() {
 #[test]
 fn test_same_topic_different_payload_ids_distinct() {
     // Gateway case: two devices forwarded on one topic must get distinct
-    // ids. The topic (`gateway/data`) yields a weak parts[1] = "data" for
-    // both, so the payload `device_id` must win.
+    // ids via the shared resolver (auto payload when field unset).
     let cfg = MqttAdapterConfig::new("test", "localhost:1883");
     let topic = "gateway/data";
-    let derive = |payload: &[u8]| {
-        extract_device_id_from_topic_strong(topic, &cfg)
-            .and_then(sanitize_auto_device_id)
-            .or_else(|| extract_device_id_from_payload(payload, &cfg))
-            .and_then(sanitize_auto_device_id)
-            .or_else(|| extract_device_id_from_topic_weak(topic))
-    };
-    let id1 = derive(b"{\"device_id\":\"sensor-1\",\"temp\":20}");
-    let id2 = derive(b"{\"device_id\":\"sensor-2\",\"temp\":21}");
-    assert_eq!(id1.as_deref(), Some("sensor-1"));
-    assert_eq!(id2.as_deref(), Some("sensor-2"));
-    assert_ne!(id1, id2);
+    let id1 =
+        resolve_mqtt_device_identity(topic, b"{\"device_id\":\"sensor-1\",\"temp\":20}", &cfg);
+    let id2 =
+        resolve_mqtt_device_identity(topic, b"{\"device_id\":\"sensor-2\",\"temp\":21}", &cfg);
+    assert_eq!(id1.device_id, "sensor-1");
+    assert_eq!(id2.device_id, "sensor-2");
+    assert_eq!(id1.source, MqttIdentitySource::AutoPayload);
+    assert_ne!(id1.device_id, id2.device_id);
 }
 
 #[test]
@@ -450,58 +444,228 @@ fn test_parse_sys_presence_topic_handles_internal_client_id() {
     assert_eq!(cid, "neomind-external-b1");
 }
 
-/// Regression: LWT/status broadcast topics must NOT trigger
-/// auto-onboarding. Real-world example from NE301 field deployment:
-/// the device publishes `aicam/status/offline` as its MQTT
-/// Last-Will-Testament; without filtering this produced a phantom
-/// "discovered device" row with `device_id=status, is_binary=true`
-/// on every disconnect. Other patterns include `{prefix}/status/online`
-/// (connect) and bare `/lwt` topics.
+/// Custom topics whose *name* contains status/downlink/offline remain
+/// discoverable. Only `$SYS` and NeoMind family `…/downlink` are protocol
+/// specials. Human approve is the gate for LWT-looking topics.
 #[test]
-fn test_lwt_and_status_topics_skip_auto_onboarding() {
-    // Status-broadcast topics
-    assert!(looks_like_non_telemetry_topic("aicam/status/offline"));
-    assert!(looks_like_non_telemetry_topic("aicam/status/online"));
-    assert!(looks_like_non_telemetry_topic(
-        "homeassistant/status/online"
+fn test_custom_status_and_downlink_topics_are_discoverable() {
+    assert!(!looks_like_non_telemetry_topic("aicam/status/offline"));
+    assert!(!looks_like_non_telemetry_topic(
+        "gateway/downlink/telemetry"
     ));
-    assert!(looks_like_non_telemetry_topic("devices/status/connected"));
-
-    // Bare LWT signatures
-    assert!(looks_like_non_telemetry_topic("aicam/offline"));
-    assert!(looks_like_non_telemetry_topic("dev/abc/lwt"));
-    assert!(looks_like_non_telemetry_topic("dev/abc/will"));
-
-    // Real telemetry MUST pass through
+    assert!(!looks_like_non_telemetry_topic(
+        "plant/line1/status/metrics"
+    ));
     assert!(!looks_like_non_telemetry_topic(
         "ne301/2A0015/upload/report"
     ));
     assert!(!looks_like_non_telemetry_topic(
         "device/ne301_camera/2819FD/uplink"
     ));
-    assert!(!looks_like_non_telemetry_topic(
-        "sensors/temp-001/temperature"
+
+    // True protocol specials still filtered.
+    assert!(looks_like_non_telemetry_topic(
+        "device/ne101_camera/000012e186d30000/downlink"
     ));
-    assert!(!looks_like_non_telemetry_topic("stat/deviceid/power"));
+    assert!(looks_like_non_telemetry_topic(
+        "$SYS/brokers/n/clients/c/connected"
+    ));
 }
 
-/// Regression: the `looks_like_non_telemetry_topic` filter must NOT
-/// cause telemetry loss for a registered device whose topic happens to
-/// contain a `status` segment or end with `online`/`offline` (common in
-/// real IoT firmware). The filter is only applied to UNKNOWN topics in
-/// the auto-onboarding path — registered-device telemetry is processed
-/// before the filter runs.
-///
-/// This test documents the contract: the helper itself is aggressive
-/// (returns true for `device/abc/status`), so the CALLING CODE must
-/// ensure registered devices are routed before the filter. If this
-/// test ever breaks because someone moved the filter before the
-/// topic_to_device lookup, the bug is back.
+// ---------------------------------------------------------------------------
+// Central MQTT identity acceptance table (discover → approve → ingest)
+// ---------------------------------------------------------------------------
+
 #[test]
-fn test_status_topic_filter_is_aggressive_by_design() {
-    // These DO match the filter — that's intentional for the
-    // auto-onboarding path. The fix is structural (filter runs AFTER
-    // registered-device lookup), not in this helper.
-    assert!(looks_like_non_telemetry_topic("device/abc/status"));
-    assert!(looks_like_non_telemetry_topic("device/abc/online"));
+fn acceptance_configured_field_beats_strong_topic() {
+    let cfg = MqttAdapterConfig {
+        device_id_field: Some("sn".to_string()),
+        ..MqttAdapterConfig::new("test", "localhost:1883")
+    };
+    let topic = "device/cam/topic-id/uplink";
+    let id = resolve_mqtt_device_identity(topic, b"{\"sn\":\"json-A\",\"temp\":1}", &cfg);
+    assert_eq!(id.device_id, "json-A");
+    assert_eq!(id.source, MqttIdentitySource::ConfiguredPayload);
+    assert_eq!(id.field.as_deref(), Some("sn"));
+}
+
+#[test]
+fn acceptance_same_topic_different_json_ids_separate_discovery() {
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let topic = "gateway/data";
+    let a = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"A\",\"v\":1}", &cfg);
+    let b = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"B\",\"v\":2}", &cfg);
+    assert_eq!(a.device_id, "A");
+    assert_eq!(b.device_id, "B");
+    assert_ne!(a.device_id, b.device_id);
+}
+
+#[test]
+fn acceptance_approve_a_then_b_stays_pending_not_attributed() {
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let topic = "gateway/data";
+    let mut map = TopicDeviceMap::new();
+    // A approved on shared topic.
+    topic_map_insert(&mut map, topic, "A");
+
+    let b = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"B\",\"v\":2}", &cfg);
+    assert_eq!(b.device_id, "B");
+    // Must NOT match A — becomes a discovery candidate.
+    assert!(match_registered_device(&map, topic, &b).is_none());
+    // A's own uplink still routes to A.
+    let a = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"A\",\"v\":1}", &cfg);
+    assert_eq!(
+        match_registered_device(&map, topic, &a).as_deref(),
+        Some("A")
+    );
+}
+
+#[test]
+fn acceptance_both_approved_split_regardless_of_order() {
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let topic = "gateway/data";
+    for order in [["A", "B"], ["B", "A"]] {
+        let mut map = TopicDeviceMap::new();
+        topic_map_insert(&mut map, topic, order[0]);
+        topic_map_insert(&mut map, topic, order[1]);
+        let a = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"A\",\"v\":1}", &cfg);
+        let b = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"B\",\"v\":2}", &cfg);
+        assert_eq!(
+            match_registered_device(&map, topic, &a).as_deref(),
+            Some("A")
+        );
+        assert_eq!(
+            match_registered_device(&map, topic, &b).as_deref(),
+            Some("B")
+        );
+        assert_eq!(lookup_topic_device_ids(&map, topic).len(), 2);
+    }
+}
+
+#[test]
+fn acceptance_same_topic_id_different_configured_json_ids_split() {
+    let cfg = MqttAdapterConfig {
+        device_id_field: Some("sn".to_string()),
+        ..MqttAdapterConfig::new("test", "localhost:1883")
+    };
+    let topic = "device/cam/SAME/uplink";
+    let mut map = TopicDeviceMap::new();
+    topic_map_insert(&mut map, topic, "json-A");
+    topic_map_insert(&mut map, topic, "json-B");
+
+    let a = resolve_mqtt_device_identity(topic, b"{\"sn\":\"json-A\"}", &cfg);
+    let b = resolve_mqtt_device_identity(topic, b"{\"sn\":\"json-B\"}", &cfg);
+    assert_eq!(a.source, MqttIdentitySource::ConfiguredPayload);
+    assert_eq!(
+        match_registered_device(&map, topic, &a).as_deref(),
+        Some("json-A")
+    );
+    assert_eq!(
+        match_registered_device(&map, topic, &b).as_deref(),
+        Some("json-B")
+    );
+}
+
+#[test]
+fn acceptance_same_topic_same_identity_updates_same_candidate() {
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let topic = "gateway/data";
+    let first =
+        resolve_mqtt_device_identity(topic, b"{\"device_id\":\"sensor-1\",\"temp\":20}", &cfg);
+    let second =
+        resolve_mqtt_device_identity(topic, b"{\"device_id\":\"sensor-1\",\"temp\":21}", &cfg);
+    assert_eq!(first.device_id, second.device_id);
+    assert_eq!(first.source, second.source);
+}
+
+#[test]
+fn acceptance_delete_a_b_keeps_shared_topic() {
+    let topic = "gateway/data";
+    let mut map = TopicDeviceMap::new();
+    topic_map_insert(&mut map, topic, "A");
+    topic_map_insert(&mut map, topic, "B");
+
+    let still_used = topic_map_remove(&mut map, topic, "A");
+    assert!(still_used, "B still shares the topic — keep MQTT subscribe");
+    assert!(lookup_topic_device_ids(&map, topic).contains("B"));
+    assert!(!lookup_topic_device_ids(&map, topic).contains("A"));
+
+    let still_used = topic_map_remove(&mut map, topic, "B");
+    assert!(!still_used, "no devices left — safe to unsubscribe");
+    assert!(lookup_topic_device_ids(&map, topic).is_empty());
+}
+
+#[test]
+fn acceptance_restart_restore_identity_split_stable() {
+    // Simulate restart restore: rebuild multi-device map from registry-like list.
+    let topic = "gateway/data";
+    let devices = [("A", topic), ("B", topic)];
+    let mut map = TopicDeviceMap::new();
+    for (id, t) in devices {
+        topic_map_insert(&mut map, t, id);
+    }
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let a = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"A\"}", &cfg);
+    let b = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"B\"}", &cfg);
+    assert_eq!(
+        match_registered_device(&map, topic, &a).as_deref(),
+        Some("A")
+    );
+    assert_eq!(
+        match_registered_device(&map, topic, &b).as_deref(),
+        Some("B")
+    );
+}
+
+#[test]
+fn acceptance_custom_topic_with_status_downlink_words_discoverable() {
+    let cfg = MqttAdapterConfig {
+        device_id_field: Some("device_id".to_string()),
+        ..MqttAdapterConfig::new("test", "localhost:1883")
+    };
+    for topic in [
+        "plant/status/metrics",
+        "gateway/downlink/telemetry",
+        "line1/offline/report",
+    ] {
+        assert!(
+            !looks_like_non_telemetry_topic(topic),
+            "{topic} must remain discoverable"
+        );
+        let id = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"node-9\"}", &cfg);
+        assert_eq!(id.device_id, "node-9");
+        assert_eq!(id.source, MqttIdentitySource::ConfiguredPayload);
+    }
+}
+
+#[test]
+fn acceptance_echo_matches_topic_payload_ttl_not_topic_alone() {
+    let mut buf = OutboundEchoBuffer::new();
+    let topic = "ne302/2819FD/down/control";
+    let cmd = b"{\"cmd\":\"capture\"}".to_vec();
+    let uplink = b"{\"device_id\":\"2819FD\",\"temp\":22}".to_vec();
+
+    buf.record(topic, cmd.clone());
+    assert!(buf.is_echo(topic, &cmd, OUTBOUND_ECHO_TTL));
+    // Same topic, different payload (legitimate uplink) must NOT be suppressed.
+    buf.record(topic, cmd);
+    assert!(!buf.is_echo(topic, &uplink, OUTBOUND_ECHO_TTL));
+}
+
+#[test]
+fn acceptance_identity_metadata_roundtrip() {
+    let id = ResolvedMqttIdentity {
+        device_id: "sensor-1".into(),
+        source: MqttIdentitySource::AutoPayload,
+        field: Some("device_id".into()),
+    };
+    let meta = id.to_metadata_map();
+    assert_eq!(
+        meta.get(MQTT_IDENTITY_SOURCE_KEY).and_then(|v| v.as_str()),
+        Some("auto_payload")
+    );
+    assert_eq!(
+        meta.get(MQTT_IDENTITY_FIELD_KEY).and_then(|v| v.as_str()),
+        Some("device_id")
+    );
 }
