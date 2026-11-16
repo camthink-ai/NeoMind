@@ -5,6 +5,7 @@
 import React, { useState } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, waitFor, act, fireEvent } from '@testing-library/react'
+import type { Editor } from '@tiptap/react'
 import { InlineMentionEditor } from '../InlineMentionEditor'
 import type { ChatContentNode } from '@/types'
 
@@ -17,11 +18,13 @@ function getEditor(): HTMLElement {
 function ControlledHost({
   onCompositionChange,
   injectRef,
+  editorRef,
 }: {
   onCompositionChange?: (c: boolean) => void
   injectRef?: React.MutableRefObject<
     ((nodes: ChatContentNode[], value: string) => void) | null
   >
+  editorRef?: React.MutableRefObject<Editor | null>
 }) {
   const [value, setValue] = useState('')
   const [nodes, setNodes] = useState<ChatContentNode[]>([])
@@ -35,6 +38,7 @@ function ControlledHost({
     <InlineMentionEditor
       value={value}
       contentNodes={nodes}
+      editorRef={editorRef}
       onPayloadChange={(p) => {
         setValue(p.message)
         setNodes(p.contentNodes)
@@ -84,11 +88,47 @@ describe('InlineMentionEditor IME / controlled sync', () => {
       fireEvent.compositionEnd(ed)
     })
     expect(onCompositionChange).toHaveBeenCalledWith(false)
-    // Deferred, not dropped: the external update applies once composition
-    // ended (it used to be silently lost forever).
+    // Empty/cancelled compose: deferred external restore still applies.
     await waitFor(() =>
       expect(ed.textContent ?? '').toContain('外部注入应被忽略'),
     )
+  })
+
+  it('prefers a committed composition over a mid-compose external draft wipe', async () => {
+    const injectRef: React.MutableRefObject<
+      ((nodes: ChatContentNode[], value: string) => void) | null
+    > = { current: null }
+    const editorRef: React.MutableRefObject<Editor | null> = { current: null }
+    render(<ControlledHost injectRef={injectRef} editorRef={editorRef} />)
+    await waitFor(() => expect(editorRef.current).toBeTruthy())
+    const ed = getEditor()
+
+    // Seed a non-empty external draft so a later clear actually changes props
+    // (identical '' → '' would skip React re-render and never park pendingSync).
+    await act(async () => {
+      injectRef.current?.([], 'parked-draft')
+    })
+    await waitFor(() => expect(ed.textContent ?? '').toContain('parked-draft'))
+
+    await act(async () => {
+      fireEvent.compositionStart(ed)
+    })
+    // Advance the TipTap doc while composing (onUpdate emit is suppressed).
+    await act(async () => {
+      editorRef.current?.chain().focus('end').insertContent('你好').run()
+    })
+    await waitFor(() => expect(ed.textContent ?? '').toContain('你好'))
+    await act(async () => {
+      injectRef.current?.([], '')
+    })
+    // Mid-compose clear must not wipe the in-flight IME text.
+    expect(ed.textContent ?? '').toContain('你好')
+
+    await act(async () => {
+      fireEvent.compositionEnd(ed)
+    })
+    // Parked clear must not overwrite the just-committed CJK.
+    expect(ed.textContent ?? '').toContain('你好')
   })
 
   it('controlled contentNodes seed + echo keep editor text', async () => {

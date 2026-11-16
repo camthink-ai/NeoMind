@@ -125,6 +125,31 @@ describe('ChatComposer mobile @-mentions', () => {
     await waitFor(() => expect(pickedDevice(onRefs)).toBe(true))
   })
 
+  it('keeps suppress armed across listbox bubble + frames during a mobile gesture', async () => {
+    // Regression: container onPointerDown used to releaseMentionSuppress after
+    // 2 rAF even when an option gesture was active, so TipTap onExit could
+    // clear the command before pointerup.
+    render(<Host />)
+    await waitFor(() => expect(document.querySelector('.ProseMirror')).toBeTruthy())
+    const btn = await screen.findByRole('button', { name: /插入引用|chat:mention.insert/i })
+    await userEvent.click(btn)
+    const options = await screen.findAllByRole('option')
+    const listbox = screen.getByRole('listbox')
+    await act(async () => {
+      fireEvent.pointerDown(options[0], { pointerId: 3, clientX: 10, clientY: 10 })
+      // Bubble reaches the listbox (same as real touch).
+      fireEvent.pointerDown(listbox, { pointerId: 3, clientX: 10, clientY: 10 })
+    })
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    })
+    // Gesture still open — menu must stay (exit suppress not released).
+    expect(screen.getByRole('listbox')).toBeTruthy()
+    await act(async () => {
+      dispatchWindowPointer('pointerup', { pointerId: 3, clientX: 12, clientY: 12 })
+    })
+  })
+
   it('does not select when the pointer moved like a scroll gesture', async () => {
     const onRefs = vi.fn()
     function SelectHost() {

@@ -5,7 +5,7 @@
  * ChatComposer (listbox / type filters / pagination / IME guards).
  */
 import { useCallback, useEffect, useMemo, useRef } from "react"
-import { EditorContent, useEditor } from "@tiptap/react"
+import { EditorContent, useEditor, type Editor } from "@tiptap/react"
 import StarterKit from "@tiptap/starter-kit"
 import Placeholder from "@tiptap/extension-placeholder"
 import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion"
@@ -66,6 +66,8 @@ export interface InlineMentionEditorProps {
   openMentionRequest?: number
   /** TipTap composition lifecycle — host uses this for IME Enter/mention guards. */
   onCompositionChange?: (composing: boolean) => void
+  /** Optional TipTap handle (tests / advanced hosts). */
+  editorRef?: React.MutableRefObject<Editor | null>
 }
 
 function contentNodesKey(nodes: ChatContentNode[] | undefined): string {
@@ -110,6 +112,7 @@ export function InlineMentionEditor({
   onBlur,
   openMentionRequest = 0,
   onCompositionChange,
+  editorRef,
 }: InlineMentionEditorProps) {
   const suggestionKeyDownRef = useRef(onSuggestionKeyDown)
   const onSuggestionStartRef = useRef(onSuggestionStart)
@@ -120,6 +123,8 @@ export function InlineMentionEditor({
   const onCompositionChangeRef = useRef(onCompositionChange)
   const skipEmit = useRef(false)
   const isComposing = useRef(false)
+  /** Plain text at compositionstart — used to detect a real IME commit. */
+  const composeStartPlainRef = useRef("")
   const lastPlain = useRef(value)
   /**
    * External value/contentNodes update that arrived while an IME composition
@@ -265,6 +270,14 @@ export function InlineMentionEditor({
     onBlur: () => onBlur?.(),
   })
 
+  useEffect(() => {
+    if (!editorRef) return
+    editorRef.current = editor
+    return () => {
+      editorRef.current = null
+    }
+  }, [editor, editorRef])
+
   // aria-controls / expanded follow the host listbox.
   useEffect(() => {
     if (!editor) return
@@ -286,33 +299,37 @@ export function InlineMentionEditor({
     const dom = editor.view.dom
     const onStart = () => {
       isComposing.current = true
+      composeStartPlainRef.current = lastPlain.current
       onCompositionChangeRef.current?.(true)
     }
     const onEnd = () => {
       isComposing.current = false
       onCompositionChangeRef.current?.(false)
+      let flushedMessage: string | null = null
       if (!skipEmit.current) {
         const doc = tipTapJsonToInlineDoc(editor.getJSON())
         const payload = inlineDocToChatPayload(doc)
+        flushedMessage = payload.message
         lastPlain.current = payload.message
         lastNodesKey.current = contentNodesKey(payload.contentNodes)
         onPayloadChangeRef.current({ ...payload, doc })
       }
-      // Replay an external value/nodes update that arrived mid-composition
-      // (deferred, not dropped — see pendingSyncRef). The replay must also
-      // re-broadcast the applied content: the flush above just emitted the
-      // PRE-restore doc, and the controlled host's now-stale (empty) props
-      // would otherwise clobber the replayed content on the next render.
+      // Replay a mid-composition external update only when the IME did not
+      // advance the doc (empty/cancelled compose). If the user committed
+      // characters, prefer that flush — replaying a parked draft / clear
+      // would wipe the just-committed CJK (draft lifecycle switch race).
       const pending = pendingSyncRef.current
       pendingSyncRef.current = null
-      if (pending) {
-        applyExternalSyncRef.current(pending.value, pending.contentNodes)
-        const doc = tipTapJsonToInlineDoc(editor.getJSON())
-        const payload = inlineDocToChatPayload(doc)
-        lastPlain.current = payload.message
-        lastNodesKey.current = contentNodesKey(payload.contentNodes)
-        onPayloadChangeRef.current({ ...payload, doc })
-      }
+      if (!pending) return
+      const composedAdvanced =
+        flushedMessage != null && flushedMessage !== composeStartPlainRef.current
+      if (composedAdvanced) return
+      applyExternalSyncRef.current(pending.value, pending.contentNodes)
+      const doc = tipTapJsonToInlineDoc(editor.getJSON())
+      const payload = inlineDocToChatPayload(doc)
+      lastPlain.current = payload.message
+      lastNodesKey.current = contentNodesKey(payload.contentNodes)
+      onPayloadChangeRef.current({ ...payload, doc })
     }
     dom.addEventListener("compositionstart", onStart)
     dom.addEventListener("compositionend", onEnd)

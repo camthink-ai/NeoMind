@@ -402,8 +402,15 @@ export function ChatComposer({
     scanMentionTrigger(next)
   }
 
-  const handleSuggestionExit = (_meta?: { editorFocused: boolean }) => {
+  const handleSuggestionExit = (meta?: { editorFocused: boolean }) => {
     if (suppressMentionExitClose.current) return
+    // Mobile option taps blur the editor; TipTap reports editorFocused=false
+    // while the host menu is still open for a deferred pointerup select.
+    // Keep the stored command alive until the gesture finishes / the user
+    // dismisses the menu another way.
+    if (meta && meta.editorFocused === false && mentionQuery !== null) {
+      return
+    }
     // Anchored picker (desktop + mobile) keeps editor focus, so TipTap exit
     // means the `@` match is gone — close the host menu.
     closeMention()
@@ -427,6 +434,12 @@ export function ChatComposer({
       } finally {
         suppressMentionExitClose.current = false
       }
+      closeMention()
+      return
+    }
+    // TipTap path lost its command (exit raced a deferred mobile select) —
+    // close the host menu instead of silently no-op'ing while still visible.
+    if (mentionQuery !== null && !mentionTrigger.current) {
       closeMention()
       return
     }
@@ -910,8 +923,15 @@ export function ChatComposer({
             // handleSuggestionExit (desktop picks bubble into this handler
             // AFTER selectMention's finally has already reset the flag, so
             // without the release the menu can never close again).
+            //
+            // Mobile options start a gesture here (select deferred to
+            // pointerup); releasing suppress while the finger is still down
+            // re-opens the exit race and drops the pick. Keep suppress armed
+            // for the whole gesture.
             suppressMentionExitClose.current = true
-            releaseMentionSuppress()
+            if (!mentionGestureRef.current) {
+              releaseMentionSuppress()
+            }
           }}
           className={cn(
             "absolute bottom-full left-0 right-0 z-[200] mb-2 flex flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-lg",
