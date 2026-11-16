@@ -42,6 +42,7 @@ import {
   normalizeContentNodes,
   saveSessionDraft,
   canHydrateDraftIntoEditor,
+  composerReplaceTextOnly,
   settlePendingDraft,
   stashPendingDraft,
   validateSendContent,
@@ -784,6 +785,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       stashPendingDraft(requestId, draftSession, draftStash)
       if (!wireOk) {
         settlePendingDraft(requestId, "failed")
+        // beginTurn already armed streaming — terminal-reset without Error+end.
+        hardReset()
         setPanelMessages(prev => prev.filter(message => message.id !== pendingUserMessageId))
         setInput(draftStash.message)
         setAttachedImages(draftStash.images)
@@ -799,6 +802,10 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
           settlePendingDraft(requestId, "accepted")
           return
         }
+        // rejected / timeout / queue_drop: always leave a terminal UI state.
+        hardReset()
+        setSendPhase("idle")
+        sendInProgressRef.current = false
         // Persist under the original panel session; hydrate only if still
         // on that session and the composer is unmodified.
         // Drop any still-queued copy — no server clientRequestId dedupe yet.
@@ -822,8 +829,6 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
             setAttachedImages(restored.images ?? [])
             setPanelReferences(restored.references)
             setPanelContentNodes(restored.contentNodes ?? [])
-            setSendPhase("idle")
-            sendInProgressRef.current = false
           }
         }
         toast({ title: t("errors.sendMessage"), variant: "destructive" })
@@ -834,7 +839,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       if (pm) pm.focus()
       else inputRef.current?.focus()
     })
-  }, [input, attachedImages, panelReferences, panelContentNodes, isStreaming, isHistoryLoading, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn, pendingAuthorizeConfirms])
+  }, [input, attachedImages, panelReferences, panelContentNodes, isStreaming, isHistoryLoading, addPanelMessage, createPanelSession, imagesAllowed, toast, t, beginTurn, hardReset, pendingAuthorizeConfirms])
 
   const handleConfirmAuthorize = useCallback((confirm: AuthorizeNewOperationConfirm) => {
     const phrase = i18n.language?.startsWith('zh') ? '确认重跑' : 'confirm re-run'
@@ -1057,7 +1062,10 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
                       key={qa.label}
                       type="button"
                       onClick={() => {
-                        setInput(qa.prompt)
+                        const next = composerReplaceTextOnly(qa.prompt)
+                        setInput(next.message)
+                        setPanelReferences(next.references)
+                        setPanelContentNodes(next.contentNodes)
                         requestAnimationFrame(() => inputRef.current?.focus())
                       }}
                       className="text-left text-xs rounded-lg border border-border bg-card px-3 py-2 text-muted-foreground transition-colors hover:text-foreground hover:bg-muted-50"

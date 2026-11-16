@@ -34,6 +34,8 @@ import {
   pruneSessionDrafts,
   saveSessionDraft,
   canHydrateDraftIntoEditor,
+  composerReplaceTextOnly,
+  sessionUnchangedAfterAwait,
   settlePendingDraft,
   stashPendingDraft,
   validateSendContent,
@@ -864,6 +866,11 @@ export function ChatPage() {
     if (!isOverrideSend && chatReferences.length > 0) {
       try {
         const resolved = await resolveMentions(chatReferences)
+        // After await: user may have switched sessions — do not write draft /
+        // optimistic bubbles into the wrong conversation.
+        if (!sessionUnchangedAfterAwait(draftSession, urlSessionIdRef.current)) {
+          return
+        }
         if (!resolved.ok) {
           const next: Record<string, string> = {}
           for (const r of resolved.resolutions) {
@@ -886,6 +893,9 @@ export function ChatPage() {
         }
         setInvalidRefs({})
       } catch {
+        if (!sessionUnchangedAfterAwait(draftSession, urlSessionIdRef.current)) {
+          return
+        }
         // Network failure on preflight must not block send — server still
         // re-resolves and spells NOT FOUND into the model context.
         setInvalidRefs({})
@@ -999,6 +1009,9 @@ export function ChatPage() {
       stashPendingDraft(requestId, draftSession, draftStash)
       if (!wireOk) {
         settlePendingDraft(requestId, "failed")
+        // beginTurn already armed the stream machine — reach a terminal
+        // state even when no Error+end will arrive (queue/wire fail).
+        hardReset()
         setInput(draftStash.message)
         setAttachedImages(draftStash.images)
         setChatReferences(draftStash.references)
@@ -1010,6 +1023,9 @@ export function ChatPage() {
             settlePendingDraft(requestId, "accepted")
             return
           }
+          // rejected / timeout / queue_drop: always terminal-reset the stream
+          // machine (server may omit Error+end on some reject paths).
+          hardReset()
           // Persist under the original session always; hydrate the editor
           // only if we are still on that session and it is unmodified.
           // Drop any still-queued copy — no server clientRequestId dedupe yet.
@@ -1089,7 +1105,12 @@ export function ChatPage() {
   const visionDelegate = !supportsMultimodal && companionRunning
 
   const handleQuickAction = (prompt: string) => {
-    setInput(prompt)
+    // Text replace must drop stale mention/reference nodes from a prior draft.
+    const next = composerReplaceTextOnly(prompt)
+    setInput(next.message)
+    setChatReferences(next.references)
+    setChatContentNodes(next.contentNodes)
+    setInvalidRefs({})
     inputRef.current?.focus()
   }
 

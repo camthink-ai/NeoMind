@@ -1231,15 +1231,16 @@ pub async fn test_transform_code_handler(
     // Use the current time for the test
     let timestamp = Utc::now().timestamp();
 
-    // Preprocess code to handle extensions.invoke calls
-    let processed_code = preprocess_extensions_invoke(&req.code, &req.input_data, &state).await?;
-
-    // Create a temporary transform executor
+    // Create a temporary transform executor. Do NOT inject a local
+    // `const extensions = { invoke: … success }` mock — that shadowed the
+    // host dry-run stub and reported false success for blocked invokes.
+    // DryRun installs `__neomind_dryrun_invoke__` and surfaces
+    // `extension_invoke_blocked` → `unverified` (same as /transforms/:id/test).
     let executor = JsTransformExecutor::new();
 
     // Execute the code
     match executor.execute(
-        &processed_code,
+        &req.code,
         &req.input_data,
         &req.output_prefix,
         "test_device",
@@ -1293,38 +1294,74 @@ pub async fn test_transform_code_handler(
     }
 }
 
-/// Preprocess JavaScript code to handle extensions.invoke calls.
-///
-/// This replaces extensions.invoke calls with mock results for testing purposes.
-/// In production, the actual extension would be called.
-async fn preprocess_extensions_invoke(
-    code: &str,
-    _input_data: &Value,
-    _state: &ServerState,
-) -> Result<String, ErrorResponse> {
-    // Check if code contains extensions.invoke
-    if !code.contains("extensions.invoke") {
-        return Ok(code.to_string());
+/// Whether `/test-code` still injects a local success mock for
+/// `extensions.invoke` (must stay false — host DryRun stub owns the path).
+#[cfg(test)]
+fn test_code_injects_success_extensions_mock() -> bool {
+    false
+}
+
+#[cfg(test)]
+mod test_code_dry_run_tests {
+    use super::test_code_injects_success_extensions_mock;
+    use crate::automation::transform::{JsTransformExecutor, TransformExecutionMode};
+    use serde_json::json;
+
+    #[test]
+    fn test_code_does_not_inject_success_extensions_mock() {
+        assert!(
+            !test_code_injects_success_extensions_mock(),
+            "local const extensions mock must stay removed so DryRun can mark unverified"
+        );
     }
 
-    // Define a mock extensions object at the beginning of the code
-    let mock_extensions = r#"
-// Mock extensions.invoke for testing
-const extensions = {
-  invoke: (extId, command, args) => ({
-    _mock: true,
-    _extension_id: extId,
-    _command: command,
-    _args: args,
-    result: 'mock_result_from_' + extId,
-    input: args?.data || input,
-    status: 'success'
-  })
-};
-"#;
+    #[test]
+    fn test_code_dry_run_caught_invoke_sets_blocked_unverified_flag() {
+        // Caught invoke still sets the host flag — the old local mock returned
+        // status:'success' and never set extension_invoke_blocked.
+        let executor = JsTransformExecutor::new();
+        let code = "try { extensions.invoke('weather', 'get', {}); } catch (e) { return {v: 1}; } return {v: 0}";
+        let out = executor
+            .execute(
+                code,
+                &json!({}),
+                "transform",
+                "test_device",
+                0,
+                None,
+                TransformExecutionMode::DryRun,
+            )
+            .expect("caught blocked invoke is Ok with flag");
+        assert!(
+            out.extension_invoke_blocked,
+            "host dry-run stub must set extension_invoke_blocked"
+        );
+        // Handler maps the flag → unverified[] alongside success:true.
+    }
 
-    // Inject the mock before the user code
-    let processed = format!("{}\n{}", mock_extensions, code);
-
-    Ok(processed)
+    #[test]
+    fn test_code_dry_run_uncaught_invoke_is_not_mock_success() {
+        let executor = JsTransformExecutor::new();
+        let code = "const r = extensions.invoke('weather', 'get', {}); return {v: 1}";
+        let err = executor
+            .execute(
+                code,
+                &json!({}),
+                "transform",
+                "test_device",
+                0,
+                None,
+                TransformExecutionMode::DryRun,
+            )
+            .expect_err("uncaught blocked invoke must not succeed");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("NEOMIND_DRYRUN_EXTENSION_BLOCKED") || msg.contains("blocked in dry-run"),
+            "must surface host dry-run block, got: {msg}"
+        );
+        assert!(
+            !msg.contains("mock_result"),
+            "local success mock must not shadow dry-run: {msg}"
+        );
+    }
 }

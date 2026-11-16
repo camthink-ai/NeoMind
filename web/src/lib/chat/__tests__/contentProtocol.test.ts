@@ -8,6 +8,7 @@ import {
   canHydrateDraftIntoEditor,
   clearPendingDraftsForTests,
   clearSessionDraft,
+  composerReplaceTextOnly,
   contentNodesHaveReferences,
   contentNodesToComposerFields,
   loadSessionDraft,
@@ -16,6 +17,7 @@ import {
   pendingDraftCount,
   pruneSessionDrafts,
   saveSessionDraft,
+  sessionUnchangedAfterAwait,
   settlePendingDraft,
   stashPendingDraft,
   validateContentNodes,
@@ -193,6 +195,20 @@ describe("contentProtocol", () => {
         images: [],
       }),
     ).toBe(true)
+  })
+
+  it("preflight after await refuses cross-session optimistic writes", () => {
+    expect(sessionUnchangedAfterAwait("s1", "s1")).toBe(true)
+    expect(sessionUnchangedAfterAwait("s1", "s2")).toBe(false)
+    expect(sessionUnchangedAfterAwait("new", null)).toBe(true)
+    expect(sessionUnchangedAfterAwait("new", "minted-id")).toBe(false)
+  })
+
+  it("quick-action text replace clears stale mention/reference nodes", () => {
+    const next = composerReplaceTextOnly("列出所有设备")
+    expect(next.message).toBe("列出所有设备")
+    expect(next.references).toEqual([])
+    expect(next.contentNodes).toEqual([])
   })
 
   it("send on A then switch to B: A timeout must not hydrate B (live session ref)", () => {

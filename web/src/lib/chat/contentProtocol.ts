@@ -425,6 +425,29 @@ export function canHydrateDraftIntoEditor(
   return true
 }
 
+/**
+ * After an await (reference preflight), refuse optimistic composer / message
+ * writes when the live route session no longer matches the send-time key.
+ */
+export function sessionUnchangedAfterAwait(
+  sendSessionId: string,
+  currentSessionId: string | null | undefined,
+): boolean {
+  return (currentSessionId || "new") === sendSessionId
+}
+
+/**
+ * Quick-action / canned-prompt text replace: always clear stale mention
+ * chips and ordered content nodes so prior @-refs do not ride the new text.
+ */
+export function composerReplaceTextOnly(prompt: string): {
+  message: string
+  references: ChatReference[]
+  contentNodes: ChatContentNode[]
+} {
+  return { message: prompt, references: [], contentNodes: [] }
+}
+
 /** Test / diagnostics: how many in-flight draft acks are waiting. */
 export function pendingDraftCount(): number {
   return pendingDraftByRequestId.size
