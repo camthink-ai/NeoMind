@@ -90,9 +90,12 @@ export function deriveRuleBlockingReasons(
 
   reasons.push(...conditionBlocks(exp.condition_met, exp.condition))
 
-  if (exp.for_duration && !exp.for_duration.satisfied) {
-    const elapsed = exp.for_duration.elapsed_secs
-    const configured = exp.for_duration.configured_secs
+  // Manual triggers skip the hold gate — ignore non-applicable for_duration.
+  const forDurationEnforced =
+    !!exp.for_duration && exp.for_duration.applicable !== false
+  if (forDurationEnforced && !exp.for_duration!.satisfied) {
+    const elapsed = exp.for_duration!.elapsed_secs
+    const configured = exp.for_duration!.configured_secs
     reasons.push({
       code: 'for_duration',
       detail:
@@ -104,7 +107,7 @@ export function deriveRuleBlockingReasons(
     exp.enabled &&
     !exp.cooldown.in_cooldown &&
     (exp.condition_met === undefined || exp.condition_met === 'true') &&
-    (!exp.for_duration || exp.for_duration.satisfied)
+    (!forDurationEnforced || exp.for_duration!.satisfied)
 
   if (reasons.length === 0) {
     reasons.push({ code: 'ready' })

@@ -112,6 +112,8 @@ export interface ForDurationExplanation {
   condition_since?: string
   elapsed_secs?: number
   satisfied: boolean
+  /** False when the trigger path does not enforce for_duration (Manual). */
+  applicable?: boolean
 }
 
 export interface CooldownExplanation {

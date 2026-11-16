@@ -1555,6 +1555,19 @@ fn message_received_frame(
     session_id: Option<&str>,
     reason: Option<&str>,
 ) -> String {
+    message_received_frame_with_resolutions(request_id, status, session_id, reason, None)
+}
+
+/// Same as [`message_received_frame`], optionally attaching per-reference
+/// resolutions from prepare so the client can mark stale @ chips without a
+/// separate preflight race.
+fn message_received_frame_with_resolutions(
+    request_id: &str,
+    status: &str,
+    session_id: Option<&str>,
+    reason: Option<&str>,
+    resolutions: Option<&[super::chat_refs::RefResolution]>,
+) -> String {
     let mut body = json!({
         "type": "MessageReceived",
         "requestId": request_id,
@@ -1565,6 +1578,11 @@ fn message_received_frame(
     }
     if let Some(r) = reason {
         body["reason"] = json!(r);
+    }
+    if let Some(res) = resolutions {
+        if !res.is_empty() {
+            body["refResolutions"] = json!(res);
+        }
     }
     body.to_string()
 }
@@ -1610,9 +1628,10 @@ fn ws_rejected_blocks_nonstream_fallback() -> bool {
 #[cfg(test)]
 mod receive_ack_reason_tests {
     use super::{
-        message_received_frame, receive_ack_reject_reason, ws_reject_terminal_frames,
-        ws_rejected_blocks_nonstream_fallback,
+        message_received_frame, message_received_frame_with_resolutions, receive_ack_reject_reason,
+        ws_reject_terminal_frames, ws_rejected_blocks_nonstream_fallback,
     };
+    use crate::handlers::chat_refs::RefResolution;
     use serde_json::Value;
 
     #[test]
@@ -1667,6 +1686,25 @@ mod receive_ack_reason_tests {
         .expect("ack JSON");
         assert_eq!(ack["status"], "rejected");
         assert_eq!(ack["requestId"], "req-1");
+
+        let resolutions = vec![RefResolution {
+            index: 0,
+            r#type: "device".into(),
+            id: "sensor-001".into(),
+            ok: false,
+            detail: "not_found".into(),
+        }];
+        let accepted: Value = serde_json::from_str(&message_received_frame_with_resolutions(
+            "req-2",
+            "accepted",
+            Some("sess-1"),
+            None,
+            Some(resolutions.as_slice()),
+        ))
+        .expect("accepted ack JSON");
+        assert_eq!(accepted["status"], "accepted");
+        assert_eq!(accepted["refResolutions"][0]["id"], "sensor-001");
+        assert_eq!(accepted["refResolutions"][0]["ok"], false);
     }
 }
 
@@ -2335,11 +2373,12 @@ async fn handle_ws_socket(
                                             Ok(stream) => {
                                                 // User message saved + busy/clearing passed.
                                                 if let Some(ref rid) = client_request_id {
-                                                    let ack = message_received_frame(
+                                                    let ack = message_received_frame_with_resolutions(
                                                         rid,
                                                         "accepted",
                                                         Some(&session_id),
                                                         None,
+                                                        Some(prepared.resolutions.as_slice()),
                                                     );
                                                     if socket.send(AxumMessage::Text(ack)).await.is_err() {
                                                         return;
@@ -2465,6 +2504,7 @@ async fn handle_ws_socket(
                                             let task_backend_id = backend_id.map(|s| s.to_string());
                                             let task_skills = selected_skills.clone();
                                             let task_final_message = final_message;
+                                            let task_resolutions = prepared.resolutions.clone();
                                             let task_req_backend = chat_req.backend_id.clone();
                                             let task_content_nodes = chat_req.content_nodes.clone();
                                             let task_content_version = chat_req.content_version;
@@ -2510,11 +2550,12 @@ async fn handle_ws_socket(
                                                         if let Some(ref rid) = task_client_request_id {
                                                             let _ = task_tx
                                                                 .send(StreamEvent {
-                                                                    json: message_received_frame(
+                                                                    json: message_received_frame_with_resolutions(
                                                                         rid,
                                                                         "accepted",
                                                                         Some(&task_session_id),
                                                                         None,
+                                                                        Some(task_resolutions.as_slice()),
                                                                     ),
                                                                 })
                                                                 .await;

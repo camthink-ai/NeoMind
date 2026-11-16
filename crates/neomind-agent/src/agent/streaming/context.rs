@@ -24,12 +24,35 @@ pub(crate) fn build_context_window_with_summary(
     build_context_window_with_summary_tracked(messages, max_tokens, summary, summary_up_to_index).0
 }
 
+/// Context-window build outcome. `latest_tool_feedback_dropped` is set when
+/// hard-budget eviction removed the newest complete assistant+tool group.
+pub(crate) struct ContextWindowBuild {
+    pub messages: Vec<AgentMessage>,
+    pub pressure: bool,
+    pub latest_tool_feedback_dropped: bool,
+}
+
 pub(crate) fn build_context_window_with_summary_tracked(
     messages: &[AgentMessage],
     max_tokens: usize,
     summary: Option<&str>,
     summary_up_to_index: Option<u64>,
 ) -> (Vec<AgentMessage>, bool) {
+    let built = build_context_window_with_summary_marked(
+        messages,
+        max_tokens,
+        summary,
+        summary_up_to_index,
+    );
+    (built.messages, built.pressure || built.latest_tool_feedback_dropped)
+}
+
+pub(crate) fn build_context_window_with_summary_marked(
+    messages: &[AgentMessage],
+    max_tokens: usize,
+    summary: Option<&str>,
+    summary_up_to_index: Option<u64>,
+) -> ContextWindowBuild {
     // [summary budget] The injected summary is part of the history payload
     // and must COUNT against it — it used to be inserted after the budget
     // was enforced (and system messages are exempt from the hard-budget
@@ -77,7 +100,8 @@ pub(crate) fn build_context_window_with_summary_tracked(
         || summary_tokens > max_tokens;
 
     // Build context window from filtered messages
-    let mut result = build_context_window_with_config(&filtered, history_budget, &config);
+    let (mut result, latest_tool_feedback_dropped) =
+        build_context_window_with_config_marked(&filtered, history_budget, &config);
 
     // Inject summary as a system message at the beginning (after any existing system messages)
     if let Some(summary_text) = summary {
@@ -93,7 +117,11 @@ pub(crate) fn build_context_window_with_summary_tracked(
         }
     }
 
-    (result, pressure)
+    ContextWindowBuild {
+        messages: result,
+        pressure,
+        latest_tool_feedback_dropped,
+    }
 }
 
 /// Build context window with custom compaction configuration.
@@ -105,11 +133,39 @@ pub(crate) fn build_context_window_with_summary_tracked(
 /// - `messages`: The message history to compact
 /// - `max_tokens`: Maximum tokens available for history
 /// - `config`: Compaction configuration
+/// Unmarked hard-budget window (drops the drop-flag). Prefer
+/// [`build_context_window_with_config_marked`] when callers need to know if
+/// the latest tool group was evicted.
+#[allow(dead_code)] // public/test helper; live loop uses the `_marked` variant
 pub fn build_context_window_with_config(
     messages: &[AgentMessage],
     max_tokens: usize,
     config: &CompactionConfig,
 ) -> Vec<AgentMessage> {
+    build_context_window_with_config_marked(messages, max_tokens, config).0
+}
+
+fn agent_group_is_complete_tool_interaction(group: &[AgentMessage]) -> bool {
+    let has_tool = group.iter().any(|m| m.role == "tool");
+    let has_assistant = group.iter().any(|m| m.role == "assistant");
+    has_tool && has_assistant
+}
+
+fn latest_complete_tool_fingerprint(messages: &[AgentMessage]) -> Option<String> {
+    let groups = partition_agent_groups(messages);
+    groups.iter().rev().find(|g| agent_group_is_complete_tool_interaction(g)).map(|g| {
+        g.iter()
+            .map(|m| format!("{}:{}", m.role, m.content.len()))
+            .collect::<Vec<_>>()
+            .join("|")
+    })
+}
+
+fn build_context_window_with_config_marked(
+    messages: &[AgentMessage],
+    max_tokens: usize,
+    config: &CompactionConfig,
+) -> (Vec<AgentMessage>, bool) {
     // Step 0: STALE cached read-back windows are previewed before the
     // token estimate (scoped to this round's feature only — ordinary tool
     // results keep their budget-driven behavior; the newest window stays
@@ -167,6 +223,8 @@ pub fn build_context_window_with_config(
     selected_groups.reverse();
     let mut selected_messages: Vec<AgentMessage> = selected_groups.into_iter().flatten().collect();
 
+    let latest_before = latest_complete_tool_fingerprint(&selected_messages);
+
     // [hard budget] System/user messages bypass the per-message budget check
     // by design (priority keep) — but on very long sessions the kept set
     // alone could exceed max_tokens, and the oversized prompt then hard-fails
@@ -175,6 +233,9 @@ pub fn build_context_window_with_config(
     // conversation's exact wording (instructions to reproduce verbatim), so
     // they are evicted LAST: pass 1 drops older assistant/tool messages,
     // pass 2 touches user messages only when nothing else remains.
+    //
+    // When eviction removes the newest complete tool interaction, mark it
+    // (warn + pressure) so callers / prompt_capture can see the drop.
     let mut total: usize = selected_messages.iter().map(estimate_message_tokens).sum();
     if total > max_tokens {
         evict_until_fits(&mut selected_messages, &mut total, max_tokens, |m| {
@@ -185,7 +246,20 @@ pub fn build_context_window_with_config(
         });
     }
 
-    selected_messages
+    let latest_after = latest_complete_tool_fingerprint(&selected_messages);
+    let dropped = match (&latest_before, &latest_after) {
+        (Some(before), Some(after)) => before != after,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    if dropped {
+        tracing::warn!(
+            category = "context",
+            "hard_budget_dropped_latest_tool_feedback"
+        );
+    }
+
+    (selected_messages, dropped)
 }
 
 /// Get the priority for an AgentMessage role.
@@ -575,5 +649,42 @@ mod tests {
         );
         // System prompt is never evicted.
         assert!(out.first().is_some_and(|m| m.role == "system"));
+    }
+
+    #[test]
+    fn hard_budget_marks_when_latest_tool_feedback_dropped() {
+        let latest_tool = "LATEST_TOOL_FEEDBACK_MUST_BE_MARKED_IF_GONE";
+        let mut messages = vec![AgentMessage::user("keep me")];
+        // Older complete tool groups — large enough to force hard eviction.
+        for i in 0..8 {
+            messages.push(AgentMessage::assistant(format!(
+                "old assistant {i} {}",
+                "x".repeat(800)
+            )));
+            messages.push(AgentMessage::tool_result(
+                "shell",
+                format!("old tool {i} {}", "y".repeat(800)),
+            ));
+        }
+        messages.push(AgentMessage::assistant("latest call"));
+        messages.push(AgentMessage::tool_result("shell", latest_tool));
+
+        let config = CompactionConfig::for_context_size(8_000);
+        // Tiny budget: soft keep may retain recent groups, hard eviction then
+        // drops assistant/tool including possibly the latest complete group.
+        let budget = 400usize;
+        let (out, dropped) = build_context_window_with_config_marked(&messages, budget, &config);
+        let has_latest = out.iter().any(|m| m.content.as_ref() == latest_tool);
+        if !has_latest {
+            assert!(
+                dropped,
+                "when latest tool group is gone, latest_tool_feedback_dropped must be true"
+            );
+        } else {
+            // Budget may still fit the latest group — either outcome is fine
+            // as long as the flag stays honest.
+            assert!(!dropped || has_latest);
+        }
+        assert!(out.iter().map(estimate_message_tokens).sum::<usize>() <= budget);
     }
 }

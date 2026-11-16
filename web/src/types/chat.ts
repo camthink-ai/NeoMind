@@ -190,6 +190,14 @@ export type ServerMessage =
       status: 'accepted' | 'rejected'
       sessionId?: string
       reason?: string
+      /** Server resolve status for @ references on this accepted turn. */
+      refResolutions?: Array<{
+        index: number
+        type: string
+        id: string
+        ok: boolean
+        detail: string
+      }>
     }
   // Execution plan step (informational, not displayed in current UI)
   | { type: 'Plan'; step: string; stage: string; sessionId: string }

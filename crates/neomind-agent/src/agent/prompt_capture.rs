@@ -86,6 +86,11 @@ pub fn redact_secrets(text: &str) -> (String, usize) {
         (r"(?i)(x-api-key\s*[:=]\s*)\S+", "${1}[REDACTED]"),
         (r"(?i)(token\s*[:=]\s*)\S{8,}", "${1}[REDACTED]"),
         (r"(?i)(secret\s*[:=]\s*)\S{8,}", "${1}[REDACTED]"),
+        (r"(?i)(pass(?:word|wd)|pwd)\s*[:=]\s*\S+", "${1}=[REDACTED]"),
+        (
+            r"(?s)-----BEGIN [A-Z0-9 -]*PRIVATE KEY-----.*?-----END [A-Z0-9 -]*PRIVATE KEY-----",
+            "[REDACTED_PEM]",
+        ),
         (r"sk-[A-Za-z0-9]{16,}", "[REDACTED_SK]"),
     ];
     let mut out = text.to_string();
@@ -325,6 +330,21 @@ mod tests {
         assert!(!out.contains("SECRET"));
         assert!(!out.contains("abcdefghijklmnopqrstuvwxyz12") || out.contains("[REDACTED"));
         assert!(out.contains("[REDACTED") || out.contains("[REDACTED_SK]"));
+    }
+
+    #[test]
+    fn redact_secrets_strips_password_and_pem() {
+        let pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF6PZX6\n-----END RSA PRIVATE KEY-----";
+        let (out, hits) =
+            redact_secrets(&format!("password=hunter2\npasswd: s3cret\n{pem}\nok"));
+        assert!(hits >= 2, "hits={hits} out={out}");
+        assert!(!out.contains("hunter2"), "password leaked: {out}");
+        assert!(!out.contains("s3cret"), "passwd leaked: {out}");
+        assert!(
+            !out.contains("MIIEowIBAAKCAQEA"),
+            "PEM body leaked: {out}"
+        );
+        assert!(out.contains("[REDACTED_PEM]") || out.contains("[REDACTED]"));
     }
 
     #[test]

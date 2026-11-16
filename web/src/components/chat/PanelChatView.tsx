@@ -113,8 +113,10 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
   // is NEVER nulled on page change: while a page switch finds the next
   // session, the PREVIOUS page's turn may still be streaming on the shared
   // socket — binding to the stale id keeps those events filtered out
-  // (null would mean "accept everything" and drive a phantom bubble).
-  const filterSessionIdRef = useRef<string | null>(null)
+  // (null/undefined would mean "accept everything" and drive a phantom bubble).
+  // Start with a non-matching sentinel (same idea as chat page WELCOME_DETACHED).
+  const PANEL_UNBOUND = "\u0000__panel_unbound__"
+  const filterSessionIdRef = useRef<string>(PANEL_UNBOUND)
 
   // Shared stream state machine (the same one the chat page uses) — the
   // panel's view-specific behavior rides the callbacks: local-message

@@ -269,6 +269,30 @@ impl RuleStore {
         Ok(results)
     }
 
+    /// Latest history row for one rule without collecting the full list.
+    ///
+    /// Keys are `history:{timestamp_ms}:{rule_id}` — reverse iteration finds
+    /// the newest matching row and returns early (explain only needs one).
+    pub fn load_latest_history(
+        &self,
+        rule_id: &RuleId,
+    ) -> Result<Option<crate::models::RuleExecutionResult>> {
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(HISTORY_TABLE) {
+            Ok(t) => t,
+            Err(_) => return Ok(None),
+        };
+
+        for item in table.iter()?.rev() {
+            let (_, value) = item?;
+            let entry: crate::models::RuleExecutionResult = serde_json::from_slice(value.value())?;
+            if &entry.rule_id == rule_id {
+                return Ok(Some(entry));
+            }
+        }
+        Ok(None)
+    }
+
     /// Count history entries since a timestamp (only actual triggers with executed actions).
     pub fn count_history_since(&self, since_timestamp: i64) -> Result<u64> {
         let read_txn = self.db.begin_read()?;

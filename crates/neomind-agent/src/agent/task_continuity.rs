@@ -348,6 +348,9 @@ pub enum ConfirmRemoveReason {
     Consumed,
     Expired,
     Cancelled,
+    /// Structured authorize submit was refused (expired already emitted
+    /// separately; use for not-found / incomplete visibility).
+    Rejected,
 }
 
 /// Queued confirm-lifecycle notice for the next stream emission.
@@ -677,6 +680,10 @@ pub struct TaskState {
     /// Notices to emit on the next stream (requested / removed).
     #[serde(skip)]
     pub confirm_lifecycle_notices: Vec<ConfirmLifecycleNotice>,
+    /// User-visible SystemNote bodies queued for the next stream (e.g.
+    /// malformed authorize — never silent downgrade).
+    #[serde(skip)]
+    pub pending_system_notes: Vec<String>,
 }
 
 impl Default for TaskState {
@@ -698,6 +705,7 @@ impl Default for TaskState {
             user_authorized_new_op: None,
             pending_confirm_requests: Vec::new(),
             confirm_lifecycle_notices: Vec::new(),
+            pending_system_notes: Vec::new(),
         }
     }
 }
@@ -884,6 +892,10 @@ impl TaskState {
     }
 
     /// Drain queued confirm lifecycle notices for stream emission.
+    pub fn drain_pending_system_notes(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_system_notes)
+    }
+
     pub fn drain_confirm_lifecycle_notices(&mut self) -> Vec<ConfirmLifecycleNotice> {
         std::mem::take(&mut self.confirm_lifecycle_notices)
     }
@@ -929,19 +941,16 @@ impl TaskState {
     ) -> ConfirmRequest {
         let now = Self::now_ms();
         self.expire_confirm_requests(now);
-        if let Some(existing) = self
-            .pending_confirm_requests
-            .iter()
-            .find(|c| {
-                c.prior_operation_id == prior_operation_id
-                    && c.write_fingerprint == write_fingerprint
-            })
-            .cloned()
-        {
-            // Re-emit so late-joining UIs still see the pending chip.
+        if let Some(existing) = self.pending_confirm_requests.iter_mut().find(|c| {
+            c.prior_operation_id == prior_operation_id && c.write_fingerprint == write_fingerprint
+        }) {
+            // Refresh validity on reuse so repeat gate hits don't leave a
+            // near-expiry chip that the UI cannot extend.
+            existing.valid_until_ms = now.saturating_add(UNKNOWN_RERUN_CONFIRM_VALIDITY_MS);
+            let refreshed = existing.clone();
             self.confirm_lifecycle_notices
-                .push(ConfirmLifecycleNotice::Requested(existing.clone()));
-            return existing;
+                .push(ConfirmLifecycleNotice::Requested(refreshed.clone()));
+            return refreshed;
         }
         let req = ConfirmRequest {
             request_id: format!("req-{}", uuid::Uuid::new_v4()),
@@ -7564,10 +7573,20 @@ mod tests {
         let op = unknown_op_with_fp(&mut s, "shell", r#"{"command":"x"}"#, &fp);
         let a = s.issue_or_reuse_confirm_request(&op, &fp, "shell", Some("EK410".into()));
         let _ = s.drain_confirm_lifecycle_notices();
+        // Shrink remaining TTL without expiring, then reuse — must refresh.
+        let shrunk = a.valid_until_ms.saturating_sub(600_000);
+        if let Some(c) = s.pending_confirm_requests.first_mut() {
+            c.valid_until_ms = shrunk;
+        }
         let b = s.issue_or_reuse_confirm_request(&op, &fp, "shell", Some("EK410".into()));
         assert_eq!(
             a.request_id, b.request_id,
             "same Unknown op must reuse request id"
+        );
+        assert!(
+            b.valid_until_ms > shrunk,
+            "reuse must refresh valid_until_ms past shrunk ({shrunk}), got {}",
+            b.valid_until_ms
         );
         assert_eq!(s.pending_confirm_requests.len(), 1);
     }

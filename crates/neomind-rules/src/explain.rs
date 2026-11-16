@@ -21,8 +21,8 @@ use neomind_core::datasource::DataSourceId;
 
 use crate::engine::RuleEngine;
 use crate::models::{
-    ComparisonOperator, LogicalOperator, RuleAction, RuleCondition, RuleId, RuleValue,
-    ValueProvider,
+    ComparisonOperator, LogicalOperator, RuleAction, RuleCondition, RuleId, RuleTrigger,
+    RuleValue, ValueProvider,
 };
 use crate::preview::to_dsl_preview;
 use crate::unified_provider::UnifiedValueProvider;
@@ -95,6 +95,15 @@ pub struct ForDurationExplanation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub elapsed_secs: Option<i64>,
     pub satisfied: bool,
+    /// False when the trigger path does not enforce `for_duration` (Manual
+    /// run-now skips the hold gate). UI must not treat unsatisfied progress
+    /// as a blocker when `applicable` is false.
+    #[serde(default = "for_duration_applicable_default")]
+    pub applicable: bool,
+}
+
+fn for_duration_applicable_default() -> bool {
+    true
 }
 
 /// Cooldown status. Lives in engine memory only — resets on restart.
@@ -186,6 +195,22 @@ impl RuleEngine {
         let condition_met = condition.as_ref().map(|c| c.result);
 
         let for_duration = rule.for_duration.map(|dur| {
+            // Manual execute_rule skips the duration gate (engine.rs) — surface
+            // the configured hold but mark non-applicable so diagnostics do
+            // not invent a blocker run-now will ignore.
+            if matches!(rule.trigger, RuleTrigger::Manual) {
+                notes.push(
+                    "for_duration is configured but Manual execute_rule skips the duration gate"
+                        .to_string(),
+                );
+                return ForDurationExplanation {
+                    configured_secs: dur.as_secs(),
+                    condition_since: None,
+                    elapsed_secs: None,
+                    satisfied: true,
+                    applicable: false,
+                };
+            }
             let since = rule.state.condition_since;
             let elapsed_secs =
                 since.map(|s| snapshot_at.signed_duration_since(s).num_seconds().max(0));
@@ -196,6 +221,7 @@ impl RuleEngine {
                 satisfied: elapsed_secs
                     .map(|e| e >= dur.as_secs() as i64)
                     .unwrap_or(false),
+                applicable: true,
             }
         });
 
@@ -217,16 +243,15 @@ impl RuleEngine {
         }
 
         // Last persisted execution as evidence (store first, in-memory fallback).
+        // Prefer load_latest_history (reverse key walk, early exit) over a
+        // full collect+sort of every row for this rule.
         let last_execution = {
             let stored = self
                 .rule_store
                 .read()
                 .as_ref()
-                .and_then(|s| s.load_history(id).ok())
-                .and_then(|mut h| {
-                    h.sort_by_key(|e| std::cmp::Reverse(e.triggered_at));
-                    h.into_iter().next()
-                });
+                .and_then(|s| s.load_latest_history(id).ok())
+                .flatten();
             let stored = match stored {
                 Some(e) => Some(e),
                 None => {
@@ -334,7 +359,22 @@ fn explain_condition(
         } => {
             let (value, age) = lookup_with_age(source, provider, unified, now_ms);
             let (result, unknown_reason) = match &value {
+                Some(RuleValue::Number(_)) if operator.is_string_op() => (
+                    EvalOutcome::Unknown,
+                    Some("operator_value_mismatch".to_string()),
+                ),
                 Some(RuleValue::Number(v)) => (outcome(operator.evaluate(*v, *threshold)), None),
+                Some(RuleValue::Text(_))
+                    if matches!(
+                        operator,
+                        ComparisonOperator::GreaterThan
+                            | ComparisonOperator::LessThan
+                            | ComparisonOperator::GreaterEqual
+                            | ComparisonOperator::LessEqual
+                    ) =>
+                {
+                    (EvalOutcome::Unknown, Some("value_not_numeric".to_string()))
+                }
                 Some(RuleValue::Text(s)) => {
                     let fallback = threshold.to_string();
                     let t = threshold_value.as_deref().unwrap_or(&fallback);
@@ -754,22 +794,158 @@ mod tests {
 
         // Fire B too: each explanation still reflects only its own record.
         assert!(engine.execute_rule(&id_b).await.success);
+        let exp_a2 = engine.explain_rule(&id_a).await.unwrap();
         let exp_b = engine.explain_rule(&id_b).await.unwrap();
-        let evidence = exp_b.last_execution.expect("B now has its own record");
-        assert_eq!(
-            evidence.triggered_at,
-            engine
-                .explain_rule(&id_b)
-                .await
-                .unwrap()
-                .last_execution
-                .unwrap()
-                .triggered_at
+        let evidence_a = exp_a2
+            .last_execution
+            .expect("rule A keeps its own record after B fires");
+        let evidence_b = exp_b.last_execution.expect("B now has its own record");
+        assert_ne!(
+            evidence_a.triggered_at, evidence_b.triggered_at,
+            "A and B executions must be independent timestamps"
         );
-        // And B's evidence differs from A's latest (different trigger times
-        // at second granularity would still pass; assert identity via success
-        // fields of independent notify runs).
-        let _ = evidence;
+        assert_eq!(
+            evidence_a.triggered_at,
+            exp_a
+                .last_execution
+                .as_ref()
+                .expect("A before B fire")
+                .triggered_at,
+            "firing B must not rewrite A's latest evidence"
+        );
+        assert!(
+            evidence_a
+                .actions_executed
+                .iter()
+                .any(|a| a.contains("rule-A")),
+            "A evidence must name rule-A actions: {:?}",
+            evidence_a.actions_executed
+        );
+        assert!(
+            evidence_b
+                .actions_executed
+                .iter()
+                .any(|a| a.contains("rule-B")),
+            "B evidence must name rule-B actions: {:?}",
+            evidence_b.actions_executed
+        );
+    }
+
+    #[tokio::test]
+    async fn explain_history_isolated_without_store() {
+        let p = provider();
+        // No set_rule_store — evidence must come only from the in-memory deque
+        // filter by rule_id (the bug that used to leak sibling history).
+        let engine = RuleEngine::new(p.clone());
+        let messages = Arc::new(neomind_messages::MessageManager::new());
+        engine.set_message_manager(messages).await;
+
+        let mk = |name: &str| {
+            let mut rule = CompiledRule::new(name);
+            rule.trigger = RuleTrigger::Manual;
+            rule.actions = vec![RuleAction::Notify {
+                message: name.to_string(),
+                severity: NotifySeverity::Info,
+            }];
+            rule.finalize();
+            rule
+        };
+        let rule_a = mk("mem-A");
+        let rule_b = mk("mem-B");
+        let id_a = rule_a.id.clone();
+        let id_b = rule_b.id.clone();
+        engine.add_rule(rule_a).await.unwrap();
+        engine.add_rule(rule_b).await.unwrap();
+
+        assert!(engine.execute_rule(&id_a).await.success);
+        let exp_b = engine.explain_rule(&id_b).await.unwrap();
+        assert!(
+            exp_b.last_execution.is_none(),
+            "no-store path must not borrow A's evidence for B: {:?}",
+            exp_b.last_execution
+        );
+        assert!(engine.explain_rule(&id_a).await.unwrap().last_execution.is_some());
+    }
+
+    #[tokio::test]
+    async fn explain_manual_for_duration_is_not_a_blocker() {
+        let p = provider();
+        let engine = RuleEngine::new(p);
+        let mut rule = CompiledRule::new("manual-hold");
+        rule.trigger = RuleTrigger::Manual;
+        rule.for_duration = Some(Duration::from_secs(120));
+        rule.condition = Some(RuleCondition::Comparison {
+            source: DataSourceId::device("sensor1", "temperature"),
+            operator: ComparisonOperator::GreaterThan,
+            threshold: 0.0,
+            threshold_value: None,
+        });
+        rule.finalize();
+        let id = rule.id.clone();
+        engine.add_rule(rule).await.unwrap();
+
+        let exp = engine.explain_rule(&id).await.unwrap();
+        let fd = exp.for_duration.expect("configured for_duration surfaced");
+        assert!(!fd.applicable, "Manual must mark for_duration non-applicable");
+        assert!(
+            fd.satisfied,
+            "non-applicable hold must not report unsatisfied progress"
+        );
+        assert!(
+            exp.notes.iter().any(|n| n.contains("Manual")),
+            "notes must name Manual skip: {:?}",
+            exp.notes
+        );
+    }
+
+    #[tokio::test]
+    async fn explain_comparison_type_mismatch_is_unknown() {
+        let p = provider();
+        p.update_value("device", "sensor1", "status", 1.0).await;
+        let engine = RuleEngine::new(p);
+        let mut rule = CompiledRule::new("mismatch");
+        rule.trigger = RuleTrigger::Manual;
+        rule.condition = Some(RuleCondition::Comparison {
+            source: DataSourceId::device("sensor1", "status"),
+            operator: ComparisonOperator::Contains,
+            threshold: 0.0,
+            threshold_value: Some("online".into()),
+        });
+        rule.finalize();
+        let id = rule.id.clone();
+        engine.add_rule(rule).await.unwrap();
+
+        let exp = engine.explain_rule(&id).await.unwrap();
+        let cond = exp.condition.expect("condition");
+        assert_eq!(cond.result, EvalOutcome::Unknown);
+        assert_eq!(
+            cond.unknown_reason.as_deref(),
+            Some("operator_value_mismatch")
+        );
+    }
+
+    #[tokio::test]
+    async fn explain_comparison_numeric_op_on_text_is_unknown() {
+        let p = provider();
+        p.update_string_value("device", "sensor1", "label", "online")
+            .await;
+        let engine = RuleEngine::new(p);
+        let mut rule = CompiledRule::new("text-gt");
+        rule.trigger = RuleTrigger::Manual;
+        rule.condition = Some(RuleCondition::Comparison {
+            source: DataSourceId::device("sensor1", "label"),
+            operator: ComparisonOperator::GreaterThan,
+            threshold: 1.0,
+            threshold_value: None,
+        });
+        rule.finalize();
+        let id = rule.id.clone();
+        engine.add_rule(rule).await.unwrap();
+
+        let exp = engine.explain_rule(&id).await.unwrap();
+        let cond = exp.condition.expect("condition");
+        assert_eq!(cond.result, EvalOutcome::Unknown);
+        assert_eq!(cond.unknown_reason.as_deref(), Some("value_not_numeric"));
     }
 
     #[tokio::test]

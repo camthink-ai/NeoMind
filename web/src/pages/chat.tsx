@@ -507,6 +507,25 @@ export function ChatPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlSessionId])
+  // Remount across /chat ↔ /chat/:id resets prevDraftSessionRef, so park on
+  // unmount — same storage keys the switch effect uses.
+  useEffect(() => {
+    return () => {
+      const cur = composerDraftRef.current
+      if (cur.input === "" && cur.references.length === 0 && cur.nodes.length === 0) {
+        return
+      }
+      const key = prevDraftSessionRef.current ?? urlSessionId ?? "new"
+      saveSessionDraft({
+        sessionId: key,
+        message: cur.input,
+        references: cur.references,
+        contentNodes: cur.nodes.length > 0 ? cur.nodes : undefined,
+        updatedAt: Date.now(),
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Handle deleted session redirects and root path
   useEffect(() => {

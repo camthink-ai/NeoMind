@@ -355,11 +355,14 @@ pub async fn process_stream_events_with_safeguards(
                 stream_owner.clone(),
                 "stream dropped or timed out",
             );
-            // Emit confirm removals from accept_user_message (consumed submit).
+            // Emit confirm removals / SystemNotes from accept_user_message.
             {
-                let notices = {
+                let (notices, sys_notes) = {
                     let mut state = internal_state.write().await;
-                    state.task_state.drain_confirm_lifecycle_notices()
+                    (
+                        state.task_state.drain_confirm_lifecycle_notices(),
+                        state.task_state.drain_pending_system_notes(),
+                    )
                 };
                 for notice in notices {
                     match notice {
@@ -375,6 +378,9 @@ pub async fn process_stream_events_with_safeguards(
                             yield AgentEvent::authorize_confirm_removed(request_id, reason);
                         }
                     }
+                }
+                for note in sys_notes {
+                    yield AgentEvent::system_note(note);
                 }
             }
             let mut stream = stream;

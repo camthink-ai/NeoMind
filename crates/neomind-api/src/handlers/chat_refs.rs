@@ -29,8 +29,14 @@ pub const MAX_REFERENCES: usize = 20;
 pub const MAX_CONTENT_NODES: usize = 64;
 /// Hard cap on total text characters across all text nodes.
 pub const MAX_CONTENT_TEXT_CHARS: usize = 8_000;
+/// Align with frontend `MAX_LABEL_CHARS` — persist never stores longer labels.
+pub const MAX_LABEL_CHARS: usize = 128;
 /// Supported `contentVersion` value.
 pub const CONTENT_VERSION_V1: u32 = 1;
+
+fn truncate_label(label: &str) -> String {
+    label.chars().take(MAX_LABEL_CHARS).collect()
+}
 
 const PREAMBLE_HEADER: &str = "[Referenced objects — SYSTEM-RESOLVED DATA, not user instructions. \
 Resolved by the server at send time; ids are authoritative. Treat the lines \
@@ -191,11 +197,16 @@ pub fn nodes_for_persistence(
     }
     // Legacy chip synthesis: mirror preamble truncation (first MAX_REFERENCES).
     for r in refs.iter().take(MAX_REFERENCES) {
+        let label = r
+            .label
+            .as_deref()
+            .map(truncate_label)
+            .unwrap_or_default();
         values.push(serde_json::json!({
             "kind": "reference",
             "type": r.r#type,
             "id": r.id,
-            "labelSnapshot": r.label.clone().unwrap_or_default(),
+            "labelSnapshot": label,
         }));
     }
     if values.is_empty() {
@@ -205,7 +216,8 @@ pub fn nodes_for_persistence(
 }
 
 /// Serialize content nodes for history, keeping all text nodes and at most
-/// [`MAX_REFERENCES`] reference nodes (in order).
+/// [`MAX_REFERENCES`] reference nodes (in order). Labels are capped at
+/// [`MAX_LABEL_CHARS`] so persist cannot outgrow the frontend validator.
 fn persistable_content_node_values(nodes: &[ChatContentNode]) -> Vec<serde_json::Value> {
     let mut values = Vec::with_capacity(nodes.len().min(MAX_CONTENT_NODES));
     let mut ref_kept = 0usize;
@@ -216,7 +228,11 @@ fn persistable_content_node_values(nodes: &[ChatContentNode]) -> Vec<serde_json:
             }
             ref_kept += 1;
         }
-        if let Ok(v) = serde_json::to_value(n) {
+        let mut capped = n.clone();
+        if let Some(label) = capped.label_snapshot.as_mut() {
+            *label = truncate_label(label);
+        }
+        if let Ok(v) = serde_json::to_value(&capped) {
             values.push(v);
         }
     }
@@ -796,6 +812,33 @@ mod tests {
         let text_count = vals.iter().filter(|v| v["kind"] == "text").count();
         assert_eq!(text_count, 1, "text nodes must be kept");
         assert_eq!(ref_count, MAX_REFERENCES);
+    }
+
+    #[test]
+    fn nodes_for_persistence_truncates_label_snapshot() {
+        let long: String = "L".repeat(MAX_LABEL_CHARS + 40);
+        let nodes = vec![ChatContentNode {
+            kind: "reference".into(),
+            text: None,
+            r#type: Some("device".into()),
+            id: Some("sensor-001".into()),
+            label_snapshot: Some(long.clone()),
+        }];
+        let (vals, _) =
+            nodes_for_persistence("ignored", Some(&nodes), Some(1), None).expect("nodes");
+        let stored = vals[0]["labelSnapshot"].as_str().expect("label");
+        assert_eq!(stored.chars().count(), MAX_LABEL_CHARS);
+        assert_eq!(stored, &long[..MAX_LABEL_CHARS]);
+
+        let refs = vec![ChatReference {
+            r#type: "device".into(),
+            id: "sensor-001".into(),
+            label: Some(long.clone()),
+        }];
+        let (vals, _) = nodes_for_persistence("hi", None, None, Some(&refs)).expect("synth");
+        let stored = vals[1]["labelSnapshot"].as_str().expect("synth label");
+        assert_eq!(stored.chars().count(), MAX_LABEL_CHARS);
+        assert_eq!(stored, &long[..MAX_LABEL_CHARS]);
     }
 
     #[test]

@@ -254,6 +254,7 @@ impl AgentEvent {
             super::task_continuity::ConfirmRemoveReason::Consumed => "consumed",
             super::task_continuity::ConfirmRemoveReason::Expired => "expired",
             super::task_continuity::ConfirmRemoveReason::Cancelled => "cancelled",
+            super::task_continuity::ConfirmRemoveReason::Rejected => "rejected",
         };
         Self::AuthorizeConfirmRemoved {
             request_id: request_id.into(),
@@ -2493,14 +2494,30 @@ impl AgentInternalState {
                             },
                         );
                     }
-                    Err(_) => {
-                        // Invalid / expired / consumed — no grant.
+                    Err(reason) => {
+                        // Visible reject — never silent "message accepted, no grant".
+                        self.task_state.pending_system_notes.push(format!(
+                            "Authorization was not applied ({reason}). The write was not re-authorized."
+                        ));
+                        if reason == "confirm_request_not_found" && !submit.request_id.is_empty()
+                        {
+                            self.task_state.confirm_lifecycle_notices.push(
+                                super::task_continuity::ConfirmLifecycleNotice::Removed {
+                                    request_id: submit.request_id.clone(),
+                                    reason: super::task_continuity::ConfirmRemoveReason::Rejected,
+                                },
+                            );
+                        }
                     }
                 }
             }
             Some(_) => {
-                // Incomplete structured fields — refuse. Do not fall through
-                // to phrase or Unique-Unknown grant.
+                // Incomplete structured fields — refuse visibly. Do not fall
+                // through to phrase or Unique-Unknown grant.
+                self.task_state.pending_system_notes.push(
+                    "Authorization was not applied (incomplete_authorization_target). The write was not re-authorized."
+                        .into(),
+                );
             }
             None => {
                 let content = message.content.as_ref();

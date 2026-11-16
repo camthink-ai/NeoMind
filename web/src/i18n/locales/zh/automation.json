@@ -320,7 +320,8 @@
     },
     "unknownReason": {
       "no_value_cached": "无缓存值",
-      "value_not_numeric": "值不是数值"
+      "value_not_numeric": "值不是数值",
+      "operator_value_mismatch": "运算符与值类型不匹配"
     }
   },
   "runTest": "运行测试",

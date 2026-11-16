@@ -321,7 +321,8 @@
     },
     "unknownReason": {
       "no_value_cached": "No value cached",
-      "value_not_numeric": "Value is not numeric"
+      "value_not_numeric": "Value is not numeric",
+      "operator_value_mismatch": "Operator does not match value type"
     }
   },
   "runTest": "Run Test",
