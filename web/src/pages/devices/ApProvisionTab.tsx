@@ -135,7 +135,9 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
           {t('devices:ap.ssidPatternLabel')}
         </p>
-        <p className="text-base font-medium tracking-wide font-mono">CT-AP-XXXXXX</p>
+        <p className="text-sm font-medium tracking-wide font-mono break-all">
+          {t('devices:ap.ssidPatternPrimary')}
+        </p>
         <p className="text-xs text-muted-foreground">{t('devices:ap.ssidPatternHint')}</p>
       </div>
 
