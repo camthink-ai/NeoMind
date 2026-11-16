@@ -165,6 +165,8 @@
       "sendCommand": "发送命令",
       "executing": "执行中",
       "noParameters": "无参数",
+      "noParametersTitle": "直接执行",
+      "noParametersHint": "此指令无需任何参数，点击「发送命令」后将立即执行。",
       "selectValue": "请选择…",
       "binaryPlaceholder": "Base64 编码数据…",
       "allParametersFixed": "所有参数均为固定值",

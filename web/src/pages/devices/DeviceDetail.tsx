@@ -850,9 +850,24 @@ export function DeviceDetail({
           submitDisabled={commandExecuting}
         >
           {(!selectedCommandDef.parameters || selectedCommandDef.parameters.length === 0) ? (
-            <p className="text-sm text-muted-foreground py-2">
-              {t('devices:command.dialog.noParameters', { defaultValue: 'No parameters required' })}
-            </p>
+            // Zero-parameter command: an empty form would read as a broken
+            // dialog — present it as a deliberate "direct command" state
+            // instead (icon + what happens on send).
+            <div className="flex flex-col items-center gap-3 py-6 text-center" data-testid="command-no-parameters">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                <Zap className="h-6 w-6 text-muted-foreground" aria-hidden="true" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">
+                  {t('devices:command.dialog.noParametersTitle', { defaultValue: 'Direct command' })}
+                </p>
+                <p className="mx-auto max-w-[260px] text-xs leading-relaxed text-muted-foreground">
+                  {t('devices:command.dialog.noParametersHint', {
+                    defaultValue: 'This command takes no parameters — it will execute immediately when you send.',
+                  })}
+                </p>
+              </div>
+            </div>
           ) : (
             <ParameterForm
               parameters={selectedCommandDef.parameters}

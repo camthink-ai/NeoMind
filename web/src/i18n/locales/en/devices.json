@@ -165,6 +165,8 @@
       "sendCommand": "Send Command",
       "executing": "Executing",
       "noParameters": "No Parameters",
+      "noParametersTitle": "Direct command",
+      "noParametersHint": "This command takes no parameters — it will execute immediately when you send.",
       "selectValue": "Select…",
       "binaryPlaceholder": "Base64 encoded data…",
       "allParametersFixed": "All parameters have fixed values",
