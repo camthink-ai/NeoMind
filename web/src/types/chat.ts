@@ -183,6 +183,14 @@ export type ServerMessage =
       sessionId: string
     }
   | { type: 'AuthorizeConfirmRemoved'; requestId: string; reason: string; sessionId: string }
+  /** Server receive-ack for a clientRequestId — NOT the same as local ws.send/queue. */
+  | {
+      type: 'MessageReceived'
+      requestId: string
+      status: 'accepted' | 'rejected'
+      sessionId?: string
+      reason?: string
+    }
   // Execution plan step (informational, not displayed in current UI)
   | { type: 'Plan'; step: string; stage: string; sessionId: string }
   // Heartbeat to keep connection alive (not displayed)
@@ -272,6 +280,8 @@ export interface ClientChatMessage {
   contentNodes?: ChatContentNode[]
   /** Host/UI confirm target for Unknown re-run (required when multiple Unknowns). */
   authorizeNewOperation?: AuthorizeNewOperationRequest
+  /** Correlation id echoed by MessageReceived (draft clears only on accepted). */
+  clientRequestId?: string
 }
 
 // ========== Chat Input Types ==========

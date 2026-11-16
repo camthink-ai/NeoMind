@@ -5,6 +5,21 @@ import { storage } from './utils/storage'
 import { getApiKey } from './api'
 import { buildWsUrl } from './urls'
 import { getServerOrigin } from './api'
+import { generateId } from './id'
+import { DRAFT_ACK_TIMEOUT_MS } from './chat/contentProtocol'
+
+/** Result of handing a chat frame to the wire or pending queue. */
+export type SendResult = {
+  /** true when sent or queued locally — NOT a server receive-ack. */
+  wireOk: boolean
+  /** Echoed by MessageReceived; draft lifecycle keys on this. */
+  requestId: string
+}
+
+export type ReceiveAckResult = {
+  status: 'accepted' | 'rejected' | 'timeout'
+  reason?: string
+}
 
 type MessageHandler = (message: ServerMessage) => void
 type ConnectionHandler = (connected: boolean, isReconnect?: boolean) => void
@@ -59,6 +74,14 @@ export class ChatWebSocket {
   private lastToken: string | null = null
   private currentState: ConnectionState = { status: 'disconnected' }
   private onlineHandler: (() => void) | null = null
+  /** Waiters for server MessageReceived keyed by clientRequestId. */
+  private receiveAckWaiters = new Map<
+    string,
+    {
+      resolve: (result: ReceiveAckResult) => void
+      timer: ReturnType<typeof setTimeout>
+    }
+  >()
 
   constructor() {
     this.loadPendingMessages()
@@ -224,6 +247,14 @@ export class ChatWebSocket {
             .map(m => (typeof m.message === 'string' ? m.message.slice(0, 50) : '(non-text)'))
             .join('", "')
           console.warn(`[WebSocket] Auth error, dropping ${droppedCount} queued message(s)`)
+          for (const dropped of this.pendingMessages) {
+            if (dropped.clientRequestId) {
+              this.settleReceiveAck(dropped.clientRequestId, {
+                status: 'rejected',
+                reason: 'queue_drop',
+              })
+            }
+          }
           this.pendingMessages = []
           storage.remove(STORAGE_KEY)
           this.setState({
@@ -255,6 +286,14 @@ export class ChatWebSocket {
             this.ws.send(JSON.stringify({ type: 'pong' }))
           }
           return // Don't notify handlers about ping/pong
+        }
+
+        // Server receive-ack for composer draft lifecycle.
+        if (data.type === 'MessageReceived') {
+          this.settleReceiveAck(data.requestId, {
+            status: data.status === 'accepted' ? 'accepted' : 'rejected',
+            reason: data.reason,
+          })
         }
 
         // Handle auth error message from server
@@ -292,8 +331,8 @@ export class ChatWebSocket {
 
   /**
    * Hand a chat request to the wire or the pending queue.
-   * @returns true when the request was sent or queued; false when the send
-   *   itself threw (caller should restore any stashed draft).
+   * @returns true when the request was sent or queued locally; false when the
+   *   send itself threw. Local success is NOT a server receive-ack.
    */
   sendRequest(request: ClientChatMessage): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
@@ -321,6 +360,12 @@ export class ChatWebSocket {
           ? dropped.message.slice(0, 50)
           : '(non-text message)'
         console.warn(`[WebSocket] Pending limit (${this.MAX_PENDING_MESSAGES}) reached, dropping oldest: "${preview}..."`)
+        if (dropped.clientRequestId) {
+          this.settleReceiveAck(dropped.clientRequestId, {
+            status: 'rejected',
+            reason: 'queue_drop',
+          })
+        }
         // Notify UI that a message was dropped
         this.setState({
           ...this.currentState,
@@ -333,7 +378,11 @@ export class ChatWebSocket {
     return true
   }
 
-  /** @returns true when the request was accepted (sent or queued). */
+  /**
+   * Send a chat turn. Always stamps `clientRequestId`.
+   * `wireOk` means sent or queued locally — wait for `waitForReceiveAck` before
+   * clearing the composer draft.
+   */
   sendMessage(
     content: string,
     images?: ChatImage[],
@@ -342,8 +391,9 @@ export class ChatWebSocket {
     references?: ChatReference[],
     contentNodes?: import("@/types").ChatContentNode[],
     authorizeNewOperation?: import("@/types").AuthorizeNewOperationRequest,
-  ): boolean {
-    return this.sendRequest({
+  ): SendResult {
+    const requestId = generateId()
+    const wireOk = this.sendRequest({
       message: content,
       images: images,
       sessionId: this.sessionId || undefined,
@@ -358,7 +408,41 @@ export class ChatWebSocket {
       contentNodes:
         contentNodes && contentNodes.length > 0 ? contentNodes : undefined,
       authorizeNewOperation: authorizeNewOperation || undefined,
+      clientRequestId: requestId,
     })
+    return { wireOk, requestId }
+  }
+
+  /**
+   * Wait for the server `MessageReceived` for `requestId`, or timeout / queue drop.
+   * Cancel / authorize-only sends can skip this.
+   */
+  waitForReceiveAck(
+    requestId: string,
+    timeoutMs: number = DRAFT_ACK_TIMEOUT_MS,
+  ): Promise<ReceiveAckResult> {
+    const existing = this.receiveAckWaiters.get(requestId)
+    if (existing) {
+      // Replace a stale waiter (should not happen in normal flow).
+      clearTimeout(existing.timer)
+      this.receiveAckWaiters.delete(requestId)
+      existing.resolve({ status: 'rejected', reason: 'replaced' })
+    }
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.receiveAckWaiters.delete(requestId)
+        resolve({ status: 'timeout' })
+      }, timeoutMs)
+      this.receiveAckWaiters.set(requestId, { resolve, timer })
+    })
+  }
+
+  private settleReceiveAck(requestId: string, result: ReceiveAckResult): void {
+    const waiter = this.receiveAckWaiters.get(requestId)
+    if (!waiter) return
+    clearTimeout(waiter.timer)
+    this.receiveAckWaiters.delete(requestId)
+    waiter.resolve(result)
   }
 
   setActiveBackend(backendId: string | null) {

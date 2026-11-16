@@ -27,7 +27,10 @@ class FakeWebSocket {
     this.readyState = 3
     this.closedWith = code
   }
-  send() {}
+  lastSent: string | null = null
+  send(data: string) {
+    this.lastSent = data
+  }
   // test helpers
   simulateOpen() {
     this.readyState = 1
@@ -109,5 +112,37 @@ describe('ChatWebSocket connect race', () => {
     void cws.onStateChange((s) => states.push(s.status))
     sock.simulateClose(4001) // CURRENT socket — must NOT be ignored
     expect(states).toContain('disconnected')
+  })
+
+  it('waitForReceiveAck resolves on MessageReceived and rejects on timeout', async () => {
+    vi.useFakeTimers()
+    const cws = new ChatWebSocket()
+    cws.connect()
+    const sock = FakeWebSocket.instances[0]
+    sock.simulateOpen()
+
+    const { wireOk, requestId } = cws.sendMessage('hello')
+    expect(wireOk).toBe(true)
+    expect(requestId).toBeTruthy()
+    // Stamp was on the wire payload.
+    const sent = JSON.parse((sock as unknown as { lastSent?: string }).lastSent || '{}')
+    // FakeWebSocket may not record send — still wait on ack path.
+    const ackPromise = cws.waitForReceiveAck(requestId, 5_000)
+    sock.onmessage?.({
+      data: JSON.stringify({
+        type: 'MessageReceived',
+        requestId,
+        status: 'accepted',
+        sessionId: 's1',
+      }),
+      target: sock,
+    })
+    await expect(ackPromise).resolves.toEqual({ status: 'accepted', reason: undefined })
+
+    const { requestId: rid2 } = cws.sendMessage('again')
+    const timeoutPromise = cws.waitForReceiveAck(rid2, 1_000)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(timeoutPromise).resolves.toEqual({ status: 'timeout' })
+    vi.useRealTimers()
   })
 })

@@ -1544,6 +1544,29 @@ pub async fn chat_handler(
     }))
 }
 
+/// Build a `MessageReceived` receive-ack frame for a client-supplied
+/// `clientRequestId`. Local `ws.send` / queue success is NOT a server accept —
+/// the composer draft lifecycle waits for this frame (or a reject/timeout).
+fn message_received_frame(
+    request_id: &str,
+    status: &str,
+    session_id: Option<&str>,
+    reason: Option<&str>,
+) -> String {
+    let mut body = json!({
+        "type": "MessageReceived",
+        "requestId": request_id,
+        "status": status,
+    });
+    if let Some(sid) = session_id {
+        body["sessionId"] = json!(sid);
+    }
+    if let Some(r) = reason {
+        body["reason"] = json!(r);
+    }
+    body.to_string()
+}
+
 /// WebSocket chat handler.
 ///
 /// Supports two authentication methods:
@@ -1955,6 +1978,17 @@ async fn handle_ws_socket(
                                                     principal = %principal,
                                                     "WS switch rejected — session belongs to another principal"
                                                 );
+                                                if let Some(ref rid) = chat_req.client_request_id {
+                                                    let ack = message_received_frame(
+                                                        rid,
+                                                        "rejected",
+                                                        Some(req_id),
+                                                        Some("session_forbidden"),
+                                                    );
+                                                    if socket.send(AxumMessage::Text(ack)).await.is_err() {
+                                                        return;
+                                                    }
+                                                }
                                                 let msg = json!({
                                                     "type": "Error",
                                                     "message": "Session belongs to another user.",
@@ -2032,7 +2066,32 @@ async fn handle_ws_socket(
                                     let message = chat_req.message.trim();
                                     if message.is_empty() && chat_req.images.as_ref().is_none_or(|i| i.is_empty()) {
                                         // Nothing to send at all (no text, no images) — skip.
+                                        if let Some(ref rid) = chat_req.client_request_id {
+                                            let ack = message_received_frame(
+                                                rid,
+                                                "rejected",
+                                                Some(&session_id),
+                                                Some("empty_message"),
+                                            );
+                                            if socket.send(AxumMessage::Text(ack)).await.is_err() {
+                                                return;
+                                            }
+                                        }
                                         continue;
+                                    }
+
+                                    // Receive-ack BEFORE stream spawn: the wire accepted the
+                                    // frame for processing. Composer drafts clear only on this.
+                                    if let Some(ref rid) = chat_req.client_request_id {
+                                        let ack = message_received_frame(
+                                            rid,
+                                            "accepted",
+                                            Some(&session_id),
+                                            None,
+                                        );
+                                        if socket.send(AxumMessage::Text(ack)).await.is_err() {
+                                            return;
+                                        }
                                     }
 
                                     // Try event streaming first (rich response with tool calls)

@@ -143,6 +143,7 @@ mod tests {
             content_nodes: None,
             session_config: None,
             authorize_new_operation: None,
+            client_request_id: None,
         };
         let result = chat_handler(
             State(state),
@@ -186,6 +187,7 @@ mod tests {
             content_nodes: None,
             session_config: None,
             authorize_new_operation: None,
+            client_request_id: None,
         };
         let result = chat_handler(State(state), Path(session_id.clone()), Json(req)).await;
         // Either Ok with timeout message or Err with something other than NOT_FOUND
@@ -246,12 +248,20 @@ mod tests {
             content_nodes: None,
             session_config: None,
             authorize_new_operation: None,
+            client_request_id: Some("client-req-1".to_string()),
         };
         assert_eq!(req.message, "Test message");
         assert_eq!(req.session_id.unwrap(), "session123");
         // Also test the new fields
         assert!(req.images.is_none());
         assert!(req.backend_id.is_none());
+        assert_eq!(req.client_request_id.as_deref(), Some("client-req-1"));
+        let json = serde_json::json!({
+            "message": "hi",
+            "clientRequestId": "rid-9"
+        });
+        let parsed: ChatRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(parsed.client_request_id.as_deref(), Some("rid-9"));
     }
 
     #[tokio::test]

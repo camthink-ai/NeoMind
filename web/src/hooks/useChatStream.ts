@@ -539,7 +539,16 @@ export function useChatStream(options: UseChatStreamOptions) {
         hardReset()
         // An interrupted turn finalizes even with an empty accumulator —
         // the view needs the end signal to reload the server's full message.
-        if (result.interrupted || result.content || result.thinking || result.toolCalls.length > 0) {
+        // Same for End frames that carry only goalStatus / endReason (no
+        // body/tools/thinking): the list still needs onEnd → reload.
+        if (
+          result.interrupted ||
+          result.content ||
+          result.thinking ||
+          result.toolCalls.length > 0 ||
+          result.goalStatus != null ||
+          result.endReason != null
+        ) {
           optionsRef.current.onEnd(result)
         }
         break

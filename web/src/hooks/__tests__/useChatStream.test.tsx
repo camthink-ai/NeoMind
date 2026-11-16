@@ -389,6 +389,28 @@ describe('useChatStream', () => {
     expect(onEnd.mock.calls[0][0].interrupted).toBe(true)
   })
 
+  it('no-body End with only goalStatus/endReason still fires onEnd (list reload)', async () => {
+    const onEnd = vi.fn()
+    render(<Harness onEnd={onEnd} sessionId="s1" />)
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({
+        type: 'end',
+        sessionId: 's1',
+        endReason: 'normal',
+        goalStatus: { status: 'not_applicable' },
+      } as ServerMessage)
+    })
+    expect(onEnd).toHaveBeenCalledTimes(1)
+    const result = onEnd.mock.calls[0][0] as StreamEndResult
+    expect(result.content).toBe('')
+    expect(result.toolCalls).toEqual([])
+    expect(result.thinking).toBeUndefined()
+    expect(result.interrupted).toBeUndefined()
+    expect(result.goalStatus).toEqual({ status: 'not_applicable' })
+    expect(result.endReason).toBe('normal')
+  })
+
   it('restore() marks the reattached turn interrupted', async () => {
     const onEnd = vi.fn()
     render(<Harness onEnd={onEnd} sessionId="s1" />)

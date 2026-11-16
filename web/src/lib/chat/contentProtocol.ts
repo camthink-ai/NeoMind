@@ -338,3 +338,71 @@ export function markDraftForRetry(sessionId: string, patch: Partial<SessionChatD
   saveSessionDraft(next)
   return next
 }
+
+/** How long the composer waits for a server `MessageReceived` before restoring. */
+export const DRAFT_ACK_TIMEOUT_MS = 20_000
+
+export type PendingDraftStash = {
+  message: string
+  references: ChatReference[]
+  contentNodes?: ChatContentNode[]
+  images?: import("@/types").ChatImage[]
+}
+
+type PendingDraftEntry = {
+  sessionId: string
+  stash: PendingDraftStash
+}
+
+/** In-memory pending drafts keyed by clientRequestId (server receive-ack). */
+const pendingDraftByRequestId = new Map<string, PendingDraftEntry>()
+
+/**
+ * Keep a draft until the server receive-ack for `requestId`.
+ * Persists via markDraftForRetry so refresh mid-flight can recover.
+ */
+export function stashPendingDraft(
+  requestId: string,
+  sessionId: string,
+  stash: PendingDraftStash,
+): void {
+  pendingDraftByRequestId.set(requestId, { sessionId, stash })
+  markDraftForRetry(sessionId, {
+    message: stash.message,
+    references: stash.references,
+    contentNodes: stash.contentNodes,
+  })
+}
+
+/**
+ * Resolve a pending draft after server ack / reject / timeout / queue drop.
+ * `accepted` clears storage; failure returns the stash for UI restore.
+ */
+export function settlePendingDraft(
+  requestId: string,
+  outcome: "accepted" | "failed",
+): PendingDraftStash & { sessionId: string } | null {
+  const entry = pendingDraftByRequestId.get(requestId)
+  pendingDraftByRequestId.delete(requestId)
+  if (!entry) return null
+  if (outcome === "accepted") {
+    clearSessionDraft(entry.sessionId)
+    return null
+  }
+  markDraftForRetry(entry.sessionId, {
+    message: entry.stash.message,
+    references: entry.stash.references,
+    contentNodes: entry.stash.contentNodes,
+  })
+  return { sessionId: entry.sessionId, ...entry.stash }
+}
+
+/** Test / diagnostics: how many in-flight draft acks are waiting. */
+export function pendingDraftCount(): number {
+  return pendingDraftByRequestId.size
+}
+
+/** Test helper — drop all in-memory pending draft waiters. */
+export function clearPendingDraftsForTests(): void {
+  pendingDraftByRequestId.clear()
+}

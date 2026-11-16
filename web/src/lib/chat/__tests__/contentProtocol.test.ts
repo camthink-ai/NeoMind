@@ -5,14 +5,18 @@ import {
   buildChatRequestFromChips,
   buildChatRequestFromDoc,
   chipsAndTextToContentNodes,
+  clearPendingDraftsForTests,
   clearSessionDraft,
   contentNodesHaveReferences,
   contentNodesToComposerFields,
   loadSessionDraft,
   markDraftForRetry,
   normalizeContentNodes,
+  pendingDraftCount,
   pruneSessionDrafts,
   saveSessionDraft,
+  settlePendingDraft,
+  stashPendingDraft,
   validateContentNodes,
   validateSendContent,
 } from "../contentProtocol"
@@ -39,6 +43,8 @@ describe("contentProtocol", () => {
     })
     clearSessionDraft("s1")
     clearSessionDraft("new")
+    clearSessionDraft("side-chat")
+    clearPendingDraftsForTests()
   })
 
   it("builds a v1 request with in-order nodes and legacy unique refs", () => {
@@ -132,6 +138,30 @@ describe("contentProtocol", () => {
     expect(stashed.message).toBe("panel draft")
     expect(loadSessionDraft("side-chat")?.references).toHaveLength(1)
     expect(loadSessionDraft("side-chat")?.contentNodes).toHaveLength(2)
+  })
+
+  it("pending draft stays until settle accepted; reject restores stash by request id", () => {
+    stashPendingDraft("req-1", "s1", {
+      message: "keep me",
+      references: [{ type: "device", id: "d1", label: "D1" }],
+      contentNodes: [{ kind: "text", text: "keep me" }],
+    })
+    expect(pendingDraftCount()).toBe(1)
+    expect(loadSessionDraft("s1")?.message).toBe("keep me")
+
+    // Local wire/queue success must NOT clear — only accepted settle does.
+    expect(settlePendingDraft("req-1", "accepted")).toBeNull()
+    expect(loadSessionDraft("s1")).toBeNull()
+    expect(pendingDraftCount()).toBe(0)
+
+    stashPendingDraft("req-2", "side-chat", {
+      message: "panel keep",
+      references: [],
+    })
+    const restored = settlePendingDraft("req-2", "failed")
+    expect(restored?.message).toBe("panel keep")
+    expect(restored?.sessionId).toBe("side-chat")
+    expect(loadSessionDraft("side-chat")?.message).toBe("panel keep")
   })
 
   it("validateSendContent mirrors the server caps for the send path (E14)", () => {

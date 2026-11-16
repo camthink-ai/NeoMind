@@ -27,13 +27,14 @@ import type {
   Message,
 } from "@/types"
 import {
-  clearSessionDraft,
   contentNodesToComposerFields,
   loadSessionDraft,
   markDraftForRetry,
   normalizeContentNodes,
   pruneSessionDrafts,
   saveSessionDraft,
+  settlePendingDraft,
+  stashPendingDraft,
   validateSendContent,
 } from "@/lib/chat/contentProtocol"
 import {
@@ -242,10 +243,14 @@ export function ChatPage() {
       // Any end stops the detached-turn poll (a live end means the poll's
       // finalize branch would race a possibly-already-started NEXT turn).
       setResumedPendingStream(null)
-      if (result.interrupted) {
-        // The local accumulator was reset mid-turn (switch away/back,
-        // detach/restore) — it holds only a tail. The server persisted the
-        // full message; take history as the truth.
+      const emptyStatusOnly =
+        !result.content &&
+        !result.thinking &&
+        result.toolCalls.length === 0 &&
+        (result.goalStatus != null || result.endReason != null)
+      if (result.interrupted || emptyStatusOnly) {
+        // Interrupted OR no-body End (goalStatus/endReason only): local
+        // assembly is incomplete — reload the list from server history.
         void (async () => {
           // Turn wall-time stats are LOCAL knowledge — the refreshed
           // server history carries no generationMs. Derive them from the
@@ -968,7 +973,7 @@ export function ChatPage() {
       overrides?.authorizeNewOperation ??
       resolveAuthorizeNewOperationForSend(trimmedInput, pendingAuthorizeConfirms) ??
       undefined
-    const accepted = ws.sendMessage(
+    const { wireOk, requestId } = ws.sendMessage(
       trimmedInput,
       sentImages,
       undefined,
@@ -978,23 +983,32 @@ export function ChatPage() {
       authorizeNewOperation,
     )
 
-    if (!isOverrideSend) {
-      if (accepted) {
-        // Draft lifecycle (E15): only clear after the request was accepted
-        // by the socket / pending queue — a failed send must not lose the
-        // draft across refresh.
-        clearSessionDraft(draftSession)
-      } else if (draftStash) {
+    if (!isOverrideSend && draftStash) {
+      // Keep draft by request id until server MessageReceived — local
+      // ws.send / queue success is NOT a receive-ack.
+      stashPendingDraft(requestId, draftSession, draftStash)
+      if (!wireOk) {
+        settlePendingDraft(requestId, "failed")
         setInput(draftStash.message)
         setAttachedImages(draftStash.images)
         setChatReferences(draftStash.references)
         setChatContentNodes(draftStash.contentNodes ?? [])
-        markDraftForRetry(draftSession, {
-          message: draftStash.message,
-          references: draftStash.references,
-          contentNodes: draftStash.contentNodes,
-        })
         toast({ title: t('chat:errors.sendMessage'), variant: "destructive" })
+      } else {
+        void ws.waitForReceiveAck(requestId).then((ack) => {
+          if (ack.status === "accepted") {
+            settlePendingDraft(requestId, "accepted")
+            return
+          }
+          const restored = settlePendingDraft(requestId, "failed")
+          if (restored) {
+            setInput(restored.message)
+            setAttachedImages(restored.images ?? [])
+            setChatReferences(restored.references)
+            setChatContentNodes(restored.contentNodes ?? [])
+          }
+          toast({ title: t('chat:errors.sendMessage'), variant: "destructive" })
+        })
       }
     }
 

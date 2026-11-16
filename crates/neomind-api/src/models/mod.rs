@@ -136,6 +136,12 @@ pub struct ChatRequest {
     /// exist). Bare phrase shortcuts still work for a unique Unknown.
     #[serde(rename = "authorizeNewOperation", default)]
     pub authorize_new_operation: Option<AuthorizeNewOperationRequest>,
+    /// Client-supplied correlation id for a receive-ack (`MessageReceived`).
+    /// Older clients omit it — the server then emits no ack frame. Used by
+    /// the composer draft lifecycle: local `ws.send` / queue success is NOT
+    /// a server accept.
+    #[serde(rename = "clientRequestId", default)]
+    pub client_request_id: Option<String>,
 }
 
 /// Patch-style session config: every field is optional, and `None` means

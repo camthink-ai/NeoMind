@@ -36,12 +36,13 @@ import { useLocation } from "react-router-dom"
 import { ChatMessages } from "./ChatMessages"
 import { ChatComposer } from "./ChatComposer"
 import {
-  clearSessionDraft,
   contentNodesToComposerFields,
   loadSessionDraft,
   markDraftForRetry,
   normalizeContentNodes,
   saveSessionDraft,
+  settlePendingDraft,
+  stashPendingDraft,
   validateSendContent,
 } from "@/lib/chat/contentProtocol"
 import {
@@ -758,7 +759,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       overrides?.authorizeNewOperation ??
       resolveAuthorizeNewOperationForSend(text, pendingAuthorizeConfirms) ??
       undefined
-    const accepted = ws.sendMessage(
+    const { wireOk, requestId } = ws.sendMessage(
       text,
       sentImages,
       skillIds,
@@ -767,27 +768,38 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
       sentContentNodes,
       authorizeNewOperation,
     )
-    if (!isOverrideSend) {
-      if (accepted) {
-        if (draftSession) clearSessionDraft(draftSession)
-      } else if (draftStash) {
+    if (!isOverrideSend && draftStash && draftSession) {
+      // Keep draft by request id until server MessageReceived.
+      stashPendingDraft(requestId, draftSession, draftStash)
+      if (!wireOk) {
+        settlePendingDraft(requestId, "failed")
         setPanelMessages(prev => prev.filter(message => message.id !== pendingUserMessageId))
         setInput(draftStash.message)
         setAttachedImages(draftStash.images)
         setPanelReferences(draftStash.references)
         setPanelContentNodes(draftStash.contentNodes ?? [])
-        if (draftSession) {
-          markDraftForRetry(draftSession, {
-            message: draftStash.message,
-            references: draftStash.references,
-            contentNodes: draftStash.contentNodes,
-          })
-        }
         setSendPhase("idle")
         sendInProgressRef.current = false
         toast({ title: t("errors.sendMessage"), variant: "destructive" })
         return
       }
+      void ws.waitForReceiveAck(requestId).then((ack) => {
+        if (ack.status === "accepted") {
+          settlePendingDraft(requestId, "accepted")
+          return
+        }
+        const restored = settlePendingDraft(requestId, "failed")
+        if (restored) {
+          setPanelMessages(prev => prev.filter(message => message.id !== pendingUserMessageId))
+          setInput(restored.message)
+          setAttachedImages(restored.images ?? [])
+          setPanelReferences(restored.references)
+          setPanelContentNodes(restored.contentNodes ?? [])
+          setSendPhase("idle")
+          sendInProgressRef.current = false
+        }
+        toast({ title: t("errors.sendMessage"), variant: "destructive" })
+      })
     }
     requestAnimationFrame(() => {
       const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
