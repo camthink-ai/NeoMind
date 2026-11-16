@@ -8,7 +8,12 @@ import { useTranslation } from "react-i18next"
 import type { ChatContentNode } from "@/types"
 import { contentNodesHaveReferences } from "@/lib/chat/contentProtocol"
 import { MarkdownMessage } from "./MarkdownMessage"
-import { mentionChipClass, mentionTypeBadgeClass } from "./mentionChipStyles"
+import {
+  mentionChipClass,
+  mentionLabelClass,
+  mentionSepClass,
+  mentionTypeBadgeClass,
+} from "./mentionChipStyles"
 
 interface UserMessageContentProps {
   content: string
@@ -42,7 +47,12 @@ export function UserMessageContent({ content, contentNodes }: UserMessageContent
             <span className={mentionTypeBadgeClass(n.type)}>
               {t(`mention.${n.type}`, n.type)}
             </span>
-            {n.labelSnapshot || n.id}
+            <span className={mentionSepClass()} aria-hidden="true">
+              ·
+            </span>
+            <span className={mentionLabelClass()}>
+              {n.labelSnapshot || n.id}
+            </span>
           </span>
         ),
       )}

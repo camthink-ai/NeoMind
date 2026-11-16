@@ -82,6 +82,7 @@ function toSuggestionApi(
         id: item.id,
         label: item.label,
         entityType: item.entityType,
+        typeLabel: item.typeLabel ?? null,
       })
     },
   }
@@ -186,6 +187,7 @@ export function InlineMentionEditor({
                     id: attrs.id,
                     label: attrs.label,
                     entityType: attrs.entityType,
+                    typeLabel: attrs.typeLabel ?? null,
                     mentionSuggestionChar: "@",
                   },
                 },

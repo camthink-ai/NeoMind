@@ -11,6 +11,8 @@ export type EntityMentionAttrs = {
   id: string | null
   label: string | null
   entityType: EntityType | null
+  /** Localized type word for display (falls back to entityType). */
+  typeLabel: string | null
   mentionSuggestionChar?: string
 }
 
@@ -18,6 +20,7 @@ export type EntityMentionItem = {
   id: string
   label: string
   entityType: EntityType
+  typeLabel?: string
 }
 
 export const EntityMention = Mention.extend<
@@ -37,6 +40,14 @@ export const EntityMention = Mention.extend<
           return { "data-entity-type": attributes.entityType }
         },
       },
+      typeLabel: {
+        default: null,
+        parseHTML: (element) => element.getAttribute("data-type-label"),
+        renderHTML: (attributes) => {
+          if (!attributes.typeLabel) return {}
+          return { "data-type-label": attributes.typeLabel }
+        },
+      },
     }
   },
 
@@ -47,6 +58,7 @@ export const EntityMention = Mention.extend<
   renderHTML({ node, HTMLAttributes }) {
     const label = node.attrs.label ?? node.attrs.id ?? ""
     const entityType = node.attrs.entityType ?? ""
+    const typeText = (node.attrs.typeLabel as string | null) || entityType
     return [
       "span",
       mergeAttributes(HTMLAttributes, {
@@ -57,12 +69,22 @@ export const EntityMention = Mention.extend<
         class: "nm-mention",
         contenteditable: "false",
       }),
-      // Type badge + label (not "@label") — matches history chips and keeps
-      // readable contrast via host CSS (never inherits bubble text color).
-      entityType
-        ? ["span", { class: `nm-mention-type nm-mention-type--${entityType}` }, entityType]
+      // Same size as surrounding prose; type tint + · + name.
+      typeText
+        ? [
+            "span",
+            {
+              class: entityType
+                ? `nm-mention-type nm-mention-type--${entityType}`
+                : "nm-mention-type",
+            },
+            typeText,
+          ]
         : "",
-      label,
+      typeText
+        ? ["span", { class: "nm-mention-sep", "aria-hidden": "true" }, "·"]
+        : "",
+      ["span", { class: "nm-mention-label" }, label],
     ]
   },
 })

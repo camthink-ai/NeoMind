@@ -213,11 +213,13 @@ describe('ChatMessages', () => {
     expect(chips[0].getAttribute('data-id')).toBe('green-01')
     expect(chips[1].getAttribute('data-id')).toBe('green-02')
     expect(chips[0].textContent).toContain('温室A')
-    // No chip fill — type is color-only; name inherits bubble/composer text.
-    expect(chips[0].className).not.toMatch(/\bbg-card\b|\bbg-muted\b/)
-    const typeEl = chips[0].querySelector('span')
+    // Inherit body size; type is accent + · separator (not a smaller tag).
+    expect(chips[0].className).not.toMatch(/\btext-xs\b|\bbg-card\b|\bbg-muted\b/)
+    expect(chips[0].textContent).toContain('·')
+    const typeEl = chips[0].querySelector('.nm-mention-type')
     expect(typeEl?.className ?? '').toContain('text-accent-cyan')
     expect(typeEl?.className ?? '').not.toMatch(/bg-accent-/)
+    expect(chips[0].querySelector('.nm-mention-label')?.textContent).toBe('温室A')
     // Plain markdown path must not swallow the ordered nodes.
     expect(screen.queryByText('把 @温室A 复制给 @温室B')).toBeNull()
   })

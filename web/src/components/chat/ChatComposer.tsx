@@ -366,6 +366,7 @@ export function ChatComposer({
           id: opt.id,
           label: opt.label,
           entityType: opt.type,
+          typeLabel: t(`chat:mention.${opt.type}`, opt.type),
         })
       } finally {
         suppressMentionExitClose.current = false
