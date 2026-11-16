@@ -2237,10 +2237,20 @@ Assistant: {ar}\n"
         // silently dropped the user's words. Fail closed: a save error
         // aborts the turn so WS MessageReceived stays rejected (composer
         // draft restore). Same persist/clear guards as persist_history.
+        // Accept already mutated Turn/auth/memory — on save failure roll that
+        // back so rejected ≡ server (retry must not duplicate user msg / auth).
         if let Err(e) = self.snapshot_history_at_turn_start(session_id).await {
+            let rolled = agent.rollback_pending_accept().await;
+            tracing::warn!(
+                session_id = %session_id,
+                rolled,
+                error = %e,
+                "turn-start save failed; rolled back accept"
+            );
             Self::remove_cancel_sender_if_token(&cancel_senders, session_id, cancel_token).await;
             return Err(e);
         }
+        agent.clear_pending_accept_rollback().await;
 
         // Wrap the stream with a scopeguard so the cancel sender is removed
         // even if the consumer drops the stream early (client disconnect,
@@ -2548,9 +2558,17 @@ Assistant: {ar}\n"
         // BEFORE returning Ok so WS MessageReceived:accepted means the user
         // message is on disk — same contract as the text path.
         if let Err(e) = self.snapshot_history_at_turn_start(session_id).await {
+            let rolled = agent.rollback_pending_accept().await;
+            tracing::warn!(
+                session_id = %session_id,
+                rolled,
+                error = %e,
+                "multimodal turn-start save failed; rolled back accept"
+            );
             Self::remove_cancel_sender_if_token(&cancel_senders, session_id, cancel_token).await;
             return Err(e);
         }
+        agent.clear_pending_accept_rollback().await;
 
         // Wrap with scopeguard so cancel sender is removed on both natural
         // stream end and early drop (matches the text streaming path above).
@@ -3897,13 +3915,8 @@ mod tests {
     async fn process_events_rejects_when_turn_start_save_fails() {
         let manager = create_temp_manager();
         let session_id = manager.create_session().await.unwrap();
-        manager
-            .persist_clear_hooks
-            .arm_fail_next_turn_start_save();
-        match manager
-            .process_message_events(&session_id, "hello")
-            .await
-        {
+        manager.persist_clear_hooks.arm_fail_next_turn_start_save();
+        match manager.process_message_events(&session_id, "hello").await {
             Err(err) => {
                 let msg = err.to_string().to_lowercase();
                 assert!(
@@ -3913,6 +3926,179 @@ mod tests {
             }
             Ok(_) => panic!("turn-start save failure must reject"),
         }
+    }
+
+    /// Save fail → reject rolls back accept; retry must not duplicate the user msg.
+    #[tokio::test]
+    async fn turn_start_save_fail_retry_does_not_duplicate_user_message() {
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        let agent = manager.get_session(&session_id).await.unwrap();
+
+        manager.persist_clear_hooks.arm_fail_next_turn_start_save();
+        let err = match manager
+            .process_message_events(&session_id, "hello once")
+            .await
+        {
+            Err(e) => e,
+            Ok(_) => panic!("injected save failure must reject"),
+        };
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("save") || msg.contains("storage"),
+            "got: {err}"
+        );
+
+        let after_fail = agent.history().await;
+        assert!(
+            after_fail
+                .iter()
+                .all(|m| m.content.as_ref() != "hello once"),
+            "rolled-back accept must leave no user message: {after_fail:?}"
+        );
+        let disk_empty = manager
+            .load_history(&session_id)
+            .map(|h| h.is_empty())
+            .unwrap_or(true);
+        assert!(disk_empty, "DB must stay empty when save failed");
+
+        // Hook is one-shot; retry persists exactly one user message.
+        let _stream = manager
+            .process_message_events(&session_id, "hello once")
+            .await
+            .expect("retry after save fail");
+        drop(_stream);
+
+        let hist = agent.history().await;
+        let user_hits: Vec<_> = hist
+            .iter()
+            .filter(|m| m.role == "user" && m.content.as_ref() == "hello once")
+            .collect();
+        assert_eq!(
+            user_hits.len(),
+            1,
+            "retry must not duplicate user message: {hist:?}"
+        );
+    }
+
+    /// Confirm submit + save fail must restore pending confirm / clear grant;
+    /// retry consumes confirm once (no double-exec grant).
+    #[tokio::test]
+    async fn confirm_save_fail_retry_keeps_auth_no_double_exec() {
+        use crate::agent::task_continuity::{
+            write_fingerprint, AuthorizeNewOpSubmit, StructuredResult,
+        };
+
+        let manager = create_temp_manager();
+        let session_id = manager.create_session().await.unwrap();
+        let agent = manager.get_session(&session_id).await.unwrap();
+
+        let (op, fp, submit, turns_before) = agent
+            .test_with_task_state_mut(|ts| {
+                let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+                let op = ts.begin_new_operation(
+                    "run_now",
+                    None,
+                    r#"{"agent_id":"A"}"#,
+                    Some(fp.clone()),
+                );
+                ts.mark_operation_running(&op);
+                ts.complete_operation_unknown(
+                    &op,
+                    StructuredResult {
+                        success: false,
+                        summary: "interrupted".into(),
+                        body: String::new(),
+                        details_ref: None,
+                    },
+                );
+                let req = ts.issue_or_reuse_confirm_request(&op, &fp, "run_now", None);
+                let submit = AuthorizeNewOpSubmit {
+                    request_id: req.request_id,
+                    prior_operation_id: req.prior_operation_id,
+                    write_fingerprint: req.write_fingerprint,
+                };
+                let turns = ts.turn_count;
+                (op, fp, submit, turns)
+            })
+            .await;
+
+        manager.persist_clear_hooks.arm_fail_next_turn_start_save();
+        let err = match manager
+            .process_message_events_with_authorize(
+                &session_id,
+                "confirm re-run",
+                Some(submit.clone()),
+                None,
+            )
+            .await
+        {
+            Err(e) => e,
+            Ok(_) => panic!("injected save failure must reject"),
+        };
+        assert!(
+            err.to_string().to_lowercase().contains("save")
+                || err.to_string().to_lowercase().contains("storage"),
+            "got: {err}"
+        );
+
+        agent
+            .test_with_task_state_mut(|ts| {
+                assert_eq!(ts.turn_count, turns_before, "Turn must roll back");
+                assert!(
+                    ts.user_authorized_new_op.is_none(),
+                    "grant must not stick after rejected save"
+                );
+                assert!(
+                    ts.pending_confirm(&submit.request_id).is_some(),
+                    "pending confirm restored for retry"
+                );
+                assert_eq!(ts.pending_confirm_requests.len(), 1);
+            })
+            .await;
+        assert!(
+            agent
+                .history()
+                .await
+                .iter()
+                .all(|m| m.content.as_ref() != "confirm re-run"),
+            "confirm user message rolled back"
+        );
+
+        // Retry: confirm consumed once → single grant (no double-exec).
+        let _stream = manager
+            .process_message_events_with_authorize(
+                &session_id,
+                "confirm re-run",
+                Some(submit.clone()),
+                None,
+            )
+            .await
+            .expect("retry after save fail");
+        drop(_stream);
+
+        agent
+            .test_with_task_state_mut(|ts| {
+                assert_eq!(ts.turn_count, turns_before + 1);
+                assert!(
+                    ts.pending_confirm(&submit.request_id).is_none(),
+                    "confirm consumed exactly once on successful retry"
+                );
+                let grant = ts
+                    .user_authorized_new_op
+                    .as_ref()
+                    .expect("single grant after one successful accept");
+                assert_eq!(grant.prior_operation_id, op);
+                assert_eq!(grant.write_fingerprint, fp);
+            })
+            .await;
+        let user_hits = agent
+            .history()
+            .await
+            .iter()
+            .filter(|m| m.role == "user" && m.content.as_ref() == "confirm re-run")
+            .count();
+        assert_eq!(user_hits, 1);
     }
 
     /// GPT tip af5e3548: clear cancels + awaits stream; stale persist cannot

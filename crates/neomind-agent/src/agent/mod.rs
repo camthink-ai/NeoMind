@@ -1048,6 +1048,32 @@ impl Agent {
         self.internal_state.write().await.clear_memory();
     }
 }
+impl Agent {
+    /// After turn-start history save succeeds — drop the accept rollback token.
+    pub async fn clear_pending_accept_rollback(&self) {
+        self.internal_state
+            .write()
+            .await
+            .clear_pending_accept_rollback();
+    }
+
+    /// On turn-start history save failure — restore pre-accept memory/Turn/auth
+    /// so client `MessageReceived: rejected` matches server state.
+    pub async fn rollback_pending_accept(&self) -> bool {
+        self.internal_state.write().await.rollback_pending_accept()
+    }
+}
+#[cfg(test)]
+impl Agent {
+    /// Test helper: mutate live TaskState (seed Unknown + confirm, assert auth).
+    pub(crate) async fn test_with_task_state_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut task_continuity::TaskState) -> R,
+    {
+        let mut state = self.internal_state.write().await;
+        f(&mut state.task_state)
+    }
+}
 /// Apply storage-derived `BackendCapabilities` to a freshly-constructed
 /// `CloudRuntime`, so that cloud backends in the chat / configure_llm flow
 /// honor the same layered capability detection (registry → heuristic → user

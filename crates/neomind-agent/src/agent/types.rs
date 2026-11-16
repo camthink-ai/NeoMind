@@ -1365,6 +1365,12 @@ impl LargeDataCache {
     /// image in the prompt, but every image tool call failed — mirroring the
     /// agent-path lesson already encoded in `seed_bound_image` ("must work
     /// even for a small bound image").
+    /// Drop chat-upload image keys (`user_image`, `user_image_N`). Used when
+    /// an accept is rolled back after turn-start save failure.
+    pub fn clear_user_images(&mut self) {
+        self.entries.retain(|k, _| !k.starts_with("user_image"));
+    }
+
     pub fn store_user_image(&mut self, key: &str, data_url: &str) {
         if !data_url.starts_with("data:image/") {
             tracing::warn!(
@@ -2165,6 +2171,10 @@ pub struct AgentInternalState {
     /// Optional durable sink. Production SessionManager always wires one;
     /// unit tests may leave `None` (no crash-window coverage required).
     pub op_ledger_commit: Option<std::sync::Arc<dyn super::task_continuity::OpLedgerCommit>>,
+    /// Pre-accept snapshot for the latest [`Self::accept_user_message`].
+    /// Cleared when turn-start history save succeeds; applied on save failure
+    /// so client `rejected` ≡ server state (no duplicate user msg / auth consume).
+    pending_accept_rollback: Option<AcceptRollback>,
 }
 
 impl std::fmt::Debug for AgentInternalState {
@@ -2185,6 +2195,10 @@ impl std::fmt::Debug for AgentInternalState {
                 "op_ledger_commit",
                 &self.op_ledger_commit.as_ref().map(|_| "Some"),
             )
+            .field(
+                "pending_accept_rollback",
+                &self.pending_accept_rollback.is_some(),
+            )
             .finish()
     }
 }
@@ -2198,6 +2212,15 @@ impl std::fmt::Debug for AgentInternalState {
 pub struct AcceptedTurnContext {
     /// Turn ID allocated for this user message (tool-gate call-site).
     pub call_site_turn: u64,
+}
+
+/// Pre-[`AgentInternalState::accept_user_message`] snapshot so a failed
+/// turn-start history save can restore memory / Turn / auth exactly.
+#[derive(Debug, Clone)]
+struct AcceptRollback {
+    memory_len: usize,
+    message_count: usize,
+    task_state: super::task_continuity::TaskState,
 }
 
 impl AgentInternalState {
@@ -2220,6 +2243,7 @@ impl AgentInternalState {
             op_ledger_version: 0,
             history_generation: 0,
             op_ledger_commit: None,
+            pending_accept_rollback: None,
         }
     }
 
@@ -2432,6 +2456,12 @@ impl AgentInternalState {
             message.role, "user",
             "accept_user_message is for user Turns only"
         );
+        // Snapshot before Turn/auth/memory mutate so save failure can restore.
+        self.pending_accept_rollback = Some(AcceptRollback {
+            memory_len: self.memory.len(),
+            message_count: self.session.message_count,
+            task_state: self.task_state.clone(),
+        });
         if let Some((nodes, ver)) = content_nodes {
             message.content_nodes = Some(nodes);
             message.content_version = Some(ver);
@@ -2486,6 +2516,28 @@ impl AgentInternalState {
         self.memory.push(message);
         self.session.increment_messages();
         AcceptedTurnContext { call_site_turn }
+    }
+
+    /// Drop the pending accept snapshot after turn-start history save succeeds.
+    pub fn clear_pending_accept_rollback(&mut self) {
+        self.pending_accept_rollback = None;
+    }
+
+    /// Restore memory / Turn / auth to the pre-accept snapshot (save failure).
+    ///
+    /// Also clears chat `user_image*` large-data entries so a multimodal retry
+    /// does not keep a half-applied accept cache. Returns whether a snapshot
+    /// was applied.
+    pub fn rollback_pending_accept(&mut self) -> bool {
+        let Some(snap) = self.pending_accept_rollback.take() else {
+            return false;
+        };
+        self.memory.truncate(snap.memory_len);
+        self.session.message_count = snap.message_count;
+        self.task_state = snap.task_state;
+        self.compaction_cache = None;
+        self.large_data_cache.clear_user_images();
+        true
     }
 
     /// Push a message to the memory.
@@ -2826,6 +2878,69 @@ mod tests {
 
         state.touch();
         assert!(state.last_activity > 0);
+    }
+
+    /// Accept rollback restores memory / Turn / confirm auth after a failed
+    /// turn-start save (client rejected ≡ server).
+    #[test]
+    fn accept_rollback_restores_memory_turn_and_confirm_auth() {
+        use super::super::task_continuity::{
+            write_fingerprint, AuthorizeNewOpSubmit, StructuredResult,
+        };
+
+        let mut state = AgentInternalState::new("rollback".into());
+        let fp = write_fingerprint("run_now", r#"{"agent_id":"A"}"#);
+        let op = state.task_state.begin_new_operation(
+            "run_now",
+            None,
+            r#"{"agent_id":"A"}"#,
+            Some(fp.clone()),
+        );
+        state.task_state.mark_operation_running(&op);
+        state.task_state.complete_operation_unknown(
+            &op,
+            StructuredResult {
+                success: false,
+                summary: "interrupted".into(),
+                body: String::new(),
+                details_ref: None,
+            },
+        );
+        let req = state
+            .task_state
+            .issue_or_reuse_confirm_request(&op, &fp, "run_now", None);
+        let submit = AuthorizeNewOpSubmit {
+            request_id: req.request_id.clone(),
+            prior_operation_id: req.prior_operation_id.clone(),
+            write_fingerprint: req.write_fingerprint.clone(),
+        };
+        let turns_before = state.task_state.turn_count;
+        let mem_before = state.memory.len();
+
+        let _ = state.accept_user_message(
+            AgentMessage::user("confirm re-run"),
+            Some(submit.clone()),
+            None,
+        );
+        assert_eq!(state.memory.len(), mem_before + 1);
+        assert!(state.task_state.user_authorized_new_op.is_some());
+        assert!(state
+            .task_state
+            .pending_confirm(&submit.request_id)
+            .is_none());
+
+        assert!(state.rollback_pending_accept());
+        assert_eq!(state.memory.len(), mem_before);
+        assert_eq!(state.task_state.turn_count, turns_before);
+        assert!(state.task_state.user_authorized_new_op.is_none());
+        assert!(
+            state
+                .task_state
+                .pending_confirm(&submit.request_id)
+                .is_some(),
+            "confirm must be restored for retry"
+        );
+        assert!(!state.rollback_pending_accept(), "pending consumed once");
     }
 
     #[test]
