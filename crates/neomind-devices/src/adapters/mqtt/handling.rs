@@ -33,9 +33,9 @@ use tracing::{debug, error, info, warn};
 
 use super::identity::{
     approved_identity_from_extra, lookup_topic_device_ids, match_by_approved_identity,
-    match_registered_device, resolve_mqtt_device_identity, topic_map_insert,
-    ApprovedIdentityOutcome, OutboundEchoBuffer, TopicDeviceMap, MQTT_IDENTITY_FIELD_KEY,
-    MQTT_IDENTITY_SOURCE_KEY, OUTBOUND_ECHO_TTL,
+    match_registered_device, match_registered_device_except, resolve_mqtt_device_identity,
+    topic_map_insert, topic_map_remove_device_all, ApprovedIdentityOutcome, OutboundEchoBuffer,
+    TopicDeviceMap, MQTT_IDENTITY_FIELD_KEY, MQTT_IDENTITY_SOURCE_KEY, OUTBOUND_ECHO_TTL,
 };
 
 impl MqttAdapter {
@@ -328,10 +328,10 @@ impl MqttAdapter {
                 );
 
                 // Registered devices: prefer each device's approved identity rule
-                // (sticky source/field from draft/approve). Compat fallback to
-                // match_registered_device only when no claiming approved rule fired
-                // a mismatch — otherwise auto-detect must not remap e.g. approved
-                // `sn=B` onto registered A via payload `device_id=A`.
+                // (sticky source/field from draft/approve). Conflict / Unverifiable
+                // isolate **per device** — blocked ids skip auto/1:1 remapping,
+                // other bound devices may still route. Missing approved field is
+                // Unverifiable (not NoRule).
                 let mut approved_blocked = HashSet::new();
                 let mut device_id_opt = {
                     let registry = device_registry.read().await;
@@ -351,67 +351,93 @@ impl MqttAdapter {
                             let mapping = topic_to_device.read().await;
                             match_registered_device(&mapping, &topic, &identity)
                         }
-                        ApprovedIdentityOutcome::Conflict { blocked } => {
+                        ApprovedIdentityOutcome::Conflict { blocked }
+                        | ApprovedIdentityOutcome::Unverifiable { blocked } => {
                             approved_blocked = blocked;
-                            None
+                            let mapping = topic_to_device.read().await;
+                            match_registered_device_except(
+                                &mapping,
+                                &topic,
+                                &identity,
+                                &approved_blocked,
+                            )
                         }
                     }
                 };
 
                 // CT-Prov bare-topic / stale map: strong-extract id already in the
                 // **live registry** → associate + learn the topic, do NOT draft.
-                // Obey approved-mismatch blocks and the delete-teardown ban.
+                // Learn + ban share one sync boundary: hold `uncollectable` write
+                // through the map insert so unsubscribe cannot clear-then-lose to
+                // a re-insert race.
                 if device_id_opt.is_none()
                     && identity.source == super::identity::MqttIdentitySource::TopicStrong
                     && !approved_blocked.contains(&identity.device_id)
                 {
-                    let banned = {
-                        let u = uncollectable.read().await;
-                        u.contains(&identity.device_id)
-                    };
-                    let known = if banned {
-                        false
-                    } else {
-                        let registry = device_registry.read().await;
-                        registry.get_device(&identity.device_id).is_some()
-                    };
-                    if known {
-                        let mut mapping = topic_to_device.write().await;
-                        topic_map_insert(&mut mapping, &topic, &identity.device_id);
-                        info!(
-                            "Learned topic mapping for registered device {} from '{}'",
-                            identity.device_id, topic
-                        );
-                        device_id_opt = Some(identity.device_id.clone());
+                    // Hold ban write through map insert so unsubscribe's
+                    // ban+clear cannot interleave (same lock order).
+                    let banned_guard = uncollectable.write().await;
+                    if !banned_guard.contains(&identity.device_id) {
+                        let known = {
+                            let registry = device_registry.read().await;
+                            registry.get_device(&identity.device_id).is_some()
+                        };
+                        if known {
+                            let mut mapping = topic_to_device.write().await;
+                            topic_map_insert(&mut mapping, &topic, &identity.device_id);
+                            info!(
+                                "Learned topic mapping for registered device {} from '{}'",
+                                identity.device_id, topic
+                            );
+                            device_id_opt = Some(identity.device_id.clone());
+                        }
                     }
+                    drop(banned_guard);
                 }
 
                 // Formal routing requires a live, collectable registration.
-                if let Some(ref id) = device_id_opt {
+                // Banned / stale map hits clear the association so a race residue
+                // cannot keep routing to a teardown or ghost device.
+                if let Some(id) = device_id_opt.clone() {
                     let banned = {
                         let u = uncollectable.read().await;
-                        u.contains(id)
+                        u.contains(&id)
                     };
-                    if banned || approved_blocked.contains(id) {
+                    if banned || approved_blocked.contains(&id) {
                         debug!(
                             "Skipping formal route for banned/blocked device {} on {}",
                             id, topic
                         );
+                        if banned {
+                            let mut mapping = topic_to_device.write().await;
+                            let _ = topic_map_remove_device_all(&mut mapping, &id);
+                        }
                         device_id_opt = None;
                         if banned {
-                            // Teardown in progress — do not rediscover mid-delete.
-                            return;
+                            let still_registered = {
+                                let registry = device_registry.read().await;
+                                registry.get_device(&id).is_some()
+                            };
+                            if still_registered {
+                                // Mid-delete — do not rediscover while registry
+                                // still lists the device.
+                                return;
+                            }
+                            // Delete complete: fall through so this uplink can
+                            // rediscover after the stale map was cleared.
                         }
                     } else {
                         let registered = {
                             let registry = device_registry.read().await;
-                            registry.get_device(id).is_some()
+                            registry.get_device(&id).is_some()
                         };
                         if !registered {
                             debug!(
                                 "Dropping stale map route for unregistered device {} on {}",
                                 id, topic
                             );
+                            let mut mapping = topic_to_device.write().await;
+                            let _ = topic_map_remove_device_all(&mut mapping, &id);
                             device_id_opt = None;
                         }
                     }

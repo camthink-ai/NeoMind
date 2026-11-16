@@ -327,17 +327,22 @@ impl DeviceAdapter for MqttAdapter {
     }
 
     async fn unsubscribe_device(&self, device_id: &str) -> AdapterResult<()> {
-        // FIRST: mark uncollectable / unlearnable before clearing maps or
-        // awaiting broker unsubscribe. Registry removal happens later in
-        // DeviceService — a message in that window must not re-insert the
-        // topic map just because the device is still in the registry.
-        {
+        // Unified sync boundary with CT-Prov learn: hold `uncollectable` write
+        // through topic-map clear so a concurrent learn cannot observe "not
+        // banned" then re-insert after we emptied the map. Registry removal
+        // happens later in DeviceService — mid-window uplinks must not restore
+        // formal routing just because the device is still registered.
+        let cleared = {
             let mut banned = self.uncollectable.write().await;
             banned.insert(device_id.to_string());
-        }
+            // Drop ALL learned topic associations for this device (not only the
+            // configured telemetry_topic — CT-Prov / aliases may have added more).
+            let mut mapping = self.topic_to_device.write().await;
+            topic_map_remove_device_all(&mut mapping, device_id)
+        };
 
-        // Clear the type cache so a late uplink cannot treat a cache hit as
-        // "still registered" and re-learn the topic.
+        // Type / metric caches are advisory for extraction; clear outside the
+        // ban+map boundary (lock order stays uncollectable → topic_to_device).
         {
             let mut types = self.device_types.write().await;
             types.remove(device_id);
@@ -347,12 +352,6 @@ impl DeviceAdapter for MqttAdapter {
             cache.remove(device_id);
         }
 
-        // Drop ALL learned topic associations for this device (not only the
-        // configured telemetry_topic — CT-Prov / aliases may have added more).
-        let cleared = {
-            let mut mapping = self.topic_to_device.write().await;
-            topic_map_remove_device_all(&mut mapping, device_id)
-        };
         for (topic, still_used) in &cleared {
             if !still_used {
                 if let Err(e) = self.unsubscribe_topic(topic).await {

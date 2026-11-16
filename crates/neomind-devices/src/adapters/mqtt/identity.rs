@@ -393,7 +393,22 @@ pub fn match_registered_device(
     topic: &str,
     identity: &ResolvedMqttIdentity,
 ) -> Option<String> {
-    let devices = lookup_topic_device_ids(map, topic);
+    match_registered_device_except(map, topic, identity, &HashSet::new())
+}
+
+/// Like [`match_registered_device`], but drops `exclude` candidates first.
+///
+/// Used when approved rules Conflict / Unverifiable for some devices: those
+/// ids must not be remapped via auto-detect / 1:1 compat, while **other**
+/// bound devices on the same topic may still route.
+pub fn match_registered_device_except(
+    map: &TopicDeviceMap,
+    topic: &str,
+    identity: &ResolvedMqttIdentity,
+    exclude: &HashSet<String>,
+) -> Option<String> {
+    let mut devices = lookup_topic_device_ids(map, topic);
+    devices.retain(|id| !exclude.contains(id));
     if devices.contains(&identity.device_id) {
         return Some(identity.device_id.clone());
     }
@@ -405,18 +420,26 @@ pub fn match_registered_device(
 
 /// Outcome of matching bound devices' approved identity rules.
 ///
-/// Distinguishes "no sticky rule" (1:1 / discovery-field fallback OK) from
-/// "sticky rule fired but mismatched" (must NOT remap the same device via
-/// other payload fields such as `device_id` when approved field was `sn`).
+/// Distinguishes:
+/// - `NoRule` — no sticky claiming rule applied → 1:1 / discovery fallback OK
+/// - `Unverifiable` — claiming rule present but message cannot verify it
+///   (missing/null/invalid field) → must NOT hit that device via other fields;
+///   message may still become a discovery candidate / route to other devices
+/// - `Conflict` — claiming rule extracted a different identity → same isolate
+///   per device; do not skip the whole compat match for other candidates
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovedIdentityOutcome {
     /// Approved rule extracted an id equal to a bound device.
     Match(String),
     /// At least one claiming approved rule extracted a different identity.
     /// Those device ids must not be attributed via `match_registered_device`
-    /// remapping (auto-detect / 1:1 compat).
+    /// remapping (auto-detect / 1:1 compat). Other bound devices may still match.
     Conflict { blocked: HashSet<String> },
-    /// No bound device carried a claiming approved rule that fired.
+    /// At least one claiming approved rule could not extract a verifiable value
+    /// from this message (missing/null/invalid field). Block remapping those
+    /// devices via other fields; do not treat as `NoRule`.
+    Unverifiable { blocked: HashSet<String> },
+    /// No bound device carried a claiming approved rule that applied.
     NoRule,
 }
 
@@ -433,9 +456,11 @@ fn is_claiming_approved_source(source: MqttIdentitySource) -> bool {
 /// Try each bound device's **approved** identity rule against this payload.
 /// First exact match wins (shared-topic split stays order-stable per insert).
 ///
-/// When a claiming rule extracts a value that does **not** equal that device,
-/// returns [`ApprovedIdentityOutcome::Conflict`] so ingest does not fall back
-/// to auto-detected fields that happen to name the same registered device.
+/// Outcomes are **per candidate device**:
+/// - Match → route to that device
+/// - Conflict / Unverifiable → block those devices from auto/1:1 remapping;
+///   other devices on the topic may still match via fallback
+/// - NoRule → full fallback OK
 pub fn match_by_approved_identity<F>(
     bound_devices: &HashSet<String>,
     topic: &str,
@@ -449,28 +474,43 @@ where
     // Deterministic order for shared topics.
     let mut ids: Vec<&String> = bound_devices.iter().collect();
     ids.sort();
-    let mut blocked = HashSet::new();
+    let mut conflicted = HashSet::new();
+    let mut unverifiable = HashSet::new();
     for device_id in ids {
         let Some((source, field)) = rule_for(device_id) else {
             continue;
         };
-        if let Some(extracted) =
-            extract_with_approved_rule(topic, payload, source, field.as_deref(), config)
-        {
-            if extracted == *device_id {
+        if !is_claiming_approved_source(source) {
+            // TopicWeak / TopicHash are discovery fallbacks — a segment mismatch
+            // or missing extract must not block explicit 1:1 bind compat.
+            continue;
+        }
+        match extract_with_approved_rule(topic, payload, source, field.as_deref(), config) {
+            Some(extracted) if extracted == *device_id => {
                 return ApprovedIdentityOutcome::Match(device_id.clone());
             }
-            // TopicWeak / TopicHash are discovery fallbacks — a segment mismatch
-            // must not block explicit 1:1 bind compat.
-            if is_claiming_approved_source(source) {
-                blocked.insert(device_id.clone());
+            Some(_) => {
+                conflicted.insert(device_id.clone());
+            }
+            None => {
+                // Has a claiming rule but this message cannot verify it
+                // (missing/null/invalid field) — NOT NoRule.
+                unverifiable.insert(device_id.clone());
             }
         }
     }
-    if blocked.is_empty() {
-        ApprovedIdentityOutcome::NoRule
+    if !conflicted.is_empty() {
+        // Conflicts dominate; also keep unverifiable peers blocked for this msg.
+        conflicted.extend(unverifiable);
+        ApprovedIdentityOutcome::Conflict {
+            blocked: conflicted,
+        }
+    } else if !unverifiable.is_empty() {
+        ApprovedIdentityOutcome::Unverifiable {
+            blocked: unverifiable,
+        }
     } else {
-        ApprovedIdentityOutcome::Conflict { blocked }
+        ApprovedIdentityOutcome::NoRule
     }
 }
 

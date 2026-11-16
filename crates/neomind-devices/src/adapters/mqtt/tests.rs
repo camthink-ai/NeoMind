@@ -741,6 +741,117 @@ fn approved_payload_mismatch_is_conflict_not_fallback() {
     assert_eq!(weak, ApprovedIdentityOutcome::NoRule);
 }
 
+#[test]
+fn approved_missing_field_is_unverifiable_not_norule() {
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let bound = std::collections::HashSet::from(["A".to_string()]);
+    // Approved sticky field is sn; payload only has device_id=A.
+    let outcome = match_by_approved_identity(
+        &bound,
+        "gateway/data",
+        b"{\"device_id\":\"A\",\"v\":1}",
+        &cfg,
+        |_| Some((MqttIdentitySource::AutoPayload, Some("sn".to_string()))),
+    );
+    match outcome {
+        ApprovedIdentityOutcome::Unverifiable { blocked } => {
+            assert!(blocked.contains("A"));
+        }
+        other => panic!("expected Unverifiable, got {:?}", other),
+    }
+    // Null / non-string sn is also unverifiable (cannot verify), not NoRule.
+    let null_sn = match_by_approved_identity(
+        &bound,
+        "gateway/data",
+        b"{\"sn\":null,\"device_id\":\"A\"}",
+        &cfg,
+        |_| Some((MqttIdentitySource::AutoPayload, Some("sn".to_string()))),
+    );
+    match null_sn {
+        ApprovedIdentityOutcome::Unverifiable { blocked } => {
+            assert!(blocked.contains("A"));
+        }
+        other => panic!("expected Unverifiable for null sn, got {:?}", other),
+    }
+}
+
+#[test]
+fn conflict_isolates_per_device_other_still_matches() {
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let bound = std::collections::HashSet::from(["A".to_string(), "B".to_string()]);
+    let topic = "gateway/data";
+    let mut map = TopicDeviceMap::new();
+    topic_map_insert(&mut map, topic, "A");
+    topic_map_insert(&mut map, topic, "B");
+
+    // A approved sn conflicts (sn=X); B has no claiming rule.
+    let outcome = match_by_approved_identity(
+        &bound,
+        topic,
+        b"{\"sn\":\"X\",\"device_id\":\"B\"}",
+        &cfg,
+        |id| {
+            if id == "A" {
+                Some((MqttIdentitySource::AutoPayload, Some("sn".to_string())))
+            } else {
+                None
+            }
+        },
+    );
+    let blocked = match outcome {
+        ApprovedIdentityOutcome::Conflict { blocked } => blocked,
+        other => panic!("expected Conflict, got {:?}", other),
+    };
+    assert!(blocked.contains("A"));
+    assert!(!blocked.contains("B"));
+
+    let identity = resolve_mqtt_device_identity(topic, b"{\"sn\":\"X\",\"device_id\":\"B\"}", &cfg);
+    // Auto-detect prefers device_id → B; exclude only A → B still routes.
+    assert_eq!(identity.device_id, "B");
+    assert_eq!(
+        match_registered_device_except(&map, topic, &identity, &blocked).as_deref(),
+        Some("B")
+    );
+    // Full skip (old bug) would have blocked B too — except-path must not.
+    assert!(match_registered_device(&map, topic, &identity).is_some());
+}
+
+#[test]
+fn unverifiable_isolates_per_device_other_still_matches() {
+    let cfg = MqttAdapterConfig::new("test", "localhost:1883");
+    let bound = std::collections::HashSet::from(["A".to_string(), "B".to_string()]);
+    let topic = "gateway/data";
+    let mut map = TopicDeviceMap::new();
+    topic_map_insert(&mut map, topic, "A");
+    topic_map_insert(&mut map, topic, "B");
+
+    // A approved sn missing; payload claims device_id=B only.
+    let outcome = match_by_approved_identity(
+        &bound,
+        topic,
+        b"{\"device_id\":\"B\",\"v\":1}",
+        &cfg,
+        |id| {
+            if id == "A" {
+                Some((MqttIdentitySource::AutoPayload, Some("sn".to_string())))
+            } else {
+                None
+            }
+        },
+    );
+    let blocked = match outcome {
+        ApprovedIdentityOutcome::Unverifiable { blocked } => blocked,
+        other => panic!("expected Unverifiable, got {:?}", other),
+    };
+    assert!(blocked.contains("A"));
+
+    let identity = resolve_mqtt_device_identity(topic, b"{\"device_id\":\"B\",\"v\":1}", &cfg);
+    assert_eq!(
+        match_registered_device_except(&map, topic, &identity, &blocked).as_deref(),
+        Some("B")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Handling-path integration: approve → persist → reload → handle → delete
 // ---------------------------------------------------------------------------
@@ -1094,6 +1205,108 @@ mod handling_path {
     }
 
     #[tokio::test]
+    async fn approved_missing_field_does_not_ingest_via_other_field() {
+        // Approved sticky field is sn; payload has device_id=A only (no sn).
+        // Missing field is Unverifiable — must NOT remap onto A via device_id.
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "A",
+            "gw",
+            "gateway/data",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry).await;
+        reload_bindings(&adapter).await;
+
+        let mut rx = adapter.event_tx.subscribe();
+        handle(&adapter, "gateway/data", b"{\"device_id\":\"A\",\"v\":1}").await;
+        let events = drain(&mut rx);
+        assert!(
+            metric_ids(&events).is_empty(),
+            "missing approved sn must not ingest to A via device_id; got {:?}",
+            metric_ids(&events)
+        );
+        // Message may still become a discovery candidate (auto-detect A).
+        assert!(
+            !discovery_ids(&events).is_empty(),
+            "unverifiable approved rule must still allow discovery candidacy"
+        );
+    }
+
+    #[tokio::test]
+    async fn conflict_on_shared_topic_still_routes_other_device() {
+        // A conflicts on approved sn; B has no claiming rule and device_id=B.
+        // Per-device isolate: A blocked, B still formally ingests.
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "A",
+            "gw",
+            "gateway/data",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+        approve_device(&registry, "B", "gw", "gateway/data", None, None).await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry).await;
+        reload_bindings(&adapter).await;
+
+        let mut rx = adapter.event_tx.subscribe();
+        handle(
+            &adapter,
+            "gateway/data",
+            b"{\"sn\":\"WRONG\",\"device_id\":\"B\",\"v\":1}",
+        )
+        .await;
+        let events = drain(&mut rx);
+        assert_eq!(
+            metric_ids(&events),
+            vec!["B".to_string()],
+            "B must still ingest when only A conflicts; got {:?}",
+            metric_ids(&events)
+        );
+    }
+
+    #[tokio::test]
+    async fn unverifiable_on_shared_topic_still_routes_other_device() {
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "gw").await;
+        approve_device(
+            &registry,
+            "A",
+            "gw",
+            "gateway/data",
+            Some("auto_payload"),
+            Some("sn"),
+        )
+        .await;
+        approve_device(&registry, "B", "gw", "gateway/data", None, None).await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry).await;
+        reload_bindings(&adapter).await;
+
+        let mut rx = adapter.event_tx.subscribe();
+        handle(&adapter, "gateway/data", b"{\"device_id\":\"B\",\"v\":1}").await;
+        let events = drain(&mut rx);
+        assert_eq!(
+            metric_ids(&events),
+            vec!["B".to_string()],
+            "B must still ingest when A's sn is missing; got {:?}",
+            metric_ids(&events)
+        );
+    }
+
+    #[tokio::test]
     async fn delete_interleave_cannot_relearn_while_registry_still_has_device() {
         // Controllable delete window: adapter teardown done (uncollectable +
         // maps cleared) while registry still lists the device — uplink must
@@ -1150,6 +1363,65 @@ mod handling_path {
         assert!(
             lookup_topic_device_ids(&*adapter.topic_to_device.read().await, topic).is_empty(),
             "post-delete uplink must not restore formal mapping"
+        );
+    }
+
+    #[tokio::test]
+    async fn banned_stale_map_hit_clears_association_then_rediscovers() {
+        // Deterministic race residue (not post-teardown-only): ban is set and
+        // registry still has the device, but topic map was re-inserted (the
+        // pre-fix learn-vs-ban window). Formal hit must clear the map, skip
+        // ingest+discovery mid-delete; after unregister, rediscovery works.
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "cam").await;
+        let topic = "device/cam/dev-1/uplink";
+        approve_device(&registry, "dev-1", "cam", topic, Some("topic_strong"), None).await;
+
+        let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
+        adapter.set_shared_device_registry(registry.clone()).await;
+
+        DeviceAdapter::unsubscribe_device(&adapter, "dev-1")
+            .await
+            .unwrap();
+        assert!(adapter.uncollectable.read().await.contains("dev-1"));
+        assert!(registry.get_device("dev-1").is_some());
+
+        // Simulate race residue: map re-inserted after ban+clear.
+        {
+            let mut map = adapter.topic_to_device.write().await;
+            topic_map_insert(&mut map, topic, "dev-1");
+        }
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, topic)
+                .contains("dev-1")
+        );
+
+        let mut rx = adapter.event_tx.subscribe();
+        handle(&adapter, topic, b"{\"temp\":1}").await;
+        let mid = drain(&mut rx);
+        assert!(
+            metric_ids(&mid).is_empty(),
+            "banned map hit must not formally ingest"
+        );
+        assert!(
+            discovery_ids(&mid).is_empty(),
+            "banned+registered must not rediscover mid-delete"
+        );
+        assert!(
+            lookup_topic_device_ids(&*adapter.topic_to_device.read().await, topic).is_empty(),
+            "banned map hit must clear the stale association; leftover map \
+             would block rediscovery after delete completes"
+        );
+
+        // Delete complete: registry gone → rediscovery allowed.
+        registry.unregister_device("dev-1").unwrap();
+        handle(&adapter, topic, b"{\"temp\":2}").await;
+        let after = drain(&mut rx);
+        assert!(metric_ids(&after).is_empty());
+        assert_eq!(
+            discovery_ids(&after),
+            vec!["dev-1".to_string()],
+            "after delete complete, cleared map must allow rediscovery"
         );
     }
 
