@@ -13,7 +13,14 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
 import { Loader2, Info, Pencil } from "lucide-react"
-import type { ChatImage, Message, UserInfo } from "@/types"
+import type {
+  ChatImage,
+  GoalEvidenceLevel,
+  Message,
+  StreamEndReason,
+  SystemGoalStatus,
+  UserInfo,
+} from "@/types"
 import { cn } from "@/lib/utils"
 import { textMini } from "@/design-system/tokens/typography"
 import { formatTimestamp, formatElapsedMs } from "@/lib/utils/format"
@@ -369,6 +376,14 @@ export function ChatMessages({
                       ))}
                     </div>
                   )}
+                  {/* System-judged goal status from End — display only; never
+                      rewrites model text. not_applicable ≠ verified success. */}
+                  {message.role === 'assistant' && message.goalStatus && (
+                    <GoalStatusCallout
+                      status={message.goalStatus}
+                      endReason={message.endReason}
+                    />
+                  )}
                 </div>
               </div>
 
@@ -413,6 +428,96 @@ export function ChatMessages({
       })}
 
       <div ref={endRef} />
+    </div>
+  )
+}
+
+const LEVEL_KEYS: Record<GoalEvidenceLevel, string> = {
+  none: "chat:goalStatus.level.none",
+  config_success: "chat:goalStatus.level.config_success",
+  command_dispatched: "chat:goalStatus.level.command_dispatched",
+  device_acknowledged: "chat:goalStatus.level.device_acknowledged",
+  physical_effect_verified: "chat:goalStatus.level.physical_effect_verified",
+}
+
+const END_REASON_KEYS: Record<StreamEndReason, string> = {
+  normal: "chat:goalStatus.endReason.normal",
+  interrupted: "chat:goalStatus.endReason.interrupted",
+  timeout: "chat:goalStatus.endReason.timeout",
+  error: "chat:goalStatus.endReason.error",
+  cancelled: "chat:goalStatus.endReason.cancelled",
+  cannot_continue: "chat:goalStatus.endReason.cannot_continue",
+}
+
+/** Display-only system goal status; never rewrites assistant content. */
+function GoalStatusCallout({
+  status,
+  endReason,
+}: {
+  status: SystemGoalStatus
+  endReason?: StreamEndReason
+}) {
+  const { t } = useTranslation("chat")
+  let body: string
+  // Tone: not_applicable / incomplete stay muted — never success styling.
+  let tone: "muted" | "warn" | "ok" = "muted"
+  switch (status.status) {
+    case "not_applicable":
+      body = t("chat:goalStatus.notApplicable")
+      tone = "muted"
+      break
+    case "incomplete":
+      body = t("chat:goalStatus.incomplete", {
+        level: t(LEVEL_KEYS[status.level]),
+        reason: status.reason,
+      })
+      tone = "warn"
+      break
+    case "complete_eligible":
+      body = t("chat:goalStatus.completeEligible", {
+        level: t(LEVEL_KEYS[status.level]),
+        physical: status.physical_ok
+          ? t("chat:goalStatus.completeEligiblePhysical")
+          : t("chat:goalStatus.completeEligibleNoPhysical"),
+      })
+      tone = status.physical_ok ? "ok" : "muted"
+      break
+    case "completed":
+      body = t("chat:goalStatus.completed", { id: status.evidence_id })
+      tone = "ok"
+      break
+    case "halted":
+      body = t("chat:goalStatus.halted", { reason: status.reason })
+      tone = "warn"
+      break
+    case "cancelled":
+      body = t("chat:goalStatus.cancelled")
+      tone = "muted"
+      break
+    default:
+      body = t("chat:goalStatus.label")
+  }
+  const reasonLine = endReason ? t(END_REASON_KEYS[endReason]) : null
+  return (
+    <div
+      className={cn(
+        "mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-relaxed",
+        tone === "ok" && "border-success-light bg-success-light text-foreground",
+        tone === "warn" && "border-warning-light bg-warning-light text-foreground",
+        tone === "muted" && "border-dashed border-border bg-muted-20 text-muted-foreground",
+      )}
+      role="status"
+      aria-label={t("chat:goalStatus.label")}
+      data-goal-status={status.status}
+      data-end-reason={endReason || undefined}
+    >
+      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <div className="flex flex-col gap-0.5">
+        <span>{body}</span>
+        {reasonLine && (
+          <span className="text-muted-foreground opacity-80">{reasonLine}</span>
+        )}
+      </div>
     </div>
   )
 }

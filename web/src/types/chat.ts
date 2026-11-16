@@ -32,9 +32,57 @@ export interface Message {
   // spent, …) — rendered as a system callout below the content, never
   // merged into it.
   systemNotes?: string[]
+  /** System-judged goal status from End.goalStatus (not model NL). */
+  goalStatus?: SystemGoalStatus
+  /** Why the stream ended (normal / interrupted / …). */
+  endReason?: StreamEndReason
   /** Inline-@ nodes for history display (client optimistic + future server). */
   contentNodes?: ChatContentNode[]
 }
+
+/** Evidence ladder from the backend (snake_case wire tags). */
+export type GoalEvidenceLevel =
+  | 'none'
+  | 'config_success'
+  | 'command_dispatched'
+  | 'device_acknowledged'
+  | 'physical_effect_verified'
+
+/**
+ * System-judged goal status on End — never derived by scanning reply text.
+ * `not_applicable` is NOT verified success.
+ */
+export type SystemGoalStatus =
+  | { status: 'not_applicable' }
+  | {
+      status: 'incomplete'
+      reason: string
+      level: GoalEvidenceLevel
+      operation_id?: string
+      task_complete_ok: boolean
+      physical_ok: boolean
+    }
+  | {
+      status: 'complete_eligible'
+      level: GoalEvidenceLevel
+      operation_id?: string
+      device_id?: string
+      command?: string
+      delivery?: string
+      task_complete_ok: boolean
+      physical_ok: boolean
+    }
+  | { status: 'completed'; evidence_id: string }
+  | { status: 'halted'; reason: string }
+  | { status: 'cancelled' }
+
+export type StreamEndReason =
+  | 'normal'
+  | 'interrupted'
+  | 'timeout'
+  | 'error'
+  | 'cancelled'
+  | 'cannot_continue'
 
 /**
  * All possible message roles including internal tool messages
@@ -156,7 +204,11 @@ export type ServerMessage =
       toolTokens?: number
       maxContextTokens?: number
       usageRatio?: number
-    } }
+    }
+    /** System-judged goal status — `not_applicable` ≠ verified success. */
+    goalStatus?: SystemGoalStatus
+    endReason?: StreamEndReason
+  }
   // Cancel acknowledged (server-side reply to __CANCEL__); no trailing
   // 'end' is guaranteed on this path, so stream state must reset HERE.
   | { type: 'cancelled'; message?: string; sessionId?: string }

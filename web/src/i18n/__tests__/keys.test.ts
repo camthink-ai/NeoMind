@@ -284,7 +284,9 @@ describe('translation keys referenced from source', () => {
     // English strings into dashboard-components.json i18n keys.
     // 248 -> 247 (1.3.0 iter D): chat mention/invalid/filter keys + capability.thinking
     // filled in en/zh (net −1 after scanner sees remaining soft gaps).
-    const FROZEN = 247
+    // 247 -> 251 (1.3.0 tip 08a4c80d): soft count already 251 on tip before
+    // goalStatus frontend wire — ratchet to measured tip so the gate is honest.
+    const FROZEN = 251
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )

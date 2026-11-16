@@ -539,12 +539,43 @@ pub enum GoalClaimKind {
     TaskComplete,
 }
 
+/// Why the stream ended (orthogonal to [`SystemGoalStatus`] evidence).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamEndReason {
+    /// Normal final reply after tools / text.
+    Normal,
+    /// User interrupt / cancel mid-stream.
+    Interrupted,
+    /// Wall-clock / stream timeout.
+    Timeout,
+    /// Fatal error path (still emits End after Error).
+    Error,
+    /// Explicit cancel acknowledgement path.
+    Cancelled,
+    /// Loop / budget / cannot-continue forced summary.
+    CannotContinue,
+}
+
+impl StreamEndReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Interrupted => "interrupted",
+            Self::Timeout => "timeout",
+            Self::Error => "error",
+            Self::Cancelled => "cancelled",
+            Self::CannotContinue => "cannot_continue",
+        }
+    }
+}
+
 /// System-judged goal status for the final response (not model NL).
 ///
 /// Structured completion is decided only from execution evidence via
 /// [`TaskState::evaluate_goal_claim`] / [`TaskState::complete_with_evidence`].
 /// Assistant prose is display-only within this limit — never scanned for
-/// success keywords.
+/// success keywords. [`Self::NotApplicable`] is **not** verified success.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum SystemGoalStatus {
@@ -2447,20 +2478,19 @@ impl TaskState {
         let Some(mut obs) = classify_goal_evidence(tool_name, arguments, result_data) else {
             return;
         };
-        // Bind to explicit op id, else current Operation — required for claim matching.
-        let bound_op = operation_id
+        // Explicit Operation id only — never fall back to current_operation_id.
+        // Without an explicit id, do not raise write-op (CommandDispatched+)
+        // evidence that would upgrade the active write lease.
+        let explicit_op = operation_id
             .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                let cur = self.current_operation_id.as_str();
-                if cur.is_empty() {
-                    None
-                } else {
-                    Some(cur.to_string())
-                }
-            });
-        if let Some(op) = bound_op {
+            .map(|s| s.to_string());
+        if obs.level >= GoalEvidenceLevel::CommandDispatched && explicit_op.is_none() {
+            return;
+        }
+        if let Some(op) = explicit_op {
             obs.operation_id = Some(op);
+        } else {
+            obs.operation_id = None;
         }
         // Constrained target: ignore evidence for a different device.
         if let (Some(need), Some(got)) = (&self.object, &obs.device_id) {
@@ -4670,6 +4700,39 @@ mod tests {
             } => assert_eq!(op, "op-B"),
             other => panic!("expected CompleteEligible(dispatched,op-B), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn observe_without_explicit_op_id_does_not_raise_write_op_evidence() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "update cam-1".into(),
+            object: Some("cam-1".into()),
+            content: None,
+        });
+        s.method = Some(ExecutionMethod::DeviceNativeCommand);
+        s.current_operation_id = "op-current".into();
+
+        // No explicit Operation id — must NOT bind to / upgrade current write op.
+        s.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({"device": "cam-1", "command": "render_text"}),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "cam-1",
+                "command": "render_text",
+                "delivery": "physical_effect_verified"
+            }),
+            None,
+        );
+        assert!(
+            s.goal_evidence_for(Some("op-current")).is_none(),
+            "implicit current-op fallback must not raise write-op evidence"
+        );
+        assert!(s.goal_evidences.is_empty());
+        assert!(s
+            .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
+            .is_err());
     }
 
     #[test]

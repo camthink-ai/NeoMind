@@ -282,7 +282,12 @@ pub async fn process_stream_events_with_safeguards(
         tracing::error!(max_context, prompt_overhead, "{}", message);
         return Ok(Box::pin(async_stream::stream! {
             yield AgentEvent::Error { message };
-            yield AgentEvent::end();
+            // No task state yet — still emit explicit status+reason.
+            yield AgentEvent::end()
+                .with_goal_status(
+                    crate::agent::task_continuity::SystemGoalStatus::NotApplicable,
+                )
+                .with_end_reason(crate::agent::task_continuity::StreamEndReason::Error);
         }));
     }
 
@@ -947,7 +952,14 @@ pub async fn process_stream_events_with_safeguards(
                                 );
                             }
                             yield AgentEvent::content("\n\n[Interrupted]");
-                            yield AgentEvent::end();
+                            {
+                                let state = internal_state.read().await;
+                                yield AgentEvent::final_end(
+                                    &state.task_state,
+                                    crate::agent::task_continuity::StreamEndReason::Interrupted,
+                                    None,
+                                );
+                            }
                             return;
                         }
                     };
@@ -1006,7 +1018,14 @@ pub async fn process_stream_events_with_safeguards(
                             );
                         }
                         yield AgentEvent::content("\n\n[Interrupted]");
-                        yield AgentEvent::end();
+                        {
+                            let state = internal_state.read().await;
+                            yield AgentEvent::final_end(
+                                &state.task_state,
+                                crate::agent::task_continuity::StreamEndReason::Interrupted,
+                                None,
+                            );
+                        }
                         return;
                     }
 
@@ -1792,7 +1811,14 @@ pub async fn process_stream_events_with_safeguards(
                                         );
                                     }
                                     yield AgentEvent::content("\n\n[Interrupted]");
-                                    yield AgentEvent::end();
+                                    {
+                                        let state = internal_state.read().await;
+                                        yield AgentEvent::final_end(
+                                            &state.task_state,
+                                            crate::agent::task_continuity::StreamEndReason::Interrupted,
+                                            None,
+                                        );
+                                    }
                                     return;
                                 }
                                 yield AgentEvent::heartbeat();
@@ -3109,20 +3135,29 @@ pub async fn process_stream_events_with_safeguards(
 
             // Read token usage from LLM interface (captured from Ollama backend stream)
             let prompt_tokens = llm_interface.take_last_prompt_tokens().await;
-            // System-judged goal status on the final response (evidence only —
-            // never derived by scanning assistant prose for success keywords).
-            let goal_status = {
-                let state = internal_state.read().await;
-                state.task_state.system_goal_status()
-            };
-            match prompt_tokens {
+            let usage = match prompt_tokens {
                 Some(pt) => {
-                    let (system_tokens, tool_tokens) = llm_interface.estimate_prompt_breakdown().await;
-                    yield AgentEvent::end_with_usage(pt, system_tokens, tool_tokens)
-                        .with_goal_status(goal_status);
+                    let (system_tokens, tool_tokens) =
+                        llm_interface.estimate_prompt_breakdown().await;
+                    Some((pt, system_tokens, tool_tokens))
                 }
-                None => yield AgentEvent::end().with_goal_status(goal_status),
-            }
+                None => None,
+            };
+            // Unified End: system goal status + reason (never bare end()).
+            let end = {
+                let state = internal_state.read().await;
+                let reason = match &state.task_state.status {
+                    crate::agent::task_continuity::TaskStatus::Halted { .. } => {
+                        crate::agent::task_continuity::StreamEndReason::CannotContinue
+                    }
+                    crate::agent::task_continuity::TaskStatus::Cancelled => {
+                        crate::agent::task_continuity::StreamEndReason::Cancelled
+                    }
+                    _ => crate::agent::task_continuity::StreamEndReason::Normal,
+                };
+                AgentEvent::final_end(&state.task_state, reason, usage)
+            };
+            yield end;
         }))
 }
 

@@ -77,8 +77,12 @@ pub enum AgentEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         tool_tokens: Option<u32>,
         /// System-judged goal status (evidence only — not model NL).
+        /// `not_applicable` is **not** verified success.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         goal_status: Option<super::task_continuity::SystemGoalStatus>,
+        /// Why this End was emitted (normal / interrupted / timeout / …).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        end_reason: Option<super::task_continuity::StreamEndReason>,
     },
     /// Intermediate end (for multi-round tool calling)
     /// Indicates the current round is complete but more processing is coming
@@ -264,6 +268,7 @@ impl AgentEvent {
             system_prompt_tokens: None,
             tool_tokens: None,
             goal_status: None,
+            end_reason: None,
         }
     }
 
@@ -279,6 +284,7 @@ impl AgentEvent {
             system_prompt_tokens: Some(system_prompt_tokens as u32),
             tool_tokens: Some(tool_tokens as u32),
             goal_status: None,
+            end_reason: None,
         }
     }
 
@@ -291,6 +297,34 @@ impl AgentEvent {
             *slot = Some(status);
         }
         self
+    }
+
+    /// Attach stream end reason (normal / interrupted / …).
+    pub fn with_end_reason(mut self, reason: super::task_continuity::StreamEndReason) -> Self {
+        if let Self::End {
+            end_reason: slot, ..
+        } = &mut self
+        {
+            *slot = Some(reason);
+        }
+        self
+    }
+
+    /// Unified final End: always carries system goal status + end reason.
+    ///
+    /// Use for normal completion, early interrupt, timeout, error, cancel,
+    /// and cannot-continue paths — never bare [`Self::end`] on those exits.
+    pub fn final_end(
+        task: &super::task_continuity::TaskState,
+        reason: super::task_continuity::StreamEndReason,
+        usage: Option<(u32, usize, usize)>,
+    ) -> Self {
+        let goal_status = task.system_goal_status();
+        let base = match usage {
+            Some((pt, sys, tools)) => Self::end_with_usage(pt, sys, tools),
+            None => Self::end(),
+        };
+        base.with_goal_status(goal_status).with_end_reason(reason)
     }
 
     /// Create an intent event.
@@ -2578,6 +2612,65 @@ mod tests {
 
         let end = AgentEvent::end();
         assert!(end.is_end());
+    }
+
+    #[test]
+    fn final_end_event_carries_goal_status_and_reason() {
+        use super::super::task_continuity::{
+            ExcludedRoute, ExecutionMethod, StreamEndReason, SystemGoalStatus, TaskDirective,
+            TaskState,
+        };
+
+        let mut task = TaskState::default();
+        task.apply_directive(TaskDirective::SetGoal {
+            goal: "update cam-1".into(),
+            object: Some("cam-1".into()),
+            content: None,
+        });
+        task.apply_directive(TaskDirective::Correct {
+            goal: "device-native".into(),
+            object: None,
+            content: None,
+            method: Some(ExecutionMethod::DeviceNativeCommand),
+            exclude_routes: vec![ExcludedRoute::NotificationOrWebhook],
+        });
+
+        let end = AgentEvent::final_end(&task, StreamEndReason::Interrupted, None);
+        match &end {
+            AgentEvent::End {
+                goal_status: Some(SystemGoalStatus::Incomplete { .. }),
+                end_reason: Some(StreamEndReason::Interrupted),
+                ..
+            } => {}
+            other => panic!("expected Incomplete+Interrupted End, got {other:?}"),
+        }
+        let json = serde_json::to_value(&end).unwrap();
+        assert_eq!(json["type"], "End");
+        assert_eq!(json["end_reason"], "interrupted");
+        assert_eq!(json["goal_status"]["status"], "incomplete");
+        // NotApplicable must not be implied as success on unconstrained early error.
+        let na = AgentEvent::end()
+            .with_goal_status(SystemGoalStatus::NotApplicable)
+            .with_end_reason(StreamEndReason::Error);
+        let na_json = serde_json::to_value(&na).unwrap();
+        assert_eq!(na_json["goal_status"]["status"], "not_applicable");
+        assert_ne!(na_json["goal_status"]["status"], "completed");
+    }
+
+    #[test]
+    fn final_end_normal_not_applicable_is_not_verified_success() {
+        use super::super::task_continuity::{StreamEndReason, SystemGoalStatus, TaskState};
+        let task = TaskState::default();
+        let end = AgentEvent::final_end(&task, StreamEndReason::Normal, Some((10, 1, 2)));
+        match end {
+            AgentEvent::End {
+                goal_status: Some(SystemGoalStatus::NotApplicable),
+                end_reason: Some(StreamEndReason::Normal),
+                prompt_tokens: Some(10),
+                ..
+            } => {}
+            other => panic!("expected NotApplicable normal End, got {other:?}"),
+        }
     }
 
     #[test]

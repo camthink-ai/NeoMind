@@ -248,6 +248,7 @@ async fn process_stream_to_channel(
                         system_prompt_tokens,
                         tool_tokens,
                         goal_status,
+                        end_reason,
                     } => {
                         // P0.3: Delete pending state on successful completion
                         let _ = session_store.delete_pending_stream(&session_id);
@@ -387,6 +388,9 @@ async fn process_stream_to_channel(
                         if let Some(gs) = goal_status {
                             end_json["goalStatus"] = serde_json::to_value(gs)
                                 .unwrap_or_else(|_| json!({"status": "incomplete"}));
+                        }
+                        if let Some(reason) = end_reason {
+                            end_json["endReason"] = json!(reason.as_str());
                         }
                         end_json
                     }
@@ -2535,6 +2539,7 @@ mod detached_delivery_tests {
                 system_prompt_tokens: None,
                 tool_tokens: None,
                 goal_status: None,
+                end_reason: None,
             },
         ];
         let total = events.len();

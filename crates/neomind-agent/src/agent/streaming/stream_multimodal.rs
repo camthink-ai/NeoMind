@@ -257,7 +257,14 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     );
                 }
                 yield AgentEvent::content("\n\n[Interrupted]");
-                yield AgentEvent::end();
+                {
+                    let state = internal_state.read().await;
+                    yield AgentEvent::final_end(
+                        &state.task_state,
+                        crate::agent::task_continuity::StreamEndReason::Interrupted,
+                        None,
+                    );
+                }
                 return;
             }
 
@@ -498,7 +505,14 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                 );
                             }
                             yield AgentEvent::content("\n\n[Interrupted]");
-                            yield AgentEvent::end();
+                            {
+                                let state = internal_state.read().await;
+                                yield AgentEvent::final_end(
+                                    &state.task_state,
+                                    crate::agent::task_continuity::StreamEndReason::Interrupted,
+                                    None,
+                                );
+                            }
                             return;
                         }
                         yield AgentEvent::heartbeat();
@@ -1442,19 +1456,28 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         }
 
         let pt = llm_interface.take_last_prompt_tokens().await;
-        // System-judged goal status on the final response (evidence only).
-        let goal_status = {
-            let state = internal_state.read().await;
-            state.task_state.system_goal_status()
-        };
-        match pt {
+        let usage = match pt {
             Some(t) => {
-                let (system_tokens, tool_tokens) = llm_interface.estimate_prompt_breakdown().await;
-                yield AgentEvent::end_with_usage(t, system_tokens, tool_tokens)
-                    .with_goal_status(goal_status);
+                let (system_tokens, tool_tokens) =
+                    llm_interface.estimate_prompt_breakdown().await;
+                Some((t, system_tokens, tool_tokens))
             }
-            None => yield AgentEvent::end().with_goal_status(goal_status),
-        }
+            None => None,
+        };
+        let end = {
+            let state = internal_state.read().await;
+            let reason = match &state.task_state.status {
+                crate::agent::task_continuity::TaskStatus::Halted { .. } => {
+                    crate::agent::task_continuity::StreamEndReason::CannotContinue
+                }
+                crate::agent::task_continuity::TaskStatus::Cancelled => {
+                    crate::agent::task_continuity::StreamEndReason::Cancelled
+                }
+                _ => crate::agent::task_continuity::StreamEndReason::Normal,
+            };
+            AgentEvent::final_end(&state.task_state, reason, usage)
+        };
+        yield end;
     }))
 }
 

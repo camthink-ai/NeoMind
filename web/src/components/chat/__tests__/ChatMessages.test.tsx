@@ -249,6 +249,56 @@ describe('ChatMessages', () => {
     expect(onReuse.mock.calls[0][0].contentNodes).toHaveLength(2)
   })
 
+  it('renders system goalStatus callout; not_applicable is not a success badge', () => {
+    // Separate turns (user between) so mergeMessagesForDisplay keeps both.
+    const messages: Message[] = [
+      { id: 'u1', role: 'user', content: 'q1', timestamp: 1 },
+      {
+        id: 'a1',
+        role: 'assistant',
+        content: '已推送成功',
+        timestamp: 2,
+        goalStatus: { status: 'not_applicable' },
+        endReason: 'normal',
+      },
+      { id: 'u2', role: 'user', content: 'q2', timestamp: 3 },
+      {
+        id: 'a2',
+        role: 'assistant',
+        content: '配置好了',
+        timestamp: 4,
+        goalStatus: {
+          status: 'incomplete',
+          reason: 'config only',
+          level: 'config_success',
+          task_complete_ok: false,
+          physical_ok: false,
+        },
+        endReason: 'normal',
+      },
+    ]
+    render(
+      <ChatMessages
+        messages={messages}
+        user={null}
+        isStreaming={false}
+        streamingContent=""
+        streamingThinking=""
+        streamingRoundThinking={{}}
+        streamingToolCalls={[]}
+        roundContents={{}}
+        currentRound={1}
+      />,
+    )
+    const na = document.querySelector('[data-goal-status="not_applicable"]')
+    expect(na).toBeTruthy()
+    expect(na!.className).not.toMatch(/success/)
+    expect(document.querySelector('[data-goal-status="incomplete"]')).toBeTruthy()
+    // Model text left intact — not rewritten from goalStatus.
+    expect(screen.getByText('已推送成功')).toBeTruthy()
+    expect(screen.getByText('配置好了')).toBeTruthy()
+  })
+
   it('normalizes snake_case content_nodes from history into chips', () => {
     const messages = [
       {

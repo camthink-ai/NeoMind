@@ -273,6 +273,8 @@ export function ChatPage() {
         round_contents: result.roundContents,
         round_thinking: result.roundThinking,
         systemNotes: result.systemNotes,
+        goalStatus: result.goalStatus,
+        endReason: result.endReason,
       }
       addMessage(completeMessage)
       setLastAssistantMessageId(result.id)

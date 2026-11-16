@@ -204,6 +204,32 @@
   },
   "loadEarlier": "加载更早的消息",
   "loadEarlierLoading": "加载中…",
+  "goalStatus": {
+    "label": "系统目标状态",
+    "notApplicable": "本轮无约束目标可核验（不等于已成功）。",
+    "incomplete": "目标未完成 — 证据等级 {{level}}。{{reason}}",
+    "completeEligible": "命令证据 {{level}}（结构化完成已允许{{physical}}）。",
+    "completeEligiblePhysical": "；物理效果已核验",
+    "completeEligibleNoPhysical": "；物理效果未核验",
+    "completed": "目标已完成（证据 {{id}}）。",
+    "halted": "目标已中止：{{reason}}",
+    "cancelled": "目标已取消。",
+    "level": {
+      "none": "无",
+      "config_success": "仅配置成功",
+      "command_dispatched": "命令已下发",
+      "device_acknowledged": "设备已确认",
+      "physical_effect_verified": "物理效果已核验"
+    },
+    "endReason": {
+      "normal": "正常结束",
+      "interrupted": "已中断",
+      "timeout": "超时",
+      "error": "错误",
+      "cancelled": "已取消",
+      "cannot_continue": "无法继续"
+    }
+  },
   "suggestions": {
     "badge": "推荐"
   },

@@ -244,6 +244,57 @@ describe('useChatStream', () => {
     )
   })
 
+  it('end passes goalStatus and endReason through without rewriting content', async () => {
+    const onEnd = vi.fn()
+    render(<Harness onEnd={onEnd} sessionId="s1" />)
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({ type: 'Content', content: '模型说已成功', sessionId: 's1' })
+      emit({
+        type: 'end',
+        sessionId: 's1',
+        endReason: 'normal',
+        goalStatus: {
+          status: 'incomplete',
+          reason: 'need command_dispatched',
+          level: 'config_success',
+          task_complete_ok: false,
+          physical_ok: false,
+        },
+      } as ServerMessage)
+    })
+    expect(onEnd).toHaveBeenCalledTimes(1)
+    const result = onEnd.mock.calls[0][0] as StreamEndResult
+    expect(result.content).toBe('模型说已成功')
+    expect(result.goalStatus).toEqual({
+      status: 'incomplete',
+      reason: 'need command_dispatched',
+      level: 'config_success',
+      task_complete_ok: false,
+      physical_ok: false,
+    })
+    expect(result.endReason).toBe('normal')
+  })
+
+  it('end not_applicable is received as-is (not treated as verified success)', async () => {
+    const onEnd = vi.fn()
+    render(<Harness onEnd={onEnd} sessionId="s1" />)
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({ type: 'Content', content: 'ok', sessionId: 's1' })
+      emit({
+        type: 'end',
+        sessionId: 's1',
+        endReason: 'interrupted',
+        goalStatus: { status: 'not_applicable' },
+      } as ServerMessage)
+    })
+    const result = onEnd.mock.calls[0][0] as StreamEndResult
+    expect(result.goalStatus).toEqual({ status: 'not_applicable' })
+    expect(result.endReason).toBe('interrupted')
+    expect(result.goalStatus?.status).not.toBe('completed')
+  })
+
   it('end with u32::MAX does not replace a previously valid meter', async () => {
     const onTokenUsage = vi.fn()
     render(<Harness onEnd={vi.fn()} onTokenUsage={onTokenUsage} />)

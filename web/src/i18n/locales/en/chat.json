@@ -209,6 +209,32 @@
   },
   "loadEarlier": "Load earlier messages",
   "loadEarlierLoading": "Loading…",
+  "goalStatus": {
+    "label": "System goal status",
+    "notApplicable": "No constrained goal to verify for this turn (not a success claim).",
+    "incomplete": "Goal incomplete — evidence {{level}}. {{reason}}",
+    "completeEligible": "Command evidence {{level}} (structured complete allowed{{physical}}).",
+    "completeEligiblePhysical": "; physical effect verified",
+    "completeEligibleNoPhysical": "; physical effect not verified",
+    "completed": "Goal completed (evidence {{id}}).",
+    "halted": "Goal halted: {{reason}}",
+    "cancelled": "Goal cancelled.",
+    "level": {
+      "none": "none",
+      "config_success": "config only",
+      "command_dispatched": "command dispatched",
+      "device_acknowledged": "device acknowledged",
+      "physical_effect_verified": "physical effect verified"
+    },
+    "endReason": {
+      "normal": "ended normally",
+      "interrupted": "interrupted",
+      "timeout": "timed out",
+      "error": "error",
+      "cancelled": "cancelled",
+      "cannot_continue": "cannot continue"
+    }
+  },
   "suggestions": {
     "badge": "Suggested"
   },

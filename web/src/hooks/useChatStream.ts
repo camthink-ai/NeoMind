@@ -84,6 +84,10 @@ export interface StreamEndResult {
   interrupted?: boolean
   /** The server dropped older history this turn to fit the context window. */
   historyTruncated?: boolean
+  /** System-judged goal status from End (not model NL). */
+  goalStatus?: import('@/types').SystemGoalStatus
+  /** Stream end reason (normal / interrupted / …). */
+  endReason?: import('@/types').StreamEndReason
 }
 
 export interface UseChatStreamOptions {
@@ -528,6 +532,9 @@ export function useChatStream(options: UseChatStreamOptions) {
           generationMs,
           historyTruncated: data.historyTruncated || undefined,
           interrupted: interruptedRef.current || undefined,
+          // Pass through system status — never rewrite model content from it.
+          goalStatus: data.goalStatus,
+          endReason: data.endReason,
         }
         hardReset()
         // An interrupted turn finalizes even with an empty accumulator —

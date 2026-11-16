@@ -89,6 +89,9 @@ export function mergeMessagesForDisplay(rawMessages: Message[]): Message[] {
     let roundCounter = 1
     let finalContent = ''
     let thinking: string | undefined
+    // Prefer the last fragment that carries system-judged goal status.
+    let goalStatus: Message['goalStatus']
+    let endReason: Message['endReason']
 
     // Detect backend storage pattern
     const hasTrailingContentMsg = turnMessages.some(m =>
@@ -117,6 +120,12 @@ export function mergeMessagesForDisplay(rawMessages: Message[]): Message[] {
       }
       if (cur.round_thinking) {
         roundThinking = { ...roundThinking, ...cur.round_thinking }
+      }
+      if (cur.goalStatus) {
+        goalStatus = cur.goalStatus
+      }
+      if (cur.endReason) {
+        endReason = cur.endReason
       }
       // Raw API messages carry the backend's snake_case field (Message's
       // other history fields keep snake_case; systemNotes is the camelCase
@@ -153,6 +162,8 @@ export function mergeMessagesForDisplay(rawMessages: Message[]): Message[] {
     merged.round_contents = Object.keys(roundContents).length > 0 ? roundContents : undefined
     merged.round_thinking = Object.keys(roundThinking).length > 0 ? roundThinking : undefined
     merged.systemNotes = systemNotes.length > 0 ? systemNotes : undefined
+    merged.goalStatus = goalStatus
+    merged.endReason = endReason
 
     if (merged.content || merged.thinking || merged.tool_calls) {
       result.push(merged)
