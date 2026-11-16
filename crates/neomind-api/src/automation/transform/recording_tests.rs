@@ -787,6 +787,29 @@ async fn multioutput_nested_extension_production_partial_success() {
     assert_eq!(counts(&records[0]), (1, 1));
 }
 
+// ---------- unresolved Reference never emits fake 0.0 ----------
+
+#[tokio::test]
+async fn reference_unresolved_emits_no_metric_with_warning() {
+    let (engine, store) = engine_with_store();
+    let mut t = TransformAutomation::new("ref-1", "ref-1", TransformScope::Global);
+    t.operations = Some(vec![TransformOperation::Reference {
+        source_device: "other-device".into(),
+        source_metric: "temperature".into(),
+        output_metric: "ref_temp".into(),
+    }]);
+    let (result, records) = run_and_fetch(&engine, &store, &t).await;
+    let r = result.expect("unresolved Reference is soft, not Err");
+    assert!(r.metrics.is_empty(), "no fake 0.0 placeholder metric");
+    assert!(
+        r.warnings.iter().any(|w| w.contains("unresolved")),
+        "warning names the unresolved Reference: {:?}",
+        r.warnings
+    );
+    assert_eq!(records[0].status, ExecutionStatus::Completed);
+    assert_eq!(counts(&records[0]), (0, 1));
+}
+
 // ---------- old records stay deserializable ----------
 
 #[tokio::test]

@@ -11,7 +11,7 @@ import {
   type EntityType,
   type InlineDoc,
   type InlineNode,
-} from "@/prototypes/inline-at/model"
+} from "@/lib/chat/inlineDoc"
 import { inlineDocToContentNodes } from "@/lib/chat/contentProtocol"
 
 const ENTITY_TYPES: EntityType[] = ["device", "rule", "transform", "agent"]

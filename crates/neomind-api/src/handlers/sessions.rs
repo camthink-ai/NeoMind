@@ -1832,6 +1832,17 @@ async fn send_session_history(
                             );
                         }
                     }
+                    // Match HTTP history: contentNodes + contentVersion
+                    if let Some(ref nodes) = msg.content_nodes {
+                        if let Some(obj) = history_json.as_object_mut() {
+                            obj.insert("contentNodes".to_string(), json!(nodes));
+                        }
+                    }
+                    if let Some(ver) = msg.content_version {
+                        if let Some(obj) = history_json.as_object_mut() {
+                            obj.insert("contentVersion".to_string(), json!(ver));
+                        }
+                    }
                     let history_msg = history_json.to_string();
 
                     if socket.send(AxumMessage::Text(history_msg)).await.is_err() {
@@ -2167,10 +2178,17 @@ async fn handle_ws_socket(
                                     // (observed: chat stuck on loading…, log: "Ignoring control
                                     // message"). Route everything to the LLM.
                                     let message = chat_req.message.trim();
-                                    if message.is_empty() && chat_req.images.as_ref().is_none_or(|i| i.is_empty()) {
-                                        // Nothing to send at all (no text, no images) — reject
-                                        // with a terminal Error+end so the client stream
-                                        // machine / draft ACK wait does not stick.
+                                    let has_content_nodes = chat_req
+                                        .content_nodes
+                                        .as_ref()
+                                        .is_some_and(|n| !n.is_empty());
+                                    if message.is_empty()
+                                        && chat_req.images.as_ref().is_none_or(|i| i.is_empty())
+                                        && !has_content_nodes
+                                    {
+                                        // Nothing to send (no text, images, or contentNodes)
+                                        // — reject with terminal Error+end so the client
+                                        // stream machine / draft ACK wait does not stick.
                                         if let Some(ref rid) = chat_req.client_request_id {
                                             let ack = message_received_frame(
                                                 rid,

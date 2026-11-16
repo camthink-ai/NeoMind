@@ -5,7 +5,7 @@ import {
   inlineDocToTipTapJson,
   tipTapJsonToInlineDoc,
 } from "../docBridge"
-import type { InlineDoc } from "@/prototypes/inline-at/model"
+import type { InlineDoc } from "@/lib/chat/inlineDoc"
 
 describe("inline-mention docBridge", () => {
   it("round-trips in-sentence duplicate mentions", () => {

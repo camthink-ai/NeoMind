@@ -2442,6 +2442,28 @@ pub fn goal_objects_equivalent(a: &str, b: &str) -> bool {
     bare(&ca) == bare(&cb)
 }
 
+/// Byte index of an ASCII `needle` in `haystack`, compared with
+/// `eq_ignore_ascii_case` on the **original** bytes. Do not search a
+/// lowercased copy and slice the original — chars like `İ` / `K` (U+212A)
+/// change byte length under `to_lowercase()`, and the offset panics.
+fn find_ascii_prefix_ci(haystack: &str, needle: &str) -> Option<usize> {
+    debug_assert!(needle.is_ascii());
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.is_empty() || h.len() < n.len() {
+        return None;
+    }
+    for i in 0..=(h.len() - n.len()) {
+        if !haystack.is_char_boundary(i) {
+            continue;
+        }
+        if h[i..i + n.len()].eq_ignore_ascii_case(n) {
+            return Some(i);
+        }
+    }
+    None
+}
+
 fn extract_object(text: &str) -> Option<String> {
     // Prefer device-like tokens (EK410, green-01, …). Store bare id;
     // [`goal_objects_equivalent`] treats name / id / `device:id` / `@` alike.
@@ -2454,9 +2476,8 @@ fn extract_object(text: &str) -> Option<String> {
         }
     }
     // `device:id` / @device id already in text → bare id.
-    let lower = text.to_lowercase();
     for prefix in ["device:", "@device:", "@device/", "device/"] {
-        if let Some(idx) = lower.find(prefix) {
+        if let Some(idx) = find_ascii_prefix_ci(text, prefix) {
             let rest = &text[idx + prefix.len()..];
             let id: String = rest
                 .chars()
@@ -4526,6 +4547,19 @@ mod tests {
             MutatingGateOutcome::Proceed { .. } => {}
             other => panic!("preferred webhook/push must proceed, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn extract_object_prefix_offsets_stay_on_original_text() {
+        // Lowercasing K (U+212A, 3 bytes) → "k" (1 byte) shortens the
+        // string; searching a lowercased copy then slicing the original
+        // used to panic mid-char. Ids stay short so the digit+alpha token
+        // loop does not short-circuit before the prefix path.
+        assert_eq!(extract_object("Kdevice:xy"), Some("xy".into()));
+        assert_eq!(extract_object("K@device:ab"), Some("ab".into()));
+        // İ (U+0130) expands under to_lowercase; ASCII-CI on original is safe.
+        assert_eq!(extract_object("İdevice:zz"), Some("zz".into()));
+        assert_eq!(extract_object("DEVICE:EK410"), Some("EK410".into()));
     }
 
     #[test]

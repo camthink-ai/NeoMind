@@ -23,7 +23,7 @@ import {
   validateContentNodes,
   validateSendContent,
 } from "../contentProtocol"
-import { emptyDoc, insertReference, setTextNode } from "@/prototypes/inline-at/model"
+import { emptyDoc, insertReference, setTextNode } from "@/lib/chat/inlineDoc"
 import { CHAT_CONTENT_VERSION_V1 } from "@/types"
 
 describe("contentProtocol", () => {

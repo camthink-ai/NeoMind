@@ -263,6 +263,7 @@
     "protoText": "Message text",
     "protoMobile": "Mobile mention picker sheet",
     "insertAt": "Insert @ mention",
+    "insert": "Insert reference",
     "protoPlain": "Plain text",
     "protoLegacy": "Legacy chip projection",
     "protoHistory": "Post-send history preview (inline tags)",

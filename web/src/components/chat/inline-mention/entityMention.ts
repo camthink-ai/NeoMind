@@ -5,7 +5,7 @@
 import Mention from "@tiptap/extension-mention"
 import type { MentionOptions } from "@tiptap/extension-mention"
 import { mergeAttributes } from "@tiptap/core"
-import type { EntityType } from "@/prototypes/inline-at/model"
+import type { EntityType } from "@/lib/chat/inlineDoc"
 import { isEntityType } from "@/components/chat/inline-mention/docBridge"
 
 export type EntityMentionAttrs = {

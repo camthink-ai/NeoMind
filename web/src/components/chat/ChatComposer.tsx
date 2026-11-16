@@ -1094,8 +1094,8 @@ export function ChatComposer({
                 "rounded-lg flex-shrink-0 text-muted-foreground hover:text-foreground",
                 isMobile && "h-10 w-10 rounded-full p-0",
               )}
-              title={t("chat:mention.insert", "插入引用")}
-              aria-label={t("chat:mention.insert", "插入引用")}
+              title={t("chat:mention.insert")}
+              aria-label={t("chat:mention.insert")}
               onClick={() => setOpenMentionRequest((n) => n + 1)}
             >
               <AtSign className="h-4 w-4" aria-hidden="true" />

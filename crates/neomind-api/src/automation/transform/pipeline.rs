@@ -618,15 +618,12 @@ impl TransformEngine {
                 source_metric: _,
                 output_metric,
             } => {
-                // Reference operations need external data - return placeholder
-                Ok(vec![TransformedMetric {
-                    device_id: source_device.clone(),
-                    transform_id: None,
-                    metric: output_metric.clone(),
-                    value: 0.0.into(),
-                    timestamp,
-                    quality: None,
-                }])
+                // Unresolved cross-device Reference: emit nothing (unknown),
+                // never a fake 0.0 that rules treat as a real reading.
+                warnings.push(format!(
+                    "Reference '{output_metric}' from device '{source_device}' unresolved — no metric emitted"
+                ));
+                Ok(Vec::new())
             }
 
             TransformOperation::Extension {
@@ -808,14 +805,12 @@ impl TransformEngine {
                             source_device,
                             source_metric: _,
                             output_metric,
-                        } => Ok(vec![TransformedMetric {
-                            device_id: source_device.clone(),
-                            transform_id: None,
-                            metric: output_metric.clone(),
-                            value: 0.0.into(),
-                            timestamp,
-                            quality: None,
-                        }]),
+                        } => {
+                            warnings.push(format!(
+                                "Reference '{output_metric}' from device '{source_device}' unresolved — no metric emitted"
+                            ));
+                            Ok(Vec::new())
+                        }
                         TransformOperation::Extension { .. } => {
                             Box::pin(self.execute_operation(
                                 op, device_id, timestamp, raw_data, warnings, unverified, mode,

@@ -11,7 +11,7 @@ import {
   type InlineDoc,
   toLegacyUniqueReferences,
   toPlainText,
-} from "@/prototypes/inline-at/model"
+} from "@/lib/chat/inlineDoc"
 
 export const MAX_CONTENT_NODES = 64
 export { MAX_REFERENCE_NODES, MAX_TEXT_CHARS, MAX_LABEL_CHARS }

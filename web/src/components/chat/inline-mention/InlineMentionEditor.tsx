@@ -11,8 +11,8 @@ import Placeholder from "@tiptap/extension-placeholder"
 import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion"
 import { cn } from "@/lib/utils"
 import type { ChatContentNode, ChatReference } from "@/types"
-import type { InlineDoc } from "@/prototypes/inline-at/model"
-import { emptyDoc } from "@/prototypes/inline-at/model"
+import type { InlineDoc } from "@/lib/chat/inlineDoc"
+import { emptyDoc } from "@/lib/chat/inlineDoc"
 import {
   EntityMention,
   type EntityMentionAttrs,
