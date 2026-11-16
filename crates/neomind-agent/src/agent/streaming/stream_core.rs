@@ -3109,12 +3109,19 @@ pub async fn process_stream_events_with_safeguards(
 
             // Read token usage from LLM interface (captured from Ollama backend stream)
             let prompt_tokens = llm_interface.take_last_prompt_tokens().await;
+            // System-judged goal status on the final response (evidence only —
+            // never derived by scanning assistant prose for success keywords).
+            let goal_status = {
+                let state = internal_state.read().await;
+                state.task_state.system_goal_status()
+            };
             match prompt_tokens {
                 Some(pt) => {
                     let (system_tokens, tool_tokens) = llm_interface.estimate_prompt_breakdown().await;
-                    yield AgentEvent::end_with_usage(pt, system_tokens, tool_tokens);
+                    yield AgentEvent::end_with_usage(pt, system_tokens, tool_tokens)
+                        .with_goal_status(goal_status);
                 }
-                None => yield AgentEvent::end(),
+                None => yield AgentEvent::end().with_goal_status(goal_status),
             }
         }))
 }

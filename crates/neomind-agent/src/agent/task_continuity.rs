@@ -528,7 +528,7 @@ pub enum GoalEvidenceLevel {
     PhysicalEffectVerified = 4,
 }
 
-/// Structured claim kinds checked against [`TaskState::goal_evidence`].
+/// Structured claim kinds checked against per-operation goal evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoalClaimKind {
     /// "sent" / "command issued" / "dispatched to device".
@@ -539,11 +539,58 @@ pub enum GoalClaimKind {
     TaskComplete,
 }
 
-/// Best goal-relevant evidence observed from tool results (not model prose).
+/// System-judged goal status for the final response (not model NL).
+///
+/// Structured completion is decided only from execution evidence via
+/// [`TaskState::evaluate_goal_claim`] / [`TaskState::complete_with_evidence`].
+/// Assistant prose is display-only within this limit — never scanned for
+/// success keywords.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum SystemGoalStatus {
+    /// No device-native / constrained goal — system does not gate completion.
+    NotApplicable,
+    /// Constrained goal; evidence for the bound operation is insufficient.
+    Incomplete {
+        reason: String,
+        level: GoalEvidenceLevel,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        operation_id: Option<String>,
+        task_complete_ok: bool,
+        physical_ok: bool,
+    },
+    /// Bound operation has enough evidence for structured TaskComplete.
+    /// Physical claims still require [`GoalEvidenceLevel::PhysicalEffectVerified`].
+    CompleteEligible {
+        level: GoalEvidenceLevel,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        operation_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        device_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delivery: Option<String>,
+        task_complete_ok: bool,
+        physical_ok: bool,
+    },
+    /// Already marked Completed via [`TaskState::complete_with_evidence`].
+    Completed {
+        evidence_id: String,
+    },
+    Halted {
+        reason: String,
+    },
+    Cancelled,
+}
+
+/// Goal-relevant evidence from one Operation's tool results (not model prose).
 ///
 /// Level is derived **only** from a structured exact `delivery` enum
 /// (plus config-route classification). `delivery_note` / free text is
-/// display-only and must never raise the level.
+/// display-only and must never raise the level. Entries are keyed by
+/// [`Self::operation_id`] — a later queued op must not inherit an earlier
+/// physical-verified level.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoalEvidence {
     pub level: GoalEvidenceLevel,
@@ -551,7 +598,7 @@ pub struct GoalEvidence {
     pub command: Option<String>,
     /// Exact delivery enum tag when known (`adapter_accepted`, …).
     pub delivery: Option<String>,
-    /// Bound Operation id when the observation came from a gated write.
+    /// Bound Operation id for this observation (required for claim matching).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
     /// Human-readable note (display-only; not used for level).
@@ -570,9 +617,9 @@ pub struct TaskState {
     /// Routes the user rejected; additive across corrections; kept on Continue.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub excluded_routes: Vec<ExcludedRoute>,
-    /// Strongest tool-proven evidence toward the current goal constraints.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub goal_evidence: Option<GoalEvidence>,
+    /// Per-operation tool-proven goal evidence (not a global max across ops).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub goal_evidences: Vec<GoalEvidence>,
     pub confirmed_steps: Vec<ConfirmedStep>,
     pub next_action: Option<NextAction>,
     pub status: TaskStatus,
@@ -606,7 +653,7 @@ impl Default for TaskState {
             content: None,
             method: None,
             excluded_routes: Vec::new(),
-            goal_evidence: None,
+            goal_evidences: Vec::new(),
             confirmed_steps: Vec::new(),
             next_action: None,
             status: TaskStatus::Idle,
@@ -1462,7 +1509,7 @@ impl TaskState {
                 // New charter — drop prior method / route exclusions / evidence.
                 self.method = None;
                 self.excluded_routes.clear();
-                self.goal_evidence = None;
+                self.goal_evidences.clear();
                 self.next_action = None;
                 // Target / goal change invalidates a pending Unknown re-run grant.
                 self.clear_user_authorized_new_op();
@@ -1498,7 +1545,7 @@ impl TaskState {
                 }
                 // Target device change invalidates prior goal evidence.
                 if self.object != prior_object {
-                    self.goal_evidence = None;
+                    self.goal_evidences.clear();
                 }
                 self.next_action = None;
                 self.cancel_prepared_operations();
@@ -1515,7 +1562,7 @@ impl TaskState {
                 self.next_action = None;
                 self.method = None;
                 self.excluded_routes.clear();
-                self.goal_evidence = None;
+                self.goal_evidences.clear();
                 self.clear_user_authorized_new_op();
                 self.cancel_all_confirm_requests();
                 ApplyOutcome::Applied
@@ -1631,15 +1678,19 @@ impl TaskState {
                 ));
             }
         }
-        if self.goal_needs_device_command_evidence() || self.goal_evidence.is_some() {
+        if self.goal_needs_device_command_evidence() || !self.goal_evidences.is_empty() {
             out.push_str("- Goal verification (tool evidence only; do not invent):\n");
             out.push_str(
                 "  - ladder: config_success < command_dispatched < device_ack < physical_effect\n",
             );
-            match &self.goal_evidence {
+            out.push_str(
+                "  - scope: evidence is per Operation — a later op does not inherit \
+                 an earlier physical/ACK level\n",
+            );
+            match self.current_goal_evidence() {
                 Some(ev) => {
                     out.push_str(&format!(
-                        "  - proven: level={:?} device={} command={} delivery={} op={}\n",
+                        "  - proven (current op): level={:?} device={} command={} delivery={} op={}\n",
                         ev.level,
                         ev.device_id.as_deref().unwrap_or("-"),
                         ev.command.as_deref().unwrap_or("-"),
@@ -1649,13 +1700,19 @@ impl TaskState {
                     out.push_str(&format!("  - note (display-only): {}\n", ev.summary));
                 }
                 None => {
-                    out.push_str("  - proven: none — no target device command observed yet\n");
+                    out.push_str(
+                        "  - proven (current op): none — no target device command on this Operation\n",
+                    );
                 }
             }
             out.push_str(
                 "  - claims: do NOT say sent/updated without command_dispatched to the \
-                 goal device; queued/adapter_accepted/extension_accepted ≠ device ACK \
-                 ≠ physical effect (screen refresh unproven)\n",
+                 goal device on the current Operation; queued/adapter_accepted/\
+                 extension_accepted ≠ device ACK ≠ physical effect (screen refresh unproven)\n",
+            );
+            out.push_str(
+                "  - completion: structured status is system-judged from evidence; \
+                 your prose is display-only and cannot raise completion\n",
             );
             if self.goal_needs_device_command_evidence() {
                 if self
@@ -1663,7 +1720,7 @@ impl TaskState {
                     .is_err()
                 {
                     out.push_str(
-                        "  - status: CommandSent NOT allowed yet (need device command to goal object)\n",
+                        "  - status: CommandSent NOT allowed yet (need device command to goal object on this op)\n",
                     );
                 }
                 if self
@@ -1671,7 +1728,7 @@ impl TaskState {
                     .is_err()
                 {
                     out.push_str(
-                        "  - status: PhysicalEffect NOT allowed (need physical_effect_verified)\n",
+                        "  - status: PhysicalEffect NOT allowed (need physical_effect_verified on this op)\n",
                     );
                 }
             }
@@ -2207,18 +2264,70 @@ impl TaskState {
             || self.object.is_some()
     }
 
-    /// Whether `claim` is allowed given current tool-proven [`goal_evidence`].
+    /// Operation id used for goal-claim matching (current Operation).
+    pub fn goal_claim_operation_id(&self) -> Option<&str> {
+        let id = self.current_operation_id.as_str();
+        if id.is_empty() {
+            None
+        } else {
+            Some(id)
+        }
+    }
+
+    /// Evidence stored for a specific Operation (no cross-op fallback).
+    pub fn goal_evidence_for(&self, operation_id: Option<&str>) -> Option<&GoalEvidence> {
+        let Some(op) = operation_id.filter(|s| !s.is_empty()) else {
+            return None;
+        };
+        self.goal_evidences
+            .iter()
+            .find(|e| e.operation_id.as_deref() == Some(op))
+    }
+
+    /// Evidence for the current Operation only.
+    pub fn current_goal_evidence(&self) -> Option<&GoalEvidence> {
+        self.goal_evidence_for(self.goal_claim_operation_id())
+    }
+
+    /// Whether `claim` is allowed for the **current** Operation's evidence.
     pub fn evaluate_goal_claim(&self, claim: GoalClaimKind) -> Result<(), String> {
+        self.evaluate_goal_claim_for(claim, self.goal_claim_operation_id())
+    }
+
+    /// Whether `claim` is allowed for evidence bound to `operation_id`.
+    ///
+    /// Does **not** fall back to another Operation's higher level. A prior
+    /// physical-verified op never authorizes claims for a later queued-only op.
+    pub fn evaluate_goal_claim_for(
+        &self,
+        claim: GoalClaimKind,
+        operation_id: Option<&str>,
+    ) -> Result<(), String> {
         if !self.goal_needs_device_command_evidence() {
             return Ok(());
         }
-        let ev = self.goal_evidence.as_ref();
+        let ev = self.goal_evidence_for(operation_id);
         let level = ev.map(|e| e.level).unwrap_or(GoalEvidenceLevel::None);
         let device_ok = match (&self.object, ev.and_then(|e| e.device_id.as_deref())) {
             (Some(need), Some(got)) => need == got,
             (Some(_), None) => false,
             (None, _) => true,
         };
+        // When an op id was requested, require the evidence entry to match it.
+        if let Some(need_op) = operation_id.filter(|s| !s.is_empty()) {
+            match ev.and_then(|e| e.operation_id.as_deref()) {
+                Some(got) if got == need_op => {}
+                Some(_) => {
+                    return Err(format!(
+                        "goal evidence operation_id mismatch (need {need_op})"
+                    ));
+                }
+                None => {
+                    // No evidence for this op — fall through to level checks
+                    // (level is None → fail below).
+                }
+            }
+        }
         match claim {
             GoalClaimKind::CommandSent | GoalClaimKind::TaskComplete => {
                 if level >= GoalEvidenceLevel::CommandDispatched && device_ok {
@@ -2231,13 +2340,13 @@ impl TaskState {
                     )
                 } else if !device_ok {
                     Err(format!(
-                        "no command_dispatched evidence for goal device '{}'",
+                        "no command_dispatched evidence for goal device '{}' on this Operation",
                         self.object.as_deref().unwrap_or("?")
                     ))
                 } else {
                     Err(
-                        "need command_dispatched (or stronger) to the goal device before \
-                         claiming sent / completing"
+                        "need command_dispatched (or stronger) to the goal device on this \
+                         Operation before claiming sent / completing"
                             .into(),
                     )
                 }
@@ -2248,7 +2357,7 @@ impl TaskState {
                 } else {
                     Err(
                         "queued / adapter_accepted / device_ack ≠ physical effect — \
-                         cannot claim screen refreshed or physical update"
+                         cannot claim screen refreshed or physical update for this Operation"
                             .into(),
                     )
                 }
@@ -2256,11 +2365,75 @@ impl TaskState {
         }
     }
 
-    /// Fold a successful tool result into [`Self::goal_evidence`] (monotonic).
+    /// System-judged goal status for the final response (evidence only).
     ///
-    /// Config-only routes never raise above [`GoalEvidenceLevel::ConfigSuccess`].
-    /// Device command results raise only via exact structured delivery enums.
-    /// Wrong-device commands do not satisfy a constrained goal object.
+    /// Does **not** inspect assistant prose. Model NL may describe outcomes
+    /// only within this structured limit.
+    pub fn system_goal_status(&self) -> SystemGoalStatus {
+        match &self.status {
+            TaskStatus::Cancelled => return SystemGoalStatus::Cancelled,
+            TaskStatus::Halted { reason } => {
+                return SystemGoalStatus::Halted {
+                    reason: reason.clone(),
+                };
+            }
+            TaskStatus::Completed { evidence_id } => {
+                return SystemGoalStatus::Completed {
+                    evidence_id: evidence_id.clone(),
+                };
+            }
+            TaskStatus::Idle | TaskStatus::Active => {}
+        }
+        if !self.goal_needs_device_command_evidence() {
+            return SystemGoalStatus::NotApplicable;
+        }
+        let op_id = self.goal_claim_operation_id().map(|s| s.to_string());
+        let ev = self.current_goal_evidence();
+        let level = ev.map(|e| e.level).unwrap_or(GoalEvidenceLevel::None);
+        let task_complete_ok = self
+            .evaluate_goal_claim(GoalClaimKind::TaskComplete)
+            .is_ok();
+        let physical_ok = self
+            .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
+            .is_ok();
+        if task_complete_ok {
+            SystemGoalStatus::CompleteEligible {
+                level,
+                operation_id: op_id.or_else(|| ev.and_then(|e| e.operation_id.clone())),
+                device_id: ev.and_then(|e| e.device_id.clone()),
+                command: ev.and_then(|e| e.command.clone()),
+                delivery: ev.and_then(|e| e.delivery.clone()),
+                task_complete_ok,
+                physical_ok,
+            }
+        } else {
+            let reason = self
+                .evaluate_goal_claim(GoalClaimKind::TaskComplete)
+                .err()
+                .unwrap_or_else(|| "incomplete".into());
+            SystemGoalStatus::Incomplete {
+                reason,
+                level,
+                operation_id: op_id,
+                task_complete_ok: false,
+                physical_ok,
+            }
+        }
+    }
+
+    /// Whether structured TaskComplete is allowed for the current Operation.
+    pub fn structured_completion_allowed(&self) -> bool {
+        self.evaluate_goal_claim(GoalClaimKind::TaskComplete)
+            .is_ok()
+    }
+
+    /// Fold a successful tool result into per-operation goal evidence.
+    ///
+    /// Updates are monotonic **within the same Operation id only**. A new
+    /// Operation starts at its own level and never inherits a prior op's
+    /// physical/ACK evidence. Config-only routes never raise above
+    /// [`GoalEvidenceLevel::ConfigSuccess`]. Wrong-device commands do not
+    /// satisfy a constrained goal object.
     pub fn observe_tool_result_for_goal(
         &mut self,
         tool_name: &str,
@@ -2274,10 +2447,20 @@ impl TaskState {
         let Some(mut obs) = classify_goal_evidence(tool_name, arguments, result_data) else {
             return;
         };
-        if let Some(op) = operation_id {
-            if !op.is_empty() {
-                obs.operation_id = Some(op.to_string());
-            }
+        // Bind to explicit op id, else current Operation — required for claim matching.
+        let bound_op = operation_id
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                let cur = self.current_operation_id.as_str();
+                if cur.is_empty() {
+                    None
+                } else {
+                    Some(cur.to_string())
+                }
+            });
+        if let Some(op) = bound_op {
+            obs.operation_id = Some(op);
         }
         // Constrained target: ignore evidence for a different device.
         if let (Some(need), Some(got)) = (&self.object, &obs.device_id) {
@@ -2285,22 +2468,21 @@ impl TaskState {
                 return;
             }
         }
-        match &self.goal_evidence {
-            None => self.goal_evidence = Some(obs),
-            Some(cur) if obs.level > cur.level => self.goal_evidence = Some(obs),
-            Some(cur)
-                if obs.level == cur.level && obs.device_id.is_some() && cur.device_id.is_none() =>
-            {
-                self.goal_evidence = Some(obs);
+        // Per-operation slot — never reuse another op's higher level.
+        let op_key = obs.operation_id.clone();
+        if let Some(idx) = self
+            .goal_evidences
+            .iter()
+            .position(|e| e.operation_id == op_key)
+        {
+            let cur = &self.goal_evidences[idx];
+            let replace = obs.level > cur.level
+                || (obs.level == cur.level && obs.device_id.is_some() && cur.device_id.is_none());
+            if replace {
+                self.goal_evidences[idx] = obs;
             }
-            Some(cur)
-                if obs.level == cur.level
-                    && obs.operation_id.is_some()
-                    && cur.operation_id.is_none() =>
-            {
-                self.goal_evidence = Some(obs);
-            }
-            _ => {}
+        } else {
+            self.goal_evidences.push(obs);
         }
     }
 }
@@ -4173,26 +4355,37 @@ mod tests {
             method: Some(ExecutionMethod::DeviceNativeCommand),
             exclude_routes: vec![ExcludedRoute::NotificationOrWebhook],
         });
+        s.current_operation_id = "op-config".into();
 
         // Push/config path "succeeds" — config only.
         s.observe_tool_result_for_goal(
             "shell",
             &serde_json::json!({"command": "neomind push start weather-screen"}),
             &serde_json::json!({"exit_code": 0, "stdout": "started"}),
-            None,
+            Some("op-config"),
         );
         assert_eq!(
-            s.goal_evidence.as_ref().map(|e| e.level),
+            s.current_goal_evidence().map(|e| e.level),
             Some(GoalEvidenceLevel::ConfigSuccess)
         );
         assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_err());
         assert!(s.evaluate_goal_claim(GoalClaimKind::TaskComplete).is_err());
         assert!(!s.complete_with_evidence("push:weather-screen:ok"));
         assert_eq!(s.status, TaskStatus::Active);
+        assert!(!s.structured_completion_allowed());
+        match s.system_goal_status() {
+            SystemGoalStatus::Incomplete {
+                task_complete_ok: false,
+                level: GoalEvidenceLevel::ConfigSuccess,
+                ..
+            } => {}
+            other => panic!("expected Incomplete(config), got {other:?}"),
+        }
 
         let prompt = s.to_prompt_section().unwrap();
         assert!(prompt.contains("Goal verification"));
         assert!(prompt.contains("CommandSent NOT allowed"));
+        assert!(prompt.contains("system-judged"));
     }
 
     #[test]
@@ -4204,6 +4397,7 @@ mod tests {
             content: Some("晴".into()),
         });
         s.method = Some(ExecutionMethod::DeviceNativeCommand);
+        s.current_operation_id = "op-dispatch-1".into();
 
         s.observe_tool_result_for_goal(
             "device_command",
@@ -4222,13 +4416,12 @@ mod tests {
             Some("op-dispatch-1"),
         );
         assert_eq!(
-            s.goal_evidence
-                .as_ref()
+            s.current_goal_evidence()
                 .and_then(|e| e.operation_id.as_deref()),
             Some("op-dispatch-1")
         );
         assert_eq!(
-            s.goal_evidence.as_ref().map(|e| e.level),
+            s.current_goal_evidence().map(|e| e.level),
             Some(GoalEvidenceLevel::CommandDispatched)
         );
         assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_ok());
@@ -4240,6 +4433,10 @@ mod tests {
         assert_eq!(s.status, TaskStatus::Active);
         assert!(s.complete_with_evidence("op:dispatched"));
         assert!(matches!(s.status, TaskStatus::Completed { .. }));
+        assert!(matches!(
+            s.system_goal_status(),
+            SystemGoalStatus::Completed { .. }
+        ));
     }
 
     #[test]
@@ -4250,6 +4447,7 @@ mod tests {
             object: Some("cam-1".into()),
             content: None,
         });
+        s.current_operation_id = "op-wrong-dev".into();
         s.observe_tool_result_for_goal(
             "device_command",
             &serde_json::json!({"device": "other-9", "command": "reboot"}),
@@ -4262,7 +4460,8 @@ mod tests {
             }),
             Some("op-wrong-dev"),
         );
-        assert!(s.goal_evidence.is_none());
+        assert!(s.current_goal_evidence().is_none());
+        assert!(s.goal_evidences.is_empty());
         assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_err());
     }
 
@@ -4274,6 +4473,7 @@ mod tests {
             object: Some("cam-1".into()),
             content: None,
         });
+        s.current_operation_id = "op-phys-1".into();
         s.observe_tool_result_for_goal(
             "device_command",
             &serde_json::json!({"device": "cam-1", "command": "render_text"}),
@@ -4287,12 +4487,11 @@ mod tests {
             Some("op-phys-1"),
         );
         assert_eq!(
-            s.goal_evidence.as_ref().map(|e| e.level),
+            s.current_goal_evidence().map(|e| e.level),
             Some(GoalEvidenceLevel::PhysicalEffectVerified)
         );
         assert_eq!(
-            s.goal_evidence
-                .as_ref()
+            s.current_goal_evidence()
                 .and_then(|e| e.operation_id.as_deref()),
             Some("op-phys-1")
         );
@@ -4308,6 +4507,7 @@ mod tests {
             object: Some("cam-1".into()),
             content: None,
         });
+        s.current_operation_id = "op-neg".into();
         // Note contains both "physical effect verified" and negation — display only.
         s.observe_tool_result_for_goal(
             "device_command",
@@ -4322,7 +4522,7 @@ mod tests {
             Some("op-neg"),
         );
         assert_eq!(
-            s.goal_evidence.as_ref().map(|e| e.level),
+            s.current_goal_evidence().map(|e| e.level),
             Some(GoalEvidenceLevel::CommandDispatched)
         );
         assert!(s
@@ -4338,6 +4538,7 @@ mod tests {
             object: Some("cam-1".into()),
             content: None,
         });
+        s.current_operation_id = "op-echo".into();
         // Params / stdout echo the magic phrase; no exact delivery enum.
         s.observe_tool_result_for_goal(
             "shell",
@@ -4352,11 +4553,12 @@ mod tests {
         );
         // exit 0 + bound device/command → dispatched only; prose ignored.
         assert_eq!(
-            s.goal_evidence.as_ref().map(|e| e.level),
+            s.current_goal_evidence().map(|e| e.level),
             Some(GoalEvidenceLevel::CommandDispatched)
         );
         assert_ne!(
-            s.goal_evidence.as_ref().and_then(|e| e.delivery.as_deref()),
+            s.current_goal_evidence()
+                .and_then(|e| e.delivery.as_deref()),
             Some("physical_effect_verified")
         );
         assert!(s
@@ -4372,6 +4574,7 @@ mod tests {
             object: Some("cam-1".into()),
             content: None,
         });
+        s.current_operation_id = "op-unknown-enum".into();
         s.observe_tool_result_for_goal(
             "device_command",
             &serde_json::json!({"device": "cam-1", "command": "render_text"}),
@@ -4385,17 +4588,130 @@ mod tests {
             Some("op-unknown-enum"),
         );
         assert_eq!(
-            s.goal_evidence.as_ref().map(|e| e.level),
+            s.current_goal_evidence().map(|e| e.level),
             Some(GoalEvidenceLevel::CommandDispatched)
         );
         assert_eq!(
-            s.goal_evidence.as_ref().and_then(|e| e.delivery.as_deref()),
+            s.current_goal_evidence()
+                .and_then(|e| e.delivery.as_deref()),
             Some("physical_effect_unverified")
         );
         assert!(s
             .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
             .is_err());
         assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_ok());
+    }
+
+    #[test]
+    fn later_queued_op_does_not_inherit_prior_physical_evidence() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "update cam-1".into(),
+            object: Some("cam-1".into()),
+            content: None,
+        });
+        s.method = Some(ExecutionMethod::DeviceNativeCommand);
+
+        // Op A — physical verified.
+        s.current_operation_id = "op-A".into();
+        s.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({"device": "cam-1", "command": "render_text"}),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "cam-1",
+                "command": "render_text",
+                "delivery": "physical_effect_verified"
+            }),
+            Some("op-A"),
+        );
+        assert!(s
+            .evaluate_goal_claim_for(GoalClaimKind::PhysicalEffect, Some("op-A"))
+            .is_ok());
+
+        // Op B — only queued / adapter_accepted. Must NOT inherit A's physical.
+        s.current_operation_id = "op-B".into();
+        s.observe_tool_result_for_goal(
+            "device_command",
+            &serde_json::json!({"device": "cam-1", "command": "render_text"}),
+            &serde_json::json!({
+                "sent": true,
+                "device_id": "cam-1",
+                "command": "render_text",
+                "delivery": "adapter_accepted",
+                "delivery_note": "queued"
+            }),
+            Some("op-B"),
+        );
+        assert_eq!(s.goal_evidences.len(), 2);
+        assert_eq!(
+            s.goal_evidence_for(Some("op-A")).map(|e| e.level),
+            Some(GoalEvidenceLevel::PhysicalEffectVerified)
+        );
+        assert_eq!(
+            s.current_goal_evidence().map(|e| e.level),
+            Some(GoalEvidenceLevel::CommandDispatched)
+        );
+        assert!(s
+            .evaluate_goal_claim(GoalClaimKind::PhysicalEffect)
+            .is_err());
+        assert!(s.evaluate_goal_claim(GoalClaimKind::CommandSent).is_ok());
+        assert!(s
+            .evaluate_goal_claim_for(GoalClaimKind::PhysicalEffect, Some("op-A"))
+            .is_ok());
+        assert!(!s.complete_with_evidence("screen-refreshed"));
+        match s.system_goal_status() {
+            SystemGoalStatus::CompleteEligible {
+                physical_ok: false,
+                task_complete_ok: true,
+                level: GoalEvidenceLevel::CommandDispatched,
+                operation_id: Some(op),
+                ..
+            } => assert_eq!(op, "op-B"),
+            other => panic!("expected CompleteEligible(dispatched,op-B), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn config_only_success_is_not_structured_complete_for_device_native_goal() {
+        // Production completion gate: system status — not model NL / "成功".
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "put weather on cam-1".into(),
+            object: Some("cam-1".into()),
+            content: Some("晴".into()),
+        });
+        s.apply_directive(TaskDirective::Correct {
+            goal: "device-native only".into(),
+            object: None,
+            content: None,
+            method: Some(ExecutionMethod::DeviceNativeCommand),
+            exclude_routes: vec![ExcludedRoute::NotificationOrWebhook],
+        });
+        s.current_operation_id = "op-push".into();
+        s.observe_tool_result_for_goal(
+            "shell",
+            &serde_json::json!({"command": "neomind push start weather-screen"}),
+            &serde_json::json!({"exit_code": 0, "stdout": "started successfully 成功"}),
+            Some("op-push"),
+        );
+        assert!(!s.structured_completion_allowed());
+        assert!(!s.complete_with_evidence("model said 成功"));
+        let status = s.system_goal_status();
+        assert!(
+            matches!(
+                status,
+                SystemGoalStatus::Incomplete {
+                    task_complete_ok: false,
+                    ..
+                }
+            ),
+            "config-only must not be structured-complete: {status:?}"
+        );
+        // Serialize shape carried on final response — no reply-text scan.
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["status"], "incomplete");
+        assert_eq!(json["task_complete_ok"], false);
     }
 
     #[test]

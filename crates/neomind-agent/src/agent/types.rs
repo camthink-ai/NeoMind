@@ -76,6 +76,9 @@ pub enum AgentEvent {
         /// Tool-definition portion of the prompt (estimated)
         #[serde(skip_serializing_if = "Option::is_none")]
         tool_tokens: Option<u32>,
+        /// System-judged goal status (evidence only — not model NL).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        goal_status: Option<super::task_continuity::SystemGoalStatus>,
     },
     /// Intermediate end (for multi-round tool calling)
     /// Indicates the current round is complete but more processing is coming
@@ -260,6 +263,7 @@ impl AgentEvent {
             prompt_tokens: None,
             system_prompt_tokens: None,
             tool_tokens: None,
+            goal_status: None,
         }
     }
 
@@ -274,7 +278,19 @@ impl AgentEvent {
             prompt_tokens: Some(prompt_tokens),
             system_prompt_tokens: Some(system_prompt_tokens as u32),
             tool_tokens: Some(tool_tokens as u32),
+            goal_status: None,
         }
+    }
+
+    /// Attach system-judged goal status to a final End event.
+    pub fn with_goal_status(mut self, status: super::task_continuity::SystemGoalStatus) -> Self {
+        if let Self::End {
+            goal_status: slot, ..
+        } = &mut self
+        {
+            *slot = Some(status);
+        }
+        self
     }
 
     /// Create an intent event.
