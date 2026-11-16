@@ -9,10 +9,9 @@ import type { ChatContentNode } from "@/types"
 import { contentNodesHaveReferences } from "@/lib/chat/contentProtocol"
 import { MarkdownMessage } from "./MarkdownMessage"
 import {
+  mentionAtClass,
   mentionChipClass,
   mentionLabelClass,
-  mentionSepClass,
-  mentionTypeBadgeClass,
 } from "./mentionChipStyles"
 
 interface UserMessageContentProps {
@@ -39,16 +38,13 @@ export function UserMessageContent({ content, contentNodes }: UserMessageContent
         ) : (
           <span
             key={i}
-            className={mentionChipClass("mx-0.5")}
+            className={mentionChipClass(n.type, "mx-0.5")}
             data-type={n.type}
             data-id={n.id}
             title={`${t(`mention.${n.type}`, n.type)} · ${n.id}`}
           >
-            <span className={mentionTypeBadgeClass(n.type)}>
-              {t(`mention.${n.type}`, n.type)}
-            </span>
-            <span className={mentionSepClass()} aria-hidden="true">
-              ·
+            <span className={mentionAtClass()} aria-hidden="true">
+              @
             </span>
             <span className={mentionLabelClass()}>
               {n.labelSnapshot || n.id}

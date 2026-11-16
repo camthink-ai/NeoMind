@@ -58,7 +58,8 @@ export const EntityMention = Mention.extend<
   renderHTML({ node, HTMLAttributes }) {
     const label = node.attrs.label ?? node.attrs.id ?? ""
     const entityType = node.attrs.entityType ?? ""
-    const typeText = (node.attrs.typeLabel as string | null) || entityType
+    const typeLabel = (node.attrs.typeLabel as string | null) || entityType
+    const typeClass = entityType ? ` nm-mention--${entityType}` : ""
     return [
       "span",
       mergeAttributes(HTMLAttributes, {
@@ -66,24 +67,12 @@ export const EntityMention = Mention.extend<
         "data-id": node.attrs.id,
         "data-label": label,
         "data-entity-type": entityType,
-        class: "nm-mention",
+        // Dense multi-mention: `@name` only; type lives in title + color.
+        title: typeLabel ? `${typeLabel} · ${node.attrs.id ?? ""}` : undefined,
+        class: `nm-mention${typeClass}`,
         contenteditable: "false",
       }),
-      // Same size as surrounding prose; type tint + · + name.
-      typeText
-        ? [
-            "span",
-            {
-              class: entityType
-                ? `nm-mention-type nm-mention-type--${entityType}`
-                : "nm-mention-type",
-            },
-            typeText,
-          ]
-        : "",
-      typeText
-        ? ["span", { class: "nm-mention-sep", "aria-hidden": "true" }, "·"]
-        : "",
+      ["span", { class: "nm-mention-at", "aria-hidden": "true" }, "@"],
       ["span", { class: "nm-mention-label" }, label],
     ]
   },
