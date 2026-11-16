@@ -940,13 +940,14 @@
     "connectBtn": "经 SoftAP 连接",
     "connectingTitle": "正在访问设备 SoftAP...",
     "unreachableHint": "请确认本机已加入设备热点后再重试。",
-    "joinTitle": "先加入设备热点",
-    "joinDesc": "打开系统 Wi‑Fi 设置，连接到设备 SoftAP，然后回到此处。",
+    "joinTitle": "经 SoftAP 连接",
+    "joinDesc": "先选择设备型号与网关，在系统 Wi‑Fi 中加入设备热点，再回到此处继续。",
     "ssidPatternLabel": "热点名称通常形如",
-    "ssidPatternHint": "也支持较新的 CT-AP-… 命名（MAC 后缀）。",
+    "ssidPatternHint": "也支持较新的 CT-AP-… 命名。",
     "joinedContinue": "我已加入 — 继续",
     "advancedOptions": "高级：SSID、型号、网关",
-    "ssidPatternPrimary": "NE101-XXXXXX  ·  NE301-XXXXXX  ·  NE503-XXXXXX"
+    "ssidPatternPrimary": "NE101-XXXXXX · NE301-XXXXXX · NE503-XXXXXX",
+    "handJoinHint": "打开系统 Wi‑Fi，加入设备热点后点继续。多数平台无法由 NeoMind 代你加入 Wi‑Fi。"
   },
   "ble": {
     "tabTitle": "蓝牙配网",
@@ -1002,7 +1003,8 @@
       "done": "配网完成",
       "failed": "失败"
     },
-    "scanDescShort": "扫描附近的 CamThink CT-Prov 蓝牙设备。"
+    "scanDescShort": "扫描附近的 CamThink CT-Prov 蓝牙设备。",
+    "scanHint": "先让设备进入可配网模式，再开始扫描。"
   },
   "auto": {
     "title": "自动发现",

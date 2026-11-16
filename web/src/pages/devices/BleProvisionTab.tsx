@@ -1,14 +1,13 @@
 /**
- * Bluetooth Device Provisioning — first viewport is scan-only.
+ * Bluetooth Device Provisioning — first viewport is scan + pick only.
  * After GATT + CT-Prov session open, shared wizard: info → caps → edit → apply.
  */
 
 import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bluetooth, Check, ChevronDown, Loader2, Signal } from 'lucide-react'
+import { Bluetooth, Loader2, Signal } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { useCtProvision } from '@/hooks/useCtProvision'
 import {
   isTauriEnv,
@@ -16,7 +15,6 @@ import {
   type CtScanDevice,
 } from '@/lib/ct-prov'
 import { useStore } from '@/store'
-import { cn } from '@/lib/utils'
 import { CtProvisionCenter, CtProvisionWizard } from './CtProvisionWizard'
 
 interface BleProvisionTabProps {
@@ -31,7 +29,6 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
   const deviceTypes = useStore((s) => s.deviceTypes)
 
   const [phase, setPhase] = useState<Phase>('scan')
-  const [prepOpen, setPrepOpen] = useState(false)
 
   const handleScan = useCallback(async () => {
     await ct.scan()
@@ -95,7 +92,6 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
     )
   }
 
-  // —— First viewport: discover only ——
   if (ct.scanning) {
     return (
       <CtProvisionCenter>
@@ -114,6 +110,9 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
     return (
       <div className="min-h-[420px] sm:min-h-[480px] flex flex-col px-4 py-6">
         <div className="text-center mb-6">
+          <p className="text-xs font-medium text-muted-foreground tracking-wide mb-1">
+            {t('devices:ctProv.productName')}
+          </p>
           <h3 className="text-lg font-medium">{t('devices:ble.selectDevice')}</h3>
           <p className="text-sm text-muted-foreground mt-1">
             {t('devices:ble.foundDevices', { count: ct.scannedDevices.length })}
@@ -175,12 +174,12 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
       <div className="w-16 h-16 rounded-xl bg-primary-light flex items-center justify-center">
         <Bluetooth className="w-8 h-8 text-primary" />
       </div>
-      <div className="text-center max-w-sm">
-        <p className="text-xs font-medium text-muted-foreground tracking-wide mb-1">
+      <div className="text-center max-w-sm space-y-2">
+        <p className="text-xs font-medium text-muted-foreground tracking-wide">
           {t('devices:ctProv.productName')}
         </p>
         <h3 className="text-lg font-medium">{t('devices:ble.scanTitle')}</h3>
-        <p className="text-sm text-muted-foreground mt-1">{t('devices:ble.scanDescShort')}</p>
+        <p className="text-sm text-muted-foreground">{t('devices:ble.scanDescShort')}</p>
       </div>
 
       {!bleSupported ? (
@@ -195,29 +194,9 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
         </Button>
       )}
 
-      <Collapsible open={prepOpen} onOpenChange={setPrepOpen} className="max-w-sm w-full">
-        <CollapsibleTrigger className="w-full flex items-center justify-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-          <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', prepOpen && 'rotate-180')} />
-          {t('devices:ble.prepTitle')}
-        </CollapsibleTrigger>
-        <CollapsibleContent className="pt-3 space-y-2">
-          <div className="rounded-xl border bg-card p-3 space-y-2">
-            <div className="flex items-start gap-2.5">
-              <Check className="w-4 h-4 text-success mt-0.5 shrink-0" />
-              <p className="text-sm">{t('devices:ble.prepStep1')}</p>
-            </div>
-            <div className="flex items-start gap-2.5">
-              <Check className="w-4 h-4 text-success mt-0.5 shrink-0" />
-              <p className="text-sm">{t('devices:ble.prepStep2')}</p>
-            </div>
-            <div className="flex items-start gap-2.5">
-              <Check className="w-4 h-4 text-success mt-0.5 shrink-0" />
-              <p className="text-sm text-muted-foreground">{t('devices:ble.prepStep3')}</p>
-            </div>
-            <p className="text-xs text-muted-foreground pt-1">{t('devices:ctProv.firmwareHint')}</p>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
+      <p className="text-xs text-muted-foreground text-center max-w-sm">
+        {t('devices:ble.scanHint')}
+      </p>
 
       {ct.error && <p className="text-sm text-error text-center max-w-sm">{ct.error}</p>}
     </CtProvisionCenter>

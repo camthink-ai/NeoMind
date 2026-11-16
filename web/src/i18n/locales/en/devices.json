@@ -940,13 +940,14 @@
     "connectBtn": "Connect over SoftAP",
     "connectingTitle": "Contacting device SoftAP...",
     "unreachableHint": "Make sure this computer is joined to the device hotspot, then retry.",
-    "joinTitle": "Join the device hotspot",
-    "joinDesc": "Open system Wi‑Fi settings, connect to the device SoftAP, then return here.",
+    "joinTitle": "Connect over SoftAP",
+    "joinDesc": "Pick the device family and gateway, join its Wi‑Fi hotspot in system settings, then continue here.",
     "ssidPatternLabel": "Look for an SSID like",
-    "ssidPatternHint": "Also supports newer CT-AP-… names (MAC suffix).",
+    "ssidPatternHint": "Also supports newer CT-AP-… names.",
     "joinedContinue": "I’ve joined — continue",
     "advancedOptions": "Advanced: SSID, model, gateway",
-    "ssidPatternPrimary": "NE101-XXXXXX  ·  NE301-XXXXXX  ·  NE503-XXXXXX"
+    "ssidPatternPrimary": "NE101-XXXXXX · NE301-XXXXXX · NE503-XXXXXX",
+    "handJoinHint": "Open system Wi‑Fi, join the device hotspot, then tap continue. NeoMind cannot join Wi‑Fi for you on most platforms."
   },
   "ble": {
     "tabTitle": "BLE Provision",
@@ -1002,7 +1003,8 @@
       "done": "Provisioning complete",
       "failed": "Failed"
     },
-    "scanDescShort": "Scan nearby CamThink CT-Prov devices over Bluetooth."
+    "scanDescShort": "Scan nearby CamThink CT-Prov devices over Bluetooth.",
+    "scanHint": "Put the device in provisionable mode, then scan."
   },
   "auto": {
     "title": "Auto Discovery",
