@@ -208,7 +208,9 @@ pub(crate) fn extract_device_id_from_topic_strong(
     None
 }
 
-/// True for NeoMind family topics: `device/{type}/{id}` or `…/uplink` / `…/downlink`.
+/// True for NeoMind family *telemetry* topics: bare `device/{type}/{id}` or
+/// `…/uplink`. Downlink is a command channel and must never enter telemetry
+/// ingest / auto-learn (wide `#` subscriptions otherwise turn echoes into metrics).
 pub(crate) fn is_neomind_device_telemetry_topic(topic: &str) -> bool {
     let parts: Vec<&str> = topic.split('/').collect();
     if parts.len() == 3 && parts[0] == "device" && !parts[1].is_empty() && !parts[2].is_empty() {
@@ -218,7 +220,17 @@ pub(crate) fn is_neomind_device_telemetry_topic(topic: &str) -> bool {
         && parts[0] == "device"
         && !parts[1].is_empty()
         && !parts[2].is_empty()
-        && matches!(parts[3], "uplink" | "downlink")
+        && parts[3] == "uplink"
+}
+
+/// True for NeoMind family command topics: `device/{type}/{id}/downlink`.
+pub(crate) fn is_neomind_device_downlink_topic(topic: &str) -> bool {
+    let parts: Vec<&str> = topic.split('/').collect();
+    parts.len() >= 4
+        && parts[0] == "device"
+        && !parts[1].is_empty()
+        && !parts[2].is_empty()
+        && parts[3] == "downlink"
 }
 
 /// Lookup helpers for topic→device maps that may store only the `/uplink` form.
@@ -473,6 +485,13 @@ pub(crate) fn extract_device_type_from_topic(topic: &str) -> Option<String> {
 pub(crate) fn looks_like_non_telemetry_topic(topic: &str) -> bool {
     // Fast path: split once, reuse for all checks.
     let segments: Vec<&str> = topic.split('/').collect();
+
+    // NeoMind (and many firmwares') command / downlink channel — never
+    // auto-onboard or treat as telemetry. Explicit topic→device mappings
+    // still win because they are checked before this filter runs.
+    if is_neomind_device_downlink_topic(topic) || segments.contains(&"downlink") {
+        return true;
+    }
 
     // LWT-style: any segment is `status`, or topic ends with
     // `online`/`offline`/`connected`/`disconnected`. These are

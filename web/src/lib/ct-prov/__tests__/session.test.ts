@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { ProvOp } from '../ops'
-import { CtSessionClient, ProvSessionError } from '../session'
+import { ProvOp, resultOpName } from '../ops'
+import {
+  CtSessionClient,
+  ProvSessionError,
+  formatSsidForDisplay,
+  parseNetworkScan,
+} from '../session'
 import { FakeTransport } from '../transport'
 import { NEOLINK_REF_COMMIT, CT_PROV_PRODUCT_NAME } from '../constants'
 import { NEOLINK_VECTORS_REF } from '../vectors'
@@ -77,5 +82,24 @@ describe('ct-prov FakeTransport session path', () => {
     expect(networks[0]?.rssi).toBeGreaterThan(networks[1]?.rssi ?? -999)
     expect(transport.opLog).toContain(ProvOp.communicationScan)
     await client.dispose()
+  })
+
+  it('preserves leading/trailing SSID spaces from scan results', () => {
+    const spaced = '  Office-2.4G  '
+    const page = parseNetworkScan({
+      kind: 'response',
+      id: 1,
+      ok: true,
+      opName: resultOpName(ProvOp.communicationScan),
+      data: {
+        section: 'wifi',
+        items: [{ ssid: spaced, rssi: -40 }, { ssid: '', rssi: -90 }],
+        more: false,
+      },
+    })
+    expect(page.items).toHaveLength(1)
+    expect(page.items[0]?.ssid).toBe(spaced)
+    // Submit value stays exact; display helper must not mutate it.
+    expect(formatSsidForDisplay(page.items[0]!.ssid)).toBe(spaced)
   })
 })

@@ -497,7 +497,10 @@ impl MqttAdapter {
 
                     // CT-Prov bare-topic / stale map: strong-extract id already
                     // registered → associate + learn the topic, do NOT draft.
-                    if device_id_opt.is_none() {
+                    // Never auto-learn `/downlink` (command echoes under wide
+                    // subscriptions must not become device metrics). Explicit
+                    // topic→device mappings above still apply independently.
+                    if device_id_opt.is_none() && !is_neomind_device_downlink_topic(&topic) {
                         if let Some(id) = extract_device_id_from_topic_strong(&topic, config)
                             .and_then(sanitize_auto_device_id)
                         {

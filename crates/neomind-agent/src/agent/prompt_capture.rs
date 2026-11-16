@@ -86,7 +86,23 @@ pub fn redact_secrets(text: &str) -> (String, usize) {
         (r"(?i)(x-api-key\s*[:=]\s*)\S+", "${1}[REDACTED]"),
         (r"(?i)(token\s*[:=]\s*)\S{8,}", "${1}[REDACTED]"),
         (r"(?i)(secret\s*[:=]\s*)\S{8,}", "${1}[REDACTED]"),
-        (r"(?i)(pass(?:word|wd)|pwd)\s*[:=]\s*\S+", "${1}=[REDACTED]"),
+        // Passwords: quoted values (incl. JSON `"password": "..."` — the
+        // quote between key and colon defeated the old bare pattern) must be
+        // matched BEFORE the bare form so `"a b"` is fully redacted, not cut
+        // at the first space. Double-quoted values honor JSON escapes
+        // (`\"`, `\\`, …) so `"prefix\" TAIL"` is not truncated at `\"`.
+        (
+            r#"(?i)(pass(?:word|wd)|pwd)["']?\s*[:=]\s*"(?:\\.|[^"\\])*""#,
+            "${1}=[REDACTED]",
+        ),
+        (
+            r#"(?i)(pass(?:word|wd)|pwd)['\"]?\s*[:=]\s*'(?:\\.|[^'\\])*'"#,
+            "${1}=[REDACTED]",
+        ),
+        (
+            r#"(?i)(pass(?:word|wd)|pwd)['\"]?\s*[:=]\s*[^\s,}]+"#,
+            "${1}=[REDACTED]",
+        ),
         (
             r"(?s)-----BEGIN [A-Z0-9 -]*PRIVATE KEY-----.*?-----END [A-Z0-9 -]*PRIVATE KEY-----",
             "[REDACTED_PEM]",
@@ -335,16 +351,52 @@ mod tests {
     #[test]
     fn redact_secrets_strips_password_and_pem() {
         let pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF6PZX6\n-----END RSA PRIVATE KEY-----";
-        let (out, hits) =
-            redact_secrets(&format!("password=hunter2\npasswd: s3cret\n{pem}\nok"));
+        let (out, hits) = redact_secrets(&format!("password=hunter2\npasswd: s3cret\n{pem}\nok"));
         assert!(hits >= 2, "hits={hits} out={out}");
         assert!(!out.contains("hunter2"), "password leaked: {out}");
         assert!(!out.contains("s3cret"), "passwd leaked: {out}");
-        assert!(
-            !out.contains("MIIEowIBAAKCAQEA"),
-            "PEM body leaked: {out}"
-        );
+        assert!(!out.contains("MIIEowIBAAKCAQEA"), "PEM body leaked: {out}");
         assert!(out.contains("[REDACTED_PEM]") || out.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redact_secrets_covers_json_and_quoted_password_fields() {
+        // JSON field + quoted value: the quote between key and colon used to
+        // defeat the bare `key[:=]value` pattern entirely.
+        let (out, _) = redact_secrets(r#"{"password":"sup3r-s3cret!"}"#);
+        assert!(!out.contains("sup3r-s3cret"), "JSON password leaked: {out}");
+
+        // Spacing after the colon and a value with spaces (bare pattern would
+        // stop at the first space).
+        let (out, _) = redact_secrets(r#"{"pwd": "two words secret"}"#);
+        assert!(!out.contains("two words"), "spaced JSON pwd leaked: {out}");
+
+        // Single-quoted form.
+        let (out, _) = redact_secrets("config {'passwd': 'ab cd'}");
+        assert!(!out.contains("ab cd"), "single-quoted passwd leaked: {out}");
+
+        // Non-quoted JSON number value (bare form, stops at `}`).
+        let (out, _) = redact_secrets(r#"{"pwd":123456, "other":1}"#);
+        assert!(!out.contains("123456"), "numeric pwd leaked: {out}");
+        assert!(out.contains("other"), "trailing JSON mangled: {out}");
+    }
+
+    #[test]
+    fn redact_secrets_handles_json_escaped_quotes_in_password() {
+        // `"[^"]*"` ends at the escaped quote; the bare-value regex then also
+        // fails to clear the spaced suffix (` TAIL_SECRET`).
+        let raw = r#"{"password":"prefix\" TAIL_SECRET"}"#;
+        let (out, hits) = redact_secrets(raw);
+        assert!(hits >= 1, "hits={hits} out={out}");
+        assert!(
+            !out.contains("TAIL_SECRET"),
+            "escaped-quote password suffix leaked: {out}"
+        );
+        assert!(
+            !out.contains("prefix"),
+            "escaped-quote password prefix leaked: {out}"
+        );
+        assert!(out.contains("[REDACTED]"), "missing redaction marker: {out}");
     }
 
     #[test]

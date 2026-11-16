@@ -263,11 +263,8 @@ fn test_ct_prov_bare_topic_extracts_device_id_not_type() {
         Some("ne101_camera")
     );
     assert_eq!(
-        extract_device_id_from_topic_strong(
-            "device/ne101_camera/000012e186d30000/uplink",
-            &cfg
-        )
-        .as_deref(),
+        extract_device_id_from_topic_strong("device/ne101_camera/000012e186d30000/uplink", &cfg)
+            .as_deref(),
         Some("000012e186d30000")
     );
 
@@ -280,6 +277,37 @@ fn test_ct_prov_bare_topic_extracts_device_id_not_type() {
         lookup_topic_device_id(&map, topic).map(|s| s.as_str()),
         Some("000012e186d30000")
     );
+}
+
+/// Downlink is a command channel: never classify as telemetry, never pass the
+/// non-telemetry filter (auto-onboard / auto-learn must not treat echoes as
+/// metrics under wide `#` subscriptions).
+#[test]
+fn test_downlink_is_not_telemetry_and_skips_auto_onboard() {
+    let downlink = "device/ne101_camera/000012e186d30000/downlink";
+    assert!(
+        !is_neomind_device_telemetry_topic(downlink),
+        "downlink must not be treated as a telemetry topic"
+    );
+    assert!(is_neomind_device_downlink_topic(downlink));
+    assert!(
+        looks_like_non_telemetry_topic(downlink),
+        "downlink must be filtered from auto-onboarding"
+    );
+
+    // Uplink / bare remain telemetry.
+    assert!(is_neomind_device_telemetry_topic(
+        "device/ne101_camera/000012e186d30000/uplink"
+    ));
+    assert!(is_neomind_device_telemetry_topic(
+        "device/ne101_camera/000012e186d30000"
+    ));
+    assert!(!is_neomind_device_downlink_topic(
+        "device/ne101_camera/000012e186d30000/uplink"
+    ));
+    assert!(!looks_like_non_telemetry_topic(
+        "device/ne101_camera/000012e186d30000/uplink"
+    ));
 }
 
 #[cfg(test)]

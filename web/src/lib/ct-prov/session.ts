@@ -49,10 +49,16 @@ export interface SetConfigResult {
 
 /** One Wi-Fi / HaLow network from `communication.scan`. */
 export interface NetworkScanItem {
+  /** Wire SSID exactly as returned — leading/trailing spaces are significant. */
   ssid: string
   rssi?: number
   bssid?: string
   security?: string
+}
+
+/** Display helper: keep submit value (`item.ssid`) untrimmed; UI may format. */
+export function formatSsidForDisplay(ssid: string): string {
+  return ssid
 }
 
 export interface NetworkScanPage {
@@ -209,8 +215,10 @@ export function parseNetworkScan(response: ProvResponse): NetworkScanPage {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
     const obj = entry as JsonObject
     const ssid = obj.ssid
-    if (typeof ssid !== 'string' || !ssid.trim()) continue
-    const item: NetworkScanItem = { ssid: ssid.trim() }
+    // Empty string only — leading/trailing spaces are part of the real SSID
+    // and must be preserved for provision submit (do not trim).
+    if (typeof ssid !== 'string' || ssid.length === 0) continue
+    const item: NetworkScanItem = { ssid }
     if (typeof obj.rssi === 'number') item.rssi = obj.rssi
     if (typeof obj.bssid === 'string') item.bssid = obj.bssid
     if (typeof obj.security === 'string') item.security = obj.security
