@@ -126,6 +126,9 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
   return (
     <div className="min-h-[420px] sm:min-h-[480px] flex flex-col px-4 py-6">
       <div className="text-center max-w-md mx-auto mb-6 space-y-2">
+        <div className="w-14 h-14 mx-auto rounded-xl bg-primary-light flex items-center justify-center">
+          <Wifi className="w-7 h-7 text-primary" />
+        </div>
         <p className="text-xs font-medium text-muted-foreground tracking-wide">
           {t('devices:ctProv.productName')}
         </p>

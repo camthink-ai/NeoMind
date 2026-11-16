@@ -619,7 +619,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
         {/* Webhook panel */}
         {activeMethod === 'webhook' && (
           <div className="rounded-xl border bg-card p-4 space-y-3">
-            <p className="text-sm text-muted-foreground">
+            <p className="text-xs text-muted-foreground leading-relaxed">
               {t('devices:auto.webhookEndpointDesc')}
             </p>
             <div className="space-y-1">
@@ -628,7 +628,7 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
                 {webhookBaseUrl}
               </code>
             </div>
-            <p className="xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground leading-relaxed">
               {t('devices:auto.webhookUrlHint')}
             </p>
             <div className="space-y-1">
@@ -852,7 +852,7 @@ export function ManualAddForm({
         {/* Device ID & Name */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <FormField label={t('devices:deviceId')} error={errors.deviceId} helpText={t('devices:id.autoGenerate')}>
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
               <Input
                 value={deviceId}
                 onChange={(e) => {
@@ -860,12 +860,13 @@ export function ManualAddForm({
                   setErrors((prev) => { const next = { ...prev }; delete next.deviceId; return next })
                 }}
                 placeholder={t('devices:id.autoGenerate')}
-                className="font-mono"
+                className="min-w-0 flex-1 font-mono"
               />
               <Button
                 type="button"
                 variant="outline"
                 size="icon"
+                className="shrink-0 h-11 w-11 sm:h-10 sm:w-10"
                 onClick={() => setDeviceId(generateRandomId())}
                 title={t('devices:id.regenerate')}
               >
@@ -1132,17 +1133,18 @@ export function ManualAddForm({
               </code>
             </div>
             <FormField label={t('devices:add.webhookToken')}>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <Input
                   value={webhookToken}
                   onChange={(e) => setWebhookToken(e.target.value)}
                   placeholder={t('devices:add.webhookTokenPlaceholder')}
-                  className="font-mono text-sm"
+                  className="min-w-0 flex-1 font-mono text-sm"
                 />
                 <Button
                   type="button"
                   variant="outline"
                   size="icon"
+                  className="shrink-0 h-11 w-11 sm:h-10 sm:w-10"
                   onClick={() => setWebhookToken(generateWebhookToken())}
                   title={t('devices:add.webhookTokenGenerate')}
                 >
