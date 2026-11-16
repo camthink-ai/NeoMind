@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bluetooth, Pencil, Search, RefreshCw, Cpu,
-  Wifi, Globe, Radio, Puzzle, Plug, Network,
+  Wifi, Radio, Puzzle, Plug, Network,
   CheckCircle2, XCircle, Loader2,
   Copy, LucideIcon, KeyRound, Download, Lock, ShieldCheck,
 } from 'lucide-react'
@@ -277,24 +277,20 @@ interface StepCardProps {
 
 function StepCard({ step, icon: Icon, title, description, status = 'pending' }: StepCardProps) {
   return (
-    <div className={cn(
-      'relative flex gap-4 p-4 rounded-xl border transition-colors',
-      status === 'done' && 'border-success bg-success-light',
-      status === 'active' && 'border-primary bg-card',
-      status === 'pending' && 'border-border bg-card',
-    )}>
-      {/* Step number */}
-      <div className={cn(
-        'w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0',
-        status === 'done' && 'bg-success text-primary-foreground',
-        status === 'active' && 'bg-primary text-primary-foreground',
-        status === 'pending' && 'bg-muted-30 text-muted-foreground',
-      )}>
-        {status === 'done' ? <CheckCircle2 className="h-4 w-4" /> : step}
+    <div className="flex gap-3 py-2">
+      <div
+        className={cn(
+          'w-7 h-7 rounded-lg flex items-center justify-center text-xs font-medium shrink-0',
+          status === 'done' && 'bg-success-light text-success',
+          status === 'active' && 'bg-primary text-primary-foreground',
+          status === 'pending' && 'bg-muted text-muted-foreground',
+        )}
+      >
+        {status === 'done' ? <CheckCircle2 className="h-3.5 w-3.5" /> : step}
       </div>
-      <div className="flex-1 min-w-0 space-y-1">
+      <div className="flex-1 min-w-0 space-y-0.5 pt-0.5">
         <div className="flex items-center gap-2">
-          <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+          <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <h4 className="text-sm font-medium">{title}</h4>
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
@@ -358,20 +354,30 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="min-h-[320px] flex flex-col items-center justify-center gap-3">
+        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">{t('common:loading')}</p>
       </div>
     )
   }
 
   return (
-    <FormSectionGroup>
-      {/* How it works — Step cards */}
+    <div className="space-y-6">
+      <div className="text-center max-w-md mx-auto space-y-2">
+        <div className="w-14 h-14 mx-auto rounded-xl bg-primary-light flex items-center justify-center">
+          <Search className="w-7 h-7 text-primary" />
+        </div>
+        <h3 className="text-lg font-medium">{t('devices:auto.title')}</h3>
+        <p className="text-sm text-muted-foreground">{t('devices:auto.tabDesc')}</p>
+      </div>
+
+      <FormSectionGroup>
+      {/* How it works — calm step list (MQTT pending drafts ≠ SoftAP) */}
       <FormSection
         title={t('devices:auto.howItWorks')}
         description={t('devices:auto.howItWorksDesc')}
       >
-        <div className="space-y-3">
+        <div className="rounded-xl border bg-card px-4 py-2 divide-y divide-border">
           <StepCard
             step={1}
             icon={Radio}
@@ -401,26 +407,23 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
         title={t('devices:auto.brokerInfo')}
         description={t('devices:auto.brokerInfoDesc')}
       >
-        {/* Method toggle */}
-        <div className="flex gap-2 mb-4">
+        {/* Method toggle — segmented, matches Manual / CT-Prov calm controls */}
+        <div className="grid grid-cols-2 rounded-lg bg-muted p-1 mb-4">
           {([
-            { key: 'mqtt' as const, icon: Radio, color: 'text-accent-orange', bg: 'bg-accent-orange-light' },
-            { key: 'webhook' as const, icon: Globe, color: 'text-accent-purple', bg: 'bg-accent-purple-light' },
-          ]).map(({ key, icon: MethodIcon, color, bg }) => (
+            { key: 'mqtt' as const },
+            { key: 'webhook' as const },
+          ]).map(({ key }) => (
             <button
               key={key}
               type="button"
               onClick={() => setActiveMethod(key)}
               className={cn(
-                'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all',
+                'min-h-11 rounded-md px-3 text-sm font-medium transition-colors',
                 activeMethod === key
-                  ? 'bg-card border border-primary shadow-sm'
-                  : 'bg-muted-30 text-muted-foreground hover:bg-card'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground',
               )}
             >
-              <div className={cn('w-6 h-6 rounded flex items-center justify-center', bg)}>
-                <MethodIcon className={cn('h-3.5 w-3.5', color)} />
-              </div>
               {t(`devices:auto.method${key.charAt(0).toUpperCase() + key.slice(1)}`)}
             </button>
           ))}
@@ -668,7 +671,8 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
           ))}
         </div>
       </FormSection>
-    </FormSectionGroup>
+      </FormSectionGroup>
+    </div>
   )
 }
 
@@ -817,6 +821,15 @@ export function ManualAddForm({
   }, [selectedDeviceType, adding, handleSubmit, renderFooter, t])
 
   return (
+    <div className="space-y-6">
+      <div className="text-center max-w-md mx-auto space-y-2">
+        <div className="w-14 h-14 mx-auto rounded-xl bg-primary-light flex items-center justify-center">
+          <Pencil className="w-7 h-7 text-primary" />
+        </div>
+        <h3 className="text-lg font-medium">{t('devices:add.title')}</h3>
+        <p className="text-sm text-muted-foreground">{t('devices:add.tabDesc')}</p>
+      </div>
+
     <FormSectionGroup>
       {/* Basic Info */}
       <FormSection>
@@ -1165,5 +1178,6 @@ export function ManualAddForm({
         </FormField>
       </FormSection>
     </FormSectionGroup>
+    </div>
   )
 }

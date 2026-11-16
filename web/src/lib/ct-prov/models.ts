@@ -16,8 +16,22 @@ export const PLAN_SOFTAP_HOST_FALLBACK: Readonly<Record<string, string>> = {
 export const MODEL_TO_DEVICE_TYPE_FALLBACK: Readonly<Record<string, string>> = {
   NE101: 'ne101_camera',
   NE301: 'ne301_camera',
+  NE302: 'ne302_camera',
   NE503: 'ne503_camera',
+  /** Product id is `ek410_Eink` (DeviceTypes / builtins) — not NK410. */
+  EK410: 'ek410_Eink',
 }
+
+/** SoftAP discovery tokens accepted on DeviceTypes `supported_discovery`. */
+function supportsApDiscovery(discovery: string[]): boolean {
+  return discovery.some((d) => {
+    const x = d.trim().toLowerCase()
+    return x === 'ap' || x === 'softap'
+  })
+}
+
+/** Plan / builtin SoftAP families when DeviceTypes are empty. */
+const FALLBACK_AP_MODELS = ['NE101', 'NE301', 'NE302', 'NE503', 'EK410'] as const
 
 export interface CtProvTypeMetadata {
   model_code?: number | null
@@ -111,7 +125,7 @@ export function softapEndpointForHost(host: string): string {
   return `http://${host}/api/v1/ctprov`
 }
 
-/** Models that advertise SoftAP discovery in DeviceTypes (fallback: plan trio). */
+/** Models that advertise SoftAP discovery in DeviceTypes (fallback: seeded families). */
 export function listApProvisionModels(
   deviceTypes?: CtProvDeviceTypeRef[] | null,
 ): Array<{ model: string; host: string; deviceType: string }> {
@@ -121,7 +135,8 @@ export function listApProvisionModels(
       const ct = t.ct_prov
       if (!ct) continue
       const discovery = ct.supported_discovery ?? []
-      if (discovery.length > 0 && !discovery.includes('ap')) continue
+      // Accept both `ap` and `softap` (EK410 DeviceTypes uses softap).
+      if (discovery.length > 0 && !supportsApDiscovery(discovery)) continue
       const model = ct.model_name || ct.ap_ssid_families?.[0]
       if (!model) continue
       out.push({
@@ -132,7 +147,7 @@ export function listApProvisionModels(
     }
   }
   if (out.length > 0) return out
-  return (['NE101', 'NE301', 'NE503'] as const).map((model) => ({
+  return FALLBACK_AP_MODELS.map((model) => ({
     model,
     host: softapHostForModel(model),
     deviceType: modelToDeviceType(model)!,

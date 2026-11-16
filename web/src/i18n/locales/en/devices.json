@@ -934,7 +934,7 @@
     "prepStep2": "Join SSID NE101-/NE301-/NE503-… (or newer CT-AP-…) from system Wi‑Fi settings",
     "prepStep3": "Return here and connect — NeoMind cannot join Wi‑Fi for you on most platforms",
     "ssidOptional": "Device SoftAP SSID (optional)",
-    "ssidPlaceholder": "NE301-84C102 or CT-AP-A1B2C3",
+    "ssidPlaceholder": "NE302-84C102 or EK410-A1B2C3",
     "model": "Device model family",
     "host": "SoftAP gateway address",
     "connectBtn": "Connect over SoftAP",
@@ -946,7 +946,7 @@
     "ssidPatternHint": "Also supports newer CT-AP-… names.",
     "joinedContinue": "I’ve joined — continue",
     "advancedOptions": "Advanced: SSID, model, gateway",
-    "ssidPatternPrimary": "NE101-XXXXXX · NE301-XXXXXX · NE503-XXXXXX",
+    "ssidPatternPrimary": "NE101-… · NE301-… · NE302-… · NE503-… · EK410-…",
     "handJoinHint": "Open system Wi‑Fi, join the device hotspot, then tap continue. NeoMind cannot join Wi‑Fi for you on most platforms."
   },
   "ble": {

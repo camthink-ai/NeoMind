@@ -1,0 +1,509 @@
+{
+  "device_type": "ek410_Eink",
+  "name": "CamThink EK410 E-Ink Display",
+  "description": "CamThink EK410 — 7.09\" six-color Spectra e-ink (logical landscape 1600×1200), ESP32-C61. MQTT topics: device/ek410_Eink/{deviceId}/uplink|downlink. Uplink is flat JSON; metric names = top-level keys. type=telemetry|status|cmd_ack share the same uplink — cmd_ack fields (last_cmd/cmd_status/detail) are listed as metrics so NeoMind can store them. Downlink: {cmd, params}. Best image: SoftAP Image upload or platform raw 4bpp 960000 B. Telemetry every 30 s; offline timeout 180 s.",
+  "categories": [
+    "MQTT",
+    "Display",
+    "E-Ink"
+  ],
+  "mode": "full",
+  "store_raw": false,
+  "metrics": [
+    {
+      "name": "type",
+      "display_name": "Uplink Type",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "ts",
+      "display_name": "Timestamp",
+      "data_type": "Integer",
+      "required": false,
+      "unit": "s",
+      "min": 0
+    },
+    {
+      "name": "devName",
+      "display_name": "Device Name",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "deviceId",
+      "display_name": "Device ID",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "clientId",
+      "display_name": "MQTT Client ID",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "rssi_dbm",
+      "display_name": "Wi-Fi RSSI",
+      "data_type": "Integer",
+      "required": false,
+      "unit": "dBm",
+      "min": -100,
+      "max": 0
+    },
+    {
+      "name": "heap_free",
+      "display_name": "Free Heap",
+      "data_type": "Integer",
+      "required": false,
+      "unit": "B",
+      "min": 0
+    },
+    {
+      "name": "uptime_s",
+      "display_name": "Uptime",
+      "data_type": "Integer",
+      "required": false,
+      "unit": "s",
+      "min": 0
+    },
+    {
+      "name": "fwVersion",
+      "display_name": "Firmware Version",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "panel",
+      "display_name": "Panel Spec",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "battery_percent",
+      "display_name": "Battery SOC",
+      "data_type": "Integer",
+      "required": false,
+      "unit": "%",
+      "min": 0,
+      "max": 100
+    },
+    {
+      "name": "battery_mv",
+      "display_name": "Battery Voltage",
+      "data_type": "Integer",
+      "required": false,
+      "unit": "mV",
+      "min": 0,
+      "max": 5000
+    },
+    {
+      "name": "online",
+      "display_name": "Online Flag",
+      "data_type": "Boolean",
+      "required": false
+    },
+    {
+      "name": "hb",
+      "display_name": "Heartbeat Flag",
+      "data_type": "Integer",
+      "required": false,
+      "min": 0,
+      "max": 1
+    },
+    {
+      "name": "state",
+      "display_name": "Connection State",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "reason",
+      "display_name": "Offline Reason",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "last_cmd",
+      "display_name": "Last Command",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "cmd_status",
+      "display_name": "Command Status",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "detail",
+      "display_name": "Command Detail",
+      "data_type": "String",
+      "required": false
+    }
+  ],
+  "uplink_samples": [
+    {
+      "type": "telemetry",
+      "devName": "EK410-e37d627a",
+      "deviceId": "e37d627a",
+      "clientId": "ek410-e37d627a",
+      "rssi_dbm": -42,
+      "heap_free": 2065519,
+      "uptime_s": 3600,
+      "fwVersion": "1.2.1-ek410",
+      "panel": "EK410 7.09\" 1600x1200 6",
+      "battery_percent": 87,
+      "battery_mv": 4120,
+      "hb": 1,
+      "online": true,
+      "ts": 1731480000
+    },
+    {
+      "type": "status",
+      "state": "online",
+      "clientId": "ek410-e37d627a",
+      "deviceId": "e37d627a",
+      "ts": 1731480000
+    },
+    {
+      "type": "status",
+      "state": "offline",
+      "clientId": "ek410-e37d627a",
+      "deviceId": "e37d627a",
+      "reason": "lwt"
+    },
+    {
+      "type": "cmd_ack",
+      "devName": "EK410-e37d627a",
+      "deviceId": "e37d627a",
+      "last_cmd": "display_url",
+      "cmd_status": "ok",
+      "detail": "displayed",
+      "ts": 1731480030
+    },
+    {
+      "type": "cmd_ack",
+      "devName": "EK410-e37d627a",
+      "deviceId": "e37d627a",
+      "last_cmd": "display_url",
+      "cmd_status": "error",
+      "detail": "dither OOM/fail",
+      "ts": 1731480060
+    }
+  ],
+  "commands": [
+    {
+      "name": "ping",
+      "display_name": "Ping / Heartbeat",
+      "description": "Ask device to publish telemetry immediately and ack with pong. Alias on device: heartbeat.",
+      "payload_template": "{\"cmd\": \"ping\"}",
+      "parameters": [],
+      "samples": [
+        {
+          "cmd": "ping"
+        }
+      ]
+    },
+    {
+      "name": "clear",
+      "display_name": "Clear / Fill Color",
+      "description": "Fill the whole panel with one Spectra ink and full-refresh.",
+      "payload_template": "{\"cmd\": \"clear\", \"params\": {\"color\": ${color}}}",
+      "parameters": [
+        {
+          "name": "color",
+          "display_name": "Color",
+          "data_type": {
+            "enum": {
+              "options": [
+                "white",
+                "black",
+                "yellow",
+                "red",
+                "blue",
+                "green"
+              ]
+            }
+          },
+          "required": false,
+          "default_value": "white",
+          "help_text": "Ink color for full-panel fill"
+        }
+      ],
+      "samples": [
+        {
+          "cmd": "clear",
+          "params": {
+            "color": "white"
+          }
+        },
+        {
+          "cmd": "clear",
+          "params": {
+            "color": "black"
+          }
+        }
+      ]
+    },
+    {
+      "name": "render_text",
+      "display_name": "Render Text",
+      "description": "Centered multi-line UTF-8 text (newline-separated, max 10 lines). ASCII 8×16 + GB2312 16×16 CJK (emoji/rare chars degrade). scale 1–8, default 3.",
+      "payload_template": "{\"cmd\": \"render_text\", \"params\": {\"text\": ${text}, \"color\": ${color}, \"bg\": ${bg}, \"scale\": ${scale}}}",
+      "parameters": [
+        {
+          "name": "text",
+          "display_name": "Text",
+          "data_type": "String",
+          "required": true,
+          "help_text": "Lines separated by \\n (max 10)"
+        },
+        {
+          "name": "color",
+          "display_name": "Text Color",
+          "data_type": {
+            "enum": {
+              "options": [
+                "black",
+                "white",
+                "yellow",
+                "red",
+                "blue",
+                "green"
+              ]
+            }
+          },
+          "required": false,
+          "default_value": "black"
+        },
+        {
+          "name": "bg",
+          "display_name": "Background",
+          "data_type": {
+            "enum": {
+              "options": [
+                "white",
+                "black",
+                "yellow",
+                "red",
+                "blue",
+                "green"
+              ]
+            }
+          },
+          "required": false,
+          "default_value": "white"
+        },
+        {
+          "name": "scale",
+          "display_name": "Font Scale",
+          "data_type": "Integer",
+          "required": false,
+          "default_value": 3,
+          "min": 1,
+          "max": 8
+        }
+      ],
+      "samples": [
+        {
+          "cmd": "render_text",
+          "params": {
+            "text": "Hello\nEK410",
+            "color": "black",
+            "bg": "white",
+            "scale": 4
+          }
+        }
+      ]
+    },
+    {
+      "name": "render_canvas",
+      "display_name": "Render Canvas (text/rect/QR)",
+      "description": "Draw-list on logical landscape 1600×1200. items: text{x,y,text,color,scale}, rect{x,y,w,h,color,thickness,fill}, qr{x,y,text,color,scale}. Max 48 items, max 2 QR, each text ≤191 UTF-8 bytes. MQTT payload must stay under ~8 KB.",
+      "payload_template": "{\"cmd\": \"render_canvas\", \"params\": {\"bg\": ${bg}, \"items\": ${items}}}",
+      "parameters": [
+        {
+          "name": "bg",
+          "display_name": "Background",
+          "data_type": {
+            "enum": {
+              "options": [
+                "white",
+                "black",
+                "yellow",
+                "red",
+                "blue",
+                "green"
+              ]
+            }
+          },
+          "required": false,
+          "default_value": "white"
+        },
+        {
+          "name": "items",
+          "display_name": "Items[]",
+          "data_type": "Array",
+          "required": true,
+          "help_text": "JSON array of draw items (text / rect / qr)"
+        }
+      ],
+      "samples": [
+        {
+          "cmd": "render_canvas",
+          "params": {
+            "bg": "white",
+            "items": [
+              {
+                "type": "text",
+                "x": 80,
+                "y": 80,
+                "text": "CamThink EK410",
+                "scale": 4,
+                "color": "black"
+              },
+              {
+                "type": "qr",
+                "x": 1200,
+                "y": 400,
+                "text": "https://wiki.camthink.ai",
+                "scale": 6
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "display_url",
+      "display_name": "Display Image / Frame from URL",
+      "description": "Device HTTP-GETs the URL and full-refreshes. Preferred for quality: raw native 4bpp exactly 960000 bytes (platform/SoftAP pre-dither). Also accepts JPEG/PNG (on-device decode+dither, quality below SoftAP; max ~768 KB). WebP not supported — convert on host. URL must be reachable from the device LAN/WAN (not localhost). On failure the panel shows reason + SoftAP/raw guidance.",
+      "payload_template": "{\"cmd\": \"display_url\", \"params\": {\"url\": ${url}}}",
+      "parameters": [
+        {
+          "name": "url",
+          "display_name": "Image / Frame URL",
+          "data_type": "String",
+          "required": true,
+          "help_text": "http(s)://… .jpg|.png (≤~300KB recommended) or raw .bin (exactly 960000 B 4bpp). Prefer SoftAP Image upload or platform raw for best quality."
+        }
+      ],
+      "samples": [
+        {
+          "cmd": "display_url",
+          "params": {
+            "url": "http://192.168.1.10/frames/ek410.bin"
+          }
+        },
+        {
+          "cmd": "display_url",
+          "params": {
+            "url": "https://example.com/photo.jpg"
+          }
+        }
+      ]
+    },
+    {
+      "name": "set_power",
+      "display_name": "Set Power Mode",
+      "description": "always = stay online; cycle = wake ~2 min then deep-sleep sleepMin minutes (optional wakeUrl on wake); hibernate = sleep immediately until MAIN button.",
+      "payload_template": "{\"cmd\": \"set_power\", \"params\": {\"mode\": ${mode}, \"sleepMin\": ${sleepMin}, \"wakeUrl\": ${wakeUrl}}}",
+      "parameters": [
+        {
+          "name": "mode",
+          "display_name": "Mode",
+          "data_type": {
+            "enum": {
+              "options": [
+                "always",
+                "cycle",
+                "hibernate"
+              ]
+            }
+          },
+          "required": true,
+          "default_value": "always"
+        },
+        {
+          "name": "sleepMin",
+          "display_name": "Sleep Minutes",
+          "data_type": "Integer",
+          "required": false,
+          "default_value": 30,
+          "min": 0,
+          "visible_when": "mode == 'cycle'",
+          "help_text": "Deep-sleep duration between wake windows (cycle mode)"
+        },
+        {
+          "name": "wakeUrl",
+          "display_name": "Wake Frame URL",
+          "data_type": "String",
+          "required": false,
+          "default_value": "",
+          "visible_when": "mode == 'cycle'",
+          "help_text": "Optional display_url target fetched after wake (cycle mode)"
+        }
+      ],
+      "samples": [
+        {
+          "cmd": "set_power",
+          "params": {
+            "mode": "always"
+          }
+        },
+        {
+          "cmd": "set_power",
+          "params": {
+            "mode": "cycle",
+            "sleepMin": 30,
+            "wakeUrl": ""
+          }
+        },
+        {
+          "cmd": "set_power",
+          "params": {
+            "mode": "hibernate"
+          }
+        }
+      ]
+    },
+    {
+      "name": "sleep_now",
+      "display_name": "Sleep Now",
+      "description": "Enter deep sleep immediately (screen retained). Wake with short-press MAIN. Alias on device: sleep.",
+      "payload_template": "{\"cmd\": \"sleep_now\"}",
+      "parameters": [],
+      "samples": [
+        {
+          "cmd": "sleep_now"
+        }
+      ]
+    },
+    {
+      "name": "reboot",
+      "display_name": "Reboot",
+      "description": "Reboot the device",
+      "payload_template": "{\"cmd\": \"reboot\"}",
+      "parameters": [],
+      "samples": [
+        {
+          "cmd": "reboot"
+        }
+      ]
+    }
+  ],
+  "default_offline_timeout_secs": 180,
+  "ct_prov": {
+    "model_code": null,
+    "model_name": "EK410",
+    "ap_ssid_families": [
+      "EK410"
+    ],
+    "softap_default_host": "192.168.4.1",
+    "supported_discovery": [
+      "ap",
+      "softap"
+    ]
+  }
+}

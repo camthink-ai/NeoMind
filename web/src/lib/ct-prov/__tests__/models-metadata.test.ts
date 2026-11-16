@@ -31,6 +31,15 @@ const TYPES: CtProvDeviceTypeRef[] = [
     },
   },
   {
+    device_type: 'ne302_camera',
+    ct_prov: {
+      model_name: 'NE302',
+      ap_ssid_families: ['NE302'],
+      softap_default_host: '192.168.10.10',
+      supported_discovery: ['ap'],
+    },
+  },
+  {
     device_type: 'ne503_camera',
     ct_prov: {
       model_code: 3,
@@ -40,6 +49,15 @@ const TYPES: CtProvDeviceTypeRef[] = [
       supported_discovery: ['ble', 'ap'],
     },
   },
+  {
+    device_type: 'ek410_Eink',
+    ct_prov: {
+      model_name: 'EK410',
+      ap_ssid_families: ['EK410'],
+      softap_default_host: '192.168.4.1',
+      supported_discovery: ['softap'],
+    },
+  },
 ]
 
 describe('ct-prov DeviceTypes metadata resolution', () => {
@@ -47,20 +65,44 @@ describe('ct-prov DeviceTypes metadata resolution', () => {
     expect(modelToDeviceType('NE101', TYPES)).toBe('ne101_camera')
     expect(modelToDeviceType('NE503', TYPES)).toBe('ne503_camera')
     expect(modelToDeviceType('NE503C', TYPES)).toBe('ne503_camera')
+    expect(modelToDeviceType('NE302', TYPES)).toBe('ne302_camera')
+    expect(modelToDeviceType('EK410', TYPES)).toBe('ek410_Eink')
     expect(softapHostForModel('NE101', TYPES)).toBe('192.168.1.1')
     expect(softapHostForModel('NE301', TYPES)).toBe('192.168.10.10')
+    expect(softapHostForModel('NE302', TYPES)).toBe('192.168.10.10')
     expect(softapHostForModel('NE503', TYPES)).toBe('10.0.0.1')
+    expect(softapHostForModel('EK410', TYPES)).toBe('192.168.4.1')
   })
 
   it('falls back to plan hosts when types are missing', () => {
     expect(softapHostForModel('NE301')).toBe('192.168.10.10')
+    expect(softapHostForModel('NE302')).toBe('192.168.10.10')
+    expect(softapHostForModel('EK410')).toBe('192.168.4.1')
     expect(modelToDeviceType('NE503')).toBe('ne503_camera')
+    expect(modelToDeviceType('EK410')).toBe('ek410_Eink')
   })
 
-  it('resolves model_code and AP model list', () => {
+  it('resolves model_code and AP model list including softap discovery', () => {
     expect(modelNameFromCode(3, TYPES)).toBe('NE503')
     expect(findCtProvType(TYPES, 'NE101')?.device_type).toBe('ne101_camera')
     const models = listApProvisionModels(TYPES)
-    expect(models.map((m) => m.model).sort()).toEqual(['NE101', 'NE301', 'NE503'])
+    expect(models.map((m) => m.model).sort()).toEqual([
+      'EK410',
+      'NE101',
+      'NE301',
+      'NE302',
+      'NE503',
+    ])
+  })
+
+  it('fallback SoftAP list includes NE302 and EK410', () => {
+    const models = listApProvisionModels([])
+    expect(models.map((m) => m.model)).toEqual([
+      'NE101',
+      'NE301',
+      'NE302',
+      'NE503',
+      'EK410',
+    ])
   })
 })

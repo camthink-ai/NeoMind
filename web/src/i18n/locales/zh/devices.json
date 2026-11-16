@@ -934,7 +934,7 @@
     "prepStep2": "在系统 Wi‑Fi 设置中加入 NE101-/NE301-/NE503-…（或较新的 CT-AP-…）热点",
     "prepStep3": "返回此处点击连接——多数平台无法由 NeoMind 代你加入 Wi‑Fi",
     "ssidOptional": "设备 SoftAP SSID（可选）",
-    "ssidPlaceholder": "NE301-84C102 或 CT-AP-A1B2C3",
+    "ssidPlaceholder": "NE302-84C102 或 EK410-A1B2C3",
     "model": "设备型号家族",
     "host": "SoftAP 网关地址",
     "connectBtn": "经 SoftAP 连接",
@@ -946,7 +946,7 @@
     "ssidPatternHint": "也支持较新的 CT-AP-… 命名。",
     "joinedContinue": "我已加入 — 继续",
     "advancedOptions": "高级：SSID、型号、网关",
-    "ssidPatternPrimary": "NE101-XXXXXX · NE301-XXXXXX · NE503-XXXXXX",
+    "ssidPatternPrimary": "NE101-… · NE301-… · NE302-… · NE503-… · EK410-…",
     "handJoinHint": "打开系统 Wi‑Fi，加入设备热点后点继续。多数平台无法由 NeoMind 代你加入 Wi‑Fi。"
   },
   "ble": {

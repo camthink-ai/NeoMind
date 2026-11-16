@@ -274,5 +274,16 @@
         }
       ]
     }
-  ]
+  ],
+  "ct_prov": {
+    "model_code": null,
+    "model_name": "NE302",
+    "ap_ssid_families": [
+      "NE302"
+    ],
+    "softap_default_host": "192.168.10.10",
+    "supported_discovery": [
+      "ap"
+    ]
+  }
 }

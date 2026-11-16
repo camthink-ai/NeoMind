@@ -40,7 +40,9 @@ export const CT_PROV_SOFTAP_PATH = '/api/v1/ctprov'
 export const SOFTAP_DEFAULT_HOST: Readonly<Record<string, string>> = {
   NE101: '192.168.1.1',
   NE301: '192.168.10.10',
+  NE302: '192.168.10.10',
   NE503: '10.0.0.1',
+  EK410: '192.168.4.1',
 }
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000

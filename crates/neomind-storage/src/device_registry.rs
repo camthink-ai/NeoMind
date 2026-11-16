@@ -907,6 +907,10 @@ impl DeviceRegistryStore {
                 "ne503_camera",
                 include_str!("builtin_types/ne503_camera.json"),
             ),
+            (
+                "ek410_Eink",
+                include_str!("builtin_types/ek410_Eink.json"),
+            ),
         ];
 
         let mut changed = 0;
@@ -1224,15 +1228,16 @@ mod tests {
     fn test_seed_builtin_templates() {
         let store = create_temp_store();
 
-        // First seed should insert NE101, NE301, NE302 and NE503
+        // First seed should insert NE101, NE301, NE302, NE503, EK410
         let seeded = store.seed_builtin_templates().unwrap();
-        assert_eq!(seeded, 4);
+        assert_eq!(seeded, 5);
 
         // Templates should exist
         assert!(store.template_exists("ne101_camera").unwrap());
         assert!(store.template_exists("ne301_camera").unwrap());
         assert!(store.template_exists("ne503_camera").unwrap());
         assert!(store.template_exists("ne302_camera").unwrap());
+        assert!(store.template_exists("ek410_Eink").unwrap());
 
         // Verify NE101 content
         let ne101 = store.load_template("ne101_camera").unwrap().unwrap();
@@ -1276,6 +1281,19 @@ mod tests {
             ne302.builtin_version.is_some(),
             "seeded builtins carry their origin marker"
         );
+        assert_eq!(
+            ne302
+                .ct_prov
+                .as_ref()
+                .and_then(|c| c.softap_default_host.as_deref()),
+            Some("192.168.10.10")
+        );
+
+        let ek410 = store.load_template("ek410_Eink").unwrap().unwrap();
+        assert_eq!(ek410.device_type, "ek410_Eink");
+        let ek_ct = ek410.ct_prov.as_ref().expect("ek410 ct_prov");
+        assert_eq!(ek_ct.model_name.as_deref(), Some("EK410"));
+        assert_eq!(ek_ct.softap_default_host.as_deref(), Some("192.168.4.1"));
 
         // Second seed is a no-op (insert-only: existing templates are never touched)
         let seeded_again = store.seed_builtin_templates().unwrap();
@@ -1307,11 +1325,11 @@ mod tests {
         };
         store.save_template(&custom).unwrap();
 
-        // Seed must NOT overwrite the existing NE101; insert NE301/NE302/NE503 fresh
+        // Seed must NOT overwrite the existing NE101; insert remaining builtins
         let seeded = store.seed_builtin_templates().unwrap();
         assert_eq!(
-            seeded, 3,
-            "only NE301/NE302/NE503 inserted; existing NE101 untouched"
+            seeded, 4,
+            "NE301/NE302/NE503/EK410 inserted; existing NE101 untouched"
         );
 
         // Existing NE101 is preserved verbatim (not reset to the bundled one)
@@ -1343,7 +1361,7 @@ mod tests {
 
         // Seed should NOT overwrite the user template
         let seeded = store.seed_builtin_templates().unwrap();
-        assert_eq!(seeded, 3); // NE301/NE302/NE503 inserted; NE101 skipped
+        assert_eq!(seeded, 4); // NE301/NE302/NE503/EK410 inserted; NE101 skipped
 
         // Verify user template is preserved
         let loaded = store.load_template("ne101_camera").unwrap().unwrap();
