@@ -131,6 +131,10 @@ impl ExtensionRuntime {
 
     /// Unload an extension and remove its streaming proxy.
     pub async fn unload(&self, id: &str) -> Result<(), ExtensionError> {
+        // Drop version-bound write-gate cache so a reload/upgrade cannot
+        // reuse a stale ReadOnly grant against a newer mutating command.
+        super::invalidate_instance_capability(id);
+
         self.isolated_manager
             .unload(id)
             .await

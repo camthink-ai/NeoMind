@@ -210,6 +210,9 @@ impl ExtensionRegistry {
             );
         }
 
+        // Drop version-bound write-gate cache for this instance.
+        super::invalidate_instance_capability(id);
+
         // Remove from memory
         self.extensions.write().remove(id);
         self.info_cache.write().remove(id);

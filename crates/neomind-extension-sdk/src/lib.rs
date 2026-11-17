@@ -385,9 +385,9 @@ impl CommandBuilder {
                 samples: Vec::new(),
                 parameter_groups: Vec::new(),
                 ai_exposed: true,
-                effect: Default::default(),
-                replay_safety: Default::default(),
-                execution: Default::default(),
+                effect: None,
+                replay_safety: None,
+                execution: None,
             },
         }
     }
@@ -401,22 +401,22 @@ impl CommandBuilder {
 
     /// Mark as read-only / replay-safe / immediate (queries).
     pub fn read_only(mut self) -> Self {
-        self.command.effect = crate::CommandEffect::ReadOnly;
-        self.command.replay_safety = crate::CommandReplaySafety::Safe;
-        self.command.execution = crate::CommandExecutionKind::Immediate;
+        self.command.effect = Some(crate::CommandEffect::ReadOnly);
+        self.command.replay_safety = Some(crate::CommandReplaySafety::Safe);
+        self.command.execution = Some(crate::CommandExecutionKind::Immediate);
         self
     }
 
-    /// Set capability axes explicitly.
+    /// Set capability axes explicitly (marks declaration present).
     pub fn capability(
         mut self,
         effect: crate::CommandEffect,
         replay_safety: crate::CommandReplaySafety,
         execution: crate::CommandExecutionKind,
     ) -> Self {
-        self.command.effect = effect;
-        self.command.replay_safety = replay_safety;
-        self.command.execution = execution;
+        self.command.effect = Some(effect);
+        self.command.replay_safety = Some(replay_safety);
+        self.command.execution = Some(execution);
         self
     }
 

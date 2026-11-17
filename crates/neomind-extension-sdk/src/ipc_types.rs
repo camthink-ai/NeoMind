@@ -333,16 +333,17 @@ pub struct CommandDescriptor {
     /// admin toggles (the author's decision wins).
     #[serde(default = "default_true")]
     pub ai_exposed: bool,
-    /// Side-effect class. Default mutating (conservative) when omitted by
-    /// older extensions / IPC payloads.
-    #[serde(default)]
-    pub effect: CommandEffect,
-    /// Replay safety after interruption. Default unsafe (conservative).
-    #[serde(default)]
-    pub replay_safety: CommandReplaySafety,
-    /// Immediate vs async track. Default immediate.
-    #[serde(default)]
-    pub execution: CommandExecutionKind,
+    /// Side-effect class. `None` = **undeclared** (old packages / missing IPC
+    /// fields) — distinct from `Some(Mutating)` which is an explicit claim.
+    /// Host compat overrides may apply only when undeclared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<CommandEffect>,
+    /// Replay safety. `None` = undeclared (see `effect`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_safety: Option<CommandReplaySafety>,
+    /// Immediate vs async. `None` = undeclared (see `effect`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<CommandExecutionKind>,
 }
 
 impl Default for CommandDescriptor {
@@ -357,9 +358,10 @@ impl Default for CommandDescriptor {
             samples: Vec::new(),
             parameter_groups: Vec::new(),
             ai_exposed: true,
-            effect: CommandEffect::Mutating,
-            replay_safety: CommandReplaySafety::Unsafe,
-            execution: CommandExecutionKind::Immediate,
+            // Undeclared — not "explicit Mutating". Serde omit + Default agree.
+            effect: None,
+            replay_safety: None,
+            execution: None,
         }
     }
 }
@@ -391,24 +393,24 @@ impl CommandDescriptor {
         self
     }
 
-    /// Declare side-effect / replay / execution metadata.
+    /// Declare side-effect / replay / execution metadata (explicit claim).
     pub fn with_capability(
         mut self,
         effect: CommandEffect,
         replay_safety: CommandReplaySafety,
         execution: CommandExecutionKind,
     ) -> Self {
-        self.effect = effect;
-        self.replay_safety = replay_safety;
-        self.execution = execution;
+        self.effect = Some(effect);
+        self.replay_safety = Some(replay_safety);
+        self.execution = Some(execution);
         self
     }
 
     /// Convenience: read-only, replay-safe, immediate.
     pub fn read_only(mut self) -> Self {
-        self.effect = CommandEffect::ReadOnly;
-        self.replay_safety = CommandReplaySafety::Safe;
-        self.execution = CommandExecutionKind::Immediate;
+        self.effect = Some(CommandEffect::ReadOnly);
+        self.replay_safety = Some(CommandReplaySafety::Safe);
+        self.execution = Some(CommandExecutionKind::Immediate);
         self
     }
 

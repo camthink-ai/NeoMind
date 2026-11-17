@@ -459,15 +459,15 @@ pub struct SdkCommandDefinition {
     /// Whether this command is exposed to the LLM as a tool (default true).
     #[serde(default = "default_true")]
     pub ai_exposed: bool,
-    /// Side-effect class (default mutating).
-    #[serde(default)]
-    pub effect: crate::CommandEffect,
-    /// Replay safety (default unsafe).
-    #[serde(default)]
-    pub replay_safety: crate::CommandReplaySafety,
-    /// Immediate vs async (default immediate).
-    #[serde(default)]
-    pub execution: crate::CommandExecutionKind,
+    /// Side-effect class (`None` = undeclared).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<crate::CommandEffect>,
+    /// Replay safety (`None` = undeclared).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_safety: Option<crate::CommandReplaySafety>,
+    /// Immediate vs async (`None` = undeclared).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<crate::CommandExecutionKind>,
 }
 
 /// Parameter group for organizing command parameters
@@ -499,9 +499,9 @@ impl SdkCommandDefinition {
             samples: Vec::new(),
             parameter_groups: Vec::new(),
             ai_exposed: true,
-            effect: Default::default(),
-            replay_safety: Default::default(),
-            execution: Default::default(),
+            effect: None,
+            replay_safety: None,
+            execution: None,
         }
     }
 

@@ -290,7 +290,7 @@ mod tests {
             CommandEffect::ReadOnly,
             CommandReplaySafety::Safe,
             CommandExecutionKind::Immediate,
-            Some("2.14.0"),
+            "2.14.0",
         );
         assert_eq!(
             classify_line(

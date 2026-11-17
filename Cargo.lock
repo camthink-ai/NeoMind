@@ -3145,6 +3145,7 @@ dependencies = [
  "parking_lot",
  "pbkdf2",
  "redb",
+ "regex",
  "reqwest",
  "scopeguard",
  "semver 1.0.28",

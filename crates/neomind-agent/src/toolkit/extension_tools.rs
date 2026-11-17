@@ -91,7 +91,7 @@ impl ExtensionTool {
             def.effect,
             def.replay_safety,
             def.execution,
-            Some(extension_version.as_str()),
+            extension_version.as_str(),
         );
         Self {
             extension,
