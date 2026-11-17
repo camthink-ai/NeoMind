@@ -452,12 +452,8 @@ export function CtProvisionWizard({
 
     let cellularPayload: Record<string, unknown> | undefined
     if (needsCellular) {
-      if (cellularFields.includes('apn') && !cellApn.trim()) {
-        // apn declared → required when the operator opens cellular config.
-        // Pre-provisioned SIMs omit apn from fields entirely.
-        setCellFormError(t('devices:ctProv.cellularApnRequired'))
-        return
-      }
+      // APN is optional even when declared (neolink: empty APN omitted from
+      // payload; only non-empty values are length-checked). Do not block Apply.
       if (cellularFields.includes('pin') && cellPin.trim()) {
         if (!/^\d{4,8}$/.test(cellPin.trim())) {
           setCellFormError(t('devices:ctProv.cellularPinInvalid'))
