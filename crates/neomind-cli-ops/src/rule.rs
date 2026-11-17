@@ -288,43 +288,77 @@ pub fn compose_rule_update_body(
     }
 
     if let Some(notify) = patch.notify {
-        let severity = match patch.severity {
-            Some(s) if SEVERITIES.contains(&s) => s.to_string(),
+        // --severity is validated up front; when patching an EXISTING notify
+        // without --severity the original severity is preserved (a
+        // message-only update must not silently downgrade critical to
+        // warning — review 2026-11-17 P2). The "warning" default applies
+        // only to a NEWLY added notify.
+        let requested_severity = match patch.severity {
+            Some(s) if SEVERITIES.contains(&s) => Some(s.to_string()),
             Some(s) => anyhow::bail!(
                 "invalid --severity '{}': valid values are {}",
                 s,
                 SEVERITIES.join(" | ")
             ),
-            _ => "warning".to_string(),
+            None => None,
         };
-        // Patch the FIRST notify action in place; a rule without one gains a
-        // single notify action (fast-path rules always have exactly one).
         let actions = body
             .as_object_mut()
             .and_then(|o| o.get_mut("actions"))
             .and_then(|a| a.as_array_mut());
-        match actions {
-            Some(arr) if arr.iter().any(|a| a.get("type") == Some(&json!("notify"))) => {
+        let notify_count = actions
+            .as_ref()
+            .map(|arr| {
+                arr.iter()
+                    .filter(|a| a.get("type") == Some(&json!("notify")))
+                    .count()
+            })
+            .unwrap_or(0);
+        match notify_count {
+            0 => {
+                // No notify yet: APPEND one, preserving every existing action
+                // in order — replacing the array here used to silently delete
+                // execute/trigger_agent actions (review P1).
+                let severity = requested_severity.unwrap_or_else(|| "warning".to_string());
+                let new_action = json!({
+                    "type": "notify",
+                    "message": notify,
+                    "severity": severity,
+                });
+                match actions {
+                    Some(arr) => arr.push(new_action),
+                    None => {
+                        body.as_object_mut()
+                            .expect("projected body is an object")
+                            .insert("actions".into(), json!([new_action]));
+                    }
+                }
+            }
+            1 => {
+                // Exactly one notify: patch its message; keep the original
+                // severity unless --severity was passed.
+                let arr = actions.expect("notify_count came from this array");
                 for action in arr.iter_mut() {
                     if action.get("type") == Some(&json!("notify")) {
-                        action["message"] = json!(notify);
-                        action["severity"] = json!(severity);
+                        action
+                            .as_object_mut()
+                            .expect("notify action is an object")
+                            .insert("message".into(), json!(notify));
+                        if let Some(sev) = &requested_severity {
+                            action
+                                .as_object_mut()
+                                .expect("notify action is an object")
+                                .insert("severity".into(), json!(sev));
+                        }
                         break;
                     }
                 }
             }
-            _ => {
-                body.as_object_mut()
-                    .expect("projected body is an object")
-                    .insert(
-                        "actions".into(),
-                        json!([{
-                            "type": "notify",
-                            "message": notify,
-                            "severity": severity,
-                        }]),
-                    );
-            }
+            _ => anyhow::bail!(
+                "this rule has {} notify actions — the fast path cannot tell which one to change. \
+                 Use --body with the full actions array",
+                notify_count
+            ),
         }
     } else if let Some(s) = patch.severity {
         let _ = s;
@@ -529,6 +563,89 @@ mod tests {
             body["condition"]["source"], "device:sensor-002:values.battery",
             "untouched condition stays"
         );
+    }
+
+    /// Review P1: adding --notify to a rule whose actions are
+    /// execute + trigger_agent must APPEND the notify and keep both original
+    /// actions in order — the first implementation replaced the whole array.
+    #[test]
+    fn notify_add_appends_and_preserves_other_actions() {
+        let mut existing = existing_rule();
+        existing["actions"] = json!([
+            {"type": "execute", "command": "neomind device control d1 open"},
+            {"type": "trigger_agent", "agent_id": "agent-1"}
+        ]);
+        let p = patch(None, None, None, None, None, Some("告警"));
+        let body = compose_rule_update_body(&existing, &p).unwrap();
+        let actions = body["actions"].as_array().unwrap();
+        assert_eq!(
+            actions.len(),
+            3,
+            "both original actions must survive: {actions:?}"
+        );
+        assert_eq!(actions[0]["type"], "execute");
+        assert_eq!(actions[1]["type"], "trigger_agent");
+        assert_eq!(actions[2]["type"], "notify");
+        assert_eq!(actions[2]["message"], "告警");
+        assert_eq!(
+            actions[2]["severity"], "warning",
+            "new notify defaults to warning"
+        );
+    }
+
+    /// Review P2: a message-only update must keep an existing CRITICAL
+    /// severity (the fixture deliberately uses critical, not warning).
+    #[test]
+    fn message_only_update_preserves_critical_severity() {
+        let mut existing = existing_rule();
+        existing["actions"] = json!([
+            {"type": "notify", "message": "old", "severity": "critical"}
+        ]);
+        let p = patch(None, None, None, None, None, Some("new msg"));
+        let body = compose_rule_update_body(&existing, &p).unwrap();
+        assert_eq!(body["actions"][0]["message"], "new msg");
+        assert_eq!(
+            body["actions"][0]["severity"], "critical",
+            "must not downgrade"
+        );
+    }
+
+    #[test]
+    fn explicit_severity_still_applies_over_existing() {
+        let mut existing = existing_rule();
+        existing["actions"] = json!([
+            {"type": "notify", "message": "old", "severity": "critical"}
+        ]);
+        let p = RuleFastPatchArgs {
+            name: None,
+            trigger_device: None,
+            metric: None,
+            source: None,
+            operator: None,
+            threshold: None,
+            notify: Some("new msg"),
+            severity: Some("info"),
+            cooldown: None,
+        };
+        let body = compose_rule_update_body(&existing, &p).unwrap();
+        assert_eq!(body["actions"][0]["severity"], "info");
+    }
+
+    /// Multiple notify actions: the fast path cannot know which one to
+    /// change — refuse and point at --body instead of guessing the first.
+    #[test]
+    fn multi_notify_rules_are_rejected_not_first_patched() {
+        let mut existing = existing_rule();
+        existing["actions"] = json!([
+            {"type": "notify", "message": "a", "severity": "info"},
+            {"type": "notify", "message": "b", "severity": "critical"}
+        ]);
+        let p = patch(None, None, None, None, None, Some("c"));
+        let err = compose_rule_update_body(&existing, &p)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("2 notify actions"), "{err}");
+        assert!(err.contains("--body"), "{err}");
     }
 
     #[test]

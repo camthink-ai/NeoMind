@@ -1314,7 +1314,9 @@ pub enum RuleCommand {
         /// New threshold value.
         #[arg(long)]
         threshold: Option<f64>,
-        /// New notify message (patches the rule's notify action).
+        /// New notify message: patches the rule's notify action (keeps its
+        /// severity) or appends one when absent; a rule with MULTIPLE notify
+        /// actions is rejected — use --body for those.
         #[arg(long)]
         notify: Option<String>,
         /// New notify severity: info | warning | critical | emergency.
