@@ -3,9 +3,9 @@
 //! This module provides the bridge between the Extension system and the Tool system,
 //! automatically generating tools from extension command descriptors.
 //!
-//! **Chat entry policy:** when [`extension_direct_tools_for_llm`] is false (CLI-only
-//! candidate / default after acceptance), these tools are **not** registered into
-//! the model tool pool. Extension ops go through
+//! **Chat entry policy (CLI-only default):** [`extension_direct_tools_for_llm`] is
+//! false unless `NEOMIND_EXTENSION_DIRECT_TOOLS=1|true|on`. Extension commands are
+//! **not** registered into the model tool pool; ops go through
 //! `neomind extension list|commands|invoke` via shell. Historical sanitized names
 //! still parse via [`neomind_core::extension::parse_extension_tool_name`] for
 //! ledger/resume compat and for a CLI redirect hint — they do **not** bypass AI
@@ -27,18 +27,19 @@ use neomind_core::tools::ToolCategory;
 
 /// Env: `NEOMIND_EXTENSION_DIRECT_TOOLS`.
 ///
-/// - unset / `1` / `true` / `on` → register extension commands as LLM tools
-///   (**frozen baseline** while the CLI-only candidate is under review).
-/// - `0` / `false` / `off` → CLI-only candidate (do not register).
-///
-/// After paired acceptance, flip the unset default to `false`.
+/// - unset / `0` / `false` / `off` → **CLI-only default** (do not register
+///   extension commands as LLM tools). Chat uses
+///   `neomind extension list|commands|invoke`; AI disable / `ai_exposed` still
+///   apply on invoke.
+/// - `1` / `true` / `on` → restore legacy direct-tool registration (debug /
+///   baseline compare only).
 pub fn extension_direct_tools_for_llm() -> bool {
     match std::env::var("NEOMIND_EXTENSION_DIRECT_TOOLS") {
         Ok(v) => {
             let t = v.trim();
-            !(t == "0" || t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("off"))
+            t == "1" || t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("on")
         }
-        Err(_) => true,
+        Err(_) => false,
     }
 }
 
@@ -884,14 +885,16 @@ mod tests {
         let prev = std::env::var_os("NEOMIND_EXTENSION_DIRECT_TOOLS");
         std::env::remove_var("NEOMIND_EXTENSION_DIRECT_TOOLS");
         assert!(
-            extension_direct_tools_for_llm(),
-            "unset keeps frozen baseline (direct tools on)"
+            !extension_direct_tools_for_llm(),
+            "unset defaults to CLI-only (direct tools off)"
         );
         std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", "0");
         assert!(!extension_direct_tools_for_llm());
         std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", "false");
         assert!(!extension_direct_tools_for_llm());
         std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", "1");
+        assert!(extension_direct_tools_for_llm());
+        std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", "true");
         assert!(extension_direct_tools_for_llm());
         match prev {
             Some(v) => std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", v),
