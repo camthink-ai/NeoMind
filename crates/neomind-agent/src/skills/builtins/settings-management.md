@@ -15,6 +15,18 @@ anti_triggers:
   keywords: [device create, 创建设备, rule create, 创建规则, dashboard, 仪表盘, system info, broker 地址]
 ---
 
+# settings-management
+
+Read the relevant current settings before changing them. Update only requested fields; preserve unrelated settings and secrets.
+Validate units, ranges and timezone requirements using CLI help/schema. Read back the persisted value and distinguish settings requiring restart from immediately effective ones.
+Do not expose credentials in replies or generated files. Load the relevant settings reference section for exact flags.
+
+## Detailed reference
+Use skill(action="load", id="settings-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # System Settings: Timezone & Data Retention
 
 `neomind settings` manages the global timezone and telemetry data retention.

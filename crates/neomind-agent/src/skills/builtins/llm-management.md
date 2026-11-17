@@ -15,6 +15,31 @@ anti_triggers:
   keywords: [device, 设备, rule, 规则, dashboard, 仪表盘, widget develop, extension develop]
 ---
 
+# llm-management
+
+Inspect configured model backends and active runtime before changing them. Separate download/install, backend configuration, activation and live readiness.
+Use the user's chosen model and hardware constraints. Preserve sampling/context settings unless a change is requested.
+Verify the active backend and readiness after changes. A configured or downloaded model is not necessarily running.
+Stopping a model is intentional state; do not silently restart it. Load provider, runtime, or troubleshooting reference sections when needed.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind llm list` | List configured LLM backends |
+| `neomind llm get <id>` | LLM backend details |
+| `neomind llm models` | List available models (from Ollama) |
+| `neomind llm create` | Create a new LLM backend |
+| `neomind llm update <id>` | Update LLM backend configuration |
+| `neomind llm delete <id>` | Delete an LLM backend |
+| `neomind llm activate <id>` | Activate a backend (set as default) |
+| `neomind llm test <id>` | Test LLM backend connection |
+
+## Detailed reference
+Use skill(action="load", id="llm-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # LLM Backend Management
 
 ## Command Cheat-Sheet (run these via `shell`)

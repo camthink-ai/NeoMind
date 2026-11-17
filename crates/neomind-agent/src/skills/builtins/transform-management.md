@@ -15,6 +15,36 @@ anti_triggers:
   keywords: [dashboard, 仪表盘, agent, 代理, extension develop, 扩展开发, device connect, 设备连接, rule, 规则]
 ---
 
+# transform-management
+
+Inspect actual input data and choose scope: global, device_type:<type>, or device:<id>. Preserve the user's formula and units.
+JavaScript must return a value; single-key input is unwrapped to its scalar, while multi-key input remains an object. No imports or async/await. Discover extension commands before using extensions.invoke.
+Test with representative actual input, then create/update if requested. A dry-run that blocks an external call is unverified; catching that exception does not make it validated. Check each output in multi-output work.
+Read back the transform and inspect executions/metrics after real input arrives. Missing output is not zero; report partial failures.
+Rules reference transform:<transform-id>:<field>. Dashboards use transform ID plus plain field; output_prefix is not the resource ID. Use data-sources/metrics for discovery.
+Load detailed code, output, scope, or binding examples only when needed.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind transform executions <id>` | Recent run records (status/error/output) — check when output is empty or failing |
+| `neomind transform list` | List all transforms |
+| `neomind transform get <id>` | Transform details |
+| `neomind transform create` | Create a new transform |
+| `neomind transform update <id>` | Update a transform |
+| `neomind transform enable <id>` | Enable a transform |
+| `neomind transform disable <id>` | Disable a transform |
+| `neomind transform delete <id>` | Delete a transform |
+| `neomind transform metrics` | List virtual metrics from transforms |
+| `neomind transform test-code` | Test transform code |
+| `neomind transform data-sources` | List transform data sources |
+
+## Detailed reference
+Use skill(action="load", id="transform-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Transform Management & Data Processing
 
 ## Command Cheat-Sheet (run these via `shell`)
@@ -134,7 +164,7 @@ neomind transform data-sources
 2. `neomind transform test-code --code '...' --input '<actual_data>'` to verify
 3. **`neomind transform create --name ... --code ... --scope ...`** to save — THIS IS THE GOAL. Don't stop at step 1 or 2. The user wants a transform CREATED, not just explored.
 
-**⚠️ Common mistake: discovering field names then stopping without creating.** After `transform data-sources` or `device get`, the NEXT command must be `transform test-code` then `transform create`.
+**⚠️ Common mistake: discovering field names then stopping without creating.** Once required input facts are known, test the code and create/update the requested transform. Discover additional facts only when necessary; report a blocker if testing fails.
 
 **Output format depends on context**:
 

@@ -21,6 +21,33 @@ anti_triggers:
   keywords: [rule, 规则, agent, 代理, extension develop, 扩展开发]
 ---
 
+# dashboard-management
+
+Inspect available dashboards and data sources. Discover component types/schema before adding unfamiliar widgets. Bind actual device, extension, transform or AI output fields.
+Create or update the requested dashboard and widgets, then read them back. A saved dashboard does not prove every data binding has live values.
+Preserve existing layout and unrelated widgets during edits. Use resource IDs, not display labels or guessed metric paths.
+For transform outputs use transform ID and plain field. For extension sources use the format returned by component/data-source discovery.
+Load widget/layout/binding reference sections before constructing complex configuration.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind dashboard list` | List all dashboards |
+| `neomind dashboard get <id>` | Dashboard details |
+| `neomind dashboard create` | Create a new dashboard |
+| `neomind dashboard update <id>` | Update name/description/layout (--components needs --replace-all) |
+| `neomind dashboard add-components <id>` | Add components (append mode) |
+| `neomind dashboard update-component <id> --component-id <cid> --set '<partial JSON>'` | **Tweak ONE component** (deep merge — preferred) |
+| `neomind dashboard remove-components <id>` | Remove components by ID |
+| `neomind dashboard delete <id>` | Delete a dashboard |
+| `neomind dashboard share <id>` | Share a dashboard |
+
+## Detailed reference
+Use skill(action="load", id="dashboard-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Dashboard Management & Component Creation
 
 ## Command Cheat-Sheet (run these via `shell`)

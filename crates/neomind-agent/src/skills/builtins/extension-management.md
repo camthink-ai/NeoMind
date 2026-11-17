@@ -15,6 +15,36 @@ anti_triggers:
   keywords: [create extension, build extension, extension sdk, neomind_export, FFI, Rust, 扩展开发, 开发扩展, scaffold, manifest.json]
 ---
 
+# extension-management
+
+Inspect installed extensions and available packages. For install/update, use the intended package and verify compatibility, enablement and exposed commands/metrics.
+Discover command schemas before invocation. Extension-provided tools may exist, but platform configuration is managed through CLI.
+Do not confuse extension installation with skill loading or widget installation. Preserve configuration during upgrades and report restart/enable requirements.
+Verify extension status and actual command/metric results. Load installation, configuration, or diagnosis reference sections as needed.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind extension list` | List installed extensions |
+| `neomind extension get <id>` | Show one extension's info (alias: `info`) |
+| `neomind extension status <id>` | Extension health/status |
+| `neomind extension logs <id>` | Extension logs (debug crashes/errors) |
+| `neomind extension config <id>` | Get/set extension configuration |
+| `neomind extension reload <id>` | Reload an extension after changes |
+| `neomind extension validate <path.nep>` | Validate a local `.nep` package before install |
+| `neomind extension install <path.nep>` | Install a local `.nep` package |
+| `neomind extension uninstall <id>` | Uninstall an extension |
+| `neomind extension market-list <关键词>` | Search the marketplace (compact: id/name/version). ALWAYS give a keyword — the unfiltered dump is huge. `-v` for full metadata |
+| `neomind extension market-install <id>` | Install an extension from the marketplace |
+| `neomind extension create` | Scaffold a NEW extension (dev — see `extension-development` skill) |
+| `neomind extension build` | Build extension from source (dev — see `extension-development` skill) |
+
+## Detailed reference
+Use skill(action="load", id="extension-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Extension Management (Install / Market / Status)
 
 Manage installed extensions and the marketplace. (For *developing/building* an extension from source, see the `extension-development` skill.)

@@ -15,6 +15,35 @@ anti_triggers:
   keywords: [dashboard, 仪表盘, agent, 代理, extension develop, 扩展开发, rule, 规则]
 ---
 
+# connector-management
+
+Connectors describe broker connections; devices and their approved identity bindings are separate resources.
+Inspect existing connectors before creating duplicates. Configure the specified host/port/TLS/auth, enable when requested, and test the connection. A saved connector is not a live session or accepted subscription.
+Keep discovery permissive: shared topics and JSON identity fields are normal. Do not add topic-name restrictions. Subscription rejection/timeout requires a visible retry path.
+Use subscription commands for requested topic changes. Read back configuration and verify actual connection/subscription state; preserve unrelated settings and credentials.
+Load TLS, subscription, or recovery reference sections for detailed flags.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind connector list` | List all data connectors |
+| `neomind connector get <id>` | Connector details + connection status |
+| `neomind connector create` | Create a new data connector |
+| `neomind connector update <id>` | Update connector configuration |
+| `neomind connector delete <id>` | Delete a connector |
+| `neomind connector enable <id>` | Enable a connector |
+| `neomind connector disable <id>` | Disable a connector |
+| `neomind connector test <id>` | Test connectivity (real MQTT handshake) |
+| `neomind connector subscriptions` | List MQTT topic subscriptions |
+| `neomind connector subscribe --topic <TOPIC> [--qos 0-2]` | Subscribe to a custom MQTT topic (⚠️ `--topic` is a flag, not positional) |
+| `neomind connector unsubscribe --topic <TOPIC>` | Unsubscribe from a topic |
+
+## Detailed reference
+Use skill(action="load", id="connector-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Connector Management & MQTT Configuration
 
 Connectors receive data from external MQTT brokers into NeoMind. `connector create` supports `mqtt` only. A webhook/MQTT data push target forwards data OUT of NeoMind: use `data-push-management` and `neomind push`. Message/alert notification channels use `message-management` and `neomind message`. Choose by the requested purpose and direction, not the transport word alone.

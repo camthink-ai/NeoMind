@@ -15,6 +15,35 @@ anti_triggers:
   keywords: [dashboard, 仪表盘, agent, 代理, extension develop, 扩展开发, rule, 规则, device connect, 设备连接, push, 推送, data push]
 ---
 
+# message-management
+
+Separate messages from delivery channels. Discover channel types and configuration schema before creating an unfamiliar channel; use --param key=value or --config JSON.
+A rule notify action creates a message. Channels receive messages according to their filters; an empty filter accepts all. Do not invent channel IDs inside rule actions.
+Test delivery when requested, then inspect the result. Message stored, delivery queued and recipient received are distinct outcomes. Avoid repeated sends after an unknown result.
+Read/update/delete only the intended message or channel. Preserve credentials and filters unless the user requested changes. Load type-specific examples and routing sections as needed.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind message list` | List messages |
+| `neomind message get <id>` | Message details |
+| `neomind message send` | Send a new message |
+| `neomind message read <id>` | Acknowledge/read a message (alias: `ack`) |
+| `neomind message channel-list` | List message channels |
+| `neomind message channel-get <id>` | Channel details |
+| `neomind message channel-types` | List available channel types |
+| `neomind message channel-type-schema <TYPE>` | Config schema + examples for a channel type |
+| `neomind message channel-create` | Create a message channel |
+| `neomind message channel-update --name <NAME> --config '<JSON>'` | Update channel configuration (⚠️ flags, no positional id) |
+| `neomind message channel-delete <id>` | Delete a channel |
+| `neomind message channel-test <id>` | Test a message channel |
+
+## Detailed reference
+Use skill(action="load", id="message-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Message Management & Channel Configuration
 
 Messages are platform notifications delivered through configurable channels. 7 channel types are supported: webhook, email, telegram, wecom, dingtalk, slack, feishu.

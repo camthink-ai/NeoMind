@@ -17,6 +17,35 @@ anti_triggers:
   keywords: [rule, 规则, agent, 代理, dashboard, 仪表盘, transform, 转换]
 ---
 
+# device-onboarding
+
+Determine the requested protocol and target; ask only for missing connection information. Inspect existing devices/types before creating anything.
+MQTT: discovery creates a candidate, not an approved device. Shared topics may carry multiple JSON identities. Preserve explicit bindings and configured identity fields; do not reject topics based on guessed uplink/downlink words. Approval and association use the real device identity.
+Webhook: create with the webhook adapter, then obtain its ingest URL. A saved configuration does not prove data is arriving.
+For control, inspect supported commands and parameters. Use neomind device control <ID> <CMD> --param key=value (repeat), or --params JSON. Read delivery evidence: accepted is not physical completion. Validation errors contain command/schema hints.
+Verify incoming telemetry after connection. If offline, report configuration and missing telemetry separately. Do not invent metrics or credentials.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind device list` | List all devices (grouped by type) |
+| `neomind device get <id>` | Details: metadata + metrics + commands |
+| `neomind device create --name <N> --device-type <TYPE> [--id <id>] [--adapter-type <a>]` | Create a device |
+| `neomind device update <id>` | Update a device |
+| `neomind device delete <id>` | Delete a device |
+| `neomind device history <id>` | Telemetry history |
+| `neomind device control <id> <COMMAND>` | Send a control command to a device |
+| `neomind device types list` | List device-type templates |
+| `neomind device write-metric <ID> --metric <METRIC> --value <VALUE> [--timestamp <ms_epoch>]` | Write a metric data point — THE tool for virtual-device simulation / test reporting (any metric name, device goes online). ⚠️ `--metric`/`--value` are FLAGS (only `<ID>` is positional); value may be a number or "true"/"false" |
+| `neomind device webhook-url <id>` | Get the webhook URL for a device |
+| `neomind device drafts` | Manage auto-discovery drafts |
+
+## Detailed reference
+Use skill(action="load", id="device-onboarding", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Device Onboarding & Connection Guide
 
 ## Command Cheat-Sheet (run these via `shell`)

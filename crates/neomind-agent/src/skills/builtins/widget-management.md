@@ -15,6 +15,31 @@ anti_triggers:
   keywords: [create widget, scaffold widget, IIFE, bundle.js, React, 开发组件, 开发 widget, manifest.json, dashboard component develop]
 ---
 
+# widget-management
+
+Manage reusable dashboard component packages, not individual dashboard widget instances. Use dashboard-management for a widget placed on a dashboard.
+Inspect installed components and package metadata; install/update the requested package and verify component availability.
+Respect component schemas and data-source formats. A loaded bundle does not establish that a particular dashboard binding works.
+Load package, installation, or troubleshooting reference sections for details.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind widget list` | List installed widgets |
+| `neomind widget get <id>` | Show widget details |
+| `neomind widget bundle <id>` | Get a widget's bundle (JS/CSS) |
+| `neomind widget install <path>` | Install from a scaffolded dir or `.zip`. Use DATA-RELATIVE paths (`frontend-components/<id>`) — absolute macOS paths contain a space ("Application Support") and must be quoted; relative sidesteps it. A BARE widget id (`widget install gauge-3832`) also resolves into the store dir |
+| `neomind widget uninstall <id>` | Uninstall a widget |
+| `neomind widget market-list` | List widgets available in the marketplace |
+| `neomind widget market-install <id>` | Install a widget from the marketplace |
+| `neomind widget create` | Scaffold a NEW widget (dev — see `widget-development` skill; add `--install` to scaffold+register in one step) |
+
+## Detailed reference
+Use skill(action="load", id="widget-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Widget Management (Install / Market / List)
 
 Manage dashboard widgets and the widget marketplace. (For *developing* a widget from scratch, see the `widget-development` skill.)

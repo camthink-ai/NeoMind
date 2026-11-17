@@ -15,6 +15,19 @@ anti_triggers:
   keywords: [widget, component, IIFE, bundle.js, dashboard component]
 ---
 
+# extension-development
+
+Use this guide for coding a new extension, not routine installation/configuration. Inspect existing SDK examples and current ABI before writing code.
+Define the extension's commands, parameter schemas, output fields and metric provenance. Use the official SDK and package format; do not invent ABI or platform binary keys.
+Implement, build and test in an isolated directory. Treat external calls and physical actions according to their actual effects.
+Package only validated artifacts; install/publish when requested. Preserve build failures and verification limitations. Load relevant Rust/Python, manifest, packaging and example sections on demand.
+
+## Detailed reference
+Use skill(action="load", id="extension-development", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Extension Development Guide
 
 Write/build extension SOURCE CODE. NOT for installing existing extensions from the marketplace — that is the `extension-management` skill (market-install). If the user said 安装/install and the extension exists in the market, you are in the wrong skill.

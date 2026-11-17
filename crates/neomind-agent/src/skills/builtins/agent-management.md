@@ -15,24 +15,45 @@ anti_triggers:
   keywords: [device, 设备, rule, 规则, dashboard, 仪表盘, extension develop]
 ---
 
+# agent-management
+
+Read an existing conclusion with neomind agent latest-execution <ID> before starting a new run. Resolve names with agent list/get; use the intended agent, not a guessed ID.
+Use neomind agent invoke <ID> [input] for an explicitly requested fresh execution. Input requirements depend on the agent's task and bindings. Executing means the existing run continues; query its result instead of invoking again.
+Choose focused for one-pass analysis, free for tool-driven tasks, structured for schema-validated output. Structured agents require actual bound input; do not substitute memory for missing telemetry.
+Choose manual for on-demand work, interval for elapsed periods, cron for local-time schedules, event for telemetry triggers. Cron must use the user's timezone; verify schedule and timezone on readback.
+Creation can activate scheduled work immediately. Preserve scope, bindings and notification intent. For schema, bindings, event filters, notification routing and examples, load the relevant reference section.
+After create/update, read back the configuration. Verify run records and conclusion before claiming the requested analysis completed.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind agent list` | List all agents |
+| `neomind agent get <id>` | Agent details |
+| `neomind agent create` | Create a new agent |
+| `neomind agent update <id>` | Update an agent |
+| `neomind agent delete <id>` | Delete an agent |
+| `neomind agent control <id> <active|paused>` | Control agent status |
+| `neomind agent invoke <id> [input]` | Invoke / run an agent now with input |
+| `neomind agent memory <id>` | Get agent memory |
+| `neomind agent clear-memory <id>` | Clear agent memory |
+| `neomind agent executions <id>` | Execution history |
+| `neomind agent latest-execution <id>` | Latest execution |
+| `neomind agent conversation <id>` | Get agent conversation / messages |
+| `neomind agent send-message <id> <text>` | Send a message to an agent |
+
+## Detailed reference
+Use skill(action="load", id="agent-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # AI Agent Management
 
 Agents are LLM-powered automated tasks. They can be scheduled (interval/cron) or event-driven, and have access to the shell tool to execute CLI commands.
 
-## Two calls have their own tools — prefer them
-
-Both take the agent's **name** (or part of it) as the user said it, so there is no id lookup first. Reach for these before `shell`:
-
-| Tool | Use it when |
-|---|---|
-| `query_conclusion` | The user asks how something an agent watches is doing ("冷库现在怎么样"). Returns the conclusion the agent already reached, and how long ago. Instant, no inference. **Try this first.** |
-| `run_now` | The user wants a fresh look or an action ("再检查一下"). Runs the agent; returns its conclusion if it finishes within a minute, otherwise reports that it is still running. Read that result shortly after with `query_conclusion`. |
-
-Do not use `run_now` to answer a question the agent has already answered — re-running takes an inference and a minute to say the same thing.
-
 ## Command Cheat-Sheet (run these via `shell`)
 
-Everything else — creating, configuring, inspecting agents — goes through `shell`. Always RUN the command yourself and report the real output.
+All agent operations go through `shell`. Always RUN the command yourself and report the real output.
 
 | Command | Purpose |
 |---|---|
@@ -88,7 +109,7 @@ For a cron schedule, the expression does not encode a timezone. If the user spec
 | `free` | Multi-round tool calling: the agent queries, calls tools, executes bound commands until done | Open-ended investigation, linked actions |
 | `structured` | ONE constrained inference; schema-validated fields published as `ai:{id}:{field}` data sources | Meter reading, QC verdicts, anything that feeds a dashboard/rule |
 
-Any mode works with zero bindings — a prompt alone is a valid agent.
+Focused/free tasks may operate without bindings when appropriate. Structured mode requires actual bound input.
 Structure of the task decides the mode; when in doubt, omit `--execution-mode`.
 
 ### Output Contract (structured & reasoning agents)

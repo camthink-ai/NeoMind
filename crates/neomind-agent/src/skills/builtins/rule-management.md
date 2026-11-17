@@ -15,6 +15,35 @@ anti_triggers:
   keywords: [dashboard, 仪表盘, agent, 代理, extension develop, 扩展开发, device connect, 设备连接]
 ---
 
+# rule-management
+
+Use actual source IDs and metric names from current references or device/extension/transform inspection. Preserve the user's threshold and units; a current reading is not permission to choose a different threshold.
+For a simple numeric threshold, use rule create flags; for logical/range/multi-action rules use --body JSON. Load the condition/action reference section before constructing an unfamiliar shape.
+Source IDs use device:<id>:<field>, extension:<id>:<field>, or transform:<transform-id>:<field>. Transform ID is not output_prefix.
+Actions: notify creates a message routed through configured channels; execute uses a discovered command and parameters; trigger_agent invokes an agent. Inspect channels only when delivery is requested or being diagnosed.
+cooldown and for_duration are milliseconds. A manual rule test does not establish continuous-duration satisfaction or real delivery. Omitted trigger defaults to data_change; explicit trigger is an object with trigger_type.
+Create/update, read back, then verify the requested behavior through explain/test/history as available. Do not inject live test telemetry or actuate a device solely to prove a rule without authorization.
+When diagnosing, check enabled state, actual source values, missing/type-mismatched data, cooldown/duration, and action results. Missing values are unknown, not zero.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind rule list` | List all rules |
+| `neomind rule get <id>` | Rule details |
+| `neomind rule create` | Create a new rule |
+| `neomind rule update <id>` | Update a rule |
+| `neomind rule delete <id>` | Delete a rule |
+| `neomind rule enable <id>` | Enable a rule |
+| `neomind rule disable <id>` | Disable a rule |
+| `neomind rule test <id>` | Test a rule |
+| `neomind rule history <id>` | Rule execution history |
+
+## Detailed reference
+Use skill(action="load", id="rule-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Rule Management
 
 ## Command Cheat-Sheet (run these via `shell`)
@@ -59,24 +88,24 @@ When a request spans several resource types (for example, BMS ventilation rules,
 NO RULE JSON CONSTRUCTION WITHOUT PRIOR DEVICE/METRIC DISCOVERY
 ```
 
-**You MUST complete Phase 1 before Phase 2.** Violating this is the single most common failure mode: rules silently never fire because the device_id or metric name was guessed.
+Establish the source identity and schema before building the condition. Reuse current verified references; discover only missing or stale facts.
 
 ## Phase 1: Discovery — Completion Checklist
 
-Every item must be ticked. Re-run if any is unchecked.
+Check the required facts; do not repeat reads already established in this conversation.
 
 - [ ] Ran `neomind device list` (or `neomind extension get <id>` for extension metrics)
 - [ ] Identified the EXACT `device_id` (case-sensitive, hyphens matter) for each target
 - [ ] Confirmed the EXACT metric name appears in `metric_fields` (NOT a guessed translation)
 - [ ] If `metric_fields` is empty OR device offline OR >50 devices: ran `neomind device get <id>` per target
-- [ ] Noted current value range (to pick a sensible threshold, not a magic number)
+- [ ] Preserved the requested threshold and units; ask if a required threshold was not specified
 
 **Output of Phase 1** (write it down before Phase 2):
 ```
 device_id: <string>
 metric_name: <string from metric_fields>
 current_value: <number from device get>
-operator + threshold: <chosen based on current_value>
+operator + threshold: <requested by user>
 ```
 
 ## Phase 2: Construct Rule JSON
@@ -146,8 +175,8 @@ Before running `neomind rule create`, tick every box:
 - [ ] `device_id` in JSON matches Phase 1 output character-for-character
 - [ ] metric name in JSON matches Phase 1 output character-for-character
 - [ ] operator matches metric data type (numeric vs string)
-- [ ] threshold is realistic vs `current_value` from Phase 1 (not magic number)
-- [ ] If action is `notify`: at least one message channel exists — run `neomind message channel-list`. If empty, load **message-management** skill first.
+- [ ] threshold and units match the user request
+- [ ] If external notification delivery is requested: inspect the intended channel and its routing filters. Creating a platform message does not require configuring a new external channel.
 - [ ] If action is `execute`: target device exists in `neomind device list` and has the command listed under `command_fields`
 - [ ] `cooldown` is set explicitly when `notify` is the action
 
@@ -165,7 +194,7 @@ neomind rule create --name "High Temp" \
 neomind rule create --body '<your_json>'
 # Note the returned rule ID.
 
-# For threshold rules: inject a test value to confirm it fires end-to-end.
+# With authorized test input: evaluate the condition; this alone does not prove duration or physical delivery.
 neomind rule test <ID> --input '{"<metric>": <value_above_threshold>}'
 
 # For ongoing monitoring of when/how it fires.
@@ -195,7 +224,7 @@ Run these in order. Stop at the first failure.
 | `notify` action but haven't run `channel-list` | Alerts vanish silently | Verify ≥1 channel, or load message-management |
 | `cooldown: 0` or unset on `notify` rule | Alert storms | Set ≥300000 (5 min) |
 | String operator (`contains`) on numeric metric | Always errors or never matches | Use numeric operator |
-| Skipping `rule test` after creation | "Works on paper" but real flow broken | Always run with synthetic input |
+| Skipping `rule test` after creation | "Works on paper" but real flow broken | Use authorized test input; distinguish simulation from live delivery |
 
 ## Quick Command Reference
 

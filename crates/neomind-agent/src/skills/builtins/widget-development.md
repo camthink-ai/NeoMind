@@ -15,6 +15,19 @@ anti_triggers:
   keywords: [extension develop, 扩展开发, rule, 规则, device connect, 设备连接, agent, 代理]
 ---
 
+# widget-development
+
+Use this guide to develop a reusable dashboard component. Routine dashboard composition uses dashboard-management; package installation uses widget-management.
+Inspect the component contract, props/schema and data binding conventions. Use existing design-system primitives and exact asset/data-source identifiers.
+Build and preview the component, verify empty/loading/error states and realistic data, then package/install if requested.
+Load the relevant API, manifest, build, or example reference section before coding. Do not copy a large unrelated example into the task context.
+
+## Detailed reference
+Use skill(action="load", id="widget-development", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Custom Widget Development
 
 Custom widgets are React components for NeoMind dashboards. No build tools — just `manifest.json` + `bundle.js`.

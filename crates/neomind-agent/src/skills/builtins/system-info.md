@@ -15,6 +15,19 @@ anti_triggers:
   keywords: [device create, 创建设备, rule create, 创建规则, dashboard, 仪表盘, timezone, 时区, retention, 数据保留, connector create, 创建连接器]
 ---
 
+# system-info
+
+Use neomind system info for live platform/service information. Host identity facts may already be provided in the system prompt.
+Inspect only resources needed for the question: status, health, versions, storage or logs. Use host shell commands when no platform command covers the question.
+Report measurements with their time and source. Do not infer a healthy service merely from saved configuration or a running process.
+Troubleshooting should collect evidence before changes; restart/delete/cleanup only within the user's requested scope. Load detailed diagnostic reference sections as needed.
+
+## Detailed reference
+Use skill(action="load", id="system-info", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # System Information & Infrastructure
 
 `neomind system info` now includes a `host` section (OS, kernel, arch, hostname, CPU, RAM, uptime, LAN IP) — for "what device/system is this running on" questions, read that; do not guess. For anything deeper (disk usage, process list, kernel messages, interfaces), run OS commands via the shell tool — it executes on the host itself: `df -h`, `free -h`, `uptime`, `ip addr`, `ps aux | head -20`, `dmesg | tail -30`, `uname -a`.

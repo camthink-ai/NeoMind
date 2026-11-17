@@ -15,6 +15,33 @@ anti_triggers:
   keywords: [dashboard, 仪表盘, agent, 代理, extension develop, 扩展开发, rule, 规则, message send, 发消息, channel, 通道, notification, 通知]
 ---
 
+# data-push-management
+
+Inspect existing push targets and available data sources. Configure the requested destination, payload mapping, authentication and cadence.
+Preserve source identity and distinguish device fields from transform/AI output fields. Use discovered schema and exact fields.
+Create/update, enable if requested, and test when authorized. Verify delivery results; saved configuration or enabled state alone does not prove receipt.
+After timeout/unknown delivery, inspect records before sending again. Load target-specific and mapping reference sections as needed.
+
+## Commands
+| Command | Purpose |
+|---|---|
+| `neomind push list` | List push targets |
+| `neomind push get <id>` | Push target details |
+| `neomind push create` | Create a push target |
+| `neomind push update <id>` | Update a push target |
+| `neomind push delete <id>` | Delete a push target |
+| `neomind push enable <id>` | Enable a target (alias for `push start`) |
+| `neomind push disable <id>` | Disable a target (alias for `push stop`) |
+| `neomind push test <id>` | Test a push target |
+| `neomind push logs <id>` | Delivery logs for a target |
+| `neomind push stats` | Push statistics |
+
+## Detailed reference
+Use skill(action="load", id="data-push-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
+
+<!-- SKILL_REFERENCE -->
+
+
 # Data Push Management & Target Configuration
 
 Data Push forwards device metrics and extension outputs to external systems (webhook, MQTT broker) in real-time or on a schedule.
