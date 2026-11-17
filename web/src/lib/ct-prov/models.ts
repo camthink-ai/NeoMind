@@ -56,6 +56,19 @@ export interface CtMqttConfig {
   password: string
   topic_prefix: string
   client_id: string
+  /** Explicit TLS; when omitted, inferred from port === 8883. */
+  tls?: boolean
+}
+
+/** Device-custom broker fields sent as `custom_mqtt` on ble-provision. */
+export interface CustomMqttFields {
+  host: string
+  port: number
+  username?: string
+  password?: string
+  tls?: boolean
+  topic_prefix?: string
+  client_id?: string
 }
 
 function normalizeModel(model: string): string {
@@ -215,7 +228,7 @@ export function mqttSectionFromResolve(cfg: CtMqttConfig): Record<string, unknow
     username: cfg.username || undefined,
     password: cfg.password || undefined,
     client_id: cfg.client_id,
-    tls: cfg.port === 8883,
+    tls: cfg.tls ?? cfg.port === 8883,
     topic,
   }
 }

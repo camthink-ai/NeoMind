@@ -24,16 +24,20 @@ import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import type { UseCtProvisionReturn } from '@/hooks/useCtProvision'
 import {
   formatProvUserMessage,
   modelToDeviceType,
   type CtMqttConfig,
+  type CustomMqttFields,
   type NetworkScanItem,
 } from '@/lib/ct-prov'
 import { api, fetchAPI } from '@/lib/api'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
+
+type BrokerSource = 'neomind' | 'custom'
 
 export type CtWizardStep = 'info' | 'capabilities' | 'edit' | 'applying' | 'done' | 'failed'
 
@@ -194,6 +198,15 @@ export function CtProvisionWizard({
   const [deviceName, setDeviceName] = useState('')
   const [brokerId, setBrokerId] = useState('embedded')
   const [brokers, setBrokers] = useState<BrokerOption[]>([])
+  const [brokerSource, setBrokerSource] = useState<BrokerSource>('neomind')
+  const [customHost, setCustomHost] = useState('')
+  const [customPort, setCustomPort] = useState('1883')
+  const [customTls, setCustomTls] = useState(false)
+  const [customUsername, setCustomUsername] = useState('')
+  const [customPassword, setCustomPassword] = useState('')
+  const [customTopic, setCustomTopic] = useState('')
+  const [customClientId, setCustomClientId] = useState('')
+  const [mqttFormError, setMqttFormError] = useState<string | null>(null)
   const [deviceId, setDeviceId] = useState<string | null>(null)
   const [registerError, setRegisterError] = useState<string | null>(null)
   const [isReprovision, setIsReprovision] = useState(false)
@@ -204,6 +217,12 @@ export function CtProvisionWizard({
   const [wifiSelect, setWifiSelect] = useState<string>(WIFI_MANUAL)
   const [wifiScanAttempted, setWifiScanAttempted] = useState(false)
   const [wifiScanError, setWifiScanError] = useState<string | null>(null)
+
+  const selectBrokerSource = useCallback((source: BrokerSource) => {
+    setBrokerSource(source)
+    setMqttFormError(null)
+    if (source === 'custom') setAdvancedOpen(true)
+  }, [])
 
   useEffect(() => {
     if (ct.deviceInfo?.deviceName && !deviceName) {
@@ -271,6 +290,40 @@ export function CtProvisionWizard({
   // Opt-in scan only — auto communication.scan on edit entry can leave the
   // device Wi-Fi stack in wifi_init failure before config.set (EK410/BLE).
 
+  const buildCustomMqtt = useCallback((): CustomMqttFields | null => {
+    const host = customHost.trim()
+    if (!host) {
+      setMqttFormError(t('devices:ctProv.customHostRequired'))
+      return null
+    }
+    const portNum = Number.parseInt(customPort.trim(), 10)
+    if (!Number.isFinite(portNum) || portNum < 1 || portNum > 65535) {
+      setMqttFormError(t('devices:ctProv.customPortInvalid'))
+      return null
+    }
+    setMqttFormError(null)
+    const topic = customTopic.trim()
+    const clientId = customClientId.trim()
+    return {
+      host,
+      port: portNum,
+      username: customUsername.trim() || undefined,
+      password: customPassword || undefined,
+      tls: customTls,
+      topic_prefix: topic || undefined,
+      client_id: clientId || undefined,
+    }
+  }, [
+    customHost,
+    customPort,
+    customTls,
+    customUsername,
+    customPassword,
+    customTopic,
+    customClientId,
+    t,
+  ])
+
   const handleApply = useCallback(async () => {
     if (!ct.deviceInfo) return
     const modelName = ct.deviceInfo.model
@@ -283,24 +336,37 @@ export function CtProvisionWizard({
     const sn = ct.deviceInfo.serialNumber
     const name = deviceName || ct.deviceInfo.deviceName || modelName
 
+    let customMqtt: CustomMqttFields | undefined
+    if (brokerSource === 'custom') {
+      const built = buildCustomMqtt()
+      if (!built) {
+        setAdvancedOpen(true)
+        return
+      }
+      customMqtt = built
+    }
+
     setStep('applying')
     setRegisterError(null)
     setWifiScanError(null)
+    setMqttFormError(null)
     ct.clearError()
+
+    const provisionBody = {
+      model: modelName,
+      sn,
+      device_type: deviceType,
+      device_name: name,
+      broker_id: brokerSource === 'custom' ? 'custom' : brokerId,
+      ...(customMqtt ? { custom_mqtt: customMqtt } : {}),
+    }
 
     try {
       const resp = await fetchAPI<{ device_id: string; mqtt_config: CtMqttConfig }>(
         '/devices/ble-provision',
         {
           method: 'POST',
-          body: JSON.stringify({
-            model: modelName,
-            sn,
-            device_type: deviceType,
-            device_name: name,
-            broker_id: brokerId,
-            resolve_only: true,
-          }),
+          body: JSON.stringify({ ...provisionBody, resolve_only: true }),
         },
       )
 
@@ -316,14 +382,7 @@ export function CtProvisionWizard({
           '/devices/ble-provision',
           {
             method: 'POST',
-            body: JSON.stringify({
-              model: modelName,
-              sn,
-              device_type: deviceType,
-              device_name: name,
-              broker_id: brokerId,
-              resolve_only: false,
-            }),
+            body: JSON.stringify({ ...provisionBody, resolve_only: false }),
           },
         )
         setDeviceId(regResp.device_id)
@@ -339,7 +398,19 @@ export function CtProvisionWizard({
       setRegisterError(provErrorCopy(t, err))
       setStep('failed')
     }
-  }, [ct, wifiSsid, wifiPassword, deviceName, brokerId, needsWifi, wifiSection, deviceTypes, t])
+  }, [
+    ct,
+    wifiSsid,
+    wifiPassword,
+    deviceName,
+    brokerId,
+    brokerSource,
+    buildCustomMqtt,
+    needsWifi,
+    wifiSection,
+    deviceTypes,
+    t,
+  ])
 
   if (step === 'applying') {
     return (
@@ -641,25 +712,165 @@ export function CtProvisionWizard({
                   />
                 </CollapsibleTrigger>
                 <CollapsibleContent>
-                  <div className="space-y-2 border-t border-border px-4 pb-4 pt-3">
-                    <Field>
-                      <FieldLabel>{t('devices:ble.broker')}</FieldLabel>
-                      <Select value={brokerId} onValueChange={setBrokerId}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {brokers.map((b) => (
-                            <SelectItem key={b.id} value={b.id}>
-                              {b.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </Field>
+                  <div className="space-y-3 border-t border-border px-4 pb-4 pt-3">
+                    <div className="grid grid-cols-2 rounded-lg bg-muted p-1">
+                      {(
+                        [
+                          { value: 'neomind' as const, label: t('devices:ctProv.brokerSourceNeomind') },
+                          { value: 'custom' as const, label: t('devices:ctProv.brokerSourceCustom') },
+                        ] as const
+                      ).map(({ value, label }) => {
+                        const isActive = brokerSource === value
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => selectBrokerSource(value)}
+                            className={cn(
+                              'min-h-11 rounded-md px-3 text-sm font-medium transition-colors',
+                              isActive
+                                ? 'bg-background text-foreground shadow-sm'
+                                : 'text-muted-foreground',
+                            )}
+                          >
+                            {label}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    {brokerSource === 'neomind' ? (
+                      <Field>
+                        <FieldLabel>{t('devices:ble.broker')}</FieldLabel>
+                        <Select value={brokerId} onValueChange={setBrokerId}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {brokers.map((b) => (
+                              <SelectItem key={b.id} value={b.id}>
+                                {b.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </Field>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <Field>
+                            <FieldLabel htmlFor="ct-mqtt-host">
+                              {t('devices:ctProv.customHost')}
+                            </FieldLabel>
+                            <Input
+                              id="ct-mqtt-host"
+                              value={customHost}
+                              onChange={(e) => {
+                                setCustomHost(e.target.value)
+                                setMqttFormError(null)
+                              }}
+                              placeholder="mqtt.example.com"
+                              autoComplete="off"
+                            />
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor="ct-mqtt-port">
+                              {t('devices:ctProv.customPort')}
+                            </FieldLabel>
+                            <Input
+                              id="ct-mqtt-port"
+                              inputMode="numeric"
+                              value={customPort}
+                              onChange={(e) => {
+                                setCustomPort(e.target.value)
+                                setMqttFormError(null)
+                              }}
+                              placeholder="1883"
+                              autoComplete="off"
+                            />
+                          </Field>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+                          <FieldLabel htmlFor="ct-mqtt-tls" className="mb-0">
+                            {t('devices:ctProv.customTls')}
+                          </FieldLabel>
+                          <Switch
+                            id="ct-mqtt-tls"
+                            checked={customTls}
+                            onCheckedChange={(checked) => {
+                              setCustomTls(checked)
+                              if (checked && (customPort === '1883' || customPort.trim() === '')) {
+                                setCustomPort('8883')
+                              } else if (!checked && customPort === '8883') {
+                                setCustomPort('1883')
+                              }
+                            }}
+                          />
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <Field>
+                            <FieldLabel htmlFor="ct-mqtt-username">
+                              {t('devices:ble.username')}
+                            </FieldLabel>
+                            <Input
+                              id="ct-mqtt-username"
+                              value={customUsername}
+                              onChange={(e) => setCustomUsername(e.target.value)}
+                              autoComplete="off"
+                            />
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor="ct-mqtt-password">
+                              {t('devices:ble.password')}
+                            </FieldLabel>
+                            <PasswordInput
+                              id="ct-mqtt-password"
+                              value={customPassword}
+                              onChange={(e) => setCustomPassword(e.target.value)}
+                              autoComplete="new-password"
+                            />
+                          </Field>
+                        </div>
+                        <Field>
+                          <FieldLabel htmlFor="ct-mqtt-topic">
+                            {t('devices:ctProv.customTopic')}
+                          </FieldLabel>
+                          <Input
+                            id="ct-mqtt-topic"
+                            value={customTopic}
+                            onChange={(e) => setCustomTopic(e.target.value)}
+                            placeholder="device/{type}/{id}/uplink"
+                            className="font-mono text-sm"
+                            autoComplete="off"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            {t('devices:ctProv.customTopicHint')}
+                          </p>
+                        </Field>
+                        <Field>
+                          <FieldLabel htmlFor="ct-mqtt-client-id">
+                            {t('devices:ctProv.customClientId')}
+                          </FieldLabel>
+                          <Input
+                            id="ct-mqtt-client-id"
+                            value={customClientId}
+                            onChange={(e) => setCustomClientId(e.target.value)}
+                            className="font-mono text-sm"
+                            autoComplete="off"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            {t('devices:ctProv.customClientIdHint')}
+                          </p>
+                        </Field>
+                      </div>
+                    )}
+
                     <p className="text-xs text-muted-foreground">
                       {t('devices:ctProv.mqttAdvancedHint')}
                     </p>
+                    {mqttFormError && (
+                      <p className="text-sm text-error">{mqttFormError}</p>
+                    )}
                   </div>
                 </CollapsibleContent>
               </div>
@@ -700,15 +911,21 @@ export function CtProvisionWizard({
               <Button
                 className="flex-1"
                 onClick={handleApply}
-                disabled={(needsWifi && !wifiSsid.trim()) || ct.provisioning}
+                disabled={
+                  (needsWifi && !wifiSsid.trim()) ||
+                  ct.provisioning ||
+                  (brokerSource === 'custom' && !customHost.trim())
+                }
               >
                 <ChevronRight className="mr-2 h-4 w-4" />
                 {t('devices:ble.apply')}
               </Button>
             </div>
-            {(wifiScanError || ct.error) && (
+            {(wifiScanError || mqttFormError || ct.error) && (
               <p className="text-center text-sm text-error">
-                {wifiScanError || (ct.error ? provErrorCopy(t, ct.error) : null)}
+                {wifiScanError ||
+                  mqttFormError ||
+                  (ct.error ? provErrorCopy(t, ct.error) : null)}
               </p>
             )}
           </div>

@@ -133,4 +133,29 @@ describe('ct-prov model stubs', () => {
       }).topic,
     ).toBe('device/t/id/uplink')
   })
+
+  it('honors explicit tls for custom brokers (not only port 8883)', () => {
+    expect(
+      mqttSectionFromResolve({
+        host: 'broker.lan',
+        port: 1883,
+        username: '',
+        password: '',
+        topic_prefix: 'device/t/id',
+        client_id: 'id',
+        tls: true,
+      }).tls,
+    ).toBe(true)
+    expect(
+      mqttSectionFromResolve({
+        host: 'broker.lan',
+        port: 8883,
+        username: '',
+        password: '',
+        topic_prefix: 'device/t/id',
+        client_id: 'id',
+        tls: false,
+      }).tls,
+    ).toBe(false)
+  })
 })
