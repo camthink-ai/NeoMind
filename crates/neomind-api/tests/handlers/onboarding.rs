@@ -62,6 +62,7 @@ impl LlmRuntime for DummyLlm {
 
 async fn state_with_manager() -> ServerState {
     let state = crate::common::create_test_server_state().await;
+    crate::common::register_mqtt_stub(&state).await;
     let bus = state
         .core
         .event_bus

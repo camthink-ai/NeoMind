@@ -188,6 +188,7 @@ where
 #[tokio::test]
 async fn scenario_a_detections_to_transform_rule_notification() {
     let state = crate::common::create_test_server_state().await;
+    crate::common::register_mqtt_stub(&state).await;
     let store = state
         .automation
         .automation_store
@@ -308,6 +309,7 @@ async fn scenario_a_detections_to_transform_rule_notification() {
 #[tokio::test]
 async fn scenario_b_sensor_rule_simulated_command_honest_delivery() {
     let state = crate::common::create_test_server_state().await;
+    crate::common::register_mqtt_stub(&state).await;
 
     register_template(&state, "env_sensor", json!([])).await;
     register_template(

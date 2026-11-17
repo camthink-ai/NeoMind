@@ -11,7 +11,11 @@ use neomind_api::models::{ChatContentNode, ChatReference};
 use neomind_rules::models::*;
 
 async fn state() -> ServerState {
-    crate::common::create_test_server_state().await
+    let state = crate::common::create_test_server_state().await;
+    // Fixture: controllable mqtt adapter so device seeding subscribes
+    // (BindIncomplete strictness) — these tests need devices to EXIST.
+    crate::common::register_mqtt_stub(&state).await;
+    state
 }
 
 fn reference(r#type: &str, id: &str, label: Option<&str>) -> ChatReference {
