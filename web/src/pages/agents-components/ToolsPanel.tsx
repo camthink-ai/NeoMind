@@ -219,10 +219,10 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
   return (
     <div className="space-y-4">
       <ResponsiveTable
-        className="table-fixed"
+        className="table-fixed min-w-[1320px]"
         columns={[
-          { key: "name", label: t("agents:detail.toolsColumnName", "Tool"), width: "w-[220px]" },
-          { key: "description", label: t("agents:detail.toolsColumnDesc", "Description") },
+          { key: "name", label: t("agents:detail.toolsColumnName", "Tool"), width: "w-[200px]" },
+          { key: "description", label: t("agents:detail.toolsColumnDesc", "Description"), width: "w-[240px]" },
           {
             key: "version",
             label: t("agents:detail.toolsColumnVersion", "Version"),
@@ -233,7 +233,8 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
             key: "source",
             label: t("agents:detail.toolsColumnSource"),
             align: "center",
-            width: "w-32",
+            width: "w-36",
+            className: "whitespace-nowrap",
           },
           {
             key: "namespace",
@@ -243,6 +244,7 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
           {
             key: "param_names",
             label: t("agents:detail.toolsColumnParams", "Parameters"),
+            width: "w-[420px]",
           },
         ]}
         data={tableData}
@@ -327,7 +329,7 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
 
             case "source":
               return (
-                <Badge variant="outline" className={cn("h-6 gap-1", src.color)}>
+                <Badge variant="outline" className={cn("h-6 shrink-0 gap-1 whitespace-nowrap", src.color)}>
                   <SrcIcon className="h-3 w-3" />
                   {t(src.labelKey)}
                 </Badge>
