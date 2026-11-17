@@ -156,16 +156,20 @@ export function CtProvisionHero({
   children,
 }: {
   tone?: 'primary' | 'success' | 'error'
-  /** `sm` = first-viewport SoftAP/BLE; `md` legacy alias → sm; `lg` = status states. */
+  /**
+   * First-viewport SoftAP/BLE/Manual/Auto language: `md` = w-14 (matches Manual/Auto).
+   * `lg` = status states. `sm` kept for rare compact call sites.
+   */
   size?: 'sm' | 'md' | 'lg'
   children: ReactNode
 }) {
-  const compact = size === 'sm' || size === 'md'
   return (
     <div
       className={cn(
-        'mx-auto flex shrink-0 items-center justify-center rounded-lg',
-        compact ? 'h-10 w-10' : 'h-14 w-14',
+        'mx-auto flex shrink-0 items-center justify-center rounded-xl',
+        size === 'sm' && 'h-10 w-10',
+        size === 'md' && 'h-14 w-14',
+        size === 'lg' && 'h-16 w-16',
         tone === 'primary' && 'bg-primary-light',
         tone === 'success' && 'bg-success-light',
         tone === 'error' && 'bg-error-light',
@@ -186,11 +190,11 @@ export function CtProvisionCenter({
   return (
     <div
       className={cn(
-        // Fill the add-device panel so short hero/status states sit mid-pane.
+        // Mid-pane center kept; hero spacing matches Manual/Auto density (gap-6).
         // w-full + flex-1: without width, a shrink-wrapped column can sit left in the
         // pane when a parent uses items-center; flex-1 keeps vertical fill reliable.
         // Horizontal padding comes from AddDeviceGlobalDialog — avoid double inset.
-        'flex h-full min-h-0 w-full flex-1 flex-col items-center justify-center gap-3 py-4',
+        'flex h-full min-h-0 w-full flex-1 flex-col items-center justify-center gap-6 py-6',
         className,
       )}
     >

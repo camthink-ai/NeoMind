@@ -212,15 +212,15 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
     )
   }
 
-  // Initial pre-scan: compact hero, mid-pane via CtProvisionCenter justify-center.
+  // Initial pre-scan: Manual/Auto-parity hero (md / text-lg / text-sm); mid-pane kept.
   return (
     <CtProvisionCenter>
-      <CtProvisionHero size="sm">
-        <Bluetooth className="h-5 w-5 text-primary" />
+      <CtProvisionHero size="md">
+        <Bluetooth className="h-7 w-7 text-primary" />
       </CtProvisionHero>
-      <div className="max-w-sm space-y-0.5 text-center">
-        <h3 className="text-base font-medium">{t('devices:ble.scanTitle')}</h3>
-        <p className="truncate text-xs text-muted-foreground">{t('devices:ble.scanDescShort')}</p>
+      <div className="max-w-sm space-y-2 text-center">
+        <h3 className="text-lg font-medium">{t('devices:ble.scanTitle')}</h3>
+        <p className="text-sm text-muted-foreground">{t('devices:ble.scanDescShort')}</p>
       </div>
 
       {!bleSupported ? (
@@ -234,6 +234,10 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
           {t('devices:ble.scanBtn')}
         </Button>
       )}
+
+      <p className="max-w-sm text-center text-xs text-muted-foreground">
+        {t('devices:ble.scanHint')}
+      </p>
 
       {ct.error && (
         <p className="max-w-sm text-center text-sm text-error">{bleErrorCopy(t, ct.error)}</p>

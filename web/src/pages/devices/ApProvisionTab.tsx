@@ -211,12 +211,12 @@ export function ApProvisionTab({ onComplete, dismissSignal = 0 }: ApProvisionTab
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-1 flex-col justify-center self-center py-4">
       <div className="flex max-h-full min-h-0 w-full flex-col">
-        <div className="mb-3 shrink-0 space-y-1 text-center">
-          <CtProvisionHero size="sm">
-            <Wifi className="h-5 w-5 text-primary" />
+        <div className="mb-5 shrink-0 space-y-2 text-center">
+          <CtProvisionHero size="md">
+            <Wifi className="h-7 w-7 text-primary" />
           </CtProvisionHero>
-          <h3 className="text-base font-medium">{t('devices:ap.joinTitle')}</h3>
-          <p className="truncate text-xs text-muted-foreground">
+          <h3 className="text-lg font-medium">{t('devices:ap.joinTitle')}</h3>
+          <p className="text-sm text-muted-foreground">
             {t('devices:ap.joinDescStrong')}
           </p>
         </div>
