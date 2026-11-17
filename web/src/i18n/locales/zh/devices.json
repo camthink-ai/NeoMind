@@ -75,12 +75,12 @@
   "sending": "发送中...",
   "commandSent": "已下发到通道（非设备确认）",
   "commandDelivery": {
-    "summaryAdapter": "适配器已接收（仅下发）",
-    "summaryExtension": "扩展已接收（非设备 ACK）",
-    "summaryDeviceAck": "设备已确认（物理效果未验证）",
-    "summaryVerified": "物理效果已验证",
-    "summaryUnknown": "已下发 — 缺少交付证据",
-    "summaryNone": "无交付证据",
+    "summaryAdapter": "已下发，设备未确认",
+    "summaryExtension": "扩展已收到，设备未确认",
+    "summaryDeviceAck": "设备已确认，效果未验证",
+    "summaryVerified": "已确认生效",
+    "summaryUnknown": "已下发",
+    "summaryNone": "未确认是否发出",
     "noElevateHint": "没有设备 ACK 或物理效果证据 — 不提升层级。",
     "adapters": "{{count}} 个适配器",
     "tier": {

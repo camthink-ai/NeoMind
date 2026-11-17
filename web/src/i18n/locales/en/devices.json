@@ -75,12 +75,12 @@
   "sending": "Sending...",
   "commandSent": "Dispatched to the channel (not a device ACK)",
   "commandDelivery": {
-    "summaryAdapter": "Adapter accepted (dispatch only)",
-    "summaryExtension": "Extension accepted (not a device ACK)",
-    "summaryDeviceAck": "Device acknowledged (physical effect unverified)",
-    "summaryVerified": "Physical effect verified",
-    "summaryUnknown": "Dispatched — delivery evidence missing",
-    "summaryNone": "No delivery evidence",
+    "summaryAdapter": "Sent. The device has not confirmed.",
+    "summaryExtension": "Extension received it. The device has not confirmed.",
+    "summaryDeviceAck": "Device confirmed. Effect not verified.",
+    "summaryVerified": "Effect verified.",
+    "summaryUnknown": "Sent.",
+    "summaryNone": "Not confirmed.",
     "noElevateHint": "No evidence for device ACK or physical effect — tier not elevated.",
     "adapters": "{{count}} adapter(s)",
     "tier": {

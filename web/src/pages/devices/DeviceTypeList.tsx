@@ -106,19 +106,19 @@ export function DeviceTypeList({
               onClick={() => onViewDetails(dt)}
             >
               <div className="px-4 py-3.5">
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-1.5">
                     <div className="truncate text-heading font-medium">{dt.name}</div>
-                    <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                      <code className="shrink-0 truncate font-mono">{dt.device_type}</code>
-                      {dt.description && <span className="truncate">· {dt.description}</span>}
-                    </div>
+                    {dt.builtin_version && (
+                      <Badge variant="outline" className={cn("h-5 shrink-0 px-1.5", textNano, "bg-muted-30 text-muted-foreground border-muted")}>
+                        {t('devices:types.builtinBadge')}
+                      </Badge>
+                    )}
                   </div>
-                  {dt.builtin_version && (
-                    <Badge variant="outline" className={cn("shrink-0", textNano, "bg-muted-30 text-muted-foreground border-muted")}>
-                      {t('devices:types.builtinBadge')}
-                    </Badge>
-                  )}
+                  <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <code className="shrink-0 truncate font-mono">{dt.device_type}</code>
+                    {dt.description && <span className="truncate">· {dt.description}</span>}
+                  </div>
                 </div>
               </div>
             </Card>
@@ -177,15 +177,15 @@ export function DeviceTypeList({
                     <Database className="h-4 w-4" />
                   </div>
                   <div className="min-w-0">
-                    <div className="font-medium text-sm truncate">{type.name}</div>
-                    <code className="block min-w-0 truncate text-xs font-mono text-muted-foreground" title={type.device_type}>{type.device_type}</code>
-                    {type.builtin_version && (
-                      <div>
-                        <Badge variant="outline" className={cn("mt-0.5", textNano, "bg-muted-30 text-muted-foreground border-muted")}>
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <div className="truncate text-sm font-medium">{type.name}</div>
+                      {type.builtin_version && (
+                        <Badge variant="outline" className={cn("h-5 shrink-0 px-1.5", textNano, "bg-muted-30 text-muted-foreground border-muted")}>
                           {t('devices:types.builtinBadge')}
                         </Badge>
-                      </div>
-                    )}
+                      )}
+                    </div>
+                    <code className="block min-w-0 truncate text-xs font-mono text-muted-foreground" title={type.device_type}>{type.device_type}</code>
                   </div>
                 </div>
               )

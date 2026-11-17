@@ -9,16 +9,8 @@ vi.mock('react-i18next', async (importOriginal) => {
     useTranslation: () => ({
       t: (key: string, opts?: { count?: number; defaultValue?: string }) => {
         const k = key.replace(/^devices:/, '')
-        if (k === 'commandDelivery.summaryAdapter') return 'Adapter accepted (dispatch only)'
-        if (k === 'commandDelivery.summaryExtension') return 'Extension accepted (not a device ACK)'
-        if (k === 'commandDelivery.noElevateHint') {
-          return 'No evidence for device ACK or physical effect — tier not elevated.'
-        }
-        if (k === 'commandDelivery.adapters' && opts?.count != null) {
-          return `${opts.count} adapter(s)`
-        }
-        if (k.startsWith('commandDelivery.tier.')) return k.slice('commandDelivery.tier.'.length)
-        if (k.startsWith('commandDelivery.state.')) return k.slice('commandDelivery.state.'.length)
+        if (k === 'commandDelivery.summaryAdapter') return 'Sent. The device has not confirmed.'
+        if (k === 'commandDelivery.summaryExtension') return 'Extension received it. The device has not confirmed.'
         return opts?.defaultValue ?? key
       },
       i18n: { language: 'en' },
@@ -39,17 +31,17 @@ describe('CommandDeliveryLadderPanel', () => {
     )
     expect(container.querySelector('[data-delivery-kind="adapter_accepted"]')).toBeTruthy()
     expect(container.querySelector('[data-verified="false"]')).toBeTruthy()
-    expect(container.querySelector('[data-tier="device_ack"][data-tier-state="not_reached"]')).toBeTruthy()
-    expect(screen.getByText(/Adapter accepted/i)).toBeTruthy()
-    expect(screen.getByText(/tier not elevated/i)).toBeTruthy()
+    expect(screen.getByText('Sent. The device has not confirmed.')).toBeTruthy()
+    expect(screen.queryByText(/broker publish/i)).toBeNull()
+    expect(container.querySelector('[data-tier]')).toBeNull()
   })
 
-  it('marks extension path without elevating to device ACK', () => {
+  it('marks extension path without claiming a device confirmation', () => {
     const { container } = render(
       <CommandDeliveryLadderPanel result={{ sent: true, delivery: 'extension_accepted' }} />,
     )
     expect(container.querySelector('[data-delivery-kind="extension_accepted"]')).toBeTruthy()
-    expect(container.querySelector('[data-tier="device_ack"][data-tier-state="not_reached"]')).toBeTruthy()
     expect(container.querySelector('[data-verified="false"]')).toBeTruthy()
+    expect(screen.getByText('Extension received it. The device has not confirmed.')).toBeTruthy()
   })
 })
