@@ -907,10 +907,7 @@ impl DeviceRegistryStore {
                 "ne503_camera",
                 include_str!("builtin_types/ne503_camera.json"),
             ),
-            (
-                "ek410_Eink",
-                include_str!("builtin_types/ek410_Eink.json"),
-            ),
+            ("ek410_Eink", include_str!("builtin_types/ek410_Eink.json")),
         ];
 
         let mut changed = 0;
@@ -1255,14 +1252,20 @@ mod tests {
         assert!(!ne301.metrics.is_empty());
         assert!(!ne301.commands.is_empty()); // NE301 has capture/sleep commands
         assert_eq!(
-            ne301.ct_prov.as_ref().and_then(|c| c.softap_default_host.as_deref()),
+            ne301
+                .ct_prov
+                .as_ref()
+                .and_then(|c| c.softap_default_host.as_deref()),
             Some("192.168.10.10")
         );
 
         let ne503 = store.load_template("ne503_camera").unwrap().unwrap();
         assert_eq!(ne503.device_type, "ne503_camera");
         assert_eq!(
-            ne503.ct_prov.as_ref().and_then(|c| c.softap_default_host.as_deref()),
+            ne503
+                .ct_prov
+                .as_ref()
+                .and_then(|c| c.softap_default_host.as_deref()),
             Some("10.0.0.1")
         );
 

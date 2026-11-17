@@ -21,8 +21,8 @@ use neomind_core::datasource::DataSourceId;
 
 use crate::engine::RuleEngine;
 use crate::models::{
-    ComparisonOperator, LogicalOperator, RuleAction, RuleCondition, RuleId, RuleTrigger,
-    RuleValue, ValueProvider,
+    ComparisonOperator, LogicalOperator, RuleAction, RuleCondition, RuleId, RuleTrigger, RuleValue,
+    ValueProvider,
 };
 use crate::preview::to_dsl_preview;
 use crate::unified_provider::UnifiedValueProvider;
@@ -864,7 +864,12 @@ mod tests {
             "no-store path must not borrow A's evidence for B: {:?}",
             exp_b.last_execution
         );
-        assert!(engine.explain_rule(&id_a).await.unwrap().last_execution.is_some());
+        assert!(engine
+            .explain_rule(&id_a)
+            .await
+            .unwrap()
+            .last_execution
+            .is_some());
     }
 
     #[tokio::test]
@@ -886,7 +891,10 @@ mod tests {
 
         let exp = engine.explain_rule(&id).await.unwrap();
         let fd = exp.for_duration.expect("configured for_duration surfaced");
-        assert!(!fd.applicable, "Manual must mark for_duration non-applicable");
+        assert!(
+            !fd.applicable,
+            "Manual must mark for_duration non-applicable"
+        );
         assert!(
             fd.satisfied,
             "non-applicable hold must not report unsatisfied progress"

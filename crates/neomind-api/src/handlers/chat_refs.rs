@@ -197,11 +197,7 @@ pub fn nodes_for_persistence(
     }
     // Legacy chip synthesis: mirror preamble truncation (first MAX_REFERENCES).
     for r in refs.iter().take(MAX_REFERENCES) {
-        let label = r
-            .label
-            .as_deref()
-            .map(truncate_label)
-            .unwrap_or_default();
+        let label = r.label.as_deref().map(truncate_label).unwrap_or_default();
         values.push(serde_json::json!({
             "kind": "reference",
             "type": r.r#type,
@@ -769,12 +765,8 @@ mod tests {
                 label: Some(format!("d{i}")),
             })
             .collect();
-        let (vals, _) =
-            nodes_for_persistence("hi", None, None, Some(&refs)).expect("synth capped");
-        let ref_nodes: Vec<_> = vals
-            .iter()
-            .filter(|v| v["kind"] == "reference")
-            .collect();
+        let (vals, _) = nodes_for_persistence("hi", None, None, Some(&refs)).expect("synth capped");
+        let ref_nodes: Vec<_> = vals.iter().filter(|v| v["kind"] == "reference").collect();
         assert_eq!(
             ref_nodes.len(),
             MAX_REFERENCES,
