@@ -1300,10 +1300,8 @@ impl MqttAdapter {
                         slot.topic, suback.pkid, suback.return_codes
                     );
                     warn!(broker = %broker_id, %msg);
-                    for tx in slot.waiters {
-                        let _ = tx.send(Err(msg.clone()));
-                    }
                     // Do NOT insert into confirmed set.
+                    Self::complete_pending_subscribe_failure(slot, msg).await;
                 } else {
                     info!(
                         broker = %broker_id,
@@ -1311,14 +1309,7 @@ impl MqttAdapter {
                         pkid = suback.pkid,
                         "MQTT SubAck success — subscription confirmed"
                     );
-                    inner
-                        .subscribed_topics
-                        .write()
-                        .await
-                        .insert(slot.topic.clone());
-                    for tx in slot.waiters {
-                        let _ = tx.send(Ok(()));
-                    }
+                    Self::complete_pending_subscribe_success(inner, slot).await;
                 }
             }
             _ => {}
@@ -1339,38 +1330,30 @@ impl MqttAdapter {
         }
     }
 
-    pub(crate) async fn complete_pending_subscribe_success(inner: &MqttClientInner, topic: &str) {
-        let slot = {
-            let mut pending = inner.pending_subscribes.lock().await;
-            let idx = pending.queue.iter().position(|s| s.topic == topic);
-            idx.and_then(|i| pending.queue.remove(i))
-        };
-        if let Some(slot) = slot {
-            inner
-                .subscribed_topics
-                .write()
-                .await
-                .insert(slot.topic.clone());
-            for tx in slot.waiters {
-                let _ = tx.send(Ok(()));
-            }
+    /// Confirm a pending Subscribe slot (SubAck success or test settle Ok).
+    /// Caller must already have removed the slot from `pending_subscribes`.
+    pub(crate) async fn complete_pending_subscribe_success(
+        inner: &MqttClientInner,
+        slot: PendingSubscribeSlot,
+    ) {
+        inner
+            .subscribed_topics
+            .write()
+            .await
+            .insert(slot.topic.clone());
+        for tx in slot.waiters {
+            let _ = tx.send(Ok(()));
         }
     }
 
+    /// Fail a pending Subscribe slot (SubAck reject or test settle Err).
+    /// Caller must already have removed the slot from `pending_subscribes`.
     pub(crate) async fn complete_pending_subscribe_failure(
-        inner: &MqttClientInner,
-        topic: &str,
+        slot: PendingSubscribeSlot,
         message: String,
     ) {
-        let slot = {
-            let mut pending = inner.pending_subscribes.lock().await;
-            let idx = pending.queue.iter().position(|s| s.topic == topic);
-            idx.and_then(|i| pending.queue.remove(i))
-        };
-        if let Some(slot) = slot {
-            for tx in slot.waiters {
-                let _ = tx.send(Err(message.clone()));
-            }
+        for tx in slot.waiters {
+            let _ = tx.send(Err(message.clone()));
         }
     }
 
@@ -1457,9 +1440,17 @@ impl MqttAdapter {
         let Some(inner) = clients.get(broker_id) else {
             return;
         };
+        let slot = {
+            let mut pending = inner.pending_subscribes.lock().await;
+            let idx = pending.queue.iter().position(|s| s.topic == topic);
+            idx.and_then(|i| pending.queue.remove(i))
+        };
+        let Some(slot) = slot else {
+            return;
+        };
         match result {
-            Ok(()) => Self::complete_pending_subscribe_success(inner, topic).await,
-            Err(msg) => Self::complete_pending_subscribe_failure(inner, topic, msg).await,
+            Ok(()) => Self::complete_pending_subscribe_success(inner, slot).await,
+            Err(msg) => Self::complete_pending_subscribe_failure(slot, msg).await,
         }
     }
 
