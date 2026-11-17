@@ -91,7 +91,7 @@ const DOMAIN_INDEX: &str = r#"
 - rule: list get create update delete enable disable test history explain
 - dashboard: list get create update delete add-components update-component remove-components share (ADD widgets → add-components (append); TWEAK one widget → update-component; `update --components` replaces ALL and needs --replace-all — almost never what you want; `dashboard get <ID>` first to see layout/ids)
 - connector: list get create update delete enable disable test subscribe subscriptions unsubscribe (external MQTT data ingestion / subscriptions; outbound webhook or MQTT data targets use push)
-- extension: list get install uninstall status logs config reload create build market-list market-install validate
+- extension: list get install uninstall status logs config reload create build market-list market-install validate commands invoke
 - transform: list get create update delete enable disable metrics test-code data-sources executions (executions = recent run records; check it when a transform outputs nothing or fails)
 - widget: list get create install uninstall bundle market-list market-install
 - message: list get send read delete channel-list channel-get channel-types channel-type-schema channel-create channel-update channel-delete channel-test (platform alerts — NOT for talking to agents)

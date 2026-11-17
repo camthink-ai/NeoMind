@@ -59,7 +59,19 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
             ExtensionCommand::List { .. }
             | ExtensionCommand::Get { .. }
             | ExtensionCommand::Status { .. }
-            | ExtensionCommand::MarketList { .. } => ProvenReadOnly,
+            | ExtensionCommand::MarketList { .. }
+            | ExtensionCommand::Commands { .. } => ProvenReadOnly,
+            // Invoke capability comes from the unified command contract
+            // (host override / declared effect) — not from command-name
+            // heuristics. Unknown commands stay Mutating.
+            ExtensionCommand::Invoke {
+                extension_id,
+                command,
+                ..
+            } => match neomind_core::extension::sync_effect_for_invoke(extension_id, command) {
+                neomind_core::extension::CommandEffect::ReadOnly => ProvenReadOnly,
+                neomind_core::extension::CommandEffect::Mutating => Mutating,
+            },
             _ => Mutating,
         },
         Command::Device { device_cmd } => classify_device(device_cmd),
@@ -239,5 +251,33 @@ mod tests {
             "list".into(),
         ];
         assert!(classify_argv(&argv).is_err());
+    }
+
+    #[test]
+    fn extension_commands_is_read_only() {
+        assert_eq!(
+            classify_line("extension commands weather-forecast-v2"),
+            CliSideEffect::ProvenReadOnly
+        );
+    }
+
+    #[test]
+    fn extension_invoke_uses_command_contract() {
+        assert_eq!(
+            classify_line(
+                "extension invoke weather-forecast-v2 get_weather --params {\"city\":\"Xiamen\"}"
+            ),
+            CliSideEffect::ProvenReadOnly
+        );
+        assert_eq!(
+            classify_line(
+                "extension invoke weather-forecast-v2 set_default_city --params {\"city\":\"Xiamen\"}"
+            ),
+            CliSideEffect::Mutating
+        );
+        assert_eq!(
+            classify_line("extension invoke other-ext do_thing --params {}"),
+            CliSideEffect::Mutating
+        );
     }
 }

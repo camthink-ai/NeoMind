@@ -325,6 +325,24 @@ impl Tool for ExtensionTool {
         self.build_parameters_schema()
     }
 
+    fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
+        let (_, replay, _) = neomind_core::extension::resolve_capability(
+            &self.extension_id,
+            &self.command.name,
+            self.command.effect,
+            self.command.replay_safety,
+            self.command.execution,
+        );
+        match replay {
+            neomind_core::extension::CommandReplaySafety::Safe => {
+                crate::toolkit::tool::ReplaySafety::Safe
+            }
+            neomind_core::extension::CommandReplaySafety::Unsafe => {
+                crate::toolkit::tool::ReplaySafety::Unsafe
+            }
+        }
+    }
+
     async fn execute(&self, args: Value) -> ToolResult<ToolOutput> {
         // Normalize image data in parameters so extensions receive raw base64:
         // - resolve /api/images/ internal URLs to bytes (extensions are a
@@ -529,6 +547,9 @@ mod tests {
             samples: vec![],
             parameter_groups: vec![],
             ai_exposed: true,
+            effect: Default::default(),
+            replay_safety: Default::default(),
+            execution: Default::default(),
         }];
 
         let ext = MockExtension { metadata, commands };

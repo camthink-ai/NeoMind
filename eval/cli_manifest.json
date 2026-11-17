@@ -395,6 +395,11 @@
     "--help",
     "--verbose"
    ],
+   "commands": [
+    "--format",
+    "--help",
+    "--verbose"
+   ],
    "config": [
     "--format",
     "--help",
@@ -417,6 +422,13 @@
    "install": [
     "--format",
     "--help",
+    "--verbose"
+   ],
+   "invoke": [
+    "--format",
+    "--help",
+    "--params",
+    "--params-file",
     "--verbose"
    ],
    "list": [
@@ -741,7 +753,6 @@
     "--format",
     "--help",
     "--id",
-    "--input",
     "--verbose"
    ]
   },

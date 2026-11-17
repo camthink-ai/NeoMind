@@ -138,6 +138,9 @@ mod tests {
             },
             disabled: false,
             ai_exposed: true,
+            effect: Default::default(),
+            replay_safety: Default::default(),
+            execution: Default::default(),
         };
 
         assert_eq!(command.id, "turn_on");
@@ -261,6 +264,9 @@ mod tests {
                 },
                 disabled: false,
                 ai_exposed: true,
+                effect: Default::default(),
+                replay_safety: Default::default(),
+                execution: Default::default(),
             }],
             metrics: vec![MetricDescriptorDto {
                 name: "temperature".to_string(),
@@ -313,6 +319,9 @@ mod tests {
                 },
                 disabled: false,
                 ai_exposed: true,
+                effect: Default::default(),
+                replay_safety: Default::default(),
+                execution: Default::default(),
             }],
             metrics: vec![MetricDescriptorDto {
                 name: "metric1".to_string(),

@@ -73,6 +73,24 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
             }
             None => crate::extension::get_extension_config(&client, &id).await?,
         },
+        ExtensionCommand::Commands { id } => {
+            crate::extension::list_extension_commands(&client, &id).await?
+        }
+        ExtensionCommand::Invoke {
+            extension_id,
+            command,
+            params,
+            params_file,
+        } => {
+            crate::extension::invoke_extension_command(
+                &client,
+                &extension_id,
+                &command,
+                params.as_deref(),
+                params_file.as_deref(),
+            )
+            .await?
+        }
         // Local commands are guarded above; any other variant is a bug.
         _ => unreachable!("unhandled extension subcommand reached run_extension_cmd"),
     };

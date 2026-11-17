@@ -77,6 +77,18 @@ pub async fn execute_extension_command_handler(
         }
     }
 
+    // Shared schema validation (same contract as CLI invoke).
+    if let Some(info) = runtime.get(&id).await {
+        if let Some(cmd) = info.commands.iter().find(|c| c.name == req.command) {
+            let def = neomind_core::extension::from_extension_command(&id, cmd);
+            if let Err(msg) =
+                neomind_core::extension::validate_params(&def.input_schema, &req.args)
+            {
+                return Err(ErrorResponse::bad_request(msg));
+            }
+        }
+    }
+
     // Execute command with panic protection
     let result = match runtime.execute_command(&id, &req.command, &req.args).await {
         Ok(r) => r,
@@ -161,6 +173,18 @@ pub async fn invoke_extension_handler(
         }
     }
 
+    // Shared schema validation (same contract as CLI invoke /execute).
+    if let Some(info) = runtime.get(&id).await {
+        if let Some(cmd) = info.commands.iter().find(|c| c.name == req.command) {
+            let def = neomind_core::extension::from_extension_command(&id, cmd);
+            if let Err(msg) =
+                neomind_core::extension::validate_params(&def.input_schema, &req.params)
+            {
+                return Err(ErrorResponse::bad_request(msg));
+            }
+        }
+    }
+
     // Execute command with proper error logging
     let result = match runtime
         .execute_command(&id, &req.command, &req.params)
@@ -231,6 +255,9 @@ pub async fn stream_extension_handler(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandDescriptorDto {
     pub id: String,
+    /// Unified business id: `extension/{extension_id}/{command}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command_id: Option<String>,
     pub display_name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
@@ -246,6 +273,15 @@ pub struct CommandDescriptorDto {
     /// never sent to the LLM. When false the toggle is locked.
     #[serde(default = "default_true")]
     pub ai_exposed: bool,
+    /// Side-effect class after host resolve (`read_only` | `mutating`).
+    #[serde(default)]
+    pub effect: neomind_core::extension::CommandEffect,
+    /// Replay safety after host resolve (`safe` | `unsafe`).
+    #[serde(default)]
+    pub replay_safety: neomind_core::extension::CommandReplaySafety,
+    /// Immediate vs async track (`immediate` | `async`).
+    #[serde(default)]
+    pub execution: neomind_core::extension::CommandExecutionKind,
 }
 
 fn default_true() -> bool {
@@ -325,20 +361,27 @@ pub async fn list_extension_commands_handler(
     let result: Vec<CommandDescriptorDto> = info
         .commands
         .iter()
-        .map(|cmd| CommandDescriptorDto {
-            id: cmd.name.clone(),
-            display_name: cmd.display_name.clone(),
-            description: cmd.description.clone(),
-            input_schema: build_parameters_schema(&cmd.parameters),
-            output_fields: vec![], // V2: Commands don't declare output fields
-            config: CommandConfigDto {
-                requires_auth: false,
-                timeout_ms: 300000,
-                is_stream: false,
-                expected_duration_ms: None,
-            },
-            disabled: !ext_enabled || !cmd.ai_exposed || disabled_cmds.contains(&cmd.name),
-            ai_exposed: cmd.ai_exposed,
+        .map(|cmd| {
+            let def = neomind_core::extension::from_extension_command(&id, cmd);
+            CommandDescriptorDto {
+                id: cmd.name.clone(),
+                command_id: Some(def.id.clone()),
+                display_name: cmd.display_name.clone(),
+                description: def.description.clone(),
+                input_schema: def.input_schema.clone(),
+                output_fields: vec![], // V2: Commands don't declare output fields
+                config: CommandConfigDto {
+                    requires_auth: false,
+                    timeout_ms: 300000,
+                    is_stream: false,
+                    expected_duration_ms: None,
+                },
+                disabled: !ext_enabled || !cmd.ai_exposed || disabled_cmds.contains(&cmd.name),
+                ai_exposed: cmd.ai_exposed,
+                effect: def.effect,
+                replay_safety: def.replay_safety,
+                execution: def.execution,
+            }
         })
         .collect();
 

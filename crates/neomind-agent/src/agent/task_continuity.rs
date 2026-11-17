@@ -3576,9 +3576,23 @@ pub fn derive_tool_capability_resolved(
         "file_write" | "file_edit" | "image_edit" | "run_now" | "device_command" => {
             ToolCapability::mutating_write()
         }
-        _ => {
-            // Conservative default: treat unknown tools / extensions as
-            // non-idempotent side-effects (must enter the write gate).
+        other => {
+            // Extension tools (`ext:cmd` / sanitized `ext_cmd`): capability
+            // from the unified command contract (host override / declared),
+            // not from name heuristics alone.
+            if let Some((ext_id, cmd)) =
+                neomind_core::extension::parse_extension_tool_name(other)
+            {
+                match neomind_core::extension::sync_effect_for_invoke(&ext_id, &cmd) {
+                    neomind_core::extension::CommandEffect::ReadOnly => {
+                        return ToolCapability::read_query();
+                    }
+                    neomind_core::extension::CommandEffect::Mutating => {
+                        return ToolCapability::mutating_write();
+                    }
+                }
+            }
+            // Conservative default: unknown tools enter the write gate.
             ToolCapability::mutating_unknown_sensitive()
         }
     }

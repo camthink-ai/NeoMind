@@ -642,6 +642,38 @@ pub enum ExtensionCommand {
         #[arg(long)]
         set: Option<String>,
     },
+    /// List machine-readable commands for an installed extension.
+    ///
+    /// Returns the unified business command contract for each command:
+    /// id, description, input_schema, effect, replay_safety, execution.
+    /// Discover before `extension invoke`.
+    /// Example: `neomind extension commands weather-forecast-v2`
+    Commands {
+        /// Extension ID.
+        #[arg(required = true)]
+        id: String,
+    },
+    /// Invoke an extension command with JSON params.
+    ///
+    /// Prefer `--params` / `--params-file` over inventing CLI flags — small
+    /// models handle one JSON object more reliably than quoted shell flags.
+    /// Same semantics as `POST /api/extensions/:id/invoke` (shared schema
+    /// validation + capability metadata).
+    /// Example: `neomind extension invoke weather-forecast-v2 get_weather --params '{"city":"Xiamen"}'`
+    Invoke {
+        /// Extension ID.
+        #[arg(required = true)]
+        extension_id: String,
+        /// Command name (from `extension commands`).
+        #[arg(required = true)]
+        command: String,
+        /// JSON object of parameters.
+        #[arg(long, conflicts_with = "params_file")]
+        params: Option<String>,
+        /// Path to a JSON file of parameters (avoids shell quoting).
+        #[arg(long, conflicts_with = "params")]
+        params_file: Option<std::path::PathBuf>,
+    },
 }
 
 /// Device subcommands.
@@ -1233,9 +1265,6 @@ pub enum RuleCommand {
         cooldown: Option<u64>,
     },
     /// Update rule.
-    ///
-    /// Modify rule using JSON format. Only included fields are updated.
-    /// Test first with `rule test <ID> --input '...'` to verify new conditions.
     ///
     /// Example: `neomind rule update rule-001 --body '{"name":"New Name"}'`
     /// The ID may also be passed as a flag: `--id rule-001` (models coming

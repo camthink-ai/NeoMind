@@ -222,24 +222,31 @@ pub(crate) fn extension_info_to_dto(
     let disabled_set: std::collections::HashSet<String> =
         disabled_commands.iter().cloned().collect();
 
-    // Convert commands to DTOs (V2 format)
+    // Convert commands to DTOs (V2 format + unified business contract)
     let commands: Vec<CommandDescriptorDto> = info
         .commands
         .iter()
-        .map(|cmd| CommandDescriptorDto {
-            id: cmd.name.clone(),
-            display_name: cmd.display_name.clone(),
-            description: cmd.description.clone(),
-            input_schema: build_parameters_schema(&cmd.parameters),
-            output_fields: vec![], // V2: Commands don't declare output fields
-            config: CommandConfigDto {
-                requires_auth: false,
-                timeout_ms: 300000,
-                is_stream: false,
-                expected_duration_ms: None,
-            },
-            disabled: !enabled || !cmd.ai_exposed || disabled_set.contains(&cmd.name),
-            ai_exposed: cmd.ai_exposed,
+        .map(|cmd| {
+            let def = neomind_core::extension::from_extension_command(&info.metadata.id, cmd);
+            CommandDescriptorDto {
+                id: cmd.name.clone(),
+                command_id: Some(def.id.clone()),
+                display_name: cmd.display_name.clone(),
+                description: def.description.clone(),
+                input_schema: def.input_schema.clone(),
+                output_fields: vec![], // V2: Commands don't declare output fields
+                config: CommandConfigDto {
+                    requires_auth: false,
+                    timeout_ms: 300000,
+                    is_stream: false,
+                    expected_duration_ms: None,
+                },
+                disabled: !enabled || !cmd.ai_exposed || disabled_set.contains(&cmd.name),
+                ai_exposed: cmd.ai_exposed,
+                effect: def.effect,
+                replay_safety: def.replay_safety,
+                execution: def.execution,
+            }
         })
         .collect();
 

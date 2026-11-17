@@ -249,6 +249,152 @@ pub fn compact_market_list(raw: &serde_json::Value, filter: Option<&str>) -> ser
     })
 }
 
+/// List unified business command defs for an installed extension.
+pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<CliResponse> {
+    let data = client
+        .get(&format!("/extensions/{}/commands", encode_segment(id)))
+        .await?;
+    // API may wrap as {success,data:[...]} or return the array directly.
+    let commands = data
+        .as_array()
+        .cloned()
+        .or_else(|| data.get("data").and_then(|d| d.as_array()).cloned())
+        .unwrap_or_default();
+
+    let summary: Vec<serde_json::Value> = commands
+        .iter()
+        .map(|c| {
+            let name = c
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            json!({
+                "id": c.get("command_id").cloned().unwrap_or_else(|| {
+                    json!(format!("extension/{id}/{name}"))
+                }),
+                "command": name,
+                "description": c.get("description").cloned().unwrap_or(json!("")),
+                "input_schema": c.get("input_schema").cloned().unwrap_or(json!({})),
+                "effect": c.get("effect").cloned().unwrap_or(json!("mutating")),
+                "replay_safety": c.get("replay_safety").cloned().unwrap_or(json!("unsafe")),
+                "execution": c.get("execution").cloned().unwrap_or(json!("immediate")),
+                "ai_exposed": c.get("ai_exposed").cloned().unwrap_or(json!(true)),
+                "disabled": c.get("disabled").cloned().unwrap_or(json!(false)),
+            })
+        })
+        .collect();
+
+    Ok(CliResponse::success(
+        json!({
+            "extension_id": id,
+            "total": summary.len(),
+            "commands": summary,
+        }),
+        format!("{} command(s) for extension {}", summary.len(), id),
+    ))
+}
+
+/// Invoke an extension command via the shared HTTP execute path.
+///
+/// Prefers `--params` / `--params-file` JSON so small models avoid shell
+/// quoting. Params are validated server-side against the same schema that
+/// `extension commands` returns.
+pub async fn invoke_extension_command(
+    client: &ApiClient,
+    extension_id: &str,
+    command: &str,
+    params_json: Option<&str>,
+    params_file: Option<&std::path::Path>,
+) -> Result<CliResponse> {
+    let params = load_invoke_params(params_json, params_file)?;
+
+    // Client-side required-field check against the live command schema when
+    // reachable — fail fast before the round-trip when possible. Server still
+    // validates (source of truth).
+    if let Ok(listed) = client
+        .get(&format!(
+            "/extensions/{}/commands",
+            encode_segment(extension_id)
+        ))
+        .await
+    {
+        let commands = listed
+            .as_array()
+            .cloned()
+            .or_else(|| listed.get("data").and_then(|d| d.as_array()).cloned())
+            .unwrap_or_default();
+        if let Some(cmd) = commands.iter().find(|c| {
+            c.get("id").and_then(|v| v.as_str()) == Some(command)
+        }) {
+            if let Some(schema) = cmd.get("input_schema") {
+                if let Err(msg) = neomind_core::extension::validate_params(schema, &params) {
+                    anyhow::bail!("{msg}");
+                }
+            }
+        } else if !commands.is_empty() {
+            let names: Vec<&str> = commands
+                .iter()
+                .filter_map(|c| c.get("id").and_then(|v| v.as_str()))
+                .collect();
+            anyhow::bail!(
+                "command '{command}' not found on extension '{extension_id}'. Available: {}",
+                names.join(", ")
+            );
+        }
+    }
+
+    let body = json!({
+        "command": command,
+        "params": params,
+    });
+    let data = client
+        .post(
+            &format!("/extensions/{}/invoke", encode_segment(extension_id)),
+            &body,
+        )
+        .await?;
+
+    let effect = neomind_core::extension::sync_effect_for_invoke(extension_id, command);
+    Ok(CliResponse::success(
+        json!({
+            "command_id": format!("extension/{extension_id}/{command}"),
+            "extension_id": extension_id,
+            "command": command,
+            "effect": effect,
+            "result": data.get("data").cloned().unwrap_or(data),
+        }),
+        format!("Invoked {extension_id}/{command}"),
+    ))
+}
+
+fn load_invoke_params(
+    params_json: Option<&str>,
+    params_file: Option<&std::path::Path>,
+) -> Result<serde_json::Value> {
+    if let Some(path) = params_file {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("failed to read --params-file {}: {e}", path.display()))?;
+        let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| {
+            anyhow::anyhow!("--params-file must contain a JSON object: {e}")
+        })?;
+        if !v.is_object() && !v.is_null() {
+            anyhow::bail!("--params-file must contain a JSON object");
+        }
+        return Ok(if v.is_null() { json!({}) } else { v });
+    }
+    match params_json {
+        None => Ok(json!({})),
+        Some(s) => {
+            let v: serde_json::Value = serde_json::from_str(s.trim())
+                .map_err(|e| anyhow::anyhow!("--params must be a JSON object: {e}"))?;
+            if !v.is_object() && !v.is_null() {
+                anyhow::bail!("--params must be a JSON object");
+            }
+            Ok(if v.is_null() { json!({}) } else { v })
+        }
+    }
+}
+
 /// Get extension configuration
 pub async fn get_extension_config(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client.get(&format!("/extensions/{}/config", id)).await?;
@@ -265,6 +411,45 @@ pub async fn update_extension_config(
         .put(&format!("/extensions/{}/config", id), &config)
         .await?;
     Ok(CliResponse::success(data, "Extension config updated"))
+}
+
+#[cfg(test)]
+mod invoke_params_tests {
+    use super::load_invoke_params;
+    use serde_json::json;
+    use std::io::Write;
+
+    #[test]
+    fn default_empty_object() {
+        assert_eq!(load_invoke_params(None, None).unwrap(), json!({}));
+    }
+
+    #[test]
+    fn params_json_object() {
+        assert_eq!(
+            load_invoke_params(Some(r#"{"city":"Xiamen"}"#), None).unwrap(),
+            json!({"city": "Xiamen"})
+        );
+    }
+
+    #[test]
+    fn params_file_wins_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.json");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(br#"{"city":"Shanghai"}"#)
+            .unwrap();
+        assert_eq!(
+            load_invoke_params(None, Some(&path)).unwrap(),
+            json!({"city": "Shanghai"})
+        );
+    }
+
+    #[test]
+    fn rejects_non_object() {
+        assert!(load_invoke_params(Some("[1,2]"), None).is_err());
+    }
 }
 
 #[cfg(test)]
