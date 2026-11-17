@@ -7,24 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.3.0] - 2026-11-14 — chat @-references, honest Transform/Rule/cmd/Agent evidence, eval foundation
+## [1.3.0] - 2026-11-14 — CamThink CT-Prov BLE provision, MQTT attach honesty, chat @-references, evidence surfaces
 
-Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through contentNodes, honest automation/device/agent status surfaces, and offline eval freezes (Plan E/F). Product version is now **1.3.0** across Cargo/Web/Tauri/locks. Live Plan E 9/10, tip 138, Appliance, and 5-person usability remain open — see `docs/development/1.3.0-release-prep-2026-11-14.md`.
+Edge-AI capability iteration on branch `1.3.0`: CamThink CT-Prov/1 BLE onboarding, honest MQTT attach/identity, inline @ mentions through contentNodes, honest automation/device/agent status surfaces, and offline eval freezes (Plan E/F). Product version is now **1.3.0** across Cargo/Web/Tauri/locks. Live Plan E 9/10, tip 138, Appliance, and 5-person usability remain open — see `docs/development/1.3.0-release-prep-2026-11-14.md`.
 
 ### Upgrade notes
-- **CamThink CT-Prov hard cut:** add-device BLE provisioning now speaks CT-Prov/1 only (GATT service `7B1E0001-…`); SoftAP HTTP (`POST /api/v1/ctprov`) is a new **AP** tab. Old JSON-on-GATT / ESP protobuf (`0xFFFE` / `0xFF53`) firmwares can no longer be provisioned — flash CT-Prov/1 first. MQTT draft **auto** discovery is unchanged and is not SoftAP.
+- **CamThink CT-Prov hard cut:** add-device BLE provisioning now speaks CT-Prov/1 only (GATT service `7B1E0001-…`). Old JSON-on-GATT / ESP protobuf (`0xFFFE` / `0xFF53`) firmwares can no longer be provisioned — flash CT-Prov/1 first. SoftAP HTTP transport (`POST /api/v1/ctprov`) remains in-tree, but the SoftAP **AP** tab is deferred/hidden (`CT_PROV_SOFTAP_UI_ENABLED=false`); shipping add-device paths are BLE + Manual/Auto. MQTT draft **auto** discovery is unchanged and is not SoftAP.
+- CT-Prov MQTT provision accepts a **custom** broker (`broker_id: custom`) and writes the full mqtt section (host/port/TLS/creds/topics); incomplete optional cellular/webhook sections are pruned before `config.set` instead of sending stub payloads.
+- Chat tools converge on CLI: dedicated `query_conclusion` / `run_now` / `device_command` model entries are removed; those capabilities stay available via `neomind …` shell/CLI (old sessions still rehydrate the three names).
 - Builtin llama.cpp runtime pin (official-asset platforms) moves **b12024 → b12359** (= llama.cpp **v1.0.0**, 2026-11-13). Semver tag `v1.0.0` ships binaries under nightly build `b12359`; NeoMind keeps the `bNNNN` cache/URL shape. Jetson and Linux-x64-CUDA self-hosted pins stay at **b12024** until matching `NeoMind-Runtimes` assets exist. `--defrag-thold` was never used by NeoMind; spawn sampling flags (`--temp`/`--top-p`/`--top-k`/`--min-p`/`--repeat-penalty`) unchanged.
 - Chat composer can attach typed `@` mentions via server search (`GET /api/mentions/search`) and send-time resolve (`POST /api/mentions/resolve`); invalid refs stay in the draft marked invalid instead of silently dropping.
 - Messages may carry ordered `contentNodes` (v1); old `references` preamble path still works for prior clients/sessions.
 - Transform **Test** is honest: failure / no-output / partial / unverified are distinct; a non-empty unverified set is never a plain green success.
 - Rule detail adds a read-only **why not triggered** explain panel (condition values, age, duration, cooldown, last run, unknown).
-- Device command UI shows a delivery ladder (adapter received → extension received → device ACK → physical effect); tiers never advance without evidence.
+- Device command UI shows a delivery ladder (adapter received → extension received → device ACK → physical effect); tiers never advance without evidence; summary collapses to a one-line status.
 - Agent execution detail shows evidence panel (input time / output / action results / failure node); missing fields render as unknown, not guessed success.
 - Dry-run Transform policy: legacy Extension ops stay gated; caught dry-run invoke is host-flagged; MultiOutput Production nested Extension tests do not pretend Production ran.
 
 ### Added
-- CamThink CT-Prov client library (`web/src/lib/ct-prov/`), BLE+SoftAP transports, rewritten BLE provision tab, and SoftAP **AP** add-device tab (hand-join SSID guide); shared session path info→capabilities→config.set→close then existing two-phase `/devices/ble-provision` register.
-- Device type `ct_prov` metadata (`model_code`, SoftAP host/SSID families, `supported_discovery`) on NE101/NE301 plus new built-in `ne503_camera` so CT-Prov register no longer 400s on NE503.
+- CamThink CT-Prov client library (`web/src/lib/ct-prov/`) with BLE (+ SoftAP transport kept for later), rewritten BLE provision wizard (step bar, TLS/divider, dismiss, webhook/cellular fields, Rescan/stepper/footer polish), and shared session path info→capabilities→config.set→close then existing two-phase `/devices/ble-provision` register.
+- Custom + complete CT MQTT broker fields in provision (`broker_id: custom` / full mqtt section) and device-type `ct_prov` metadata (`model_code`, SoftAP host/SSID families, `supported_discovery`) on NE101/NE301/NE302/EK410 plus built-in `ne503_camera` so CT-Prov register no longer 400s on NE503.
+- EK410 eink preview frame metrics (seq/crc/source/base64 BMP) and higher `render_text` scale ceiling.
+- Skill-routing metadata + progressive skill load / slim harness context; builtin skill bodies overview-first; injection honesty for skill-routing workflow.
 - Inline-@ editor prototype at `/dev/inline-at` (`InlineDoc` model) plus production ChatComposer mention search, type filters, load-more, IME Enter guards, and listbox/option/tablist ARIA.
 - `contentNodes` v1 in-place protocol on HTTP/WS/image paths; draft persistence in localStorage; hard 400/Error on oversize.
 - Production chip composer sends `contentNodes` (text + trailing refs); SessionMessage/AgentMessage persist `contentNodes`/`contentVersion` for history reload (legacy chips synthesize nodes when nodes omitted).
@@ -33,14 +37,37 @@ Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through conten
 - Headed Playwright mention a11y suite (`mention-a11y.spec.ts`): prototype+chat listbox/ARIA/axe, history chips, touch-emulated mobile taps (mocked API; physical touch / VoiceOver / 5-person still open).
 - Chat skill bodies (transient tool loads + pinned) share a total estimated-token budget (`ctx/8` clamped 2k–6k); later guides truncate or skip instead of zeroing history.
 - Each new user turn clears transient skills while G2 `TaskState` (Continue / Correct / Cancel / write fingerprints) survives; multimodal applies directives before the first LLM call.
-- G2 mutating write gate at chat tool dispatch (`may_execute_write` / `record_successful_write` for shell mutations + `run_now`/`file_write`/`file_edit`/`image_edit`).
+- G2 mutating write gate at chat tool dispatch (`may_execute_write` / `record_successful_write` for shell mutations + file/image writes; former `run_now` path now via CLI).
 - Rule explain API/UI (`GET /rules/:id/explain` surface in Rule detail).
 - Command delivery ladder UI + Agent execution evidence panel (`stop_reason` / `tokens_used` DTO plumbing + `deriveAgentExecutionEvidence`).
 - Eval foundation: fixture `case_precheck`, `seed-main-objective`, Plan E detection-chain preregister (5×zh+5×en, ≥9/10 gate), Plan F 48-scenario catalog + 24/12/12 splits + pairing gates (`test_business_capability_48`).
 
-### Fixed — transforms
+### Fixed — CT-Prov / BLE provision
+- SoftAP **AP** tab stays hidden until SoftAP Wi‑Fi scan iteration; BLE wizard ships with Manual/Auto parity heroes and calm copy (no invented SoftAP scan UX).
+- Web Bluetooth UUID lowercased; discovery uses `namePrefix` **OR** `services` filter so Chrome lists CamThink devices again (Service Data ADV).
+- BLE scan window ~30s with progressive multi-device list; BLE session released on navigation; discovery drafts cleared on BLE register (NM-225).
+- `config.set` timeout raised; Wi‑Fi associate failures mapped to operator copy; incomplete cellular/webhook/wifi|halow stubs pruned; webhook/cellular writes skipped when disabled or blank APN.
+- Required-field markers + validate optional sections only when enabled; cellular APN optional on Apply; `wifi_init` scan failure clarified as manual-SSID path.
+- Tauri sandbox Bluetooth entitlement + peripheral usage string so desktop BLE permission prompts are honest.
+
+### Fixed — MQTT attach / identity
+- Central shared-topic identity resolver; P1/P2 identity bind, approved-mismatch gate, delete-cache, and Unverifiable/Conflict drafts stay visible instead of silent drops.
+- Unified association bind with honest subscribe result; confirm-attach updates config and validates identity; pending-assoc approve blocked until real identity.
+- SUBACK gates draft consume (pending vs confirmed); session-ready vs queued client; dual-fail pending persist; no fake subscribe / legacy 1:1 attach residuals closed.
+- CT-Prov auto-learn gated on target approved identity; MQTT topic associates to the registered device; downlink auto-learn + SSID spaces + escaped password redaction.
+- Ordinary approve honesty + unified subscribe path; pre-enqueue cancel drops Absorb; approve retry updates type.
+
+### Fixed — chat / agent / web
+- GoalStatusCallout hides default “ended normally” / N/A session-footer noise; keeps abnormal/incomplete callouts.
+- Agent refuses tools when the outer window drops the latest feedback; multimodal deny on all paths; canonical write fingerprints + restore migration hardening.
+- Chat draft/send lifecycle: MessageReceived after save, safe draft hydrate, rollback accept bound to history generation/Turn; TipTap contentNodes no longer kill CJK IME.
+- Mobile chat workspace drawer (wider, shortcuts on top, mention list scrollable, composer actions clickable while expanded); mention chip contrast / compact multi-@ tokens; empty context dash hidden beside usage ring.
+- Chat send button stays circular and quieter while in-progress; rule execute actions use device ParameterForm; dead server-born dashboards no longer resurrect into 404 loops.
+
+### Fixed — transforms / residuals
 - Host flag for caught dry-run invoke; MultiOutput Production nested Extension tests report nested outcomes honestly.
 - Legacy Extension ops gated behind dry-run Pure policy (no silent Production side effects from Test).
+- NM-160–170 / residual surfaces: Unicode safety, WS reject terminal, shell argv, test-code dry-run, FE races, placeholder 0.0, persist ref cap, tool compress, transform blocked marker / fail warnings / preprocess gate, inline-at DEV gate, extract_object ASCII, Reference no-zero, explain/confirm/budget/draft/ref cleanups.
 
 ### Test
 - Mentions search/resolve + ChatComposer/IME/InlineAt vitest; Transform test-status; Rule explain; command delivery ladder; Agent evidence derive; Plan E acceptance units; Plan F `test_business_capability_48` 7/7.
@@ -50,6 +77,7 @@ Edge-AI capability iteration on branch `1.3.0`: inline @ mentions through conten
 - Headed Playwright mention-a11y 6/6 (`npm run test:e2e:mention-a11y`); 5×4 usability not executed.
 - Skill total-body budget unit tests (scale/clamp, append plan, 15-guide cap) 4/4.
 - Skill-clear + TaskState continuity tests (continue/correct/cancel/write recovery) — `task_continuity` 14/14.
+- CT-Prov / BLE / MQTT attach suites (config prune, Web Bluetooth OR filter, draft clear on BLE register, association bind / SUBACK / identity) plus skill-routing workflow harness + bilingual cases.
 - Offline only for E live 10-run and F tip-138 / Appliance — not claimed in this release entry.
 
 ---
