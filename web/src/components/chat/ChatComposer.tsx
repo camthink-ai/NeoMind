@@ -1294,7 +1294,9 @@ export function ChatComposer({
               { label: t('chat:context.toolDefs', 'Tool definitions'), value: contextUsage.tools, color: 'var(--accent-cyan)' },
               { label: t('chat:context.history', 'Conversation history'), value: contextUsage.history, color: 'var(--muted-foreground)', suffix: contextUsage.messageCount != null ? t('chat:context.msgCount', { defaultValue: ' · {{count}} msgs', count: contextUsage.messageCount }) : undefined },
             ]
-            const availableRows = rows.filter(r => r.value != null)
+            const availableRows = rows.filter(
+              (r): r is { label: string; value: number; color: string; suffix?: string } => r.value != null,
+            )
             return (
               <div className="max-sm:hidden">
               <TooltipProvider delayDuration={150}>
@@ -1315,12 +1317,15 @@ export function ChatComposer({
                           className="transition-all duration-500"
                         />
                       </svg>
-                      <span className={cn(
-                        "text-xs tabular-nums",
-                        !pending && pct != null && pct > 90 ? "text-error" : !pending && pct != null && pct > 70 ? "text-warning" : "text-muted-foreground",
-                      )}>
-                        {pending ? "…" : fmt(contextUsage.used)}
-                      </span>
+                      {/* No lone "—" / "…" when measurement is missing — ring alone is enough. */}
+                      {!pending && (
+                        <span className={cn(
+                          "text-xs tabular-nums",
+                          pct != null && pct > 90 ? "text-error" : pct != null && pct > 70 ? "text-warning" : "text-muted-foreground",
+                        )}>
+                          {fmt(contextUsage.used)}
+                        </span>
+                      )}
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="top" align="end" className="w-72 max-w-[calc(100vw-1rem)] rounded-xl border border-border p-4 shadow-lg">
@@ -1344,7 +1349,7 @@ export function ChatComposer({
                         <div key={r.label} className="flex items-center gap-2">
                           <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
                           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{r.label}</span>
-                          <span className="shrink-0 text-xs font-medium tabular-nums text-foreground">{(r.value != null ? fmt(r.value) : '—') + (r.suffix ?? '')}</span>
+                          <span className="shrink-0 text-xs font-medium tabular-nums text-foreground">{fmt(r.value) + (r.suffix ?? '')}</span>
                         </div>
                       ))}
                     </div> : <p className="text-xs text-muted-foreground">{t('chat:context.breakdownUnavailable')}</p>}

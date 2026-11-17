@@ -261,4 +261,19 @@ describe('ChatComposer context actions', () => {
     expect(screen.queryByText(/compact|立即压缩/i)).toBeNull()
     expect(screen.queryByText(/clear|清空对话/i)).toBeNull()
   })
+
+  it('hides the lone empty placeholder next to the ring while pending', () => {
+    render(
+      <ChatComposer
+        value=""
+        onChange={vi.fn()}
+        onSend={vi.fn()}
+        contextUsage={{ used: 0, max: 8192, pending: true, estimated: true }}
+      />,
+    )
+    const trigger = findUsageTrigger()
+    expect(trigger).toBeTruthy()
+    // Ring stays for hover/a11y; no "-", "—", or "…" label beside it.
+    expect(trigger.textContent?.replace(/\s+/g, '')).toBe('')
+  })
 })
