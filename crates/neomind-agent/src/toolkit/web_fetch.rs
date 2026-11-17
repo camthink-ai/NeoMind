@@ -54,7 +54,9 @@ const DEFAULT_MAX_LENGTH: usize = 5000;
 /// Maximum allowed max_length value (50K characters).
 const MAX_ALLOWED_LENGTH: usize = 50_000;
 
-/// Maximum response body size (1 MB).
+/// Maximum response body bytes kept for extraction (1 MB).
+/// Larger pages are **truncated at download**, not rejected — HTML often
+/// exceeds 1MB while the cleaned text window is far smaller (Wikipedia etc.).
 const MAX_RESPONSE_BODY: usize = 1024 * 1024;
 
 impl WebFetchTool {
@@ -330,9 +332,13 @@ Returns the page title, the final URL after redirects, readable text, and up to
 When `truncated` is true, call again with the returned `next_offset` as `offset`
 to continue reading from where it stopped.
 
+Large pages: the download is capped at 1MB (not failed). If the wire body was
+cut, `download_truncated` is true — you still get the extracted text window from
+the prefix. Prefer `offset`/`next_offset` for reading further within that text.
+
 Security: Cannot access private/local network addresses (localhost, 127.0.0.1, 10.x, 192.168.x, etc.).
 Redirects to private addresses are also blocked.
-Timeout: 15 seconds. Max response: 1MB."#
+Timeout: 15 seconds. Download cap: 1MB (prefix kept)."#
     }
 
     fn parameters(&self) -> Value {
@@ -386,7 +392,6 @@ Timeout: 15 seconds. Max response: 1MB."#
 
         tracing::info!(url = %url, format = %format, "Fetching URL");
 
-        // Pre-check Content-Length header before downloading body
         let response = self
             .client
             .get(parsed_url.as_str())
@@ -418,19 +423,12 @@ Timeout: 15 seconds. Max response: 1MB."#
             )));
         }
 
-        // Check Content-Length header before downloading body
-        if let Some(content_length) = response.headers().get("content-length") {
-            if let Ok(len_str) = content_length.to_str() {
-                if let Ok(len) = len_str.parse::<usize>() {
-                    if len > MAX_RESPONSE_BODY {
-                        return Ok(ToolOutput::error(format!(
-                            "Response too large (Content-Length: {} bytes, max: {} bytes)",
-                            len, MAX_RESPONSE_BODY
-                        )));
-                    }
-                }
-            }
-        }
+        // Content-Length is advisory only — large pages are prefix-capped below.
+        let declared_length = response
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok());
 
         // Check content type — parse media type (type/subtype) before parameters
         let content_type = response
@@ -457,22 +455,10 @@ Timeout: 15 seconds. Max response: 1MB."#
             )));
         }
 
-        // Download body with size check
-        // (final URL captured first — `bytes()` consumes the response)
+        // Cap the download at MAX_RESPONSE_BODY — keep the prefix, do not fail.
         let final_url = response.url().to_string();
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| ToolError::Execution(format!("Failed to read response body: {}", e)))?;
-
-        if body.len() > MAX_RESPONSE_BODY {
-            return Ok(ToolOutput::error(format!(
-                "Response too large: {} bytes (max: {} bytes)",
-                body.len(),
-                MAX_RESPONSE_BODY
-            )));
-        }
-
+        let (body, download_truncated) =
+            read_body_capped(response, MAX_RESPONSE_BODY).await?;
         let body_text = String::from_utf8_lossy(&body);
 
         // Format output
@@ -521,11 +507,22 @@ Timeout: 15 seconds. Max response: 1MB."#
             "content_type": content_type,
             "content": final_content,
             "truncated": truncated,
+            "download_truncated": download_truncated,
             "offset": offset,
             "length": content.len(),
+            "bytes_kept": body.len(),
         });
         if final_url != url {
             out["requested_url"] = serde_json::Value::String(url.to_string());
+        }
+        if let Some(len) = declared_length {
+            out["content_length"] = serde_json::json!(len);
+        }
+        if download_truncated {
+            out["download_note"] = serde_json::Value::String(format!(
+                "Wire body exceeded {MAX_RESPONSE_BODY} bytes; kept the first {kept} bytes for extraction. Text `offset`/`next_offset` still apply within the extracted prefix.",
+                kept = body.len()
+            ));
         }
         if let Some(next) = next_offset {
             out["next_offset"] = serde_json::json!(next);
@@ -542,6 +539,50 @@ Timeout: 15 seconds. Max response: 1MB."#
         }
 
         Ok(ToolOutput::success(out))
+    }
+}
+
+/// Read at most `max_bytes` from the response body. Returns `(bytes, truncated)`.
+async fn read_body_capped(
+    response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<(Vec<u8>, bool)> {
+    use futures::StreamExt;
+
+    let mut stream = response.bytes_stream();
+    let mut buf = Vec::with_capacity(max_bytes.min(64 * 1024));
+    let mut truncated = false;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk =
+            chunk.map_err(|e| ToolError::Execution(format!("Failed to read response body: {e}")))?;
+        if append_capped(&mut buf, &chunk, max_bytes) {
+            truncated = true;
+            break;
+        }
+    }
+
+    // Do not drain the remainder — dropping the stream aborts the download.
+    // Trim a partial UTF-8 sequence at the cut so lossy decode stays clean.
+    while !buf.is_empty() && std::str::from_utf8(&buf).is_err() {
+        buf.pop();
+    }
+
+    Ok((buf, truncated))
+}
+
+/// Append `chunk` into `buf` up to `max_bytes`. Returns whether the cap was hit.
+fn append_capped(buf: &mut Vec<u8>, chunk: &[u8], max_bytes: usize) -> bool {
+    if buf.len() >= max_bytes {
+        return true;
+    }
+    let room = max_bytes - buf.len();
+    if chunk.len() <= room {
+        buf.extend_from_slice(chunk);
+        false
+    } else {
+        buf.extend_from_slice(&chunk[..room]);
+        true
     }
 }
 
@@ -752,5 +793,25 @@ mod tests {
         // The visible text must contain no broken characters.
         let visible = &first[..first.find("...\n[truncated").unwrap()];
         assert!(!visible.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn append_capped_keeps_prefix_instead_of_rejecting() {
+        let mut buf = Vec::new();
+        assert!(!append_capped(&mut buf, b"hello ", 10));
+        assert!(append_capped(&mut buf, b"world!!!", 10));
+        assert_eq!(&buf, b"hello worl");
+        assert_eq!(buf.len(), 10);
+        // Already at cap — further chunks report truncated without growing.
+        assert!(append_capped(&mut buf, b"MORE", 10));
+        assert_eq!(buf.len(), 10);
+    }
+
+    #[test]
+    fn description_promises_prefix_cap_not_hard_fail() {
+        let tool = WebFetchTool::new();
+        let d = tool.description();
+        assert!(d.contains("download_truncated") || d.contains("capped"));
+        assert!(!d.contains("Max response: 1MB."));
     }
 }

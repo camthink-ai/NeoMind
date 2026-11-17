@@ -672,6 +672,38 @@ async fn web_fetch_allows_public_ip() {
     }
 }
 
+/// Large HTML page (Wikipedia ~1.1MB Content-Length) must return a text
+/// window with `download_truncated`, not fail with "Response too large".
+#[tokio::test]
+#[ignore]
+async fn web_fetch_large_wikipedia_prefix_ok() {
+    let tool = WebFetchTool::new();
+    let result = tool
+        .execute(serde_json::json!({
+            "url": "https://zh.wikipedia.org/wiki/%E5%8E%A6%E9%97%A8%E5%B8%82",
+            "format": "text",
+            "max_length": 2000
+        }))
+        .await;
+
+    let output = assert_success(result);
+    assert!(
+        output.data["download_truncated"].as_bool().unwrap_or(false),
+        "1.1MB wiki page should hit the download cap: {}",
+        output.data
+    );
+    let content = output.data["content"].as_str().unwrap_or("");
+    assert!(!content.is_empty(), "prefix extract must be non-empty");
+    assert!(
+        !output
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("Response too large"),
+        "must not hard-fail oversized bodies"
+    );
+}
+
 /// Real network test — fetches example.com
 #[tokio::test]
 #[ignore] // Run with --ignored to hit real network
