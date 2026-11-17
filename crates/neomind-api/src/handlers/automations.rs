@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-use crate::automation::{transform::JsTransformExecutor, Automation, AutomationType, IntentResult};
+use crate::automation::{
+    transform::JsTransformExecutor, Automation, AutomationType, IntentResult, TransformAutomation,
+};
 
 use super::{
     common::{ok, HandlerResult},
@@ -352,7 +354,7 @@ pub async fn create_automation_handler(
     }
 
     // Parse transform from definition
-    let automation = match serde_json::from_value(definition) {
+    let automation = match serde_json::from_value::<TransformAutomation>(definition) {
         Ok(transform) => transform,
         Err(e) => {
             return Err(ErrorResponse::bad_request(format!(
@@ -361,6 +363,21 @@ pub async fn create_automation_handler(
             )));
         }
     };
+
+    // Syntax-check JS code at create time: broken code used to be accepted
+    // with a success response and only failed later at execution (CLI
+    // feedback audit 2026-11-17). The check compiles WITHOUT executing.
+    if let Some(code) = automation.js_code.as_deref() {
+        if !code.trim().is_empty() {
+            if let Err(syntax_err) = JsTransformExecutor::check_syntax(code) {
+                return Err(ErrorResponse::bad_request(format!(
+                    "Transform JS code has a syntax error and was NOT saved: {}. \
+                     Fix the code and retry; use `neomind transform test-code` to iterate.",
+                    syntax_err
+                )));
+            }
+        }
+    }
 
     // Save the automation
     match store.save_automation(&automation).await {
@@ -435,6 +452,7 @@ pub async fn update_automation_handler(
     }
 
     // Merge definition fields if provided
+    let mut js_code_touched = false;
     if let Some(definition) = req.definition {
         if let Some(obj) = definition.as_object() {
             if let Some(scope) = obj.get("scope") {
@@ -444,6 +462,11 @@ pub async fn update_automation_handler(
             }
             if let Some(js_code) = obj.get("js_code") {
                 updated.js_code = js_code.as_str().map(|s| s.to_string());
+                // Only code the request actually WRITES is validated below —
+                // a legacy record with broken JS must still be renamable
+                // (review 2026-11-17: checking untouched code blocked
+                // name-only edits of old records).
+                js_code_touched = true;
             }
             if let Some(output_prefix) = obj.get("output_prefix") {
                 if let Some(s) = output_prefix.as_str() {
@@ -464,6 +487,22 @@ pub async fn update_automation_handler(
     updated.metadata.updated_at = chrono::Utc::now().timestamp();
 
     // Save the updated automation
+    // Same create-time syntax check on the update path — but ONLY for code
+    // this request actually wrote (see js_code_touched).
+    if js_code_touched {
+        if let Some(code) = updated.js_code.as_deref() {
+            if !code.trim().is_empty() {
+                if let Err(syntax_err) = JsTransformExecutor::check_syntax(code) {
+                    return Err(ErrorResponse::bad_request(format!(
+                        "Transform JS code has a syntax error and was NOT saved: {}. \
+                         Fix the code and retry; use `neomind transform test-code` to iterate.",
+                        syntax_err
+                    )));
+                }
+            }
+        }
+    }
+
     match store.save_automation(&updated).await {
         Ok(_) => {
             let dto = AutomationDto::from(updated.clone());

@@ -190,6 +190,26 @@ impl JsTransformExecutor {
     pub fn new() -> Self {
         JsTransformExecutor
     }
+
+    /// Parse-only syntax check for transform JS code.
+    ///
+    /// `new Function('input','input_raw', code)` COMPILES the body without
+    /// executing it, so a syntax error throws at construction and valid code
+    /// has zero side effects. Create/update use this to reject broken code
+    /// up front (2026-11-17 audit: `function transform(` was accepted with a
+    /// ✅ and only failed later at execution time).
+    pub fn check_syntax(code: &str) -> std::result::Result<(), String> {
+        use boa_engine::{Context, Source};
+        let mut context = Context::default();
+        let wrapped = format!(
+            "new Function('input', 'input_raw', {})",
+            super::js_string_literal(code)
+        );
+        match context.eval(Source::from_bytes(wrapped.as_bytes())) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
 }
 impl JsTransformExecutor {
     /// Execute JavaScript transformation code with optional extension support
@@ -904,5 +924,41 @@ mod unicode_safety_tests {
         );
         assert!(code.contains(r#"__obj["temp'ure"]"#), "code={code}");
         assert!(!code.contains("__obj['temp'ure']"));
+    }
+}
+
+#[cfg(test)]
+mod syntax_check_tests {
+    use super::JsTransformExecutor;
+
+    /// 2026-11-17 CLI feedback audit: `function transform(` was accepted at
+    /// create with a success response. check_syntax must reject broken
+    /// shapes while accepting real transforms — compile-only.
+    #[test]
+    fn broken_js_is_rejected_and_valid_js_passes() {
+        for bad in ["function transform(", "const x = ;", "return {{{", "if ( {"] {
+            assert!(
+                JsTransformExecutor::check_syntax(bad).is_err(),
+                "broken code must be rejected: {bad:?}"
+            );
+        }
+        for good in [
+            "return input * 2;",
+            "const c = input_raw.temperature; return c * 1.8 + 32;",
+            "",
+        ] {
+            assert!(
+                JsTransformExecutor::check_syntax(good).is_ok(),
+                "valid code must pass: {good:?}"
+            );
+        }
+    }
+
+    /// Compile-only: a runtime error is NOT a syntax error — the body never
+    /// executes during the check (execution honesty is the engine's job).
+    #[test]
+    fn check_syntax_does_not_execute_the_body() {
+        let runtime_error_only = "undefined_function_call(input); return 1;";
+        assert!(JsTransformExecutor::check_syntax(runtime_error_only).is_ok());
     }
 }

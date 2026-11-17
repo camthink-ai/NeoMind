@@ -19,6 +19,164 @@ fn sample_req() -> ProcessDataRequest {
     .expect("valid ProcessDataRequest")
 }
 
+// ---- create/update JS syntax-check regression (2026-11-17 audit) ----
+
+#[cfg(test)]
+mod syntax_gate_tests {
+    use super::*;
+    use neomind_api::automation::types::TransformAutomation;
+    use std::collections::HashSet;
+
+    fn create_req(name: &str, js: &str) -> Json<CreateAutomationRequest> {
+        Json(CreateAutomationRequest {
+            name: name.to_string(),
+            description: String::new(),
+            r#type: None,
+            enabled: true,
+            definition: json!({
+                "scope": "global",
+                "js_code": js,
+                "output_prefix": "out",
+            }),
+        })
+    }
+
+    #[tokio::test]
+    async fn create_rejects_broken_js_and_saves_nothing() {
+        let state = create_test_server_state().await;
+        let resp = create_automation_handler(
+            State(state.clone()),
+            create_req("broken", "function transform("),
+        )
+        .await;
+        let err = resp.unwrap_err();
+        assert_eq!(err.status.as_u16(), 400);
+        assert!(err.message.contains("syntax error"), "{err:?}");
+        // Nothing was saved.
+        let all = state
+            .automation
+            .automation_store
+            .as_ref()
+            .unwrap()
+            .list_automations()
+            .await
+            .unwrap_or_default();
+        assert!(
+            all.iter().all(|a| a.metadata.name != "broken"),
+            "broken transform must not be persisted"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_accepts_valid_js() {
+        let state = create_test_server_state().await;
+        let resp = create_automation_handler(
+            State(state.clone()),
+            create_req("valid-tx", "return input * 2;"),
+        )
+        .await;
+        assert!(resp.is_ok(), "{resp:?}");
+    }
+
+    /// Review scenario: a LEGACY record already holds broken JS (saved before
+    /// the gate existed). A name-only update must still succeed — the gate
+    /// applies only to code this request writes.
+    #[tokio::test]
+    async fn name_only_update_of_legacy_broken_record_succeeds() {
+        let state = create_test_server_state().await;
+        let mut t = TransformAutomation::new("legacy-bad", "legacy-bad", TransformScope::Global);
+        t.js_code = Some("function transform(".to_string());
+        state
+            .automation
+            .automation_store
+            .as_ref()
+            .unwrap()
+            .save_automation(&t)
+            .await
+            .unwrap();
+
+        let resp = update_automation_handler(
+            Path("legacy-bad".into()),
+            State(state.clone()),
+            Json(UpdateAutomationRequest {
+                name: Some("renamed".into()),
+                description: None,
+                definition: None,
+                enabled: None,
+            }),
+        )
+        .await;
+        assert!(resp.is_ok(), "name-only edit must pass: {resp:?}");
+        let stored = state
+            .automation
+            .automation_store
+            .as_ref()
+            .unwrap()
+            .get_automation("legacy-bad")
+            .await
+            .unwrap()
+            .expect("still there");
+        assert_eq!(stored.metadata.name, "renamed");
+        // Untouched broken code is preserved verbatim (execution-path
+        // honesty handles it; iteration-1).
+        assert_eq!(stored.js_code.as_deref(), Some("function transform("));
+    }
+
+    /// Updating the CODE to something broken is rejected; the stored record
+    /// keeps its previous definition.
+    #[tokio::test]
+    async fn update_with_new_broken_js_is_rejected_and_kept() {
+        let state = create_test_server_state().await;
+        let mut t = TransformAutomation::new("tx-u", "tx-u", TransformScope::Global);
+        t.js_code = Some("return input;".to_string());
+        state
+            .automation
+            .automation_store
+            .as_ref()
+            .unwrap()
+            .save_automation(&t)
+            .await
+            .unwrap();
+
+        let resp = update_automation_handler(
+            Path("tx-u".into()),
+            State(state.clone()),
+            Json(UpdateAutomationRequest {
+                name: None,
+                description: None,
+                definition: Some(json!({"js_code": "return {{{"})),
+                enabled: None,
+            }),
+        )
+        .await;
+        let err = resp.unwrap_err();
+        assert_eq!(err.status.as_u16(), 400);
+        let stored = state
+            .automation
+            .automation_store
+            .as_ref()
+            .unwrap()
+            .get_automation("tx-u")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.js_code.as_deref(), Some("return input;"));
+    }
+
+    /// Compile-only gate must not reject runtime-error code on create.
+    #[tokio::test]
+    async fn create_allows_runtime_errors_but_not_syntax_errors() {
+        let state = create_test_server_state().await;
+        let resp = create_automation_handler(
+            State(state.clone()),
+            create_req("runtime-only", "nope(input); return 1;"),
+        )
+        .await;
+        assert!(resp.is_ok(), "{resp:?}");
+        let _ = HashSet::<String>::new(); // silence unused import variance
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
