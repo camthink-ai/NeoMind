@@ -10,7 +10,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { generateId } from '@/lib/id'
-import { Button } from '@/components/ui/button'
+import { Button, IconButton } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -21,24 +21,25 @@ import {
   Zap,
   Bell,
   Bot,
-  Lightbulb,
+  SlidersHorizontal,
+  UnfoldHorizontal,
+  ListChecks,
+  GitBranch,
+  Ban,
   Clock,
-  AlertTriangle,
-  Check,
-  Globe,
   Timer,
   Calendar,
-  Play,
   Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { textNano } from "@/design-system/tokens/typography"
 import { useIsMobile } from '@/hooks/useMobile'
-import type { Rule, RuleTrigger, RuleCondition, RuleAction, DeviceType, Extension, ExtensionDataSourceInfo, ExtensionCommandDescriptor, TransformDataSourceInfo } from '@/types'
+import type { Rule, RuleTrigger, RuleCondition, RuleAction, DeviceType, Extension, ExtensionDataSourceInfo, ExtensionCommandDescriptor, TransformDataSourceInfo, ParameterDefinition, ParameterGroup } from '@/types'
 // Unified dialog components
 import { BuilderShell } from './dialog/BuilderShell'
 import { WorkspaceSegmentedControl } from './dialog/WorkspaceSegmentedControl'
 import { Field, FieldLabel, FieldMessage } from '@/components/ui/field'
+import { ParameterForm } from '@/components/devices/ParameterForm'
+import { seedCommandDefaults } from '@/components/devices/seedCommandDefaults'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 
@@ -58,13 +59,47 @@ function getExtensionId(formattedId: string): string {
   return formattedId.replace('extension:', '')
 }
 
-// Get commands for a resource (device or extension)
+interface ResourceCommand {
+  name: string
+  description: string
+  display_name?: string
+  parameters?: ParameterDefinition[]
+  parameter_groups?: ParameterGroup[]
+}
+
+function findDeviceTypeTemplate(
+  deviceTypeId: string | undefined,
+  deviceTypes?: DeviceType[],
+): DeviceType | undefined {
+  if (!deviceTypeId || !deviceTypes) return undefined
+  return deviceTypes.find((t) => t.device_type === deviceTypeId || t.name === deviceTypeId)
+}
+
+/** Resource payloads only carry name/param_type. Templates carry the full definition the device dialog renders. */
+function asParameterDefinitions(parameters: unknown): ParameterDefinition[] | undefined {
+  if (!Array.isArray(parameters) || parameters.length === 0) return undefined
+  return parameters.map((raw) => {
+    const param = raw as ParameterDefinition & { param_type?: string }
+    if (param.data_type !== undefined) return param
+    const paramType = String(param.param_type ?? 'string').toLowerCase()
+    let data_type: ParameterDefinition['data_type'] = 'string'
+    if (paramType.includes('bool')) data_type = 'boolean'
+    else if (paramType.includes('int')) data_type = 'integer'
+    else if (paramType.includes('float') || paramType.includes('number')) data_type = 'float'
+    else if (paramType.includes('binary')) data_type = 'binary'
+    else if (paramType.includes('array')) data_type = 'array'
+    return { ...param, data_type }
+  })
+}
+
+// Get commands for a resource (device or extension).
+// Device commands prefer the type template so the parameter form matches the device command dialog.
 function getCommandsForResource(
   id: string,
-  devices: Array<{ id: string; name: string; device_type: string; commands?: Array<{ name: string; description: string; parameters?: Array<{ name: string; param_type: string; required: boolean; default_value?: unknown }> }> }>,
+  devices: Array<{ id: string; name: string; device_type: string; commands?: Array<{ name: string; description: string; display_name?: string; parameters?: unknown; parameter_groups?: ParameterGroup[] }> }>,
   deviceTypes?: DeviceType[],
   extensions?: Extension[]
-): Array<{ name: string; description: string; display_name?: string; parameters?: Array<{ name: string; param_type: string; required: boolean; default_value?: unknown }> }> {
+): ResourceCommand[] {
   if (isExtensionId(id)) {
     const extId = getExtensionId(id)
     const ext = extensions?.find((e: Extension) => e.id === extId)
@@ -75,16 +110,25 @@ function getCommandsForResource(
     })) || []
   }
 
-  const device = devices?.find((d: any) => d.id === id)
-  if (device?.commands) return device.commands
-
-  // Check device type for commands
-  if (device && deviceTypes) {
-    const dt = deviceTypes.find((t: any) => t.name === device.device_type)
-    return dt?.commands?.map((c: any) => ({ name: c.name, description: c.description || '', display_name: c.display_name, parameters: c.parameters })) || []
+  const device = devices?.find((d) => d.id === id)
+  const template = findDeviceTypeTemplate(device?.device_type, deviceTypes)
+  if (template?.commands && template.commands.length > 0) {
+    return template.commands.map((command) => ({
+      name: command.name,
+      description: command.llm_hints || '',
+      display_name: command.display_name || command.name,
+      parameters: command.parameters,
+      parameter_groups: command.parameter_groups,
+    }))
   }
 
-  return []
+  return (device?.commands ?? []).map((command) => ({
+    name: command.name,
+    description: command.description || '',
+    display_name: command.display_name,
+    parameters: asParameterDefinitions(command.parameters),
+    parameter_groups: command.parameter_groups,
+  }))
 }
 
 // Get metrics for a resource (device or extension)
@@ -737,7 +781,7 @@ interface ConditionCanvasProps {
   selectedCronTemplate: string
   onSelectedCronTemplateChange: (v: string) => void
   condition: UICondition | null
-  onConditionChange: (c: UICondition) => void
+  onConditionChange: (c: UICondition | null) => void
   onAddCondition: () => UICondition
   devices: Array<{
     id: string
@@ -804,29 +848,24 @@ function ConditionCanvas({
   }, [triggerType, cronExpression])
 
   return (
-    <div className="space-y-4 p-4 rounded-lg border border-border">
+    <section className="space-y-4">
       {triggerType === 'data_change' && (
         <>
-          <div className="flex items-center gap-2 pb-4 border-b">
-            <div className="hidden p-2 rounded-full bg-accent-indigo-light md:block">
-              <Lightbulb className="h-5 w-5 text-accent-indigo" />
-            </div>
-            <div>
-              <h4 className="text-sm font-medium">{tBuilder('triggerDevice') || 'Device Trigger'}</h4>
-              <p className="text-xs text-muted-foreground">{tBuilder('deviceTriggerDesc') || 'Trigger when device state meets conditions'}</p>
-            </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-foreground">{tBuilder('triggerDevice') || 'Device Trigger'}</h3>
+            <p className="text-sm text-muted-foreground">{tBuilder('deviceTriggerDesc') || 'Trigger when device state meets conditions'}</p>
           </div>
 
           {!condition && (
-            <div className="grid grid-cols-1 divide-y divide-border overflow-hidden rounded-lg border border-border md:grid-cols-5 md:gap-3 md:divide-y-0 md:overflow-visible md:rounded-none md:border-0">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
               <ConditionTypeButton
                 label={tBuilder('simpleCondition')}
-                icon={<Lightbulb className="h-5 w-5" />}
+                icon={<SlidersHorizontal className="h-4 w-4" />}
                 onClick={() => onConditionChange(onAddCondition())}
               />
               <ConditionTypeButton
                 label={tBuilder('rangeCondition')}
-                icon={<Globe className="h-5 w-5" />}
+                icon={<UnfoldHorizontal className="h-4 w-4" />}
                 onClick={() => {
                   const c = onAddCondition()
                   c.type = 'range'
@@ -837,7 +876,7 @@ function ConditionCanvas({
               />
               <ConditionTypeButton
                 label={tBuilder('andCombination')}
-                icon={<Check className="h-5 w-5" />}
+                icon={<ListChecks className="h-4 w-4" />}
                 onClick={() => {
                   const c = onAddCondition()
                   c.type = 'and'
@@ -847,7 +886,7 @@ function ConditionCanvas({
               />
               <ConditionTypeButton
                 label={tBuilder('orCombination')}
-                icon={<AlertTriangle className="h-5 w-5" />}
+                icon={<GitBranch className="h-4 w-4" />}
                 onClick={() => {
                   const c = onAddCondition()
                   c.type = 'or'
@@ -857,7 +896,7 @@ function ConditionCanvas({
               />
               <ConditionTypeButton
                 label={tBuilder('notCondition') || 'NOT'}
-                icon={<X className="h-5 w-5" />}
+                icon={<Ban className="h-4 w-4" />}
                 onClick={() => {
                   const c = onAddCondition()
                   c.type = 'not'
@@ -872,7 +911,7 @@ function ConditionCanvas({
             <div className="space-y-4">
               <ConditionEditor
                 condition={condition}
-                onChange={(c) => { if (c !== null) onConditionChange(c) }}
+                onChange={onConditionChange}
                 devices={devices}
                 deviceTypes={deviceTypes}
                 extensions={extensions}
@@ -882,27 +921,28 @@ function ConditionCanvas({
                 tBuilder={tBuilder}
               />
 
-              <div className="flex items-center gap-3 p-4 rounded-lg border">
-                <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
-                <Label className="text-sm font-medium">{tBuilder('duration')}</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={forDuration}
-                  onChange={e => onForDurationChange(parseInt(e.target.value) || 0)}
-                  className="w-24 h-9"
-                />
-                <Select value={forUnit} onValueChange={(v: any) => onForUnitChange(v)}>
-                  <SelectTrigger className="w-28 h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="seconds">{tBuilder('seconds')}</SelectItem>
-                    <SelectItem value="minutes">{tBuilder('minutes')}</SelectItem>
-                    <SelectItem value="hours">{tBuilder('hours')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <Field className="max-w-md">
+                <FieldLabel>{tBuilder('duration')}</FieldLabel>
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={forDuration}
+                    onChange={e => onForDurationChange(parseInt(e.target.value) || 0)}
+                    className="w-28"
+                  />
+                  <Select value={forUnit} onValueChange={(v: any) => onForUnitChange(v)}>
+                    <SelectTrigger className="w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="seconds">{tBuilder('seconds')}</SelectItem>
+                      <SelectItem value="minutes">{tBuilder('minutes')}</SelectItem>
+                      <SelectItem value="hours">{tBuilder('hours')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </Field>
 
               {errors.condition && errors.condition.length > 0 && (
                 <div className="p-3 bg-error-light border border-error rounded-lg">
@@ -918,14 +958,9 @@ function ConditionCanvas({
 
       {triggerType === 'schedule' && (
         <>
-          <div className="flex items-center gap-2 pb-4 border-b">
-            <div className="p-2 rounded-full bg-accent-indigo-light">
-              <Clock className="h-5 w-5 text-accent-indigo" />
-            </div>
-            <div>
-              <h4 className="text-sm font-medium">{tBuilder('triggerSchedule') || 'Schedule Trigger'}</h4>
-              <p className="text-xs text-muted-foreground">{tBuilder('scheduleTriggerDesc') || 'Execute on a schedule'}</p>
-            </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-foreground">{tBuilder('triggerSchedule') || 'Schedule Trigger'}</h3>
+            <p className="text-sm text-muted-foreground">{tBuilder('scheduleTriggerDesc') || 'Execute on a schedule'}</p>
           </div>
 
           <div className="space-y-4">
@@ -938,10 +973,10 @@ function ConditionCanvas({
                     type="button"
                     onClick={() => handleCronTemplateSelect(template.id)}
                     className={cn(
-                      "flex flex-col items-center gap-1 p-2 rounded-md border text-xs transition-all",
+                      "flex min-h-[4.5rem] flex-col items-center justify-center gap-1.5 rounded-lg border p-2 text-sm transition-colors",
                       selectedCronTemplate === template.id
-                        ? "border-accent-indigo bg-accent-indigo-light text-accent-indigo"
-                        : "border-border hover:border-accent-indigo"
+                        ? "border-foreground bg-muted text-foreground"
+                        : "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
                     )}
                   >
                     {template.icon}
@@ -972,7 +1007,7 @@ function ConditionCanvas({
                       onSelectedCronTemplateChange('custom')
                     }
                   }}
-                  className="text-xs text-accent-indigo hover:text-accent-indigo"
+                  className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                 >
                   {showCustomCron ? (tBuilder('useTemplate') || 'Use Template') : (tBuilder('customCron') || 'Custom')}
                 </button>
@@ -1001,8 +1036,8 @@ function ConditionCanvas({
             </div>
 
             {nextExecution && (
-              <div className="flex items-center gap-2 p-3 rounded-lg border">
-                <Calendar className="h-4 w-4 text-success" />
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-muted-30 px-3 py-2">
+                <Calendar className="h-4 w-4 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">
                   {tBuilder('nextExecution') || 'Next execution'}: {nextExecution.toLocaleString('zh-CN', {
                     month: 'short',
@@ -1019,33 +1054,24 @@ function ConditionCanvas({
 
       {triggerType === 'manual' && (
         <>
-          <div className="flex items-center gap-2 pb-4 border-b">
-            <div className="p-2 rounded-full bg-accent-indigo-light">
-              <Play className="h-5 w-5 text-accent-indigo" />
-            </div>
-            <div>
-              <h4 className="text-sm font-medium">{tBuilder('triggerManual') || 'Manual Trigger'}</h4>
-              <p className="text-xs text-muted-foreground">{tBuilder('manualTriggerDesc') || 'This rule must be triggered manually'}</p>
-            </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-foreground">{tBuilder('triggerManual') || 'Manual Trigger'}</h3>
+            <p className="text-sm text-muted-foreground">{tBuilder('manualTriggerDesc') || 'This rule must be triggered manually'}</p>
           </div>
 
-          <div className="space-y-3">
-            <div className="flex items-center gap-3 p-3 rounded-lg border">
-              <div className="w-6 h-6 shrink-0 rounded-full bg-success-light flex items-center justify-center">
-                <span className="text-xs font-medium text-success">1</span>
-              </div>
+          <ol className="space-y-2">
+            <li className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium text-foreground">1</span>
               <p className="text-sm text-muted-foreground">{tBuilder('manualStep1') || 'Click execute button in rule list'}</p>
-            </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg border">
-              <div className="w-6 h-6 shrink-0 rounded-full bg-success-light flex items-center justify-center">
-                <span className="text-xs font-medium text-success">2</span>
-              </div>
+            </li>
+            <li className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium text-foreground">2</span>
               <p className="text-sm text-muted-foreground">{tBuilder('manualStep2') || 'Or call execution API'}</p>
-            </div>
-          </div>
+            </li>
+          </ol>
         </>
       )}
-    </div>
+    </section>
   )
 }
 
@@ -1070,16 +1096,10 @@ interface ActionCanvasProps {
 
 function ActionCanvas({ actions, onActionsChange, devices, deviceTypes, extensions, messageChannels, agents, errors, t, tBuilder }: ActionCanvasProps) {
   return (
-    <div className="space-y-4 p-4 rounded-lg border border-border">
-      {/* Header — emerald accent to differentiate from Condition (indigo) */}
-      <div className="flex items-center gap-2 pb-3 border-b">
-        <div className="hidden p-2 rounded-full bg-accent-emerald-light md:block">
-          <Zap className="h-5 w-5 text-accent-emerald" />
-        </div>
-        <div>
-          <h4 className="text-sm font-medium">{tBuilder('executeActions')}</h4>
-          <p className="text-xs text-muted-foreground">{tBuilder('actionsDesc')}</p>
-        </div>
+    <section className="space-y-4 border-t border-border pt-8">
+      <div className="space-y-1">
+        <h3 className="text-sm font-semibold text-foreground">{tBuilder('executeActions')}</h3>
+        <p className="text-sm text-muted-foreground">{tBuilder('actionsDesc')}</p>
       </div>
 
       {/* Action type buttons */}
@@ -1087,7 +1107,8 @@ function ActionCanvas({ actions, onActionsChange, devices, deviceTypes, extensio
         <Button size="sm" variant="outline" onClick={() => {
           const firstDevice = devices[0]
           const commands = firstDevice ? getCommandsForResource(firstDevice.id, devices, deviceTypes, extensions) : []
-          onActionsChange([...actions, { type: 'execute' as const, target: firstDevice?.id || '', target_type: 'device' as const, command: commands[0]?.name || 'turn_on', params: {}, _key: generateId() } as UIAction])
+          const firstCommand = commands[0]
+          onActionsChange([...actions, { type: 'execute' as const, target: firstDevice?.id || '', target_type: 'device' as const, command: firstCommand?.name || 'turn_on', params: seedCommandDefaults(firstCommand?.parameters), _key: generateId() } as UIAction])
         }}>
           <Zap className="mr-1 hidden h-4 w-4 md:block" />
           {tBuilder('executeCommand') || 'Execute'}
@@ -1128,20 +1149,21 @@ function ActionCanvas({ actions, onActionsChange, devices, deviceTypes, extensio
           ))
         )}
       </div>
-    </div>
+    </section>
   )
 }
 
 function ConditionTypeButton({ label, icon, onClick }: { label: string; icon: React.ReactNode; onClick: () => void }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="min-h-12 min-w-0 px-3 py-2 text-left hover:bg-muted md:rounded-lg md:border-2 md:border-border md:p-4 md:hover:border-accent-indigo md:hover:bg-transparent md:hover:transition-all"
+      className="flex h-auto min-h-[5.25rem] w-full min-w-0 flex-col items-start justify-between gap-3 overflow-visible rounded-lg border border-border bg-card p-3 text-left hover:bg-muted"
     >
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="hidden shrink-0 rounded-lg p-2 md:block">{icon}</div>
-        <span className="font-medium min-w-0 break-words">{label}</span>
-      </div>
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        {icon}
+      </span>
+      <span className="min-w-0 break-words text-sm font-medium leading-5">{label}</span>
     </button>
   )
 }
@@ -1572,7 +1594,7 @@ export function SimpleRuleBuilderSplit({
         />
 
         {workspaceTab === 'form' && (
-          <div className="space-y-6">
+          <div className="space-y-4">
             <ConditionCanvas
               triggerType={triggerType}
               cronExpression={cronExpression}
@@ -1611,11 +1633,9 @@ export function SimpleRuleBuilderSplit({
         )}
 
         {workspaceTab === 'dsl' && (
-          <div className="rounded-lg border border-border p-4">
-            <pre className={cn(textNano, "font-mono overflow-x-auto whitespace-pre-wrap break-all")}>
-              {previewJSON || tBuilder('noPreview')}
-            </pre>
-          </div>
+          <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-border bg-card p-4 font-mono text-xs leading-5 text-foreground">
+            {previewJSON || tBuilder('noPreview')}
+          </pre>
         )}
       </div>
   )
@@ -1636,7 +1656,7 @@ export function SimpleRuleBuilderSplit({
         </span>
       }
       config={
-        <div className="space-y-3.5">
+        <div className="space-y-4">
           {/* Name */}
           <Field>
             <FieldLabel htmlFor="rule-name">
@@ -1657,19 +1677,6 @@ export function SimpleRuleBuilderSplit({
           <Field>
             <FieldLabel htmlFor="rule-desc">{t('automation:ruleBuilder.description')}</FieldLabel>
             <Textarea id="rule-desc" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
-          </Field>
-
-          {/* Trigger type select */}
-          <Field>
-            <FieldLabel>{t('automation:ruleBuilder.triggerType')}</FieldLabel>
-            <Select value={triggerType} onValueChange={(v) => setTriggerType(v as typeof triggerType)}>
-              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="data_change">{t('automation:ruleBuilder.triggerDevice')}</SelectItem>
-                <SelectItem value="schedule">{t('automation:ruleBuilder.triggerSchedule')}</SelectItem>
-                <SelectItem value="manual">{t('automation:ruleBuilder.triggerManual')}</SelectItem>
-              </SelectContent>
-            </Select>
           </Field>
 
           {/* Tags editor - lifted from BasicInfoStep */}
@@ -1711,6 +1718,18 @@ export function SimpleRuleBuilderSplit({
             </div>
           </Field>
 
+          <Field>
+            <FieldLabel>{t('automation:ruleBuilder.triggerType')}</FieldLabel>
+            <Select value={triggerType} onValueChange={(v) => setTriggerType(v as typeof triggerType)}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="data_change">{t('automation:ruleBuilder.triggerDevice')}</SelectItem>
+                <SelectItem value="schedule">{t('automation:ruleBuilder.triggerSchedule')}</SelectItem>
+                <SelectItem value="manual">{t('automation:ruleBuilder.triggerManual')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+
           {/* Cooldown */}
           <Field>
             <FieldLabel>{tBuilder('cooldown')}</FieldLabel>
@@ -1738,22 +1757,21 @@ export function SimpleRuleBuilderSplit({
             </p>
           </Field>
 
-          {/* Enabled switch */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="rule-enabled" className="cursor-pointer text-sm font-medium">
+              {tBuilder('enabled')}
+            </Label>
             <Switch
               id="rule-enabled"
               checked={enabled}
               onCheckedChange={(checked) => setEnabled(!!checked)}
             />
-            <Label htmlFor="rule-enabled" className="text-sm font-medium cursor-pointer">
-              {tBuilder('enabled')}
-            </Label>
           </div>
         </div>
       }
       workspace={ruleWorkspaceContent}
       footer={
-        <Button onClick={handleSave} disabled={saving} className="ml-auto">
+        <Button onClick={handleSave} disabled={saving}>
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {t('automation:ruleBuilder.save')}
         </Button>
@@ -1786,7 +1804,6 @@ interface ConditionEditorProps {
 }
 
 function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions, extensionDataSources, transformDataSources, t, tBuilder }: ConditionEditorProps) {
-  const isMobile = useIsMobile()
   const updateField = <K extends keyof UICondition>(field: K, value: UICondition[K]) => {
     onChange({ ...condition, [field]: value })
   }
@@ -1882,7 +1899,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
               updateField('threshold_value', v)
             }}
           >
-            <SelectTrigger className="w-20 h-9"><SelectValue /></SelectTrigger>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="true">true</SelectItem>
               <SelectItem value="false">false</SelectItem>
@@ -1899,7 +1916,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
             onChange={e => {
               updateField('threshold_value', e.target.value)
             }}
-            className="w-28 h-9"
+            className="w-full"
             disabled={!(cond.source_type === 'extension' ? cond.extension_id : cond.device_id)}
           />
         )
@@ -1910,24 +1927,36 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
           type="number"
           value={cond.threshold ?? ''}
           onChange={e => updateField('threshold', parseFloat(e.target.value) || 0)}
-          className="w-24 h-9"
+          className="w-full"
           disabled={!(cond.source_type === 'extension' ? cond.extension_id : cond.device_id)}
         />
       )
     }
 
+    const sourceLabel = cond.source_type === 'extension'
+      ? tBuilder('extension')
+      : cond.source_type === 'transform'
+        ? (tBuilder('transform') || 'Transform')
+        : tBuilder('device')
+
     return (
-      <div className="p-3 bg-accent-purple-light rounded-lg border border-accent-purple">
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Source Type Selector */}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <p className="text-sm font-medium">{tBuilder('simpleCondition')}</p>
+          <IconButton type="button" aria-label={tBuilder('removeCondition')} onClick={() => onChange(null)}>
+            <X className="h-4 w-4" />
+          </IconButton>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel>{t('common:type')}</FieldLabel>
           <Select
             value={cond.source_type || 'device'}
             onValueChange={(v: 'device' | 'extension' | 'transform') => {
-              // Clear all IDs when changing source type
               onChange({ ...condition, source_type: v, device_id: undefined, extension_id: undefined, transform_id: undefined, metric: undefined })
             }}
           >
-            <SelectTrigger className="w-28 h-9 text-sm">
+            <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1938,8 +1967,10 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
               )}
             </SelectContent>
           </Select>
+          </Field>
 
-          {/* Device/Extension/Transform Selector */}
+          <Field>
+            <FieldLabel>{sourceLabel}</FieldLabel>
           <Select
             value={cond.source_type === 'extension' ? cond.extension_id : cond.source_type === 'transform' ? cond.transform_id : cond.device_id}
             onValueChange={(v) => {
@@ -1959,7 +1990,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
               }
             }}
           >
-            <SelectTrigger className="w-36 h-9 text-sm">
+            <SelectTrigger>
               <SelectValue placeholder={
                 cond.source_type === 'extension' ? tBuilder('selectExtension')
                 : cond.source_type === 'transform' ? tBuilder('selectTransform')
@@ -1972,8 +2003,10 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
               ))}
             </SelectContent>
           </Select>
+          </Field>
 
-          {/* Metric Selector */}
+          <Field>
+            <FieldLabel>{t('automation:metric')}</FieldLabel>
           {((cond.source_type === 'extension' && cond.extension_id) || (cond.source_type === 'device' && cond.device_id) || (cond.source_type === 'transform' && cond.transform_id)) && metrics.length > 0 ? (
             <Select value={cond.metric} onValueChange={(v) => {
               const newDataType = resolveMetricDataType(v)
@@ -1984,7 +2017,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
                 operator: (cond.operator && allowedOps.includes(cond.operator) ? cond.operator : allowedOps[0])!,
               })
             }}>
-              <SelectTrigger className="w-32 h-9 text-sm"><SelectValue /></SelectTrigger>
+              <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {metrics.map(m => (
                   <SelectItem key={m.name} value={m.name}>
@@ -2000,29 +2033,32 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
               </SelectContent>
             </Select>
           ) : (
-            <span className="text-xs text-muted-foreground italic">
+            <p className="flex h-10 items-center text-sm text-muted-foreground">
               {cond.source_type === 'extension' ? tBuilder('selectExtensionFirst')
                 : cond.source_type === 'transform' ? tBuilder('selectTransformFirst')
                 : tBuilder('selectDeviceFirst')}
-            </span>
+            </p>
           )}
+          </Field>
 
-          {/* Operator Selector */}
+          <Field>
+            <FieldLabel>{t('automation:operator')}</FieldLabel>
           <Select
             value={cond.operator}
             onValueChange={(v) => updateField('operator', v)}
             disabled={!((cond.source_type === 'extension' && cond.extension_id) || (cond.source_type === 'transform' && cond.transform_id) || (cond.source_type === 'device' && cond.device_id))}
           >
-            <SelectTrigger className="w-32 h-9 text-sm"><SelectValue /></SelectTrigger>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               {getComparisonOperators(t, metricDataType).map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
             </SelectContent>
           </Select>
+          </Field>
 
-          {renderValueInput()}
-          <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-6 sm:w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
-            <X className="h-4 w-4" />
-          </Button>
+          <Field className="sm:col-span-2">
+            <FieldLabel>{t('automation:threshold')}</FieldLabel>
+            {renderValueInput()}
+          </Field>
         </div>
       </div>
     )
@@ -2040,113 +2076,127 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
       : []
 
     const hasValidId = (cond.source_type === 'extension' && cond.extension_id) || (cond.source_type === 'device' && cond.device_id) || (cond.source_type === 'transform' && cond.transform_id)
+    const sourceLabel = cond.source_type === 'extension'
+      ? tBuilder('extension')
+      : cond.source_type === 'transform'
+        ? (tBuilder('transform') || 'Transform')
+        : tBuilder('device')
 
     return (
-      <div className="p-3 bg-info-light rounded-lg border border-info">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="text-xs bg-info-light text-info border-info">{tBuilder('between')}</Badge>
-
-          {/* Source Type Selector */}
-          <Select
-            value={cond.source_type || 'device'}
-            onValueChange={(v: 'device' | 'extension' | 'transform') => {
-              onChange({ ...condition, source_type: v, device_id: undefined, extension_id: undefined, transform_id: undefined, metric: undefined })
-            }}
-          >
-            <SelectTrigger className="w-28 h-9 text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="device">{tBuilder('device') || 'Device'}</SelectItem>
-              <SelectItem value="extension">{tBuilder('extension') || 'Extension'}</SelectItem>
-              {transformOptions.length > 0 && (
-                <SelectItem value="transform">{tBuilder('transform') || 'Transform'}</SelectItem>
-              )}
-            </SelectContent>
-          </Select>
-
-          {/* Device/Extension/Transform Selector */}
-          <Select
-            value={cond.source_type === 'extension' ? cond.extension_id : cond.source_type === 'transform' ? cond.transform_id : cond.device_id}
-            onValueChange={(v) => {
-              const st = cond.source_type || 'device'
-              const newMetrics = st === 'extension'
-                ? getExtensionMetrics(v, extensions || [], extensionDataSources || [])
-                : st === 'transform'
-                ? getTransformMetrics(v, transformDataSources || [])
-                : getDeviceMetrics(v, devices, deviceTypes)
-
-              if (st === 'extension') {
-                onChange({ ...condition, extension_id: v, device_id: undefined, transform_id: undefined, metric: newMetrics[0]?.name || 'value' })
-              } else if (st === 'transform') {
-                onChange({ ...condition, transform_id: v, device_id: undefined, extension_id: undefined, metric: newMetrics[0]?.name || 'value' })
-              } else {
-                onChange({ ...condition, device_id: v, extension_id: undefined, transform_id: undefined, metric: newMetrics[0]?.name || 'value' })
-              }
-            }}
-          >
-            <SelectTrigger className="w-36 h-9 text-sm">
-              <SelectValue placeholder={
-                cond.source_type === 'extension' ? tBuilder('selectExtension')
-                : cond.source_type === 'transform' ? tBuilder('selectTransform')
-                : tBuilder('selectDevice')
-              } />
-            </SelectTrigger>
-            <SelectContent>
-              {(cond.source_type === 'extension' ? extensionOptions : cond.source_type === 'transform' ? transformOptions : deviceOptions).map(d => (
-                <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* Metric Selector */}
-          {hasValidId && metrics.length > 0 ? (
-            <Select value={cond.metric} onValueChange={(v) => {
-              onChange({
-                ...condition,
-                metric: v,
-              })
-            }}>
-              <SelectTrigger className="w-32 h-9 text-sm"><SelectValue /></SelectTrigger>
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <p className="text-sm font-medium">{tBuilder('rangeCondition')}</p>
+          <IconButton type="button" aria-label={tBuilder('removeCondition')} onClick={() => onChange(null)}>
+            <X className="h-4 w-4" />
+          </IconButton>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field>
+            <FieldLabel>{t('common:type')}</FieldLabel>
+            <Select
+              value={cond.source_type || 'device'}
+              onValueChange={(v: 'device' | 'extension' | 'transform') => {
+                onChange({ ...condition, source_type: v, device_id: undefined, extension_id: undefined, transform_id: undefined, metric: undefined })
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
-                {metrics.map(m => <SelectItem key={m.name} value={m.name}>{m.display_name || m.name}</SelectItem>)}
-                {cond.source_type === 'device' && (
-                  <SelectGroup>
-                    <SelectLabel className="text-muted-foreground">{tBuilder('systemMetrics')}</SelectLabel>
-                    <SelectItem value="__last_seen_age_secs">Seconds since last data</SelectItem>
-                  </SelectGroup>
+                <SelectItem value="device">{tBuilder('device') || 'Device'}</SelectItem>
+                <SelectItem value="extension">{tBuilder('extension') || 'Extension'}</SelectItem>
+                {transformOptions.length > 0 && (
+                  <SelectItem value="transform">{tBuilder('transform') || 'Transform'}</SelectItem>
                 )}
               </SelectContent>
             </Select>
-          ) : (
-            <span className="text-xs text-muted-foreground italic">
-              {cond.source_type === 'extension' ? tBuilder('selectExtensionFirst')
-                : cond.source_type === 'transform' ? tBuilder('selectTransformFirst')
-                : tBuilder('selectDeviceFirst')}
-            </span>
-          )}
+          </Field>
 
-          <span className="text-xs font-medium text-muted-foreground px-1">{tBuilder('between')}</span>
-          <Input
-            type="number"
-            value={cond.range_min}
-            onChange={e => updateField('range_min', parseFloat(e.target.value) || 0)}
-            className="w-20 h-9"
-            placeholder={tBuilder('minPlaceholder')}
-            disabled={!hasValidId}
-          />
-          <span className="text-xs text-muted-foreground">{tBuilder('and')}</span>
-          <Input
-            type="number"
-            value={cond.range_max}
-            onChange={e => updateField('range_max', parseFloat(e.target.value) || 0)}
-            className="w-20 h-9"
-            placeholder={tBuilder('maxPlaceholder')}
-            disabled={!hasValidId}
-          />
-          <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-6 sm:w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
-            <X className="h-4 w-4" />
-          </Button>
+          <Field>
+            <FieldLabel>{sourceLabel}</FieldLabel>
+            <Select
+              value={cond.source_type === 'extension' ? cond.extension_id : cond.source_type === 'transform' ? cond.transform_id : cond.device_id}
+              onValueChange={(v) => {
+                const st = cond.source_type || 'device'
+                const newMetrics = st === 'extension'
+                  ? getExtensionMetrics(v, extensions || [], extensionDataSources || [])
+                  : st === 'transform'
+                  ? getTransformMetrics(v, transformDataSources || [])
+                  : getDeviceMetrics(v, devices, deviceTypes)
+
+                if (st === 'extension') {
+                  onChange({ ...condition, extension_id: v, device_id: undefined, transform_id: undefined, metric: newMetrics[0]?.name || 'value' })
+                } else if (st === 'transform') {
+                  onChange({ ...condition, transform_id: v, device_id: undefined, extension_id: undefined, metric: newMetrics[0]?.name || 'value' })
+                } else {
+                  onChange({ ...condition, device_id: v, extension_id: undefined, transform_id: undefined, metric: newMetrics[0]?.name || 'value' })
+                }
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={
+                  cond.source_type === 'extension' ? tBuilder('selectExtension')
+                  : cond.source_type === 'transform' ? tBuilder('selectTransform')
+                  : tBuilder('selectDevice')
+                } />
+              </SelectTrigger>
+              <SelectContent>
+                {(cond.source_type === 'extension' ? extensionOptions : cond.source_type === 'transform' ? transformOptions : deviceOptions).map(d => (
+                  <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+
+          <Field className="sm:col-span-2">
+            <FieldLabel>{t('automation:metric')}</FieldLabel>
+            {hasValidId && metrics.length > 0 ? (
+              <Select value={cond.metric} onValueChange={(v) => {
+                onChange({
+                  ...condition,
+                  metric: v,
+                })
+              }}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {metrics.map(m => <SelectItem key={m.name} value={m.name}>{m.display_name || m.name}</SelectItem>)}
+                  {cond.source_type === 'device' && (
+                    <SelectGroup>
+                      <SelectLabel className="text-muted-foreground">{tBuilder('systemMetrics')}</SelectLabel>
+                      <SelectItem value="__last_seen_age_secs">Seconds since last data</SelectItem>
+                    </SelectGroup>
+                  )}
+                </SelectContent>
+              </Select>
+            ) : (
+              <p className="flex h-10 items-center text-sm text-muted-foreground">
+                {cond.source_type === 'extension' ? tBuilder('selectExtensionFirst')
+                  : cond.source_type === 'transform' ? tBuilder('selectTransformFirst')
+                  : tBuilder('selectDeviceFirst')}
+              </p>
+            )}
+          </Field>
+
+          <Field>
+            <FieldLabel>{tBuilder('minPlaceholder')}</FieldLabel>
+            <Input
+              type="number"
+              value={cond.range_min}
+              onChange={e => updateField('range_min', parseFloat(e.target.value) || 0)}
+              placeholder={tBuilder('minPlaceholder')}
+              disabled={!hasValidId}
+            />
+          </Field>
+          <Field>
+            <FieldLabel>{tBuilder('maxPlaceholder')}</FieldLabel>
+            <Input
+              type="number"
+              value={cond.range_max}
+              onChange={e => updateField('range_max', parseFloat(e.target.value) || 0)}
+              placeholder={tBuilder('maxPlaceholder')}
+              disabled={!hasValidId}
+            />
+          </Field>
         </div>
       </div>
     )
@@ -2155,66 +2205,40 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
   // Render logical condition (AND/OR/NOT)
   const renderLogicalCondition = () => {
     const label = condition.type.toUpperCase()
-    const badgeClass = condition.type === 'and'
-      ? 'bg-success-light text-success border-success-light'
-      : condition.type === 'or'
-      ? 'bg-warning-light text-warning border-warning'
-      : 'bg-error-light text-error border-error'
 
     return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 p-2.5 rounded-t-lg border">
-          <Badge variant="outline" className={cn('text-xs px-2.5 py-1', badgeClass)}>{label}</Badge>
-          <span className="text-xs text-muted-foreground flex-1">
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="mb-4 flex items-center gap-3">
+          <Badge variant="secondary">{label}</Badge>
+          <span className="min-w-0 flex-1 text-sm text-muted-foreground">
             {condition.type === 'and' ? tBuilder('allConditionsMustMeet') : condition.type === 'or' ? tBuilder('anyConditionMustMeet') : tBuilder('conditionNotMet')}
           </span>
-          <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-6 sm:w-6" onClick={() => onChange(null)} aria-label={tBuilder('removeCondition')}>
+          <IconButton type="button" aria-label={tBuilder('removeCondition')} onClick={() => onChange(null)}>
             <X className="h-4 w-4" />
-          </Button>
+          </IconButton>
         </div>
 
-        <div className="p-3 border border-t-0 rounded-b-lg space-y-3">
+        <div className="space-y-3">
           {condition.conditions?.map((subCond, i) => (
             <div key={subCond.id} className="relative group">
               {i > 0 && (
                 <div className="flex items-center justify-start -mb-2 mt-1">
-                  <span className={cn(
-                    'text-xs font-semibold px-2.5 py-1 rounded-full',
-                    condition.type === 'and' ? 'bg-success-light text-success dark:bg-success-light dark:text-success' : 'bg-warning-light text-warning'
-                  )}>
+                  <span className="rounded-md bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">
                     {condition.type.toUpperCase()}
                   </span>
                 </div>
               )}
-              <div className="relative pr-8">
-                <div className="rounded-lg">
-                  <ConditionEditor
-                    condition={subCond}
-                    onChange={(c) => updateNestedCondition(i, c)}
-                    devices={devices}
-                    deviceTypes={deviceTypes}
-                    extensions={extensions}
-                    extensionDataSources={extensionDataSources}
-                    transformDataSources={transformDataSources}
-                    t={t}
-                    tBuilder={tBuilder}
-                  />
-                </div>
-                {condition.conditions && condition.conditions.length > 1 && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className={cn(
-                      'h-6 w-6 absolute right-0 top-2',
-                      isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-                    , "sm:h-6 sm:w-6")}
-                    onClick={() => removeNestedCondition(i)}
-                    aria-label={tBuilder('removeCondition')}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
+              <ConditionEditor
+                condition={subCond}
+                onChange={(c) => updateNestedCondition(i, c)}
+                devices={devices}
+                deviceTypes={deviceTypes}
+                extensions={extensions}
+                extensionDataSources={extensionDataSources}
+                transformDataSources={transformDataSources}
+                t={t}
+                tBuilder={tBuilder}
+              />
             </div>
           ))}
 
@@ -2222,7 +2246,7 @@ function ConditionEditor({ condition, onChange, devices, deviceTypes, extensions
             <Button
               variant="outline"
               size="sm"
-              className="w-full border-dashed h-9 sm:h-9"
+              className="w-full border-dashed"
               onClick={() => {
                 // Try devices first, then extensions
                 const firstDevice = devices[0]
@@ -2433,31 +2457,38 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
         const currentParams = executeAction.params || {}
 
         return (
-          <div className="space-y-2 w-full">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground w-20">
-                {isExt ? t('extensions:extension') : t('automation:device')}:
-              </span>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field>
+              <FieldLabel>{isExt ? t('extensions:extension') : t('automation:device')}</FieldLabel>
               <Select
                 value={executeAction.target}
                 onValueChange={(v) => {
                   const cmds = getCommandsForResource(v, devices, deviceTypes, extensions)
                   const targetType = v && isExtensionId(v) ? 'extension' as const : 'device' as const
-                  onUpdate({ target: v, target_type: targetType, command: cmds[0]?.name || 'turn_on', params: {} })
+                  const firstCommand = cmds[0]
+                  onUpdate({
+                    target: v,
+                    target_type: targetType,
+                    command: firstCommand?.name || 'turn_on',
+                    params: seedCommandDefaults(firstCommand?.parameters),
+                  })
                 }}
               >
-                <SelectTrigger className="h-8 text-sm flex-1 max-w-xs">
+                <SelectTrigger>
                   <SelectValue placeholder={isExt ? tBuilder('selectExtension') : t('automation:selectDevice')} />
                 </SelectTrigger>
                 <SelectContent>
                   {deviceOptions.map(d => <SelectItem key={d.value} value={d.value}>{d.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground w-20">{t('dashboardComponents:ruleBuilder.command')}:</span>
-              <Select value={executeAction.command} onValueChange={(v) => onUpdate({ command: v, params: {} })}>
-                <SelectTrigger className="h-8 text-sm flex-1 max-w-xs">
+            </Field>
+            <Field>
+              <FieldLabel>{t('dashboardComponents:ruleBuilder.command')}</FieldLabel>
+              <Select value={executeAction.command} onValueChange={(v) => {
+                const cmd = commands.find((c) => c.name === v)
+                onUpdate({ command: v, params: seedCommandDefaults(cmd?.parameters) })
+              }}>
+                <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -2466,51 +2497,18 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
                   ))}
                 </SelectContent>
               </Select>
-            </div>
-            {/* Command Parameters */}
+            </Field>
             {cmdParams.length > 0 && (
-              <div className="space-y-1.5 pl-2 border-l-2 border-muted ml-1">
-                {cmdParams.map(param => {
-                  const paramType = param.param_type?.toLowerCase() || 'string'
-                  const isBool = paramType.includes('bool')
-                  const isNum = paramType.includes('int') || paramType.includes('float') || paramType.includes('number')
-                  return (
-                    <div key={param.name} className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground w-20 truncate" title={param.name}>
-                        {param.name}:
-                      </span>
-                      {isBool ? (
-                        <Select
-                          value={String(currentParams[param.name] ?? param.default_value ?? 'false')}
-                          onValueChange={(v) => {
-                            const newParams = { ...currentParams, [param.name]: v === 'true' }
-                            onUpdate({ params: newParams })
-                          }}
-                        >
-                          <SelectTrigger className="h-8 text-sm flex-1 max-w-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="true">true</SelectItem>
-                            <SelectItem value="false">false</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <Input
-                          type={isNum ? 'number' : 'text'}
-                          value={String(currentParams[param.name] ?? param.default_value ?? (isNum ? 0 : ''))}
-                          onChange={(e) => {
-                            const val = isNum ? (parseFloat(e.target.value) || 0) : e.target.value
-                            const newParams = { ...currentParams, [param.name]: val }
-                            onUpdate({ params: newParams })
-                          }}
-                          className="h-8 text-sm flex-1 max-w-xs"
-                          placeholder={param.name}
-                        />
-                      )}
-                    </div>
-                  )
-                })}
+              <div className="sm:col-span-2">
+                <ParameterForm
+                  parameters={cmdParams}
+                  groups={selectedCmd?.parameter_groups}
+                  values={currentParams}
+                  onChange={(name, value) => onUpdate({ params: { ...currentParams, [name]: value } })}
+                  hideDefault={false}
+                  variant={isMobile ? 'compact' : 'default'}
+                  grouped={(selectedCmd?.parameter_groups?.length ?? 0) > 0}
+                />
               </div>
             )}
           </div>
@@ -2520,24 +2518,29 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
       case 'notify': {
         const notifyAction = action as { type: 'notify'; message: string; severity: 'info' | 'warning' | 'critical' | 'emergency' }
         return (
-          <div className="space-y-2 w-full">
-            <Input
-              value={notifyAction.message}
-              onChange={(e) => onUpdate({ message: e.target.value })}
-              placeholder={tBuilder('notificationContentPlaceholder')}
-              className="h-8 text-sm"
-            />
-            <Select value={notifyAction.severity} onValueChange={(v) => onUpdate({ severity: v as 'info' | 'warning' | 'critical' | 'emergency' })}>
-              <SelectTrigger className="w-28 h-8 text-sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="info">{t('dashboardComponents:ruleBuilder.severity.info')}</SelectItem>
-                <SelectItem value="warning">{t('dashboardComponents:ruleBuilder.severity.warning')}</SelectItem>
-                <SelectItem value="critical">{t('dashboardComponents:ruleBuilder.severity.critical')}</SelectItem>
-                <SelectItem value="emergency">{t('dashboardComponents:ruleBuilder.severity.emergency') || 'Emergency'}</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+            <Field>
+              <FieldLabel>{t('automation:message')}</FieldLabel>
+              <Input
+                value={notifyAction.message}
+                onChange={(e) => onUpdate({ message: e.target.value })}
+                placeholder={tBuilder('notificationContentPlaceholder')}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>{t('automation:severity')}</FieldLabel>
+              <Select value={notifyAction.severity} onValueChange={(v) => onUpdate({ severity: v as 'info' | 'warning' | 'critical' | 'emergency' })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="info">{t('dashboardComponents:ruleBuilder.severity.info')}</SelectItem>
+                  <SelectItem value="warning">{t('dashboardComponents:ruleBuilder.severity.warning')}</SelectItem>
+                  <SelectItem value="critical">{t('dashboardComponents:ruleBuilder.severity.critical')}</SelectItem>
+                  <SelectItem value="emergency">{t('dashboardComponents:ruleBuilder.severity.emergency') || 'Emergency'}</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
           </div>
         )
       }
@@ -2546,31 +2549,36 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
         const agentAction = action as { type: 'trigger_agent'; agent_id: string; input?: string }
         const availableAgents = agents || []
         return (
-          <div className="space-y-2 w-full">
-            <Select
-              value={agentAction.agent_id}
-              onValueChange={(value) => onUpdate({ agent_id: value })}
-            >
-              <SelectTrigger className="h-8 text-sm">
-                <SelectValue placeholder={t('automation:selectAgent') || 'Select Agent'} />
-              </SelectTrigger>
-              <SelectContent>
-                {availableAgents.map((agent) => (
-                  <SelectItem key={agent.id} value={agent.id}>
-                    {agent.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {availableAgents.length === 0 && (
-              <p className="text-xs text-muted-foreground">{t('automation:noAgentsAvailable') || 'No agents available'}</p>
-            )}
-            <Input
-              value={agentAction.input || ''}
-              onChange={(e) => onUpdate({ input: e.target.value })}
-              placeholder={t('automation:agentInputPlaceholder') || 'Optional input'}
-              className="h-8 text-sm"
-            />
+          <div className="grid gap-4">
+            <Field>
+              <FieldLabel>{tBuilder('triggerAgent') || 'Trigger Agent'}</FieldLabel>
+              <Select
+                value={agentAction.agent_id}
+                onValueChange={(value) => onUpdate({ agent_id: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={t('automation:selectAgent') || 'Select Agent'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableAgents.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {availableAgents.length === 0 && (
+                <p className="text-sm text-muted-foreground">{t('automation:noAgentsAvailable') || 'No agents available'}</p>
+              )}
+            </Field>
+            <Field>
+              <FieldLabel>{t('automation:message')}</FieldLabel>
+              <Input
+                value={agentAction.input || ''}
+                onChange={(e) => onUpdate({ input: e.target.value })}
+                placeholder={t('automation:agentInputPlaceholder') || 'Optional input'}
+              />
+            </Field>
           </div>
         )
       }
@@ -2583,7 +2591,7 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
         const operatorAction = action as { type: 'run_operator'; agent_id: string }
         return (
           <div className="flex items-center gap-2 w-full">
-            <span className="text-xs text-muted-foreground w-20">{tBuilder('operator')}:</span>
+            <span className="w-24 shrink-0 text-xs text-muted-foreground">{tBuilder('operator')}</span>
             <span className="text-xs font-mono truncate">{operatorAction.agent_id}</span>
           </div>
         )
@@ -2618,53 +2626,34 @@ function ActionEditorCompact({ action, devices, deviceTypes, extensions, message
     }
   }
 
-  const getActionColor = (): string => {
+  const getActionTone = (): string => {
     switch (action.type) {
-      case 'execute': return 'text-warning bg-warning-light border-warning'
-      case 'notify': return 'text-info bg-info-light border-info'
-      case 'trigger_agent': return 'text-accent-purple bg-accent-purple-light border-accent-purple-light'
-      case 'run_operator': return 'text-accent-purple bg-accent-purple-light border-accent-purple-light'
-      default: return 'text-muted-foreground bg-muted border-border'
+      case 'execute': return 'bg-warning-light text-warning'
+      case 'notify': return 'bg-info-light text-info'
+      case 'trigger_agent':
+      case 'run_operator': return 'bg-accent-purple-light text-accent-purple'
+      default: return 'bg-muted text-muted-foreground'
     }
   }
 
   return (
-    <div className={cn(
-      "group rounded-lg border bg-card p-3 shadow-sm transition-all hover:shadow-md",
-      getActionColor()
-    )}>
-      <div className="flex items-start gap-3">
-        {/* Action Icon */}
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="mb-4 flex items-center gap-3">
         <div className={cn(
-          "flex items-center justify-center w-8 h-8 rounded-full flex-shrink-0",
-          getActionColor().replace('text-', 'bg-opacity-10 ')
+          "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg",
+          getActionTone()
         )}>
           {getActionIcon()}
         </div>
-
-        {/* Action Content */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-sm font-medium">{getActionLabel()}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn(
-                'h-6 w-6 flex-shrink-0 transition-opacity',
-                isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-              , "sm:h-6 sm:w-6")}
-              onClick={onRemove}
-              aria-label={tBuilder('removeAction')}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </div>
-          {renderActionContent()}
-          {error && (
-            <p className="text-xs text-error mt-2">{error}</p>
-          )}
-        </div>
+        <span className="min-w-0 flex-1 text-sm font-medium">{getActionLabel()}</span>
+        <IconButton type="button" aria-label={tBuilder('removeAction')} onClick={onRemove}>
+          <X className="h-4 w-4" />
+        </IconButton>
       </div>
+      {renderActionContent()}
+      {error && (
+        <p className="mt-3 text-sm text-error">{error}</p>
+      )}
     </div>
   )
 }

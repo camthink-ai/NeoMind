@@ -3,7 +3,7 @@
 /// builders mount cleanly with minimal props and expose their primary
 /// affordances; deep field-level behavior stays with manual QA.
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { SimpleRuleBuilderSplit } from '../SimpleRuleBuilderSplit'
 import { TransformBuilder as TransformBuilderSplit } from '../TransformBuilderSplit'
 
@@ -40,6 +40,24 @@ describe('SimpleRuleBuilderSplit', () => {
     // i18n provider t() returns the key — assert on the key text.
     const heading = screen.getByRole('heading', { level: 1 })
     expect(heading.textContent).toContain('newRule')
+  })
+
+  it('returns to the condition type cards after the chosen type is removed', () => {
+    render(
+      <SimpleRuleBuilderSplit
+        open
+        onOpenChange={noop}
+        onSave={noopAsync}
+        resources={{ devices: [], deviceTypes: [], extensions: [], extensionDataSources: [], transformDataSources: [], messageChannels: [] }}
+      />,
+    )
+    const overlay = document.querySelector('.fixed.inset-0') as HTMLElement
+    const typeCard = within(overlay).getByRole('button', { name: /simpleCondition/ })
+    fireEvent.click(typeCard)
+    expect(within(overlay).queryByRole('button', { name: /simpleCondition/ })).not.toBeInTheDocument()
+
+    fireEvent.click(within(overlay).getByRole('button', { name: /removeCondition/ }))
+    expect(within(overlay).getByRole('button', { name: /simpleCondition/ })).toBeInTheDocument()
   })
 
   it('renders nothing visible when closed', () => {
@@ -132,6 +150,75 @@ describe('SimpleRuleBuilderSplit', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
 
     expect(onSave.mock.calls[0][0].actions).toEqual([operatorAction])
+  })
+
+  it('renders the device command parameter form for an execute action', async () => {
+    render(
+      <SimpleRuleBuilderSplit
+        open
+        onOpenChange={noop}
+        onSave={noopAsync}
+        rule={{
+          id: 'r-cmd',
+          name: '抓拍',
+          enabled: true,
+          trigger: { trigger_type: 'manual' },
+          actions: [{
+            type: 'execute',
+            target: 'cam-1',
+            target_type: 'device',
+            command: 'capture',
+            params: { mode: 'manual', exposure: 5 },
+          }],
+        } as never}
+        resources={{
+          devices: [{
+            id: 'cam-1',
+            name: '门口相机',
+            device_type: 'ne301',
+            commands: [{ name: 'capture', description: 'Capture' }],
+            online: true,
+          }],
+          deviceTypes: [{
+            device_type: 'ne301',
+            name: 'NE301',
+            description: '',
+            categories: [],
+            commands: [{
+              name: 'capture',
+              display_name: '抓拍',
+              parameters: [
+                {
+                  name: 'mode',
+                  display_name: '拍摄模式',
+                  data_type: { enum: ['auto', 'manual'] },
+                  required: true,
+                  help_text: '选择曝光模式',
+                },
+                {
+                  name: 'exposure',
+                  display_name: '曝光时间',
+                  data_type: 'integer',
+                  min: 1,
+                  max: 30,
+                  unit: 's',
+                  required: true,
+                },
+              ],
+            }],
+          }] as never,
+          extensions: [],
+          extensionDataSources: [],
+          transformDataSources: [],
+          messageChannels: [],
+        }}
+      />,
+    )
+    const overlay = document.querySelector('.fixed.inset-0') as HTMLElement
+    await waitFor(() => expect(within(overlay).getByText('拍摄模式')).toBeInTheDocument())
+    expect(within(overlay).getByText('曝光时间')).toBeInTheDocument()
+    expect(within(overlay).getByText('选择曝光模式')).toBeInTheDocument()
+    expect(within(overlay).getByPlaceholderText('1 ~ 30 s')).toHaveValue(5)
   })
 })
 
