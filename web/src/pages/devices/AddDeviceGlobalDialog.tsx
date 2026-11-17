@@ -216,13 +216,15 @@ export function AddDeviceGlobalDialog({
               shrinkable so inner overflow-y-auto can scroll instead of clipping. */}
           <FullScreenDialogMain
             className={cn(
-              'flex flex-col items-center',
-              (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 overflow-hidden',
+              // Full pane width for Manual/Auto (no max-w-2xl squeeze).
+              // BLE/AP still center their own max-w-md wizard column.
+              'flex flex-col',
+              (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 items-center overflow-hidden',
             )}
           >
             <div
               className={cn(
-                'flex w-full max-w-2xl flex-1 flex-col',
+                'flex w-full flex-1 flex-col',
                 isMobile ? 'px-3 py-4' : 'px-5 py-6 md:px-8',
                 (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 py-0 md:py-0',
               )}
@@ -312,23 +314,30 @@ interface StepCardProps {
 
 function StepCard({ step, icon: Icon, title, description, status = 'pending' }: StepCardProps) {
   return (
-    <div className="flex gap-3 py-2">
+    <div className="flex gap-3 py-2.5">
+      {/* Fixed size-8 badge for every status — success-light is translucent and
+          CheckCircle2 vs digit looked like different chip sizes. */}
       <div
         className={cn(
-          'w-7 h-7 rounded-lg flex items-center justify-center text-xs font-medium shrink-0',
-          status === 'done' && 'bg-success-light text-success',
+          'flex size-8 shrink-0 items-center justify-center rounded-lg text-xs font-medium tabular-nums',
+          status === 'done' && 'bg-card text-success ring-1 ring-inset ring-success',
           status === 'active' && 'bg-primary text-primary-foreground',
-          status === 'pending' && 'bg-muted text-muted-foreground',
+          status === 'pending' && 'bg-card text-muted-foreground ring-1 ring-inset ring-border',
         )}
+        aria-hidden={status !== 'active'}
       >
-        {status === 'done' ? <CheckCircle2 className="h-3.5 w-3.5" /> : step}
+        {status === 'done' ? (
+          <CheckCircle2 className="size-4 shrink-0" aria-hidden />
+        ) : (
+          <span className="leading-none">{step}</span>
+        )}
       </div>
-      <div className="flex-1 min-w-0 space-y-0.5 pt-0.5">
+      <div className="min-w-0 flex-1 space-y-0.5 pt-0.5">
         <div className="flex items-center gap-2">
-          <Icon className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
           <h4 className="text-sm font-medium">{title}</h4>
         </div>
-        <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>
       </div>
     </div>
   )
