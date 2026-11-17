@@ -33,12 +33,13 @@ pub mod types;
 
 pub use capability_services::{keys, CapabilityServices};
 pub use command_contract::{
-    assert_supported_schema, begin_instance_generation, build_input_schema,
-    current_instance_generation, from_extension_command, invalidate_instance_capability,
-    parse_extension_tool_name, prepare_invoke, remember_capability, resolve_capability,
-    sync_effect_for_invoke, sync_replay_for_invoke, type_base_of, validate_and_normalize,
-    validate_params, BusinessCommandDef, CapabilityGeneration, CapabilitySource,
-    ExtensionCommandSnapshot, InvokeTarget, PrepareInvokeRequest, PreparedInvoke, CONTRACT_VERSION,
+    ai_command_access_denied, assert_supported_schema, begin_instance_generation,
+    build_input_schema, current_instance_generation, from_extension_command,
+    invalidate_instance_capability, parse_extension_tool_name, prepare_invoke, remember_capability,
+    resolve_capability, sync_effect_for_invoke, sync_replay_for_invoke, type_base_of,
+    validate_and_normalize, validate_params, BusinessCommandDef, CapabilityGeneration,
+    CapabilitySource, ExtensionCommandSnapshot, InvokeTarget, PrepareInvokeRequest, PreparedInvoke,
+    CONTRACT_VERSION,
 };
 pub use context::{
     AvailableCapabilities, CapabilityError, CapabilityManifest, ExtensionCapability,

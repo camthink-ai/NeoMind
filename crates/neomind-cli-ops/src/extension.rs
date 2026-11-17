@@ -5,8 +5,9 @@ use serde_json::json;
 
 /// List all extensions with compact summary.
 ///
-/// Returns id, name, version, status, and enabled flag per extension.
-/// Full config is available via `neomind extension get <id>`.
+/// Returns id, name, version, runtime status, AI-enabled flag, and the
+/// next discovery step (`extension commands <id>`). `enabled` is the AI
+/// master switch — it is NOT the same as running.
 pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/extensions").await?;
 
@@ -25,25 +26,71 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
         return Ok(CliResponse::success(data, "Extensions listed"));
     };
 
+    // Bound large catalogs so Chat context stays usable; full dump via get.
+    const LIST_CAP: usize = 50;
     let total = extensions.len();
+    let truncated = total > LIST_CAP;
     let summary: Vec<serde_json::Value> = extensions
         .iter()
+        .take(LIST_CAP)
         .map(|e| {
+            let id = e.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            let status = e
+                .get("status")
+                .and_then(|v| v.as_str())
+                .or_else(|| e.get("state").and_then(|v| v.as_str()))
+                .unwrap_or("unknown");
+            let ai_enabled = e.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            let status_l = status.to_ascii_lowercase();
+            let running = e
+                .get("running")
+                .and_then(|v| v.as_bool())
+                .or_else(|| e.get("is_running").and_then(|v| v.as_bool()))
+                .unwrap_or_else(|| {
+                    // API may return "Running (Isolated)" / "running" / health ok.
+                    status_l.contains("running")
+                        || status_l == "active"
+                        || status_l == "ok"
+                        || status_l == "healthy"
+                });
             json!({
-                "id": e.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
+                "id": id,
                 "name": e.get("name").and_then(|v| v.as_str()).unwrap_or("(unnamed)"),
                 "version": e.get("version").and_then(|v| v.as_str()).unwrap_or("?"),
-                "status": e.get("status").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                "enabled": e.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+                "status": status,
+                "running": running,
+                "ai_enabled": ai_enabled,
+                // Keep legacy key; document that it is the AI master switch.
+                "enabled": ai_enabled,
                 "description": e.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+                "next": format!("neomind extension commands {id}"),
             })
         })
         .collect();
 
-    Ok(CliResponse::success(
-        json!({ "total": total, "extensions": summary }),
+    let mut resp = CliResponse::success(
+        json!({
+            "total": total,
+            "returned": summary.len(),
+            "truncated": truncated,
+            "extensions": summary,
+        }),
         format!("{} extension(s) listed", total),
-    ))
+    );
+    if total == 0 {
+        resp = resp.with_suggestion(
+            "No extensions installed. Install from the marketplace or a .nep file, then re-list.",
+        );
+    } else if truncated {
+        resp = resp.with_suggestion(format!(
+            "Showing first {LIST_CAP} of {total}. Pick an id and run: neomind extension commands <id>"
+        ));
+    } else {
+        resp = resp.with_suggestion(
+            "Next: neomind extension commands <id>  (then neomind extension invoke <id> <command> --params '{...}')",
+        );
+    }
+    Ok(resp)
 }
 
 /// Percent-encode a URL path segment. A raw `/` inside an extension ID
@@ -250,6 +297,9 @@ pub fn compact_market_list(raw: &serde_json::Value, filter: Option<&str>) -> ser
 }
 
 /// List unified business command defs for an installed extension.
+///
+/// Includes schema, capability, AI visibility, and a concrete invoke example
+/// so the model can go list → commands → invoke without re-scanning help.
 pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client
         .get(&format!("/extensions/{}/commands", encode_segment(id)))
@@ -264,7 +314,19 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
     let summary: Vec<serde_json::Value> = commands
         .iter()
         .map(|c| {
-            let name = c.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+            // API CommandDef uses `id` for the short command name.
+            let name = c
+                .get("id")
+                .and_then(|v| v.as_str())
+                .or_else(|| c.get("command").and_then(|v| v.as_str()))
+                .unwrap_or("?");
+            let disabled = c.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let ai_exposed = c
+                .get("ai_exposed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let schema = c.get("input_schema").cloned().unwrap_or(json!({}));
+            let example_params = example_params_from_schema(&schema);
             json!({
                 "id": c.get("command_id").cloned().unwrap_or_else(|| {
                     json!(format!(
@@ -276,26 +338,91 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
                 "contract_version": c.get("contract_version").cloned()
                     .unwrap_or(json!(neomind_core::extension::CONTRACT_VERSION)),
                 "description": c.get("description").cloned().unwrap_or(json!("")),
-                "input_schema": c.get("input_schema").cloned().unwrap_or(json!({})),
+                "input_schema": schema,
                 "effect": c.get("effect").cloned().unwrap_or(json!("mutating")),
                 "replay_safety": c.get("replay_safety").cloned().unwrap_or(json!("unsafe")),
                 "execution": c.get("execution").cloned().unwrap_or(json!("immediate")),
                 "capability_source": c.get("capability_source").cloned()
                     .unwrap_or(json!({"kind":"conservative_default"})),
-                "ai_exposed": c.get("ai_exposed").cloned().unwrap_or(json!(true)),
-                "disabled": c.get("disabled").cloned().unwrap_or(json!(false)),
+                "ai_exposed": ai_exposed,
+                "disabled": disabled,
+                "ai_invokable": ai_exposed && !disabled,
+                "invoke_example": format!(
+                    "neomind extension invoke {id} {name} --params '{}'",
+                    example_params
+                ),
             })
         })
         .collect();
 
-    Ok(CliResponse::success(
+    let invokable: Vec<&str> = summary
+        .iter()
+        .filter(|c| c.get("ai_invokable").and_then(|v| v.as_bool()) == Some(true))
+        .filter_map(|c| c.get("command").and_then(|v| v.as_str()))
+        .collect();
+
+    let mut resp = CliResponse::success(
         json!({
             "extension_id": id,
             "total": summary.len(),
+            "ai_invokable_count": invokable.len(),
             "commands": summary,
         }),
         format!("{} command(s) for extension {}", summary.len(), id),
-    ))
+    );
+    if summary.is_empty() {
+        resp = resp.with_suggestion(format!(
+            "No commands registered for '{id}'. Confirm it is installed and running: neomind extension status {id}"
+        ));
+    } else if invokable.is_empty() {
+        resp = resp.with_suggestion(
+            "All commands are AI-disabled or author-hidden (ai_exposed=false). Re-enable in extension settings if AI should call them.",
+        );
+    } else {
+        let first = invokable[0];
+        resp = resp.with_suggestion(format!(
+            "Next: neomind extension invoke {id} {first} --params '{{...}}'  (use input_schema / invoke_example on each command)"
+        ));
+    }
+    Ok(resp)
+}
+
+/// Build a minimal example JSON object from a JSON Schema for invoke hints.
+fn example_params_from_schema(schema: &serde_json::Value) -> String {
+    let mut obj = serde_json::Map::new();
+    if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
+        let required: std::collections::HashSet<&str> = schema
+            .get("required")
+            .and_then(|r| r.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<std::collections::HashSet<_>>()
+            })
+            .unwrap_or_default();
+        for (key, prop) in props {
+            if !required.is_empty() && !required.contains(key.as_str()) {
+                continue;
+            }
+            let sample = if let Some(d) = prop.get("default") {
+                d.clone()
+            } else {
+                match prop.get("type").and_then(|t| t.as_str()) {
+                    Some("string") => json!(""),
+                    Some("number") | Some("integer") => json!(0),
+                    Some("boolean") => json!(false),
+                    Some("array") => json!([]),
+                    Some("object") => json!({}),
+                    _ => json!(""),
+                }
+            };
+            obj.insert(key.clone(), sample);
+            if obj.len() >= 6 {
+                break;
+            }
+        }
+    }
+    serde_json::to_string(&serde_json::Value::Object(obj)).unwrap_or_else(|_| "{}".into())
 }
 
 /// Invoke an extension command via the shared HTTP execute path.
@@ -416,9 +543,27 @@ pub async fn update_extension_config(
 
 #[cfg(test)]
 mod invoke_params_tests {
-    use super::load_invoke_params;
+    use super::{example_params_from_schema, load_invoke_params};
     use serde_json::json;
     use std::io::Write;
+
+    #[test]
+    fn example_params_prefer_required_and_defaults() {
+        let schema = json!({
+            "type": "object",
+            "required": ["city"],
+            "properties": {
+                "city": {"type": "string"},
+                "lang": {"type": "string", "default": "en"},
+                "units": {"type": "string"}
+            }
+        });
+        let s = example_params_from_schema(&schema);
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert!(v.get("city").is_some(), "{v}");
+        // Optional without default omitted when required set is non-empty.
+        assert!(v.get("units").is_none(), "{v}");
+    }
 
     #[test]
     fn default_empty_object() {

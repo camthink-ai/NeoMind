@@ -215,6 +215,10 @@ pub async fn invoke_extension_handler(
 }
 
 /// Shared prepare for HTTP execute + invoke (same path as CLI / tools).
+///
+/// Enforces AI access policy (`enabled` / `disabled_commands` / `ai_exposed`)
+/// at this boundary so Chat shell → `extension invoke` cannot bypass the
+/// toggles that already hide direct tools from the LLM.
 async fn prepare_extension_invoke(
     state: &ServerState,
     instance_id: &str,
@@ -233,10 +237,31 @@ async fn prepare_extension_invoke(
         .iter()
         .find(|c| c.name == command_name)
         .ok_or_else(|| {
+            let available: Vec<&str> = info.commands.iter().map(|c| c.name.as_str()).collect();
             ErrorResponse::bad_request(format!(
-                "command '{command_name}' not found on extension '{instance_id}'"
+                "command '{command_name}' not found on extension '{instance_id}'. \
+                 Available: [{}]. Next: neomind extension commands {instance_id}",
+                available.join(", ")
             ))
         })?;
+
+    // Persisted AI toggles — same semantics as tool-registry disable bootstrap.
+    let (ext_ai_enabled, disabled_cmds) =
+        match neomind_storage::ExtensionStore::open(crate::server::paths::extension_store_path()) {
+            Ok(store) => match store.load(instance_id) {
+                Ok(Some(r)) if !r.uninstalled => (r.enabled, r.disabled_commands),
+                _ => (true, Vec::new()),
+            },
+            Err(_) => (true, Vec::new()),
+        };
+    if let Some(reason) = neomind_core::extension::ai_command_access_denied(
+        ext_ai_enabled,
+        &disabled_cmds,
+        command_name,
+        cmd.ai_exposed,
+    ) {
+        return Err(ErrorResponse::forbidden(reason));
+    }
 
     let version = Some(info.metadata.version.as_str());
     // Token comes from the same load snapshot as `cmd` / `info` — never "current".
@@ -407,8 +432,7 @@ pub async fn list_extension_commands_handler(
         .commands
         .iter()
         .map(|cmd| {
-            let def =
-                neomind_core::extension::from_extension_command(&id, cmd, version, None);
+            let def = neomind_core::extension::from_extension_command(&id, cmd, version, None);
             CommandDescriptorDto {
                 id: cmd.name.clone(),
                 command_id: Some(def.id.clone()),

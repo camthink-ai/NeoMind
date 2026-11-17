@@ -64,6 +64,11 @@ impl ErrorResponse {
         Self::new("UNAUTHORIZED", message, StatusCode::UNAUTHORIZED)
     }
 
+    /// Forbidden (403).
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::new("FORBIDDEN", message, StatusCode::FORBIDDEN)
+    }
+
     /// Not found (404).
     pub fn not_found(resource: impl Into<String>) -> Self {
         Self::new(

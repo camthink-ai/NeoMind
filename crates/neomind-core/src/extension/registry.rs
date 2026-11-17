@@ -418,11 +418,17 @@ impl ExtensionRegistry {
         // Clone the Arc to avoid holding the lock across the await
         let ext_clone = Arc::clone(&info.instance);
 
-        // Shared prepare (validate+normalize+capability) — same path as
-        // CLI/HTTP/ExtensionTool. Unknown command falls through to the
-        // extension's own CommandNotFound.
-        let canonical_args = if let Some(cmd_def) = info.commands.iter().find(|c| c.name == command)
-        {
+        // Shared prepare only — unknown names never pass through to the
+        // extension business function (fail closed with discovery hint).
+        let Some(cmd_def) = info.commands.iter().find(|c| c.name == command) else {
+            let available: Vec<&str> = info.commands.iter().map(|c| c.name.as_str()).collect();
+            return Err(ExtensionError::CommandNotFound(format!(
+                "'{command}' is not in the registered command catalog for '{id}'. \
+                 Available: [{}]. Discover with: neomind extension commands {id}",
+                available.join(", ")
+            )));
+        };
+        let canonical_args =
             match crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
                 instance_id: id,
                 command: cmd_def,
@@ -435,10 +441,7 @@ impl ExtensionRegistry {
                 Err(msg) => {
                     return Err(ExtensionError::InvalidArguments(msg));
                 }
-            }
-        } else {
-            args.clone()
-        };
+            };
 
         // Record start time for execution stats
         let start_time = std::time::Instant::now();
@@ -777,14 +780,100 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(v2["saw"], "2.0.0", "must run the reload's instance");
-        // cmdA no longer exists on the new entry: falls through prepare, then
-        // the new instance rejects it.
+        // cmdA no longer exists on the new entry: catalog miss → CommandNotFound
+        // (never reaches the extension business function).
+        let err = registry
+            .execute_command("exec-ext", "cmdA", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        match err {
+            ExtensionError::CommandNotFound(msg) => {
+                assert!(msg.contains("cmdA"), "got: {msg}");
+                assert!(
+                    msg.contains("neomind extension commands"),
+                    "must point at discovery: {msg}"
+                );
+            }
+            other => panic!("expected CommandNotFound, got {other:?}"),
+        }
+    }
+
+    /// Unknown names must NOT pass args through to the extension. A counting
+    /// fake proves execute_command on the instance is never entered.
+    #[tokio::test]
+    async fn unknown_command_never_reaches_extension_business_fn() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::OnceLock;
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        CALLS.store(0, Ordering::SeqCst);
+
+        struct CountingFake;
+        #[async_trait::async_trait]
+        impl Extension for CountingFake {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("count-ext", "Count", "1.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ExtensionCommand {
+                    name: "only_known".into(),
+                    display_name: "Only".into(),
+                    description: String::new(),
+                    payload_template: String::new(),
+                    parameters: Vec::new(),
+                    fixed_values: std::collections::HashMap::new(),
+                    samples: Vec::new(),
+                    parameter_groups: Vec::new(),
+                    ai_exposed: true,
+                    effect: Some(crate::extension::system::CommandEffect::ReadOnly),
+                    replay_safety: Some(crate::extension::system::CommandReplaySafety::Safe),
+                    execution: Some(crate::extension::system::CommandExecutionKind::Immediate),
+                }]
+            }
+            async fn execute_command(
+                &self,
+                command: &str,
+                _args: &serde_json::Value,
+            ) -> Result<serde_json::Value> {
+                CALLS.fetch_add(1, Ordering::SeqCst);
+                Ok(serde_json::json!({"cmd": command}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let registry = ExtensionRegistry::new();
+        registry
+            .register(
+                "count-ext".into(),
+                Arc::new(tokio::sync::RwLock::new(Box::new(CountingFake))),
+            )
+            .await
+            .unwrap();
+
+        let err = registry
+            .execute_command("count-ext", "totally_unknown", &serde_json::json!({"x": 1}))
+            .await
+            .unwrap_err();
         assert!(
-            registry
-                .execute_command("exec-ext", "cmdA", &serde_json::json!({}))
-                .await
-                .is_err(),
-            "removed command must not execute"
+            matches!(err, ExtensionError::CommandNotFound(_)),
+            "got {err:?}"
         );
+        assert_eq!(
+            CALLS.load(Ordering::SeqCst),
+            0,
+            "extension business fn must not run for unknown commands"
+        );
+
+        // Known command still reaches the instance once.
+        registry
+            .execute_command("count-ext", "only_known", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(CALLS.load(Ordering::SeqCst), 1);
     }
 }

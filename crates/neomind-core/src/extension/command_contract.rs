@@ -24,6 +24,40 @@ use super::system::{
 /// Contract schema version stamped on every prepared invoke.
 pub const CONTRACT_VERSION: &str = "1";
 
+/// AI-facing access check for an extension command.
+///
+/// Covers the three persisted/author controls (must agree across direct tools,
+/// Chat shell → CLI, and HTTP invoke/execute):
+/// - extension master `enabled` (AI off for the whole extension)
+/// - `disabled_commands` (per-command AI off)
+/// - descriptor `ai_exposed=false` (author hides from AI)
+///
+/// Returns `None` when AI may invoke; `Some(reason)` when it must refuse.
+/// Automation / Transform paths that are not AI-facing should not call this.
+pub fn ai_command_access_denied(
+    extension_ai_enabled: bool,
+    disabled_commands: &[String],
+    command_name: &str,
+    ai_exposed: bool,
+) -> Option<String> {
+    if !extension_ai_enabled {
+        return Some(format!(
+            "extension AI is disabled (master enabled=false); cannot AI-invoke '{command_name}'"
+        ));
+    }
+    if !ai_exposed {
+        return Some(format!(
+            "command '{command_name}' declares ai_exposed=false (author-hidden from AI)"
+        ));
+    }
+    if disabled_commands.iter().any(|c| c == command_name) {
+        return Some(format!(
+            "command '{command_name}' is disabled for AI (disabled_commands)"
+        ));
+    }
+    None
+}
+
 /// Keywords we fully implement (recursive).
 const IMPLEMENTED_SCHEMA_KEYS: &[&str] = &[
     "type",
@@ -1575,5 +1609,30 @@ mod tests {
             parse_extension_tool_name("weather-forecast-v2:get_weather"),
             Some(("weather-forecast-v2".into(), "get_weather".into()))
         );
+    }
+
+    #[test]
+    fn ai_access_allows_when_all_flags_open() {
+        assert!(ai_command_access_denied(true, &[], "get_weather", true).is_none());
+    }
+
+    #[test]
+    fn ai_access_denies_master_off() {
+        let r = ai_command_access_denied(false, &[], "get_weather", true).unwrap();
+        assert!(r.contains("master enabled=false"), "{r}");
+    }
+
+    #[test]
+    fn ai_access_denies_disabled_command() {
+        let disabled = vec!["get_weather".into()];
+        let r = ai_command_access_denied(true, &disabled, "get_weather", true).unwrap();
+        assert!(r.contains("disabled_commands"), "{r}");
+        assert!(ai_command_access_denied(true, &disabled, "other", true).is_none());
+    }
+
+    #[test]
+    fn ai_access_denies_author_hidden() {
+        let r = ai_command_access_denied(true, &[], "secret", false).unwrap();
+        assert!(r.contains("ai_exposed=false"), "{r}");
     }
 }
