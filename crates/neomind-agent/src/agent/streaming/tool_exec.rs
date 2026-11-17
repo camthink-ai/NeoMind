@@ -97,19 +97,12 @@ pub(crate) async fn execute_with_retry_impl(
     // Authorized same-args re-runs use `_new_operation` / TaskState, not here.
     let effective_max_retries = if replay_safe { max_retries } else { 0 };
 
-    // Tool execution timeout: 30s default, but respect shell tool's internal timeout
-    const DEFAULT_TIMEOUT_SECS: u64 = 30;
-    let timeout_secs = if real_tool_name == "shell" {
-        // Shell tool manages its own timeout internally; give it room to breathe
-        let shell_timeout: u64 = exec_args
-            .get("timeout")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(30)
-            .min(600);
-        shell_timeout + 5 // buffer for process cleanup
-    } else {
-        DEFAULT_TIMEOUT_SECS
+    // The tool owns its deadline: never cut off its inner timeout/cleanup.
+    let execution_timeout = match tools.get(&real_tool_name) {
+        Some(tool) => tool.execution_timeout(&exec_args)?,
+        None => crate::toolkit::timeouts::DEFAULT,
     };
+    let timeout_secs = execution_timeout.as_secs();
 
     for attempt in 0..=effective_max_retries {
         let result = tokio::time::timeout(

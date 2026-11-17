@@ -390,6 +390,29 @@ mod tests {
     }
 
     #[test]
+    fn overview_then_distinct_sections_are_progress_but_repeats_are_not() {
+        let mut budget = SkillExplorationBudget::default();
+        for (section, guide) in [
+            (None, "overview"),
+            (Some("Syntax"), "syntax"),
+            (Some("Errors"), "errors"),
+        ] {
+            budget.observe(
+                &serde_json::json!({"action":"load","id":"rule-management","section":section}),
+                &serde_json::json!({"id":"rule-management","section":section,"guide":guide}),
+            );
+            assert!(!budget.exhausted());
+        }
+        for _ in 0..2 {
+            budget.observe(
+                &serde_json::json!({"action":"load"}),
+                &serde_json::json!({"id":"rule-management","section":"Errors","guide":"errors"}),
+            );
+        }
+        assert!(budget.exhausted());
+    }
+
+    #[test]
     fn ledger_counts_and_summary() {
         let mut l = GuardLedger::new();
         rec(&mut l, GuardKind::NarrationNudge, GuardOutcome::Fired);

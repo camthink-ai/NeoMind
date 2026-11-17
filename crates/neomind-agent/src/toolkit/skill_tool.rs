@@ -186,12 +186,15 @@ impl Tool for SkillTool {
     }
 
     fn description(&self) -> &str {
-        r##"Load operation guides (skills) on demand — step-by-step CLI instructions, command examples, error solutions. Skills are NOT in your system prompt; load BEFORE unfamiliar operations.
+        r##"Load operation guides (skills) on demand — step-by-step CLI instructions, command examples, error solutions. Load only relevant guidance; request a returned section title for detailed syntax.
 
-Actions: search (find by keywords), load (full guide by ID — auto-resolves partial/domain name, e.g. 'dashboard'→dashboard-management), create/update/delete (user skills).
+Actions: search (find by keywords), load (concise guide + reference section titles by ID — auto-resolves partial/domain name, e.g. 'dashboard'→dashboard-management), create/update/delete (user skills).
 
 Available skill IDs (load when relevant, partial name auto-resolves):
-- device-onboarding (devices/MQTT/webhook), dashboard-management, rule-management, agent-management, message-management, transform-management, extension-development, widget-development, widget-management, extension-management, connector-management, data-push-management, llm-management, settings-management, system-info
+- device-onboarding (connect devices), connector-management (broker connections), data-push-management (outbound telemetry)
+- rule-management (conditions), transform-management (data conversion), agent-management (recurring AI), message-management (notifications), dashboard-management (visualization)
+- extension-management (packages), widget-management (packages), extension-development (coding), widget-development (coding)
+- llm-management (models), settings-management (configuration), system-info (diagnostics)
 
 When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, cross-domain) or when a command failed and you don't know why. For standard CRUD (list/get/update/delete by id), use `shell` (`neomind <domain> <subcommand>`) directly."##
     }
@@ -211,6 +214,10 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 "query": {
                     "type": "string",
                     "description": "Search query for finding relevant skills. Example: 'device', 'rule', 'dashboard'"
+                },
+                "section": {
+                    "type": "string",
+                    "description": "Optional exact reference section title returned by load. Omit for the concise workflow."
                 },
                 "content": {
                     "type": "string",
@@ -297,7 +304,7 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                         "scope": "workflow_guides",
                         "count": skills.len(),
                         "matches": skills,
-                        "hint": "Use action='load' and 'id' to get the full guide."
+                        "hint": "Use action='load' and 'id' for the overview; add 'section' for a listed reference chapter."
                     })))
                 }
             }
@@ -306,14 +313,18 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                     .as_str()
                     .ok_or_else(|| ToolError::InvalidArguments("id is required for load".into()))?;
 
+                let section = match args.get("section") {
+                    None | Some(Value::Null) => None,
+                    Some(Value::String(section)) => Some(section.as_str()),
+                    Some(_) => return Err(ToolError::InvalidArguments(
+                        "section must be a returned reference title (string)".into()
+                    )),
+                };
                 let registry_guard = self.registry.read().await;
                 match registry_guard.get(id) {
                     Some(skill) => {
-                        Ok(ToolOutput::success(serde_json::json!({
-                            "id": skill.metadata.id,
-                            "name": skill.metadata.name,
-                            "guide": skill.body,
-                        })))
+                        Ok(ToolOutput::success(skill.load_guide(section)
+                            .map_err(ToolError::InvalidArguments)?))
                     }
                     None => {
                         // Fuzzy resolution: when an exact id misses, try to resolve a
@@ -352,13 +363,10 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                                 resolved = %skill.metadata.id,
                                 "skill load fuzzy-resolved"
                             );
-                            Ok(ToolOutput::success(serde_json::json!({
-                                "id": skill.metadata.id,
-                                "name": skill.metadata.name,
-                                "guide": skill.body,
-                                // Surface that the id was fuzzy-matched, not exact.
-                                "resolved_from": id,
-                            })))
+                            let mut result = skill.load_guide(section)
+                                .map_err(ToolError::InvalidArguments)?;
+                            result["resolved_from"] = serde_json::json!(id);
+                            Ok(ToolOutput::success(result))
                         } else {
                             // Structured candidates (mirror the CLI `suggestion`/`n`
                             // field) so the caller can pick — not just a text hint.
@@ -700,6 +708,57 @@ mod tests {
                 .await
                 .unwrap();
             assert!(loaded.success, "search matches must remain loadable");
+        }
+    }
+
+    #[tokio::test]
+    async fn progressive_builtin_guides_and_all_sections_are_loadable() {
+        let tool = builtin_tool();
+        let ids: Vec<_> = {
+            let registry = tool.registry.read().await;
+            registry
+                .list()
+                .iter()
+                .map(|s| s.metadata.id.clone())
+                .collect()
+        };
+        for id in ids {
+            let overview = tool
+                .execute(serde_json::json!({"action":"load","id":id}))
+                .await
+                .unwrap();
+            let guide = overview.data["guide"].as_str().unwrap();
+            assert!(!guide.contains("<!-- SKILL_REFERENCE -->"), "{id}");
+            assert!(guide.chars().count() < 6000, "overview too long: {id}");
+            let sections = overview.data["sections"].as_array().unwrap();
+            assert!(!sections.is_empty(), "missing reference: {id}");
+            for section in sections {
+                let loaded = tool
+                    .execute(serde_json::json!({"action":"load","id":id,"section":section}))
+                    .await
+                    .unwrap();
+                assert_eq!(&loaded.data["section"], section);
+                assert!(loaded.data["guide"].as_str().unwrap().starts_with("## "));
+                assert_ne!(
+                    crate::llm::extract_skill_id_from_result(&overview.data.to_string()),
+                    crate::llm::extract_skill_id_from_result(&loaded.data.to_string())
+                );
+            }
+        }
+        assert!(tool
+            .execute(serde_json::json!({"action":"load","id":"dashboard","section":"nonexistent"}))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn invalid_section_type_is_not_silently_loaded_as_overview() {
+        let tool = builtin_tool();
+        for id in ["dashboard-management", "dashboard"] {
+            assert!(tool
+                .execute(serde_json::json!({"action":"load","id":id,"section":["Commands"]}))
+                .await
+                .is_err());
         }
     }
 

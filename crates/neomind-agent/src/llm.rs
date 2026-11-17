@@ -2943,7 +2943,10 @@ pub(crate) fn extract_skill_id_from_result(result_str: &str) -> String {
             .or_else(|| v.get("skill_id"))
             .and_then(|i| i.as_str())
         {
-            return id.to_string();
+            return match v.get("section").and_then(|s| s.as_str()) {
+                Some(section) => format!("{id}#section:{section}"),
+                None => id.to_string(),
+            };
         }
         // `search` returns an array of entries — distinct skill loads shouldn't collapse,
         // so derive a stable key from the payload itself.
@@ -3134,6 +3137,25 @@ mod tests {
             "fallback must be deterministic for identical input"
         );
         assert!(key1.starts_with("hash:"));
+    }
+
+    #[tokio::test]
+    async fn overview_and_reference_survive_together_without_duplicate_sections() {
+        let interface = LlmInterface::new(ChatConfig::default());
+        for payload in [
+            r#"{"id":"rule-management","guide":"OVERVIEW_MARKER"}"#,
+            r#"{"id":"rule-management","section":"Syntax","guide":"REFERENCE_MARKER"}"#,
+            r#"{"id":"rule-management","section":"Syntax","guide":"REFERENCE_MARKER"}"#,
+        ] {
+            interface
+                .set_skill_context(extract_skill_id_from_result(payload), payload.into())
+                .await;
+        }
+        let body = interface.get_skill_context().await.unwrap();
+        assert_eq!(body.matches("OVERVIEW_MARKER").count(), 1);
+        assert_eq!(body.matches("REFERENCE_MARKER").count(), 1);
+        interface.clear_skill_context().await;
+        assert!(interface.get_skill_context().await.is_none());
     }
 
     #[tokio::test]

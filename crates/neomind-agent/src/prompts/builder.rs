@@ -142,7 +142,7 @@ mod tests {
         let prompt = builder.build_system_prompt();
         assert!(prompt.contains("NeoMind"));
         assert!(prompt.contains("IoT"));
-        assert!(prompt.contains("Principles"));
+        assert!(prompt.contains("Task and execution"));
         assert!(!prompt.contains("Visual Understanding"));
     }
 
@@ -150,7 +150,7 @@ mod tests {
     fn test_prompt_without_examples() {
         let builder = PromptBuilder::new();
         let prompt = builder.build_system_prompt();
-        assert!(prompt.contains("Principles"));
+        assert!(prompt.contains("Task and execution"));
         assert!(!prompt.contains("Example Dialogs"));
     }
 
@@ -158,7 +158,7 @@ mod tests {
     fn test_prompt_without_thinking() {
         let builder = PromptBuilder::new().with_thinking(false);
         let prompt = builder.build_system_prompt();
-        assert!(prompt.contains("Principles"));
+        assert!(prompt.contains("Task and execution"));
         assert!(!prompt.contains("Thinking Mode"));
     }
 
@@ -173,19 +173,20 @@ mod tests {
     fn test_language_policy_in_prompt() {
         let builder = PromptBuilder::new();
         let prompt = builder.build_system_prompt();
-        assert!(prompt.contains("Language Policy"));
-        assert!(prompt.contains("Highest Priority"));
+        assert!(prompt.contains("Identity and language"));
         let prompt_lower = prompt.to_lowercase();
         assert!(prompt_lower.contains("same language"));
     }
 
     #[test]
     fn test_no_cli_reference_table() {
-        // The canonical slim prompt drops the CLI reference table AND the
-        // --help guidance (saved tokens) — details live in skills/--help.
+        // Keep syntax discovery without embedding the CLI reference table.
         let prompt = PromptBuilder::new().build_system_prompt();
         assert!(!prompt.contains("CLI Command Reference"));
-        assert!(!prompt.contains("--help"), "slim drops --help guidance");
+        assert!(
+            prompt.contains("--help"),
+            "unfamiliar syntax has an on-demand discovery path"
+        );
     }
 
     #[test]
@@ -215,10 +216,10 @@ mod tests {
         let builder = PromptBuilder::new();
         let prompt = builder.build_system_prompt();
         // Tier 1 rules must remain
-        assert!(prompt.contains("No Hallucinated Operations"));
-        assert!(prompt.contains("Task Workflow"));
-        assert!(prompt.contains("BATCH RULE"));
-        assert!(prompt.contains("Domain Boundaries"));
+        assert!(prompt.contains("Do not invent resources"));
+        assert!(prompt.contains("gather missing facts"));
+        assert!(prompt.contains("Parallelize independent reads"));
+        assert!(prompt.contains("Platform data comes from the CLI"));
     }
 
     #[test]
@@ -252,13 +253,13 @@ mod tests {
     fn test_default_prompt_preserves_rules() {
         // The canonical prompt must keep every hard constraint.
         let prompt = PromptBuilder::new().build_system_prompt();
-        assert!(prompt.contains("Language Policy"));
-        assert!(prompt.contains("No Hallucinated Operations"));
-        assert!(prompt.contains("BATCH RULE"));
-        assert!(prompt.contains("Tool-First"));
+        assert!(prompt.contains("Identity and language"));
+        assert!(prompt.contains("Do not invent resources"));
+        assert!(prompt.contains("Parallelize independent reads"));
+        assert!(prompt.contains("Live checks and actual operations require evidence"));
         assert!(prompt.contains("{{CURRENT_TIME}}")); // KV-cache boundary preserved
         assert!(prompt.contains("## Environment"));
-        assert!(prompt.contains("Device Onboarding Guidance")); // guided onboarding
+        assert!(prompt.contains("load device-onboarding")); // guided onboarding
     }
 
     #[test]

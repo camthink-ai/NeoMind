@@ -2126,7 +2126,7 @@ impl ServerState {
             // Shell tool — CLI-first: domain operations via `neomind` commands
             .with_shell_tool(Some(neomind_agent::toolkit::ShellConfig {
                 enabled: true,
-                timeout_secs: 30,
+                timeout_secs: neomind_agent::toolkit::timeouts::shell_default().as_secs(),
                 max_output_chars: 10000,
             }))
             // Scan extensions and register their tools (dynamic, keep)
@@ -2226,7 +2226,7 @@ impl ServerState {
             .with_extension_registry(self.extensions.registry.clone())
             .with_shell_tool(Some(neomind_agent::toolkit::ShellConfig {
                 enabled: true,
-                timeout_secs: 30,
+                timeout_secs: neomind_agent::toolkit::timeouts::shell_default().as_secs(),
                 max_output_chars: 10000,
             }))
             .with_extensions_scanned()

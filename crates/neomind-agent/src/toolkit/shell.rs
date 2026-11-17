@@ -111,6 +111,28 @@ pub struct ShellTool {
 }
 
 impl ShellTool {
+    fn command_timeout(&self, args: &Value) -> Result<Duration> {
+        // Resolve timeout: per-command override or config default, capped at 600s
+        // Accepts both number and string forms (LLM may pass "30" as string)
+        let timeout = if let Some(user_timeout) = args.get("timeout") {
+            let secs = user_timeout
+                .as_u64()
+                .or_else(|| user_timeout.as_str().and_then(|s| s.parse::<u64>().ok()))
+                .ok_or_else(|| {
+                    ToolError::InvalidArguments("timeout must be a positive number".into())
+                })?;
+            Duration::from_secs(secs.min(crate::toolkit::timeouts::shell_max().as_secs()))
+        } else {
+            Duration::from_secs(
+                self.config
+                    .timeout_secs
+                    .min(crate::toolkit::timeouts::shell_max().as_secs()),
+            )
+        };
+
+        Ok(timeout)
+    }
+
     pub fn new(config: ShellConfig) -> Self {
         Self { config }
     }
@@ -581,7 +603,7 @@ impl ShellTool {
         );
 
         // Apply the same per-command timeout as the subprocess path. The
-        // ApiClient has its own 30s HTTP timeout, but a handler may issue
+        // ApiClient has its own HTTP timeout (70s for agent invoke), but may issue
         // multiple requests; this guarantees the in-process path cannot hang
         // longer than the subprocess equivalent would.
         match tokio::time::timeout(timeout, neomind_cli_ops::dispatch::dispatch(&argv)).await {
@@ -1654,10 +1676,8 @@ Quick reference (run `neomind <domain> --help` or load the `skill` guide for ful
 
 Critical rules:
 - NEVER guess metric or subcommand names — discover via `get`/`list`/`--help` first, then use exact names.
-- Read before write: `get <ID>` before create/update/control/delete.
-- COMPLETE THE FULL FLOW: a multi-step request ("create X then enable it", "deploy then verify") requires EVERY step — do not stop after the first action.
-  Worked example — "create an MQTT connector named c1 to 192.168.1.100, enable and test it" is ONE request = THREE commands:
-  `neomind connector create --name c1 --host 192.168.1.100 --port 1883` → `neomind connector enable c1` → `neomind connector test c1`. Run them all.
+- Read before write when facts are missing or stale. Reuse verified target IDs and schemas from this conversation; inspect only missing or stale facts before writing.
+- COMPLETE THE FULL FLOW: perform requested actions and verify their results. Example: a request to create, enable and test a connector needs connector create, connector enable, then connector test. Configuration saved is not proof of device feedback.
 - On error, read the `suggestion` field in the JSON output for recovery.
 
 Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, docker, …"#;
@@ -1692,6 +1712,10 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
         ToolCategory::System
     }
 
+    fn execution_timeout(&self, args: &Value) -> Result<Duration> {
+        Ok(self.command_timeout(args)? + Duration::from_secs(5))
+    }
+
     async fn execute(&self, args: Value) -> Result<ToolOutput> {
         let command = args
             .get("command")
@@ -1704,23 +1728,7 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
             ));
         }
 
-        // Resolve timeout: per-command override or config default, capped at 600s
-        // Accepts both number and string forms (LLM may pass "30" as string)
-        let timeout = if let Some(user_timeout) = args.get("timeout") {
-            let secs = user_timeout
-                .as_u64()
-                .or_else(|| user_timeout.as_str().and_then(|s| s.parse::<u64>().ok()))
-                .ok_or_else(|| {
-                    ToolError::InvalidArguments("timeout must be a positive number".into())
-                })?;
-            Duration::from_secs(secs.min(crate::toolkit::timeouts::shell_max().as_secs()))
-        } else {
-            Duration::from_secs(
-                self.config
-                    .timeout_secs
-                    .min(crate::toolkit::timeouts::shell_max().as_secs()),
-            )
-        };
+        let timeout = self.command_timeout(&args)?;
 
         let working_dir = args.get("working_dir").and_then(|v| v.as_str());
         let description = args.get("description").and_then(|v| v.as_str());
@@ -2015,6 +2023,26 @@ mod tests {
                 "Command Choice must keep sequence directive {needle:?}"
             );
         }
+    }
+
+    #[test]
+    fn scheduler_timeout_tracks_inner_config_and_overrides() {
+        let tool = ShellTool::new(ShellConfig {
+            timeout_secs: 123,
+            ..Default::default()
+        });
+        for (args, expected) in [
+            (serde_json::json!({}), 128),
+            (serde_json::json!({"timeout":180}), 185),
+            (serde_json::json!({"timeout":"180"}), 185),
+            (serde_json::json!({"timeout":999}), 605),
+        ] {
+            assert_eq!(tool.execution_timeout(&args).unwrap().as_secs(), expected);
+        }
+        assert!(tool
+            .execution_timeout(&serde_json::json!({"timeout":"invalid"}))
+            .is_err());
+        assert!(crate::toolkit::timeouts::shell_default().as_secs() > 70);
     }
 
     #[tokio::test]

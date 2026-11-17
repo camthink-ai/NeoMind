@@ -419,6 +419,11 @@ pub trait Tool: Send + Sync {
     /// Execute the tool with the given arguments.
     async fn execute(&self, args: Value) -> Result<ToolOutput>;
 
+    /// Outer scheduler budget; tools with an inner deadline include cleanup time.
+    fn execution_timeout(&self, _args: &Value) -> Result<std::time::Duration> {
+        Ok(super::timeouts::DEFAULT)
+    }
+
     /// Replay safety of this tool after an interrupted call (see
     /// [`ReplaySafety`]). Default is the conservative `Unsafe`.
     fn replay_safety(&self) -> ReplaySafety {

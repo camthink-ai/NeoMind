@@ -164,7 +164,7 @@ impl ToolRegistry {
         // every server restart. Small models have strong positional bias
         // (they favor the first tool they see), so keep `shell` first.
         // Tools not listed here (e.g. extension tools) sort to the end,
-        // retaining their relative order via stable sort.
+        // ordered by name so HashMap iteration cannot reshuffle the tail.
         let order = [
             "shell",
             "skill",
@@ -178,10 +178,13 @@ impl ToolRegistry {
             "file_edit",
         ];
         defs.sort_by_key(|d| {
-            order
-                .iter()
-                .position(|n| *n == d.name)
-                .unwrap_or(usize::MAX)
+            (
+                order
+                    .iter()
+                    .position(|n| *n == d.name)
+                    .unwrap_or(usize::MAX),
+                d.name.clone(),
+            )
         });
         defs
     }
@@ -573,6 +576,25 @@ mod tests {
                 error: None,
                 metadata: None,
             })
+        }
+    }
+
+    #[test]
+    fn definitions_keep_builtin_priority_and_sort_extension_tail() {
+        for names in [
+            ["z:invoke", "shell", "a:query", "skill"],
+            ["skill", "a:query", "shell", "z:invoke"],
+        ] {
+            let mut registry = ToolRegistry::new();
+            for name in names {
+                registry.register(Arc::new(TestTool { name: name.into() }));
+            }
+            let actual: Vec<_> = registry
+                .definitions_for_llm()
+                .into_iter()
+                .map(|d| d.name)
+                .collect();
+            assert_eq!(actual, ["shell", "skill", "a:query", "z:invoke"]);
         }
     }
 
