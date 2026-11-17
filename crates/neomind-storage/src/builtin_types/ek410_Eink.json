@@ -478,8 +478,8 @@
     {
       "name": "set_power",
       "display_name": "Set Power Mode",
-      "description": "always = stay online; cycle = wake ~2 min then deep-sleep sleepMin minutes (optional wakeUrl on wake); hibernate = sleep immediately until MAIN button.",
-      "payload_template": "{\"cmd\": \"set_power\", \"params\": {\"mode\": ${mode}, \"sleepMin\": ${sleepMin}, \"wakeUrl\": ${wakeUrl}}}",
+      "description": "always = stay online; cycle = online wakeSec seconds then deep-sleep sleepMin minutes (optional wakeUrl on wake); hibernate = sleep immediately until MAIN button.",
+      "payload_template": "{\"cmd\": \"set_power\", \"params\": {\"mode\": ${mode}, \"sleepMin\": ${sleepMin}, \"wakeSec\": ${wakeSec}, \"wakeUrl\": ${wakeUrl}}}",
       "parameters": [
         {
           "name": "mode",
@@ -495,6 +495,17 @@
           },
           "required": true,
           "default_value": "always"
+        },
+        {
+          "name": "wakeSec",
+          "display_name": "Online Window (sec)",
+          "data_type": "Integer",
+          "required": false,
+          "default_value": 120,
+          "min": 30,
+          "max": 600,
+          "visible_when": "mode == 'cycle'",
+          "help_text": "Seconds to stay online after wake before deep sleep (cycle mode; default 120)"
         },
         {
           "name": "sleepMin",
@@ -527,6 +538,7 @@
           "cmd": "set_power",
           "params": {
             "mode": "cycle",
+            "wakeSec": 120,
             "sleepMin": 30,
             "wakeUrl": ""
           }
