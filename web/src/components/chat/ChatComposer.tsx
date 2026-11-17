@@ -1407,13 +1407,14 @@ export function ChatComposer({
 
           <div className={cn("flex-1", isMobile && !mobileExpanded && "hidden")} />
 
-          {/* Send or Cancel button */}
+          {/* Send or Cancel button — size=icon-sm so default px/sm:h don't ovalize h-8 w-8 */}
           {isStreaming ? (
             <Button
               type="button"
               onClick={onCancel}
               variant="outline"
-              className="h-8 w-8 rounded-full flex-shrink-0 p-0 border-border text-muted-foreground hover:bg-muted-30 hover:text-foreground"
+              size="icon-sm"
+              className="h-8 w-8 sm:h-8 sm:w-8 shrink-0 rounded-full p-0 border-border text-muted-foreground hover:bg-muted-30 hover:text-foreground"
               title={t("chat:input.cancel")}
               aria-label={t("chat:input.cancel")}
             >
@@ -1424,8 +1425,9 @@ export function ChatComposer({
               type="button"
               onClick={onSend}
               disabled={!canSend}
+              size="icon-sm"
               className={cn(
-                "h-8 w-8 rounded-full flex-shrink-0 p-0 transition-all",
+                "h-8 w-8 sm:h-8 sm:w-8 shrink-0 rounded-full p-0 transition-all",
                 !canSend
                   ? "bg-muted text-muted-foreground"
                   : "bg-primary hover:bg-primary-hover text-primary-foreground"
