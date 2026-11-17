@@ -1012,47 +1012,16 @@ impl DeviceRegistry {
         let device_type = config.device_type.clone();
         let telemetry_topic = config.connection_config.telemetry_topic.clone();
 
-        // Check if device already exists — update in place for idempotent re-registration
+        // Idempotent re-registration (e.g. ordinary approve retry after
+        // BindIncomplete): apply the full landed config — including device_type
+        // and connection_config — via update_device. The old partial patch kept
+        // the first type/topic and made retry returns lie about what was saved.
         if self.devices.contains_key(&device_id) {
-            // Update existing device with new config
-            if let Some(mut entry) = self.devices.get_mut(&device_id) {
-                entry.name = config.name;
-                if config.adapter_id.is_some() {
-                    entry.adapter_id.clone_from(&config.adapter_id);
-                }
-                if config.last_seen > 0 {
-                    entry.last_seen = config.last_seen;
-                }
-            }
-            // Persist update if auto-save is enabled
-            if self.is_auto_save() {
-                if let Some(storage) = &self.storage {
-                    if let Some(updated) = self.devices.get(&device_id) {
-                        let sc = StorageConfig {
-                            device_id: updated.device_id.clone(),
-                            name: updated.name.clone(),
-                            device_type: updated.device_type.clone(),
-                            adapter_type: updated.adapter_type.clone(),
-                            connection_config: convert_connection_config_to_storage(
-                                updated.connection_config.clone(),
-                            ),
-                            adapter_id: updated.adapter_id.clone(),
-                            last_seen: updated.last_seen,
-                            offline_timeout_secs: updated.offline_timeout_secs,
-                        };
-                        if let Err(e) = storage.save_device(&sc) {
-                            tracing::error!(
-                                device_id = %device_id,
-                                error = %e,
-                                "Failed to persist device re-registration — \
-                                 in-memory updated but change will be lost on restart"
-                            );
-                        }
-                    }
-                }
-            }
-            tracing::debug!("Device '{}' re-registered (updated in place)", device_id);
-            return Ok(());
+            tracing::debug!(
+                "Device '{}' re-registered — updating type+config in place",
+                device_id
+            );
+            return self.update_device(&device_id, config).await;
         }
 
         // Prepare storage config (cloned before moving config)
@@ -1456,6 +1425,67 @@ mod tests {
 
         let result = registry.register_device(config).await;
         assert!(result.is_err());
+    }
+
+    /// NM-206: ordinary approve retry after BindIncomplete with a changed
+    /// device_type must land the new type+config (not the old partial upsert).
+    #[tokio::test]
+    async fn register_device_retry_updates_type_and_config() {
+        let registry = DeviceRegistry::new();
+        registry
+            .register_template(DeviceTypeTemplate::new("old", "Old"))
+            .await
+            .unwrap();
+        registry
+            .register_template(DeviceTypeTemplate::new("new", "New"))
+            .await
+            .unwrap();
+
+        let mut first = DeviceConfig {
+            device_id: "retry-device".into(),
+            name: "Retry".into(),
+            device_type: "old".into(),
+            adapter_type: "mqtt".into(),
+            connection_config: ConnectionConfig {
+                telemetry_topic: Some("sensors/old".into()),
+                ..Default::default()
+            },
+            adapter_id: Some("test".into()),
+            last_seen: 1,
+            offline_timeout_secs: None,
+        };
+        registry.register_device(first.clone()).await.unwrap();
+        assert_eq!(
+            registry.get_device("retry-device").unwrap().device_type,
+            "old"
+        );
+
+        first.device_type = "new".into();
+        first.connection_config.telemetry_topic = Some("sensors/retry-device".into());
+        first.name = "Retry renamed".into();
+        registry.register_device(first).await.unwrap();
+
+        let landed = registry.get_device("retry-device").unwrap();
+        assert_eq!(landed.device_type, "new", "retry must update device_type");
+        assert_eq!(landed.name, "Retry renamed");
+        assert_eq!(
+            landed.connection_config.telemetry_topic.as_deref(),
+            Some("sensors/retry-device"),
+            "retry must update connection_config"
+        );
+        assert!(
+            registry
+                .list_devices_by_type("new")
+                .iter()
+                .any(|d| d.device_id == "retry-device")
+        );
+        assert!(
+            !registry
+                .list_devices_by_type("old")
+                .iter()
+                .any(|d| d.device_id == "retry-device"),
+            "type index must move off old type"
+        );
     }
 
     #[tokio::test]

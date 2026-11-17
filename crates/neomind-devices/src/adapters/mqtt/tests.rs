@@ -2831,6 +2831,87 @@ mod handling_path {
         );
     }
 
+    /// NM-206: ordinary approve fail → change device_type → retry must land
+    /// the new type (registry re-register used to keep the old type).
+    #[tokio::test]
+    async fn ordinary_approve_retry_updates_device_type() {
+        use crate::mdl::DeviceError;
+        use crate::service::DeviceService;
+        use crate::{ConnectionConfig, DeviceConfig};
+        use neomind_core::EventBus;
+        use std::time::Duration;
+
+        let registry = Arc::new(DeviceRegistry::new());
+        seed_template(&registry, "old").await;
+        seed_template(&registry, "new").await;
+        let svc = DeviceService::new(registry.clone(), EventBus::new());
+        let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "test",
+            "localhost",
+        )));
+        adapter.set_shared_device_registry(registry.clone()).await;
+        adapter.install_test_broker_slot("test").await;
+        svc.register_adapter("test".into(), adapter.clone() as Arc<dyn DeviceAdapter>)
+            .await;
+
+        let cfg = |t: &str| DeviceConfig {
+            device_id: "retry-device".into(),
+            name: "Retry".into(),
+            device_type: t.into(),
+            adapter_type: "mqtt".into(),
+            adapter_id: Some("test".into()),
+            connection_config: ConnectionConfig {
+                telemetry_topic: Some("sensors/retry-device".into()),
+                ..Default::default()
+            },
+            last_seen: 1,
+            offline_timeout_secs: None,
+        };
+
+        adapter
+            .enable_test_suback_wait("test", Duration::from_millis(60))
+            .await;
+        let first = svc.register_device(cfg("old")).await;
+        match first {
+            Err(DeviceError::BindIncomplete { config_applied, .. }) => {
+                assert!(config_applied);
+            }
+            other => panic!("expected BindIncomplete, got {other:?}"),
+        }
+        assert_eq!(
+            registry.get_device("retry-device").unwrap().device_type,
+            "old"
+        );
+
+        adapter
+            .enable_test_suback_wait("test", Duration::from_secs(2))
+            .await;
+        let settler = adapter.clone();
+        let settle = tokio::spawn(async move {
+            for _ in 0..80 {
+                settler
+                    .settle_all_test_pending_subacks("test", Ok(()))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        svc.register_device(cfg("new"))
+            .await
+            .expect("retry with new type must succeed");
+        settle.abort();
+
+        let landed = registry.get_device("retry-device").unwrap();
+        assert_eq!(
+            landed.device_type, "new",
+            "retry must persist requested device_type, got {}",
+            landed.device_type
+        );
+        assert_eq!(
+            landed.connection_config.telemetry_topic.as_deref(),
+            Some("sensors/retry-device")
+        );
+    }
+
     /// Real mosquitto smoke (Mac): set `NEOMIND_MQTT_SMOKE_PORT` to a live
     /// broker port. Verifies bind → subscribe → publish → metric for B.
     #[tokio::test]
@@ -3171,5 +3252,189 @@ mod unify_subscribe_protocol {
             .expect("new sub after reconnect restore");
         assert!(adapter.test_topic_confirmed("many", "t/new").await);
         settle_task.abort();
+    }
+
+    /// NM-206: pre-enqueue timeout under request-channel backpressure must NOT
+    /// leave Absorb (ghost Absorb steals later Outgoing → deny→Ok / allow→Err).
+    #[tokio::test]
+    async fn pre_enqueue_timeout_no_absorb_then_mixed_allow_reject() {
+        let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "bp",
+            "localhost:1883",
+        )));
+        // Tiny client channel: 2 successful enqueues fill it; further
+        // `client.subscribe` blocks after Active is inserted (enqueued=false).
+        adapter
+            .install_test_broker_slot_with_capacity("bp", 2)
+            .await;
+        adapter
+            .enable_test_suback_wait("bp", Duration::from_secs(30))
+            .await;
+
+        let mut fillers = Vec::new();
+        for i in 0..2 {
+            let a = adapter.clone();
+            fillers.push(tokio::spawn(async move {
+                a.subscribe_topic(&format!("fill/{i}")).await
+            }));
+        }
+        // Wait until both fillers are Active (channel full).
+        for _ in 0..200 {
+            if adapter.test_pending_subscribe_count("bp").await >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert_eq!(
+            adapter.test_pending_subscribe_count("bp").await,
+            2,
+            "fillers must occupy the request channel"
+        );
+        assert_eq!(adapter.test_absorb_subscribe_count("bp").await, 0);
+
+        // Victims block in pre-enqueue subscribe and time out.
+        adapter
+            .enable_test_suback_wait("bp", Duration::from_millis(80))
+            .await;
+        let mut victims = Vec::new();
+        for i in 0..8 {
+            let a = adapter.clone();
+            let deny = i % 2 == 0;
+            victims.push(tokio::spawn(async move {
+                let topic = format!(
+                    "review/{}/{i}",
+                    if deny { "deny" } else { "allow" }
+                );
+                let r = a.subscribe_topic(&topic).await;
+                (topic, deny, r)
+            }));
+        }
+        let mut false_success = 0usize;
+        for v in victims {
+            let (topic, deny, r) = v.await.expect("join");
+            assert!(
+                r.is_err(),
+                "pre-enqueue timeout must fail {topic}, got {r:?}"
+            );
+            assert!(
+                !adapter.test_pending_has_topic("bp", &topic).await,
+                "timed-out victim must not remain Active: {topic}"
+            );
+            if r.is_ok() && deny {
+                false_success += 1;
+            }
+        }
+        assert_eq!(false_success, 0);
+        assert_eq!(
+            adapter.test_absorb_subscribe_count("bp").await,
+            0,
+            "pre-enqueue timeout must not leave Absorb"
+        );
+        // Fillers still Active (enqueued); no ghost Absorb from victims.
+        assert_eq!(adapter.test_pending_subscribe_count("bp").await, 2);
+
+        // Drop fillers without Absorb (disconnect-style) so the slot is clean.
+        adapter
+            .fail_test_pending_subscribes("bp", "test drop fillers")
+            .await;
+        for f in fillers {
+            let _ = f.await;
+        }
+        assert_eq!(adapter.test_absorb_subscribe_count("bp").await, 0);
+        assert_eq!(adapter.test_pending_subscribe_count("bp").await, 0);
+
+        // Fresh broker slot: mixed allow/reject must route accurately (no
+        // leftover Absorb from the backpressure burst).
+        adapter.install_test_broker_slot("mixed").await;
+        adapter
+            .enable_test_suback_wait("mixed", Duration::from_secs(2))
+            .await;
+        let topics_ok = ["review/allow/0", "review/allow/1", "review/allow/2"];
+        let topics_bad = ["review/deny/0", "review/deny/1", "review/deny/2"];
+        let settler = adapter.clone();
+        let settle_task = tokio::spawn(async move {
+            for _ in 0..200 {
+                for t in &topics_ok {
+                    settler
+                        .settle_test_pending_suback("mixed", t, Ok(()))
+                        .await;
+                }
+                for t in &topics_bad {
+                    settler
+                        .settle_test_pending_suback("mixed", t, Err("deny".into()))
+                        .await;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        let mut handles = Vec::new();
+        for t in topics_ok.iter().chain(topics_bad.iter()) {
+            let a = adapter.clone();
+            let topic = (*t).to_string();
+            handles.push(tokio::spawn(async move { a.subscribe_topic(&topic).await }));
+        }
+        let mut results = Vec::new();
+        for h in handles {
+            results.push(h.await.expect("join"));
+        }
+        settle_task.abort();
+        for (i, t) in topics_ok.iter().enumerate() {
+            assert!(results[i].is_ok(), "{t} must succeed, got {:?}", results[i]);
+            assert!(adapter.test_topic_confirmed("mixed", t).await);
+        }
+        for (i, t) in topics_bad.iter().enumerate() {
+            assert!(
+                results[topics_ok.len() + i].is_err(),
+                "{t} must fail, got {:?}",
+                results[topics_ok.len() + i]
+            );
+            assert!(!adapter.test_topic_confirmed("mixed", t).await);
+        }
+    }
+
+    /// Post-enqueue timeout still leaves Absorb so a late Outgoing cannot
+    /// attach to a later Active request (request-id cancel, enqueued=true).
+    #[tokio::test]
+    async fn post_enqueue_timeout_still_absorbs_late_outgoing() {
+        let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "post",
+            "localhost:1883",
+        )));
+        adapter.install_test_broker_slot("post").await;
+        adapter
+            .enable_test_suback_wait("post", Duration::from_millis(60))
+            .await;
+
+        let first = adapter.subscribe_topic("topic/old").await;
+        assert!(first.is_err(), "must timeout after enqueue");
+        assert_eq!(
+            adapter.test_absorb_subscribe_count("post").await,
+            1,
+            "post-enqueue timeout must leave Absorb"
+        );
+
+        // Late Outgoing is claimed by Absorb — not by a later Active.
+        adapter.test_apply_subscribe_outgoing("post", 9).await;
+        assert_eq!(adapter.test_absorb_subscribe_count("post").await, 1);
+
+        adapter
+            .enable_test_suback_wait("post", Duration::from_secs(2))
+            .await;
+        let a = adapter.clone();
+        tokio::spawn(async move {
+            for _ in 0..80 {
+                a.settle_test_pending_suback("post", "topic/new", Ok(()))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        adapter
+            .subscribe_topic("topic/new")
+            .await
+            .expect("later request must succeed");
+        // Absorb still holds pkid 9; SubAck 9 must not confirm old.
+        adapter.test_apply_suback("post", 9, true).await;
+        assert!(!adapter.test_topic_confirmed("post", "topic/old").await);
+        assert!(adapter.test_topic_confirmed("post", "topic/new").await);
     }
 }

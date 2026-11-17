@@ -1298,8 +1298,8 @@ impl MqttAdapter {
         let mut pending = inner.pending_subscribes.lock().await;
         while let Some(entry) = pending.queue.pop_front() {
             if let PendingQueueEntry::Active(slot) = entry {
-                for tx in slot.waiters {
-                    let _ = tx.send(Err(format!(
+                for waiter in slot.waiters {
+                    let _ = waiter.tx.send(Err(format!(
                         "Subscribe to '{}' incomplete: {reason}",
                         slot.topic
                     )));
@@ -1319,8 +1319,8 @@ impl MqttAdapter {
             .write()
             .await
             .insert(slot.topic.clone());
-        for tx in slot.waiters {
-            let _ = tx.send(Ok(()));
+        for waiter in slot.waiters {
+            let _ = waiter.tx.send(Ok(()));
         }
     }
 
@@ -1330,8 +1330,8 @@ impl MqttAdapter {
         slot: PendingSubscribeSlot,
         message: String,
     ) {
-        for tx in slot.waiters {
-            let _ = tx.send(Err(message.clone()));
+        for waiter in slot.waiters {
+            let _ = waiter.tx.send(Err(message.clone()));
         }
     }
 
@@ -1345,6 +1345,14 @@ impl MqttAdapter {
     /// only on ConnAck Success and clears on poll errors during reconnect.
     #[cfg(any(test, feature = "test-utils"))]
     pub async fn install_test_broker_slot(&self, broker_id: &str) {
+        self.install_test_broker_slot_with_capacity(broker_id, 256)
+            .await;
+    }
+
+    /// Like [`install_test_broker_slot`] but with an explicit client request
+    /// channel capacity (used to force subscribe backpressure in tests).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn install_test_broker_slot_with_capacity(&self, broker_id: &str, capacity: usize) {
         use rumqttc::{AsyncClient, MqttOptions};
         use std::time::Duration;
 
@@ -1357,9 +1365,10 @@ impl MqttAdapter {
             9, // unused — event loop is never polled
         );
         opts.set_keep_alive(Duration::from_secs(5));
-        // Capacity must cover large reconnect restores in tests (>100 topics)
-        // because the eventloop is not polled and never drains the channel.
-        let (client, eventloop) = AsyncClient::new(opts, 256);
+        // Default capacity (256) must cover large reconnect restores in tests
+        // (>100 topics) because the eventloop is not polled and never drains.
+        // Tests may pass a small capacity to force subscribe backpressure.
+        let (client, eventloop) = AsyncClient::new(opts, capacity);
         // Hold the eventloop so the client request channel stays alive; do not
         // poll (avoids connection attempts / disconnect cleanup races).
         std::mem::forget(eventloop);
@@ -1581,6 +1590,28 @@ impl MqttAdapter {
             .iter()
             .filter(|e| matches!(e, PendingQueueEntry::Active(_)))
             .count()
+    }
+
+    /// Test/helper: Absorb entries left for late Outgoing/SubAck.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn test_absorb_subscribe_count(&self, broker_id: &str) -> usize {
+        let clients = self.mqtt_clients.read().await;
+        let Some(inner) = clients.get(broker_id) else {
+            return 0;
+        };
+        let pending = inner.pending_subscribes.lock().await;
+        pending.absorb_count()
+    }
+
+    /// Test/helper: whether an Active pending entry exists for `topic`.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn test_pending_has_topic(&self, broker_id: &str, topic: &str) -> bool {
+        let clients = self.mqtt_clients.read().await;
+        let Some(inner) = clients.get(broker_id) else {
+            return false;
+        };
+        let pending = inner.pending_subscribes.lock().await;
+        pending.active_topics().iter().any(|t| t == topic)
     }
 
     /// Update overall connection status from session-ready brokers (not mere

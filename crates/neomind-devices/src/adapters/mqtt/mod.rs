@@ -30,7 +30,7 @@ use futures::StreamExt;
 use neomind_core::EventBus;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{broadcast, oneshot, Mutex, RwLock};
@@ -39,21 +39,41 @@ use tokio::sync::{broadcast, oneshot, Mutex, RwLock};
 /// Default wait for broker SUBACK after queueing a Subscribe (production).
 pub(crate) const DEFAULT_SUBACK_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Monotonic id for Subscribe requests — cancel matches this, not topic alone.
+static SUBSCRIBE_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) fn next_subscribe_request_id() -> u64 {
+    SUBSCRIBE_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+/// One waiter bound to a specific subscribe request id.
+pub(crate) struct PendingSubscribeWaiter {
+    pub(crate) request_id: u64,
+    pub(crate) tx: oneshot::Sender<Result<(), String>>,
+}
+
 /// One in-flight Subscribe awaiting SubAck correlation (pkid + waiters).
 pub(crate) struct PendingSubscribeSlot {
     pub(crate) topic: String,
+    /// Request id of the caller that issued `client.subscribe` for this slot
+    /// (bootstrap may have no waiter; cancel / enqueued marking still needs it).
+    pub(crate) owner_request_id: u64,
     /// Set when the event loop sees `Outgoing::Subscribe(pkid)`.
     pub(crate) pkid: Option<u16>,
-    pub(crate) waiters: Vec<oneshot::Sender<Result<(), String>>>,
+    /// True only after `client.subscribe` returned Ok (packet accepted by the
+    /// client request channel). Pre-enqueue cancel must not leave Absorb.
+    pub(crate) enqueued: bool,
+    pub(crate) waiters: Vec<PendingSubscribeWaiter>,
 }
 
 /// Queue entry: live waiter, or a cancelled request that must still absorb its
 /// Outgoing/SubAck so a timed-out Subscribe cannot complete a later request.
 pub(crate) enum PendingQueueEntry {
     Active(PendingSubscribeSlot),
-    /// Timed-out / cancelled. If `pkid` is None, the next Outgoing Subscribe is
-    /// claimed here; once pkid is known (or was known at cancel), SubAck is
-    /// discarded without touching confirmed or other waiters.
+    /// Timed-out / cancelled **after** enqueue. If `pkid` is None, the next
+    /// Outgoing Subscribe is claimed here; once pkid is known (or was known at
+    /// cancel), SubAck is discarded without touching confirmed or other waiters.
+    /// Never created for pre-enqueue cancel (no protocol event will arrive).
     Absorb {
         topic: String,
         pkid: Option<u16>,
@@ -78,6 +98,22 @@ impl PendingSubscribeState {
         None
     }
 
+    pub(crate) fn find_active_by_request_mut(
+        &mut self,
+        request_id: u64,
+    ) -> Option<&mut PendingSubscribeSlot> {
+        for entry in self.queue.iter_mut() {
+            if let PendingQueueEntry::Active(slot) = entry {
+                if slot.owner_request_id == request_id
+                    || slot.waiters.iter().any(|w| w.request_id == request_id)
+                {
+                    return Some(slot);
+                }
+            }
+        }
+        None
+    }
+
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) fn active_topics(&self) -> Vec<String> {
         self.queue
@@ -87,6 +123,14 @@ impl PendingSubscribeState {
                 PendingQueueEntry::Absorb { .. } => None,
             })
             .collect()
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn absorb_count(&self) -> usize {
+        self.queue
+            .iter()
+            .filter(|e| matches!(e, PendingQueueEntry::Absorb { .. }))
+            .count()
     }
 }
 
