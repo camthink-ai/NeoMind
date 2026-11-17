@@ -1,6 +1,9 @@
 ---
 id: widget-development
+summary: Write custom widget code.
+not_for: [installing widgets from the market (widget-management)]
 name: Custom Widget Development
+aliases: [widget-dev]
 description: Use when the user wants to DEVELOP a custom dashboard widget — creating a component bundle (IIFE/JSX/manifest), custom charts/gauges. Distinct from INSTALLING widgets (that's widget-management). Covers widget create/install even without saying 'widget' (e.g. '写个自定义图表组件'). Includes 组件开发/自定义图表/widget 开发.
 category: widget
 origin: builtin

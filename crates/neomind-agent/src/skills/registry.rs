@@ -133,9 +133,44 @@ impl SkillRegistry {
         self.skills.insert(id, skill);
     }
 
+    /// Re-insert a skill, restoring a previous entry after a failed
+    /// persistence rollback (create/update/delete that could not reach disk).
+    pub fn reinsert(&mut self, skill: Skill) {
+        self.insert(skill);
+    }
+
     /// Get a skill by ID.
     pub fn get(&self, id: &str) -> Option<&Skill> {
         self.skills.get(id)
+    }
+
+    /// Resolve a DECLARED alias to exactly one skill (case-insensitive,
+    /// whole-name exact — never substring).
+    ///
+    /// Returns `Some(skill)` only when the alias is declared by exactly one
+    /// skill in the registry. An alias declared by two skills (e.g. a user
+    /// skill reusing a builtin's short name) resolves to NOTHING — the
+    /// caller must ask for disambiguation instead of guessing.
+    pub fn resolve_alias(&self, requested: &str) -> Option<&Skill> {
+        let want = requested.trim().to_lowercase();
+        if want.is_empty() {
+            return None;
+        }
+        let mut hit: Option<&Skill> = None;
+        for skill in self.skills.values() {
+            if skill
+                .metadata
+                .aliases
+                .iter()
+                .any(|a| a.trim().to_lowercase() == want)
+            {
+                if hit.is_some() {
+                    return None; // ambiguous declared alias — never guess
+                }
+                hit = Some(skill);
+            }
+        }
+        hit
     }
 
     /// List all skills.
@@ -154,11 +189,21 @@ impl SkillRegistry {
     }
 
     /// Update a user skill by ID.
+    ///
+    /// Builtin skills are read-only AT THIS SHARED LAYER (not only at the
+    /// tool/API entry points): a builtin shadow-overwrite would persist to
+    /// disk and mask builtin content shipped with future upgrades.
     pub fn update_user_skill(&mut self, id: &str, content: &str) -> Result<(), String> {
-        let _existing = self
+        let existing = self
             .skills
             .get(id)
             .ok_or_else(|| format!("Skill '{}' not found", id))?;
+        if existing.metadata.origin == SkillOrigin::Builtin {
+            return Err(format!(
+                "Skill '{}' is builtin and read-only — copy it to a user skill instead",
+                id
+            ));
+        }
 
         let mut new_skill =
             parser::parse_skill(content).map_err(|e| format!("Parse error: {}", e))?;
@@ -171,8 +216,19 @@ impl SkillRegistry {
         Ok(())
     }
 
-    /// Delete a skill by ID.
+    /// Delete a skill by ID (builtin protection at the shared layer — see
+    /// [`Self::update_user_skill`]).
     pub fn delete_skill(&mut self, id: &str) -> Result<Skill, String> {
+        let existing = self
+            .skills
+            .get(id)
+            .ok_or_else(|| format!("Skill '{}' not found", id))?;
+        if existing.metadata.origin == SkillOrigin::Builtin {
+            return Err(format!(
+                "Skill '{}' is builtin and read-only — copy it to a user skill instead",
+                id
+            ));
+        }
         self.skills
             .remove(id)
             .ok_or_else(|| format!("Skill '{}' not found", id))
@@ -191,6 +247,52 @@ impl SkillRegistry {
 
 /// Thread-safe wrapper for the skill registry.
 pub type SharedSkillRegistry = Arc<RwLock<SkillRegistry>>;
+
+/// Validate a skill ID for filesystem use (shared by the skill tool and the
+/// API handlers so the two entry points cannot drift).
+pub fn is_safe_skill_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Atomically persist a user skill file under `<data_dir>/skills/<id>.md`.
+///
+/// Write-to-temp + rename: an interrupted save never leaves a half-written
+/// skill file behind (the old file, or none, stays readable). Callers must
+/// treat an Err as "NOT saved" and roll back any in-memory registry change —
+/// reporting success with an unpersisted skill is the exact lie this round
+/// removes.
+pub fn persist_skill_file(data_dir: &Path, id: &str, content: &str) -> Result<(), String> {
+    if !is_safe_skill_id(id) {
+        return Err(format!("Invalid skill ID '{}'", id));
+    }
+    let dir = data_dir.join("skills");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create skills dir: {}", e))?;
+    let path = dir.join(format!("{}.md", id));
+    let tmp = dir.join(format!(".{}.md.tmp", id));
+    std::fs::write(&tmp, content).map_err(|e| format!("Failed to write skill '{}': {}", id, e))?;
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        // Best-effort cleanup of the temp file; the original is untouched.
+        let _ = std::fs::remove_file(&tmp);
+        format!("Failed to persist skill '{}': {}", id, e)
+    })
+}
+
+/// Remove a user skill file (Ok when the file is already absent).
+pub fn remove_skill_file(data_dir: &Path, id: &str) -> Result<(), String> {
+    if !is_safe_skill_id(id) {
+        return Err(format!("Invalid skill ID '{}'", id));
+    }
+    let path = data_dir.join("skills").join(format!("{}.md", id));
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|e| format!("Failed to delete skill file '{}': {}", id, e))?;
+    }
+    Ok(())
+}
 
 /// Create a new shared registry loaded with all skills.
 pub fn create_shared_registry(data_dir: Option<&Path>) -> SharedSkillRegistry {
@@ -336,6 +438,21 @@ mod cross_domain_search_coverage {
             ("create an ai agent", "agent-management"),
             ("connect an mqtt broker", "connector-management"),
             ("set the timezone", "settings-management"),
+            // skill-routing round confusion table (plan §5): same object,
+            // different action must route to different guides. Adding
+            // "Not for" boundary sentences to descriptions shifted these
+            // once (telemetry TF boost flipped convert→data-push) — pinned.
+            ("把设备温度显示到首页", "dashboard-management"),
+            (
+                "show the device temperature on the home page",
+                "dashboard-management",
+            ),
+            ("温度超过30通知我", "rule-management"),
+            ("notify me when it goes above 30 degrees", "rule-management"),
+            ("把摄氏度转换为华氏度", "transform-management"),
+            ("convert celsius to fahrenheit", "transform-management"),
+            ("接入温度传感器", "device-onboarding"),
+            ("onboard a temperature sensor", "device-onboarding"),
         ];
         let mut misses = Vec::new();
         for (query, want) in cases {

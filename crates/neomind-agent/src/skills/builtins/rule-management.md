@@ -1,13 +1,16 @@
 ---
 id: rule-management
+summary: Create, modify, and diagnose condition-triggered automation rules.
+not_for: [notification-channel setup (message-management), data conversion (transform-management)]
 name: Rule Management Guide
+aliases: [rule, rules]
 description: Use when the user wants to create or manage rules — conditions (comparison/range/logical), triggers, actions (notify/execute/trigger-agent), thresholds, enabling/disabling. Covers rule create/update/enable/disable even without saying 'rule' (e.g. '温度超过30就告警', '低于20发通知'). Includes 规则/告警/条件/阈值/自动化.
 category: rule
 origin: builtin
 priority: 85
 token_budget: 5000
 triggers:
-  keywords: [rule, 规则, 创建规则, create rule, alert, 告警, 报警, trigger, 触发, automation, 自动化, condition, 条件, action, 动作, threshold, 阈值, notification, 通知, 规则管理, rule create, rule update, rule enable, rule disable, 阈值判断, 超过, 低于, 大于, 小于, temperature, 温度, humidity, 湿度, battery, 电池]
+  keywords: [rule, 规则, 创建规则, create rule, alert, 告警, 报警, trigger, 触发, automation, 自动化, condition, 条件, threshold, 阈值, 规则管理, rule create, rule update, rule enable, rule disable, 阈值判断, 超过, 低于, 大于, 小于, exceeds, below, above, 通知我, notify me]
   tool_target:
     - tool: rule
       actions: [list, get, create, update, delete, enable, disable, test, history]

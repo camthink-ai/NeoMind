@@ -78,6 +78,25 @@ pub struct SkillMetadata {
     /// Optional for backward compat (empty = fall back to keywords-only).
     #[serde(default)]
     pub description: String,
+    /// One-line purpose: WHAT task this guide completes. The model-facing
+    /// catalog line and the PRIMARY retrieval signal. Optional for backward
+    /// compat (empty = fall back to description).
+    #[serde(default)]
+    pub summary: String,
+    /// Adjacent tasks this guide explicitly does NOT cover (boundary
+    /// understanding for the model). NEVER concatenated into positive
+    /// retrieval text — boundary wording in the scoring corpus distorts
+    /// ranking (2026-11-17: a "Not for … telemetry" sentence handed
+    /// convert-queries to data-push).
+    #[serde(default)]
+    pub not_for: Vec<String>,
+    /// Declared short names the `skill` tool may resolve for `load`
+    /// (case-insensitive, whole-word exact — never substring matching).
+    /// A declared alias resolves only while it maps to exactly ONE skill in
+    /// the registry; collisions degrade to `needs_selection`.
+    /// Optional for backward compat with existing user skills.
+    #[serde(default)]
+    pub aliases: Vec<String>,
     #[serde(default = "default_category")]
     pub category: SkillCategory,
     #[serde(default = "default_origin")]

@@ -1,6 +1,9 @@
 ---
 id: agent-management
+summary: Create and operate recurring or scheduled AI agents.
+not_for: [one-off immediate device actions (use device control), threshold rules (rule-management)]
 name: AI Agent Management
+aliases: [agent, agents]
 description: Use when the user wants to create, configure, or manage AI agents — schedules (cron/interval/event/manual), triggers, invoking/executing agents, agent memory, execution history, or monitoring agents. Covers agent create/list/update/delete/control/invoke/memory/executions even if they don't say 'agent' (e.g. '让助手每天定时跑', '安排一个监控任务', 'create a job', '建个AI job', 'make an AI task', '帮我盯着' — agents are also called jobs, AI jobs, AI tasks, or 盯盘/巡检任务). Includes 创建/配置/调用代理、定时任务、代理记忆.
 category: agent
 origin: builtin

@@ -27,3 +27,18 @@ pub mod types;
 pub use matcher::match_skills;
 pub use registry::{create_shared_registry, SharedSkillRegistry, SkillRegistry};
 pub use types::{Skill, SkillCategory, TokenBudgetConfig};
+
+/// Eval-only no-skill mode (guidance round 3, three-way comparison): when
+/// `NEOMIND_EVAL_DISABLE_SKILLS` is set, the skill tool is NOT registered and
+/// no skill bodies (pinned or transient) are injected — the CLI stays. This
+/// exists to measure how much the skill system actually contributes on the
+/// frozen sets; it is never set in production.
+pub fn disabled_by_env() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("NEOMIND_EVAL_DISABLE_SKILLS")
+            .map(|v| !v.is_empty() && v != "0")
+            .unwrap_or(false)
+    })
+}

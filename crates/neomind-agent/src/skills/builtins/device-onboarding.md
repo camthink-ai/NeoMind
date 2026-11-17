@@ -1,6 +1,9 @@
 ---
 id: device-onboarding
+summary: Connect, register, and verify telemetry arrival for devices (MQTT/webhook/BLE); send device control commands.
+not_for: [reading current values (use the CLI directly), dashboard display (dashboard-management), threshold alerts (rule-management)]
 name: Device Onboarding & Connection Guide
+aliases: [device, onboarding]
 description: Use when the user wants to onboard, connect, or configure an IoT device, OR send a control command to a device (stop, start, set speed, alarm, reboot). Covers device provisioning, MQTT/Webhook/BLE connection, getting broker addresses, and controlling devices — even if they don't explicitly say "device" or "control" (e.g. "shut down the pump", "把泵停掉", "set the fan speed", "停下来"). Also covers virtual/simulated devices — create a device then feed it data with `neomind device write-metric` (adapter-independent, the device goes online immediately) or via its webhook URL with curl ('建个虚拟设备', 'create a virtual device', '模拟数据'). Includes 设备接入/连接/配置/控制/停机/调速/命令下发.
 category: device
 origin: builtin

@@ -264,6 +264,24 @@ impl SkillExplorationBudget {
                     self.repeated_loads = 0;
                 }
             }
+            // skill-routing contract: an unresolvable id returns
+            // status='needs_selection'/'not_found' (no guide). Re-asking with
+            // the SAME unresolved name is a no-progress loop just like a
+            // repeated load — count it, or the new contract would let the
+            // model spin on "pick a candidate" forever without tripping the
+            // budget.
+            Some("load")
+                if data.get("status").and_then(|v| v.as_str()) == Some("needs_selection")
+                    || data.get("status").and_then(|v| v.as_str()) == Some("not_found") =>
+            {
+                let requested = arguments.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let key = serde_json::json!(["unresolved", requested]).to_string();
+                if !self.loaded_guides.insert(key) {
+                    self.repeated_loads += 1;
+                } else {
+                    self.repeated_loads = 0;
+                }
+            }
             _ => {}
         }
     }

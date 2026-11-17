@@ -1,13 +1,16 @@
 ---
 id: dashboard-management
+summary: Create pages, add and bind visualization components.
+not_for: [connecting devices (device-onboarding), alert conditions (rule-management)]
 name: Dashboard Management & Component Creation
+aliases: [dashboard, dashboards]
 description: Use when the user wants to create or manage dashboards and their components — creating boards, adding/removing chart/widget/gauge components, binding data sources to widgets, sharing dashboards. Covers dashboard create/update/share/add-components even without saying 'dashboard' (e.g. '做个监控面板', '把温度画出来'). Includes 仪表盘/看板/组件/绑定数据.
 category: dashboard
 origin: builtin
 priority: 85
 token_budget: 14000
 triggers:
-  keywords: [dashboard, 仪表盘, 仪表板, create dashboard, 组件, widget, component, 数据源, data source, dashboard component, dashboard widget, 绑定数据, bind data, 创建仪表盘, 监控面板, share dashboard, 共享仪表盘, add-components, 添加组件, 删除组件, remove component]
+  keywords: [dashboard, 仪表盘, 仪表板, create dashboard, 组件, widget, component, 数据源, data source, dashboard component, dashboard widget, 绑定数据, bind data, 创建仪表盘, 监控面板, share dashboard, 共享仪表盘, add-components, 添加组件, 删除组件, remove component, 显示到, 展示到, 放到首页, 上屏, show on, display on, home page, visualization, 可视化]
   tool_target:
     - tool: dashboard
       actions: [list, get, create, update, delete, share, add-components, update-component, remove-components]

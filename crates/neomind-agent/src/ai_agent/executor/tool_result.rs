@@ -290,6 +290,9 @@ impl AgentExecutor {
                             Content::text("Skill guide retrieved and will be used as reference."),
                         ));
                     }
+                    // plan_skill_body_append never returns this; the
+                    // session-level setter uses it for same-turn dedup.
+                    crate::llm::SkillBodyAppendOutcome::AlreadyPresent => {}
                 }
             } else {
                 // Use sanitized name for LLM message so it matches what the LLM used
@@ -776,6 +779,7 @@ mod tests {
             let (outcome, piece) = plan_skill_body_append(&skill_reference, &result_text, budget);
             match outcome {
                 SkillBodyAppendOutcome::Skipped => {}
+                SkillBodyAppendOutcome::AlreadyPresent => {}
                 SkillBodyAppendOutcome::Truncated | SkillBodyAppendOutcome::Full => {
                     skill_reference.push_str(&piece);
                 }

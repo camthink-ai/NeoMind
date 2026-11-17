@@ -1,6 +1,9 @@
 ---
 id: widget-management
+summary: Install and uninstall widgets from the market.
+not_for: [writing widget code (widget-development)]
 name: Widget Management (Install/Market/List)
+aliases: [widget]
 description: Use when the user wants to INSTALL or MANAGE existing dashboard widgets — installing from market, listing, getting bundle, uninstalling. Distinct from DEVELOPMENT (that's widget-development). Covers widget install/market/bundle even without saying 'widget' (e.g. '装个仪表盘组件'). Includes 组件安装/卸载/市场.
 category: widget
 origin: builtin

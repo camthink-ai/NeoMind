@@ -1,6 +1,9 @@
 ---
 id: extension-management
+summary: Install and uninstall extensions (capability packages) from the market.
+not_for: [writing extension code (extension-development)]
 name: Extension Management (Install/Market/Status)
+aliases: [extension, extensions]
 description: Use when the user wants to INSTALL or MANAGE existing extensions — installing/uninstalling from the marketplace, listing, status, logs, config, reload. NOT for writing extension source code (that's extension-development). Covers install/market requests even without the word 'extension' (e.g. 'install the weather extension', '装个天气扩展'). FIRST check whether it's already installed — installed extensions may simply need configuration.
 category: extension
 origin: builtin

@@ -1,6 +1,9 @@
 ---
 id: system-info
+summary: Read system diagnostics (resources, network, storage).
+not_for: [changing configuration (settings-management)]
 name: System Information & Infrastructure
+aliases: [system]
 description: Use when the user asks about system/infrastructure details — broker address/port, connection info, network, server IP, how to connect devices, ESP32/ESP8266, webhook URL, TLS/auth. Covers system info even without saying 'system' (e.g. '我的设备连哪里', 'broker 地址是多少'). Includes 系统信息/broker 地址/连接信息/网络/服务器/CPU/内存/磁盘/占用/性能/运行状态.
 category: system
 origin: builtin

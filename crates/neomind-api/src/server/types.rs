@@ -2135,14 +2135,17 @@ impl ServerState {
             .build();
 
         // Register standalone tools that don't map to CLI commands
-        // Skill tool — manages skill CRUD (not CLI-replaceable)
-        let skill_registry = self.agents.session_manager.skill_registry();
-        {
-            let tool = neomind_agent::toolkit::skill_tool::SkillTool::with_data_dir(
-                skill_registry.clone(),
-                self.data_dir.clone(),
-            );
-            registry.register(Arc::new(tool));
+        // Skill tool — manages skill CRUD (not CLI-replaceable). Skipped in
+        // the eval-only no-skill comparison mode (see skills::disabled_by_env).
+        if !neomind_agent::skills::disabled_by_env() {
+            let skill_registry = self.agents.session_manager.skill_registry();
+            {
+                let tool = neomind_agent::toolkit::skill_tool::SkillTool::with_data_dir(
+                    skill_registry.clone(),
+                    self.data_dir.clone(),
+                );
+                registry.register(Arc::new(tool));
+            }
         }
 
         // Web search tool — keyless structured search (Bing RSS channel)
@@ -2233,14 +2236,16 @@ impl ServerState {
             .await
             .build();
 
-        // Re-register standalone tools
-        let skill_registry = self.agents.session_manager.skill_registry();
-        {
-            let tool = neomind_agent::toolkit::skill_tool::SkillTool::with_data_dir(
-                skill_registry.clone(),
-                self.data_dir.clone(),
-            );
-            registry.register(Arc::new(tool));
+        // Re-register standalone tools (guarded by the eval no-skill mode)
+        if !neomind_agent::skills::disabled_by_env() {
+            let skill_registry = self.agents.session_manager.skill_registry();
+            {
+                let tool = neomind_agent::toolkit::skill_tool::SkillTool::with_data_dir(
+                    skill_registry.clone(),
+                    self.data_dir.clone(),
+                );
+                registry.register(Arc::new(tool));
+            }
         }
 
         // Re-register stateful chat tools (query_conclusion / run_now /

@@ -62,6 +62,9 @@ fn parse_frontmatter(yaml: &str) -> Result<SkillMetadata, ParseError> {
     let mut trigger_keywords: Vec<String> = Vec::new();
     let mut tool_targets: Vec<ToolTarget> = Vec::new();
     let mut anti_trigger_keywords: Vec<String> = Vec::new();
+    let mut aliases: Vec<String> = Vec::new();
+    let mut summary = String::new();
+    let mut not_for: Vec<String> = Vec::new();
 
     let mut current_section = "";
 
@@ -86,11 +89,29 @@ fn parse_frontmatter(yaml: &str) -> Result<SkillMetadata, ParseError> {
             current_section = "tool_target";
             continue;
         }
+        if trimmed == "aliases:" {
+            current_section = "aliases";
+            continue;
+        }
+        if trimmed == "not_for:" {
+            current_section = "not_for";
+            continue;
+        }
 
         // Parse list items (- item)
         if let Some(item) = trimmed.strip_prefix("- ") {
             let item = item.trim().trim_matches('"').trim_matches('\'');
             match current_section {
+                "aliases" => {
+                    if !item.is_empty() {
+                        aliases.push(item.to_string());
+                    }
+                }
+                "not_for" => {
+                    if !item.is_empty() {
+                        not_for.push(item.to_string());
+                    }
+                }
                 "triggers" => {
                     trigger_keywords.push(item.to_string());
                 }
@@ -131,6 +152,10 @@ fn parse_frontmatter(yaml: &str) -> Result<SkillMetadata, ParseError> {
                     description = value.chars().take(1024).collect();
                     current_section = "";
                 }
+                "summary" => {
+                    summary = value.chars().take(200).collect();
+                    current_section = "";
+                }
                 "category" => {
                     category = match value {
                         "device" => SkillCategory::Device,
@@ -164,6 +189,20 @@ fn parse_frontmatter(yaml: &str) -> Result<SkillMetadata, ParseError> {
                 }
                 "tool_target" => {
                     current_section = "tool_target";
+                }
+                "aliases" => {
+                    // Header with inline list value (`aliases: [a, b]`) or bare
+                    // header with `- item` lines below.
+                    if !value.trim().is_empty() {
+                        aliases = parse_list_value(value);
+                    }
+                    current_section = "aliases";
+                }
+                "not_for" => {
+                    if !value.trim().is_empty() {
+                        not_for = parse_list_value(value);
+                    }
+                    current_section = "not_for";
                 }
 
                 // Section-specific fields
@@ -200,6 +239,9 @@ fn parse_frontmatter(yaml: &str) -> Result<SkillMetadata, ParseError> {
         id,
         name,
         description,
+        summary,
+        not_for,
+        aliases,
         category,
         origin,
         priority,
@@ -330,6 +372,9 @@ Step-by-step guide here.
                 id: "test".into(),
                 name: "Test".into(),
                 description: String::new(),
+                summary: String::new(),
+                not_for: vec![],
+                aliases: vec![],
                 category: SkillCategory::General,
                 origin: SkillOrigin::User,
                 priority: 50,

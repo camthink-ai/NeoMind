@@ -1,6 +1,9 @@
 ---
 id: data-push-management
+summary: Push platform data out to external systems (webhook/mqtt).
+not_for: [in-platform notifications (message-management)]
 name: Data Push Management & Target Configuration
+aliases: [push, data-push]
 description: Use when the user wants to forward or export data to external systems — webhook/MQTT push targets, push schedules, delivery history, test pushes. Covers push create/update/test/logs even without saying 'push' (e.g. '把数据转发到我的服务器', '数据导出'). Includes 数据推送/转发/导出/webhook 推送.
 category: push
 origin: builtin

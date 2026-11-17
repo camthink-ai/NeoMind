@@ -253,7 +253,87 @@ fn long_prompt_thinking_threshold(max_context: usize) -> usize {
 #[derive(Default)]
 struct TransientSkillContext {
     loaded_ids: std::collections::HashSet<String>,
+    /// Per-key ACTUAL injection state for every guide loaded THIS turn —
+    /// complete and unbounded (the source of truth for duplicate loads).
+    /// Kept separately from the display ring: a guide evicted from `recent`
+    /// by the 8-entry cap still has its true state here, so a repeat request
+    /// cannot misreport an in-context body as "not in context".
+    turn_states: std::collections::HashMap<String, RecentSkillState>,
     body: String,
+    /// Display-only usage record of the most recent guides, kept ACROSS user
+    /// turns (the bodies themselves are cleared at each turn boundary).
+    /// Bounded ring; never consulted for load-state decisions.
+    recent: std::collections::VecDeque<RecentSkillLoad>,
+}
+
+/// One entry of the cross-turn "recently used guides" record.
+///
+/// `state` records what ACTUALLY entered the skill block on the load that
+/// put this entry here — full / partial (truncated) / skipped. A duplicate
+/// load request must never upgrade the recorded state (the body was not
+/// re-appended), and the note shown to the model must never claim a guide is
+/// fully in context when the shared budget skipped or truncated it away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecentSkillState {
+    /// The whole body entered the skill block.
+    Full,
+    /// Only a truncated prefix entered.
+    Partial,
+    /// Nothing entered (budget exhausted before this load).
+    Skipped,
+}
+
+#[derive(Debug, Clone)]
+struct RecentSkillLoad {
+    key: String,
+    state: RecentSkillState,
+}
+
+/// How many recent-guide entries the usage note keeps.
+const RECENT_SKILL_MEMORY: usize = 8;
+
+/// Refresh the bounded recent-usage record: update-or-push the key at the
+/// back, trim to [`RECENT_SKILL_MEMORY`].
+fn touch_recent(
+    recent: &mut std::collections::VecDeque<RecentSkillLoad>,
+    key: &str,
+    state: RecentSkillState,
+) {
+    if let Some(pos) = recent.iter().position(|r| r.key == key) {
+        recent.remove(pos);
+    }
+    recent.push_back(RecentSkillLoad {
+        key: key.to_string(),
+        state,
+    });
+    while recent.len() > RECENT_SKILL_MEMORY {
+        recent.pop_front();
+    }
+}
+
+/// The model-facing "recently used guides" usage note. Deliberately explicit
+/// that entries are a USAGE RECORD — guide text is in context only when the
+/// per-entry state says so; skipped/truncated loads are never claimed as
+/// fully present. Rendered whenever any guide was consulted, INCLUDING while
+/// other bodies are in the block: a later load the budget skipped must still
+/// be visible as "not in context" in the very same request.
+fn recent_skill_note(recent: &std::collections::VecDeque<RecentSkillLoad>) -> Option<String> {
+    if recent.is_empty() {
+        return None;
+    }
+    let mut lines = String::from(
+        "## Recently Used Guides\nUsage record only — a guide's full text is in context only \
+         when marked retained. Reload with the skill tool if you need its content.\n",
+    );
+    for entry in recent.iter().rev() {
+        let state = match entry.state {
+            RecentSkillState::Full => "retained above",
+            RecentSkillState::Partial => "partially retained (truncated)",
+            RecentSkillState::Skipped => "not in context",
+        };
+        lines.push_str(&format!("- {} ({})\n", entry.key, state));
+    }
+    Some(lines)
 }
 
 /// Total estimated-token budget for skill bodies injected into one system
@@ -277,6 +357,10 @@ pub(crate) enum SkillBodyAppendOutcome {
     Full,
     Truncated,
     Skipped,
+    /// The same guide key was already injected this turn — nothing appended.
+    /// Only produced by the session-level skill-context setter, never by the
+    /// budget planner itself.
+    AlreadyPresent,
 }
 
 /// Plan the next skill-body fragment under a total token budget.
@@ -359,6 +443,9 @@ pub(crate) fn build_skill_injection_block(
                 break;
             }
             SkillBodyAppendOutcome::Full => combined.push_str(&piece),
+            // plan_skill_body_append never returns this; exhaustive for the
+            // session-level variant.
+            SkillBodyAppendOutcome::AlreadyPresent => {}
         }
     }
     if let Some(body) = transient_body {
@@ -382,6 +469,7 @@ pub(crate) fn build_skill_injection_block(
                     combined.push_str(&piece);
                 }
                 SkillBodyAppendOutcome::Full => combined.push_str(&piece),
+                SkillBodyAppendOutcome::AlreadyPresent => {}
             }
         }
     }
@@ -1312,7 +1400,17 @@ impl LlmInterface {
     }
 
     pub async fn clear_skill_context(&self) {
-        *self.skill_context.write().await = TransientSkillContext::default();
+        // Turn boundary: drop bodies + dedup set, KEEP the recent-usage record
+        // (bounded) so the next turn knows what was already consulted. All
+        // entries flip to not-retained — their bodies just left the context,
+        // and the usage note must never claim otherwise.
+        let mut guard = self.skill_context.write().await;
+        guard.loaded_ids.clear();
+        guard.turn_states.clear();
+        guard.body.clear();
+        for entry in guard.recent.iter_mut() {
+            entry.state = RecentSkillState::Skipped;
+        }
     }
 
     /// Append transient skill context (from skill tool results).
@@ -1322,6 +1420,17 @@ impl LlmInterface {
     /// under [`skill_bodies_token_budget`] — later loads truncate or skip when
     /// the total would blow the fixed-prefix budget (plan §12 P1).
     pub async fn set_skill_context(&self, skill_id: String, content: String) {
+        self.set_skill_context_outcome(skill_id, content).await;
+    }
+
+    /// [`Self::set_skill_context`] returning the injection outcome — the
+    /// internal full/partial/skipped/already_present state (surfaced via the
+    /// recent-usage note and diagnostics, not a new model-facing parameter).
+    pub(crate) async fn set_skill_context_outcome(
+        &self,
+        skill_id: String,
+        content: String,
+    ) -> SkillBodyAppendOutcome {
         // Reserve tokens already committed to pinned skills so mid-turn loads
         // cannot fill the whole shared budget before assemble merges both.
         let pinned_reserved = self.estimate_pinned_skill_tokens().await;
@@ -1330,20 +1439,39 @@ impl LlmInterface {
         let mut guard = self.skill_context.write().await;
         if !guard.loaded_ids.insert(skill_id.clone()) {
             // Already loaded this turn — skip to avoid duplicate context bloat.
-            return;
+            // The usage record keeps the state recorded by the ORIGINAL load
+            // (a repeat request must never upgrade a partial/skipped entry to
+            // "full": the body was not re-appended).
+            tracing::info!(
+                target: "neomind::skills",
+                skill = %skill_id,
+                outcome = "already_present",
+                "skill_inject"
+            );
+            let prior = guard
+                .turn_states
+                .get(&skill_id)
+                .copied()
+                .unwrap_or(RecentSkillState::Skipped);
+            touch_recent(&mut guard.recent, &skill_id, prior);
+            return SkillBodyAppendOutcome::AlreadyPresent;
         }
         let (outcome, piece) = plan_skill_body_append(&guard.body, &content, budget);
-        match outcome {
-            SkillBodyAppendOutcome::Full => {
-                guard.body.push_str(&piece);
-            }
+        let recorded_state = match outcome {
+            SkillBodyAppendOutcome::Full => RecentSkillState::Full,
+            SkillBodyAppendOutcome::Truncated => RecentSkillState::Partial,
+            SkillBodyAppendOutcome::Skipped => RecentSkillState::Skipped,
+            SkillBodyAppendOutcome::AlreadyPresent => RecentSkillState::Skipped,
+        };
+        let logged = match outcome {
+            SkillBodyAppendOutcome::Full => "full",
             SkillBodyAppendOutcome::Truncated => {
                 tracing::warn!(
                     skill_id = %skill_id,
                     budget_tokens = budget,
                     "skill context truncated to fit total skill body budget"
                 );
-                guard.body.push_str(&piece);
+                "partial"
             }
             SkillBodyAppendOutcome::Skipped => {
                 tracing::warn!(
@@ -1351,10 +1479,28 @@ impl LlmInterface {
                     budget_tokens = budget,
                     "skill context skipped: total skill body budget exhausted"
                 );
-                // Id stays in loaded_ids so the model cannot re-append the same
-                // oversized body in a retry loop.
+                "skipped"
             }
+            SkillBodyAppendOutcome::AlreadyPresent => "already_present",
+        };
+        tracing::info!(
+            target: "neomind::skills",
+            skill = %skill_id,
+            outcome = logged,
+            budget_tokens = budget,
+            "skill_inject"
+        );
+        match outcome {
+            SkillBodyAppendOutcome::Full | SkillBodyAppendOutcome::Truncated => {
+                guard.body.push_str(&piece)
+            }
+            // Id stays in loaded_ids so the model cannot re-append the same
+            // oversized body in a retry loop.
+            SkillBodyAppendOutcome::Skipped | SkillBodyAppendOutcome::AlreadyPresent => {}
         }
+        guard.turn_states.insert(skill_id.clone(), recorded_state);
+        touch_recent(&mut guard.recent, &skill_id, recorded_state);
+        outcome
     }
 
     /// Get transient skill context body (None if empty).
@@ -1501,39 +1647,57 @@ impl LlmInterface {
 
         // Pinned (user-selected) + transient skill-tool bodies share one total
         // budget on this production assemble path. Per-skill metadata still
-        // caps individuals via body_within_budget.
-        let pinned = self.pinned_skills.read().await.clone();
-        let mut pinned_chunks: Vec<(String, String)> = Vec::new();
-        if !pinned.is_empty() {
-            if let Some(registry) = self.skill_registry.read().await.clone() {
-                let registry_guard = registry.read().await;
-                for skill_id in &pinned {
-                    if let Some(skill) = registry_guard.get(skill_id) {
-                        pinned_chunks.push((
-                            skill_id.clone(),
-                            format!(
-                                "## Pinned Skill: {}\n{}",
-                                skill.metadata.name,
-                                skill.body_within_budget()
-                            ),
-                        ));
+        // caps individuals via body_within_budget. The eval-only no-skill
+        // mode skips every skill surface (see skills::disabled_by_env).
+        if !crate::skills::disabled_by_env() {
+            let pinned = self.pinned_skills.read().await.clone();
+            let mut pinned_chunks: Vec<(String, String)> = Vec::new();
+            if !pinned.is_empty() {
+                if let Some(registry) = self.skill_registry.read().await.clone() {
+                    let registry_guard = registry.read().await;
+                    for skill_id in &pinned {
+                        if let Some(skill) = registry_guard.get(skill_id) {
+                            pinned_chunks.push((
+                                skill_id.clone(),
+                                format!(
+                                    "## Pinned Skill: {}\n{}",
+                                    skill.metadata.name,
+                                    skill.body_within_budget()
+                                ),
+                            ));
+                        }
                     }
                 }
             }
-        }
-        // Auto-load skill guides — DISABLED: the slim prompt (default) dropped the
-        // full CLI reference table, and the shell tool's Command Choice covers only
-        // a subset of domains. Skills are loaded on-demand via the skill tool
-        // (search/load) when the LLM needs domain-specific guidance beyond the
-        // always-present Command Choice (complex workflows, error troubleshooting).
-        // Re-enabling auto-load would re-add ~3000 tokens per turn.
-        let transient = self.get_skill_context().await;
-        let budget = skill_bodies_token_budget(self.max_context_length().await);
-        let skill_block = build_skill_injection_block(&pinned_chunks, transient.as_deref(), budget);
-        if !skill_block.is_empty() {
-            prompt.push('\n');
-            prompt.push_str(&skill_block);
-            prompt.push('\n');
+            // Auto-load skill guides — DISABLED: the slim prompt (default) dropped the
+            // full CLI reference table, and the shell tool's Command Choice covers only
+            // a subset of domains. Skills are loaded on-demand via the skill tool
+            // (search/load) when the LLM needs domain-specific guidance beyond the
+            // always-present Command Choice (complex workflows, error troubleshooting).
+            // Re-enabling auto-load would re-add ~3000 tokens per turn.
+            let transient = self.get_skill_context().await;
+            let budget = skill_bodies_token_budget(self.max_context_length().await);
+            let skill_block =
+                build_skill_injection_block(&pinned_chunks, transient.as_deref(), budget);
+            if !skill_block.is_empty() {
+                prompt.push('\n');
+                prompt.push_str(&skill_block);
+                prompt.push('\n');
+            }
+            // Cross-turn/within-turn usage note: ALWAYS rendered when any guide
+            // was consulted — including while bodies are present, so a later load
+            // the shared budget skipped is visible as "not in context" in the
+            // very same request (review P1-2: state must reach the model, not
+            // just the logs).
+            let recent = {
+                let guard = self.skill_context.read().await;
+                recent_skill_note(&guard.recent)
+            };
+            if let Some(note) = recent {
+                prompt.push('\n');
+                prompt.push_str(&note);
+                prompt.push('\n');
+            }
         }
 
         // G2 TaskState (goal / confirmed steps / next) — production path.
@@ -3060,6 +3224,226 @@ mod request_tests;
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn recent_skill_note_survives_turn_boundary_and_stays_honest() {
+        let interface = LlmInterface::new(ChatConfig::default());
+        let outcome = interface
+            .set_skill_context_outcome("rule-management".into(), "# guide body".repeat(20))
+            .await;
+        assert_eq!(outcome, SkillBodyAppendOutcome::Full);
+
+        // While the body is present the note is rendered too, marking the
+        // guide as retained (state must be visible in the same request).
+        let prompt = interface.assemble_system_prompt(None).await;
+        assert!(prompt.contains("# guide body"));
+        assert!(
+            prompt.contains("rule-management (retained above)"),
+            "{prompt}"
+        );
+
+        // Turn boundary: body cleared, usage record kept, state degrades to
+        // not-in-context.
+        interface.clear_skill_context().await;
+        assert!(interface.get_skill_context().await.is_none());
+        let prompt = interface.assemble_system_prompt(None).await;
+        assert!(
+            prompt.contains("Recently Used Guides"),
+            "usage note must appear after the turn boundary"
+        );
+        assert!(
+            prompt.contains("rule-management (not in context)"),
+            "cleared guides must be marked not-in-context, never 'retained'"
+        );
+        assert!(!prompt.contains("retained above"), "{prompt}");
+        assert!(!prompt.contains("# guide body"), "body itself must be gone");
+
+        // Reload in the new turn: body back AND the record says retained.
+        interface
+            .set_skill_context_outcome("rule-management".into(), "# guide body".repeat(20))
+            .await;
+        assert!(interface.get_skill_context().await.is_some());
+        let prompt = interface.assemble_system_prompt(None).await;
+        assert!(prompt.contains("# guide body"));
+        assert!(prompt.contains("rule-management (retained above)"));
+    }
+
+    /// Review P1-2 (request-level): load A full, then exhaust the budget so B
+    /// is skipped — the SAME assembled request must show A's body AND B
+    /// marked "not in context".
+    #[tokio::test]
+    async fn skipped_load_is_visible_in_the_same_request_as_present_bodies() {
+        let interface = LlmInterface::new(ChatConfig::default());
+        let budget = skill_bodies_token_budget(interface.max_context_length().await);
+
+        // A: well under budget.
+        let body_a = "A-SENTINEL ".repeat(budget / 8);
+        let out_a = interface
+            .set_skill_context_outcome("guide-a".into(), body_a)
+            .await;
+        assert_eq!(out_a, SkillBodyAppendOutcome::Full);
+
+        // B: fills the remainder (Truncated or Full — both fine).
+        let body_b = "B-SENTINEL ".repeat(budget);
+        interface
+            .set_skill_context_outcome("guide-b".into(), body_b)
+            .await;
+
+        // C: tiny load with (near-)zero remaining budget -> Skipped.
+        let out_c = interface
+            .set_skill_context_outcome("guide-c".into(), "C-SENTINEL tiny".to_string())
+            .await;
+        if out_c == SkillBodyAppendOutcome::Full {
+            // Budget math landed differently — force exhaustion with one more
+            // oversized load and use D as the skipped one.
+            let out_d = interface
+                .set_skill_context_outcome("guide-d".into(), "D-SENTINEL tiny".to_string())
+                .await;
+            assert_ne!(
+                out_d,
+                SkillBodyAppendOutcome::Full,
+                "test needs a skipped load; budget too large"
+            );
+        }
+
+        let prompt = interface.assemble_system_prompt(None).await;
+        assert!(prompt.contains("A-SENTINEL"), "A's body must be in context");
+        // Whichever guide got skipped must be named as not-in-context in the
+        // SAME request — the state reaches the model, not just the logs.
+        assert!(
+            prompt.contains("(not in context)"),
+            "skipped guide must be listed as not in context: {prompt}"
+        );
+    }
+
+    /// Deterministic filler with an exact estimated token count (review-2:
+    /// budget fixtures must not depend on estimate rounding).
+    fn filler_of_tokens(tokens: usize, mark: &str) -> String {
+        use crate::agent::tokenizer::{estimate_tokens, truncate_to_tokens};
+        let long = format!("{mark}{} ", "x".repeat(tokens * 8));
+        let cut = truncate_to_tokens(&long, tokens);
+        assert_eq!(estimate_tokens(&cut), tokens, "filler token count");
+        cut
+    }
+
+    /// Review P1-1 (review-2 split): Full / Partial / Skipped states each
+    /// survive a duplicate load — no upgrade, no body growth.
+    #[tokio::test]
+    async fn duplicate_load_keeps_full_partial_and_skipped_states_exactly() {
+        let budget = skill_bodies_token_budget(
+            LlmInterface::new(ChatConfig::default())
+                .max_context_length()
+                .await,
+        );
+
+        // ---- Full ----
+        let f = LlmInterface::new(ChatConfig::default());
+        let body = filler_of_tokens(budget / 4, "F-SENT");
+        assert_eq!(
+            f.set_skill_context_outcome("g-full".into(), body.clone())
+                .await,
+            SkillBodyAppendOutcome::Full
+        );
+        assert_eq!(
+            f.set_skill_context_outcome("g-full".into(), body.clone())
+                .await,
+            SkillBodyAppendOutcome::AlreadyPresent
+        );
+        let prompt = f.assemble_system_prompt(None).await;
+        assert!(prompt.contains("g-full (retained above)"), "{prompt}");
+        assert!(prompt.matches("F-SENT").count() >= 1);
+
+        // ---- Partial: filler leaves exactly 100 tokens, guide-p needs more ----
+        let p = LlmInterface::new(ChatConfig::default());
+        let pre = filler_of_tokens(budget - 100, "P-PRE");
+        assert_eq!(
+            p.set_skill_context_outcome("g-pre".into(), pre).await,
+            SkillBodyAppendOutcome::Full
+        );
+        let big = filler_of_tokens(budget, "P-BIG");
+        assert_eq!(
+            p.set_skill_context_outcome("g-partial".into(), big.clone())
+                .await,
+            SkillBodyAppendOutcome::Truncated
+        );
+        let before = p.get_skill_context().await.unwrap();
+        assert_eq!(
+            p.set_skill_context_outcome("g-partial".into(), big.clone())
+                .await,
+            SkillBodyAppendOutcome::AlreadyPresent
+        );
+        assert_eq!(
+            p.get_skill_context().await.unwrap(),
+            before,
+            "duplicate partial load must not grow the body"
+        );
+        let prompt = p.assemble_system_prompt(None).await;
+        assert!(
+            prompt.contains("g-partial (partially retained (truncated))"),
+            "{prompt}"
+        );
+
+        // ---- Skipped: budget exactly consumed, then a tiny load ----
+        let s = LlmInterface::new(ChatConfig::default());
+        let fill = filler_of_tokens(budget, "S-FILL");
+        assert_eq!(
+            s.set_skill_context_outcome("g-fill".into(), fill).await,
+            SkillBodyAppendOutcome::Full
+        );
+        let tiny = "S-TINY body".to_string();
+        assert_eq!(
+            s.set_skill_context_outcome("g-skipped".into(), tiny.clone())
+                .await,
+            SkillBodyAppendOutcome::Skipped
+        );
+        assert_eq!(
+            s.set_skill_context_outcome("g-skipped".into(), tiny).await,
+            SkillBodyAppendOutcome::AlreadyPresent
+        );
+        let prompt = s.assemble_system_prompt(None).await;
+        assert!(prompt.contains("g-skipped (not in context)"), "{prompt}");
+        assert!(!prompt.contains("S-TINY"), "{prompt}");
+        assert!(
+            !prompt.contains("g-skipped (retained above)")
+                && !prompt.contains("g-skipped (partially retained"),
+            "skipped must not upgrade: {prompt}"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_load_within_turn_reports_already_present_without_growth() {
+        let interface = LlmInterface::new(ChatConfig::default());
+        // One unique sentinel per body so counting proves (non-)duplication.
+        let body = format!("GUIDE-SENTINEL {}", "正文".repeat(40));
+        let first = interface
+            .set_skill_context_outcome("agent-management".into(), body.clone())
+            .await;
+        let second = interface
+            .set_skill_context_outcome("agent-management".into(), body.clone())
+            .await;
+        assert_eq!(first, SkillBodyAppendOutcome::Full);
+        assert_eq!(second, SkillBodyAppendOutcome::AlreadyPresent);
+        let injected = interface.get_skill_context().await.unwrap();
+        assert_eq!(
+            injected.matches("GUIDE-SENTINEL").count(),
+            1,
+            "duplicate load must not double the body"
+        );
+    }
+
+    #[test]
+    fn touch_recent_bounds_the_ring_and_refreshes_order() {
+        let mut recent = std::collections::VecDeque::new();
+        for i in 0..(RECENT_SKILL_MEMORY + 3) {
+            touch_recent(&mut recent, &format!("skill-{i}"), RecentSkillState::Full);
+        }
+        assert_eq!(recent.len(), RECENT_SKILL_MEMORY);
+        assert_eq!(recent.front().unwrap().key, "skill-3");
+        // Re-touching an old entry moves it to the back with updated state.
+        touch_recent(&mut recent, "skill-3", RecentSkillState::Skipped);
+        assert_eq!(recent.back().unwrap().key, "skill-3");
+        assert_eq!(recent.back().unwrap().state, RecentSkillState::Skipped);
+    }
+
     #[test]
     fn extract_token_marker_preserves_implausible_meters() {
         let (clean, _, meter) = extract_token_marker("\n__NEOMIND_TOKEN_PROMPT:0__", false);
@@ -3351,7 +3735,12 @@ mod tests {
             .find("## Pinned Skill:")
             .or_else(|| prompt.find("## Skill Reference"))
             .expect("skill injection present");
-        let skill_region = &prompt[skill_start..];
+        // The budget covers the skill BLOCK only — the cross-turn usage note
+        // ("## Recently Used Guides") may follow it and is not skill body.
+        let skill_region = match prompt[skill_start..].find("## Recently Used Guides") {
+            Some(note_at) => &prompt[skill_start..skill_start + note_at],
+            None => &prompt[skill_start..],
+        };
         let tokens = estimate_tokens(skill_region);
         assert!(
             tokens <= budget + 32,

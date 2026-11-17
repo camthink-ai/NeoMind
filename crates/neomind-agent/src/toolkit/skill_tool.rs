@@ -10,6 +10,54 @@ use super::ToolOutput;
 use crate::skills;
 use crate::skills::matcher::description_intent_phrases;
 
+/// Per-signal score composition for one (skill, query) pair (see
+/// [`SkillTool::score_skill_query_parts`]).
+///
+/// Diagnostics surface WHY a candidate ranked where it did (phase-0
+/// requirement: reconstruct "why was this retrieved"); weight tuning in later
+/// phases reads the same components instead of re-deriving them.
+#[derive(Debug, Clone, Copy, Default)]
+struct ScoreBreakdown {
+    id_hit: bool,
+    alias_hits: u32,
+    keyword_hits: u32,
+    name_hit: bool,
+    desc_hits: u32,
+    category_hit: bool,
+    bm25_raw: f32,
+    bm25_lift: f32,
+    total: f32,
+}
+
+impl ScoreBreakdown {
+    /// Compact one-line composition, e.g. `id+2 kw+1 desc+1 bm25+0.45 = 4.45`.
+    fn brief(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if self.id_hit {
+            parts.push("id+2".into());
+        }
+        if self.alias_hits > 0 {
+            parts.push(format!("alias+{}", self.alias_hits));
+        }
+        if self.keyword_hits > 0 {
+            parts.push(format!("kw+{}", self.keyword_hits));
+        }
+        if self.name_hit {
+            parts.push("name+1".into());
+        }
+        if self.desc_hits > 0 {
+            parts.push(format!("desc+{}", self.desc_hits));
+        }
+        if self.category_hit {
+            parts.push("cat+0.5".into());
+        }
+        if self.bm25_lift.abs() >= 0.01 {
+            parts.push(format!("bm25+{:.2}", self.bm25_lift));
+        }
+        format!("{} = {:.2}", parts.join(","), self.total)
+    }
+}
+
 /// Tool for managing operation guides (skills).
 ///
 /// Skills are reusable step-by-step guides built from available tools.
@@ -47,16 +95,16 @@ impl SkillTool {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     }
 
-    /// Score a skill against a query string.
-    ///
-    /// Shared relevance scoring for `search` and `load` fuzzy resolution so the
-    /// two actions never drift apart. Signals (strongest first): id substring,
-    /// keyword substring, full-name containment, category substring. Returns
-    /// 0.0 for no match. Case-insensitive; empty query scores 0.0.
-    fn score_skill_query(skill: &skills::Skill, query: &str) -> f32 {
+    /// Score a skill against a query string, returning the per-signal
+    /// composition. Signals (strongest first): id substring, alias
+    /// substring, keyword substring, full-name containment, description
+    /// intent phrases, category substring. Case-insensitive; empty query
+    /// scores 0.0.
+    fn score_skill_query_parts(skill: &skills::Skill, query: &str) -> ScoreBreakdown {
+        let mut b = ScoreBreakdown::default();
         let query_lower = query.to_lowercase();
         if query_lower.is_empty() {
-            return 0.0;
+            return b;
         }
         let mut score = 0.0f32;
 
@@ -64,13 +112,34 @@ impl SkillTool {
         let id_lower = skill.metadata.id.to_lowercase();
         if id_lower.contains(&query_lower) || query_lower.contains(&id_lower) {
             score += 2.0;
+            b.id_hit = true;
         }
+
+        // Declared alias match — the author's own short names rank with
+        // keywords (a query equal to an alias must surface that skill so an
+        // ambiguous alias degrades to needs_selection WITH candidates, not a
+        // blind not_found). Cap at 2 to bound noise.
+        let mut alias_hits = 0u32;
+        for alias in &skill.metadata.aliases {
+            let a_lower = alias.trim().to_lowercase();
+            if a_lower.chars().count() >= 2
+                && (query_lower.contains(&a_lower) || a_lower.contains(&query_lower))
+            {
+                score += 1.0;
+                alias_hits += 1;
+                if alias_hits >= 2 {
+                    break;
+                }
+            }
+        }
+        b.alias_hits = alias_hits;
 
         // Keyword match — bidirectional substring (each matching keyword adds up)
         for keyword in &skill.metadata.triggers.keywords {
             let kw_lower = keyword.to_lowercase();
             if query_lower.contains(&kw_lower) || kw_lower.contains(&query_lower) {
                 score += 1.0;
+                b.keyword_hits += 1;
             }
         }
 
@@ -81,15 +150,19 @@ impl SkillTool {
         let name_lower = skill.metadata.name.to_lowercase();
         if !name_lower.is_empty() && query_lower.contains(&name_lower) {
             score += 1.0;
+            b.name_hit = true;
         }
 
-        // Description intent match — the agentskills.io standard trigger
-        // signal. Shares the intent-vocabulary extraction with the auto-inject
-        // matcher (quoted synonyms + "Includes A/B"), so a search like "把泵
-        // 停掉" or "turn off the pump" (no literal keyword) still matches.
-        if !skill.metadata.description.is_empty() {
+        // Intent-phrase match — the agentskills.io standard trigger signal,
+        // read from the retrieval text (`summary` when declared, else the
+        // legacy description). Shares the intent-vocabulary extraction with
+        // the auto-inject matcher (quoted synonyms + "Includes A/B"), so a
+        // search like "把泵停掉" or "turn off the pump" (no literal keyword)
+        // still matches.
+        let retrieval = skills::matcher::retrieval_text(skill);
+        if !retrieval.is_empty() {
             let mut desc_hits = 0u32;
-            for phrase in description_intent_phrases(&skill.metadata.description) {
+            for phrase in description_intent_phrases(&retrieval) {
                 let p_lower = phrase.to_lowercase();
                 // Forward match (query contains the phrase) is the intent hit.
                 // Reverse match (phrase contains the query) only for queries
@@ -105,18 +178,21 @@ impl SkillTool {
                     }
                 }
             }
+            b.desc_hits = desc_hits;
         }
 
         // Category match
         let category_lower = format!("{:?}", skill.metadata.category).to_lowercase();
         if category_lower.contains(&query_lower) {
             score += 0.5;
+            b.category_hit = true;
         }
 
-        score
+        b.total = score;
+        b
     }
 
-    /// `score_skill_query` + BM25 IDF-weighted lexical boost — the production
+    /// Flat signals + BM25 IDF-weighted lexical boost — the production
     /// retrieval path. The matcher's auto-inject GATE (raw>1.0 × 0.3) is NOT
     /// applied here: this is ranking, not trigger selection, so the boost only
     /// lifts an already-positive candidate (rare-term hits like "LoRaWAN"
@@ -131,45 +207,94 @@ impl SkillTool {
         doc_idx: usize,
         query_tokens: &[String],
     ) -> f32 {
-        let mut score = Self::score_skill_query(skill, query);
+        Self::score_with_bm25_parts(skill, query, index, doc_idx, query_tokens).total
+    }
+
+    /// [`Self::score_with_bm25`] with per-signal composition for diagnostics.
+    fn score_with_bm25_parts(
+        skill: &skills::Skill,
+        query: &str,
+        index: &skills::bm25::Bm25Index,
+        doc_idx: usize,
+        query_tokens: &[String],
+    ) -> ScoreBreakdown {
+        let mut b = Self::score_skill_query_parts(skill, query);
         let raw = index.score(doc_idx, query_tokens);
+        b.bm25_raw = raw;
         if raw > 1.0 {
-            if score > 0.0 {
+            if b.total > 0.0 {
                 // Ranking lift for an already-positive candidate.
-                score += (raw - 1.0) * 0.3;
+                b.bm25_lift = (raw - 1.0) * 0.3;
             } else if raw >= Self::RARE_TERM_RESCUE_RAW {
                 // Rescue for a genuinely rare-term query whose flat signals
                 // missed (e.g. "lorawan"): only a STRONG IDF-weighted hit
                 // creates a candidate from zero. Common-word coincidences
                 // ("skill", "not") stay below the bar, so a garbage query
                 // like "zzz-not-a-skill" still finds nothing.
-                score += (raw - 2.0) * 0.5;
+                b.bm25_lift = (raw - 2.0) * 0.5;
             }
         }
-        score
+        b.total += b.bm25_lift;
+        b
     }
 
-    /// Persist a skill file to disk.
-    fn persist(&self, id: &str, content: &str) {
-        if let Some(ref dir) = self.data_dir {
-            let skills_dir = dir.join("skills");
-            let _ = std::fs::create_dir_all(&skills_dir);
-            let path = skills_dir.join(format!("{}.md", id));
-            if let Err(e) = std::fs::write(&path, content) {
-                tracing::error!(path = %path.display(), error = %e, "Failed to persist skill");
-            }
+    /// One-line purpose of a skill for candidate lists: the description up to
+    /// its first sentence boundary (descriptions are written intent-first,
+    /// agentskills.io style), capped for token hygiene.
+    fn purpose_of(skill: &skills::Skill) -> String {
+        let desc = if !skill.metadata.summary.is_empty() {
+            skill.metadata.summary.as_str()
+        } else if !skill.metadata.description.is_empty() {
+            skill.metadata.description.as_str()
+        } else {
+            skill
+                .body
+                .lines()
+                .find(|l| !l.is_empty() && !l.starts_with('#'))
+                .unwrap_or("Step-by-step guide")
+        };
+        let first_sentence = desc
+            .find(['。', '.', '；', ';'])
+            .map(|i| &desc[..i])
+            .unwrap_or(desc)
+            .trim();
+        first_sentence.chars().take(120).collect()
+    }
+
+    /// Contextual redirect when a load resolves to nothing. The extension
+    /// redirect ONLY fires when the request itself smells like extension
+    /// work (skill-vs-extension confusion is real but was previously bolted
+    /// onto EVERY miss, misdirecting unrelated lookups).
+    fn redirect_hint(requested: &str) -> String {
+        let lower = requested.to_lowercase();
+        let extensionish = ["extension", "扩展", "插件", "plugin", "market"]
+            .iter()
+            .any(|t| lower.contains(t));
+        if extensionish {
+            return " If you meant to install an EXTENSION (a capability like \
+                    weather-forecast), load 'extension-management' — skills are how-to \
+                    guides, extensions are installable capabilities."
+                .to_string();
+        }
+        " Use action='search' with domain keywords, or continue with \
+          `neomind <domain> --help` — do not retry the same name."
+            .to_string()
+    }
+
+    /// Persist a skill file atomically. `Ok(())` when no data dir is
+    /// configured (no persistence expected — e.g. the builtin-only tests).
+    fn persist(&self, id: &str, content: &str) -> std::result::Result<(), String> {
+        match self.data_dir {
+            Some(ref dir) => skills::registry::persist_skill_file(dir, id, content),
+            None => Ok(()),
         }
     }
 
-    /// Delete a skill file from disk.
-    fn remove_file(&self, id: &str) {
-        if let Some(ref dir) = self.data_dir {
-            let path = dir.join("skills").join(format!("{}.md", id));
-            if path.exists() {
-                if let Err(e) = std::fs::remove_file(&path) {
-                    tracing::error!(path = %path.display(), error = %e, "Failed to delete skill file");
-                }
-            }
+    /// Delete a skill file from disk (atomic contract shared with persist).
+    fn remove_file(&self, id: &str) -> std::result::Result<(), String> {
+        match self.data_dir {
+            Some(ref dir) => skills::registry::remove_skill_file(dir, id),
+            None => Ok(()),
         }
     }
 }
@@ -186,17 +311,32 @@ impl Tool for SkillTool {
     }
 
     fn description(&self) -> &str {
-        r##"Load operation guides (skills) on demand — step-by-step CLI instructions, command examples, error solutions. Load only relevant guidance; request a returned section title for detailed syntax.
+        // PURPOSE CATALOG (guidance round 3): one line per skill — the SAME
+        // sentence as the frontmatter `summary` (pinned by
+        // `description_catalog_matches_frontmatter_summaries`). The model
+        // picks the exact id directly from this catalog; search is only for
+        // uncertain names and custom guides — never a mandatory step.
+        r#"Load operation guides (skills) on demand — step-by-step CLI instructions, command examples, error solutions.
 
-Actions: search (find by keywords), load (concise guide + reference section titles by ID — auto-resolves partial/domain name, e.g. 'dashboard'→dashboard-management), create/update/delete (user skills).
+How to choose: for simple operations use the neomind CLI directly. When you need workflow knowledge, pick the matching skill id below and load it in ONE call (a declared alias also resolves). Use search only when unsure of the name or looking for custom guides. If an id/alias does not resolve, load returns needs_selection with candidates — pick one, don't retry the same name.
 
-Available skill IDs (load when relevant, partial name auto-resolves):
-- device-onboarding (connect devices), connector-management (broker connections), data-push-management (outbound telemetry)
-- rule-management (conditions), transform-management (data conversion), agent-management (recurring AI), message-management (notifications), dashboard-management (visualization)
-- extension-management (packages), widget-management (packages), extension-development (coding), widget-development (coding)
-- llm-management (models), settings-management (configuration), system-info (diagnostics)
+- device-onboarding (device): Connect, register, and verify telemetry arrival for devices (MQTT/webhook/BLE); send device control commands.
+- connector-management (connector): Configure and diagnose external broker connections.
+- data-push-management (push): Push platform data out to external systems (webhook/mqtt).
+- rule-management (rule): Create, modify, and diagnose condition-triggered automation rules.
+- transform-management (transform): Convert input data into new metrics and verify the output.
+- agent-management (agent): Create and operate recurring or scheduled AI agents.
+- message-management (notification): Configure notification channels and send messages.
+- dashboard-management (dashboard): Create pages, add and bind visualization components.
+- extension-management (extension): Install and uninstall extensions (capability packages) from the market.
+- extension-development (extension-dev): Write extension code from scratch.
+- widget-management (widget): Install and uninstall widgets from the market.
+- widget-development (widget-dev): Write custom widget code.
+- llm-management (llm): Add and configure LLM backends.
+- settings-management (settings): Read and change system settings.
+- system-info (system): Read system diagnostics (resources, network, storage).
 
-When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, cross-domain) or when a command failed and you don't know why. For standard CRUD (list/get/update/delete by id), use `shell` (`neomind <domain> <subcommand>`) directly."##
+When NOT to load: standard CRUD (list/get/update/delete by id), plain reads of current values, or syntax you can check with neomind <domain> <command> --help. Load only for complex/unfamiliar workflows or a command failure you cannot explain."#
     }
 
     fn parameters(&self) -> Value {
@@ -209,15 +349,19 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 },
                 "id": {
                     "type": "string",
-                    "description": "Skill ID for load/update/delete. Example: 'rule-management', 'device-onboarding'"
+                    "description": "Exact skill ID or declared alias for load/update/delete. Example: 'rule-management', 'dashboard'"
                 },
                 "query": {
                     "type": "string",
-                    "description": "Search query for finding relevant skills. Example: 'device', 'rule', 'dashboard'"
+                    "description": "Search query for finding relevant skills. Example: 'device onboarding', 'notification'"
                 },
                 "section": {
                     "type": "string",
                     "description": "Optional exact reference section title returned by load. Omit for the concise workflow."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional search result count, 1-10 (default 3)."
                 },
                 "content": {
                     "type": "string",
@@ -255,27 +399,21 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 let index = skills::bm25::Bm25Index::build(corpus);
                 let query_tokens = skills::bm25::tokenize(query);
 
-                let mut results: Vec<(String, String, f32)> = Vec::new();
+                let mut results: Vec<(String, ScoreBreakdown)> = Vec::new();
                 for (i, skill) in all.iter().copied().enumerate() {
-                    let score = Self::score_with_bm25(skill, query, &index, i, &query_tokens);
-                    if score > 0.0 {
-                        // The frontmatter `description` is the intent-carrying
-                        // signal (agentskills.io); fall back to the body's first
-                        // content line for skills authored before descriptions.
-                        let desc = if !skill.metadata.description.is_empty() {
-                            skill.metadata.description.clone()
-                        } else {
-                            skill.body
-                                .lines()
-                                .find(|l| !l.is_empty() && !l.starts_with('#'))
-                                .unwrap_or("Step-by-step guide")
-                                .to_string()
-                        };
-                        results.push((skill.metadata.id.clone(), desc, score));
+                    let b = Self::score_with_bm25_parts(skill, query, &index, i, &query_tokens);
+                    if b.total > 0.0 {
+                        results.push((skill.metadata.id.clone(), b));
                     }
                 }
 
                 if results.is_empty() {
+                    tracing::info!(
+                        target: "neomind::skills",
+                        query = %query,
+                        found = false,
+                        "skill_search"
+                    );
                     // A successful search may have no matches. Do not return
                     // unrelated guides as apparent evidence, or keep process-
                     // global retry state: exploration budgets belong to the
@@ -290,21 +428,60 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                         "hint": "Use another available capability if it can answer the request; otherwise explain what is missing or ask for the required details."
                     })))
                 } else {
-                    results.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
-                    let skills: Vec<serde_json::Value> = results.iter()
-                        .take(5)
-                        .map(|(id, desc, score)| serde_json::json!({
-                            "id": id,
-                            "description": desc,
-                            "relevance": format!("{:.1}", score)
-                        }))
+                    // Stable total order: score desc, then id asc — the same
+                    // query + registry must produce the same ranking across
+                    // calls and process restarts (HashMap order is not order).
+                    results.sort_by(|a, b| {
+                        b.1.total
+                            .partial_cmp(&a.1.total)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| a.0.cmp(&b.0))
+                    });
+                    // Default 3 candidates ("limit" widens to at most 10 for
+                    // browsing a large custom-skill registry).
+                    let limit = args
+                        .get("limit")
+                        .and_then(|v| v.as_u64())
+                        .map(|n| (n as usize).clamp(1, 10))
+                        .unwrap_or(3);
+                    // Diagnostics (no guide bodies): query + ranked composition
+                    // of every returned candidate, so a failure can be traced
+                    // back to "why was this retrieved" from the log alone.
+                    let ranked_brief: Vec<String> = results
+                        .iter()
+                        .take(limit)
+                        .map(|(id, b)| format!("{id} {}", b.brief()))
+                        .collect();
+                    tracing::info!(
+                        target: "neomind::skills",
+                        query = %query,
+                        found = true,
+                        candidates = ?ranked_brief,
+                        "skill_search"
+                    );
+                    let total = results.len();
+                    let matches: Vec<serde_json::Value> = results
+                        .iter()
+                        .take(limit)
+                        .map(|(id, _)| {
+                            let s = all
+                                .iter()
+                                .find(|s| s.metadata.id == *id)
+                                .expect("result id comes from the registry list");
+                            serde_json::json!({
+                                "id": id,
+                                "purpose": Self::purpose_of(s),
+                            })
+                        })
                         .collect();
                     Ok(ToolOutput::success(serde_json::json!({
                         "found": true,
                         "scope": "workflow_guides",
-                        "count": skills.len(),
-                        "matches": skills,
-                        "hint": "Use action='load' and 'id' for the overview; add 'section' for a listed reference chapter."
+                        "count": matches.len(),
+                        "total_matches": total,
+                        "more_available": total > matches.len(),
+                        "matches": matches,
+                        "hint": "Use action='load' with the exact id (a declared alias also resolves); add 'section' for a listed reference chapter."
                     })))
                 }
             }
@@ -321,105 +498,98 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                     )),
                 };
                 let registry_guard = self.registry.read().await;
-                match registry_guard.get(id) {
-                    Some(skill) => {
-                        Ok(ToolOutput::success(skill.load_guide(section)
-                            .map_err(ToolError::InvalidArguments)?))
+                // Resolution is DETERMINISTIC and declared, never scored:
+                //   1. exact skill id
+                //   2. alias declared in frontmatter AND unique across the registry
+                //   3. otherwise the caller must choose (needs_selection) — a
+                //      scoring lead is NOT a reason to silently load a guide.
+                // (skill-routing round: the old single-leader fuzzy auto-load
+                // had no relevance floor — any 0.1-score "leader" loaded.)
+                let resolved = registry_guard
+                    .get(id)
+                    .map(|s| (s, false))
+                    .or_else(|| registry_guard.resolve_alias(id).map(|s| (s, true)));
+
+                if let Some((skill, via_alias)) = resolved {
+                    tracing::info!(
+                        target: "neomind::skills",
+                        requested = %id,
+                        resolution = if via_alias { "declared_alias" } else { "exact_id" },
+                        resolved = %skill.metadata.id,
+                        section = ?section,
+                        "skill_load"
+                    );
+                    let mut result = skill.load_guide(section)
+                        .map_err(ToolError::InvalidArguments)?;
+                    if via_alias {
+                        result["resolved_from"] = serde_json::json!(id);
                     }
-                    None => {
-                        // Fuzzy resolution: when an exact id misses, try to resolve a
-                        // unique best match (e.g. "dashboard" → "dashboard-management").
-                        // Domain tools get this self-healing via the tool-name mapper;
-                        // without it a model that guesses a partial id gets stuck after
-                        // the first miss — especially small models, which rarely act on
-                        // a plain-text "Did you mean" hint.
-                        let all: Vec<&skills::Skill> = registry_guard.list();
-                        let corpus: Vec<String> =
-                            all.iter().copied().map(skills::matcher::searchable_text).collect();
-                        let index = skills::bm25::Bm25Index::build(corpus);
-                        let query_tokens = skills::bm25::tokenize(id);
-                        let mut candidates: Vec<(&skills::Skill, f32)> = all
-                            .iter()
-                            .enumerate()
-                            .map(|(i, s)| (*s, Self::score_with_bm25(s, id, &index, i, &query_tokens)))
-                            .filter(|(_, sc)| *sc > 0.0)
-                            .collect();
-                        candidates
-                            .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    Ok(ToolOutput::success(result))
+                } else {
+                    // Suggestion candidates only — scored, stably sorted, bounded.
+                    let all: Vec<&skills::Skill> = registry_guard.list();
+                    let corpus: Vec<String> =
+                        all.iter().copied().map(skills::matcher::searchable_text).collect();
+                    let index = skills::bm25::Bm25Index::build(corpus);
+                    let query_tokens = skills::bm25::tokenize(id);
+                    let mut candidates: Vec<(&skills::Skill, f32)> = all
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| (*s, Self::score_with_bm25(s, id, &index, i, &query_tokens)))
+                        .filter(|(_, sc)| *sc > 0.0)
+                        .collect();
+                    candidates.sort_by(|a, b| {
+                        b.1.partial_cmp(&a.1)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| a.0.metadata.id.cmp(&b.0.metadata.id))
+                    });
 
-                        // Auto-resolve only when a single match strictly leads the
-                        // runner-up — never silently pick among ties (e.g. "management"
-                        // matching every *-management skill).
-                        let resolved = match candidates.len() {
-                            0 => None,
-                            1 => Some(candidates[0].0),
-                            _ if candidates[0].1 > candidates[1].1 => Some(candidates[0].0),
-                            _ => None,
-                        };
-
-                        if let Some(skill) = resolved {
-                            tracing::debug!(
-                                requested = %id,
-                                resolved = %skill.metadata.id,
-                                "skill load fuzzy-resolved"
-                            );
-                            let mut result = skill.load_guide(section)
-                                .map_err(ToolError::InvalidArguments)?;
-                            result["resolved_from"] = serde_json::json!(id);
-                            Ok(ToolOutput::success(result))
-                        } else {
-                            // Structured candidates (mirror the CLI `suggestion`/`n`
-                            // field) so the caller can pick — not just a text hint.
-                            let ids: Vec<String> = candidates
+                    let status = if candidates.is_empty() { "not_found" } else { "needs_selection" };
+                    tracing::info!(
+                        target: "neomind::skills",
+                        requested = %id,
+                        resolution = status,
+                        candidate_count = candidates.len(),
+                        section = ?section,
+                        "skill_load"
+                    );
+                    let cands: Vec<serde_json::Value> = candidates
+                        .iter()
+                        .take(3)
+                        .map(|(s, _)| {
+                            serde_json::json!({
+                                "id": s.metadata.id,
+                                "purpose": Self::purpose_of(s),
+                            })
+                        })
+                        .collect();
+                    let msg = if cands.is_empty() {
+                        format!(
+                            "No skill matches '{}' and no guide was loaded.{}",
+                            id,
+                            Self::redirect_hint(id)
+                        )
+                    } else {
+                        format!(
+                            "'{}' is not an exact skill id or a declared alias. Candidates: {}. \
+                             Load one by its exact id, or proceed with the CLI directly.{}",
+                            id,
+                            candidates
                                 .iter()
-                                .take(5)
+                                .take(3)
                                 .map(|(s, _)| s.metadata.id.clone())
-                                .collect();
-                            let cands: Vec<serde_json::Value> = candidates
-                                .iter()
-                                .take(5)
-                                .map(|(s, sc)| {
-                                    serde_json::json!({
-                                        "id": s.metadata.id,
-                                        "name": s.metadata.name,
-                                        "relevance": format!("{:.1}", sc),
-                                    })
-                                })
-                                .collect();
-                            // Skill-vs-extension disambiguation rides on the
-                            // error: small models asked to "install the X
-                            // extension" routinely try skill(load, "X") here
-                            // (2026-10-15: a 7-round spiral on exactly this).
-                            // One sentence at the failure point redirects them
-                            // to the extension-management skill.
-                            let ext_hint = " NOTE: skills are how-to guides. If you meant to \
-                             install an EXTENSION (a capability like weather-forecast), load the \
-                             'extension-management' skill instead — it covers \
-                             market-install.";
-                            let msg = if ids.is_empty() {
-                                format!(
-                                    "Skill '{}' not found. No close match — use action='search' \
-                                     to find skills, or action='load' with an exact ID.{}",
-                                    id, ext_hint
-                                )
-                            } else {
-                                format!(
-                                    "Skill '{}' not found. Did you mean: {}?{}",
-                                    id,
-                                    ids.join(", "),
-                                    ext_hint
-                                )
-                            };
-                            Ok(ToolOutput::error_with_metadata(
-                                msg,
-                                serde_json::json!({
-                                    "requested_id": id,
-                                    "candidates": cands,
-                                    "hint": "Use action='load' with one of these exact IDs.",
-                                }),
-                            ))
-                        }
-                    }
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            Self::redirect_hint(id)
+                        )
+                    };
+                    Ok(ToolOutput::success(serde_json::json!({
+                        "status": status,
+                        "loaded": false,
+                        "requested_id": id,
+                        "candidates": cands,
+                        "message": msg,
+                    })))
                 }
             }
             "create" => {
@@ -432,9 +602,20 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 let mut registry_guard = self.registry.write().await;
                 match registry_guard.add_user_skill(content) {
                     Ok(id) => {
+                        // Memory-then-disk with rollback: if the file cannot be
+                        // persisted, the registry entry is removed again and the
+                        // failure is REPORTED — never "created successfully"
+                        // with nothing on disk.
+                        if let Err(e) = self.persist(&id, content) {
+                            let _ = registry_guard.delete_skill(&id);
+                            tracing::error!(skill = %id, error = %e, "skill create rolled back");
+                            return Ok(ToolOutput::error(format!(
+                                "Failed to create skill '{}' — nothing was saved. Error: {}",
+                                id, e
+                            )));
+                        }
                         let skill = registry_guard.get(&id)
                             .ok_or_else(|| ToolError::Execution("Skill created but not found in registry".into()))?;
-                        self.persist(&id, content);
                         Ok(ToolOutput::success(serde_json::json!({
                             "id": skill.metadata.id,
                             "name": skill.metadata.name,
@@ -456,7 +637,11 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 })?;
 
                 let mut registry_guard = self.registry.write().await;
-                if let Some(skill) = registry_guard.get(id) {
+                // Snapshot for rollback (update_user_skill re-checks builtin
+                // protection at the shared layer; this also covers the older
+                // tool-level check).
+                let previous = registry_guard.get(id).cloned();
+                if let Some(skill) = &previous {
                     if skill.metadata.origin == crate::skills::types::SkillOrigin::Builtin {
                         return Ok(ToolOutput::error(format!(
                             "Skill '{}' is builtin and read-only — copy it to a user skill instead",
@@ -466,9 +651,18 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 }
                 match registry_guard.update_user_skill(id, content) {
                     Ok(()) => {
+                        if let Err(e) = self.persist(id, content) {
+                            if let Some(old) = previous {
+                                registry_guard.reinsert(old);
+                            }
+                            tracing::error!(skill = %id, error = %e, "skill update rolled back");
+                            return Ok(ToolOutput::error(format!(
+                                "Failed to update skill '{}' — the previous version is unchanged. Error: {}",
+                                id, e
+                            )));
+                        }
                         let skill = registry_guard.get(id)
                             .ok_or_else(|| ToolError::Execution("Skill updated but not found in registry".into()))?;
-                        self.persist(id, content);
                         Ok(ToolOutput::success(serde_json::json!({
                             "id": skill.metadata.id,
                             "name": skill.metadata.name,
@@ -498,7 +692,14 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
                 }
                 match registry_guard.delete_skill(id) {
                     Ok(skill) => {
-                        self.remove_file(id);
+                        if let Err(e) = self.remove_file(id) {
+                            registry_guard.reinsert(skill);
+                            tracing::error!(skill = %id, error = %e, "skill delete rolled back");
+                            return Ok(ToolOutput::error(format!(
+                                "Failed to delete skill '{}' — it still exists. Error: {}",
+                                id, e
+                            )));
+                        }
                         Ok(ToolOutput::success(serde_json::json!({
                             "message": format!("Skill '{}' ('{}') deleted successfully", id, skill.metadata.name),
                         })))
@@ -518,7 +719,6 @@ When to load: ONLY complex/unfamiliar workflows (multi-entity, unit conversion, 
 mod tests {
     use super::*;
     use crate::skills::SkillRegistry;
-    use std::collections::HashSet;
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
@@ -597,64 +797,55 @@ mod tests {
         );
     }
 
-    /// Guard against drift between the hardcoded "Available skill IDs" list in
-    /// SkillTool::description() and the builtin skills actually loaded by the
-    /// registry. The description is the agent's startup view of which skills
-    /// exist; if it goes stale the agent won't know to load a new skill.
+    /// Guard against drift between the PURPOSE CATALOG in
+    /// SkillTool::description() and the builtin skills' frontmatter.
     ///
-    /// When adding/removing a builtin skill, update BOTH:
-    ///   - crates/neomind-agent/src/skills/registry.rs (the `include_str!` list)
-    ///   - this file's `description()` "Available skill IDs" section
+    /// The catalog is the model's startup view of which skills exist and what
+    /// each completes; its one-liners must be the EXACT frontmatter `summary`
+    /// sentences. A stale id or paraphrased line silently degrades direct
+    /// selection — so both are pinned here. When adding/removing a builtin,
+    /// update BOTH the registry `include_str!` list AND this catalog.
     #[test]
-    fn description_skill_ids_match_registry_builtins() {
-        // load_all(None) loads builtins only (no data_dir → no user skills),
-        // which is exactly what description() advertises.
+    fn description_catalog_matches_frontmatter_summaries() {
         let registry = SkillRegistry::load_all(None);
-        let registry_ids: HashSet<String> = registry
-            .list()
-            .iter()
-            .map(|s| s.metadata.id.clone())
-            .collect();
-
         let tool = SkillTool::new(Arc::new(RwLock::new(registry)));
-        let desc = tool.description();
 
-        // Parse the compact "- id1, id2, ..." list under "Available skill IDs".
-        // IDs are comma-separated on a single line; an optional "(...)" note may
-        // follow an id (e.g. "device-onboarding (devices/MQTT/webhook)") and is
-        // stripped before matching against the registry.
-        let mut listed_ids: HashSet<String> = HashSet::new();
-        let mut in_section = false;
-        for line in desc.lines() {
-            if line.starts_with("Available skill IDs") {
-                in_section = true;
-                continue;
-            }
-            if in_section {
-                if let Some(rest) = line.strip_prefix("- ") {
-                    for part in rest.split(',') {
-                        let id = part.trim();
-                        // Drop a parenthesized note, e.g. "id (note)" -> "id".
-                        let id = id.split('(').next().unwrap_or(id).trim();
-                        if !id.is_empty() {
-                            listed_ids.insert(id.to_string());
-                        }
-                    }
-                } else if !listed_ids.is_empty() {
-                    break; // first non-bullet line ends the section
+        // Parse "- <id> (<aliases>): <summary>" catalog bullets.
+        let mut catalog: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for line in tool.description().lines() {
+            if let Some(rest) = line.strip_prefix("- ") {
+                let Some((id_part, summary)) = rest.split_once(": ") else {
+                    continue;
+                };
+                // Drop the parenthesized alias note: "id (alias)" -> "id".
+                let id = id_part.split('(').next().unwrap_or(id_part).trim();
+                if !id.is_empty() {
+                    catalog.insert(id.to_string(), summary.trim().to_string());
                 }
             }
         }
 
+        let reg = SkillRegistry::load_all(None);
+        let builtins: Vec<&crate::skills::Skill> = reg.list();
         assert_eq!(
-            registry_ids, listed_ids,
-            "skill_tool description 'Available skill IDs' drifted from registry builtins.\n\
-             registry builtins: {:#?}\n\
-             description lists: {:#?}\n\
-             Fix: when adding/removing a builtin skill, update BOTH \
-             skills/registry.rs (include_str!) AND skill_tool.rs description().",
-            registry_ids, listed_ids
+            catalog.len(),
+            builtins.len(),
+            "catalog lists {} skills, registry has {}",
+            catalog.len(),
+            builtins.len()
         );
+        for skill in builtins {
+            let id = &skill.metadata.id;
+            let listed = catalog
+                .get(id.as_str())
+                .unwrap_or_else(|| panic!("builtin {id} missing from the tool catalog"));
+            assert_eq!(
+                listed,
+                skill.metadata.summary.as_str(),
+                "catalog line for {id} drifted from its frontmatter summary"
+            );
+        }
     }
 
     /// Build a SkillTool over the builtin skills (no user skills / data dir).
@@ -776,61 +967,302 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_load_fuzzy_resolves_partial_id() {
-        // "dashboard" is not an exact id, but uniquely resolves to dashboard-management.
+    async fn test_load_alias_resolves_declared_short_name() {
+        // "dashboard" is a DECLARED alias of dashboard-management — resolves
+        // deterministically (no scoring involved), marks resolved_from.
         let tool = builtin_tool();
         let out = tool
             .execute(serde_json::json!({"action": "load", "id": "dashboard"}))
             .await
             .unwrap();
-        assert!(
-            out.success,
-            "fuzzy load should auto-resolve: {:?}",
-            out.error
-        );
+        assert!(out.success, "alias load should resolve: {:?}", out.error);
         assert_eq!(out.data["id"], "dashboard-management");
         assert_eq!(out.data["resolved_from"], "dashboard");
         assert!(!out.data["guide"].as_str().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn test_load_fuzzy_ambiguous_returns_candidates() {
-        // "management" matches multiple *-management skills — must NOT auto-pick.
+    async fn test_load_alias_is_case_and_whitespace_insensitive() {
+        let tool = builtin_tool();
+        let out = tool
+            .execute(serde_json::json!({"action": "load", "id": "  Dashboard "}))
+            .await
+            .unwrap();
+        assert!(out.success);
+        assert_eq!(out.data["id"], "dashboard-management");
+    }
+
+    #[tokio::test]
+    async fn test_load_unresolvable_returns_needs_selection_not_auto_load() {
+        // "management" scores on many *-management skills but is neither an id
+        // nor a declared alias: the tool MUST NOT silently load a scored
+        // "leader" — it returns candidates and lets the caller choose.
         let tool = builtin_tool();
         let out = tool
             .execute(serde_json::json!({"action": "load", "id": "management"}))
             .await
             .unwrap();
-        assert!(!out.success);
-        assert!(out.error.as_ref().unwrap().contains("Did you mean"));
-        // Structured candidates are present and there are several.
+        assert!(out.success, "needs_selection is not an execution failure");
+        assert_eq!(out.data["status"], "needs_selection");
+        assert_eq!(out.data["loaded"], false);
         let cands = out.data["candidates"].as_array().unwrap();
-        assert!(
-            cands.len() > 1,
-            "expected multiple candidates, got {:?}",
-            cands
-        );
-        // Every returned candidate must be a *-management skill (the only thing
-        // "management" matches). Exact member depends on HashMap iteration order
-        // since all tie at the same score, so don't pin a specific id.
+        assert!(!cands.is_empty() && cands.len() <= 3, "{cands:?}");
         assert!(
             cands
                 .iter()
                 .all(|c| c["id"].as_str().unwrap().contains("management")),
-            "candidates should all be *-management skills, got {:?}",
-            cands
+            "candidates should be *-management skills, got {cands:?}"
         );
+        // Every candidate carries a purpose so the model can pick sensibly.
+        for c in cands {
+            assert!(!c["purpose"].as_str().unwrap_or("").is_empty());
+        }
     }
 
     #[tokio::test]
-    async fn test_load_no_match() {
+    async fn test_load_no_match_is_honest_not_found() {
         let tool = builtin_tool();
         let out = tool
             .execute(serde_json::json!({"action": "load", "id": "zzz-not-a-skill"}))
             .await
             .unwrap();
+        assert!(out.success);
+        assert_eq!(out.data["status"], "not_found");
+        assert_eq!(out.data["loaded"], false);
+        assert!(out.data["candidates"].as_array().unwrap().is_empty());
+        // No unconditional extension redirect on an unrelated miss.
+        let msg = out.data["message"].as_str().unwrap();
+        assert!(!msg.contains("extension-management"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn test_load_extensionish_miss_gets_extension_redirect() {
+        let tool = builtin_tool();
+        let out = tool
+            .execute(serde_json::json!({"action": "load", "id": "weather-extension"}))
+            .await
+            .unwrap();
+        let msg = out.data["message"].as_str().unwrap();
+        assert!(msg.contains("extension-management"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn test_search_defaults_to_three_with_purpose_and_more_flag() {
+        let tool = builtin_tool();
+        let out = tool
+            .execute(serde_json::json!({"action": "search", "query": "management"}))
+            .await
+            .unwrap();
+        let matches = out.data["matches"].as_array().unwrap();
+        assert!(!matches.is_empty() && matches.len() <= 3);
+        for m in matches {
+            assert!(!m["purpose"].as_str().unwrap_or("").is_empty());
+            // No fabricated confidence number rides on candidates anymore.
+            assert!(m.get("relevance").is_none());
+        }
+        if out.data["total_matches"].as_u64().unwrap_or(0) as usize > matches.len() {
+            assert_eq!(out.data["more_available"], true);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_search_ranking_is_stable_across_calls() {
+        // Equal scores must tie-break by id — same query, same registry, same
+        // order on every call (the registry is a HashMap underneath).
+        let tool = builtin_tool();
+        let once = tool
+            .execute(serde_json::json!({"action": "search", "query": "management"}))
+            .await
+            .unwrap();
+        for _ in 0..5 {
+            let again = tool
+                .execute(serde_json::json!({"action": "search", "query": "management"}))
+                .await
+                .unwrap();
+            assert_eq!(
+                once.data["matches"], again.data["matches"],
+                "search ranking must be stable"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn ambiguous_alias_declared_by_two_skills_resolves_to_nothing() {
+        use crate::skills::SkillRegistry;
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+        let mk = |id: &str, aliases: &str| {
+            format!("---\nid: {id}\nname: {id}\naliases: {aliases}\n---\n\n# {id}\nbody.")
+        };
+        let mut registry = SkillRegistry::new();
+        registry
+            .add_user_skill(&mk("alpha-guide", "[shared]"))
+            .unwrap();
+        registry
+            .add_user_skill(&mk("beta-guide", "[shared]"))
+            .unwrap();
+        assert!(registry.resolve_alias("shared").is_none());
+        assert!(registry.resolve_alias("alpha-guide").is_none()); // ids are NOT aliases
+        let tool = SkillTool::new(Arc::new(RwLock::new(registry)));
+        let out = tool
+            .execute(serde_json::json!({"action": "load", "id": "shared"}))
+            .await
+            .unwrap();
+        assert_eq!(out.data["status"], "needs_selection");
+        assert_eq!(out.data["loaded"], false);
+    }
+
+    // ---- persistence truthfulness (skill-routing round plan §7) ----
+
+    const USER_SKILL_A: &str = "---\nid: user-guide-a\nname: Guide A\n---\n\n# A\nfirst body.";
+    const USER_SKILL_A_UPDATED: &str =
+        "---\nid: user-guide-a\nname: Guide A\n---\n\n# A\nsecond body.";
+
+    fn readonly_dir_tool() -> (tempfile::TempDir, SkillTool) {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        let mut perms = std::fs::metadata(&skills).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500); // r-x: writes fail
+        std::fs::set_permissions(&skills, perms).unwrap();
+        let registry = SkillRegistry::new();
+        let tool =
+            SkillTool::with_data_dir(Arc::new(RwLock::new(registry)), dir.path().to_path_buf());
+        (dir, tool)
+    }
+
+    fn writable_dir_tool() -> (tempfile::TempDir, SkillTool) {
+        let dir = tempfile::tempdir().unwrap();
+        let registry = SkillRegistry::new();
+        let tool =
+            SkillTool::with_data_dir(Arc::new(RwLock::new(registry)), dir.path().to_path_buf());
+        (dir, tool)
+    }
+
+    /// Unwritable skills dir: create must FAIL and roll the registry back —
+    /// never report success with an in-memory-only skill.
+    #[tokio::test]
+    async fn create_failure_rolls_back_and_reports_failure() {
+        let (_dir, tool) = readonly_dir_tool();
+        let out = tool
+            .execute(serde_json::json!({"action": "create", "content": USER_SKILL_A}))
+            .await
+            .unwrap();
+        assert!(!out.success, "unwritable dir must not report success");
+        let msg = out.error.unwrap_or_default();
+        assert!(msg.contains("nothing was saved"), "{msg}");
+        let guard = tool.registry.read().await;
+        assert!(
+            guard.get("user-guide-a").is_none(),
+            "registry must be rolled back"
+        );
+    }
+
+    /// Unwritable skills dir: update must FAIL and keep the previous version.
+    #[tokio::test]
+    async fn update_failure_keeps_previous_version() {
+        let (_dir, tool) = readonly_dir_tool();
+        // Seed the file directly with write permissions restored momentarily.
+        {
+            let skills = _dir.path().join("skills");
+            let mut perms = std::fs::metadata(&skills).unwrap().permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o700);
+            std::fs::set_permissions(&skills, perms).unwrap();
+            std::fs::write(skills.join("user-guide-a.md"), USER_SKILL_A).unwrap();
+            let mut perms = std::fs::metadata(&skills).unwrap().permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o500);
+            std::fs::set_permissions(&skills, perms).unwrap();
+            tool.registry
+                .write()
+                .await
+                .add_user_skill(USER_SKILL_A)
+                .unwrap();
+        }
+        let out = tool
+            .execute(serde_json::json!({
+                "action": "update", "id": "user-guide-a", "content": USER_SKILL_A_UPDATED
+            }))
+            .await
+            .unwrap();
         assert!(!out.success);
-        let cands = out.data["candidates"].as_array().unwrap();
-        assert!(cands.is_empty());
+        let msg = out.error.unwrap_or_default();
+        assert!(msg.contains("previous version is unchanged"), "{msg}");
+        let guard = tool.registry.read().await;
+        assert!(
+            guard
+                .get("user-guide-a")
+                .unwrap()
+                .body
+                .contains("first body"),
+            "registry must hold the pre-update version"
+        );
+        // The on-disk file is the ORIGINAL (atomic write never landed a half file).
+        let on_disk =
+            std::fs::read_to_string(_dir.path().join("skills").join("user-guide-a.md")).unwrap();
+        assert!(on_disk.contains("first body"));
+    }
+
+    /// Successful create persists atomically and survives a fresh registry
+    /// load from the same data dir (restart semantics).
+    #[tokio::test]
+    async fn successful_create_persists_and_survives_reload() {
+        let (dir, tool) = writable_dir_tool();
+        let out = tool
+            .execute(serde_json::json!({"action": "create", "content": USER_SKILL_A}))
+            .await
+            .unwrap();
+        assert!(out.success, "{:?}", out.error);
+        let reloaded = SkillRegistry::load_all(Some(dir.path()));
+        assert!(
+            reloaded.get("user-guide-a").is_some(),
+            "must survive restart"
+        );
+        // No temp-file leftovers from the atomic replace.
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path().join("skills"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    /// Successful delete removes the file AND the registry entry; a pinned
+    /// list still containing the id stays readable (skipped at assemble).
+    #[tokio::test]
+    async fn successful_delete_removes_everything_and_pinned_stays_readable() {
+        let (dir, tool) = writable_dir_tool();
+        tool.execute(serde_json::json!({"action": "create", "content": USER_SKILL_A}))
+            .await
+            .unwrap();
+        let out = tool
+            .execute(serde_json::json!({"action": "delete", "id": "user-guide-a"}))
+            .await
+            .unwrap();
+        assert!(out.success, "{:?}", out.error);
+        assert!(!dir.path().join("skills").join("user-guide-a.md").exists());
+        assert!(tool.registry.read().await.get("user-guide-a").is_none());
+        let reloaded = SkillRegistry::load_all(Some(dir.path()));
+        assert!(reloaded.get("user-guide-a").is_none());
+    }
+
+    /// Builtin protection lives at the SHARED registry layer — the tool entry
+    /// point is no longer the only guard (plan §7).
+    #[tokio::test]
+    async fn builtin_skills_are_read_only_at_the_registry_layer() {
+        let registry = SkillRegistry::load_all(None);
+        let mut guard = registry;
+        let update = guard.update_user_skill("dashboard-management", "evil");
+        assert!(update.is_err(), "registry must reject builtin update");
+        let delete = guard.delete_skill("dashboard-management");
+        assert!(delete.is_err(), "registry must reject builtin delete");
+        // Tool layer keeps its guard too.
+        let tool = builtin_tool();
+        let out = tool
+            .execute(serde_json::json!({
+                "action": "update", "id": "dashboard-management", "content": "evil"
+            }))
+            .await
+            .unwrap();
+        assert!(!out.success);
     }
 }

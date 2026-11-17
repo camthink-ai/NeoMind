@@ -1,13 +1,16 @@
 ---
 id: transform-management
+summary: Convert input data into new metrics and verify the output.
+not_for: [visualization (dashboard-management), alerts (rule-management)]
 name: Transform Management & Data Processing
+aliases: [transform, transforms]
 description: Use when the user wants to process or transform data — computing derived/virtual metrics, unit conversion, formulas, JS scripts, averaging/summing telemetry. Covers transform create/test-code/metrics even without saying 'transform' (e.g. '温度转华氏', '算个平均值'). Includes 数据转换/计算/公式/虚拟指标.
 category: transform
 origin: builtin
 priority: 80
 token_budget: 10000
 triggers:
-  keywords: [transform, 转换, 数据转换, data transform, 计算, calculate, formula, 公式, virtual metric, 虚拟指标, 转换数据, process data, 数据处理, 脚本, script, JS code, javascript, 华氏, 摄氏, 单位转换, unit conversion, transform create, transform test-code]
+  keywords: [transform, 转换, 数据转换, data transform, 计算, calculate, formula, 公式, virtual metric, 虚拟指标, 转换数据, process data, 数据处理, 脚本, script, JS code, javascript, 华氏, 摄氏, 单位转换, unit conversion, transform create, transform test-code, convert, celsius, fahrenheit, 换算]
   tool_target:
     - tool: transform
       actions: [list, get, create, update, delete, test-code, metrics, data-sources]

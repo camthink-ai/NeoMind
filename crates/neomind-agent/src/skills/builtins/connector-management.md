@@ -1,6 +1,9 @@
 ---
 id: connector-management
+summary: Configure and diagnose external broker connections.
+not_for: [registering devices onto a broker (device-onboarding)]
 name: Connector Management & MQTT Configuration
+aliases: [connector, broker]
 description: Use when the user wants to configure external MQTT brokers or connectors — adding/removing external brokers, subscriptions, testing connections, remote/cloud brokers. Covers connector create/list/update/enable/disable/test/subscriptions even without saying 'connector' (e.g. '连到远程 MQTT', '订阅一个外部主题'). Includes 连接器/外部 broker/远程 MQTT/订阅. NOT notification channels — use message-management for those.
 category: connector
 origin: builtin

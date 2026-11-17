@@ -11,7 +11,6 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 use neomind_agent::skills::types::SkillOrigin;
 use neomind_agent::skills::{match_skills, Skill, SkillCategory, SkillRegistry, TokenBudgetConfig};
@@ -45,14 +44,8 @@ fn is_safe_skill_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// Helper: get the skills directory, creating it if needed.
-fn skills_dir(data_dir: &std::path::Path) -> Result<PathBuf, String> {
-    let dir = data_dir.join("skills");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create skills dir: {}", e))?;
-    Ok(dir)
-}
-
-/// Helper: persist a skill to disk. Returns error on failure.
+/// Helper: persist a skill to disk ATOMICALLY (temp file + rename, shared
+/// implementation with the skill tool — no half-written skill files).
 fn persist_skill(data_dir: &std::path::Path, id: &str, content: &str) -> Result<(), String> {
     if !is_safe_skill_id(id) {
         return Err(format!(
@@ -60,23 +53,12 @@ fn persist_skill(data_dir: &std::path::Path, id: &str, content: &str) -> Result<
             id
         ));
     }
-    let dir = skills_dir(data_dir)?;
-    let path = dir.join(format!("{}.md", id));
-    std::fs::write(&path, content).map_err(|e| format!("Failed to persist skill '{}': {}", id, e))
+    neomind_agent::skills::registry::persist_skill_file(data_dir, id, content)
 }
 
-/// Helper: delete a skill file from disk.
+/// Helper: delete a skill file from disk (shared implementation).
 fn delete_skill_file(data_dir: &std::path::Path, id: &str) -> Result<(), String> {
-    if !is_safe_skill_id(id) {
-        return Err(format!("Invalid skill ID '{}'", id));
-    }
-    let dir = skills_dir(data_dir)?;
-    let path = dir.join(format!("{}.md", id));
-    if path.exists() {
-        std::fs::remove_file(&path)
-            .map_err(|e| format!("Failed to delete skill file '{}': {}", id, e))?;
-    }
-    Ok(())
+    neomind_agent::skills::registry::remove_skill_file(data_dir, id)
 }
 
 // ============================================================================
@@ -322,8 +304,17 @@ pub async fn create_skill_handler(
 
     match guard.add_user_skill(&req.content) {
         Ok(id) => {
+            // Memory-then-disk with rollback: a skill that cannot reach disk is
+            // removed from the registry again and the caller gets a 500 —
+            // never a CREATED response for an unpersisted skill.
             if let Err(e) = persist_skill(&state.data_dir, &id, &req.content) {
-                tracing::error!(error = %e, "Skill created in memory but not persisted to disk");
+                tracing::error!(error = %e, "Skill create rolled back: not persisted to disk");
+                let _ = guard.delete_skill(&id);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("Skill '{}' was not saved: {}", id, e) })),
+                )
+                    .into_response();
             }
             match guard.get(&id) {
                 Some(skill) => {
@@ -368,6 +359,8 @@ pub async fn update_skill_handler(
 
     // Builtin skills are read-only — a shadow overwrite here would persist
     // forever and mask future builtin content shipped with NeoMind upgrades.
+    // (Also enforced at the shared registry layer; kept here for the 403.)
+    let previous = guard.get(&id).cloned();
     if let Some(skill) = guard.get(&id) {
         if skill.metadata.origin == SkillOrigin::Builtin {
             return (
@@ -380,8 +373,18 @@ pub async fn update_skill_handler(
 
     match guard.update_user_skill(&id, &req.content) {
         Ok(()) => {
+            // Rollback to the previous registry entry when persistence fails —
+            // the caller sees 500 and the old version stays intact everywhere.
             if let Err(e) = persist_skill(&state.data_dir, &id, &req.content) {
-                tracing::error!(error = %e, "Skill updated in memory but not persisted to disk");
+                tracing::error!(error = %e, "Skill update rolled back: not persisted to disk");
+                if let Some(old) = previous {
+                    guard.reinsert(old);
+                }
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("Skill '{}' was not updated: {} (previous version unchanged)", id, e) })),
+                )
+                    .into_response();
             }
             match guard.get(&id) {
                 Some(skill) => (StatusCode::OK, Json(SkillDetail::from(skill))).into_response(),
@@ -435,9 +438,17 @@ pub async fn delete_skill_handler(
     }
 
     match guard.delete_skill(&id) {
-        Ok(_) => {
+        Ok(deleted) => {
+            // File removal failure restores the registry entry and reports 500
+            // — "deleted" must never be claimed while the file still exists.
             if let Err(e) = delete_skill_file(&state.data_dir, &id) {
-                tracing::error!(error = %e, "Skill removed from memory but file not deleted");
+                tracing::error!(error = %e, "Skill delete rolled back: file not removed");
+                guard.reinsert(deleted);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": format!("Skill '{}' was not deleted: {}", id, e) })),
+                )
+                    .into_response();
             }
             (
                 StatusCode::OK,

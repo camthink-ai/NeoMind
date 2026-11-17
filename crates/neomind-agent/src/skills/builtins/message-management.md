@@ -1,6 +1,9 @@
 ---
 id: message-management
+summary: Configure notification channels and send messages.
+not_for: [threshold/condition logic (rule-management)]
 name: Message Management & Channel Configuration
+aliases: [notification, notify]
 description: Use when the user wants to manage messages and notification channels — sending messages, configuring channels (webhook/email/Telegram/DingTalk/Feishu/Slack), alerts, acknowledge, severity. Covers message send/channel-create/channel-get/channel-update/channel-test/channel-delete/channel-type-schema even without saying 'message' (e.g. '发个通知到飞书', '告警发我邮箱'). Includes 消息/通知/通道/告警. NOT external MQTT brokers — use connector-management for those.
 category: message
 origin: builtin

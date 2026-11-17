@@ -1,6 +1,9 @@
 ---
 id: extension-development
+summary: Write extension code from scratch.
+not_for: [installing/uninstalling from the market (extension-management)]
 name: Extension Development Guide
+aliases: [extension-dev]
 description: Use when the user wants to DEVELOP a custom extension — creating/building a .nep package, using the extension SDK, FFI/native extensions, capability registration, extension Rust code. Covers extension create/build/validate even without saying 'extension' (e.g. '写个自定义扩展', '开发一个 .nep'). Includes 扩展开发/构建/SDK/FFI.
 category: extension
 origin: builtin
