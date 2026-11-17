@@ -104,6 +104,32 @@ impl SkillRegistry {
                 match std::fs::read_to_string(&path) {
                     Ok(content) => match parser::parse_skill(&content) {
                         Ok(mut skill) => {
+                            // Startup identity validation (review 2026-11-17):
+                            // a file whose body id disagrees with its filename,
+                            // or whose id collides with a builtin, used to load
+                            // anyway — resurrecting the update-id-mismatch
+                            // shadow after restart. Skip with a loud warning.
+                            let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                            if skill.metadata.id != file_stem {
+                                tracing::warn!(
+                                    path = %path.display(),
+                                    body_id = %skill.metadata.id,
+                                    "Skipping user skill: frontmatter id does not match the filename"
+                                );
+                                continue;
+                            }
+                            if self
+                                .skills
+                                .get(&skill.metadata.id)
+                                .is_some_and(|s| s.metadata.origin == SkillOrigin::Builtin)
+                            {
+                                tracing::warn!(
+                                    path = %path.display(),
+                                    skill_id = %skill.metadata.id,
+                                    "Skipping user skill: id collides with a builtin skill (builtins are read-only)"
+                                );
+                                continue;
+                            }
                             skill.metadata.origin = SkillOrigin::User;
                             let id = skill.metadata.id.clone();
                             tracing::debug!(skill_id = %id, path = %path.display(), "Loaded user skill");
@@ -178,9 +204,26 @@ impl SkillRegistry {
         self.skills.values().collect()
     }
 
-    /// Add a user skill.
+    /// Add a user skill. REJECTS an id that already exists (user OR builtin):
+    /// a duplicate create used to silently overwrite — including a builtin,
+    /// which bypassed the update/delete read-only protection, and when the
+    /// subsequent persist failed, rollback deleted the new entry without
+    /// restoring the overwritten original. Updates must go through
+    /// [`Self::update_user_skill`].
     pub fn add_user_skill(&mut self, content: &str) -> Result<String, String> {
         let mut skill = parser::parse_skill(content).map_err(|e| format!("Parse error: {}", e))?;
+
+        if let Some(existing) = self.skills.get(&skill.metadata.id) {
+            let kind = if existing.metadata.origin == SkillOrigin::Builtin {
+                "a builtin skill (read-only)"
+            } else {
+                "an existing user skill"
+            };
+            return Err(format!(
+                "Skill id '{}' already exists as {} — use update to change it, or pick a new id",
+                skill.metadata.id, kind
+            ));
+        }
 
         skill.metadata.origin = SkillOrigin::User;
         let id = skill.metadata.id.clone();
@@ -208,10 +251,20 @@ impl SkillRegistry {
         let mut new_skill =
             parser::parse_skill(content).map_err(|e| format!("Parse error: {}", e))?;
 
-        // Force the ID to match
-        new_skill.metadata.id = id.to_string();
-        new_skill.metadata.origin = SkillOrigin::User;
+        // The body's own id MUST match the target: memory used to force the
+        // target id while persistence wrote the untouched body, so a body
+        // declaring `id: rule-management` updated against `custom-a` showed
+        // custom-a in-process but reloaded as rule-management after restart
+        // — shadowing a builtin (review 2026-11-17). Reject instead.
+        if new_skill.metadata.id != id {
+            return Err(format!(
+                "Skill id mismatch: target is '{}' but the content declares '{}'. \
+                 The frontmatter id must match the skill being updated.",
+                id, new_skill.metadata.id
+            ));
+        }
 
+        new_skill.metadata.origin = SkillOrigin::User;
         self.insert(new_skill);
         Ok(())
     }

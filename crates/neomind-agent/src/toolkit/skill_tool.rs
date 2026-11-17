@@ -261,6 +261,20 @@ impl SkillTool {
         first_sentence.chars().take(120).collect()
     }
 
+    /// Brief boundary note for candidate lists: the first two `not_for`
+    /// entries, joined — enough to stop a wrong pick without re-bloating
+    /// the context (full boundaries ride the load overview).
+    fn boundary_brief(skill: &skills::Skill) -> String {
+        skill
+            .metadata
+            .not_for
+            .iter()
+            .take(2)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+
     /// Contextual redirect when a load resolves to nothing. The extension
     /// redirect ONLY fires when the request itself smells like extension
     /// work (skill-vs-extension confusion is real but was previously bolted
@@ -471,6 +485,7 @@ When NOT to load: standard CRUD (list/get/update/delete by id), plain reads of c
                             serde_json::json!({
                                 "id": id,
                                 "purpose": Self::purpose_of(s),
+                                "boundary": Self::boundary_brief(s),
                             })
                         })
                         .collect();
@@ -524,6 +539,14 @@ When NOT to load: standard CRUD (list/get/update/delete by id), plain reads of c
                     if via_alias {
                         result["resolved_from"] = serde_json::json!(id);
                     }
+                    // Boundary awareness where the model CHOOSES: overview
+                    // loads carry the full not_for list so the model can tell
+                    // this guide does not cover an adjacent task it may also
+                    // have in mind. Section loads are pure reference and
+                    // skip it (token hygiene).
+                    if section.is_none() && !skill.metadata.not_for.is_empty() {
+                        result["boundaries"] = serde_json::json!(skill.metadata.not_for);
+                    }
                     Ok(ToolOutput::success(result))
                 } else {
                     // Suggestion candidates only — scored, stably sorted, bounded.
@@ -560,6 +583,7 @@ When NOT to load: standard CRUD (list/get/update/delete by id), plain reads of c
                             serde_json::json!({
                                 "id": s.metadata.id,
                                 "purpose": Self::purpose_of(s),
+                                "boundary": Self::boundary_brief(s),
                             })
                         })
                         .collect();
@@ -1046,6 +1070,52 @@ mod tests {
         assert!(msg.contains("extension-management"), "{msg}");
     }
 
+    /// not_for surfaces where the model CHOOSES: search candidates carry a
+    /// brief boundary, the load OVERVIEW carries the full list, and section
+    /// loads stay pure reference (guidance round 3 closeout).
+    #[tokio::test]
+    async fn not_for_surfaces_in_candidates_and_overview_not_sections() {
+        let tool = builtin_tool();
+
+        let out = tool
+            .execute(serde_json::json!({"action": "search", "query": "management"}))
+            .await
+            .unwrap();
+        for m in out.data["matches"].as_array().unwrap() {
+            let boundary = m["boundary"].as_str().unwrap_or_default();
+            assert!(
+                !boundary.is_empty(),
+                "candidates must carry a boundary: {m}"
+            );
+        }
+
+        let over = tool
+            .execute(serde_json::json!({"action": "load", "id": "dashboard-management"}))
+            .await
+            .unwrap();
+        let bounds = over.data["boundaries"].as_array().unwrap();
+        assert!(
+            bounds
+                .iter()
+                .any(|b| b.as_str().unwrap_or("").contains("device-onboarding")),
+            "overview boundaries must name the adjacent skill: {bounds:?}"
+        );
+
+        let sections = over.data["sections"].as_array().unwrap();
+        if let Some(section) = sections.first() {
+            let sec = tool
+                .execute(serde_json::json!({
+                    "action": "load", "id": "dashboard-management", "section": section
+                }))
+                .await
+                .unwrap();
+            assert!(
+                sec.data.get("boundaries").is_none(),
+                "section loads must not carry boundaries"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_search_defaults_to_three_with_purpose_and_more_flag() {
         let tool = builtin_tool();
@@ -1243,6 +1313,131 @@ mod tests {
         assert!(tool.registry.read().await.get("user-guide-a").is_none());
         let reloaded = SkillRegistry::load_all(Some(dir.path()));
         assert!(reloaded.get("user-guide-a").is_none());
+    }
+
+    /// Review P1-1: duplicate create must be REJECTED at the shared registry —
+    /// builtin ids (bypassed the read-only protection) and existing user ids
+    /// (silently overwrote, and a later persist failure lost the original).
+    #[tokio::test]
+    async fn duplicate_create_is_rejected_and_originals_survive() {
+        // (a) builtin id: rejected, builtin intact.
+        let tool = builtin_tool();
+        let builtin_body = "---\nid: rule-management\nname: Evil\n---\n\n# evil\nshadow.";
+        let out = tool
+            .execute(serde_json::json!({"action": "create", "content": builtin_body}))
+            .await
+            .unwrap();
+        assert!(!out.success, "{out:?}");
+        assert!(out.error.unwrap_or_default().contains("builtin"));
+        let guard = tool.registry.read().await;
+        assert_ne!(guard.get("rule-management").unwrap().metadata.name, "Evil");
+
+        // (b) existing user id: rejected, original intact (memory + disk).
+        let (dir, wtool) = writable_dir_tool();
+        let seeded = wtool
+            .execute(serde_json::json!({"action": "create", "content": USER_SKILL_A}))
+            .await
+            .unwrap();
+        assert!(seeded.success, "seed create failed");
+        let overwrite = "---\nid: user-guide-a\nname: Hijack\n---\n\n# hijack\nnew body.";
+        let out = wtool
+            .execute(serde_json::json!({"action": "create", "content": overwrite}))
+            .await
+            .unwrap();
+        assert!(!out.success, "{out:?}");
+        assert!(out
+            .error
+            .unwrap_or_default()
+            .contains("existing user skill"));
+        let g = wtool.registry.read().await;
+        assert!(g.get("user-guide-a").unwrap().body.contains("first body"));
+        drop(g);
+        let on_disk =
+            std::fs::read_to_string(dir.path().join("skills").join("user-guide-a.md")).unwrap();
+        assert!(on_disk.contains("first body"), "file must be untouched");
+    }
+
+    /// Review P1-2: an update whose body declares a DIFFERENT id is rejected;
+    /// identity survives save→restart→read (the old chain showed the target
+    /// id in-process but reloaded under the body id, shadowing builtins).
+    #[tokio::test]
+    async fn update_with_mismatched_body_id_is_rejected_and_identity_survives_restart() {
+        let (dir, tool) = writable_dir_tool();
+        tool.execute(serde_json::json!({"action": "create", "content": USER_SKILL_A}))
+            .await
+            .unwrap();
+        let mismatched = "---\nid: rule-management\nname: Shadow\n---\n\n# shadow\nbody.";
+        let out = tool
+            .execute(serde_json::json!({
+                "action": "update", "id": "user-guide-a", "content": mismatched
+            }))
+            .await
+            .unwrap();
+        assert!(!out.success, "{out:?}");
+        assert!(out.error.unwrap_or_default().contains("id mismatch"));
+
+        // Memory keeps the original; the file on disk was never rewritten.
+        let g = tool.registry.read().await;
+        assert!(g.get("user-guide-a").unwrap().body.contains("first body"));
+        drop(g);
+        let on_disk =
+            std::fs::read_to_string(dir.path().join("skills").join("user-guide-a.md")).unwrap();
+        assert!(on_disk.contains("first body"));
+
+        // Restart semantics: a fresh registry load sees user-guide-a as
+        // itself, and NO rule-management shadow file exists.
+        let reloaded = SkillRegistry::load_all(Some(dir.path()));
+        assert!(reloaded.get("user-guide-a").is_some());
+        assert!(
+            reloaded.get("rule-management").unwrap().metadata.origin
+                == crate::skills::types::SkillOrigin::Builtin
+        );
+        assert!(!dir
+            .path()
+            .join("skills")
+            .join("rule-management.md")
+            .exists());
+    }
+
+    /// Startup identity validation: a user file whose frontmatter id
+    /// disagrees with its filename, or collides with a builtin, is SKIPPED —
+    /// it can no longer resurrect the shadow after restart.
+    #[test]
+    fn startup_load_skips_mismatched_filename_and_builtin_shadows() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        // (a) body id ≠ filename
+        std::fs::write(
+            skills.join("custom-a.md"),
+            "---\nid: other-id\nname: Mismatch\n---\n\n# m\nbody.",
+        )
+        .unwrap();
+        // (b) builtin shadow
+        std::fs::write(
+            skills.join("rule-management.md"),
+            "---\nid: rule-management\nname: Shadow\n---\n\n# s\nshadow body.",
+        )
+        .unwrap();
+        // (c) legitimate file loads
+        std::fs::write(
+            skills.join("good-one.md"),
+            "---\nid: good-one\nname: Good\n---\n\n# g\nbody.",
+        )
+        .unwrap();
+
+        let registry = SkillRegistry::load_all(Some(dir.path()));
+        assert!(
+            registry.get("other-id").is_none(),
+            "mismatched file must be skipped"
+        );
+        assert!(registry.get("good-one").is_some());
+        let rule = registry.get("rule-management").unwrap();
+        assert_eq!(
+            rule.metadata.origin,
+            crate::skills::types::SkillOrigin::Builtin
+        );
+        assert_ne!(rule.metadata.name, "Shadow");
     }
 
     /// Builtin protection lives at the SHARED registry layer — the tool entry
