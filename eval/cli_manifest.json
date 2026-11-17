@@ -750,9 +750,19 @@
    ],
    "update": [
     "--body",
+    "--cooldown",
     "--format",
     "--help",
     "--id",
+    "--input",
+    "--metric",
+    "--name",
+    "--notify",
+    "--operator",
+    "--severity",
+    "--source",
+    "--threshold",
+    "--trigger-device",
     "--verbose"
    ]
   },

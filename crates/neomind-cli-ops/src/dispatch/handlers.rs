@@ -574,11 +574,56 @@ pub async fn run_rule_cmd(cmd: RuleCommand) -> Result<(CliResponse, OutputFormat
             };
             create_rule(&client, &json_body).await?
         }
-        RuleCommand::Update { id, id_flag, body } => {
+        RuleCommand::Update {
+            id,
+            id_flag,
+            body,
+            name,
+            trigger_device,
+            metric,
+            source,
+            operator,
+            threshold,
+            notify,
+            severity,
+            cooldown,
+        } => {
             let rule_id = id.or(id_flag).ok_or_else(|| {
                 anyhow::anyhow!("rule ID is required: pass it positionally (`rule update <ID> --body ...`) or as --id <ID>.\nHint: list rules with: neomind rule list")
             })?;
-            update_rule(&client, &rule_id, &body).await?
+            match body {
+                Some(b) => update_rule(&client, &rule_id, &b).await?,
+                None => {
+                    let has_any = name.is_some()
+                        || trigger_device.is_some()
+                        || metric.is_some()
+                        || source.is_some()
+                        || operator.is_some()
+                        || threshold.is_some()
+                        || notify.is_some()
+                        || severity.is_some()
+                        || cooldown.is_some();
+                    if !has_any {
+                        anyhow::bail!(
+                            "nothing to update: pass --body '<JSON>' or fast-path flags \
+                             (--name / --trigger-device + --metric + --operator + --threshold / \
+                             --notify / --cooldown)"
+                        );
+                    }
+                    let patch = crate::rule::RuleFastPatchArgs {
+                        name: name.as_deref(),
+                        trigger_device: trigger_device.as_deref(),
+                        metric: metric.as_deref(),
+                        source: source.as_deref(),
+                        operator: operator.as_deref(),
+                        threshold,
+                        notify: notify.as_deref(),
+                        severity: severity.as_deref(),
+                        cooldown,
+                    };
+                    update_rule_fast(&client, &rule_id, &patch).await?
+                }
+            }
         }
         RuleCommand::Delete { id } => delete_rule(&client, &id).await?,
         RuleCommand::Enable { id } => enable_rule(&client, &id).await?,

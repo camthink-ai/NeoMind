@@ -34,7 +34,7 @@ When diagnosing, check enabled state, actual source values, missing/type-mismatc
 | `neomind rule list` | List all rules |
 | `neomind rule get <id>` | Rule details |
 | `neomind rule create` | Create a new rule |
-| `neomind rule update <id>` | Update a rule |
+| `neomind rule update <id>` | Update a rule (rename/notify/cooldown, or re-target with `--trigger-device <dev> --metric <m> --operator <op> --threshold <v>`) |
 | `neomind rule delete <id>` | Delete a rule |
 | `neomind rule enable <id>` | Enable a rule |
 | `neomind rule disable <id>` | Disable a rule |
@@ -238,6 +238,7 @@ neomind rule create --name <N> --trigger-device <D> --metric <M> --operator <OP>
                                           # fast path: single-metric threshold rule (flags)
 neomind rule create --body '<JSON>'       # full form: range/logical/multi-action (enabled by default)
 neomind rule update <ID> --body '<JSON>'  # modify fields (ID also accepted as --id <ID>)
+neomind rule update <ID> --trigger-device sensor-001 --metric values.battery --operator less_than --threshold 15  # re-target / re-threshold (actions preserved)
 neomind rule enable <ID>                  # re-enable a paused rule
 neomind rule disable <ID>                 # pause without deleting
 neomind rule delete <ID>                  # permanent removal

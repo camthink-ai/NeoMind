@@ -1266,7 +1266,16 @@ pub enum RuleCommand {
     },
     /// Update rule.
     ///
-    /// Example: `neomind rule update rule-001 --body '{"name":"New Name"}'`
+    /// Fast path to re-target or re-threshold a rule (flags, no JSON — the
+    /// existing rule is fetched, the condition is rebuilt, actions are
+    /// preserved, and the full definition is PUT):
+    /// `neomind rule update rule-001 --trigger-device sensor-2 --metric temperature --operator greater_than --threshold 30`
+    /// `--name`, `--notify`, `--severity` and `--cooldown` patch their fields.
+    ///
+    /// Full JSON form for anything else (only included fields are updated):
+    /// `neomind rule update rule-001 --body '{"name":"New Name"}'`
+    /// Test first with `rule test <ID> --input '...'` to verify new conditions.
+    ///
     /// The ID may also be passed as a flag: `--id rule-001` (models coming
     /// off a `rule create` response reach for this form).
     Update {
@@ -1276,9 +1285,44 @@ pub enum RuleCommand {
         /// Rule ID (flag form — exactly one of this or the positional).
         #[arg(long = "id", value_name = "ID", conflicts_with = "id")]
         id_flag: Option<String>,
-        /// Updated rule definition as JSON string.
+        /// Updated rule definition as JSON string (full or partial form).
+        #[arg(
+            short,
+            long,
+            conflicts_with_all = [
+                "name", "trigger_device", "source", "metric", "operator", "threshold", "notify",
+                "severity", "cooldown",
+            ]
+        )]
+        body: Option<String>,
+        /// New rule name.
         #[arg(short, long)]
-        body: String,
+        name: Option<String>,
+        /// Re-target: device whose metric the rule watches (with --metric).
+        #[arg(long, requires = "metric", conflicts_with = "source")]
+        trigger_device: Option<String>,
+        /// Re-target: metric name on the trigger device.
+        #[arg(long, requires = "trigger_device")]
+        metric: Option<String>,
+        /// Re-target: full source form (`extension:<id>:<metric>` / `transform:<id>:<field>`).
+        #[arg(long, conflicts_with = "trigger_device")]
+        source: Option<String>,
+        /// New comparison operator: greater_than | less_than | greater_equal |
+        /// less_equal | equal | not_equal.
+        #[arg(long)]
+        operator: Option<String>,
+        /// New threshold value.
+        #[arg(long)]
+        threshold: Option<f64>,
+        /// New notify message (patches the rule's notify action).
+        #[arg(long)]
+        notify: Option<String>,
+        /// New notify severity: info | warning | critical | emergency.
+        #[arg(long, requires = "notify")]
+        severity: Option<String>,
+        /// New cooldown in ms between triggers.
+        #[arg(long)]
+        cooldown: Option<u64>,
     },
     /// Delete rule.
     ///
