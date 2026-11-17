@@ -152,14 +152,14 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
 
   if (ct.scannedDevices.length > 0) {
     return (
-      <div className="mx-auto flex h-full min-h-[min(60vh,520px)] w-full max-w-md flex-col self-center py-6">
-        <div className="mb-5 text-center">
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-1 flex-col self-center py-6">
+        <div className="mb-5 shrink-0 text-center">
           <h3 className="text-lg font-medium">{t('devices:ble.selectDevice')}</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             {t('devices:ble.foundDevices', { count: ct.scannedDevices.length })}
           </p>
         </div>
-        <div className="w-full flex-1 space-y-2 overflow-y-auto">
+        <div className="min-h-0 w-full flex-1 space-y-2 overflow-y-auto">
           {ct.scannedDevices.map((dev) => {
             const busy = dev.discovered?.busy
             const codeName =
@@ -202,7 +202,7 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
             )
           })}
         </div>
-        <div className="mt-6 flex justify-center">
+        <div className="mt-auto flex shrink-0 justify-center pt-4">
           <Button variant="outline" onClick={handleScan} disabled={ct.scanning}>
             <Bluetooth className="mr-2 h-4 w-4" />
             {t('devices:ble.rescan')}

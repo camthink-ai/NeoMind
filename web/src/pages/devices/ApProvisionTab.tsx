@@ -204,9 +204,11 @@ export function ApProvisionTab({ onComplete, dismissSignal = 0 }: ApProvisionTab
   }
 
   // —— First viewport: unmistakable hand-join ——
+  // Mirror BLE scan-list shell: Main is overflow-hidden for sticky wizard
+  // actions, so this pane must own overflow-y-auto (min-h-0 flex chain).
   return (
-    <div className="mx-auto flex h-full min-h-[min(60vh,520px)] w-full max-w-md flex-col self-center py-6">
-      <div className="mb-5 space-y-2 text-center">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-1 flex-col self-center py-6">
+      <div className="mb-5 shrink-0 space-y-2 text-center">
         <CtProvisionHero size="md">
           <Wifi className="h-7 w-7 text-primary" />
         </CtProvisionHero>
@@ -214,7 +216,7 @@ export function ApProvisionTab({ onComplete, dismissSignal = 0 }: ApProvisionTab
         <p className="text-sm text-muted-foreground">{t('devices:ap.joinDescStrong')}</p>
       </div>
 
-      <div className="w-full space-y-4">
+      <div className="min-h-0 w-full flex-1 space-y-4 overflow-y-auto pb-2">
         <div className="space-y-3 rounded-xl border border-border bg-card p-4">
           <Field>
             <FieldLabel>{t('devices:ap.model')}</FieldLabel>
@@ -289,7 +291,9 @@ export function ApProvisionTab({ onComplete, dismissSignal = 0 }: ApProvisionTab
             </CollapsibleContent>
           </div>
         </Collapsible>
+      </div>
 
+      <div className="mt-auto shrink-0 space-y-3 border-t border-border bg-background pt-3">
         <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-card p-3.5">
           <Checkbox
             checked={joinedAck}

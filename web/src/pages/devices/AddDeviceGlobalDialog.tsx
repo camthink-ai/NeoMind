@@ -196,7 +196,7 @@ export function AddDeviceGlobalDialog({
         </FullScreenDialogSidebar>
 
         {/* Center column: main + footer stacked vertically */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {isMobile && (
             <MobileTabStrip
               items={allTabs.map((tab) => ({ value: tab.value, label: t(tab.labelKey) }))}
@@ -208,11 +208,12 @@ export function AddDeviceGlobalDialog({
           {/* Main scrollable content */}
           {/* BLE/AP own their scroll + sticky step actions; Main must not scroll.
               Center the content column with items-center (more reliable than mx-auto
-              alone on a flex-1 child in WKWebView). */}
+              alone on a flex-1 child in WKWebView). min-h-0 keeps the flex child
+              shrinkable so inner overflow-y-auto can scroll instead of clipping. */}
           <FullScreenDialogMain
             className={cn(
               'flex flex-col items-center',
-              (activeTab === 'ble' || activeTab === 'ap') && 'overflow-hidden',
+              (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 overflow-hidden',
             )}
           >
             <div
