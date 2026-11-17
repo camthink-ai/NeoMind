@@ -57,13 +57,13 @@ export interface UseCtProvisionReturn {
   setApSsidInput: (v: string) => void
   setApHost: (v: string) => void
   setApModelHint: (v: string | null) => void
-  /** Run config.set with wifi (+ mqtt from resolve) then session.close. */
+  /** Run config.set with wifi (+ mqtt from resolve) then session.close. Throws on failure. */
   applyConfig: (opts: {
     wifiSsid?: string
     wifiPassword?: string
     mqtt: CtMqttConfig
     networkSection?: string
-  }) => Promise<SetConfigResult | null>
+  }) => Promise<SetConfigResult>
   /** Device-side Wi-Fi / HaLow scan when the section is scannable. */
   scanWifiNetworks: (section?: string) => Promise<NetworkScanItem[]>
   disconnect: () => void
@@ -282,19 +282,16 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
     async (section = 'wifi'): Promise<NetworkScanItem[]> => {
       const client = clientRef.current
       if (!client) {
-        setError('Not connected')
-        return []
+        throw new Error('Not connected')
       }
-      try {
-        return await withTimeout(
-          client.scanNetworks(section),
-          25_000,
-          'communication.scan',
-        )
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : String(err))
-        return []
-      }
+      // Do not set session-level `error` here — scan is optional. A failed
+      // communication.scan (e.g. wifi_init) must not poison the apply path or
+      // leave a raw ProvSessionError under the configure form.
+      return await withTimeout(
+        client.scanNetworks(section),
+        25_000,
+        'communication.scan',
+      )
     },
     [],
   )
@@ -305,11 +302,12 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
       wifiPassword?: string
       mqtt: CtMqttConfig
       networkSection?: string
-    }): Promise<SetConfigResult | null> => {
+    }): Promise<SetConfigResult> => {
       const client = clientRef.current
       if (!client) {
-        setError('Not connected')
-        return null
+        const err = new Error('Not connected')
+        setError(err.message)
+        throw err
       }
       setProvisioning(true)
       setError(null)
@@ -349,8 +347,11 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
         setConnected(false)
         return result
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : String(err))
-        return null
+        const msg = err instanceof Error ? err.message : String(err)
+        setError(msg)
+        // Rethrow so the wizard can map ProvSessionError (e.g. wifi_init) to
+        // operator copy instead of only reading a possibly-stale ct.error.
+        throw err instanceof Error ? err : new Error(msg)
       } finally {
         setProvisioning(false)
         setProvisioningStep(null)

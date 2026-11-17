@@ -4,6 +4,7 @@ import { ProvOp, resultOpName } from '../ops'
 import {
   CtSessionClient,
   ProvSessionError,
+  formatProvUserMessage,
   formatSsidForDisplay,
   parseNetworkScan,
 } from '../session'
@@ -101,5 +102,16 @@ describe('ct-prov FakeTransport session path', () => {
     expect(page.items[0]?.ssid).toBe(spaced)
     // Submit value stays exact; display helper must not mutate it.
     expect(formatSsidForDisplay(page.items[0]!.ssid)).toBe(spaced)
+  })
+
+  it('maps wifi_init INTERNAL_ERROR to a stable user code', () => {
+    const err = new ProvSessionError(
+      'internal_error',
+      'INTERNAL_ERROR: wifi_init failed',
+    )
+    expect(formatProvUserMessage(err)).toBe('wifi_init_failed')
+    expect(formatProvUserMessage('ProvSessionError(internal_error: INTERNAL_ERROR: wifi_init failed)')).toBe(
+      'wifi_init_failed',
+    )
   })
 })

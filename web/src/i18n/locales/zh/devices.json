@@ -956,8 +956,14 @@
     "wifiSelectPlaceholder": "选择网络",
     "wifiManual": "手动输入 SSID",
     "scanningWifi": "正在通过设备扫描附近网络…",
+    "scanWifi": "扫描网络",
     "rescanWifi": "重新扫描",
-    "wifiScanEmpty": "未扫到网络 — 请手动输入 SSID。"
+    "wifiScanEmpty": "未扫到网络 — 请手动输入 SSID。",
+    "wizardStepsAria": "配网步骤",
+    "errorWifiInit": "设备 Wi‑Fi 初始化失败。请跳过扫描、手动填写 SSID 后重试；若仍失败，重启设备后再配网。",
+    "errorBusy": "设备正忙，请稍候再试。",
+    "errorNotConnected": "与设备的配网会话已断开，请重新连接。",
+    "errorInternal": "设备返回内部错误。请重试；若反复出现，检查固件或重启设备。"
   },
   "ap": {
     "tabTitle": "AP 配网",

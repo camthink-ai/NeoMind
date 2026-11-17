@@ -26,6 +26,7 @@ import { PasswordInput } from '@/components/ui/password-input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import type { UseCtProvisionReturn } from '@/hooks/useCtProvision'
 import {
+  formatProvUserMessage,
   modelToDeviceType,
   type CtMqttConfig,
   type NetworkScanItem,
@@ -63,51 +64,60 @@ function StepDots({ current }: { current: CtWizardStep }) {
     t('ctProv.stepConfigure'),
   ]
   return (
-    <div className="mb-6" aria-hidden={idx < 0}>
-      {/* Circles + connectors on one baseline (labels below, not in the flex row). */}
-      <div className="flex items-center justify-center gap-0">
-        {STEP_ORDER.map((step, i) => {
-          const active = i === idx
-          const done = idx > i
-          return (
-            <div key={step} className="flex items-center">
-              {i > 0 && (
-                <div
-                  className={cn(
-                    'h-px w-6 sm:w-10 shrink-0',
-                    done || active ? 'bg-primary' : 'bg-border',
-                  )}
-                />
-              )}
-              <div
+    <ol
+      className="mb-5 grid grid-cols-3 gap-0"
+      aria-label={t('ctProv.wizardStepsAria')}
+    >
+      {STEP_ORDER.map((step, i) => {
+        const active = i === idx
+        const done = idx > i
+        return (
+          <li key={step} className="relative flex flex-col items-center gap-1.5 px-1">
+            {i > 0 && (
+              <span
+                aria-hidden
                 className={cn(
-                  'w-7 h-7 rounded-full text-xs font-medium flex items-center justify-center shrink-0',
-                  done && 'bg-success-light text-success',
-                  active && 'bg-primary text-primary-foreground',
-                  !done && !active && 'bg-muted text-muted-foreground',
+                  'pointer-events-none absolute top-3.5 right-1/2 left-[-50%] h-px',
+                  done || active ? 'bg-primary' : 'bg-border',
                 )}
-              >
-                {i + 1}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-      <div className="mt-2 hidden sm:grid grid-cols-3 gap-2 text-center">
-        {labels.map((label, i) => (
-          <span
-            key={label}
-            className={cn(
-              'text-[10px] leading-tight',
-              i === idx ? 'text-foreground font-medium' : 'text-muted-foreground',
+              />
             )}
-          >
-            {label}
-          </span>
-        ))}
-      </div>
-    </div>
+            <span
+              className={cn(
+                'relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium',
+                done && 'bg-success-light text-success',
+                active && 'bg-primary text-primary-foreground',
+                !done && !active && 'bg-muted text-muted-foreground',
+              )}
+              aria-current={active ? 'step' : undefined}
+            >
+              {done ? <CheckCircle2 className="h-4 w-4" aria-hidden /> : i + 1}
+            </span>
+            <span
+              className={cn(
+                'text-nano text-center leading-tight',
+                active ? 'font-medium text-foreground' : 'text-muted-foreground',
+              )}
+            >
+              {labels[i]}
+            </span>
+          </li>
+        )
+      })}
+    </ol>
   )
+}
+
+function provErrorCopy(
+  t: (key: string, opts?: Record<string, string>) => string,
+  err: unknown,
+): string {
+  const code = formatProvUserMessage(err)
+  if (code === 'wifi_init_failed') return t('devices:ctProv.errorWifiInit')
+  if (code === 'device_busy') return t('devices:ctProv.errorBusy')
+  if (code === 'not_connected') return t('devices:ctProv.errorNotConnected')
+  if (code === 'internal_error') return t('devices:ctProv.errorInternal')
+  return code
 }
 
 export function CtProvisionCenter({
@@ -156,6 +166,7 @@ export function CtProvisionWizard({
   const [wifiScanning, setWifiScanning] = useState(false)
   const [wifiSelect, setWifiSelect] = useState<string>(WIFI_MANUAL)
   const [wifiScanAttempted, setWifiScanAttempted] = useState(false)
+  const [wifiScanError, setWifiScanError] = useState<string | null>(null)
 
   useEffect(() => {
     if (ct.deviceInfo?.deviceName && !deviceName) {
@@ -196,6 +207,8 @@ export function CtProvisionWizard({
     if (!wifiSection || !wifiScannable) return
     setWifiScanning(true)
     setWifiScanAttempted(true)
+    setWifiScanError(null)
+    ct.clearError()
     try {
       const items = await ct.scanWifiNetworks(wifiSection)
       setWifiNetworks(items)
@@ -209,15 +222,17 @@ export function CtProvisionWizard({
       } else {
         setWifiSelect(WIFI_MANUAL)
       }
+    } catch (err) {
+      setWifiNetworks([])
+      setWifiSelect(WIFI_MANUAL)
+      setWifiScanError(provErrorCopy(t, err))
     } finally {
       setWifiScanning(false)
     }
-  }, [ct, wifiSection, wifiScannable])
+  }, [ct, wifiSection, wifiScannable, t])
 
-  useEffect(() => {
-    if (step !== 'edit' || !wifiScannable || wifiScanAttempted) return
-    void refreshWifiScan()
-  }, [step, wifiScannable, wifiScanAttempted, refreshWifiScan])
+  // Opt-in scan only — auto communication.scan on edit entry can leave the
+  // device Wi-Fi stack in wifi_init failure before config.set (EK410/BLE).
 
   const handleApply = useCallback(async () => {
     if (!ct.deviceInfo) return
@@ -233,6 +248,8 @@ export function CtProvisionWizard({
 
     setStep('applying')
     setRegisterError(null)
+    setWifiScanError(null)
+    ct.clearError()
 
     try {
       const resp = await fetchAPI<{ device_id: string; mqtt_config: CtMqttConfig }>(
@@ -250,16 +267,12 @@ export function CtProvisionWizard({
         },
       )
 
-      const setResult = await ct.applyConfig({
+      await ct.applyConfig({
         wifiSsid: needsWifi ? wifiSsid : undefined,
         wifiPassword: needsWifi ? wifiPassword : undefined,
         mqtt: resp.mqtt_config,
         networkSection: wifiSection ?? undefined,
       })
-      if (!setResult) {
-        setStep('failed')
-        return
-      }
 
       try {
         const regResp = await fetchAPI<{ device_id: string; already_exists?: boolean }>(
@@ -286,10 +299,10 @@ export function CtProvisionWizard({
       setStep('done')
     } catch (err) {
       console.error('[CT-Prov] Provisioning failed:', err)
-      setRegisterError(err instanceof Error ? err.message : String(err))
+      setRegisterError(provErrorCopy(t, err))
       setStep('failed')
     }
-  }, [ct, wifiSsid, wifiPassword, deviceName, brokerId, needsWifi, wifiSection, deviceTypes])
+  }, [ct, wifiSsid, wifiPassword, deviceName, brokerId, needsWifi, wifiSection, deviceTypes, t])
 
   if (step === 'applying') {
     return (
@@ -340,16 +353,17 @@ export function CtProvisionWizard({
   }
 
   if (step === 'failed') {
+    const failMsg = registerError || (ct.error ? provErrorCopy(t, ct.error) : null)
     return (
       <CtProvisionCenter>
         <div className="w-16 h-16 rounded-xl bg-error-light flex items-center justify-center">
           <XCircle className="w-8 h-8 text-error" />
         </div>
-        <div className="text-center max-w-sm">
+        <div className="text-center max-w-sm space-y-2">
           <h3 className="text-lg font-medium">{t('devices:ble.failedTitle')}</h3>
-          <p className="text-sm text-muted-foreground mt-1">{ct.error || registerError}</p>
+          <p className="text-sm text-muted-foreground">{failMsg}</p>
           {failureHint && (
-            <p className="text-xs text-muted-foreground mt-2">{failureHint}</p>
+            <p className="text-xs text-muted-foreground">{failureHint}</p>
           )}
         </div>
         <Button onClick={onReset}>{t('common:retry')}</Button>
@@ -358,53 +372,49 @@ export function CtProvisionWizard({
   }
 
   return (
-    <div className="max-w-md mx-auto py-4 px-1 sm:px-0">
+    <div className="mx-auto w-full max-w-md flex-1 flex flex-col min-h-0 py-2 sm:py-4">
       <StepDots current={step} />
 
-      {/* Connected strip */}
-      <div className="rounded-xl border bg-card p-3 mb-4">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-success-light flex items-center justify-center shrink-0">
-            <ChannelIcon className="w-4 h-4 text-success" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">
-              {ct.deviceInfo?.deviceName || ct.deviceInfo?.model}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              <span className="text-success">{t('devices:ble.connected')}</span>
-              {ct.deviceInfo?.model && <span className="ml-2">{ct.deviceInfo.model}</span>}
-            </p>
-          </div>
+      {/* Connected strip — compact, not a competing card stack */}
+      <div className="mb-4 flex items-center gap-3 rounded-lg border bg-muted-30 px-3 py-2.5">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-success-light">
+          <ChannelIcon className="h-4 w-4 text-success" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">
+            {ct.deviceInfo?.deviceName || ct.deviceInfo?.model}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            <span className="text-success">{t('devices:ble.connected')}</span>
+            {ct.deviceInfo?.model ? ` · ${ct.deviceInfo.model}` : ''}
+          </p>
         </div>
       </div>
 
+      <div className="flex-1 min-h-0 space-y-4 overflow-y-auto pb-2">
+
       {step === 'info' && (
         <div className="space-y-4">
-          <div className="text-center mb-2">
+          <div className="mb-1 text-center">
             <h3 className="text-base font-medium">{t('devices:ctProv.stepInfoTitle')}</h3>
-            <p className="text-sm text-muted-foreground mt-1">{t('devices:ctProv.stepInfoDesc')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{t('devices:ctProv.stepInfoDesc')}</p>
           </div>
-          <div className="rounded-xl border bg-card p-4 space-y-3 text-sm">
+          <div className="space-y-3 rounded-xl border bg-card p-4 text-sm">
             <InfoRow label={t('devices:ble.deviceName')} value={ct.deviceInfo?.deviceName || '—'} />
             <InfoRow label={t('devices:ctProv.serialNumber')} value={ct.deviceInfo?.serialNumber || '—'} />
             <InfoRow label={t('devices:ctProv.model')} value={ct.deviceInfo?.model || '—'} />
             <InfoRow label={t('devices:ctProv.firmware')} value={ct.deviceInfo?.firmware || '—'} />
           </div>
-          <Button className="w-full" onClick={() => setStep('capabilities')}>
-            <ChevronRight className="w-4 h-4 mr-2" />
-            {t('devices:ctProv.continue')}
-          </Button>
         </div>
       )}
 
       {step === 'capabilities' && (
         <div className="space-y-4">
-          <div className="text-center mb-2">
+          <div className="mb-1 text-center">
             <h3 className="text-base font-medium">{t('devices:ctProv.stepCapsTitle')}</h3>
-            <p className="text-sm text-muted-foreground mt-1">{t('devices:ctProv.stepCapsDesc')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{t('devices:ctProv.stepCapsDesc')}</p>
           </div>
-          <div className="rounded-xl border bg-card p-4 space-y-2">
+          <div className="space-y-2 rounded-xl border bg-card p-4">
             <p className="text-sm">
               {needsWifi
                 ? wifiSection === 'halow'
@@ -418,17 +428,17 @@ export function CtProvisionWizard({
               </p>
             )}
             <Collapsible open={capsDetailOpen} onOpenChange={setCapsDetailOpen}>
-              <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground pt-1">
+              <CollapsibleTrigger className="flex items-center gap-1 pt-1 text-xs text-muted-foreground hover:text-foreground">
                 <ChevronDown
-                  className={cn('w-3.5 h-3.5 transition-transform', capsDetailOpen && 'rotate-180')}
+                  className={cn('h-3.5 w-3.5 transition-transform', capsDetailOpen && 'rotate-180')}
                 />
                 {t('devices:ctProv.showCapabilities')}
               </CollapsibleTrigger>
-              <CollapsibleContent className="pt-2 space-y-1">
+              <CollapsibleContent className="space-y-1 pt-2">
                 {(ct.capabilities?.sections ?? []).map((s) => (
                   <div
                     key={s.name}
-                    className="flex items-center justify-between text-xs rounded-lg bg-muted-30 px-2.5 py-1.5"
+                    className="flex items-center justify-between rounded-lg bg-muted-30 px-2.5 py-1.5 text-xs"
                   >
                     <span className="font-medium">{s.name}</span>
                     <span className="text-muted-foreground">
@@ -443,28 +453,20 @@ export function CtProvisionWizard({
               </CollapsibleContent>
             </Collapsible>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" className="flex-1" onClick={() => setStep('info')}>
-              {t('common:back')}
-            </Button>
-            <Button className="flex-1" onClick={() => setStep('edit')}>
-              <ChevronRight className="w-4 h-4 mr-2" />
-              {t('devices:ctProv.continue')}
-            </Button>
-          </div>
         </div>
       )}
 
       {step === 'edit' && (
         <div className="space-y-4">
-          <div className="text-center mb-2">
+          <div className="mb-1 text-center">
             <h3 className="text-base font-medium">{t('devices:ctProv.stepEditTitle')}</h3>
-            <p className="text-sm text-muted-foreground mt-1">{t('devices:ctProv.stepEditDesc')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{t('devices:ctProv.stepEditDesc')}</p>
           </div>
 
-          <div className="rounded-xl border bg-card p-4 space-y-2">
-            <Label className="text-xs text-muted-foreground">{t('devices:ble.deviceName')}</Label>
+          <div className="space-y-2">
+            <Label htmlFor="ct-device-name">{t('devices:ble.deviceName')}</Label>
             <Input
+              id="ct-device-name"
               value={deviceName}
               onChange={(e) => setDeviceName(e.target.value)}
               placeholder={ct.deviceInfo?.model || 'Camera'}
@@ -473,10 +475,10 @@ export function CtProvisionWizard({
           </div>
 
           {needsWifi && (
-            <div className="rounded-xl border bg-card p-4 space-y-3">
+            <div className="space-y-3 rounded-xl border bg-card p-4">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
-                  <Wifi className="w-4 h-4 text-primary" />
+                  <Wifi className="h-4 w-4 text-primary" />
                   <span className="text-sm font-medium">
                     {wifiSection === 'halow'
                       ? t('devices:ble.wifiConfigHalow')
@@ -493,81 +495,94 @@ export function CtProvisionWizard({
                     disabled={wifiScanning || ct.provisioning}
                   >
                     {wifiScanning ? (
-                      <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                      <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
                     ) : (
-                      <Signal className="w-3.5 h-3.5 mr-1" />
+                      <Signal className="mr-1 h-3.5 w-3.5" />
                     )}
-                    {t('devices:ctProv.rescanWifi')}
+                    {wifiScanAttempted
+                      ? t('devices:ctProv.rescanWifi')
+                      : t('devices:ctProv.scanWifi')}
                   </Button>
                 )}
               </div>
-              {wifiScannable && (
-                <div>
-                  <Label>{t('devices:ctProv.wifiNetwork')}</Label>
-                  {wifiScanning && wifiNetworks.length === 0 ? (
-                    <div className="flex items-center justify-center gap-2 rounded-lg border bg-muted-30 py-6 text-sm text-muted-foreground">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      {t('devices:ctProv.scanningWifi')}
-                    </div>
-                  ) : (
-                    <Select
-                      value={wifiSelect}
-                      onValueChange={(v) => {
-                        setWifiSelect(v)
-                        if (v === WIFI_MANUAL) return
-                        setWifiSsid(v)
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t('devices:ctProv.wifiSelectPlaceholder')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {wifiNetworks.map((n) => (
-                          <SelectItem key={`${n.ssid}:${n.bssid ?? ''}`} value={n.ssid}>
-                            {n.rssi != null ? `${n.ssid} (${n.rssi} dBm)` : n.ssid}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value={WIFI_MANUAL}>
-                          {t('devices:ctProv.wifiManual')}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  )}
-                  {wifiScanAttempted && !wifiScanning && wifiNetworks.length === 0 && (
-                    <p className="text-xs text-muted-foreground mt-1.5">
-                      {t('devices:ctProv.wifiScanEmpty')}
-                    </p>
-                  )}
+
+              {wifiScannable && wifiScanning && (
+                <div className="flex items-center justify-center gap-2 rounded-lg border bg-muted-30 py-5 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t('devices:ctProv.scanningWifi')}
                 </div>
               )}
-              {(!wifiScannable || wifiSelect === WIFI_MANUAL) && (
-                <div>
-                  <Label>{t('devices:ble.ssid')}</Label>
+
+              {/* Only show the network picker when the device actually returned SSIDs */}
+              {wifiScannable && !wifiScanning && wifiNetworks.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label>{t('devices:ctProv.wifiNetwork')}</Label>
+                  <Select
+                    value={wifiSelect}
+                    onValueChange={(v) => {
+                      setWifiSelect(v)
+                      if (v === WIFI_MANUAL) return
+                      setWifiSsid(v)
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder={t('devices:ctProv.wifiSelectPlaceholder')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {wifiNetworks.map((n) => (
+                        <SelectItem key={`${n.ssid}:${n.bssid ?? ''}`} value={n.ssid}>
+                          {n.rssi != null ? `${n.ssid} (${n.rssi} dBm)` : n.ssid}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value={WIFI_MANUAL}>
+                        {t('devices:ctProv.wifiManual')}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {wifiScannable && !wifiScanning && wifiScanAttempted && wifiNetworks.length === 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {wifiScanError || t('devices:ctProv.wifiScanEmpty')}
+                </p>
+              )}
+
+              {(!wifiScannable ||
+                wifiSelect === WIFI_MANUAL ||
+                (!wifiScanning && wifiNetworks.length === 0)) && (
+                <div className="space-y-1.5">
+                  <Label htmlFor="ct-wifi-ssid">{t('devices:ble.ssid')}</Label>
                   <Input
+                    id="ct-wifi-ssid"
                     value={wifiSsid}
                     onChange={(e) => {
                       setWifiSsid(e.target.value)
                       setWifiSelect(WIFI_MANUAL)
                     }}
                     placeholder={t('devices:ble.ssidPlaceholder')}
+                    autoComplete="off"
                   />
                 </div>
               )}
-              <div>
-                <Label>{t('devices:ble.password')}</Label>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="ct-wifi-password">{t('devices:ble.password')}</Label>
                 <PasswordInput
+                  id="ct-wifi-password"
                   value={wifiPassword}
                   onChange={(e) => setWifiPassword(e.target.value)}
                   placeholder={t('devices:ble.passwordPlaceholder')}
+                  autoComplete="new-password"
                 />
               </div>
             </div>
           )}
 
           {!needsWifi && (
-            <div className="rounded-xl border bg-card p-4 space-y-2">
+            <div className="space-y-2 rounded-xl border bg-card p-4">
               <div className="flex items-center gap-2">
-                <Signal className="w-4 h-4 text-primary" />
+                <Signal className="h-4 w-4 text-primary" />
                 <span className="text-sm font-medium">{t('devices:ble.cat1NoWifi')}</span>
               </div>
               <p className="text-xs text-muted-foreground">{t('devices:ble.cat1Hint')}</p>
@@ -576,20 +591,20 @@ export function CtProvisionWizard({
 
           <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
             <div className="rounded-xl border bg-card">
-              <CollapsibleTrigger className="w-full flex items-center justify-between p-4 text-left">
+              <CollapsibleTrigger className="flex w-full items-center justify-between p-4 text-left">
                 <div className="flex items-center gap-2">
-                  <Server className="w-4 h-4 text-primary" />
+                  <Server className="h-4 w-4 text-primary" />
                   <span className="text-sm font-medium">{t('devices:ctProv.advancedMqtt')}</span>
                 </div>
                 <ChevronDown
                   className={cn(
-                    'w-4 h-4 text-muted-foreground transition-transform',
+                    'h-4 w-4 text-muted-foreground transition-transform',
                     advancedOpen && 'rotate-180',
                   )}
                 />
               </CollapsibleTrigger>
               <CollapsibleContent>
-                <div className="px-4 pb-4 space-y-2 border-t pt-3">
+                <div className="space-y-2 border-t px-4 pb-4 pt-3">
                   <Label>{t('devices:ble.broker')}</Label>
                   <Select value={brokerId} onValueChange={setBrokerId}>
                     <SelectTrigger>
@@ -603,12 +618,39 @@ export function CtProvisionWizard({
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">{t('devices:ctProv.mqttAdvancedHint')}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('devices:ctProv.mqttAdvancedHint')}
+                  </p>
                 </div>
               </CollapsibleContent>
             </div>
           </Collapsible>
+        </div>
+      )}
+      </div>
 
+      {/* Sticky step actions — outside the scroll region */}
+      {step === 'info' && (
+        <div className="mt-4 shrink-0">
+          <Button className="w-full" onClick={() => setStep('capabilities')}>
+            <ChevronRight className="mr-2 h-4 w-4" />
+            {t('devices:ctProv.continue')}
+          </Button>
+        </div>
+      )}
+      {step === 'capabilities' && (
+        <div className="mt-4 flex shrink-0 gap-2">
+          <Button variant="outline" className="flex-1" onClick={() => setStep('info')}>
+            {t('common:back')}
+          </Button>
+          <Button className="flex-1" onClick={() => setStep('edit')}>
+            <ChevronRight className="mr-2 h-4 w-4" />
+            {t('devices:ctProv.continue')}
+          </Button>
+        </div>
+      )}
+      {step === 'edit' && (
+        <div className="mt-4 shrink-0 space-y-2">
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" onClick={() => setStep('capabilities')}>
               {t('common:back')}
@@ -616,13 +658,17 @@ export function CtProvisionWizard({
             <Button
               className="flex-1"
               onClick={handleApply}
-              disabled={(needsWifi && !wifiSsid) || ct.provisioning}
+              disabled={(needsWifi && !wifiSsid.trim()) || ct.provisioning}
             >
-              <ChevronRight className="w-4 h-4 mr-2" />
+              <ChevronRight className="mr-2 h-4 w-4" />
               {t('devices:ble.apply')}
             </Button>
           </div>
-          {ct.error && <p className="text-center text-sm text-error">{ct.error}</p>}
+          {(wifiScanError || ct.error) && (
+            <p className="text-center text-sm text-error">
+              {wifiScanError || (ct.error ? provErrorCopy(t, ct.error) : null)}
+            </p>
+          )}
         </div>
       )}
     </div>

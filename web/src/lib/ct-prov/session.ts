@@ -18,6 +18,35 @@ export class ProvSessionError extends Error {
   }
 }
 
+/**
+ * Map protocol / transport errors to a short operator-facing sentence.
+ * Keeps the raw `ProvSessionError(...)` string out of the wizard UI.
+ */
+export function formatProvUserMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  const lower = raw.toLowerCase()
+  if (lower.includes('wifi_init')) {
+    return 'wifi_init_failed'
+  }
+  if (lower.includes('busy')) {
+    return 'device_busy'
+  }
+  if (err instanceof ProvSessionError) {
+    if (err.reason === 'internal_error' || lower.includes('internal_error')) {
+      return 'internal_error'
+    }
+    if (err.reason === 'not_open') {
+      return 'not_connected'
+    }
+  }
+  if (lower.includes('not connected') || lower.includes('not_open')) {
+    return 'not_connected'
+  }
+  // Fall back to a cleaned reason/message without the ProvSessionError wrapper.
+  const m = raw.match(/^ProvSessionError\((.+)\)$/)
+  return m?.[1] ?? raw
+}
+
 export interface DeviceInfoResult {
   deviceName: string
   serialNumber: string
