@@ -11,8 +11,8 @@ import { ChevronDown, Loader2, Wifi } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useCtProvision } from '@/hooks/useCtProvision'
 import {
@@ -23,7 +23,11 @@ import {
 } from '@/lib/ct-prov'
 import { useStore } from '@/store'
 import { cn } from '@/lib/utils'
-import { CtProvisionCenter, CtProvisionWizard } from './CtProvisionWizard'
+import {
+  CtProvisionCenter,
+  CtProvisionHero,
+  CtProvisionWizard,
+} from './CtProvisionWizard'
 
 interface ApProvisionTabProps {
   onComplete?: (deviceId: string) => void
@@ -138,14 +142,14 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
           : t('devices:ap.errorNotOnSoftap')
     return (
       <CtProvisionCenter>
-        <div className="w-16 h-16 rounded-xl bg-error-light flex items-center justify-center">
-          <Wifi className="w-8 h-8 text-error" />
-        </div>
-        <div className="text-center max-w-sm space-y-2">
+        <CtProvisionHero tone="error">
+          <Wifi className="h-8 w-8 text-error" />
+        </CtProvisionHero>
+        <div className="max-w-sm space-y-2 text-center">
           <h3 className="text-lg font-medium">{t('devices:ble.failedTitle')}</h3>
           <p className="text-sm text-muted-foreground">{hint}</p>
           {ct.error && (
-            <p className="text-xs text-muted-foreground font-mono break-all">{ct.error}</p>
+            <p className="break-all font-mono text-xs text-muted-foreground">{ct.error}</p>
           )}
           <p className="text-xs text-muted-foreground">
             {t('devices:ap.errorHostHint', {
@@ -162,19 +166,17 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
   if (phase === 'probing' || phase === 'connecting' || ct.connecting) {
     return (
       <CtProvisionCenter>
-        <div className="w-16 h-16 rounded-xl bg-primary-light flex items-center justify-center">
-          <Loader2 className="w-8 h-8 text-primary animate-spin" />
-        </div>
-        <div className="text-center space-y-2">
+        <CtProvisionHero>
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </CtProvisionHero>
+        <div className="space-y-2 text-center">
           <h3 className="text-lg font-medium">
             {phase === 'probing'
               ? t('devices:ap.probingTitle')
               : t('devices:ap.connectingTitle')}
           </h3>
-          <p className="text-sm text-muted-foreground font-mono">{selectedHost}</p>
-          <p className="text-xs text-muted-foreground max-w-sm">
-            {t('devices:ap.probingHint')}
-          </p>
+          <p className="font-mono text-sm text-muted-foreground">{selectedHost}</p>
+          <p className="max-w-sm text-xs text-muted-foreground">{t('devices:ap.probingHint')}</p>
         </div>
       </CtProvisionCenter>
     )
@@ -182,19 +184,19 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
 
   // —— First viewport: unmistakable hand-join ——
   return (
-    <div className="min-h-[min(60vh,520px)] h-full flex flex-col px-4 py-6">
-      <div className="text-center max-w-md mx-auto mb-5 space-y-2">
-        <div className="w-14 h-14 mx-auto rounded-xl bg-primary-light flex items-center justify-center">
-          <Wifi className="w-7 h-7 text-primary" />
-        </div>
+    <div className="flex h-full min-h-[min(60vh,520px)] flex-col py-6">
+      <div className="mx-auto mb-5 max-w-md space-y-2 text-center">
+        <CtProvisionHero size="md">
+          <Wifi className="h-7 w-7 text-primary" />
+        </CtProvisionHero>
         <h3 className="text-lg font-medium">{t('devices:ap.joinTitle')}</h3>
         <p className="text-sm text-muted-foreground">{t('devices:ap.joinDescStrong')}</p>
       </div>
 
-      <div className="max-w-md mx-auto w-full space-y-4">
-        <div className="rounded-xl border bg-card p-4 space-y-3">
-          <div>
-            <Label>{t('devices:ap.model')}</Label>
+      <div className="mx-auto w-full max-w-md space-y-4">
+        <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+          <Field>
+            <FieldLabel>{t('devices:ap.model')}</FieldLabel>
             <Select value={modelPick} onValueChange={handleModelChange}>
               <SelectTrigger>
                 <SelectValue />
@@ -207,9 +209,9 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </Field>
 
-          <ol className="space-y-2.5 text-sm list-decimal list-inside text-foreground">
+          <ol className="list-inside list-decimal space-y-2.5 text-sm text-foreground">
             <li>{t('devices:ap.handStep1')}</li>
             <li>
               {t('devices:ap.handStep2', {
@@ -219,7 +221,7 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
             <li>{t('devices:ap.handStep3')}</li>
           </ol>
 
-          <div className="rounded-lg bg-muted-30 px-3 py-2.5 text-xs space-y-1">
+          <div className="space-y-1 rounded-lg bg-muted-30 px-3 py-2.5 text-xs">
             <p>
               <span className="text-muted-foreground">{t('devices:ap.ssidPatternLabel')}: </span>
               <span className="font-mono font-medium">{ssidExampleForFamily(modelPick)}</span>
@@ -234,40 +236,40 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
         </div>
 
         <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-          <div className="rounded-xl border bg-card">
-            <CollapsibleTrigger className="w-full flex items-center justify-between p-3.5 text-left">
+          <div className="rounded-xl border border-border bg-card">
+            <CollapsibleTrigger className="flex w-full items-center justify-between p-3.5 text-left">
               <span className="text-sm font-medium">{t('devices:ap.advancedOptions')}</span>
               <ChevronDown
                 className={cn(
-                  'w-4 h-4 text-muted-foreground transition-transform',
+                  'h-4 w-4 text-muted-foreground transition-transform',
                   advancedOpen && 'rotate-180',
                 )}
               />
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <div className="px-3.5 pb-3.5 space-y-3 border-t pt-3">
-                <div>
-                  <Label>{t('devices:ap.ssidOptional')}</Label>
+              <div className="space-y-3 border-t border-border px-3.5 pb-3.5 pt-3">
+                <Field>
+                  <FieldLabel>{t('devices:ap.ssidOptional')}</FieldLabel>
                   <Input
                     value={ct.apSsidInput}
                     onChange={(e) => ct.setApSsidInput(e.target.value)}
                     placeholder={t('devices:ap.ssidPlaceholder')}
                   />
-                </div>
-                <div>
-                  <Label>{t('devices:ap.host')}</Label>
+                </Field>
+                <Field>
+                  <FieldLabel>{t('devices:ap.host')}</FieldLabel>
                   <Input
                     value={ct.apHost}
                     onChange={(e) => ct.setApHost(e.target.value)}
                     placeholder={softapHostForModel(modelPick, deviceTypes)}
                   />
-                </div>
+                </Field>
               </div>
             </CollapsibleContent>
           </div>
         </Collapsible>
 
-        <label className="flex items-start gap-3 rounded-xl border bg-card p-3.5 cursor-pointer">
+        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-card p-3.5">
           <Checkbox
             checked={joinedAck}
             onCheckedChange={(v) => setJoinedAck(v === true)}
@@ -286,11 +288,11 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
           onClick={() => void handleConnect()}
           disabled={!joinedAck}
         >
-          <Wifi className="w-4 h-4 mr-2" />
+          <Wifi className="mr-2 h-4 w-4" />
           {t('devices:ap.joinedContinue')}
         </Button>
 
-        {ct.error && <p className="text-sm text-error text-center">{ct.error}</p>}
+        {ct.error && <p className="text-center text-sm text-error">{ct.error}</p>}
       </div>
     </div>
   )

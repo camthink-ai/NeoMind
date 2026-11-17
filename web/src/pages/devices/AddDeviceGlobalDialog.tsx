@@ -196,12 +196,18 @@ export function AddDeviceGlobalDialog({
             />
           )}
           {/* Main scrollable content */}
-          <FullScreenDialogMain className="flex flex-col">
+          {/* BLE/AP own their scroll + sticky step actions; Main must not scroll. */}
+          <FullScreenDialogMain
+            className={cn(
+              'flex flex-col',
+              (activeTab === 'ble' || activeTab === 'ap') && 'overflow-hidden',
+            )}
+          >
             <div
               className={cn(
                 'max-w-2xl mx-auto w-full flex-1 flex flex-col',
                 isMobile ? 'px-3 py-4' : 'px-5 py-6 md:px-8',
-                (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0',
+                (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 py-0 md:py-0',
               )}
             >
 
