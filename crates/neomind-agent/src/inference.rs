@@ -6,7 +6,7 @@
 //! validation errors back to the model. No tools, no loop, no memory.
 //!
 //! Serves Structured-mode agents (L0 operators) and will serve chat tools
-//! (`query_conclusion` refresh, dry-run). Runtime construction stays in the
+//! (dry-run). Runtime construction stays in the
 //! instance manager (M0-2) — this module only resolves and calls.
 
 use std::collections::BTreeMap;

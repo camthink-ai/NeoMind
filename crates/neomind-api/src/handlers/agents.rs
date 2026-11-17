@@ -354,6 +354,12 @@ struct AgentExecutionDto {
     trigger_type: String,
     status: String,
     duration_ms: u64,
+    /// The run's conclusion, inline: list readers answering "what did the
+    /// agent last conclude" (CLI `agent latest-execution`, chat via shell)
+    /// must not need a second round-trip per record to see it.
+    conclusion: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confidence: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
@@ -794,6 +800,8 @@ impl From<AgentExecutionRecord> for AgentExecutionDto {
             trigger_type: record.trigger_type,
             status: execution_status_to_string(&record.status).to_string(),
             duration_ms: record.duration_ms,
+            conclusion: record.decision_process.conclusion,
+            confidence: record.decision_process.confidence,
             error: record.error,
         }
     }

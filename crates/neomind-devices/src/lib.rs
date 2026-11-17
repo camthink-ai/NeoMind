@@ -30,6 +30,7 @@ pub mod telemetry;
 
 // Simplified device management
 pub mod association_bind;
+pub mod command_validation;
 pub mod registry;
 pub mod service;
 

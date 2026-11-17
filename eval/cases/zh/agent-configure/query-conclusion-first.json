@@ -4,7 +4,7 @@
   "category": "agent",
   "workflow": "agent-configure",
   "scenario_type": "single_turn",
-  "description": "边界规则 v2(任务分类协议):对于「X 还好吗 / agent 盯的东西现在什么状态」类问题,必须先调 query_conclusion(即时、免费)——而不是 shell 查 neomind agent,也不是 run_now。",
+  "description": "边界规则 v2(任务分类协议):对于「X 还好吗 / agent 盯的东西现在什么状态」类问题,先读 agent 已有的最近结论(`neomind agent latest-execution`,即时、免费)——不要为状态问题触发一次新执行(`neomind agent invoke`)。",
   "setup": {
     "fixture": "seed-empty",
     "extras": {
@@ -33,11 +33,16 @@
   ],
   "expectations": {
     "per_turn": [
-      "T1: 把「冷库」对应到 coldroom-watch 这个 agent,先调 query_conclusion(agent 按自己的排程跑过,结论即时可得);只有确实需要新看一眼时才 run_now"
+      "T1: 把「冷库」对应到 coldroom-watch 这个 agent,用 `neomind agent latest-execution` 读取最近一次执行的结论(或明确说明还没有跑过);只有用户明确要求重新检查时才 invoke"
     ],
-    "overall": "状态回答必须落在 agent 的结论上(或明确说还没有结论),绝不能凭空编造"
+    "overall": "状态回答必须落在 agent 最近一次执行的结论上(或明确说还没有结论/尚未运行),绝不能凭空编造"
   },
   "expect": {
-    "tools": ["query_conclusion"]
+    "tools": [
+      "shell"
+    ],
+    "commands": [
+      "neomind agent latest-execution"
+    ]
   }
 }

@@ -39,6 +39,26 @@ pub async fn send_command_handler(
     Path((device_id, command)): Path<(String, String)>,
     Json(req): Json<SendCommandRequest>,
 ) -> HandlerResult<serde_json::Value> {
+    // Shared preflight with schema feedback: a wrong command name lists the
+    // template's commands, wrong params return the offending command's
+    // schema (types/required/allowed_values/min/max/default/unit) in `hint`,
+    // which the CLI appends to error output — every caller (HTTP, CLI, chat
+    // via shell) gets the same corrective loop. DeviceService validation
+    // remains the authority below.
+    if let Some(config) = state.devices.service.get_device(&device_id) {
+        if let Some(template) = state.devices.service.get_template(&config.device_type) {
+            let catalog = neomind_devices::command_validation::catalog_from_template(&template);
+            if let Err(pf) =
+                neomind_devices::command_validation::preflight(&catalog, &command, &req.params)
+            {
+                let mut err =
+                    ErrorResponse::bad_request(format!("Failed to send command: {}", pf.message));
+                err.hint = pf.hint;
+                return Err(err);
+            }
+        }
+    }
+
     // Use DeviceService.send_command which accepts HashMap<String, serde_json::Value>
     let (_value, delivery) = state
         .devices

@@ -1772,7 +1772,7 @@ impl TaskState {
                 let method_line = match m {
                     ExecutionMethod::DeviceNativeCommand => {
                         "method=device_native_command (device type template command \
-                         via device_command / device control — not notification/push/webhook)"
+                         via `neomind device control` — not notification/push/webhook)"
                     }
                 };
                 out.push_str(&format!("  - {method_line}\n"));
@@ -1784,8 +1784,8 @@ impl TaskState {
                          push/message/webhook for this goal)"
                     }
                     ExcludedRoute::DeviceNativeCommand => {
-                        "excluded=device_native_command (do not use device_command / \
-                         device control for this goal — prefer the allowed route)"
+                        "excluded=device_native_command (do not use \
+                         `neomind device control` for this goal — prefer the allowed route)"
                     }
                 };
                 out.push_str(&format!("  - {line}\n"));
@@ -2598,7 +2598,7 @@ impl TaskState {
             ExcludedRoute::NotificationOrWebhook => {
                 let method_hint = match self.method {
                     Some(ExecutionMethod::DeviceNativeCommand) => {
-                        " Use device_command (or device control) for the goal device instead."
+                        " Use `neomind device control` for the goal device instead."
                     }
                     None => " Follow the Active Task State constraints.",
                 };

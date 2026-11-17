@@ -170,6 +170,54 @@ impl ApiClient {
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 
+    /// POST with a per-request timeout that overrides the client default.
+    ///
+    /// For endpoints whose server side deliberately waits longer than the
+    /// 30s client default (e.g. `agent invoke`'s 60s patience window): the
+    /// caller must receive the endpoint's structured "still executing"
+    /// response, not a client-side timeout that reads as business failure.
+    pub async fn post_timeout(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+        timeout_secs: u64,
+    ) -> Result<serde_json::Value> {
+        for attempt in 0..=MAX_RETRIES {
+            let url = self.url_for(path);
+            let resp = self
+                .add_auth(
+                    self.client
+                        .post(&url)
+                        .timeout(Duration::from_secs(timeout_secs))
+                        .json(body),
+                )
+                .send()
+                .await?;
+            let status = resp.status();
+            if status.as_u16() == 401 && attempt < MAX_RETRIES {
+                self.refresh_api_key();
+                continue;
+            }
+            let resp_body: serde_json::Value = resp.json().await.unwrap_or_default();
+            if !status.is_success() {
+                anyhow::bail!(
+                    "API error ({}): {}{}",
+                    status,
+                    extract_error_message(&resp_body),
+                    if status == reqwest::StatusCode::UNAUTHORIZED {
+                        unauthorized_hint()
+                    } else if status == reqwest::StatusCode::NOT_FOUND {
+                        "\nHint: not found — check the exact ID using this resource's list command"
+                    } else {
+                        ""
+                    }
+                );
+            }
+            return Ok(resp_body);
+        }
+        anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
+    }
+
     pub async fn post_raw(&self, path: &str) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
             let url = self.url_for(path);

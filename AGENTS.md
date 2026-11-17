@@ -450,3 +450,49 @@ This zcode worktree stays detached (binary used by the finished eval) and
 can be removed once its target is no longer needed. main branch untouched
 at 871af9fe. NO push/publish anywhere; user to change the Mac login
 password (was shared in chat) themselves.
+
+## Dedicated chat tool entry points removed (2026-11-17, user decision)
+
+User decision after evidence review: the three dedicated chat tools
+(query_conclusion, run_now, device_command) are REMOVED from model
+registration; the platform converges on the unified shell/CLI entry. Frozen
+138 evidence (fc0c554e, tools registered): both agent-tool case families
+chose shell 8/8 trials (tool_ok 0/8), including `neomind agent
+query_conclusion` inventions; device-control families passed business 8/8
+via CLI. Retention necessity was unproven; no entry-comparison run was made
+a precondition (user: delete first, compare later).
+
+What landed (this round, uncommitted-then-committed on 1.3.0):
+- register_stateful_chat_tools deleted (types.rs); toolkit/agent_tools.rs
+  and toolkit/device_command.rs deleted; mapper keeps the three names as
+  exact self-mappings so OLD SESSION stored ops still resolve (rehydration
+  tests green; capability arms + write-fingerprint names kept for replay).
+- Schema feedback moved to the shared layer: neomind-devices
+  command_validation.rs (catalog_from_template + preflight, bounded hints)
+  wired into POST /devices/{id}/command — unknown command lists available,
+  param errors carry the offending command's schema in ErrorResponse.hint
+  (CLI renders hint). 6 handler tests pin it.
+- CLI contract fixes: `agent invoke` input now OPTIONAL; per-request
+  post_timeout 70s > endpoint 60s patience (client wait never reads as
+  business failure); Executing renders as lifecycle with the
+  latest-execution poll command (invoke_outcome_message, tested);
+  `agent invoke` classified Mutating (write-gate/anti-duplicate via shell,
+  pinned by classify test + existing task_continuity fingerprint test).
+- REAL GAP FOUND AND FIXED: GET /agents/{id}/executions (the
+  `agent latest-execution` read path) did NOT include the conclusion —
+  AgentExecutionDto now carries conclusion + confidence (readback test
+  pins the CLI read scenario; additive for the frontend).
+- Model-visible constraint text in task_continuity reworded from
+  "device_command / device control" to `neomind device control` only.
+- eval cases zh/en agent-runnow-delegation + query-conclusion-first
+  re-specified to business contracts (shell + neomind agent invoke /
+  latest-execution); mirror check green; historical frozen results on disk
+  untouched. Skill-CLI drift + CLI-API drift green.
+
+Gates: agent lib 1144/0 (test-utils), cli-ops 130/0, api lib 543/0,
+api integration new tests green, fmt clean, clippy clean on touched crates.
+PRE-EXISTING reds on HEAD (NOT this round, concurrent BLE/MQTM workstream):
+neomind-devices clippy 2 errors + registration test, api integration
+chat_refs/e2e_scenarios/mentions 10 failures (BindIncomplete strictness) —
+verified identical on stashed HEAD. No push/publish. Small-model effect
+comparison deferred by decision.

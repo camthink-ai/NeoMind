@@ -1541,7 +1541,7 @@ pub enum AgentCommand {
         ///   - cron:     runs on schedule (--schedule-config "0 8 * * *" = daily 8am)
         ///   - event:    runs when device data arrives (--event-filter optional)
         ///   - manual:   never scheduled — runs only when you call
-        ///     `agent invoke` (or chat's run_now). This is what the editor's
+        ///     `agent invoke`. This is what the editor's
         ///     "on demand" strategy creates, so an agent built in the UI and
         ///     one built here can be the same shape.
         #[arg(long)]
@@ -1717,19 +1717,22 @@ pub enum AgentCommand {
     },
     /// Invoke agent with input.
     ///
-    /// Runs a one-time agent execution with custom input, bypassing the schedule.
-    /// Returns the agent's response directly. Useful for testing or ad-hoc queries.
+    /// Runs a one-time agent execution, bypassing the schedule. Without input
+    /// the agent runs on its own prompt (it already knows what it watches).
+    /// The server waits up to 60s; a longer run continues in the background —
+    /// the response says `Executing`, and the result lands with
+    /// `agent latest-execution <ID>`.
     ///
-    /// Workflow: `agent invoke <ID> "your question"` → see immediate response.
+    /// Workflow: `agent invoke <ID> ["your question"]` → immediate response,
+    /// or `Executing` → `agent latest-execution <ID>`.
     ///
     /// Example: `neomind agent invoke agent-001 "Check all sensor readings"`
     Invoke {
         /// Agent ID.
         #[arg(required = true)]
         id: String,
-        /// Input prompt.
-        #[arg(required = true)]
-        input: String,
+        /// Optional extra input for this run only.
+        input: Option<String>,
     },
     /// Get agent memory.
     ///
@@ -2780,5 +2783,44 @@ mod unify_enable_disable_tests {
             }
             other => panic!("expected Message::Read, got {other:?}"),
         }
+    }
+}
+
+/// `agent invoke` input is optional: the agent already knows what it watches,
+/// and the server-side invocation carries the agent's own prompt. The old
+/// required positional made a no-input run a parse error — which the model
+/// read as business failure (2026-11-17 eval forensics).
+#[cfg(test)]
+mod agent_invoke_input_tests {
+    use super::{AgentCommand, Args, Command};
+    use clap::Parser;
+
+    fn parse(argv: &[&str]) -> Result<Option<String>, String> {
+        Args::try_parse_from(["neomind"].into_iter().chain(argv.iter().copied()))
+            .map(|a| match a.command {
+                Command::Agent {
+                    agent_cmd: AgentCommand::Invoke { input, .. },
+                } => input,
+                _ => None,
+            })
+            .map_err(|e| e.to_string())
+    }
+
+    #[test]
+    fn invoke_without_input_parses() {
+        assert_eq!(parse(&["agent", "invoke", "agent-001"]).unwrap(), None);
+    }
+
+    #[test]
+    fn invoke_with_input_parses() {
+        assert_eq!(
+            parse(&["agent", "invoke", "agent-001", "check sensors"]).unwrap(),
+            Some("check sensors".to_string())
+        );
+    }
+
+    #[test]
+    fn invoke_requires_id() {
+        assert!(parse(&["agent", "invoke"]).is_err());
     }
 }

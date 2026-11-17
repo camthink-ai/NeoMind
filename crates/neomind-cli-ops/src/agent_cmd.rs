@@ -507,14 +507,41 @@ pub async fn control_agent(client: &ApiClient, id: &str, status: &str) -> Result
     Ok(CliResponse::success(data, "Agent status updated"))
 }
 
-/// Invoke agent with input
-pub async fn invoke_agent(client: &ApiClient, id: &str, input: &str) -> Result<CliResponse> {
+/// Invoke agent with optional input.
+///
+/// The endpoint waits up to 60s; this call waits up to 70s so it always
+/// receives the endpoint's structured answer — a finished run's conclusion,
+/// or `status: "Executing"` for a run that continues in the background. A
+/// client-side timeout must never read as "the execution failed".
+pub async fn invoke_agent(
+    client: &ApiClient,
+    id: &str,
+    input: Option<&str>,
+) -> Result<CliResponse> {
     let id = resolve_agent_id(client, id).await?;
-    let body = json!({ "input": input });
+    let body = match input {
+        Some(text) => json!({ "input": text }),
+        None => json!({}),
+    };
     let data = client
-        .post(&format!("/agents/{}/invoke", id), &body)
+        .post_timeout(&format!("/agents/{}/invoke", id), &body, 70)
         .await?;
-    Ok(CliResponse::success(data, "Agent invoked"))
+    let message = invoke_outcome_message(&data, &id);
+    Ok(CliResponse::success(data, &message))
+}
+
+/// Render the invoke outcome for the caller. "Still executing" is a
+/// lifecycle fact, NOT a business failure — the message says the run
+/// continues and names the poll command instead of reading as an error.
+pub fn invoke_outcome_message(data: &serde_json::Value, agent_id: &str) -> String {
+    if data.get("still_executing").and_then(|v| v.as_bool()) == Some(true) {
+        format!(
+            "Agent run started and still executing in the background — it will finish and record \
+             its result. Poll with: neomind agent latest-execution {agent_id}"
+        )
+    } else {
+        "Agent invoked".to_string()
+    }
 }
 
 /// Get agent memory
@@ -676,5 +703,36 @@ mod tests {
                 "{schedule:?}: {step}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod invoke_outcome_tests {
+    use super::invoke_outcome_message;
+    use serde_json::json;
+
+    #[test]
+    fn executing_renders_as_lifecycle_not_failure() {
+        let msg = invoke_outcome_message(
+            &json!({"status": "Executing", "still_executing": true}),
+            "agent-7",
+        );
+        assert!(msg.contains("still executing"), "{msg}");
+        assert!(
+            msg.contains("neomind agent latest-execution agent-7"),
+            "{msg}"
+        );
+        // Not phrased as an error the model would retry or apologize for.
+        assert!(!msg.to_lowercase().contains("failed"));
+        assert!(!msg.to_lowercase().contains("error"));
+    }
+
+    #[test]
+    fn finished_renders_neutral_message() {
+        let msg = invoke_outcome_message(
+            &json!({"status": "Completed", "conclusion": "ok", "still_executing": false}),
+            "agent-7",
+        );
+        assert_eq!(msg, "Agent invoked");
     }
 }

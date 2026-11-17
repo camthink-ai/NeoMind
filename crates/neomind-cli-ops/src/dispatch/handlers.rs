@@ -779,7 +779,7 @@ pub async fn run_agent_cmd(cmd: AgentCommand) -> Result<(CliResponse, OutputForm
         }
         AgentCommand::Delete { id } => delete_agent(&client, &id).await?,
         AgentCommand::Control { id, status } => control_agent(&client, &id, &status).await?,
-        AgentCommand::Invoke { id, input } => invoke_agent(&client, &id, &input).await?,
+        AgentCommand::Invoke { id, input } => invoke_agent(&client, &id, input.as_deref()).await?,
         AgentCommand::Memory { id } => get_agent_memory(&client, &id).await?,
         AgentCommand::ClearMemory { id } => clear_agent_memory(&client, &id).await?,
         AgentCommand::Executions { id, limit, offset } => {

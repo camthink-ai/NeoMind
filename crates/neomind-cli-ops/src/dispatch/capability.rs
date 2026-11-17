@@ -192,6 +192,21 @@ mod tests {
         assert_eq!(classify_line("llm models"), CliSideEffect::ProvenReadOnly);
     }
 
+    /// `agent invoke` through shell must enter the mutating write gate —
+    /// the durable anti-duplicate path for agent runs (pinned together with
+    /// the write-fingerprint test in neomind-agent task_continuity).
+    #[test]
+    fn agent_invoke_is_mutating() {
+        assert_eq!(
+            classify_line("agent invoke agent-001"),
+            CliSideEffect::Mutating
+        );
+        assert_eq!(
+            classify_line("agent invoke agent-001 recheck"),
+            CliSideEffect::Mutating
+        );
+    }
+
     #[test]
     fn mutations_are_not_read_only() {
         assert_eq!(

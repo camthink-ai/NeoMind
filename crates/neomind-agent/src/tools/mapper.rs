@@ -50,9 +50,10 @@ impl ToolNameMapper {
         self.register_simplified("extension", "shell");
         self.register_simplified("skill", "skill");
         self.register_simplified("shell", "shell");
-        // First-class registry tool (not CLI domain). Must win before fuzzy
-        // substring match: "device_command".contains("device"|"command") would
-        // otherwise route it to shell and break structured device control.
+        // Legacy dedicated tool names (removed from registration 2026-11-17).
+        // Kept as exact self-mappings so stored operations from old sessions
+        // still resolve to their own capability class instead of fuzzy-
+        // matching into a CLI domain.
         self.register_simplified("device_command", "device_command");
         self.register_simplified("run_now", "run_now");
         self.register_simplified("query_conclusion", "query_conclusion");
