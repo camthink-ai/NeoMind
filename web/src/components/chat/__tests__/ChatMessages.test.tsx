@@ -4,10 +4,48 @@
 /// message, and the load-earlier pagination affordance.
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { ChatMessages } from '../ChatMessages'
+import {
+  ChatMessages,
+  isDefaultGoalStatusNoise,
+  shouldShowGoalStatusCallout,
+} from '../ChatMessages'
 import type { Message } from '@/types'
 
 const _noop = () => {}
+
+describe('goalStatus footer gating', () => {
+  it('treats not_applicable + normal/absent as default noise', () => {
+    expect(
+      isDefaultGoalStatusNoise({ status: 'not_applicable' }, 'normal'),
+    ).toBe(true)
+    expect(isDefaultGoalStatusNoise({ status: 'not_applicable' })).toBe(true)
+    expect(
+      shouldShowGoalStatusCallout({ status: 'not_applicable' }, 'normal', false),
+    ).toBe(false)
+    expect(
+      shouldShowGoalStatusCallout({ status: 'not_applicable' }, 'normal', true),
+    ).toBe(true)
+  })
+
+  it('keeps incomplete / interrupted visible without debug flag', () => {
+    expect(
+      shouldShowGoalStatusCallout(
+        {
+          status: 'incomplete',
+          reason: 'config only',
+          level: 'config_success',
+          task_complete_ok: false,
+          physical_ok: false,
+        },
+        'normal',
+        false,
+      ),
+    ).toBe(true)
+    expect(
+      shouldShowGoalStatusCallout({ status: 'not_applicable' }, 'interrupted', false),
+    ).toBe(true)
+  })
+})
 
 describe('ChatMessages', () => {
   it('renders a user message bubble with its content', () => {
@@ -275,7 +313,7 @@ describe('ChatMessages', () => {
     expect(onReuse.mock.calls[0][0].contentNodes).toHaveLength(2)
   })
 
-  it('renders system goalStatus callout; not_applicable is not a success badge', () => {
+  it('hides default not_applicable + ended-normally footer; keeps incomplete', () => {
     // Separate turns (user between) so mergeMessagesForDisplay keeps both.
     const messages: Message[] = [
       { id: 'u1', role: 'user', content: 'q1', timestamp: 1 },
@@ -316,13 +354,49 @@ describe('ChatMessages', () => {
         currentRound={1}
       />,
     )
-    const na = document.querySelector('[data-goal-status="not_applicable"]')
-    expect(na).toBeTruthy()
-    expect(na!.className).not.toMatch(/success/)
-    expect(document.querySelector('[data-goal-status="incomplete"]')).toBeTruthy()
+    // Ordinary-turn noise must not appear as a session footer.
+    expect(document.querySelector('[data-goal-status="not_applicable"]')).toBeNull()
+    expect(screen.queryByText(/No constrained goal|无约束目标|ended normally|正常结束/i)).toBeNull()
+    const incomplete = document.querySelector('[data-goal-status="incomplete"]')
+    expect(incomplete).toBeTruthy()
+    expect(incomplete!.className).not.toMatch(/success/)
+    // incomplete keeps its body; "ended normally" stays hidden even there.
+    expect(incomplete!.textContent || '').not.toMatch(/ended normally|正常结束/i)
     // Model text left intact — not rewritten from goalStatus.
     expect(screen.getByText('已推送成功')).toBeTruthy()
     expect(screen.getByText('配置好了')).toBeTruthy()
+  })
+
+  it('shows abnormal endReason without the default not_applicable body', () => {
+    const messages: Message[] = [
+      { id: 'u1', role: 'user', content: 'q', timestamp: 1 },
+      {
+        id: 'a1',
+        role: 'assistant',
+        content: 'stopped',
+        timestamp: 2,
+        goalStatus: { status: 'not_applicable' },
+        endReason: 'interrupted',
+      },
+    ]
+    render(
+      <ChatMessages
+        messages={messages}
+        user={null}
+        isStreaming={false}
+        streamingContent=""
+        streamingThinking=""
+        streamingRoundThinking={{}}
+        streamingToolCalls={[]}
+        roundContents={{}}
+        currentRound={1}
+      />,
+    )
+    const callout = document.querySelector('[data-goal-status="not_applicable"]')
+    expect(callout).toBeTruthy()
+    expect(callout!.getAttribute('data-end-reason')).toBe('interrupted')
+    expect(callout!.textContent || '').toMatch(/interrupted|已中断/i)
+    expect(callout!.textContent || '').not.toMatch(/No constrained goal|无约束目标/i)
   })
 
   it('normalizes snake_case content_nodes from history into chips', () => {

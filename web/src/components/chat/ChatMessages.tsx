@@ -236,6 +236,15 @@ export function ChatMessages({
                 : null,
             ].filter(Boolean).join(" · ")
           : undefined
+        const goalStatusDebug = isGoalStatusDebugChromeEnabled()
+        const showGoalStatus =
+          message.role === "assistant" &&
+          !!message.goalStatus &&
+          shouldShowGoalStatusCallout(
+            message.goalStatus,
+            message.endReason,
+            goalStatusDebug,
+          )
         return (
           <div
             key={message.id || `msg-${idx}`}
@@ -386,11 +395,13 @@ export function ChatMessages({
                     </div>
                   )}
                   {/* System-judged goal status from End — display only; never
-                      rewrites model text. not_applicable ≠ verified success. */}
-                  {message.role === 'assistant' && message.goalStatus && (
+                      rewrites model text. Default not_applicable + "ended
+                      normally" is debug chrome and stays hidden for users. */}
+                  {showGoalStatus && message.goalStatus && (
                     <GoalStatusCallout
                       status={message.goalStatus}
                       endReason={message.endReason}
+                      showDebugChrome={goalStatusDebug}
                     />
                   )}
                 </div>
@@ -489,21 +500,58 @@ const END_REASON_KEYS: Record<StreamEndReason, string> = {
   cannot_continue: "chat:goalStatus.endReason.cannot_continue",
 }
 
+/** Default End payload on ordinary turns — not operator-facing chrome. */
+export function isDefaultGoalStatusNoise(
+  status: SystemGoalStatus,
+  endReason?: StreamEndReason,
+): boolean {
+  const noiseStatus = status.status === "not_applicable"
+  const noiseReason = !endReason || endReason === "normal"
+  return noiseStatus && noiseReason
+}
+
+/**
+ * Hide the default "no constrained goal" / "ended normally" footer for users.
+ * Meaningful goal outcomes and abnormal end reasons stay visible. Optional
+ * `showDebugChrome` restores the default payload for harness debug.
+ */
+export function shouldShowGoalStatusCallout(
+  status: SystemGoalStatus,
+  endReason?: StreamEndReason,
+  showDebugChrome = false,
+): boolean {
+  if (!isDefaultGoalStatusNoise(status, endReason)) return true
+  return showDebugChrome
+}
+
+/** Opt-in only: `localStorage.neomind.debug.goalStatus = "1"`. */
+export function isGoalStatusDebugChromeEnabled(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    return window.localStorage.getItem("neomind.debug.goalStatus") === "1"
+  } catch {
+    return false
+  }
+}
+
 /** Display-only system goal status; never rewrites assistant content. */
 function GoalStatusCallout({
   status,
   endReason,
+  showDebugChrome,
 }: {
   status: SystemGoalStatus
   endReason?: StreamEndReason
+  showDebugChrome: boolean
 }) {
   const { t } = useTranslation("chat")
-  let body: string
+  let body: string | null = null
   // Tone: not_applicable / incomplete stay muted — never success styling.
   let tone: "muted" | "warn" | "ok" = "muted"
   switch (status.status) {
     case "not_applicable":
-      body = t("chat:goalStatus.notApplicable")
+      // Default N/A line is debug chrome; abnormal endReason still shows.
+      body = showDebugChrome ? t("chat:goalStatus.notApplicable") : null
       tone = "muted"
       break
     case "incomplete":
@@ -537,7 +585,11 @@ function GoalStatusCallout({
     default:
       body = t("chat:goalStatus.label")
   }
-  const reasonLine = endReason ? t(END_REASON_KEYS[endReason]) : null
+  // "ended normally" is default turn chrome — only abnormal ends for users.
+  const showReasonLine =
+    !!endReason && (endReason !== "normal" || showDebugChrome)
+  const reasonLine = showReasonLine && endReason ? t(END_REASON_KEYS[endReason]) : null
+  if (!body && !reasonLine) return null
   return (
     <div
       className={cn(
@@ -553,7 +605,7 @@ function GoalStatusCallout({
     >
       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       <div className="flex flex-col gap-0.5">
-        <span>{body}</span>
+        {body && <span>{body}</span>}
         {reasonLine && (
           <span className="text-muted-foreground opacity-80">{reasonLine}</span>
         )}
