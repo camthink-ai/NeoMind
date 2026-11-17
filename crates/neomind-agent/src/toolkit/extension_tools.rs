@@ -2,6 +2,14 @@
 //!
 //! This module provides the bridge between the Extension system and the Tool system,
 //! automatically generating tools from extension command descriptors.
+//!
+//! **Chat entry policy:** when [`extension_direct_tools_for_llm`] is false (CLI-only
+//! candidate / default after acceptance), these tools are **not** registered into
+//! the model tool pool. Extension ops go through
+//! `neomind extension list|commands|invoke` via shell. Historical sanitized names
+//! still parse via [`neomind_core::extension::parse_extension_tool_name`] for
+//! ledger/resume compat and for a CLI redirect hint — they do **not** bypass AI
+//! policy by executing here when unregistered.
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -16,6 +24,36 @@ use neomind_core::extension::registry::ExtensionRegistry;
 use neomind_core::extension::*;
 use neomind_core::extension::{DynExtension, ExtensionCommand};
 use neomind_core::tools::ToolCategory;
+
+/// Env: `NEOMIND_EXTENSION_DIRECT_TOOLS`.
+///
+/// - unset / `1` / `true` / `on` → register extension commands as LLM tools
+///   (**frozen baseline** while the CLI-only candidate is under review).
+/// - `0` / `false` / `off` → CLI-only candidate (do not register).
+///
+/// After paired acceptance, flip the unset default to `false`.
+pub fn extension_direct_tools_for_llm() -> bool {
+    match std::env::var("NEOMIND_EXTENSION_DIRECT_TOOLS") {
+        Ok(v) => {
+            let t = v.trim();
+            !(t == "0" || t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("off"))
+        }
+        Err(_) => true,
+    }
+}
+
+/// CLI redirect when the model still emits a historical `ext:cmd` /
+/// `ext_cmd` tool name that is not registered (CLI-only mode or removed tool).
+pub fn historical_extension_tool_cli_hint(tool_name: &str) -> Option<String> {
+    let (ext, cmd) = parse_extension_tool_name(tool_name)?;
+    Some(format!(
+        "Tool '{tool_name}' is not registered for chat. Use CLI discovery then invoke \
+         (AI disable / ai_exposed still apply on invoke):\n\
+         neomind extension list\n\
+         neomind extension commands {ext}\n\
+         neomind extension invoke {ext} {cmd} --params '{{...}}'"
+    ))
+}
 
 /// Maximum length for a string value before truncation in extension output.
 const MAX_STRING_VALUE_LEN: usize = 200;
@@ -144,8 +182,7 @@ impl ExtensionTool {
         let extension_version = ext.metadata().version.to_string();
         let commands = ext.commands().to_vec();
         drop(ext);
-        let generation =
-            neomind_core::extension::begin_instance_generation(&extension_id);
+        let generation = neomind_core::extension::begin_instance_generation(&extension_id);
         commands
             .into_iter()
             .map(|cmd| {
@@ -660,7 +697,11 @@ mod tests {
 
         assert!(def.name.ends_with(":test_command"));
         assert!(def.name.starts_with("test.extension."));
-        assert!(def.namespace.as_ref().unwrap().starts_with("test.extension."));
+        assert!(def
+            .namespace
+            .as_ref()
+            .unwrap()
+            .starts_with("test.extension."));
         assert_eq!(def.version, "2.0.0");
     }
 
@@ -821,5 +862,40 @@ mod tests {
             .to_string()
             .contains("Cannot read internal image reference"));
         let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn historical_extension_tool_cli_hint_covers_colon_and_sanitized() {
+        let colon = historical_extension_tool_cli_hint("weather-forecast-v2:get_weather").unwrap();
+        assert!(colon.contains("neomind extension commands weather-forecast-v2"));
+        assert!(colon.contains("neomind extension invoke weather-forecast-v2 get_weather"));
+        assert!(colon.contains("AI disable"));
+
+        let sanitized =
+            historical_extension_tool_cli_hint("weather-forecast-v2_get_weather").unwrap();
+        assert!(sanitized.contains("neomind extension invoke weather-forecast-v2 get_weather"));
+
+        assert!(historical_extension_tool_cli_hint("shell").is_none());
+        assert!(historical_extension_tool_cli_hint("file_read").is_none());
+    }
+
+    #[test]
+    fn extension_direct_tools_env_gate() {
+        let prev = std::env::var_os("NEOMIND_EXTENSION_DIRECT_TOOLS");
+        std::env::remove_var("NEOMIND_EXTENSION_DIRECT_TOOLS");
+        assert!(
+            extension_direct_tools_for_llm(),
+            "unset keeps frozen baseline (direct tools on)"
+        );
+        std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", "0");
+        assert!(!extension_direct_tools_for_llm());
+        std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", "false");
+        assert!(!extension_direct_tools_for_llm());
+        std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", "1");
+        assert!(extension_direct_tools_for_llm());
+        match prev {
+            Some(v) => std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", v),
+            None => std::env::remove_var("NEOMIND_EXTENSION_DIRECT_TOOLS"),
+        }
     }
 }

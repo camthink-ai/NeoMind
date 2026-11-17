@@ -1549,13 +1549,15 @@ impl ShellTool {
             }
             "extension" => {
                 if is_not_found {
-                    Some("Run 'neomind extension list' to see installed extensions.".to_string())
+                    Some("Run 'neomind extension list' to see installed extensions. Then 'neomind extension commands <ID>' and 'neomind extension invoke <ID> <command> --params '{...}'.".to_string())
                 } else if action == "install" && is_validation {
                     Some("Provide the extension zip file path. Use 'neomind extension market-list' to browse marketplace.".to_string())
                 } else if action == "config" {
                     Some("Usage: neomind extension config <ID> to view, or neomind extension config <ID> --set '{\"key\":\"value\"}' to update.".to_string())
+                } else if action == "commands" || action == "invoke" {
+                    Some("Discover: neomind extension commands <ID>. Invoke: neomind extension invoke <ID> <command> --params '{\"key\":\"value\"}' (or --params-file). Do not invent sanitized tool names as CLI subcommands.".to_string())
                 } else {
-                    Some("Available actions: list, get, status, logs, config, install, uninstall, reload, create, build, market-list, market-install".to_string())
+                    Some("Available actions: list, get, commands, invoke, status, logs, config, install, uninstall, reload, create, build, market-list, market-install, validate".to_string())
                 }
             }
             "transform" => {
@@ -1671,6 +1673,7 @@ Quick reference (run `neomind <domain> --help` or load the `skill` guide for ful
 - Read: `<domain> get <ID>` (one) / `<domain> list` (all). ID is positional, never `--id`.
 - Write: `<domain> create/update/delete` take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
 - Control / enable / activate are explicit writes: `device control <ID> <CMD> --param key=value` (repeat for each device-defined parameter; these are NOT standalone `--key` flags), `rule enable <ID>`, `llm activate <ID>`, `connector enable <ID>`, `push enable <ID>`.
+- Extensions: `extension list` → `extension commands <ID>` → `extension invoke <ID> <command> --params '{...}'`. Never use sanitized names like `weather-forecast-v2_get_weather` as CLI subcommands.
 - History & conversation: `agent executions <ID>`, `agent conversation <ID>`, `agent send-message <ID>`.
 - Notification channels are a sub-family: `message channel-list` / `channel-create` / `channel-test`, NOT `message list`.
 

@@ -249,9 +249,19 @@ impl ToolRegistry {
             return Err(ToolError::Disabled(name.to_string()));
         }
 
-        let tool = self
-            .get(name)
-            .ok_or_else(|| ToolError::NotFound(name.to_string()))?;
+        let tool = self.get(name).ok_or_else(|| {
+            if let Some(hint) =
+                super::extension_tools::historical_extension_tool_cli_hint(name)
+            {
+                // Historical name resolve for compat: recognize legacy
+                // ext:cmd / sanitized names and redirect to CLI — do not
+                // execute the extension here (would bypass CLI-only + confuse
+                // AI-policy attribution).
+                ToolError::NotFound(hint)
+            } else {
+                ToolError::NotFound(name.to_string())
+            }
+        })?;
 
         let token_opt = self.cancellation_token.read().clone();
         match token_opt {
@@ -496,9 +506,19 @@ impl ToolRegistryBuilder {
 
     /// Scan extensions and add their tools to the registry.
     ///
-    /// Returns the builder on success (with extension tools added), or the original builder on error.
+    /// Skipped when [`super::extension_tools::extension_direct_tools_for_llm`]
+    /// is false (CLI-only candidate) — chat then uses
+    /// `neomind extension list|commands|invoke` only.
+    ///
     /// Call `.build()` after this method to get the final registry.
     pub async fn with_extensions_scanned(mut self) -> Self {
+        if !super::extension_tools::extension_direct_tools_for_llm() {
+            tracing::info!(
+                category = "ai",
+                "CLI-only extension entry: skipping direct extension tool registration"
+            );
+            return self;
+        }
         if let Some(ext_registry) = &self.extension_registry {
             use super::extension_tools::ExtensionToolExecutor;
 
@@ -650,6 +670,50 @@ mod tests {
             .await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ToolError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn execute_historical_extension_name_redirects_to_cli_not_found() {
+        let registry = ToolRegistry::new();
+        let err = registry
+            .execute("weather-forecast-v2_get_weather", serde_json::json!({}))
+            .await
+            .unwrap_err();
+        match err {
+            ToolError::NotFound(msg) => {
+                assert!(
+                    msg.contains("neomind extension invoke weather-forecast-v2 get_weather"),
+                    "{msg}"
+                );
+                assert!(
+                    msg.contains("not registered for chat"),
+                    "must not silently execute: {msg}"
+                );
+            }
+            other => panic!("expected NotFound redirect, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn with_extensions_scanned_skips_when_cli_only_env() {
+        let prev = std::env::var_os("NEOMIND_EXTENSION_DIRECT_TOOLS");
+        std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", "0");
+        let registry = ToolRegistryBuilder::new()
+            .with_extension_registry(Arc::new(
+                neomind_core::extension::registry::ExtensionRegistry::new(),
+            ))
+            .with_extensions_scanned()
+            .await
+            .build();
+        assert_eq!(
+            registry.len(),
+            0,
+            "CLI-only must not register extension tools"
+        );
+        match prev {
+            Some(v) => std::env::set_var("NEOMIND_EXTENSION_DIRECT_TOOLS", v),
+            None => std::env::remove_var("NEOMIND_EXTENSION_DIRECT_TOOLS"),
+        }
     }
 
     #[tokio::test]

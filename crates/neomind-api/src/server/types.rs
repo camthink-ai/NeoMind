@@ -2129,7 +2129,8 @@ impl ServerState {
                 timeout_secs: neomind_agent::toolkit::timeouts::shell_default().as_secs(),
                 max_output_chars: 10000,
             }))
-            // Scan extensions and register their tools (dynamic, keep)
+            // Direct extension tools: gated by NEOMIND_EXTENSION_DIRECT_TOOLS
+            // (CLI-only candidate skips registration; invoke stays on CLI).
             .with_extensions_scanned()
             .await
             .build();
@@ -2209,7 +2210,9 @@ impl ServerState {
 
         tracing::info!(
             category = "ai",
-            "Tool registry initialized with {} tools (CLI-first + extensions + meta)",
+            direct_extension_tools =
+                neomind_agent::toolkit::extension_tools::extension_direct_tools_for_llm(),
+            "Tool registry initialized with {} tools (CLI-first + optional extension tools + meta)",
             tool_registry.len()
         );
     }
@@ -2310,6 +2313,8 @@ impl ServerState {
 
         tracing::info!(
             category = "ai",
+            direct_extension_tools =
+                neomind_agent::toolkit::extension_tools::extension_direct_tools_for_llm(),
             "Tool registry refreshed with {} tools (extensions now loaded)",
             tool_count
         );

@@ -21,7 +21,7 @@ anti_triggers:
 # extension-management
 
 Inspect installed extensions and available packages. For install/update, use the intended package and verify compatibility, enablement and exposed commands/metrics.
-Discover command schemas before invocation. Extension-provided tools may exist, but platform configuration is managed through CLI.
+Discover command schemas before invocation via CLI only: `neomind extension list` → `neomind extension commands <id>` → `neomind extension invoke <id> <command> --params '{...}'`. Do not invent chat tools named `{id}:{command}` or sanitized CLI subcommands.
 Do not confuse extension installation with skill loading or widget installation. Preserve configuration during upgrades and report restart/enable requirements.
 Verify extension status and actual command/metric results. Load installation, configuration, or diagnosis reference sections as needed.
 
@@ -30,6 +30,8 @@ Verify extension status and actual command/metric results. Load installation, co
 |---|---|
 | `neomind extension list` | List installed extensions |
 | `neomind extension get <id>` | Show one extension's info (alias: `info`) |
+| `neomind extension commands <id>` | Machine-readable command schemas + invoke examples |
+| `neomind extension invoke <id> <command> --params '{...}'` | Run a command (honors AI enable / disabled_commands / ai_exposed) |
 | `neomind extension status <id>` | Extension health/status |
 | `neomind extension logs <id>` | Extension logs (debug crashes/errors) |
 | `neomind extension config <id>` | Get/set extension configuration |
@@ -71,6 +73,8 @@ Manage installed extensions and the marketplace. (For *developing/building* an e
 |---|---|
 | `neomind extension list` | List installed extensions |
 | `neomind extension get <id>` | Show one extension's info (alias: `info`) |
+| `neomind extension commands <id>` | Command schemas + invoke examples |
+| `neomind extension invoke <id> <command> --params '{...}'` | Run a command |
 | `neomind extension status <id>` | Extension health/status |
 | `neomind extension logs <id>` | Extension logs (debug crashes/errors) |
 | `neomind extension config <id>` | Get/set extension configuration |
@@ -87,6 +91,8 @@ Manage installed extensions and the marketplace. (For *developing/building* an e
 
 ```bash
 neomind extension list
+neomind extension commands weather-forecast-v2
+neomind extension invoke weather-forecast-v2 get_weather --params '{"city":"Xiamen"}'
 neomind extension market-list weather     # compact, filtered
 neomind extension market-install weather-forecast   # install the EXACT id shown
 neomind extension validate ./my-ext-1.0.0.nep
