@@ -2942,3 +2942,234 @@ mod handling_path {
         let _ = DeviceAdapter::stop(adapter.as_ref()).await;
     }
 }
+
+/// NM-203 Group A — unified subscribe protocol honesty (test-slot SubAck path).
+mod unify_subscribe_protocol {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    async fn slot(broker: &str) -> Arc<MqttAdapter> {
+        let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            broker,
+            "localhost:1883",
+        )));
+        adapter.install_test_broker_slot(broker).await;
+        adapter
+            .enable_test_suback_wait(broker, Duration::from_secs(2))
+            .await;
+        adapter
+    }
+
+    /// Rejected startup wildcard must NOT cover later concrete topics.
+    #[tokio::test]
+    async fn rejected_startup_wildcard_does_not_cover_later_topics() {
+        let adapter = slot("wc-reject").await;
+        // Simulate rejected "#" via pending + Failure SubAck (startup path).
+        let a = adapter.clone();
+        let reject = tokio::spawn(async move {
+            for _ in 0..50 {
+                a.settle_test_pending_suback("wc-reject", "#", Err("ACL deny #".into()))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        let wild = adapter.subscribe_topic("#").await;
+        assert!(wild.is_err(), "rejected # must fail");
+        reject.abort();
+        assert!(
+            !adapter.test_topic_confirmed("wc-reject", "#").await,
+            "rejected # must not enter confirmed"
+        );
+        assert!(
+            adapter
+                .test_desired_topics("wc-reject")
+                .await
+                .contains(&"#".to_string()),
+            "intent kept for reconnect even when rejected"
+        );
+
+        // Concrete topic must NOT short-circuit on cover — needs its own SubAck.
+        let a = adapter.clone();
+        let allow = tokio::spawn(async move {
+            for _ in 0..50 {
+                a.settle_test_pending_suback("wc-reject", "device/gw/x/uplink", Ok(()))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        adapter
+            .subscribe_topic("device/gw/x/uplink")
+            .await
+            .expect("concrete must subscribe independently of rejected #");
+        allow.abort();
+        assert!(
+            adapter
+                .test_topic_confirmed("wc-reject", "device/gw/x/uplink")
+                .await
+        );
+    }
+
+    /// Concurrent mixed allow/reject — confirmed set accurate per topic.
+    #[tokio::test]
+    async fn concurrent_mixed_allow_reject_per_topic_accurate() {
+        let adapter = slot("mixed").await;
+        let topics_ok = ["ok/a", "ok/b", "ok/c"];
+        let topics_bad = ["bad/x", "bad/y"];
+
+        let settler = adapter.clone();
+        tokio::spawn(async move {
+            for _ in 0..200 {
+                for t in &topics_ok {
+                    settler.settle_test_pending_suback("mixed", t, Ok(())).await;
+                }
+                for t in &topics_bad {
+                    settler
+                        .settle_test_pending_suback("mixed", t, Err("deny".into()))
+                        .await;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+
+        let mut handles = Vec::new();
+        for t in topics_ok.iter().chain(topics_bad.iter()) {
+            let a = adapter.clone();
+            let topic = (*t).to_string();
+            handles.push(tokio::spawn(async move { a.subscribe_topic(&topic).await }));
+        }
+        let mut results = Vec::new();
+        for h in handles {
+            results.push(h.await.expect("join"));
+        }
+        for (i, t) in topics_ok.iter().enumerate() {
+            assert!(results[i].is_ok(), "{t} must succeed");
+            assert!(adapter.test_topic_confirmed("mixed", t).await);
+        }
+        for (i, t) in topics_bad.iter().enumerate() {
+            assert!(results[topics_ok.len() + i].is_err(), "{t} must fail");
+            assert!(!adapter.test_topic_confirmed("mixed", t).await);
+        }
+    }
+
+    /// Late SubAck after timeout must not complete a later request.
+    #[tokio::test]
+    async fn late_suback_after_timeout_does_not_complete_later_request() {
+        let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "late",
+            "localhost:1883",
+        )));
+        adapter.install_test_broker_slot("late").await;
+        adapter
+            .enable_test_suback_wait("late", Duration::from_millis(60))
+            .await;
+
+        // First request times out (never settled).
+        let first = adapter.subscribe_topic("topic/old").await;
+        assert!(first.is_err(), "must timeout");
+        assert!(!adapter.test_topic_confirmed("late", "topic/old").await);
+
+        // Timed-out Outgoing pkid is absorbed; late SubAck must not confirm old.
+        adapter.test_apply_subscribe_outgoing("late", 7).await;
+        adapter.test_apply_suback("late", 7, true).await;
+        assert!(
+            !adapter.test_topic_confirmed("late", "topic/old").await,
+            "late SubAck for timed-out request must not confirm"
+        );
+
+        // New request gets its own correlation and completes cleanly.
+        adapter
+            .enable_test_suback_wait("late", Duration::from_secs(2))
+            .await;
+        let a = adapter.clone();
+        tokio::spawn(async move {
+            for _ in 0..80 {
+                a.settle_test_pending_suback("late", "topic/new", Ok(()))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        adapter
+            .subscribe_topic("topic/new")
+            .await
+            .expect("later request must succeed");
+        assert!(adapter.test_topic_confirmed("late", "topic/new").await);
+        assert!(!adapter.test_topic_confirmed("late", "topic/old").await);
+    }
+
+    /// >100 independent desired topics: disconnect clears confirmed; restore
+    /// recovers; a new subscribe still works.
+    #[tokio::test]
+    async fn reconnect_restores_over_100_desired_and_new_sub_works() {
+        let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+            "many",
+            "localhost:1883",
+        )));
+        adapter.install_test_broker_slot("many").await;
+        // Generous timeout — settler completes each pending quickly.
+        adapter
+            .enable_test_suback_wait("many", Duration::from_secs(5))
+            .await;
+        let n = 105usize;
+        for i in 0..n {
+            adapter
+                .seed_test_desired_topic("many", &format!("t/{i}"))
+                .await;
+            adapter
+                .seed_test_confirmed_topic("many", &format!("t/{i}"))
+                .await;
+        }
+        assert!(adapter.test_topic_confirmed("many", "t/0").await);
+
+        adapter
+            .test_simulate_disconnect_clear_confirmed("many")
+            .await;
+        assert!(
+            !adapter.test_topic_confirmed("many", "t/0").await,
+            "disconnect clears confirmed"
+        );
+        assert_eq!(
+            adapter.test_desired_topics("many").await.len(),
+            n,
+            "desired intent kept"
+        );
+
+        adapter.set_test_session_ready("many", true).await;
+        let settler = adapter.clone();
+        let settle_task = tokio::spawn(async move {
+            loop {
+                settler
+                    .settle_all_test_pending_subacks("many", Ok(()))
+                    .await;
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        });
+        adapter.test_restore_desired_after_reconnect("many").await;
+
+        let mut confirmed = 0usize;
+        for i in 0..n {
+            if adapter
+                .test_topic_confirmed("many", &format!("t/{i}"))
+                .await
+            {
+                confirmed += 1;
+            }
+        }
+        assert_eq!(confirmed, n, "all {n} desired topics restored to confirmed");
+
+        // New subscribe after restore still works.
+        let a = adapter.clone();
+        tokio::spawn(async move {
+            for _ in 0..80 {
+                a.settle_test_pending_suback("many", "t/new", Ok(())).await;
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        adapter
+            .subscribe_topic("t/new")
+            .await
+            .expect("new sub after reconnect restore");
+        assert!(adapter.test_topic_confirmed("many", "t/new").await);
+        settle_task.abort();
+    }
+}

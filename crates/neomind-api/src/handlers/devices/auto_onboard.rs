@@ -348,11 +348,11 @@ pub async fn approve_draft_device(
                 offline_timeout_secs: None,
             };
 
-            // Register the device
+            // Register the device (MQTT subscribe honesty → BindIncomplete)
             device_service
                 .register_device(device_config)
                 .await
-                .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+                .map_err(bind_error_to_response)?;
 
             (
                 existing_type.clone(),
@@ -465,11 +465,11 @@ pub async fn approve_draft_device(
                 offline_timeout_secs: None,
             };
 
-            // Register the device
+            // Register the device (MQTT subscribe honesty → BindIncomplete)
             device_service
                 .register_device(device_config)
                 .await
-                .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+                .map_err(bind_error_to_response)?;
 
             tracing::info!("Registered device '{}' with type '{}'", device_id, type_id);
 
@@ -481,24 +481,35 @@ pub async fn approve_draft_device(
             )
         };
 
-    // Mark device as Connected - it was actively sending data when discovered
-    device_service
-        .update_device_status(&device_id, ConnectionStatus::Connected)
-        .await;
+    let is_webhook = draft.source == "webhook";
+    let subscription_ready = if is_webhook {
+        // Webhook unchanged: no MQTT subscribe gate.
+        false
+    } else {
+        // MQTT (and other transport): register_device only returns Ok after
+        // subscribe succeeded (or non-mqtt adapters). Config ≠ online.
+        true
+    };
 
-    // Publish DeviceOnline event so frontend immediately shows device as online
-    if let Some(event_bus) = state.core.event_bus.as_ref() {
-        let _ = event_bus
-            .publish(neomind_core::NeoMindEvent::DeviceOnline {
-                device_id: device_id.clone(),
-                device_type: device_type.clone(),
-                timestamp: chrono::Utc::now().timestamp(),
-            })
+    if is_webhook {
+        // Legacy webhook path: mark Connected + DeviceOnline from discovery traffic.
+        device_service
+            .update_device_status(&device_id, ConnectionStatus::Connected)
             .await;
+        if let Some(event_bus) = state.core.event_bus.as_ref() {
+            let _ = event_bus
+                .publish(neomind_core::NeoMindEvent::DeviceOnline {
+                    device_id: device_id.clone(),
+                    device_type: device_type.clone(),
+                    timestamp: chrono::Utc::now().timestamp(),
+                })
+                .await;
+        }
     }
+    // MQTT: do NOT mark Connected / publish DeviceOnline here — online follows
+    // real telemetry or transport evidence (same as association confirm).
 
-    // Remove draft completely after successful registration (same behavior as reject)
-    // This allows the device to be re-discovered if needed and keeps the pending list clean
+    // Draft consumed ONLY after register (+ MQTT subscribe) succeeded.
     manager
         .remove_draft(&device_id)
         .await
@@ -510,7 +521,7 @@ pub async fn approve_draft_device(
         device_type,
         recommended_topic,
         registered: true,
-        subscription_ready: false,
+        subscription_ready,
         online: false,
         message,
     })

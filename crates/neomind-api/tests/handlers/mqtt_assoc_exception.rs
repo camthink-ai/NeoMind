@@ -1586,3 +1586,150 @@ async fn acceptance_confirmed_wildcard_cover_reuses_without_resubscribe() {
         "cover reuse must not leave pending Subscribe"
     );
 }
+
+/// Seed an ordinary (non-association-exception) MQTT draft for approve honesty.
+async fn seed_ordinary_mqtt_draft(state: &ServerState, device_id: &str, topic: &str) {
+    state
+        .devices
+        .registry
+        .register_template(DeviceTypeTemplate::new("sensor", "sensor"))
+        .await
+        .ok();
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    let accepted = ServerState::process_device_discovered_for_onboarding(
+        manager.as_ref(),
+        state.devices.service.as_ref(),
+        device_id.to_string(),
+        "mqtt".to_string(),
+        Some("test".to_string()),
+        &json!({
+            "original_topic": topic,
+        }),
+        &json!({"temperature": 21.5, "device_id": device_id}),
+        false,
+    )
+    .await;
+    assert!(accepted, "ordinary discovery must create draft");
+    let _ = wait_for_draft(manager.as_ref(), device_id).await;
+}
+
+/// NM-203 Group B: ordinary approve SubAck reject → keep draft, no online.
+#[tokio::test]
+async fn ordinary_approve_suback_reject_keeps_draft() {
+    let state = state_with_listener().await;
+    seed_ordinary_mqtt_draft(&state, "ord-1", "sensors/ord-1").await;
+    let adapter = register_confirm_adapter(&state, "test").await;
+    adapter
+        .enable_test_suback_wait("test", Duration::from_secs(3))
+        .await;
+    let settler = adapter.clone();
+    tokio::spawn(async move { settle_pending_loop(settler, "test", false).await });
+
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    let err = approve_draft_device(
+        State(state.clone()),
+        Path("ord-1".to_string()),
+        Json(Some(ApproveDraftDeviceRequest {
+            existing_type: Some("sensor".to_string()),
+            new_type: None,
+            device_name: Some("Ord 1".to_string()),
+        })),
+    )
+    .await;
+    assert!(err.is_err(), "reject must not claim approve success");
+    assert!(
+        manager.get_draft("ord-1").await.is_some(),
+        "draft kept after SubAck reject"
+    );
+    assert!(
+        state.devices.service.get_device("ord-1").is_some(),
+        "config applied (retryable)"
+    );
+    let status = state.devices.service.get_device_status("ord-1").await;
+    assert!(
+        !matches!(status.status, ConnectionStatus::Connected),
+        "must not mark Connected on sub fail"
+    );
+}
+
+/// NM-203 Group B: ordinary approve timeout → keep draft; retry after ACL fix.
+#[tokio::test]
+async fn ordinary_approve_timeout_keeps_draft_then_retry_ok() {
+    let state = state_with_listener().await;
+    seed_ordinary_mqtt_draft(&state, "ord-2", "sensors/ord-2").await;
+    let adapter = register_confirm_adapter(&state, "test").await;
+    adapter
+        .enable_test_suback_wait("test", Duration::from_millis(80))
+        .await;
+
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    let first = approve_draft_device(
+        State(state.clone()),
+        Path("ord-2".to_string()),
+        Json(Some(ApproveDraftDeviceRequest {
+            existing_type: Some("sensor".to_string()),
+            new_type: None,
+            device_name: Some("Ord 2".to_string()),
+        })),
+    )
+    .await;
+    assert!(first.is_err(), "timeout must be BindIncomplete");
+    assert!(manager.get_draft("ord-2").await.is_some());
+
+    adapter
+        .enable_test_suback_wait("test", Duration::from_secs(3))
+        .await;
+    let settler = adapter.clone();
+    tokio::spawn(async move { settle_pending_loop(settler, "test", true).await });
+    let second = approve_draft_device(
+        State(state.clone()),
+        Path("ord-2".to_string()),
+        Json(Some(ApproveDraftDeviceRequest {
+            existing_type: Some("sensor".to_string()),
+            new_type: None,
+            device_name: Some("Ord 2 retry".to_string()),
+        })),
+    )
+    .await
+    .expect("retry after ACL fix");
+    let body = second.0.data.expect("body");
+    assert!(body.subscription_ready);
+    assert!(!body.online);
+    assert!(manager.get_draft("ord-2").await.is_none());
+}
+
+/// NM-203 Group B: ordinary approve disconnect mid-wait → keep draft.
+#[tokio::test]
+async fn ordinary_approve_disconnect_keeps_draft() {
+    let state = state_with_listener().await;
+    seed_ordinary_mqtt_draft(&state, "ord-3", "sensors/ord-3").await;
+    let adapter = register_confirm_adapter(&state, "test").await;
+    adapter
+        .enable_test_suback_wait("test", Duration::from_secs(2))
+        .await;
+    let failer = adapter.clone();
+    tokio::spawn(async move {
+        for _ in 0..100 {
+            failer
+                .fail_test_pending_subscribes("test", "simulated disconnect")
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    let err = approve_draft_device(
+        State(state.clone()),
+        Path("ord-3".to_string()),
+        Json(Some(ApproveDraftDeviceRequest {
+            existing_type: Some("sensor".to_string()),
+            new_type: None,
+            device_name: Some("Ord 3".to_string()),
+        })),
+    )
+    .await;
+    assert!(err.is_err());
+    assert!(
+        manager.get_draft("ord-3").await.is_some(),
+        "draft kept after disconnect"
+    );
+}

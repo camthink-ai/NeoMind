@@ -47,10 +47,73 @@ pub(crate) struct PendingSubscribeSlot {
     pub(crate) waiters: Vec<oneshot::Sender<Result<(), String>>>,
 }
 
+/// Queue entry: live waiter, or a cancelled request that must still absorb its
+/// Outgoing/SubAck so a timed-out Subscribe cannot complete a later request.
+pub(crate) enum PendingQueueEntry {
+    Active(PendingSubscribeSlot),
+    /// Timed-out / cancelled. If `pkid` is None, the next Outgoing Subscribe is
+    /// claimed here; once pkid is known (or was known at cancel), SubAck is
+    /// discarded without touching confirmed or other waiters.
+    Absorb {
+        topic: String,
+        pkid: Option<u16>,
+    },
+}
+
 /// Pending (queued, not yet SubAck'd) subscription waiters for one broker.
 #[derive(Default)]
 pub(crate) struct PendingSubscribeState {
-    pub(crate) queue: VecDeque<PendingSubscribeSlot>,
+    pub(crate) queue: VecDeque<PendingQueueEntry>,
+}
+
+impl PendingSubscribeState {
+    pub(crate) fn find_active_mut(&mut self, topic: &str) -> Option<&mut PendingSubscribeSlot> {
+        for entry in self.queue.iter_mut() {
+            if let PendingQueueEntry::Active(slot) = entry {
+                if slot.topic == topic {
+                    return Some(slot);
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(crate) fn active_topics(&self) -> Vec<String> {
+        self.queue
+            .iter()
+            .filter_map(|e| match e {
+                PendingQueueEntry::Active(s) => Some(s.topic.clone()),
+                PendingQueueEntry::Absorb { .. } => None,
+            })
+            .collect()
+    }
+}
+
+/// Arc handles for one broker subscribe so callers drop `mqtt_clients`
+/// before awaiting SubAck (poll / settler / reconnect worker must progress).
+pub(crate) struct BrokerSubscribeHandles {
+    pub(crate) client: rumqttc::AsyncClient,
+    pub(crate) subscribed_topics: Arc<RwLock<std::collections::HashSet<String>>>,
+    pub(crate) desired_topics: Arc<RwLock<std::collections::HashSet<String>>>,
+    pub(crate) pending_subscribes: Arc<Mutex<PendingSubscribeState>>,
+    pub(crate) subscribe_send: Arc<Mutex<()>>,
+    pub(crate) await_suback: bool,
+    pub(crate) suback_timeout: Duration,
+}
+
+impl BrokerSubscribeHandles {
+    pub(crate) fn from_inner(inner: &MqttClientInner) -> Self {
+        Self {
+            client: inner.client.clone(),
+            subscribed_topics: inner.subscribed_topics.clone(),
+            desired_topics: inner.desired_topics.clone(),
+            pending_subscribes: inner.pending_subscribes.clone(),
+            subscribe_send: inner.subscribe_send.clone(),
+            await_suback: inner.await_suback,
+            suback_timeout: inner.suback_timeout,
+        }
+    }
 }
 
 /// Single MQTT broker connection
@@ -63,18 +126,27 @@ pub(crate) struct MqttClientInner {
     pub(crate) client: rumqttc::AsyncClient,
     /// Running flag for the event loop task
     pub(crate) running: Arc<RwLock<bool>>,
-    /// **Confirmed** subscriptions only (successful SUBACK, or bootstrap
-    /// topics inserted after queue-Ok on add_broker). Pending queue-Ok must
-    /// NOT land here — that previously made association confirm claim
-    /// `subscription_ready` before the broker granted the filter.
+    /// **Confirmed** subscriptions only (successful SUBACK). Pending queue-Ok,
+    /// rejected startup wildcards, and reconnect intent must NOT land here —
+    /// cover checks and `subscription_ready` read this set only.
     pub(crate) subscribed_topics: Arc<RwLock<std::collections::HashSet<String>>>,
+    /// Restore / reconnect intent. Survives disconnect (which clears confirmed).
+    /// Startup, device restore, dynamic subscribe, and reconnect all register
+    /// here; only successful SUBACK promotes into `subscribed_topics`.
+    pub(crate) desired_topics: Arc<RwLock<std::collections::HashSet<String>>>,
     /// In-flight Subscribe requests waiting for SubAck (or disconnect/timeout).
     pub(crate) pending_subscribes: Arc<Mutex<PendingSubscribeState>>,
+    /// Serializes pending-register + `client.subscribe` so Outgoing pkid order
+    /// matches queue order (fixes register-vs-send races across callers).
+    pub(crate) subscribe_send: Arc<Mutex<()>>,
+    /// Notifies the out-of-poll reconnect worker (never subscribe from poll).
+    pub(crate) reconnect_tx: tokio::sync::mpsc::Sender<()>,
     /// When false (test broker slots without a polled event loop), queue-Ok
     /// is treated as an immediate successful SubAck so existing unit tests
     /// keep working. Production brokers always leave this true.
     pub(crate) await_suback: bool,
     /// How long `subscribe_topic` waits outside the MQTT callback for SubAck.
+    /// Covers enqueue + wait (not wait alone).
     pub(crate) suback_timeout: Duration,
     /// True only after ConnAck Success; false while created/queued or reconnecting.
     /// `client.subscribe` may queue before this flips — do not treat queue-Ok as ready.

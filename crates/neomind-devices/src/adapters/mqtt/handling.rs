@@ -99,19 +99,9 @@ impl MqttAdapter {
                 if !inner.is_session_ready() {
                     continue;
                 }
-                (
-                    inner.client.clone(),
-                    inner.subscribed_topics.clone(),
-                    inner.pending_subscribes.clone(),
-                    inner.await_suback,
-                    inner.suback_timeout,
-                )
+                BrokerSubscribeHandles::from_inner(inner)
             };
-            match Self::subscribe_topic_on_broker(
-                &handles.0, &handles.1, &handles.2, handles.3, handles.4, broker_id, topic,
-            )
-            .await
-            {
+            match Self::request_subscribe_on_broker(&handles, broker_id, topic, true).await {
                 Ok(()) => subscribed_count += 1,
                 Err(e) => {
                     warn!(
@@ -142,21 +132,32 @@ impl MqttAdapter {
         Ok(())
     }
 
-    /// Subscribe on one broker: reuse confirmed cover, else queue + wait SubAck.
-    /// Takes Arc handles (not `&MqttClientInner`) so callers can drop the
-    /// `mqtt_clients` lock before awaiting SubAck.
-    async fn subscribe_topic_on_broker(
-        client: &rumqttc::AsyncClient,
-        subscribed_topics: &Arc<RwLock<HashSet<String>>>,
-        pending_subscribes: &Arc<tokio::sync::Mutex<PendingSubscribeState>>,
-        await_suback: bool,
-        suback_timeout: std::time::Duration,
+    /// Unified subscribe request (startup / restore / dynamic / reconnect).
+    ///
+    /// - Records restore intent in `desired_topics` immediately.
+    /// - Cover reuse reads **confirmed** only (rejected wildcards never cover).
+    /// - Registers pending **before** send under `subscribe_send` (pkid order).
+    /// - When `wait_for_suback`: timeout covers enqueue + wait; cancelled entries
+    ///   absorb late Outgoing/SubAck.
+    /// - When not waiting (startup/bootstrap): enqueue-Ok keeps the broker; SubAck
+    ///   still alone promotes into confirmed (rejected `#` never covers).
+    /// - Only successful SubAck enters confirmed.
+    pub(crate) async fn request_subscribe_on_broker(
+        handles: &BrokerSubscribeHandles,
         broker_id: &str,
         topic: &str,
+        wait_for_suback: bool,
     ) -> AdapterResult<()> {
-        // Confirmed set only — pending must not look like "subscribed".
+        // Intent survives disconnect even if this attempt fails.
+        handles
+            .desired_topics
+            .write()
+            .await
+            .insert(topic.to_string());
+
+        // Confirmed set only — pending / desired / rejected must not look subscribed.
         {
-            let confirmed = subscribed_topics.read().await;
+            let confirmed = handles.subscribed_topics.read().await;
             if confirmed.contains(topic) {
                 debug!(
                     "Already confirmed subscribed to topic {} on broker {}",
@@ -164,7 +165,6 @@ impl MqttAdapter {
                 );
                 return Ok(());
             }
-            // Reuse existing confirmed wildcard (e.g. "#") — no resubscribe.
             if confirmed
                 .iter()
                 .any(|existing| topic_filter_covers(existing, topic))
@@ -178,10 +178,18 @@ impl MqttAdapter {
         }
 
         // Test slots without a polled event loop: queue-Ok simulates SubAck success.
-        if !await_suback {
-            match client.subscribe(topic, rumqttc::QoS::AtLeastOnce).await {
+        if !handles.await_suback {
+            match handles
+                .client
+                .subscribe(topic, rumqttc::QoS::AtLeastOnce)
+                .await
+            {
                 Ok(()) => {
-                    subscribed_topics.write().await.insert(topic.to_string());
+                    handles
+                        .subscribed_topics
+                        .write()
+                        .await
+                        .insert(topic.to_string());
                     info!(
                         "Subscribed to topic {} on broker {} (test slot: queue-Ok as confirmed)",
                         topic, broker_id
@@ -196,28 +204,73 @@ impl MqttAdapter {
             }
         }
 
-        // Production / strict: register waiter, queue Subscribe, wait OUTSIDE
-        // the MQTT callback for SubAck (or reject / timeout / disconnect).
-        let (tx, rx) = oneshot::channel();
+        if wait_for_suback {
+            let timeout = handles.suback_timeout;
+            match tokio::time::timeout(
+                timeout,
+                Self::enqueue_and_await_suback(handles, broker_id, topic),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    Self::cancel_pending_topic_absorb(
+                        &handles.pending_subscribes,
+                        topic,
+                        format!(
+                            "SUBACK timeout waiting for '{topic}' on broker {broker_id} after {timeout:?}"
+                        ),
+                    )
+                    .await;
+                    Err(AdapterError::Communication(format!(
+                        "SUBACK timeout waiting for '{topic}' on broker {broker_id} after {timeout:?}"
+                    )))
+                }
+            }
+        } else {
+            // Startup/bootstrap: enqueue only. SubAck (or reject) arrives via poll.
+            Self::enqueue_subscribe_pending(handles, broker_id, topic, None).await
+        }
+    }
+
+    /// Register pending + send Subscribe. Optional oneshot waiter for SubAck.
+    async fn enqueue_subscribe_pending(
+        handles: &BrokerSubscribeHandles,
+        broker_id: &str,
+        topic: &str,
+        waiter: Option<oneshot::Sender<Result<(), String>>>,
+    ) -> AdapterResult<()> {
+        let _send_guard = handles.subscribe_send.lock().await;
         let need_send = {
-            let mut pending = pending_subscribes.lock().await;
-            if let Some(slot) = pending.queue.iter_mut().find(|s| s.topic == topic) {
-                slot.waiters.push(tx);
+            let mut pending = handles.pending_subscribes.lock().await;
+            if let Some(slot) = pending.find_active_mut(topic) {
+                if let Some(tx) = waiter {
+                    slot.waiters.push(tx);
+                }
                 false
             } else {
-                pending.queue.push_back(PendingSubscribeSlot {
-                    topic: topic.to_string(),
-                    pkid: None,
-                    waiters: vec![tx],
-                });
+                let mut waiters = Vec::new();
+                if let Some(tx) = waiter {
+                    waiters.push(tx);
+                }
+                pending
+                    .queue
+                    .push_back(PendingQueueEntry::Active(PendingSubscribeSlot {
+                        topic: topic.to_string(),
+                        pkid: None,
+                        waiters,
+                    }));
                 true
             }
         };
-
         if need_send {
-            if let Err(e) = client.subscribe(topic, rumqttc::QoS::AtLeastOnce).await {
-                Self::fail_pending_topic(
-                    pending_subscribes,
+            if let Err(e) = handles
+                .client
+                .subscribe(topic, rumqttc::QoS::AtLeastOnce)
+                .await
+            {
+                Self::cancel_pending_topic_absorb(
+                    &handles.pending_subscribes,
                     topic,
                     format!("Failed to queue Subscribe for '{topic}': {e}"),
                 )
@@ -226,48 +279,62 @@ impl MqttAdapter {
                     "Failed to queue Subscribe for '{topic}' on broker {broker_id}: {e}"
                 )));
             }
-            // Topic is pending only — NOT in confirmed until SubAck success.
             info!(
                 "Subscribe queued for topic {} on broker {} — awaiting SubAck",
                 topic, broker_id
             );
         }
+        Ok(())
+    }
 
-        match tokio::time::timeout(suback_timeout, rx).await {
-            Ok(Ok(Ok(()))) => {
+    async fn enqueue_and_await_suback(
+        handles: &BrokerSubscribeHandles,
+        broker_id: &str,
+        topic: &str,
+    ) -> AdapterResult<()> {
+        let (tx, rx) = oneshot::channel();
+        Self::enqueue_subscribe_pending(handles, broker_id, topic, Some(tx)).await?;
+
+        match rx.await {
+            Ok(Ok(())) => {
                 info!("SubAck confirmed topic {} on broker {}", topic, broker_id);
                 Ok(())
             }
-            Ok(Ok(Err(msg))) => Err(AdapterError::Communication(msg)),
-            Ok(Err(_)) => Err(AdapterError::Communication(format!(
+            Ok(Err(msg)) => Err(AdapterError::Communication(msg)),
+            Err(_) => Err(AdapterError::Communication(format!(
                 "Subscribe waiter dropped for '{topic}' on broker {broker_id}"
             ))),
-            Err(_) => {
-                // Timeout: remove pending so a late SubAck cannot enter confirmed.
-                Self::fail_pending_topic(
-                    pending_subscribes,
-                    topic,
-                    format!(
-                        "SUBACK timeout waiting for '{topic}' on broker {broker_id} after {suback_timeout:?}"
-                    ),
-                )
-                .await;
-                Err(AdapterError::Communication(format!(
-                    "SUBACK timeout waiting for '{topic}' on broker {broker_id} after {suback_timeout:?}"
-                )))
-            }
         }
     }
 
-    async fn fail_pending_topic(
+    /// Fail an active pending topic and leave an Absorb entry so late protocol
+    /// events cannot steal a later request's SubAck.
+    pub(crate) async fn cancel_pending_topic_absorb(
         pending_subscribes: &Arc<tokio::sync::Mutex<PendingSubscribeState>>,
         topic: &str,
         message: String,
     ) {
         let slot = {
             let mut pending = pending_subscribes.lock().await;
-            let idx = pending.queue.iter().position(|s| s.topic == topic);
-            idx.and_then(|i| pending.queue.remove(i))
+            let idx = pending.queue.iter().position(|e| match e {
+                PendingQueueEntry::Active(s) => s.topic == topic,
+                PendingQueueEntry::Absorb { .. } => false,
+            });
+            if let Some(i) = idx {
+                if let Some(PendingQueueEntry::Active(slot)) = pending.queue.remove(i) {
+                    let absorb = PendingQueueEntry::Absorb {
+                        topic: slot.topic.clone(),
+                        pkid: slot.pkid,
+                    };
+                    let insert_at = i.min(pending.queue.len());
+                    pending.queue.insert(insert_at, absorb);
+                    Some(slot)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         };
         if let Some(slot) = slot {
             for tx in slot.waiters {
@@ -281,6 +348,8 @@ impl MqttAdapter {
         let clients = self.mqtt_clients.read().await;
 
         for (broker_id, inner) in clients.iter() {
+            // Drop restore intent even if not currently confirmed.
+            inner.desired_topics.write().await.remove(topic);
             if !inner.subscribed_topics.read().await.contains(topic) {
                 continue;
             }

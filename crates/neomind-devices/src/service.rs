@@ -1340,7 +1340,22 @@ impl DeviceService {
                     adapter_type,
                     target_adapter_id
                 );
+                // MQTT (and other transport adapters): config saved but no live
+                // subscribe path — same honesty as association confirm.
+                if adapter_type == "mqtt" {
+                    return Err(DeviceError::BindIncomplete {
+                        message: format!(
+                            "No MQTT adapter found to subscribe device '{device_id}' (adapter_id: {target_adapter_id:?})"
+                        ),
+                        config_applied: true,
+                        retry_hint: format!(
+                            "Device '{device_id}' is registered. Connect/register the MQTT adapter and retry approve — draft should be kept until subscribe succeeds."
+                        ),
+                    });
+                }
             } else {
+                let mut any_ok = false;
+                let mut last_err: Option<String> = None;
                 for (adapter_id, adapter) in &matched {
                     tracing::info!(
                         "Notifying adapter '{}' to subscribe to device '{}'",
@@ -1349,14 +1364,30 @@ impl DeviceService {
                     );
                     // No `break`: notify ALL matching adapters so a device with a
                     // custom telemetry_topic is subscribed on every connected broker.
-                    if let Err(e) = adapter.subscribe_device(&device_id).await {
-                        tracing::warn!(
-                            device_id = %device_id,
-                            adapter = %adapter_id,
-                            error = %e,
-                            "Adapter failed to subscribe to device during register (continuing)"
-                        );
+                    match adapter.subscribe_device(&device_id).await {
+                        Ok(()) => any_ok = true,
+                        Err(e) => {
+                            tracing::warn!(
+                                device_id = %device_id,
+                                adapter = %adapter_id,
+                                error = %e,
+                                "Adapter failed to subscribe to device during register"
+                            );
+                            last_err = Some(format!("{adapter_id}: {e}"));
+                        }
                     }
+                }
+                if adapter_type == "mqtt" && !any_ok {
+                    let detail = last_err.unwrap_or_else(|| "unknown subscribe error".into());
+                    return Err(DeviceError::BindIncomplete {
+                        message: format!(
+                            "MQTT subscribe failed for device '{device_id}': {detail}"
+                        ),
+                        config_applied: true,
+                        retry_hint: format!(
+                            "Device '{device_id}' config is saved. Fix broker/ACL and retry — draft kept until subscribe succeeds; no double-register."
+                        ),
+                    });
                 }
             }
         } else {
