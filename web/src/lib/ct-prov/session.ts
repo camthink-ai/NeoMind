@@ -78,11 +78,18 @@ export interface SetConfigResult {
 
 /** One Wi-Fi / HaLow network from `communication.scan`. */
 export interface NetworkScanItem {
-  /** Wire SSID exactly as returned — leading/trailing spaces are significant. */
+  /**
+   * Submit / select value = CT-Prov `network_id` (SSID for wifi/halow).
+   * Leading/trailing spaces are significant — do not trim for provision.
+   */
   ssid: string
+  /** Operator-facing label (`display_name`); falls back to `ssid`. */
+  displayName?: string
+  /** dBm — from wire `signal` (golden) or legacy `rssi`. */
   rssi?: number
   bssid?: string
   security?: string
+  channel?: number
 }
 
 /** Display helper: keep submit value (`item.ssid`) untrimmed; UI may format. */
@@ -243,12 +250,27 @@ export function parseNetworkScan(response: ProvResponse): NetworkScanPage {
   for (const entry of rawItems) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
     const obj = entry as JsonObject
-    const ssid = obj.ssid
+    // CT-Prov/1 golden (§9): network_id + display_name + signal.
+    // Legacy / FakeTransport may still send ssid + rssi — accept both.
+    const networkId = obj.network_id
+    const legacySsid = obj.ssid
+    const ssid =
+      typeof networkId === 'string' && networkId.length > 0
+        ? networkId
+        : typeof legacySsid === 'string' && legacySsid.length > 0
+          ? legacySsid
+          : null
     // Empty string only — leading/trailing spaces are part of the real SSID
     // and must be preserved for provision submit (do not trim).
-    if (typeof ssid !== 'string' || ssid.length === 0) continue
+    if (ssid == null) continue
     const item: NetworkScanItem = { ssid }
-    if (typeof obj.rssi === 'number') item.rssi = obj.rssi
+    const displayName = obj.display_name
+    if (typeof displayName === 'string' && displayName.length > 0) {
+      item.displayName = displayName
+    }
+    if (typeof obj.signal === 'number') item.rssi = obj.signal
+    else if (typeof obj.rssi === 'number') item.rssi = obj.rssi
+    if (typeof obj.channel === 'number') item.channel = obj.channel
     if (typeof obj.bssid === 'string') item.bssid = obj.bssid
     if (typeof obj.security === 'string') item.security = obj.security
     items.push(item)

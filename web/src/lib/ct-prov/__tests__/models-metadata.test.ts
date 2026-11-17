@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  cellularSectionFromFields,
   findCtProvType,
   listApProvisionModels,
   modelNameFromCode,
   modelToDeviceType,
   softapHostForModel,
+  webhookSectionFromFields,
   type CtProvDeviceTypeRef,
 } from '../models'
 
@@ -136,5 +138,59 @@ describe('ct-prov DeviceTypes metadata resolution', () => {
     ])
     expect(models.find((m) => m.model === 'EK410')?.host).toBe('192.168.4.1')
     expect(models.find((m) => m.model === 'EK410')?.deviceType).toBe('ek410_Eink')
+  })
+})
+
+describe('cellular / webhook section builders', () => {
+  it('gates cellular fields by capabilities declaration', () => {
+    const full = cellularSectionFromFields(
+      {
+        apn: 'cmiot.iot',
+        username: 'u',
+        password: 'p',
+        pin: '1234',
+        auth: 'chap',
+        roaming: true,
+      },
+      ['apn', 'username', 'password', 'pin', 'auth'],
+    )
+    expect(full).toEqual({
+      apn: 'cmiot.iot',
+      username: 'u',
+      password: 'p',
+      pin: '1234',
+      auth: 'chap',
+    })
+    // roaming not declared → omitted
+    expect(full).not.toHaveProperty('roaming')
+
+    // Pre-provisioned SIM: no apn in fields, empty payload → null
+    expect(cellularSectionFromFields({ apn: '' }, ['username'])).toBeNull()
+  })
+
+  it('builds webhook enable=false and gates secret/header', () => {
+    expect(
+      webhookSectionFromFields(
+        { enable: false, url: '', secret: 's', header: 'X: 1' },
+        ['enable', 'url'],
+      ),
+    ).toEqual({ enable: false })
+
+    expect(
+      webhookSectionFromFields(
+        {
+          enable: true,
+          url: 'https://example.com/h',
+          secret: 's',
+          header: 'X-API-Key: abc',
+        },
+        ['enable', 'url', 'secret', 'header'],
+      ),
+    ).toEqual({
+      enable: true,
+      url: 'https://example.com/h',
+      secret: 's',
+      header: 'X-API-Key: abc',
+    })
   })
 })

@@ -57,12 +57,16 @@ export interface UseCtProvisionReturn {
   setApSsidInput: (v: string) => void
   setApHost: (v: string) => void
   setApModelHint: (v: string | null) => void
-  /** Run config.set with wifi (+ mqtt from resolve) then session.close. Throws on failure. */
+  /** Run config.set with wifi/cellular/webhook (+ mqtt from resolve) then session.close. */
   applyConfig: (opts: {
     wifiSsid?: string
     wifiPassword?: string
     mqtt: CtMqttConfig
     networkSection?: string
+    /** CT cellular section when capabilities declare it configurable. */
+    cellular?: Record<string, unknown>
+    /** CT webhook section when capabilities declare it configurable. */
+    webhook?: Record<string, unknown>
   }) => Promise<SetConfigResult>
   /** Device-side Wi-Fi / HaLow scan when the section is scannable. */
   scanWifiNetworks: (section?: string) => Promise<NetworkScanItem[]>
@@ -317,6 +321,8 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
       wifiPassword?: string
       mqtt: CtMqttConfig
       networkSection?: string
+      cellular?: Record<string, unknown>
+      webhook?: Record<string, unknown>
     }): Promise<SetConfigResult> => {
       const client = clientRef.current
       if (!client) {
@@ -341,14 +347,17 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
             password: opts.wifiPassword ?? '',
           }
         }
-        // Prefer active network if capabilities expose cellular-only (no wifi)
-        if (!sections.wifi && !sections.halow) {
-          const cellular = capabilities?.sections.find(
-            (s) => s.name === 'cellular' && s.configurable,
-          )
-          if (cellular && capabilities?.currentNetwork === 'cellular') {
-            // leave cellular as-is; mqtt-only write is valid
-          }
+        const cellularCapable = capabilities?.sections.some(
+          (s) => s.name === 'cellular' && s.configurable,
+        )
+        if (cellularCapable && opts.cellular && Object.keys(opts.cellular).length > 0) {
+          sections.cellular = opts.cellular as JsonObject
+        }
+        const webhookCapable = capabilities?.sections.some(
+          (s) => s.name === 'webhook' && s.configurable,
+        )
+        if (webhookCapable && opts.webhook && Object.keys(opts.webhook).length > 0) {
+          sections.webhook = opts.webhook as JsonObject
         }
 
         const result = await withTimeout(client.setConfig(sections), 20_000, 'config.set')

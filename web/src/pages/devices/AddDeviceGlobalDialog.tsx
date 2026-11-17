@@ -39,6 +39,7 @@ import { useExtensionPages } from '@/hooks/useExtensionPages'
 import { ExtensionPageHost } from '@/components/extensions/ExtensionPageHost'
 import { toast } from '@/components/ui/use-toast'
 import { api } from '@/lib/api'
+import { CT_PROV_SOFTAP_UI_ENABLED } from '@/lib/ct-prov'
 import { useServerUrl } from '@/lib/server-url'
 import { useStore } from '@/store'
 import { fetchCache } from '@/lib/utils/async'
@@ -72,7 +73,10 @@ interface TabItem {
 
 const TABS: TabItem[] = [
   { value: 'ble', icon: Bluetooth, labelKey: 'devices:ble.tabTitle', descKey: 'devices:ble.tabDesc' },
-  { value: 'ap', icon: Wifi, labelKey: 'devices:ap.tabTitle', descKey: 'devices:ap.tabDesc' },
+  // SoftAP tab kept in code; gated off until NM-222 SoftAP scan iteration.
+  ...(CT_PROV_SOFTAP_UI_ENABLED
+    ? [{ value: 'ap' as const, icon: Wifi, labelKey: 'devices:ap.tabTitle', descKey: 'devices:ap.tabDesc' }]
+    : []),
   { value: 'manual', icon: Pencil, labelKey: 'devices:add.title', descKey: 'devices:add.tabDesc' },
   { value: 'auto', icon: Search, labelKey: 'devices:auto.title', descKey: 'devices:auto.tabDesc' },
 ]
@@ -238,7 +242,7 @@ export function AddDeviceGlobalDialog({
                 </div>
               )}
 
-              {activeTab === 'ap' && open && (
+              {CT_PROV_SOFTAP_UI_ENABLED && activeTab === 'ap' && open && (
                 <div className="flex min-h-0 w-full flex-1 flex-col items-center">
                   <ApProvisionTab
                     dismissSignal={dismissSignal}

@@ -11,7 +11,9 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Globe,
   Loader2,
+  Radio,
   Server,
   Signal,
   Wifi,
@@ -27,9 +29,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import type { UseCtProvisionReturn } from '@/hooks/useCtProvision'
 import {
+  cellularSectionFromFields,
   formatProvUserMessage,
   modelToDeviceType,
+  normalizeCellularAuth,
   normalizeMqttQos,
+  webhookSectionFromFields,
+  type CellularAuth,
   type CtMqttConfig,
   type CtMqttQos,
   type CustomMqttFields,
@@ -110,12 +116,14 @@ function StepDots({ current }: { current: CtWizardStep }) {
                   />
                 </span>
               )}
+              {/* Opaque chip fills — success-light / muted-tints are translucent
+                  and let the connector show through numbers/icons. */}
               <span
                 className={cn(
                   'relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium',
-                  done && 'bg-success-light text-success',
+                  done && 'bg-card text-success ring-2 ring-inset ring-success',
                   active && 'bg-primary text-primary-foreground',
-                  !done && !active && 'bg-muted text-muted-foreground',
+                  !done && !active && 'bg-card text-muted-foreground ring-1 ring-inset ring-border',
                 )}
                 aria-current={active ? 'step' : undefined}
               >
@@ -124,7 +132,7 @@ function StepDots({ current }: { current: CtWizardStep }) {
             </div>
             <span
               className={cn(
-                'relative z-10 max-w-full px-0.5 text-center text-nano leading-tight',
+                'relative z-10 max-w-full rounded-sm bg-background px-0.5 text-center text-nano leading-tight',
                 active ? 'font-medium text-foreground' : 'text-muted-foreground',
               )}
             >
@@ -252,6 +260,22 @@ export function CtProvisionWizard({
   const [wifiScanAttempted, setWifiScanAttempted] = useState(false)
   const [wifiScanError, setWifiScanError] = useState<string | null>(null)
 
+  // Cellular (capabilities-gated)
+  const [cellApn, setCellApn] = useState('')
+  const [cellUsername, setCellUsername] = useState('')
+  const [cellPassword, setCellPassword] = useState('')
+  const [cellPin, setCellPin] = useState('')
+  const [cellAuth, setCellAuth] = useState<CellularAuth>('none')
+  const [cellRoaming, setCellRoaming] = useState(false)
+  const [cellFormError, setCellFormError] = useState<string | null>(null)
+
+  // Webhook (capabilities-gated)
+  const [webhookEnable, setWebhookEnable] = useState(false)
+  const [webhookUrl, setWebhookUrl] = useState('')
+  const [webhookSecret, setWebhookSecret] = useState('')
+  const [webhookHeader, setWebhookHeader] = useState('')
+  const [webhookFormError, setWebhookFormError] = useState<string | null>(null)
+
   const selectBrokerSource = useCallback((source: BrokerSource) => {
     setBrokerSource(source)
     setMqttFormError(null)
@@ -292,6 +316,18 @@ export function CtProvisionWizard({
       (s) => s.name === wifiSection && s.configurable && s.scannable,
     )
   }, [ct.capabilities, wifiSection])
+
+  const cellularSection = useMemo(() => {
+    return ct.capabilities?.sections.find((s) => s.name === 'cellular' && s.configurable) ?? null
+  }, [ct.capabilities])
+  const cellularFields = useMemo(() => cellularSection?.fields ?? [], [cellularSection])
+  const needsCellular = cellularSection !== null
+
+  const webhookSection = useMemo(() => {
+    return ct.capabilities?.sections.find((s) => s.name === 'webhook' && s.configurable) ?? null
+  }, [ct.capabilities])
+  const webhookFields = useMemo(() => webhookSection?.fields ?? [], [webhookSection])
+  const needsWebhook = webhookSection !== null
 
   const refreshWifiScan = useCallback(async () => {
     if (!wifiSection || !wifiScannable) return
@@ -403,6 +439,75 @@ export function CtProvisionWizard({
       customMqtt = built
     }
 
+    setCellFormError(null)
+    setWebhookFormError(null)
+
+    let cellularPayload: Record<string, unknown> | undefined
+    if (needsCellular) {
+      if (cellularFields.includes('apn') && !cellApn.trim()) {
+        // apn declared → required when the operator opens cellular config.
+        // Pre-provisioned SIMs omit apn from fields entirely.
+        setCellFormError(t('devices:ctProv.cellularApnRequired'))
+        return
+      }
+      if (cellularFields.includes('pin') && cellPin.trim()) {
+        if (!/^\d{4,8}$/.test(cellPin.trim())) {
+          setCellFormError(t('devices:ctProv.cellularPinInvalid'))
+          return
+        }
+      }
+      const built = cellularSectionFromFields(
+        {
+          apn: cellApn,
+          username: cellUsername,
+          password: cellPassword,
+          pin: cellPin,
+          auth: cellAuth,
+          roaming: cellRoaming,
+        },
+        cellularFields,
+      )
+      if (built) cellularPayload = built
+    }
+
+    let webhookPayload: Record<string, unknown> | undefined
+    if (needsWebhook) {
+      if (webhookEnable) {
+        const url = webhookUrl.trim()
+        if (!url) {
+          setWebhookFormError(t('devices:ctProv.webhookUrlRequired'))
+          return
+        }
+        try {
+          const parsed = new URL(url)
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            setWebhookFormError(t('devices:ctProv.webhookUrlInvalid'))
+            return
+          }
+        } catch {
+          setWebhookFormError(t('devices:ctProv.webhookUrlInvalid'))
+          return
+        }
+        if (webhookFields.includes('header') && webhookHeader.trim()) {
+          const h = webhookHeader.trim()
+          if (!h.includes(':') || !h.split(':')[0]?.trim()) {
+            setWebhookFormError(t('devices:ctProv.webhookHeaderInvalid'))
+            return
+          }
+        }
+      }
+      const built = webhookSectionFromFields(
+        {
+          enable: webhookEnable,
+          url: webhookUrl,
+          secret: webhookSecret,
+          header: webhookHeader,
+        },
+        webhookFields,
+      )
+      if (built) webhookPayload = built
+    }
+
     setStep('applying')
     setRegisterError(null)
     setWifiScanError(null)
@@ -432,6 +537,8 @@ export function CtProvisionWizard({
         wifiPassword: needsWifi ? wifiPassword : undefined,
         mqtt: resp.mqtt_config,
         networkSection: wifiSection ?? undefined,
+        cellular: cellularPayload,
+        webhook: webhookPayload,
       })
 
       try {
@@ -465,6 +572,20 @@ export function CtProvisionWizard({
     buildCustomMqtt,
     needsWifi,
     wifiSection,
+    needsCellular,
+    cellularFields,
+    cellApn,
+    cellUsername,
+    cellPassword,
+    cellPin,
+    cellAuth,
+    cellRoaming,
+    needsWebhook,
+    webhookFields,
+    webhookEnable,
+    webhookUrl,
+    webhookSecret,
+    webhookHeader,
     deviceTypes,
     t,
   ])
@@ -583,13 +704,20 @@ export function CtProvisionWizard({
               <p className="text-sm text-muted-foreground">{t('devices:ctProv.stepCapsDesc')}</p>
             </div>
             <div className="space-y-2 rounded-xl border border-border p-4">
-              <p className="text-sm">
-                {needsWifi
-                  ? wifiSection === 'halow'
-                    ? t('devices:ble.wifiConfigHalow')
-                    : t('devices:ble.wifiConfig')
-                  : t('devices:ble.cat1NoWifi')}
-              </p>
+              <ul className="space-y-1 text-sm">
+                {needsWifi && (
+                  <li>
+                    {wifiSection === 'halow'
+                      ? t('devices:ble.wifiConfigHalow')
+                      : t('devices:ble.wifiConfig')}
+                  </li>
+                )}
+                {needsCellular && <li>{t('devices:ctProv.cellularConfig')}</li>}
+                {needsWebhook && <li>{t('devices:ctProv.webhookConfig')}</li>}
+                {!needsWifi && !needsCellular && (
+                  <li>{t('devices:ble.cat1NoWifi')}</li>
+                )}
+              </ul>
               {ct.capabilities?.currentNetwork && (
                 <p className="text-xs text-muted-foreground">
                   {t('devices:ctProv.currentNetwork', { network: ct.capabilities.currentNetwork })}
@@ -681,37 +809,69 @@ export function CtProvisionWizard({
                   </div>
                 )}
 
-                {/* Only show the network picker when the device actually returned SSIDs */}
+                {/* Visible SSID list after scan — not a closed Select (results must stay on-screen). */}
                 {wifiScannable && !wifiScanning && wifiNetworks.length > 0 && (
                   <Field>
                     <FieldLabel>{t('devices:ctProv.wifiNetwork')}</FieldLabel>
-                    <Select
-                      value={wifiSelect}
-                      onValueChange={(v) => {
-                        setWifiSelect(v)
-                        if (v === WIFI_MANUAL) return
-                        setWifiSsid(v)
-                      }}
+                    <div
+                      role="listbox"
+                      aria-label={t('devices:ctProv.wifiNetwork')}
+                      className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-border p-1"
                     >
-                      <SelectTrigger>
-                        <SelectValue placeholder={t('devices:ctProv.wifiSelectPlaceholder')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {wifiNetworks.map((n) => (
-                          <SelectItem key={`${n.ssid}:${n.bssid ?? ''}`} value={n.ssid}>
-                            {n.rssi != null ? `${n.ssid} (${n.rssi} dBm)` : n.ssid}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value={WIFI_MANUAL}>
-                          {t('devices:ctProv.wifiManual')}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
+                      {wifiNetworks.map((n) => {
+                        const selected = wifiSelect === n.ssid
+                        const label = n.displayName || n.ssid
+                        return (
+                          <button
+                            key={`${n.ssid}:${n.bssid ?? n.channel ?? ''}`}
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            className={cn(
+                              'flex w-full items-center justify-between gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors',
+                              selected
+                                ? 'bg-primary text-primary-foreground'
+                                : 'hover:bg-muted-30',
+                            )}
+                            onClick={() => {
+                              setWifiSelect(n.ssid)
+                              setWifiSsid(n.ssid)
+                            }}
+                          >
+                            <span className="min-w-0 truncate font-medium">{label}</span>
+                            {n.rssi != null && (
+                              <span
+                                className={cn(
+                                  'shrink-0 text-xs tabular-nums',
+                                  selected ? 'text-primary-foreground' : 'text-muted-foreground',
+                                )}
+                              >
+                                {n.rssi} dBm
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={wifiSelect === WIFI_MANUAL}
+                        className={cn(
+                          'flex w-full items-center rounded-md px-3 py-2 text-left text-sm transition-colors',
+                          wifiSelect === WIFI_MANUAL
+                            ? 'bg-primary text-primary-foreground'
+                            : 'hover:bg-muted-30 text-muted-foreground',
+                        )}
+                        onClick={() => setWifiSelect(WIFI_MANUAL)}
+                      >
+                        {t('devices:ctProv.wifiManual')}
+                      </button>
+                    </div>
                   </Field>
                 )}
 
                 {wifiScannable && !wifiScanning && wifiScanAttempted && wifiNetworks.length === 0 && (
-                  <p className="text-xs text-muted-foreground">
+                  <p className="rounded-lg border border-border bg-muted-30 px-3 py-2 text-xs text-muted-foreground">
                     {wifiScanError || t('devices:ctProv.wifiScanEmpty')}
                   </p>
                 )}
@@ -747,13 +907,199 @@ export function CtProvisionWizard({
               </div>
             )}
 
-            {!needsWifi && (
+            {needsCellular && (
+              <div className="space-y-3 rounded-xl border border-border p-4">
+                <div className="flex items-center gap-2">
+                  <Radio className="h-4 w-4 text-primary" />
+                  <span className="text-sm font-medium">{t('devices:ctProv.cellularConfig')}</span>
+                </div>
+                <p className="text-xs text-muted-foreground">{t('devices:ctProv.cellularHint')}</p>
+                {cellularFields.includes('apn') && (
+                  <Field>
+                    <FieldLabel htmlFor="ct-cell-apn">{t('devices:ctProv.cellularApn')}</FieldLabel>
+                    <Input
+                      id="ct-cell-apn"
+                      value={cellApn}
+                      onChange={(e) => {
+                        setCellApn(e.target.value)
+                        setCellFormError(null)
+                      }}
+                      placeholder="cmiot.iot"
+                      autoComplete="off"
+                    />
+                  </Field>
+                )}
+                {(cellularFields.includes('username') || cellularFields.includes('password')) && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {cellularFields.includes('username') && (
+                      <Field>
+                        <FieldLabel htmlFor="ct-cell-user">
+                          {t('devices:ble.username')}
+                        </FieldLabel>
+                        <Input
+                          id="ct-cell-user"
+                          value={cellUsername}
+                          onChange={(e) => setCellUsername(e.target.value)}
+                          autoComplete="off"
+                        />
+                      </Field>
+                    )}
+                    {cellularFields.includes('password') && (
+                      <Field>
+                        <FieldLabel htmlFor="ct-cell-pass">
+                          {t('devices:ble.password')}
+                        </FieldLabel>
+                        <PasswordInput
+                          id="ct-cell-pass"
+                          value={cellPassword}
+                          onChange={(e) => setCellPassword(e.target.value)}
+                          autoComplete="new-password"
+                        />
+                      </Field>
+                    )}
+                  </div>
+                )}
+                {cellularFields.includes('pin') && (
+                  <Field>
+                    <FieldLabel htmlFor="ct-cell-pin">{t('devices:ctProv.cellularPin')}</FieldLabel>
+                    <Input
+                      id="ct-cell-pin"
+                      inputMode="numeric"
+                      value={cellPin}
+                      onChange={(e) => {
+                        setCellPin(e.target.value)
+                        setCellFormError(null)
+                      }}
+                      placeholder="1234"
+                      autoComplete="off"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t('devices:ctProv.cellularPinHint')}
+                    </p>
+                  </Field>
+                )}
+                {cellularFields.includes('auth') && (
+                  <Field>
+                    <FieldLabel>{t('devices:ctProv.cellularAuth')}</FieldLabel>
+                    <Select
+                      value={cellAuth}
+                      onValueChange={(v) => setCellAuth(normalizeCellularAuth(v))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">{t('devices:ctProv.cellularAuthNone')}</SelectItem>
+                        <SelectItem value="pap">PAP</SelectItem>
+                        <SelectItem value="chap">CHAP</SelectItem>
+                        <SelectItem value="pap_or_chap">
+                          {t('devices:ctProv.cellularAuthPapOrChap')}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                )}
+                {cellularFields.includes('roaming') && (
+                  <div className="flex items-center justify-between gap-3 py-1">
+                    <FieldLabel htmlFor="ct-cell-roaming" className="mb-0">
+                      {t('devices:ctProv.cellularRoaming')}
+                    </FieldLabel>
+                    <Switch
+                      id="ct-cell-roaming"
+                      checked={cellRoaming}
+                      onCheckedChange={setCellRoaming}
+                    />
+                  </div>
+                )}
+                {cellFormError && <p className="text-sm text-error">{cellFormError}</p>}
+              </div>
+            )}
+
+            {!needsWifi && !needsCellular && (
               <div className="space-y-2 rounded-xl border border-border p-4">
                 <div className="flex items-center gap-2">
                   <Signal className="h-4 w-4 text-primary" />
                   <span className="text-sm font-medium">{t('devices:ble.cat1NoWifi')}</span>
                 </div>
                 <p className="text-xs text-muted-foreground">{t('devices:ble.cat1Hint')}</p>
+              </div>
+            )}
+
+            {needsWebhook && (
+              <div className="space-y-3 rounded-xl border border-border p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Globe className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-medium">{t('devices:ctProv.webhookConfig')}</span>
+                  </div>
+                  {webhookFields.includes('enable') && (
+                    <Switch
+                      id="ct-webhook-enable"
+                      checked={webhookEnable}
+                      onCheckedChange={(v) => {
+                        setWebhookEnable(v)
+                        setWebhookFormError(null)
+                      }}
+                    />
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">{t('devices:ctProv.webhookHint')}</p>
+                {webhookFields.includes('url') && (
+                  <Field>
+                    <FieldLabel htmlFor="ct-webhook-url">
+                      {t('devices:ctProv.webhookUrl')}
+                    </FieldLabel>
+                    <Input
+                      id="ct-webhook-url"
+                      value={webhookUrl}
+                      onChange={(e) => {
+                        setWebhookUrl(e.target.value)
+                        setWebhookFormError(null)
+                      }}
+                      placeholder="https://example.com/hook"
+                      disabled={webhookFields.includes('enable') && !webhookEnable}
+                      className="font-mono text-sm"
+                      autoComplete="off"
+                    />
+                  </Field>
+                )}
+                {webhookFields.includes('secret') && (
+                  <Field>
+                    <FieldLabel htmlFor="ct-webhook-secret">
+                      {t('devices:ctProv.webhookSecret')}
+                    </FieldLabel>
+                    <PasswordInput
+                      id="ct-webhook-secret"
+                      value={webhookSecret}
+                      onChange={(e) => setWebhookSecret(e.target.value)}
+                      disabled={webhookFields.includes('enable') && !webhookEnable}
+                      autoComplete="new-password"
+                    />
+                  </Field>
+                )}
+                {webhookFields.includes('header') && (
+                  <Field>
+                    <FieldLabel htmlFor="ct-webhook-header">
+                      {t('devices:ctProv.webhookHeader')}
+                    </FieldLabel>
+                    <Input
+                      id="ct-webhook-header"
+                      value={webhookHeader}
+                      onChange={(e) => {
+                        setWebhookHeader(e.target.value)
+                        setWebhookFormError(null)
+                      }}
+                      placeholder="X-API-Key: abc123"
+                      disabled={webhookFields.includes('enable') && !webhookEnable}
+                      className="font-mono text-sm"
+                      autoComplete="off"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t('devices:ctProv.webhookHeaderHint')}
+                    </p>
+                  </Field>
+                )}
+                {webhookFormError && <p className="text-sm text-error">{webhookFormError}</p>}
               </div>
             )}
 
@@ -985,7 +1331,7 @@ export function CtProvisionWizard({
       {/* Sticky step actions — outside the scroll region (Main must be overflow-hidden). */}
       {step === 'info' && (
         <StepActions>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <Button variant="outline" className="flex-1" onClick={onReset}>
               {t('common:cancel')}
             </Button>
@@ -998,18 +1344,16 @@ export function CtProvisionWizard({
       )}
       {step === 'capabilities' && (
         <StepActions>
-          <div className="space-y-2">
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setStep('info')}>
-                {t('common:back')}
-              </Button>
-              <Button className="flex-1" onClick={() => setStep('edit')}>
-                <ChevronRight className="mr-2 h-4 w-4" />
-                {t('devices:ctProv.continue')}
-              </Button>
-            </div>
-            <Button variant="ghost" className="w-full" onClick={onReset}>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setStep('info')}>
+              {t('common:back')}
+            </Button>
+            <Button variant="ghost" onClick={onReset}>
               {t('common:cancel')}
+            </Button>
+            <Button className="min-w-0 flex-1" onClick={() => setStep('edit')}>
+              <ChevronRight className="mr-2 h-4 w-4" />
+              {t('devices:ctProv.continue')}
             </Button>
           </div>
         </StepActions>
@@ -1017,12 +1361,15 @@ export function CtProvisionWizard({
       {step === 'edit' && (
         <StepActions>
           <div className="space-y-2">
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setStep('capabilities')}>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setStep('capabilities')}>
                 {t('common:back')}
               </Button>
+              <Button variant="ghost" onClick={onReset}>
+                {t('common:cancel')}
+              </Button>
               <Button
-                className="flex-1"
+                className="min-w-0 flex-1"
                 onClick={handleApply}
                 disabled={
                   (needsWifi && !wifiSsid.trim()) ||
@@ -1034,13 +1381,12 @@ export function CtProvisionWizard({
                 {t('devices:ble.apply')}
               </Button>
             </div>
-            <Button variant="ghost" className="w-full" onClick={onReset}>
-              {t('common:cancel')}
-            </Button>
-            {(wifiScanError || mqttFormError || ct.error) && (
+            {(wifiScanError || mqttFormError || cellFormError || webhookFormError || ct.error) && (
               <p className="text-center text-sm text-error">
                 {wifiScanError ||
                   mqttFormError ||
+                  cellFormError ||
+                  webhookFormError ||
                   (ct.error ? provErrorCopy(t, ct.error) : null)}
               </p>
             )}

@@ -96,12 +96,108 @@ export const CT_MQTT_SECTION_FIELDS = [
   'qos',
 ] as const
 
+/**
+ * CT-Prov/1 cellular section (neolink golden capabilities).
+ * NE101 omits `roaming`; NE301 may declare it.
+ */
+export const CT_CELLULAR_SECTION_FIELDS = [
+  'apn',
+  'username',
+  'password',
+  'pin',
+  'auth',
+  'roaming',
+] as const
+
+/** CT-Prov/1 webhook section (neolink golden capabilities). */
+export const CT_WEBHOOK_SECTION_FIELDS = ['enable', 'url', 'secret', 'header'] as const
+
 export type CtMqttQos = 0 | 1 | 2
+
+export type CellularAuth = 'none' | 'pap' | 'chap' | 'pap_or_chap'
+
+export const CELLULAR_AUTH_VALUES: readonly CellularAuth[] = [
+  'none',
+  'pap',
+  'chap',
+  'pap_or_chap',
+] as const
+
+export interface CellularFields {
+  apn?: string
+  username?: string
+  password?: string
+  pin?: string
+  auth?: CellularAuth
+  roaming?: boolean
+}
+
+export interface WebhookFields {
+  enable: boolean
+  url: string
+  secret?: string
+  header?: string
+}
 
 export function normalizeMqttQos(value: unknown, fallback: CtMqttQos = 1): CtMqttQos {
   const n = typeof value === 'number' ? value : Number(value)
   if (n === 0 || n === 1 || n === 2) return n
   return fallback
+}
+
+export function normalizeCellularAuth(
+  value: unknown,
+  fallback: CellularAuth = 'none',
+): CellularAuth {
+  if (typeof value === 'string' && (CELLULAR_AUTH_VALUES as readonly string[]).includes(value)) {
+    return value as CellularAuth
+  }
+  return fallback
+}
+
+function fieldDeclared(declared: readonly string[] | undefined, field: string): boolean {
+  return !declared || declared.includes(field)
+}
+
+/**
+ * Build CT `cellular` section gated by capabilities.fields.
+ * Returns null when there is nothing to write (all empty / undeclared).
+ * APN may be omitted entirely for pre-provisioned SIMs (fields without apn).
+ */
+export function cellularSectionFromFields(
+  fields: CellularFields,
+  declared?: readonly string[],
+): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {}
+  const apn = fields.apn?.trim() ?? ''
+  if (apn && fieldDeclared(declared, 'apn')) out.apn = apn
+  const username = fields.username?.trim()
+  if (username && fieldDeclared(declared, 'username')) out.username = username
+  if (fields.password && fieldDeclared(declared, 'password')) out.password = fields.password
+  const pin = fields.pin?.trim()
+  if (pin && fieldDeclared(declared, 'pin')) out.pin = pin
+  if (fields.auth && fieldDeclared(declared, 'auth')) out.auth = fields.auth
+  if (fields.roaming != null && fieldDeclared(declared, 'roaming')) out.roaming = fields.roaming
+  return Object.keys(out).length > 0 ? out : null
+}
+
+/**
+ * Build CT `webhook` section gated by capabilities.fields.
+ * enable=false is a complete write (device clears outbound webhook).
+ */
+export function webhookSectionFromFields(
+  fields: WebhookFields,
+  declared?: readonly string[],
+): Record<string, unknown> | null {
+  if (!fieldDeclared(declared, 'enable')) return null
+  const out: Record<string, unknown> = { enable: fields.enable }
+  const url = fields.url.trim()
+  if (url && fieldDeclared(declared, 'url')) out.url = url
+  const secret = fields.secret?.trim()
+  if (secret && fieldDeclared(declared, 'secret')) out.secret = secret
+  const header = fields.header?.trim()
+  if (header && fieldDeclared(declared, 'header')) out.header = header
+  return out
 }
 
 function normalizeModel(model: string): string {

@@ -221,6 +221,7 @@ export class FakeTransport implements ProvTransport {
     }
 
     if (opName === ProvOp.communicationScan) {
+      // CT-Prov/1 golden §9 shape (network_id / display_name / signal).
       return encodeResponse({
         id,
         op: resultOpName(opName),
@@ -228,8 +229,18 @@ export class FakeTransport implements ProvTransport {
         data: {
           section: data.section ?? 'wifi',
           items: [
-            { ssid: 'Office-2.4G', rssi: -48, security: 'wpa2' },
-            { ssid: 'Guest', rssi: -72, security: 'open' },
+            {
+              network_id: 'Office-2.4G',
+              display_name: 'Office-2.4G',
+              signal: -48,
+              channel: 6,
+            },
+            {
+              network_id: 'Guest',
+              display_name: 'Guest',
+              signal: -72,
+              channel: 1,
+            },
           ],
           more: false,
           cursor: '',

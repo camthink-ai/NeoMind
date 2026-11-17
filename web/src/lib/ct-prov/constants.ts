@@ -45,6 +45,13 @@ export const MAX_LOGICAL_PACKET_BYTES = 4096
 /** SoftAP HTTP path (whole envelope, no fragmentation). */
 export const CT_PROV_SOFTAP_PATH = '/api/v1/ctprov'
 
+/**
+ * SoftAP Add Device tab visibility.
+ * NM-222 SoftAP Wi‑Fi scan is assessment-only / deferred; keep SoftAP code
+ * but hide the tab until that iteration lands. BLE (+ manual/auto) remain.
+ */
+export const CT_PROV_SOFTAP_UI_ENABLED = false
+
 /** Default SoftAP gateway hosts by model family. */
 export const SOFTAP_DEFAULT_HOST: Readonly<Record<string, string>> = {
   NE101: '192.168.1.1',

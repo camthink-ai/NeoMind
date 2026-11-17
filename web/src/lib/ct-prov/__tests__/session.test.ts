@@ -124,6 +124,48 @@ describe('ct-prov FakeTransport session path', () => {
     expect(formatSsidForDisplay(page.items[0]!.ssid)).toBe(spaced)
   })
 
+  it('parses CT-Prov/1 golden scan items (network_id / display_name / signal)', () => {
+    const page = parseNetworkScan({
+      kind: 'response',
+      id: 3,
+      ok: true,
+      opName: resultOpName(ProvOp.communicationScan),
+      data: {
+        section: 'wifi',
+        items: [
+          {
+            network_id: 'Office-2.4G',
+            display_name: 'Office-2.4G',
+            signal: -48,
+            channel: 6,
+          },
+          {
+            network_id: 'Lab-5G',
+            display_name: 'Lab 5 GHz',
+            signal: -71,
+            channel: 36,
+          },
+          // Missing identity — skipped
+          { display_name: 'orphan', signal: -90 },
+        ],
+        more: false,
+        cursor: '',
+      },
+    })
+    expect(page.items).toHaveLength(2)
+    expect(page.items[0]).toMatchObject({
+      ssid: 'Office-2.4G',
+      displayName: 'Office-2.4G',
+      rssi: -48,
+      channel: 6,
+    })
+    expect(page.items[1]).toMatchObject({
+      ssid: 'Lab-5G',
+      displayName: 'Lab 5 GHz',
+      rssi: -71,
+    })
+  })
+
   it('maps wifi_init INTERNAL_ERROR to a stable user code', () => {
     const err = new ProvSessionError(
       'internal_error',
