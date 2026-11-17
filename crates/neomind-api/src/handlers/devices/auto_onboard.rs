@@ -110,7 +110,7 @@ fn create_default_llm_runtime() -> Arc<dyn LlmRuntime> {
 
 /// Helper to get or create the AutoOnboardManager from ServerState
 /// Uses double-checked locking to ensure only one instance is created.
-async fn get_auto_onboard_manager(
+pub(crate) async fn get_auto_onboard_manager(
     state: &ServerState,
 ) -> Result<Arc<AutoOnboardManager>, ErrorResponse> {
     // First check: read lock (fast path)

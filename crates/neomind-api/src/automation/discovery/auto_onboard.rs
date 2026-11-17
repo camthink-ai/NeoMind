@@ -1122,6 +1122,43 @@ impl AutoOnboardManager {
         Ok(())
     }
 
+    /// Clear Pending drafts that belong to a now-registered identity.
+    ///
+    /// Matches the draft map key **or** `claimed_identity` (association-exception
+    /// candidates keep a non-colliding map key but still claim the real id).
+    /// Used by BLE provision / re-provision so a pre-BLE MQTT discovery draft
+    /// does not linger in Pending after the same SN is formally registered.
+    pub async fn remove_drafts_for_identity(&self, device_id: &str) -> usize {
+        let mut drafts = self.drafts.write().await;
+        let keys: Vec<String> = drafts
+            .iter()
+            .filter(|(key, draft)| {
+                key.as_str() == device_id
+                    || draft.device_id == device_id
+                    || draft.claimed_identity.as_deref() == Some(device_id)
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        let removed = keys.len();
+        for key in &keys {
+            drafts.remove(key);
+        }
+        drop(drafts);
+
+        if removed > 0 {
+            let mut limiters = self.rate_limiters.write().await;
+            for key in &keys {
+                limiters.remove(key);
+            }
+            tracing::info!(
+                device_id = %device_id,
+                removed,
+                "Cleared discovery draft(s) for registered identity"
+            );
+        }
+        removed
+    }
+
     /// Set the status of a draft device
     pub async fn set_draft_status(&self, device_id: &str, status: DraftDeviceStatus) -> Result<()> {
         let mut drafts = self.drafts.write().await;
@@ -1718,6 +1755,31 @@ mod tests {
 
         draft.set_status(DraftDeviceStatus::Registered);
         assert_eq!(draft.status, DraftDeviceStatus::Registered);
+    }
+
+    #[tokio::test]
+    async fn remove_drafts_for_identity_clears_key_and_claimed() {
+        let manager = create_test_manager();
+        {
+            let mut drafts = manager.drafts.write().await;
+            drafts.insert(
+                "e37d627a".into(),
+                DraftDevice::new("e37d627a".into(), "mqtt".into(), 5),
+            );
+            let mut assoc = DraftDevice::new("pending-e37d-topic".into(), "mqtt".into(), 5);
+            assoc.claimed_identity = Some("e37d627a".into());
+            drafts.insert("pending-e37d-topic".into(), assoc);
+            drafts.insert(
+                "other-device".into(),
+                DraftDevice::new("other-device".into(), "mqtt".into(), 5),
+            );
+        }
+
+        let removed = manager.remove_drafts_for_identity("e37d627a").await;
+        assert_eq!(removed, 2);
+        let drafts = manager.get_drafts().await;
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].device_id, "other-device");
     }
 
     #[test]

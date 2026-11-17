@@ -12,8 +12,10 @@ use serde_json::json;
 
 use crate::config;
 use crate::handlers::common::{ok, HandlerResult};
+use crate::handlers::devices::auto_onboard::get_auto_onboard_manager;
 use crate::models::ErrorResponse;
 use crate::server::types::ServerState;
+use neomind_devices::DeviceError;
 
 // ---------------------------------------------------------------------------
 // Request / Response types
@@ -310,17 +312,15 @@ pub async fn ble_provision_handler(
                 offline_timeout_secs: existing.offline_timeout_secs,
             };
 
+            // Refresh adapter topic maps (plain update_device leaves runtime stale).
             state
                 .devices
                 .service
-                .update_device(&device_id, updated)
+                .update_device_and_refresh_adapters(&device_id, updated)
                 .await
-                .map_err(|e| {
-                    ErrorResponse::internal(format!(
-                        "Failed to update re-provisioned device: {}",
-                        e
-                    ))
-                })?;
+                .map_err(ble_bind_error)?;
+
+            clear_discovery_drafts_for_identity(&state, &device_id).await;
 
             tracing::info!(
                 category = "ble",
@@ -389,9 +389,10 @@ pub async fn ble_provision_handler(
         .service
         .register_device(config)
         .await
-        .map_err(|e| {
-            ErrorResponse::internal(format!("Failed to register BLE provisioned device: {}", e))
-        })?;
+        .map_err(ble_bind_error)?;
+
+    // MQTT may have drafted this SN before BLE finished — drop Pending ghosts.
+    clear_discovery_drafts_for_identity(&state, &device_id).await;
 
     tracing::info!(
         category = "ble",
@@ -404,6 +405,46 @@ pub async fn ble_provision_handler(
         "device_id": device_id,
         "mqtt_config": mqtt_config,
     }))
+}
+
+/// Best-effort: clear auto-onboard drafts for a formal BLE registration.
+/// Manager may be absent in minimal test states — never fail the provision.
+async fn clear_discovery_drafts_for_identity(state: &ServerState, device_id: &str) {
+    match get_auto_onboard_manager(state).await {
+        Ok(manager) => {
+            let removed = manager.remove_drafts_for_identity(device_id).await;
+            if removed > 0 {
+                tracing::info!(
+                    category = "ble",
+                    device_id = %device_id,
+                    removed,
+                    "BLE provision cleared leftover discovery draft(s)"
+                );
+            }
+        }
+        Err(e) => {
+            tracing::debug!(
+                category = "ble",
+                device_id = %device_id,
+                error = %e.message,
+                "BLE provision: auto-onboard manager unavailable; draft clear skipped"
+            );
+        }
+    }
+}
+
+fn ble_bind_error(e: DeviceError) -> ErrorResponse {
+    match e {
+        DeviceError::BindIncomplete {
+            message,
+            config_applied,
+            retry_hint,
+        } => ErrorResponse::service_unavailable(format!(
+            "{message}; config_applied={config_applied}"
+        ))
+        .with_hint(retry_hint),
+        other => ErrorResponse::internal(format!("Failed to register/update BLE device: {other}")),
+    }
 }
 
 #[cfg(test)]
