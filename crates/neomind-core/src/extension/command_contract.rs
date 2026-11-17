@@ -103,6 +103,19 @@ pub struct PrepareInvokeRequest<'a> {
     pub raw_params: &'a Value,
     pub extension_version: Option<&'a str>,
     pub package_digest: Option<&'a str>,
+    /// Load-lifecycle generation token. Stale / missing tokens refuse cache writes.
+    pub capability_generation: Option<&'a CapabilityGeneration>,
+}
+
+/// Opaque capability-cache generation. Only [`begin_instance_generation`] may mint
+/// or install the current token for an instance.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CapabilityGeneration(String);
+
+impl CapabilityGeneration {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -283,7 +296,24 @@ enum SchemaKeyClass {
     Unsupported,
 }
 
-/// Recursively reject unsupported constraint keywords; allow documentary ones.
+const SCALAR_TYPES: &[&str] = &["string", "number", "integer", "boolean"];
+const ALL_TYPES: &[&str] = &["object", "array", "string", "number", "integer", "boolean"];
+
+/// Keywords that require an explicit string `type` (no silent skip).
+const CONSTRAINT_KEYS: &[&str] = &[
+    "enum",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "minimum",
+    "maximum",
+    "properties",
+    "items",
+    "additionalProperties",
+    "required",
+];
+
+/// Recursively reject unsupported keywords and invalid keyword shapes.
 pub fn assert_supported_schema(schema: &Value) -> Result<(), String> {
     assert_supported_schema_at(schema, "")
 }
@@ -307,8 +337,50 @@ fn assert_supported_schema_at(schema: &Value, path: &str) -> Result<(), String> 
             SchemaKeyClass::Implemented | SchemaKeyClass::Documentary => {}
         }
     }
-    if let Some(props) = obj.get("properties").and_then(|p| p.as_object()) {
-        for (pname, prop) in props {
+
+    // Keyword value-type checks (fail closed — never coerce).
+    if let Some(t) = obj.get("type") {
+        match t {
+            Value::String(s) => {
+                if !ALL_TYPES.contains(&s.as_str()) {
+                    return Err(format!(
+                        "unsupported schema type '{s}' at '{path}' (fail closed)"
+                    ));
+                }
+            }
+            Value::Array(_) => {
+                return Err(format!(
+                    "schema type unions (array form) unsupported at '{path}' (fail closed)"
+                ));
+            }
+            other => {
+                return Err(format!(
+                    "schema 'type' at '{path}' must be a string, got {other}"
+                ));
+            }
+        }
+    }
+
+    let type_str = obj.get("type").and_then(|t| t.as_str());
+    let has_constraint = CONSTRAINT_KEYS.iter().any(|k| obj.contains_key(*k));
+    if has_constraint && type_str.is_none() {
+        return Err(format!(
+            "schema at '{path}' has constraints but no string 'type' (fail closed)"
+        ));
+    }
+
+    if let Some(props) = obj.get("properties") {
+        let Some(map) = props.as_object() else {
+            return Err(format!(
+                "'properties' at '{path}' must be an object (fail closed)"
+            ));
+        };
+        if type_str != Some("object") {
+            return Err(format!(
+                "'properties' requires type=object at '{path}' (fail closed)"
+            ));
+        }
+        for (pname, prop) in map {
             let child = if path.is_empty() {
                 format!("properties.{pname}")
             } else {
@@ -317,7 +389,18 @@ fn assert_supported_schema_at(schema: &Value, path: &str) -> Result<(), String> 
             assert_supported_schema_at(prop, &child)?;
         }
     }
+
     if let Some(items) = obj.get("items") {
+        if type_str != Some("array") {
+            return Err(format!(
+                "'items' requires type=array at '{path}' (fail closed)"
+            ));
+        }
+        if !items.is_object() {
+            return Err(format!(
+                "'items' at '{path}' must be a schema object (fail closed)"
+            ));
+        }
         let child = if path.is_empty() {
             "items".to_string()
         } else {
@@ -325,14 +408,84 @@ fn assert_supported_schema_at(schema: &Value, path: &str) -> Result<(), String> 
         };
         assert_supported_schema_at(items, &child)?;
     }
+
     if let Some(ap) = obj.get("additionalProperties") {
-        if ap.is_object() {
+        if !ap.is_boolean() {
             return Err(format!(
-                "additionalProperties as a schema object is unsupported at '{path}' (fail closed); \
-                 use boolean true/false only"
+                "'additionalProperties' at '{path}' must be a boolean (got {ap}); \
+                 schema objects / strings are unsupported (fail closed)"
+            ));
+        }
+        if type_str != Some("object") {
+            return Err(format!(
+                "'additionalProperties' requires type=object at '{path}' (fail closed)"
             ));
         }
     }
+
+    if let Some(req) = obj.get("required") {
+        let Some(arr) = req.as_array() else {
+            return Err(format!(
+                "'required' at '{path}' must be an array of strings (fail closed)"
+            ));
+        };
+        if arr.iter().any(|v| !v.is_string()) {
+            return Err(format!(
+                "'required' at '{path}' must contain only strings (fail closed)"
+            ));
+        }
+    }
+
+    if let Some(en) = obj.get("enum") {
+        let Some(arr) = en.as_array() else {
+            return Err(format!("'enum' at '{path}' must be an array (fail closed)"));
+        };
+        if arr.is_empty() {
+            return Err(format!("'enum' at '{path}' must be non-empty (fail closed)"));
+        }
+    }
+
+    for key in ["minLength", "maxLength"] {
+        if let Some(v) = obj.get(key) {
+            if v.as_u64().is_none() {
+                return Err(format!(
+                    "'{key}' at '{path}' must be a non-negative integer (fail closed)"
+                ));
+            }
+            if type_str != Some("string") {
+                return Err(format!(
+                    "'{key}' requires type=string at '{path}' (fail closed)"
+                ));
+            }
+        }
+    }
+    if let Some(v) = obj.get("pattern") {
+        if !v.is_string() {
+            return Err(format!(
+                "'pattern' at '{path}' must be a string (fail closed)"
+            ));
+        }
+        if type_str != Some("string") {
+            return Err(format!(
+                "'pattern' requires type=string at '{path}' (fail closed)"
+            ));
+        }
+    }
+    for key in ["minimum", "maximum"] {
+        if let Some(v) = obj.get(key) {
+            if !v.is_number() {
+                return Err(format!(
+                    "'{key}' at '{path}' must be a number (fail closed)"
+                ));
+            }
+            if !matches!(type_str, Some("number") | Some("integer")) {
+                return Err(format!(
+                    "'{key}' requires type=number|integer at '{path}' (fail closed)"
+                ));
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -342,45 +495,78 @@ pub fn validate_and_normalize(schema: &Value, raw: &Value) -> Result<Value, Stri
     normalize_value(schema, raw, "params")
 }
 
-fn normalize_value(schema: &Value, raw: &Value, path: &str) -> Result<Value, String> {
-    // Top-level null → empty object only when schema type is object.
-    let expected_type = schema.get("type").and_then(|t| t.as_str());
-    if matches!(expected_type, Some("object")) && raw.is_null() && path == "params" {
-        return normalize_object(schema, &Map::new(), path);
+fn check_enum(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+    if let Some(enum_vals) = schema.get("enum") {
+        let Some(arr) = enum_vals.as_array() else {
+            return Err(format!("'{path}' schema enum is not an array"));
+        };
+        if !arr.iter().any(|e| e == value) {
+            return Err(format!(
+                "'{path}' must be one of {arr:?}, got {value}"
+            ));
+        }
     }
-    match expected_type {
+    Ok(())
+}
+
+fn normalize_value(schema: &Value, raw: &Value, path: &str) -> Result<Value, String> {
+    let expected_type = match schema.get("type") {
+        None => None,
+        Some(Value::String(s)) => Some(s.as_str()),
+        Some(Value::Array(_)) => {
+            return Err(format!(
+                "schema type unions unsupported at '{path}' (fail closed)"
+            ));
+        }
+        Some(other) => {
+            return Err(format!(
+                "schema 'type' at '{path}' must be a string, got {other}"
+            ));
+        }
+    };
+
+    // Top-level null → empty object only when schema type is object.
+    if matches!(expected_type, Some("object")) && raw.is_null() && path == "params" {
+        let out = normalize_object(schema, &Map::new(), path)?;
+        check_enum(schema, &out, path)?;
+        return Ok(out);
+    }
+
+    let out = match expected_type {
         Some("object") => {
             let obj = raw.as_object().ok_or_else(|| {
                 format!("'{path}' must be a JSON object, got {raw}")
             })?;
-            normalize_object(schema, obj, path)
+            normalize_object(schema, obj, path)?
         }
         Some("array") => {
             let arr = raw.as_array().ok_or_else(|| {
                 format!("'{path}' must be a JSON array, got {raw}")
             })?;
-            normalize_array(schema, arr, path)
+            normalize_array(schema, arr, path)?
         }
-        Some(t) => {
+        Some(t) if SCALAR_TYPES.contains(&t) => {
             if raw.is_null() {
                 return Err(format!(
                     "'{path}' is null but schema type is '{t}' (null not allowed)"
                 ));
             }
             validate_scalar(schema, raw, t, path)?;
-            Ok(raw.clone())
+            raw.clone()
+        }
+        Some(other) => {
+            return Err(format!(
+                "unsupported schema type '{other}' at '{path}' (fail closed)"
+            ));
         }
         None => {
-            // No type: still reject unknown constraint keys (already done);
-            // pass value through only if no properties/items constraints.
-            if schema.get("properties").is_some() || schema.get("items").is_some() {
-                return Err(format!(
-                    "schema at '{path}' has properties/items but no type (fail closed)"
-                ));
-            }
-            Ok(raw.clone())
+            // Documentary-only schemas (no type, no constraints) may pass through.
+            // Constraints without type are rejected in assert_supported_schema.
+            raw.clone()
         }
-    }
+    };
+    check_enum(schema, &out, path)?;
+    Ok(out)
 }
 
 fn normalize_object(
@@ -394,10 +580,16 @@ fn normalize_object(
         .cloned()
         .unwrap_or_default();
 
-    let additional = schema
-        .get("additionalProperties")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    // Strict: only boolean additionalProperties (validated in assert).
+    let additional = match schema.get("additionalProperties") {
+        None => true,
+        Some(Value::Bool(b)) => *b,
+        Some(other) => {
+            return Err(format!(
+                "'additionalProperties' at '{path}' must be boolean, got {other}"
+            ));
+        }
+    };
 
     let mut obj = raw.clone();
 
@@ -448,7 +640,6 @@ fn normalize_object(
             }
             out.insert(key.clone(), normalize_value(prop, value, &child_path)?);
         } else {
-            // Passthrough when additionalProperties allows.
             out.insert(key.clone(), value.clone());
         }
     }
@@ -487,13 +678,6 @@ fn validate_scalar(schema: &Value, value: &Value, expected: &str, path: &str) ->
             "'{path}' must be of type {expected}, got {value}"
         ));
     }
-    if let Some(enum_vals) = schema.get("enum").and_then(|e| e.as_array()) {
-        if !enum_vals.is_empty() && !enum_vals.iter().any(|e| e == value) {
-            return Err(format!(
-                "'{path}' must be one of {enum_vals:?}, got {value}"
-            ));
-        }
-    }
     if expected == "string" {
         let s = value.as_str().unwrap_or("");
         if let Some(min_l) = schema.get("minLength").and_then(|v| v.as_u64()) {
@@ -513,9 +697,8 @@ fn validate_scalar(schema: &Value, value: &Value, expected: &str, path: &str) ->
             }
         }
         if let Some(pat) = schema.get("pattern").and_then(|v| v.as_str()) {
-            let re = regex_lite_match(pat, s).map_err(|e| {
-                format!("invalid pattern '{pat}' at '{path}': {e}")
-            })?;
+            let re = regex_lite_match(pat, s)
+                .map_err(|e| format!("invalid pattern '{pat}' at '{path}': {e}"))?;
             if !re {
                 return Err(format!("'{path}' does not match pattern '{pat}'"));
             }
@@ -629,15 +812,21 @@ pub fn prepare_invoke(req: PrepareInvokeRequest<'_>) -> Result<PreparedInvoke, S
     let param_fingerprint = fingerprint_params(&canonical_params);
     let operation_id = new_operation_id();
 
-    if let Some(ver) = req.extension_version {
+    // Cache write only under a verified load-lifecycle generation. Callers
+    // cannot mint/replace the current generation via prepare.
+    let gen = match req.capability_generation {
+        Some(g) => Some(g.clone()),
+        None => current_instance_generation(req.instance_id),
+    };
+    if let Some(gen) = gen.as_ref() {
         remember_capability(
             req.instance_id,
             &req.command.name,
             contract.effect,
             contract.replay_safety,
             contract.execution,
-            ver,
-        );
+            gen,
+        )?;
     }
 
     Ok(PreparedInvoke {
@@ -656,7 +845,7 @@ pub fn prepare_invoke(req: PrepareInvokeRequest<'_>) -> Result<PreparedInvoke, S
 }
 
 // ---------------------------------------------------------------------------
-// Version-bound capability cache (write-gate / CLI classify)
+// Load-lifecycle capability cache (write-gate / CLI classify)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
@@ -668,8 +857,8 @@ struct CachedCap {
 }
 
 struct CapCache {
-    /// instance_id → current generation (usually package version).
-    generation: HashMap<String, String>,
+    /// instance_id → current load-lifecycle generation token.
+    generation: HashMap<String, CapabilityGeneration>,
     /// `{instance}\0{command}\0{generation}` → capability.
     caps: HashMap<String, CachedCap>,
 }
@@ -688,24 +877,90 @@ fn versioned_key(instance_id: &str, command: &str, generation: &str) -> String {
     format!("{instance_id}\0{command}\0{generation}")
 }
 
-/// Remember capability for `(instance, command, version)`.
-/// Sets the instance generation so lookups only hit the current version.
+/// Mint and install a **new** generation for `instance_id` (load / reload).
+/// Clears prior caps. Callers may only *carry* this token afterward.
+pub fn begin_instance_generation(instance_id: &str) -> CapabilityGeneration {
+    let token = CapabilityGeneration(format!("gen_{}", uuid::Uuid::new_v4()));
+    if let Ok(mut guard) = cap_cache().lock() {
+        let prefix = format!("{instance_id}\0");
+        guard.caps.retain(|k, _| !k.starts_with(&prefix));
+        guard
+            .generation
+            .insert(instance_id.to_string(), token.clone());
+    }
+    token
+}
+
+/// Return the active generation, or mint one if missing (orphan/test paths).
+/// Unlike [`begin_instance_generation`], does **not** rotate an existing token.
+pub fn ensure_instance_generation(instance_id: &str) -> CapabilityGeneration {
+    if let Ok(mut guard) = cap_cache().lock() {
+        if let Some(cur) = guard.generation.get(instance_id) {
+            return cur.clone();
+        }
+        let token = CapabilityGeneration(format!("gen_{}", uuid::Uuid::new_v4()));
+        guard
+            .generation
+            .insert(instance_id.to_string(), token.clone());
+        return token;
+    }
+    begin_instance_generation(instance_id)
+}
+
+pub fn current_instance_generation(instance_id: &str) -> Option<CapabilityGeneration> {
+    cap_cache()
+        .lock()
+        .ok()
+        .and_then(|g| g.generation.get(instance_id).cloned())
+}
+
+fn ensure_generation_current(
+    instance_id: &str,
+    generation: &CapabilityGeneration,
+) -> Result<(), String> {
+    let guard = cap_cache()
+        .lock()
+        .map_err(|_| "capability cache poisoned".to_string())?;
+    match guard.generation.get(instance_id) {
+        Some(cur) if cur == generation => Ok(()),
+        Some(_) => Err(format!(
+            "stale capability generation for '{instance_id}' (instance was reloaded)"
+        )),
+        None => Err(format!(
+            "no active capability generation for '{instance_id}' (unloaded or not registered)"
+        )),
+    }
+}
+
+/// Remember capability for `(instance, command)` under an already-active
+/// generation. **Does not** install or change the current generation — stale
+/// tokens are rejected so an old ExtensionTool cannot revive privileges.
 pub fn remember_capability(
     instance_id: &str,
     command: &str,
     effect: CommandEffect,
     replay: CommandReplaySafety,
     execution: CommandExecutionKind,
-    version: &str,
-) {
+    generation: &CapabilityGeneration,
+) -> Result<(), String> {
+    ensure_generation_current(instance_id, generation)?;
     if let Ok(mut guard) = cap_cache().lock() {
-        let prev = guard.generation.insert(instance_id.to_string(), version.to_string());
-        if prev.as_deref() != Some(version) {
-            // Generation change: drop stale keys for this instance.
-            guard.caps.retain(|k, _| !k.starts_with(&format!("{instance_id}\0")));
+        // Re-check under write lock.
+        match guard.generation.get(instance_id) {
+            Some(cur) if cur == generation => {}
+            Some(_) => {
+                return Err(format!(
+                    "stale capability generation for '{instance_id}' (instance was reloaded)"
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "no active capability generation for '{instance_id}' (unloaded or not registered)"
+                ));
+            }
         }
         guard.caps.insert(
-            versioned_key(instance_id, command, version),
+            versioned_key(instance_id, command, generation.as_str()),
             CachedCap {
                 effect,
                 replay,
@@ -713,6 +968,7 @@ pub fn remember_capability(
             },
         );
     }
+    Ok(())
 }
 
 /// Drop all cached capability for an instance (unload / reload / upgrade).
@@ -725,11 +981,14 @@ pub fn invalidate_instance_capability(instance_id: &str) {
 }
 
 /// Sync effect for classify: only returns a cached grant when the instance's
-/// **current** generation matches the cache entry. No version → Mutating.
+/// **current** generation matches the cache entry. No generation → Mutating.
 pub fn sync_effect_for_invoke(instance_id: &str, command: &str) -> CommandEffect {
     if let Ok(guard) = cap_cache().lock() {
         if let Some(gen) = guard.generation.get(instance_id) {
-            if let Some(c) = guard.caps.get(&versioned_key(instance_id, command, gen)) {
+            if let Some(c) = guard
+                .caps
+                .get(&versioned_key(instance_id, command, gen.as_str()))
+            {
                 return c.effect;
             }
         }
@@ -740,7 +999,10 @@ pub fn sync_effect_for_invoke(instance_id: &str, command: &str) -> CommandEffect
 pub fn sync_replay_for_invoke(instance_id: &str, command: &str) -> CommandReplaySafety {
     if let Ok(guard) = cap_cache().lock() {
         if let Some(gen) = guard.generation.get(instance_id) {
-            if let Some(c) = guard.caps.get(&versioned_key(instance_id, command, gen)) {
+            if let Some(c) = guard
+                .caps
+                .get(&versioned_key(instance_id, command, gen.as_str()))
+            {
                 return c.replay;
             }
         }
@@ -988,69 +1250,200 @@ mod tests {
     }
 
     #[test]
-    fn capability_cache_version_bound_and_invalidates() {
+    fn enum_without_type_fails_closed() {
+        let schema = json!({"enum": ["safe"]});
+        let err = validate_and_normalize(&schema, &json!("other")).unwrap_err();
+        assert!(
+            err.contains("no string 'type'") || err.contains("constraints"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn type_union_array_form_fails_closed() {
+        let schema = json!({
+            "type": ["string", "null"],
+            "enum": ["safe"]
+        });
+        assert!(validate_and_normalize(&schema, &json!("safe"))
+            .unwrap_err()
+            .contains("unions"));
+    }
+
+    #[test]
+    fn object_enum_is_enforced() {
+        let schema = json!({
+            "type": "object",
+            "enum": [{"mode": "safe"}],
+            "properties": {"mode": {"type": "string"}},
+            "required": ["mode"]
+        });
+        assert!(validate_and_normalize(&schema, &json!({"mode": "safe"})).is_ok());
+        assert!(validate_and_normalize(&schema, &json!({"mode": "unsafe"}))
+            .unwrap_err()
+            .contains("one of"));
+    }
+
+    #[test]
+    fn additional_properties_string_false_fails_closed() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "additionalProperties": "false"
+        });
+        let err = validate_and_normalize(&schema, &json!({"city": "Xiamen", "x": 1})).unwrap_err();
+        assert!(err.contains("boolean"), "got: {err}");
+    }
+
+    #[test]
+    fn capability_generation_token_not_rewritable_by_stale_call() {
         invalidate_instance_capability("cache-test-ext");
+        let gen1 = begin_instance_generation("cache-test-ext");
         remember_capability(
             "cache-test-ext",
             "get_weather",
             CommandEffect::ReadOnly,
             CommandReplaySafety::Safe,
             CommandExecutionKind::Immediate,
-            "1.0.0",
-        );
+            &gen1,
+        )
+        .unwrap();
         assert_eq!(
             sync_effect_for_invoke("cache-test-ext", "get_weather"),
             CommandEffect::ReadOnly
         );
-        // Upgrade generation → old RO must not apply.
+
+        // Reload → new generation; old token cannot restore RO.
+        let gen2 = begin_instance_generation("cache-test-ext");
+        assert_ne!(gen1, gen2);
+        assert_eq!(
+            sync_effect_for_invoke("cache-test-ext", "get_weather"),
+            CommandEffect::Mutating
+        );
+        let err = remember_capability(
+            "cache-test-ext",
+            "get_weather",
+            CommandEffect::ReadOnly,
+            CommandReplaySafety::Safe,
+            CommandExecutionKind::Immediate,
+            &gen1,
+        )
+        .unwrap_err();
+        assert!(err.contains("stale"), "got: {err}");
+        assert_eq!(
+            sync_effect_for_invoke("cache-test-ext", "get_weather"),
+            CommandEffect::Mutating
+        );
+
         remember_capability(
             "cache-test-ext",
             "get_weather",
             CommandEffect::Mutating,
             CommandReplaySafety::Unsafe,
             CommandExecutionKind::Immediate,
-            "2.0.0",
-        );
+            &gen2,
+        )
+        .unwrap();
+        invalidate_instance_capability("cache-test-ext");
         assert_eq!(
             sync_effect_for_invoke("cache-test-ext", "get_weather"),
             CommandEffect::Mutating
         );
-        invalidate_instance_capability("cache-test-ext");
+        assert!(remember_capability(
+            "cache-test-ext",
+            "get_weather",
+            CommandEffect::ReadOnly,
+            CommandReplaySafety::Safe,
+            CommandExecutionKind::Immediate,
+            &gen2,
+        )
+        .unwrap_err()
+        .contains("no active"));
+    }
+
+    #[test]
+    fn stale_prepare_after_unload_reload_cannot_restore() {
+        // Unique instance; type_base still weather-forecast via `-vNNN` strip.
+        let id = "weather-forecast-v801";
+        invalidate_instance_capability(id);
+        let gen_old = begin_instance_generation(id);
+        let cmd = weather_get_undeclared();
+        prepare_invoke(PrepareInvokeRequest {
+            instance_id: id,
+            command: &cmd,
+            raw_params: &json!({"city": "Xiamen"}),
+            extension_version: Some("2.14.0"),
+            package_digest: None,
+            capability_generation: Some(&gen_old),
+        })
+        .unwrap();
         assert_eq!(
-            sync_effect_for_invoke("cache-test-ext", "get_weather"),
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::ReadOnly
+        );
+
+        // Simulate unload then reload with a new generation (same package version).
+        invalidate_instance_capability(id);
+        let gen_new = begin_instance_generation(id);
+        assert_ne!(gen_old, gen_new);
+
+        let err = prepare_invoke(PrepareInvokeRequest {
+            instance_id: id,
+            command: &cmd,
+            raw_params: &json!({"city": "Xiamen"}),
+            extension_version: Some("2.14.0"),
+            package_digest: None,
+            capability_generation: Some(&gen_old),
+        })
+        .unwrap_err();
+        assert!(err.contains("stale"), "got: {err}");
+        // New generation still has no RO grant from the stale call.
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
             CommandEffect::Mutating
         );
     }
 
     #[test]
     fn prepare_sets_uuid_operation_and_canonical() {
+        let id = "weather-forecast-v802";
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
         let cmd = weather_get_undeclared();
         let prep = prepare_invoke(PrepareInvokeRequest {
-            instance_id: "weather-forecast-v2",
+            instance_id: id,
             command: &cmd,
             raw_params: &json!({"city": "Xiamen"}),
             extension_version: Some("2.14.0"),
             package_digest: None,
+            capability_generation: Some(&gen),
         })
         .unwrap();
         assert!(prep.operation_id.starts_with("op_"));
         assert!(uuid::Uuid::parse_str(prep.operation_id.trim_start_matches("op_")).is_ok());
         assert_eq!(prep.canonical_params["city"], "Xiamen");
         assert_eq!(
-            sync_effect_for_invoke("weather-forecast-v2", "get_weather"),
+            sync_effect_for_invoke(id, "get_weather"),
             CommandEffect::ReadOnly
         );
     }
 
     #[test]
     fn cross_entry_capability_matrix() {
+        let id_w = "weather-forecast-v803";
+        let id_m = "mystery-ext-v803";
+        invalidate_instance_capability(id_w);
+        invalidate_instance_capability(id_m);
+        let gen_w = begin_instance_generation(id_w);
+        let gen_m = begin_instance_generation(id_m);
         let get = weather_get_undeclared();
         let ro = prepare_invoke(PrepareInvokeRequest {
-            instance_id: "weather-forecast-v2",
+            instance_id: id_w,
             command: &get,
             raw_params: &json!({"city": "Xiamen"}),
             extension_version: Some("2.14.0"),
             package_digest: None,
+            capability_generation: Some(&gen_w),
         })
         .unwrap();
         assert_eq!(ro.contract.effect, CommandEffect::ReadOnly);
@@ -1074,11 +1467,12 @@ mod tests {
             ..Default::default()
         };
         let wr = prepare_invoke(PrepareInvokeRequest {
-            instance_id: "weather-forecast-v2",
+            instance_id: id_w,
             command: &set,
             raw_params: &json!({"city": "Xiamen"}),
             extension_version: Some("2.14.0"),
             package_digest: None,
+            capability_generation: Some(&gen_w),
         })
         .unwrap();
         assert_eq!(wr.contract.effect, CommandEffect::Mutating);
@@ -1091,11 +1485,12 @@ mod tests {
             ..Default::default()
         };
         let unk = prepare_invoke(PrepareInvokeRequest {
-            instance_id: "mystery-ext",
+            instance_id: id_m,
             command: &mystery,
             raw_params: &json!({}),
             extension_version: Some("1.0.0"),
             package_digest: None,
+            capability_generation: Some(&gen_m),
         })
         .unwrap();
         assert_eq!(unk.contract.effect, CommandEffect::Mutating);

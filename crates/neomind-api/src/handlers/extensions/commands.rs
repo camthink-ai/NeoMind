@@ -245,6 +245,8 @@ async fn prepare_extension_invoke(
         raw_params,
         extension_version: version,
         package_digest: None,
+        // HTTP uses the registry's current generation (set at register/load).
+        capability_generation: None,
     })
     .map_err(ErrorResponse::bad_request)
 }

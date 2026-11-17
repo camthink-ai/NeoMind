@@ -63,6 +63,8 @@ pub struct ExtensionTool {
     _extension_name: String,
     /// Installed package version (for version-bound capability resolve).
     extension_version: String,
+    /// Load-lifecycle generation captured at tool construction. Stale after reload.
+    capability_generation: neomind_core::extension::CapabilityGeneration,
     /// Full tool name in format "{extension_id}:{command_name}"
     /// This is computed once and stored for efficient name() calls
     full_name: String,
@@ -78,20 +80,23 @@ impl ExtensionTool {
         extension_version: String,
     ) -> Self {
         let full_name = format!("{}:{}", extension_id, command.name);
-        // Warm classify cache with version-bound / declared capability.
+        // Capture active load generation; mint only if missing (do not rotate).
+        // After unload/reload a held token becomes stale and prepare/remember refuse.
+        let capability_generation =
+            neomind_core::extension::ensure_instance_generation(&extension_id);
         let def = neomind_core::extension::from_extension_command(
             &extension_id,
             &command,
             Some(extension_version.as_str()),
             None,
         );
-        neomind_core::extension::remember_capability(
+        let _ = neomind_core::extension::remember_capability(
             &extension_id,
             &command.name,
             def.effect,
             def.replay_safety,
             def.execution,
-            extension_version.as_str(),
+            &capability_generation,
         );
         Self {
             extension,
@@ -99,6 +104,7 @@ impl ExtensionTool {
             extension_id,
             _extension_name: extension_name,
             extension_version,
+            capability_generation,
             full_name,
         }
     }
@@ -383,6 +389,7 @@ impl Tool for ExtensionTool {
                 raw_params: &image_normalized,
                 extension_version: Some(self.extension_version.as_str()),
                 package_digest: None,
+                capability_generation: Some(&self.capability_generation),
             },
         )
         .map_err(|e| super::error::ToolError::InvalidArguments(e))?;

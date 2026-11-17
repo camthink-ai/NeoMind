@@ -124,6 +124,7 @@ impl ExtensionRuntime {
             self.proxy_registry
                 .register(metadata.id.clone(), proxy)
                 .await?;
+            // `register` mints the capability generation token.
         }
 
         Ok(metadata)

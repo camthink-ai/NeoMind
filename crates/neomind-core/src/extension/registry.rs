@@ -134,6 +134,9 @@ impl ExtensionRegistry {
             .write()
             .insert(id.clone(), extension.clone());
 
+        // Mint a new capability-cache generation for this load (old tokens refuse).
+        crate::extension::begin_instance_generation(&id);
+
         // Register with safety manager for circuit breaking and panic tracking
         self.safety_manager.register_extension(id.clone()).await;
 
@@ -412,6 +415,7 @@ impl ExtensionRegistry {
                     raw_params: args,
                     extension_version: Some(version.as_str()),
                     package_digest: None,
+                    capability_generation: None,
                 }) {
                     Ok(prep) => prep.canonical_params,
                     Err(msg) => {

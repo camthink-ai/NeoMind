@@ -282,16 +282,19 @@ mod tests {
     #[test]
     fn extension_invoke_respects_remembered_capability() {
         use neomind_core::extension::{
-            remember_capability, CommandEffect, CommandExecutionKind, CommandReplaySafety,
+            begin_instance_generation, remember_capability, CommandEffect, CommandExecutionKind,
+            CommandReplaySafety,
         };
+        let gen = begin_instance_generation("cached-weather-ext");
         remember_capability(
             "cached-weather-ext",
             "get_weather",
             CommandEffect::ReadOnly,
             CommandReplaySafety::Safe,
             CommandExecutionKind::Immediate,
-            "2.14.0",
-        );
+            &gen,
+        )
+        .unwrap();
         assert_eq!(
             classify_line(
                 "extension invoke cached-weather-ext get_weather --params {\"city\":\"Xiamen\"}"
