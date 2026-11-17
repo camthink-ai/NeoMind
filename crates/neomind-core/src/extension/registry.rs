@@ -28,7 +28,7 @@ use crate::extension::types::Result;
 ///
 /// `commands` and `capability_generation` are captured together at register
 /// time — an old `ExtensionInfo` after reload still carries the old token.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ExtensionInfo {
     /// Extension metadata
     pub metadata: ExtensionMetadata,
@@ -44,6 +44,11 @@ pub struct ExtensionInfo {
     pub commands: Vec<super::system::ExtensionCommand>,
     /// Capability-cache generation minted for this load.
     pub capability_generation: crate::extension::CapabilityGeneration,
+    /// The instance handle FROM THIS LOAD. The entry (descriptor + token +
+    /// handle) is the atomic execution snapshot: reading it once guarantees
+    /// the three belong to the same load — a reload between separate reads
+    /// used to allow old-descriptor+new-token or new-handle+old-token pairs.
+    pub instance: DynExtension,
 }
 
 /// Registry for managing extensions.
@@ -161,6 +166,7 @@ impl ExtensionRegistry {
                 metrics,
                 commands,
                 capability_generation,
+                instance: extension.clone(),
             },
         );
 
@@ -400,36 +406,35 @@ impl ExtensionRegistry {
             )));
         }
 
-        let ext = self
-            .get(id)
-            .await
-            .ok_or_else(|| ExtensionError::NotFound(id.to_string()))?;
-
+        // SINGLE atomic entry read: instance handle, command descriptor and
+        // capability generation must come from the same load snapshot. The
+        // previous shape read the instance Arc and the info entry separately,
+        // so a reload between the reads could execute a NEW instance under an
+        // OLD token's blessing (or vice versa).
+        let snapshot = self.info_cache.read().get(id).cloned();
+        let Some(info) = snapshot else {
+            return Err(ExtensionError::NotFound(id.to_string()));
+        };
         // Clone the Arc to avoid holding the lock across the await
-        let ext_clone = Arc::clone(&ext);
+        let ext_clone = Arc::clone(&info.instance);
 
         // Shared prepare (validate+normalize+capability) — same path as
         // CLI/HTTP/ExtensionTool. Unknown command falls through to the
         // extension's own CommandNotFound.
-        // Commands + generation from the registered load snapshot (not live Arc).
-        let snapshot = self.info_cache.read().get(id).cloned();
-        let canonical_args = if let Some(info) = snapshot {
-            if let Some(cmd_def) = info.commands.iter().find(|c| c.name == command) {
-                match crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
-                    instance_id: id,
-                    command: cmd_def,
-                    raw_params: args,
-                    extension_version: Some(info.metadata.version.as_str()),
-                    package_digest: None,
-                    capability_generation: &info.capability_generation,
-                }) {
-                    Ok(prep) => prep.canonical_params,
-                    Err(msg) => {
-                        return Err(ExtensionError::InvalidArguments(msg));
-                    }
+        let canonical_args = if let Some(cmd_def) = info.commands.iter().find(|c| c.name == command)
+        {
+            match crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
+                instance_id: id,
+                command: cmd_def,
+                raw_params: args,
+                extension_version: Some(info.metadata.version.as_str()),
+                package_digest: None,
+                capability_generation: &info.capability_generation,
+            }) {
+                Ok(prep) => prep.canonical_params,
+                Err(msg) => {
+                    return Err(ExtensionError::InvalidArguments(msg));
                 }
-            } else {
-                args.clone()
             }
         } else {
             args.clone()
@@ -616,10 +621,170 @@ impl ExtensionRegistryTrait for ExtensionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extension::system::{ExtensionCommand, MetricDefinition};
+    use crate::extension::Extension;
 
     #[tokio::test]
     async fn test_registry_creation() {
         let registry = ExtensionRegistry::new();
         assert_eq!(registry.count().await, 0);
+    }
+
+    /// Versioned fake extension: distinguishable metadata, command set and
+    /// execute result, so a reload is observable through the registry entry.
+    fn fake_ext(version: &'static str, cmds: &'static [&'static str]) -> DynExtension {
+        use std::sync::OnceLock;
+        struct Fake {
+            version: &'static str,
+            cmds: &'static [&'static str],
+        }
+        #[async_trait::async_trait]
+        impl Extension for Fake {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M1: OnceLock<ExtensionMetadata> = OnceLock::new();
+                static M2: OnceLock<ExtensionMetadata> = OnceLock::new();
+                if self.version == "1.0.0" {
+                    M1.get_or_init(|| ExtensionMetadata::new("fake-ext", "Fake", "1.0.0"))
+                } else {
+                    M2.get_or_init(|| ExtensionMetadata::new("fake-ext", "Fake", "2.0.0"))
+                }
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                self.cmds
+                    .iter()
+                    .map(|n| ExtensionCommand {
+                        name: n.to_string(),
+                        display_name: n.to_string(),
+                        description: String::new(),
+                        payload_template: String::new(),
+                        parameters: Vec::new(),
+                        fixed_values: std::collections::HashMap::new(),
+                        samples: Vec::new(),
+                        parameter_groups: Vec::new(),
+                        ai_exposed: true,
+                        effect: Some(crate::extension::system::CommandEffect::ReadOnly),
+                        replay_safety: Some(crate::extension::system::CommandReplaySafety::Safe),
+                        execution: Some(crate::extension::system::CommandExecutionKind::Immediate),
+                    })
+                    .collect()
+            }
+            async fn execute_command(
+                &self,
+                command: &str,
+                _args: &serde_json::Value,
+            ) -> Result<serde_json::Value> {
+                if !self.cmds.contains(&command) {
+                    // Real extensions answer CommandNotFound for unknown
+                    // commands — the fake must too, or the removed-command
+                    // assertion is meaningless.
+                    return Err(crate::extension::types::ExtensionError::CommandNotFound(
+                        command.to_string(),
+                    ));
+                }
+                Ok(serde_json::json!({"saw": self.version, "cmd": command}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+        Arc::new(tokio::sync::RwLock::new(Box::new(Fake { version, cmds })))
+    }
+
+    /// SEQUENTIAL reload coverage (review follow-up, honest scope): after a
+    /// reload the entry never mixes the old descriptor with the new
+    /// generation, and the pre-reload (descriptor, token) pair is refused.
+    /// The single-entry structure closes the two-source splicing
+    /// STRUCTURALLY; this is not a forced-concurrency interleaving test.
+    #[tokio::test]
+    async fn sequential_reload_entry_stays_consistent_and_old_pair_refused() {
+        let registry = ExtensionRegistry::new();
+        registry
+            .register("mixed-ext".into(), fake_ext("1.0.0", &["cmdA"]))
+            .await
+            .unwrap();
+        let e1 = registry.get_info("mixed-ext").await.unwrap();
+        assert!(e1.commands.iter().any(|c| c.name == "cmdA"));
+
+        // Reload: new command set, new generation.
+        registry.unregister("mixed-ext").await.unwrap();
+        registry
+            .register("mixed-ext".into(), fake_ext("2.0.0", &["cmdB"]))
+            .await
+            .unwrap();
+        let e2 = registry.get_info("mixed-ext").await.unwrap();
+        assert!(
+            e2.commands.iter().any(|c| c.name == "cmdB"),
+            "new descriptor present: {:?}",
+            e2.commands
+                .iter()
+                .map(|c| c.name.clone())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !e2.commands.iter().any(|c| c.name == "cmdA"),
+            "OLD descriptor must not pair with the NEW generation"
+        );
+        assert_ne!(e1.capability_generation, e2.capability_generation);
+
+        // The pre-reload captured pair is dead: prepare with (old cmd, old
+        // token) must be refused instead of executing.
+        let old_cmd = e1
+            .commands
+            .iter()
+            .find(|c| c.name == "cmdA")
+            .expect("captured old descriptor");
+        let err = crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
+            instance_id: "mixed-ext",
+            command: old_cmd,
+            raw_params: &serde_json::json!({}),
+            extension_version: Some(e1.metadata.version.as_str()),
+            package_digest: None,
+            capability_generation: &e1.capability_generation,
+        })
+        .unwrap_err();
+        assert!(
+            err.contains("stale") || err.contains("no active"),
+            "old pair must be refused: {err}"
+        );
+    }
+
+    /// Execution runs the instance bound to the SAME entry that supplied the
+    /// descriptor+token — after a reload the new instance answers, and the
+    /// removed command is no longer routable through the fast path.
+    #[tokio::test]
+    async fn execute_uses_the_snapshot_instance_after_reload() {
+        let registry = ExtensionRegistry::new();
+        registry
+            .register("exec-ext".into(), fake_ext("1.0.0", &["cmdA"]))
+            .await
+            .unwrap();
+        let v1 = registry
+            .execute_command("exec-ext", "cmdA", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(v1["saw"], "1.0.0");
+
+        registry.unregister("exec-ext").await.unwrap();
+        registry
+            .register("exec-ext".into(), fake_ext("2.0.0", &["cmdB"]))
+            .await
+            .unwrap();
+        let v2 = registry
+            .execute_command("exec-ext", "cmdB", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(v2["saw"], "2.0.0", "must run the reload's instance");
+        // cmdA no longer exists on the new entry: falls through prepare, then
+        // the new instance rejects it.
+        assert!(
+            registry
+                .execute_command("exec-ext", "cmdA", &serde_json::json!({}))
+                .await
+                .is_err(),
+            "removed command must not execute"
+        );
     }
 }

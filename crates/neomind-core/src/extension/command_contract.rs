@@ -183,11 +183,8 @@ fn compat_grant(
     COMPAT_GRANTS.iter().find(|g| {
         g.type_base == type_base
             && g.command == command
-            && g.versions.iter().any(|v| *v == version)
-            && (g.digests.is_empty()
-                || digest
-                    .map(|d| g.digests.iter().any(|x| *x == d))
-                    .unwrap_or(false))
+            && g.versions.contains(&version)
+            && (g.digests.is_empty() || digest.map(|d| g.digests.contains(&d)).unwrap_or(false))
     })
 }
 
@@ -460,7 +457,9 @@ fn assert_supported_schema_at(schema: &Value, path: &str) -> Result<(), String> 
             return Err(format!("'enum' at '{path}' must be an array (fail closed)"));
         };
         if arr.is_empty() {
-            return Err(format!("'enum' at '{path}' must be non-empty (fail closed)"));
+            return Err(format!(
+                "'enum' at '{path}' must be non-empty (fail closed)"
+            ));
         }
     }
 
@@ -520,9 +519,7 @@ fn check_enum(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
             return Err(format!("'{path}' schema enum is not an array"));
         };
         if !arr.iter().any(|e| e == value) {
-            return Err(format!(
-                "'{path}' must be one of {arr:?}, got {value}"
-            ));
+            return Err(format!("'{path}' must be one of {arr:?}, got {value}"));
         }
     }
     Ok(())
@@ -553,15 +550,15 @@ fn normalize_value(schema: &Value, raw: &Value, path: &str) -> Result<Value, Str
 
     let out = match expected_type {
         Some("object") => {
-            let obj = raw.as_object().ok_or_else(|| {
-                format!("'{path}' must be a JSON object, got {raw}")
-            })?;
+            let obj = raw
+                .as_object()
+                .ok_or_else(|| format!("'{path}' must be a JSON object, got {raw}"))?;
             normalize_object(schema, obj, path)?
         }
         Some("array") => {
-            let arr = raw.as_array().ok_or_else(|| {
-                format!("'{path}' must be a JSON array, got {raw}")
-            })?;
+            let arr = raw
+                .as_array()
+                .ok_or_else(|| format!("'{path}' must be a JSON array, got {raw}"))?;
             normalize_array(schema, arr, path)?
         }
         Some(t) if SCALAR_TYPES.contains(&t) => {
@@ -588,11 +585,7 @@ fn normalize_value(schema: &Value, raw: &Value, path: &str) -> Result<Value, Str
     Ok(out)
 }
 
-fn normalize_object(
-    schema: &Value,
-    raw: &Map<String, Value>,
-    path: &str,
-) -> Result<Value, String> {
+fn normalize_object(schema: &Value, raw: &Map<String, Value>, path: &str) -> Result<Value, String> {
     let properties = schema
         .get("properties")
         .and_then(|v| v.as_object())
@@ -673,14 +666,21 @@ fn normalize_array(schema: &Value, raw: &[Value], path: &str) -> Result<Value, S
     for (i, item) in raw.iter().enumerate() {
         let child = format!("{path}[{i}]");
         if item.is_null() {
-            return Err(format!("'{child}' is null (null array elements not allowed)"));
+            return Err(format!(
+                "'{child}' is null (null array elements not allowed)"
+            ));
         }
         out.push(normalize_value(item_schema, item, &child)?);
     }
     Ok(Value::Array(out))
 }
 
-fn validate_scalar(schema: &Value, value: &Value, expected: &str, path: &str) -> Result<(), String> {
+fn validate_scalar(
+    schema: &Value,
+    value: &Value,
+    expected: &str,
+    path: &str,
+) -> Result<(), String> {
     let ok = match expected {
         "string" => value.is_string(),
         "number" => value.is_number(),
@@ -693,9 +693,7 @@ fn validate_scalar(schema: &Value, value: &Value, expected: &str, path: &str) ->
         }
     };
     if !ok {
-        return Err(format!(
-            "'{path}' must be of type {expected}, got {value}"
-        ));
+        return Err(format!("'{path}' must be of type {expected}, got {value}"));
     }
     if expected == "string" {
         let s = value.as_str().unwrap_or("");
@@ -1055,8 +1053,12 @@ mod tests {
 
     #[test]
     fn type_and_instance_ids_are_separate() {
-        let def =
-            from_extension_command("weather-forecast-v2", &weather_get_undeclared(), Some("2.14.0"), None);
+        let def = from_extension_command(
+            "weather-forecast-v2",
+            &weather_get_undeclared(),
+            Some("2.14.0"),
+            None,
+        );
         assert_eq!(def.id, "extension.type/weather-forecast/get_weather");
         assert_eq!(def.contract_version, CONTRACT_VERSION);
     }
@@ -1163,9 +1165,11 @@ mod tests {
             "additionalProperties": false,
             "required": ["city"]
         });
-        assert!(validate_and_normalize(&schema, &json!({"city": "Xiamen", "extra": 1}))
-            .unwrap_err()
-            .contains("additionalProperties"));
+        assert!(
+            validate_and_normalize(&schema, &json!({"city": "Xiamen", "extra": 1}))
+                .unwrap_err()
+                .contains("additionalProperties")
+        );
         assert!(validate_and_normalize(&schema, &json!({"city": "Xiamen"})).is_ok());
     }
 
@@ -1192,9 +1196,11 @@ mod tests {
             &json!({"loc": {"lat": 1.0, "lon": 2.0}, "tags": ["a"]})
         )
         .is_ok());
-        assert!(validate_and_normalize(&schema, &json!({"loc": {"lat": 1.0}}))
-            .unwrap_err()
-            .contains("required"));
+        assert!(
+            validate_and_normalize(&schema, &json!({"loc": {"lat": 1.0}}))
+                .unwrap_err()
+                .contains("required")
+        );
         assert!(validate_and_normalize(
             &schema,
             &json!({"loc": {"lat": 1.0, "lon": 2.0}, "tags": [""]})
@@ -1537,7 +1543,10 @@ mod tests {
             capability_generation: &gen_old,
         })
         .unwrap_err();
-        assert!(err.contains("stale") || err.contains("no active"), "got: {err}");
+        assert!(
+            err.contains("stale") || err.contains("no active"),
+            "got: {err}"
+        );
         assert_eq!(
             sync_effect_for_invoke(id, "get_weather"),
             CommandEffect::Mutating,

@@ -307,51 +307,58 @@ impl ExtensionRuntime {
         self.isolated_manager.contains(id).await
     }
 
-    /// Get extension info (commands + capability generation from the load snapshot).
+    /// Get extension info.
+    ///
+    /// Descriptor fields (metadata/metrics/commands) AND the capability
+    /// generation are taken from ONE registry entry — the previous shape
+    /// read the descriptor here and the token from the registry with an
+    /// await in between, so a reload could return "old descriptor + new
+    /// token" in a single info object. Runtime status (is_running/crashes)
+    /// is separately-sourced liveness data, which never feeds the
+    /// capability gate.
     pub async fn get_info(&self, id: &str) -> Option<ExtensionRuntimeInfo> {
-        let info = self.isolated_manager.get_info(id)?;
-        // Generation lives on the proxy registry snapshot minted at register.
-        let capability_generation = self
-            .proxy_registry
-            .get_info(id)
-            .await?
-            .capability_generation;
+        let entry = self.proxy_registry.get_info(id).await?;
+        let runtime_status = self.isolated_manager.get_info(id)?;
         Some(ExtensionRuntimeInfo {
-            metadata: info.descriptor.metadata,
+            metadata: entry.metadata,
             is_isolated: true,
-            is_running: info.runtime.is_running,
-            path: Some(info.path),
-            metrics: info.descriptor.metrics,
-            commands: info.descriptor.commands,
-            capability_generation,
-            consecutive_crashes: info.runtime.consecutive_crashes,
-            last_crash_reason: info.runtime.last_crash_reason.clone(),
+            is_running: runtime_status.runtime.is_running,
+            path: Some(runtime_status.path),
+            metrics: entry.metrics,
+            commands: entry.commands,
+            capability_generation: entry.capability_generation,
+            consecutive_crashes: runtime_status.runtime.consecutive_crashes,
+            last_crash_reason: runtime_status.runtime.last_crash_reason.clone(),
         })
     }
 
     /// List all loaded extensions.
+    ///
+    /// Same single-entry rule as [`Self::get_info`]: descriptor + generation
+    /// from one registry entry per extension; runtime status separately.
     pub async fn list(&self) -> Vec<ExtensionRuntimeInfo> {
         let mut out = Vec::new();
-        for info in self.isolated_manager.list().await {
-            let id = info.descriptor.metadata.id.clone();
-            let Some(capability_generation) = self
-                .proxy_registry
-                .get_info(&id)
-                .await
-                .map(|i| i.capability_generation)
-            else {
-                continue;
-            };
+        for entry in self.proxy_registry.list().await {
+            let id = entry.metadata.id.clone();
+            let runtime_status = self.isolated_manager.get_info(&id);
             out.push(ExtensionRuntimeInfo {
-                metadata: info.descriptor.metadata,
+                metadata: entry.metadata,
                 is_isolated: true,
-                is_running: info.runtime.is_running,
-                path: Some(info.path),
-                metrics: info.descriptor.metrics,
-                commands: info.descriptor.commands,
-                capability_generation,
-                consecutive_crashes: info.runtime.consecutive_crashes,
-                last_crash_reason: info.runtime.last_crash_reason.clone(),
+                is_running: runtime_status
+                    .as_ref()
+                    .map(|i| i.runtime.is_running)
+                    .unwrap_or(false),
+                path: runtime_status.as_ref().map(|i| i.path.clone()),
+                metrics: entry.metrics,
+                commands: entry.commands,
+                capability_generation: entry.capability_generation,
+                consecutive_crashes: runtime_status
+                    .as_ref()
+                    .map(|i| i.runtime.consecutive_crashes)
+                    .unwrap_or(0),
+                last_crash_reason: runtime_status
+                    .as_ref()
+                    .and_then(|i| i.runtime.last_crash_reason.clone()),
             });
         }
         out

@@ -334,9 +334,7 @@ pub async fn invoke_extension_command(
             if let Some(schema) = cmd.get("input_schema") {
                 // Same validate+normalize as the server; discard canonical
                 // here — server re-prepares as source of truth.
-                if let Err(msg) =
-                    neomind_core::extension::validate_and_normalize(schema, &params)
-                {
+                if let Err(msg) = neomind_core::extension::validate_and_normalize(schema, &params) {
                     anyhow::bail!("{msg}");
                 }
             }
