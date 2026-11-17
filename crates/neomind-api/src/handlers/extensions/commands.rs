@@ -614,6 +614,11 @@ pub async fn set_extension_command_enabled_handler(
     ok(json!({ "id": id, "command": cmd, "enabled": req.enabled }))
 }
 
+/// Module tests for AI policy fail-closed on `prepare_extension_invoke` +
+/// registry execute — **not** full Axum route or desktop acceptance.
+///
+/// Corrupt-store seams need `--features testing` (pulls
+/// `neomind-storage/test-utils`).
 #[cfg(test)]
 mod ai_policy_fail_closed_tests {
     use super::*;
@@ -681,9 +686,9 @@ mod ai_policy_fail_closed_tests {
         )
     }
 
-    /// Mirror HTTP invoke/execute: prepare (AI gate) then registry execute.
-    /// Counts prove a failed gate never reaches the extension business fn.
-    async fn http_prepare_then_registry_execute(
+    /// Direct call to shared prepare then registry execute (same sequence as
+    /// HTTP handlers use after routing). Not an Axum route test.
+    async fn prepare_then_registry_execute(
         state: &ServerState,
         id: &str,
         command: &str,
@@ -717,6 +722,8 @@ mod ai_policy_fail_closed_tests {
         assert!(err.message.contains("uninstalled"));
     }
 
+    /// Needs `neomind-storage/test-utils` via `--features testing`.
+    #[cfg(feature = "testing")]
     #[test]
     fn store_load_error_is_service_unavailable() {
         let store = neomind_storage::ExtensionStore::open(":memory:").unwrap();
@@ -729,7 +736,7 @@ mod ai_policy_fail_closed_tests {
     }
 
     #[tokio::test]
-    async fn persisted_disable_blocks_http_prepare_before_execute() {
+    async fn persisted_disable_blocks_prepare_before_execute() {
         let state = ServerState::new_for_testing().await;
         let id = "ai-policy-ext";
         let calls = Arc::new(AtomicUsize::new(0));
@@ -747,7 +754,7 @@ mod ai_policy_fail_closed_tests {
         rec.disabled_commands = vec!["ping".into()];
         state.extensions.store.save(&rec).unwrap();
 
-        let err = http_prepare_then_registry_execute(&state, id, "ping", calls.as_ref())
+        let err = prepare_then_registry_execute(&state, id, "ping", calls.as_ref())
             .await
             .unwrap_err();
         assert_eq!(err.status, StatusCode::FORBIDDEN, "msg={}", err.message);
@@ -763,6 +770,8 @@ mod ai_policy_fail_closed_tests {
         );
     }
 
+    /// Needs `neomind-storage/test-utils` via `--features testing`.
+    #[cfg(feature = "testing")]
     #[tokio::test]
     async fn store_read_failure_after_disable_never_reaches_execute() {
         let state = ServerState::new_for_testing().await;
@@ -825,7 +834,7 @@ mod ai_policy_fail_closed_tests {
             .insert_unreadable_bytes_for_test(id, b"{\"enabled\":true,\"disabled_commands\":[]")
             .unwrap();
 
-        let err = http_prepare_then_registry_execute(&state, id, "ping", calls.as_ref())
+        let err = prepare_then_registry_execute(&state, id, "ping", calls.as_ref())
             .await
             .unwrap_err();
         assert_eq!(
@@ -886,7 +895,7 @@ mod ai_policy_fail_closed_tests {
             .unwrap();
         state.extensions.store.save(&base_record(id)).unwrap();
 
-        http_prepare_then_registry_execute(&state, id, "ping", calls.as_ref())
+        prepare_then_registry_execute(&state, id, "ping", calls.as_ref())
             .await
             .expect("enabled policy must allow");
         assert_eq!(calls.load(Ordering::SeqCst), 1);

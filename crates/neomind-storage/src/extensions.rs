@@ -310,10 +310,12 @@ impl ExtensionStore {
         }
     }
 
-    /// Write opaque table bytes that [`Self::load`] cannot deserialize.
+    /// Test seam: write opaque table bytes that [`Self::load`] cannot
+    /// deserialize (forces a storage/read error without mocking the store).
     ///
-    /// Used by API fail-closed AI-policy tests to force a storage/read error
-    /// without mocking the store. Not a supported product API.
+    /// Gated behind `test-utils` so it never compiles into a release binary.
+    #[cfg(feature = "test-utils")]
+    #[doc(hidden)]
     pub fn insert_unreadable_bytes_for_test(&self, id: &str, bytes: &[u8]) -> Result<(), Error> {
         let write_txn = self.db.begin_write()?;
         {

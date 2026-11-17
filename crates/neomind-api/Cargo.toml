@@ -38,7 +38,9 @@ dingtalk = []
 slack = []
 feishu = []
 static = ["rust-embed", "mime_guess"]
-testing = []  # Enable test-only APIs for parallel test execution
+# Test-only APIs + storage test seams (e.g. ExtensionStore corrupt-row helper).
+# Enable for lib tests that need them: `cargo test -p neomind-api --features testing`.
+testing = ["neomind-storage/test-utils"]
 
 [dependencies]
 neomind-cli-ops = { path = "../neomind-cli-ops" }
