@@ -18,6 +18,10 @@ import {
   CT_PROV_META_UUID,
   normalizeBleUuid,
 } from '../constants'
+import {
+  CT_PROV_WEB_BLE_NAME_PREFIXES,
+  ctProvWebBluetoothRequestOptions,
+} from '../ble-channel'
 import { NEOLINK_VECTORS_REF } from '../vectors'
 
 describe('ct-prov FakeTransport session path', () => {
@@ -36,6 +40,20 @@ describe('ct-prov FakeTransport session path', () => {
       expect(uuid).toBe(uuid.toLowerCase())
       expect(normalizeBleUuid(uuid.toUpperCase())).toBe(uuid)
     }
+  })
+
+  it('Web Bluetooth requestDevice ORs services filter with name prefixes', () => {
+    const opts = ctProvWebBluetoothRequestOptions()
+    expect(opts.filters).toEqual(
+      expect.arrayContaining([
+        { services: [CT_PROV_SERVICE_UUID] },
+        ...CT_PROV_WEB_BLE_NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
+      ]),
+    )
+    expect(opts.optionalServices).toContain(CT_PROV_SERVICE_UUID)
+    // Legacy web path used namePrefix NE — must stay for Service-Data-only ADV.
+    expect(CT_PROV_WEB_BLE_NAME_PREFIXES).toContain('NE')
+    expect(CT_PROV_WEB_BLE_NAME_PREFIXES).toContain('EK410')
   })
 
   it('runs device.info.get → capabilities.get → config.set → session.close', async () => {

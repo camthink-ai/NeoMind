@@ -45,6 +45,28 @@ const CT_C2D = normalizeBleUuid(CT_PROV_C2D_UUID)
 const CT_D2C = normalizeBleUuid(CT_PROV_D2C_UUID)
 const CT_META = normalizeBleUuid(CT_PROV_META_UUID)
 
+/**
+ * CamThink CT-Prov ADV puts the service UUID in **Service Data (AD type 0x21)**,
+ * not in Complete List of 128-bit Service UUIDs (0x07). Chrome's
+ * `filters.services` often ignores Service Data → empty picker even though
+ * Tauri blec matches `serviceData` and finds the device.
+ *
+ * Legacy web path used `namePrefix: 'NE'`. Keep a services filter (for stacks
+ * that do match Service Data / UUID lists) and OR name prefixes for families.
+ */
+export const CT_PROV_WEB_BLE_NAME_PREFIXES = ['NE', 'EK410'] as const
+
+/** Shared `requestDevice` options for scan + connect re-request. */
+export function ctProvWebBluetoothRequestOptions(): BluetoothRequestDeviceOptions {
+  return {
+    filters: [
+      { services: [CT_SERVICE] },
+      ...CT_PROV_WEB_BLE_NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
+    ],
+    optionalServices: [CT_SERVICE],
+  }
+}
+
 function deviceHasCtService(d: {
   services?: string[]
   serviceData?: Record<string, number[]>
@@ -157,10 +179,9 @@ async function scanWebBluetooth(): Promise<CtScanDevice[]> {
   if (!navigator.bluetooth) {
     throw new Error('Web Bluetooth is not supported')
   }
-  const selected = await navigator.bluetooth.requestDevice({
-    filters: [{ services: [CT_SERVICE] }],
-    optionalServices: [CT_SERVICE],
-  })
+  const selected = await navigator.bluetooth.requestDevice(
+    ctProvWebBluetoothRequestOptions(),
+  )
   return [
     {
       id: selected.id,
@@ -240,10 +261,9 @@ class WebBluetoothCtGattChannel implements CtGattChannel {
     if (!this.bleDevice) {
       // Re-request if scan did not stash the device (rare)
       if (!navigator.bluetooth) throw new Error('Web Bluetooth is not supported')
-      this.bleDevice = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [CT_SERVICE] }],
-        optionalServices: [CT_SERVICE],
-      })
+      this.bleDevice = await navigator.bluetooth.requestDevice(
+        ctProvWebBluetoothRequestOptions(),
+      )
     }
     if (onDisconnect) {
       this.bleDevice.addEventListener('gattserverdisconnected', onDisconnect)
@@ -324,10 +344,9 @@ export async function scanCtDevicesWithWebStash(
 ): Promise<CtScanDevice[]> {
   if (!isTauriEnv() && navigator.bluetooth) {
     // Browser Web Bluetooth: system picker returns a single chosen device.
-    const selected = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [CT_SERVICE] }],
-      optionalServices: [CT_SERVICE],
-    })
+    const selected = await navigator.bluetooth.requestDevice(
+      ctProvWebBluetoothRequestOptions(),
+    )
     lastWebDevice = selected
     const one: CtScanDevice[] = [
       {
