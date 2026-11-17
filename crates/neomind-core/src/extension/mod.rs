@@ -59,11 +59,12 @@ pub use stream::{
 };
 pub use command_contract::{
     assert_supported_schema, begin_instance_generation, build_input_schema,
-    current_instance_generation, ensure_instance_generation, from_extension_command,
-    invalidate_instance_capability, parse_extension_tool_name, prepare_invoke, remember_capability,
-    resolve_capability, sync_effect_for_invoke, sync_replay_for_invoke, type_base_of,
-    validate_and_normalize, validate_params, BusinessCommandDef, CapabilityGeneration,
-    CapabilitySource, InvokeTarget, PrepareInvokeRequest, PreparedInvoke, CONTRACT_VERSION,
+    current_instance_generation, from_extension_command, invalidate_instance_capability,
+    parse_extension_tool_name, prepare_invoke, remember_capability, resolve_capability,
+    sync_effect_for_invoke, sync_replay_for_invoke, type_base_of, validate_and_normalize,
+    validate_params, BusinessCommandDef, CapabilityGeneration, CapabilitySource,
+    ExtensionCommandSnapshot, InvokeTarget, PrepareInvokeRequest, PreparedInvoke,
+    CONTRACT_VERSION,
 };
 pub use system::{
     CExtensionMetadata, CommandDefinition, CommandEffect, CommandExecutionKind,

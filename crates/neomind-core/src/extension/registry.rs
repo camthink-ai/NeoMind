@@ -24,7 +24,10 @@ use crate::extension::system::{
 };
 use crate::extension::types::Result;
 
-/// Information about a registered extension.
+/// Information about a registered extension (load snapshot).
+///
+/// `commands` and `capability_generation` are captured together at register
+/// time — an old `ExtensionInfo` after reload still carries the old token.
 #[derive(Debug, Clone)]
 pub struct ExtensionInfo {
     /// Extension metadata
@@ -39,6 +42,8 @@ pub struct ExtensionInfo {
     pub metrics: Vec<super::system::MetricDescriptor>,
     /// Commands provided by this extension
     pub commands: Vec<super::system::ExtensionCommand>,
+    /// Capability-cache generation minted for this load.
+    pub capability_generation: crate::extension::CapabilityGeneration,
 }
 
 /// Registry for managing extensions.
@@ -134,8 +139,8 @@ impl ExtensionRegistry {
             .write()
             .insert(id.clone(), extension.clone());
 
-        // Mint a new capability-cache generation for this load (old tokens refuse).
-        crate::extension::begin_instance_generation(&id);
+        // Mint a new capability-cache generation for this load (sole mint site).
+        let capability_generation = crate::extension::begin_instance_generation(&id);
 
         // Register with safety manager for circuit breaking and panic tracking
         self.safety_manager.register_extension(id.clone()).await;
@@ -155,6 +160,7 @@ impl ExtensionRegistry {
                 loaded_at: Some(chrono::Utc::now()),
                 metrics,
                 commands,
+                capability_generation,
             },
         );
 
@@ -405,17 +411,17 @@ impl ExtensionRegistry {
         // Shared prepare (validate+normalize+capability) — same path as
         // CLI/HTTP/ExtensionTool. Unknown command falls through to the
         // extension's own CommandNotFound.
-        let canonical_args = {
-            let guard = ext_clone.read().await;
-            let version = guard.metadata().version.clone();
-            if let Some(cmd_def) = guard.commands().iter().find(|c| c.name == command) {
+        // Commands + generation from the registered load snapshot (not live Arc).
+        let snapshot = self.info_cache.read().get(id).cloned();
+        let canonical_args = if let Some(info) = snapshot {
+            if let Some(cmd_def) = info.commands.iter().find(|c| c.name == command) {
                 match crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
                     instance_id: id,
                     command: cmd_def,
                     raw_params: args,
-                    extension_version: Some(version.as_str()),
+                    extension_version: Some(info.metadata.version.as_str()),
                     package_digest: None,
-                    capability_generation: None,
+                    capability_generation: &info.capability_generation,
                 }) {
                     Ok(prep) => prep.canonical_params,
                     Err(msg) => {
@@ -425,6 +431,8 @@ impl ExtensionRegistry {
             } else {
                 args.clone()
             }
+        } else {
+            args.clone()
         };
 
         // Record start time for execution stats

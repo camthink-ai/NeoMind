@@ -72,18 +72,18 @@ pub struct ExtensionTool {
 
 impl ExtensionTool {
     /// Create a new ExtensionTool from an extension and command descriptor.
+    ///
+    /// `capability_generation` must come from the same load snapshot as the
+    /// command list (e.g. [`ExtensionInfo::capability_generation`]).
     pub fn new(
         extension: DynExtension,
         command: ExtensionCommand,
         extension_id: String,
         extension_name: String,
         extension_version: String,
+        capability_generation: neomind_core::extension::CapabilityGeneration,
     ) -> Self {
         let full_name = format!("{}:{}", extension_id, command.name);
-        // Capture active load generation; mint only if missing (do not rotate).
-        // After unload/reload a held token becomes stale and prepare/remember refuse.
-        let capability_generation =
-            neomind_core::extension::ensure_instance_generation(&extension_id);
         let def = neomind_core::extension::from_extension_command(
             &extension_id,
             &command,
@@ -109,18 +109,43 @@ impl ExtensionTool {
         }
     }
 
-    /// Create extension tools from an extension.
-    ///
-    /// Returns all commands provided by the extension as Tool trait objects.
+    /// Create tools from a registered load snapshot (commands + generation).
+    pub async fn from_registered(
+        extension: DynExtension,
+        info: &neomind_core::extension::registry::ExtensionInfo,
+    ) -> Vec<ExtensionTool> {
+        let extension_id = info.metadata.id.clone();
+        let extension_name = info.metadata.name.clone();
+        let extension_version = info.metadata.version.clone();
+        let generation = info.capability_generation.clone();
+
+        info.commands
+            .iter()
+            .cloned()
+            .map(|cmd| {
+                ExtensionTool::new(
+                    extension.clone(),
+                    cmd,
+                    extension_id.clone(),
+                    extension_name.clone(),
+                    extension_version.clone(),
+                    generation.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// Test helper: mint a generation then build tools (not for production).
+    #[cfg(test)]
     pub async fn from_extension(extension: DynExtension) -> Vec<ExtensionTool> {
-        // Access metadata and commands through RwLock
         let ext = extension.read().await;
         let extension_id = ext.metadata().id.to_string();
         let extension_name = ext.metadata().name.to_string();
         let extension_version = ext.metadata().version.to_string();
         let commands = ext.commands().to_vec();
         drop(ext);
-
+        let generation =
+            neomind_core::extension::begin_instance_generation(&extension_id);
         commands
             .into_iter()
             .map(|cmd| {
@@ -130,6 +155,7 @@ impl ExtensionTool {
                     extension_id.clone(),
                     extension_name.clone(),
                     extension_version.clone(),
+                    generation.clone(),
                 )
             })
             .collect()
@@ -389,7 +415,7 @@ impl Tool for ExtensionTool {
                 raw_params: &image_normalized,
                 extension_version: Some(self.extension_version.as_str()),
                 package_digest: None,
-                capability_generation: Some(&self.capability_generation),
+                capability_generation: &self.capability_generation,
             },
         )
         .map_err(|e| super::error::ToolError::InvalidArguments(e))?;
@@ -459,9 +485,8 @@ impl ExtensionToolExecutor {
         let mut all_tools = Vec::new();
 
         for info in extensions {
-            // Get the extension instance by ID
             if let Some(extension) = self.registry.get(&info.metadata.id).await {
-                let tools = ExtensionTool::from_extension(extension).await;
+                let tools = ExtensionTool::from_registered(extension, &info).await;
                 all_tools.extend(tools);
             }
         }
@@ -566,7 +591,11 @@ mod tests {
     }
 
     fn create_mock_extension() -> DynExtension {
-        let metadata = ExtensionMetadata::new("test.extension", "Test Extension", "1.0.0")
+        // Unique id per call — parallel tests must not share capability generation.
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = format!("test.extension.{n}");
+        let metadata = ExtensionMetadata::new(&id, "Test Extension", "1.0.0")
             .with_description("A test extension");
 
         let commands = vec![ExtensionCommand {
@@ -605,7 +634,7 @@ mod tests {
 
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0].command.name, "test_command");
-        assert_eq!(tools[0].extension_id, "test.extension");
+        assert!(tools[0].extension_id.starts_with("test.extension."));
     }
 
     #[tokio::test]
@@ -629,8 +658,9 @@ mod tests {
         let tool = &tools[0];
         let def = tool.to_tool_definition();
 
-        assert_eq!(def.name, "test.extension:test_command");
-        assert_eq!(def.namespace, Some("test.extension".to_string()));
+        assert!(def.name.ends_with(":test_command"));
+        assert!(def.name.starts_with("test.extension."));
+        assert!(def.namespace.as_ref().unwrap().starts_with("test.extension."));
         assert_eq!(def.version, "2.0.0");
     }
 

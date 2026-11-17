@@ -239,14 +239,14 @@ async fn prepare_extension_invoke(
         })?;
 
     let version = Some(info.metadata.version.as_str());
+    // Token comes from the same load snapshot as `cmd` / `info` — never "current".
     neomind_core::extension::prepare_invoke(neomind_core::extension::PrepareInvokeRequest {
         instance_id,
         command: cmd,
         raw_params,
         extension_version: version,
         package_digest: None,
-        // HTTP uses the registry's current generation (set at register/load).
-        capability_generation: None,
+        capability_generation: &info.capability_generation,
     })
     .map_err(ErrorResponse::bad_request)
 }

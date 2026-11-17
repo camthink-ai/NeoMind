@@ -26,7 +26,7 @@ impl Default for ExtensionRuntimeConfig {
     }
 }
 
-/// Runtime view of a loaded extension.
+/// Runtime view of a loaded extension (load snapshot).
 #[derive(Debug, Clone)]
 pub struct ExtensionRuntimeInfo {
     /// Extension metadata.
@@ -41,6 +41,8 @@ pub struct ExtensionRuntimeInfo {
     pub metrics: Vec<super::system::MetricDescriptor>,
     /// Commands provided by this extension.
     pub commands: Vec<super::system::ExtensionCommand>,
+    /// Capability generation captured with this load (same snapshot as commands).
+    pub capability_generation: super::CapabilityGeneration,
     /// Consecutive crashes (crash-loop counter, reset on a stable start).
     /// Non-zero while stopped ⇒ the extension crashed rather than being
     /// stopped on purpose.
@@ -305,39 +307,54 @@ impl ExtensionRuntime {
         self.isolated_manager.contains(id).await
     }
 
-    /// Get extension info.
+    /// Get extension info (commands + capability generation from the load snapshot).
     pub async fn get_info(&self, id: &str) -> Option<ExtensionRuntimeInfo> {
-        self.isolated_manager
+        let info = self.isolated_manager.get_info(id)?;
+        // Generation lives on the proxy registry snapshot minted at register.
+        let capability_generation = self
+            .proxy_registry
             .get_info(id)
-            .map(|info| ExtensionRuntimeInfo {
-                metadata: info.descriptor.metadata,
-                is_isolated: true,
-                is_running: info.runtime.is_running,
-                path: Some(info.path),
-                metrics: info.descriptor.metrics,
-                commands: info.descriptor.commands,
-                consecutive_crashes: info.runtime.consecutive_crashes,
-                last_crash_reason: info.runtime.last_crash_reason.clone(),
-            })
+            .await?
+            .capability_generation;
+        Some(ExtensionRuntimeInfo {
+            metadata: info.descriptor.metadata,
+            is_isolated: true,
+            is_running: info.runtime.is_running,
+            path: Some(info.path),
+            metrics: info.descriptor.metrics,
+            commands: info.descriptor.commands,
+            capability_generation,
+            consecutive_crashes: info.runtime.consecutive_crashes,
+            last_crash_reason: info.runtime.last_crash_reason.clone(),
+        })
     }
 
     /// List all loaded extensions.
     pub async fn list(&self) -> Vec<ExtensionRuntimeInfo> {
-        self.isolated_manager
-            .list()
-            .await
-            .into_iter()
-            .map(|info| ExtensionRuntimeInfo {
+        let mut out = Vec::new();
+        for info in self.isolated_manager.list().await {
+            let id = info.descriptor.metadata.id.clone();
+            let Some(capability_generation) = self
+                .proxy_registry
+                .get_info(&id)
+                .await
+                .map(|i| i.capability_generation)
+            else {
+                continue;
+            };
+            out.push(ExtensionRuntimeInfo {
                 metadata: info.descriptor.metadata,
                 is_isolated: true,
                 is_running: info.runtime.is_running,
                 path: Some(info.path),
                 metrics: info.descriptor.metrics,
                 commands: info.descriptor.commands,
+                capability_generation,
                 consecutive_crashes: info.runtime.consecutive_crashes,
                 last_crash_reason: info.runtime.last_crash_reason.clone(),
-            })
-            .collect()
+            });
+        }
+        out
     }
 
     /// Get a specific extension by ID.

@@ -103,18 +103,37 @@ pub struct PrepareInvokeRequest<'a> {
     pub raw_params: &'a Value,
     pub extension_version: Option<&'a str>,
     pub package_digest: Option<&'a str>,
-    /// Load-lifecycle generation token. Stale / missing tokens refuse cache writes.
-    pub capability_generation: Option<&'a CapabilityGeneration>,
+    /// Load-lifecycle generation from the **same** snapshot as `command`.
+    /// Required — production must not look up "current" (that lets stale
+    /// descriptors borrow a fresh token after reload).
+    pub capability_generation: &'a CapabilityGeneration,
 }
 
 /// Opaque capability-cache generation. Only [`begin_instance_generation`] may mint
-/// or install the current token for an instance.
+/// or install the current token for an instance (load / reload).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CapabilityGeneration(String);
 
 impl CapabilityGeneration {
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+/// Load-time snapshot: commands + generation share one identity.
+/// Holding an old snapshot after reload keeps the old token (prepare refuses).
+#[derive(Debug, Clone)]
+pub struct ExtensionCommandSnapshot {
+    pub instance_id: String,
+    pub extension_version: String,
+    pub package_digest: Option<String>,
+    pub commands: Vec<ExtensionCommand>,
+    pub capability_generation: CapabilityGeneration,
+}
+
+impl ExtensionCommandSnapshot {
+    pub fn find_command(&self, name: &str) -> Option<&ExtensionCommand> {
+        self.commands.iter().find(|c| c.name == name)
     }
 }
 
@@ -812,22 +831,15 @@ pub fn prepare_invoke(req: PrepareInvokeRequest<'_>) -> Result<PreparedInvoke, S
     let param_fingerprint = fingerprint_params(&canonical_params);
     let operation_id = new_operation_id();
 
-    // Cache write only under a verified load-lifecycle generation. Callers
-    // cannot mint/replace the current generation via prepare.
-    let gen = match req.capability_generation {
-        Some(g) => Some(g.clone()),
-        None => current_instance_generation(req.instance_id),
-    };
-    if let Some(gen) = gen.as_ref() {
-        remember_capability(
-            req.instance_id,
-            &req.command.name,
-            contract.effect,
-            contract.replay_safety,
-            contract.execution,
-            gen,
-        )?;
-    }
+    // Required token from the caller's load snapshot — never "current".
+    remember_capability(
+        req.instance_id,
+        &req.command.name,
+        contract.effect,
+        contract.replay_safety,
+        contract.execution,
+        req.capability_generation,
+    )?;
 
     Ok(PreparedInvoke {
         operation_id,
@@ -891,27 +903,17 @@ pub fn begin_instance_generation(instance_id: &str) -> CapabilityGeneration {
     token
 }
 
-/// Return the active generation, or mint one if missing (orphan/test paths).
-/// Unlike [`begin_instance_generation`], does **not** rotate an existing token.
-pub fn ensure_instance_generation(instance_id: &str) -> CapabilityGeneration {
-    if let Ok(mut guard) = cap_cache().lock() {
-        if let Some(cur) = guard.generation.get(instance_id) {
-            return cur.clone();
-        }
-        let token = CapabilityGeneration(format!("gen_{}", uuid::Uuid::new_v4()));
-        guard
-            .generation
-            .insert(instance_id.to_string(), token.clone());
-        return token;
-    }
-    begin_instance_generation(instance_id)
-}
-
 pub fn current_instance_generation(instance_id: &str) -> Option<CapabilityGeneration> {
     cap_cache()
         .lock()
         .ok()
         .and_then(|g| g.generation.get(instance_id).cloned())
+}
+
+/// Test-only: mint a generation without going through registry register.
+#[cfg(test)]
+pub fn test_begin_instance_generation(instance_id: &str) -> CapabilityGeneration {
+    begin_instance_generation(instance_id)
 }
 
 fn ensure_generation_current(
@@ -1374,7 +1376,7 @@ mod tests {
             raw_params: &json!({"city": "Xiamen"}),
             extension_version: Some("2.14.0"),
             package_digest: None,
-            capability_generation: Some(&gen_old),
+            capability_generation: &gen_old,
         })
         .unwrap();
         assert_eq!(
@@ -1393,7 +1395,7 @@ mod tests {
             raw_params: &json!({"city": "Xiamen"}),
             extension_version: Some("2.14.0"),
             package_digest: None,
-            capability_generation: Some(&gen_old),
+            capability_generation: &gen_old,
         })
         .unwrap_err();
         assert!(err.contains("stale"), "got: {err}");
@@ -1416,7 +1418,7 @@ mod tests {
             raw_params: &json!({"city": "Xiamen"}),
             extension_version: Some("2.14.0"),
             package_digest: None,
-            capability_generation: Some(&gen),
+            capability_generation: &gen,
         })
         .unwrap();
         assert!(prep.operation_id.starts_with("op_"));
@@ -1443,7 +1445,7 @@ mod tests {
             raw_params: &json!({"city": "Xiamen"}),
             extension_version: Some("2.14.0"),
             package_digest: None,
-            capability_generation: Some(&gen_w),
+            capability_generation: &gen_w,
         })
         .unwrap();
         assert_eq!(ro.contract.effect, CommandEffect::ReadOnly);
@@ -1472,7 +1474,7 @@ mod tests {
             raw_params: &json!({"city": "Xiamen"}),
             extension_version: Some("2.14.0"),
             package_digest: None,
-            capability_generation: Some(&gen_w),
+            capability_generation: &gen_w,
         })
         .unwrap();
         assert_eq!(wr.contract.effect, CommandEffect::Mutating);
@@ -1490,11 +1492,72 @@ mod tests {
             raw_params: &json!({}),
             extension_version: Some("1.0.0"),
             package_digest: None,
-            capability_generation: Some(&gen_m),
+            capability_generation: &gen_m,
         })
         .unwrap();
         assert_eq!(unk.contract.effect, CommandEffect::Mutating);
         assert_ne!(ro.operation_id, wr.operation_id);
+    }
+
+    #[test]
+    fn stale_descriptor_after_reload_cannot_borrow_new_generation() {
+        // Acquire old command snapshot + gen, reload, continue prepare with
+        // the old snapshot — must refuse and must not pollute the new cache.
+        let id = "weather-forecast-v804";
+        invalidate_instance_capability(id);
+        let gen_old = begin_instance_generation(id);
+        let old_cmd = weather_get_undeclared(); // undeclared → compat RO at 2.14.0
+
+        prepare_invoke(PrepareInvokeRequest {
+            instance_id: id,
+            command: &old_cmd,
+            raw_params: &json!({"city": "Xiamen"}),
+            extension_version: Some("2.14.0"),
+            package_digest: None,
+            capability_generation: &gen_old,
+        })
+        .unwrap();
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::ReadOnly
+        );
+
+        // Reload: new generation (same package version string).
+        invalidate_instance_capability(id);
+        let gen_new = begin_instance_generation(id);
+        assert_ne!(gen_old, gen_new);
+
+        // Old request keeps old descriptor + old token.
+        let err = prepare_invoke(PrepareInvokeRequest {
+            instance_id: id,
+            command: &old_cmd,
+            raw_params: &json!({"city": "Xiamen"}),
+            extension_version: Some("2.14.0"),
+            package_digest: None,
+            capability_generation: &gen_old,
+        })
+        .unwrap_err();
+        assert!(err.contains("stale") || err.contains("no active"), "got: {err}");
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::Mutating,
+            "stale prepare must not write RO into the new generation"
+        );
+
+        // New snapshot can warm the new generation independently.
+        prepare_invoke(PrepareInvokeRequest {
+            instance_id: id,
+            command: &old_cmd,
+            raw_params: &json!({"city": "Xiamen"}),
+            extension_version: Some("2.14.0"),
+            package_digest: None,
+            capability_generation: &gen_new,
+        })
+        .unwrap();
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::ReadOnly
+        );
     }
 
     #[test]
