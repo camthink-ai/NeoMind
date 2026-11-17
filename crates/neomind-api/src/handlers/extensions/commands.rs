@@ -77,25 +77,19 @@ pub async fn execute_extension_command_handler(
         }
     }
 
-    // Shared schema validation (same contract as CLI invoke).
-    if let Some(info) = runtime.get(&id).await {
-        if let Some(cmd) = info.commands.iter().find(|c| c.name == req.command) {
-            let def = neomind_core::extension::from_extension_command(&id, cmd);
-            if let Err(msg) =
-                neomind_core::extension::validate_params(&def.input_schema, &req.args)
-            {
-                return Err(ErrorResponse::bad_request(msg));
-            }
-        }
-    }
+    let prepared = prepare_extension_invoke(&state, &id, &req.command, &req.args).await?;
 
-    // Execute command with panic protection
-    let result = match runtime.execute_command(&id, &req.command, &req.args).await {
+    // Execute with canonical params (same set used for auth/capability).
+    let result = match runtime
+        .execute_command(&id, &req.command, &prepared.canonical_params)
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(
                 extension_id = %id,
                 command = %req.command,
+                operation_id = %prepared.operation_id,
                 error = %e,
                 "Extension command execution failed"
             );
@@ -109,7 +103,17 @@ pub async fn execute_extension_command_handler(
     // Publish ExtensionOutput events for agent triggers and dashboard subscriptions
     publish_extension_metrics_safe(&state, &id, &result).await;
 
-    ok(result)
+    ok(json!({
+        "operation_id": prepared.operation_id,
+        "contract_version": prepared.contract.contract_version,
+        "command_id": prepared.contract.id,
+        "target": prepared.target,
+        "effect": prepared.contract.effect,
+        "replay_safety": prepared.contract.replay_safety,
+        "capability_source": prepared.contract.capability_source,
+        "param_fingerprint": prepared.param_fingerprint,
+        "result": result,
+    }))
 }
 
 /// Request to invoke an extension.
@@ -173,21 +177,10 @@ pub async fn invoke_extension_handler(
         }
     }
 
-    // Shared schema validation (same contract as CLI invoke /execute).
-    if let Some(info) = runtime.get(&id).await {
-        if let Some(cmd) = info.commands.iter().find(|c| c.name == req.command) {
-            let def = neomind_core::extension::from_extension_command(&id, cmd);
-            if let Err(msg) =
-                neomind_core::extension::validate_params(&def.input_schema, &req.params)
-            {
-                return Err(ErrorResponse::bad_request(msg));
-            }
-        }
-    }
+    let prepared = prepare_extension_invoke(&state, &id, &req.command, &req.params).await?;
 
-    // Execute command with proper error logging
     let result = match runtime
-        .execute_command(&id, &req.command, &req.params)
+        .execute_command(&id, &req.command, &prepared.canonical_params)
         .await
     {
         Ok(r) => r,
@@ -195,6 +188,7 @@ pub async fn invoke_extension_handler(
             tracing::warn!(
                 extension_id = %id,
                 command = %req.command,
+                operation_id = %prepared.operation_id,
                 error = %e,
                 "Extension invoke failed"
             );
@@ -202,15 +196,57 @@ pub async fn invoke_extension_handler(
         }
     };
 
-    // Publish ExtensionOutput events with timeout protection
     publish_extension_metrics_safe(&state, &id, &result).await;
 
     ok(serde_json::json!({
         "extension_id": id,
         "command": req.command,
+        "operation_id": prepared.operation_id,
+        "contract_version": prepared.contract.contract_version,
+        "command_id": prepared.contract.id,
+        "target": prepared.target,
+        "effect": prepared.contract.effect,
+        "replay_safety": prepared.contract.replay_safety,
+        "capability_source": prepared.contract.capability_source,
+        "param_fingerprint": prepared.param_fingerprint,
         "result": result,
         "timestamp": chrono::Utc::now().to_rfc3339(),
     }))
+}
+
+/// Shared prepare for HTTP execute + invoke (same path as CLI / tools).
+async fn prepare_extension_invoke(
+    state: &ServerState,
+    instance_id: &str,
+    command_name: &str,
+    raw_params: &serde_json::Value,
+) -> Result<neomind_core::extension::PreparedInvoke, ErrorResponse> {
+    let info = state
+        .extensions
+        .runtime
+        .get(instance_id)
+        .await
+        .ok_or_else(|| ErrorResponse::not_found(format!("Extension '{instance_id}' not found")))?;
+
+    let cmd = info
+        .commands
+        .iter()
+        .find(|c| c.name == command_name)
+        .ok_or_else(|| {
+            ErrorResponse::bad_request(format!(
+                "command '{command_name}' not found on extension '{instance_id}'"
+            ))
+        })?;
+
+    let version = Some(info.metadata.version.as_str());
+    neomind_core::extension::prepare_invoke(neomind_core::extension::PrepareInvokeRequest {
+        instance_id,
+        command: cmd,
+        raw_params,
+        extension_version: version,
+        package_digest: None,
+    })
+    .map_err(ErrorResponse::bad_request)
 }
 
 /// GET /api/extensions/:id/stream
@@ -255,9 +291,15 @@ pub async fn stream_extension_handler(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandDescriptorDto {
     pub id: String,
-    /// Unified business id: `extension/{extension_id}/{command}`.
+    /// Type-level contract id: `extension.type/{type_base}/{command}`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command_id: Option<String>,
+    /// Contract schema version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_version: Option<String>,
+    /// Capability provenance after host resolve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_source: Option<neomind_core::extension::CapabilitySource>,
     pub display_name: String,
     pub description: String,
     pub input_schema: serde_json::Value,
@@ -358,14 +400,18 @@ pub async fn list_extension_commands_handler(
             None => (true, Default::default()),
         };
 
+    let version = Some(info.metadata.version.as_str());
     let result: Vec<CommandDescriptorDto> = info
         .commands
         .iter()
         .map(|cmd| {
-            let def = neomind_core::extension::from_extension_command(&id, cmd);
+            let def =
+                neomind_core::extension::from_extension_command(&id, cmd, version, None);
             CommandDescriptorDto {
                 id: cmd.name.clone(),
                 command_id: Some(def.id.clone()),
+                contract_version: Some(def.contract_version.clone()),
+                capability_source: Some(def.capability_source.clone()),
                 display_name: cmd.display_name.clone(),
                 description: def.description.clone(),
                 input_schema: def.input_schema.clone(),

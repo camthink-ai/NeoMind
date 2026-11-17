@@ -396,6 +396,30 @@ impl ExtensionRegistry {
         // Clone the Arc to avoid holding the lock across the await
         let ext_clone = Arc::clone(&ext);
 
+        // Shared prepare (validate+normalize+capability) — same path as
+        // CLI/HTTP/ExtensionTool. Unknown command falls through to the
+        // extension's own CommandNotFound.
+        let canonical_args = {
+            let guard = ext_clone.read().await;
+            let version = guard.metadata().version.clone();
+            if let Some(cmd_def) = guard.commands().iter().find(|c| c.name == command) {
+                match crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
+                    instance_id: id,
+                    command: cmd_def,
+                    raw_params: args,
+                    extension_version: Some(version.as_str()),
+                    package_digest: None,
+                }) {
+                    Ok(prep) => prep.canonical_params,
+                    Err(msg) => {
+                        return Err(ExtensionError::InvalidArguments(msg));
+                    }
+                }
+            } else {
+                args.clone()
+            }
+        };
+
         // Record start time for execution stats
         let start_time = std::time::Instant::now();
 
@@ -404,7 +428,7 @@ impl ExtensionRegistry {
             std::time::Duration::from_secs(self.command_timeout_secs),
             async {
                 let ext_guard = ext_clone.read().await;
-                ext_guard.execute_command(command, args).await
+                ext_guard.execute_command(command, &canonical_args).await
             },
         )
         .await;

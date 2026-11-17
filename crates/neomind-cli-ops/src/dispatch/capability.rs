@@ -262,22 +262,41 @@ mod tests {
     }
 
     #[test]
-    fn extension_invoke_uses_command_contract() {
+    fn extension_invoke_classify_is_conservative_without_cache() {
+        // Unique instance so other tests' remember_capability cannot leak.
+        // Without a warmed cache, invoke is Mutating — name-only grants forbidden.
         assert_eq!(
             classify_line(
-                "extension invoke weather-forecast-v2 get_weather --params {\"city\":\"Xiamen\"}"
+                "extension invoke never-cached-ext-xyz get_weather --params {\"city\":\"Xiamen\"}"
+            ),
+            CliSideEffect::Mutating
+        );
+        assert_eq!(
+            classify_line(
+                "extension invoke never-cached-ext-xyz set_default_city --params {\"city\":\"Xiamen\"}"
+            ),
+            CliSideEffect::Mutating
+        );
+    }
+
+    #[test]
+    fn extension_invoke_respects_remembered_capability() {
+        use neomind_core::extension::{
+            remember_capability, CommandEffect, CommandExecutionKind, CommandReplaySafety,
+        };
+        remember_capability(
+            "cached-weather-ext",
+            "get_weather",
+            CommandEffect::ReadOnly,
+            CommandReplaySafety::Safe,
+            CommandExecutionKind::Immediate,
+            Some("2.14.0"),
+        );
+        assert_eq!(
+            classify_line(
+                "extension invoke cached-weather-ext get_weather --params {\"city\":\"Xiamen\"}"
             ),
             CliSideEffect::ProvenReadOnly
-        );
-        assert_eq!(
-            classify_line(
-                "extension invoke weather-forecast-v2 set_default_city --params {\"city\":\"Xiamen\"}"
-            ),
-            CliSideEffect::Mutating
-        );
-        assert_eq!(
-            classify_line("extension invoke other-ext do_thing --params {}"),
-            CliSideEffect::Mutating
         );
     }
 }

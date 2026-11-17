@@ -141,6 +141,9 @@ mod tests {
             effect: Default::default(),
             replay_safety: Default::default(),
             execution: Default::default(),
+            command_id: None,
+            contract_version: None,
+            capability_source: None,
         };
 
         assert_eq!(command.id, "turn_on");
@@ -267,6 +270,9 @@ mod tests {
                 effect: Default::default(),
                 replay_safety: Default::default(),
                 execution: Default::default(),
+                command_id: None,
+                contract_version: None,
+                capability_source: None,
             }],
             metrics: vec![MetricDescriptorDto {
                 name: "temperature".to_string(),
@@ -322,6 +328,9 @@ mod tests {
                 effect: Default::default(),
                 replay_safety: Default::default(),
                 execution: Default::default(),
+                command_id: None,
+                contract_version: None,
+                capability_source: None,
             }],
             metrics: vec![MetricDescriptorDto {
                 name: "metric1".to_string(),

@@ -61,6 +61,8 @@ pub struct ExtensionTool {
     extension_id: String,
     /// Extension name for display (reserved for future use)
     _extension_name: String,
+    /// Installed package version (for version-bound capability resolve).
+    extension_version: String,
     /// Full tool name in format "{extension_id}:{command_name}"
     /// This is computed once and stored for efficient name() calls
     full_name: String,
@@ -73,13 +75,30 @@ impl ExtensionTool {
         command: ExtensionCommand,
         extension_id: String,
         extension_name: String,
+        extension_version: String,
     ) -> Self {
         let full_name = format!("{}:{}", extension_id, command.name);
+        // Warm classify cache with version-bound / declared capability.
+        let def = neomind_core::extension::from_extension_command(
+            &extension_id,
+            &command,
+            Some(extension_version.as_str()),
+            None,
+        );
+        neomind_core::extension::remember_capability(
+            &extension_id,
+            &command.name,
+            def.effect,
+            def.replay_safety,
+            def.execution,
+            Some(extension_version.as_str()),
+        );
         Self {
             extension,
             command,
             extension_id,
             _extension_name: extension_name,
+            extension_version,
             full_name,
         }
     }
@@ -92,6 +111,7 @@ impl ExtensionTool {
         let ext = extension.read().await;
         let extension_id = ext.metadata().id.to_string();
         let extension_name = ext.metadata().name.to_string();
+        let extension_version = ext.metadata().version.to_string();
         let commands = ext.commands().to_vec();
         drop(ext);
 
@@ -103,6 +123,7 @@ impl ExtensionTool {
                     cmd,
                     extension_id.clone(),
                     extension_name.clone(),
+                    extension_version.clone(),
                 )
             })
             .collect()
@@ -326,12 +347,14 @@ impl Tool for ExtensionTool {
     }
 
     fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
-        let (_, replay, _) = neomind_core::extension::resolve_capability(
-            &self.extension_id,
+        let (_, replay, _, _) = neomind_core::extension::resolve_capability(
+            &neomind_core::extension::type_base_of(&self.extension_id),
             &self.command.name,
             self.command.effect,
             self.command.replay_safety,
             self.command.execution,
+            Some(self.extension_version.as_str()),
+            None,
         );
         match replay {
             neomind_core::extension::CommandReplaySafety::Safe => {
@@ -350,15 +373,27 @@ impl Tool for ExtensionTool {
         // - strip the data:image/...;base64, prefix (extensions fail with
         //   "Invalid base64: Invalid symbol 58" when they get the data URI).
         let data_dir = neomind_core::paths::data_dir();
-        let normalized_args = Self::normalize_image_args(&args, &data_dir)?;
+        let image_normalized = Self::normalize_image_args(&args, &data_dir)?;
+
+        // Shared prepare: validate+defaults → canonical params + capability.
+        let prepared = neomind_core::extension::prepare_invoke(
+            neomind_core::extension::PrepareInvokeRequest {
+                instance_id: &self.extension_id,
+                command: &self.command,
+                raw_params: &image_normalized,
+                extension_version: Some(self.extension_version.as_str()),
+                package_digest: None,
+            },
+        )
+        .map_err(|e| super::error::ToolError::InvalidArguments(e))?;
 
         // Execute with the centralized SLOW tier timeout (300s) for extensions that
         // need longer inference. Routed through `timeouts` so the ceiling is tunable
         // from a single source of truth.
+        let canonical = prepared.canonical_params.clone();
         let result = tokio::time::timeout(crate::toolkit::timeouts::extension_invoke(), async {
             let ext = self.extension.read().await;
-            ext.execute_command(&self.command.name, &normalized_args)
-                .await
+            ext.execute_command(&self.command.name, &canonical).await
         })
         .await;
 

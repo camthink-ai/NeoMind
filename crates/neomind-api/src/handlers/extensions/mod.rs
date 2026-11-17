@@ -223,14 +223,22 @@ pub(crate) fn extension_info_to_dto(
         disabled_commands.iter().cloned().collect();
 
     // Convert commands to DTOs (V2 format + unified business contract)
+    let version = Some(info.metadata.version.as_str());
     let commands: Vec<CommandDescriptorDto> = info
         .commands
         .iter()
         .map(|cmd| {
-            let def = neomind_core::extension::from_extension_command(&info.metadata.id, cmd);
+            let def = neomind_core::extension::from_extension_command(
+                &info.metadata.id,
+                cmd,
+                version,
+                None,
+            );
             CommandDescriptorDto {
                 id: cmd.name.clone(),
                 command_id: Some(def.id.clone()),
+                contract_version: Some(def.contract_version.clone()),
+                capability_source: Some(def.capability_source.clone()),
                 display_name: cmd.display_name.clone(),
                 description: def.description.clone(),
                 input_schema: def.input_schema.clone(),

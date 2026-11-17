@@ -264,20 +264,24 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
     let summary: Vec<serde_json::Value> = commands
         .iter()
         .map(|c| {
-            let name = c
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
+            let name = c.get("id").and_then(|v| v.as_str()).unwrap_or("?");
             json!({
                 "id": c.get("command_id").cloned().unwrap_or_else(|| {
-                    json!(format!("extension/{id}/{name}"))
+                    json!(format!(
+                        "extension.type/{}/{name}",
+                        neomind_core::extension::type_base_of(id)
+                    ))
                 }),
                 "command": name,
+                "contract_version": c.get("contract_version").cloned()
+                    .unwrap_or(json!(neomind_core::extension::CONTRACT_VERSION)),
                 "description": c.get("description").cloned().unwrap_or(json!("")),
                 "input_schema": c.get("input_schema").cloned().unwrap_or(json!({})),
                 "effect": c.get("effect").cloned().unwrap_or(json!("mutating")),
                 "replay_safety": c.get("replay_safety").cloned().unwrap_or(json!("unsafe")),
                 "execution": c.get("execution").cloned().unwrap_or(json!("immediate")),
+                "capability_source": c.get("capability_source").cloned()
+                    .unwrap_or(json!({"kind":"conservative_default"})),
                 "ai_exposed": c.get("ai_exposed").cloned().unwrap_or(json!(true)),
                 "disabled": c.get("disabled").cloned().unwrap_or(json!(false)),
             })
@@ -323,11 +327,16 @@ pub async fn invoke_extension_command(
             .cloned()
             .or_else(|| listed.get("data").and_then(|d| d.as_array()).cloned())
             .unwrap_or_default();
-        if let Some(cmd) = commands.iter().find(|c| {
-            c.get("id").and_then(|v| v.as_str()) == Some(command)
-        }) {
+        if let Some(cmd) = commands
+            .iter()
+            .find(|c| c.get("id").and_then(|v| v.as_str()) == Some(command))
+        {
             if let Some(schema) = cmd.get("input_schema") {
-                if let Err(msg) = neomind_core::extension::validate_params(schema, &params) {
+                // Same validate+normalize as the server; discard canonical
+                // here — server re-prepares as source of truth.
+                if let Err(msg) =
+                    neomind_core::extension::validate_and_normalize(schema, &params)
+                {
                     anyhow::bail!("{msg}");
                 }
             }
@@ -354,15 +363,10 @@ pub async fn invoke_extension_command(
         )
         .await?;
 
-    let effect = neomind_core::extension::sync_effect_for_invoke(extension_id, command);
+    // Prefer the server's prepared envelope (operation_id, contract, …).
+    let inner = data.get("data").cloned().unwrap_or(data);
     Ok(CliResponse::success(
-        json!({
-            "command_id": format!("extension/{extension_id}/{command}"),
-            "extension_id": extension_id,
-            "command": command,
-            "effect": effect,
-            "result": data.get("data").cloned().unwrap_or(data),
-        }),
+        inner,
         format!("Invoked {extension_id}/{command}"),
     ))
 }
@@ -374,9 +378,8 @@ fn load_invoke_params(
     if let Some(path) = params_file {
         let text = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("failed to read --params-file {}: {e}", path.display()))?;
-        let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| {
-            anyhow::anyhow!("--params-file must contain a JSON object: {e}")
-        })?;
+        let v: serde_json::Value = serde_json::from_str(text.trim())
+            .map_err(|e| anyhow::anyhow!("--params-file must contain a JSON object: {e}"))?;
         if !v.is_object() && !v.is_null() {
             anyhow::bail!("--params-file must contain a JSON object");
         }
