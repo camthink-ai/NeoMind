@@ -79,11 +79,9 @@ pub async fn execute_extension_command_handler(
 
     let prepared = prepare_extension_invoke(&state, &id, &req.command, &req.args).await?;
 
-    // Execute with canonical params (same set used for auth/capability).
-    let result = match runtime
-        .execute_command(&id, &req.command, &prepared.canonical_params)
-        .await
-    {
+    // Consume the bound prepared invoke (generation + canonical params).
+    // Do not re-resolve by id alone — a reload must refuse, not swap instances.
+    let result = match runtime.execute_prepared(&prepared).await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(
@@ -93,6 +91,10 @@ pub async fn execute_extension_command_handler(
                 error = %e,
                 "Extension command execution failed"
             );
+            let msg = e.to_string();
+            if msg.contains("stale prepared") || msg.contains("generation expired") {
+                return Err(ErrorResponse::bad_request(msg));
+            }
             return Err(ErrorResponse::internal(format!(
                 "Command execution failed: {}",
                 e
@@ -179,10 +181,7 @@ pub async fn invoke_extension_handler(
 
     let prepared = prepare_extension_invoke(&state, &id, &req.command, &req.params).await?;
 
-    let result = match runtime
-        .execute_command(&id, &req.command, &prepared.canonical_params)
-        .await
-    {
+    let result = match runtime.execute_prepared(&prepared).await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(
@@ -192,6 +191,10 @@ pub async fn invoke_extension_handler(
                 error = %e,
                 "Extension invoke failed"
             );
+            let msg = e.to_string();
+            if msg.contains("stale prepared") || msg.contains("generation expired") {
+                return Err(ErrorResponse::bad_request(msg));
+            }
             return Err(ErrorResponse::internal(format!("Invoke failed: {}", e)));
         }
     };
@@ -699,7 +702,7 @@ mod ai_policy_fail_closed_tests {
         let out = state
             .extensions
             .registry
-            .execute_command(id, command, &prepared.canonical_params)
+            .execute_prepared(&prepared)
             .await
             .map_err(|e| ErrorResponse::internal(e.to_string()))?;
         assert!(

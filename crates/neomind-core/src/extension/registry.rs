@@ -384,16 +384,53 @@ impl ExtensionRegistry {
         discovered
     }
 
-    /// Execute a command on an extension.
+    /// Prepare from the current load snapshot, then [`Self::execute_prepared`].
     ///
-    /// Includes a 30-second timeout to prevent hanging on slow or buggy extensions.
+    /// Single-call callers (Transform, etc.) get atomic prepare+execute.
+    /// HTTP/CLI that already hold a [`PreparedInvoke`] must call
+    /// [`Self::execute_prepared`] so a reload between prepare and execute
+    /// cannot run a new instance under an old contract.
     pub async fn execute_command(
         &self,
         id: &str,
         command: &str,
         args: &serde_json::Value,
     ) -> Result<serde_json::Value> {
-        // Check safety manager before executing
+        let snapshot = self.info_cache.read().get(id).cloned();
+        let Some(info) = snapshot else {
+            return Err(ExtensionError::NotFound(id.to_string()));
+        };
+        let Some(cmd_def) = info.commands.iter().find(|c| c.name == command) else {
+            let available: Vec<&str> = info.commands.iter().map(|c| c.name.as_str()).collect();
+            return Err(ExtensionError::CommandNotFound(format!(
+                "'{command}' is not in the registered command catalog for '{id}'. \
+                 Available: [{}]. Discover with: neomind extension commands {id}",
+                available.join(", ")
+            )));
+        };
+        let prepared = crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
+            instance_id: id,
+            command: cmd_def,
+            raw_params: args,
+            extension_version: Some(info.metadata.version.as_str()),
+            package_digest: None,
+            capability_generation: &info.capability_generation,
+        })
+        .map_err(ExtensionError::InvalidArguments)?;
+        self.execute_prepared(&prepared).await
+    }
+
+    /// Execute a previously prepared invoke against the **bound** load
+    /// snapshot (instance + generation). Does not re-resolve by id alone —
+    /// if the generation expired after reload, the call is refused and the
+    /// new instance is never entered.
+    pub async fn execute_prepared(
+        &self,
+        prepared: &crate::extension::PreparedInvoke,
+    ) -> Result<serde_json::Value> {
+        let id = prepared.target.instance_id.as_str();
+        let command = prepared.command.as_str();
+
         if !self.safety_manager.is_allowed(id).await {
             tracing::warn!(
                 extension_id = %id,
@@ -406,83 +443,55 @@ impl ExtensionRegistry {
             )));
         }
 
-        // SINGLE atomic entry read: instance handle, command descriptor and
-        // capability generation must come from the same load snapshot. The
-        // previous shape read the instance Arc and the info entry separately,
-        // so a reload between the reads could execute a NEW instance under an
-        // OLD token's blessing (or vice versa).
         let snapshot = self.info_cache.read().get(id).cloned();
         let Some(info) = snapshot else {
             return Err(ExtensionError::NotFound(id.to_string()));
         };
-        // Clone the Arc to avoid holding the lock across the await
-        let ext_clone = Arc::clone(&info.instance);
-
-        // Shared prepare only — unknown names never pass through to the
-        // extension business function (fail closed with discovery hint).
-        let Some(cmd_def) = info.commands.iter().find(|c| c.name == command) else {
+        if info.capability_generation.as_str() != prepared.capability_generation {
+            return Err(ExtensionError::InvalidArguments(format!(
+                "stale prepared invoke for '{id}' (operation {}): capability generation \
+                 expired after reload; re-discover and prepare again",
+                prepared.operation_id
+            )));
+        }
+        if !info.commands.iter().any(|c| c.name == command) {
             let available: Vec<&str> = info.commands.iter().map(|c| c.name.as_str()).collect();
             return Err(ExtensionError::CommandNotFound(format!(
                 "'{command}' is not in the registered command catalog for '{id}'. \
                  Available: [{}]. Discover with: neomind extension commands {id}",
                 available.join(", ")
             )));
-        };
-        let canonical_args =
-            match crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
-                instance_id: id,
-                command: cmd_def,
-                raw_params: args,
-                extension_version: Some(info.metadata.version.as_str()),
-                package_digest: None,
-                capability_generation: &info.capability_generation,
-            }) {
-                Ok(prep) => prep.canonical_params,
-                Err(msg) => {
-                    return Err(ExtensionError::InvalidArguments(msg));
-                }
-            };
+        }
 
-        // Record start time for execution stats
+        let ext_clone = Arc::clone(&info.instance);
+        let canonical_args = &prepared.canonical_params;
         let start_time = std::time::Instant::now();
-
-        // Execute with timeout protection
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(self.command_timeout_secs),
             async {
                 let ext_guard = ext_clone.read().await;
-                ext_guard.execute_command(command, &canonical_args).await
+                ext_guard.execute_command(command, canonical_args).await
             },
         )
         .await;
-
-        // Calculate execution time
         let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
         match result {
             Ok(Ok(value)) => {
-                // Record success with safety manager
                 self.safety_manager.record_success(id).await;
-
-                // Update stats for successful execution
                 if let Some(info) = self.info_cache.write().get_mut(id) {
                     info.stats.commands_executed += 1;
                     info.stats.total_execution_time_ms += execution_time_ms;
                     info.stats.last_execution_time_ms = Some(chrono::Utc::now().timestamp_millis());
                 }
-
                 Ok(value)
             }
             Ok(Err(e)) => {
-                // Record logical failure
                 self.safety_manager.record_failure(id).await;
-
-                // Update error stats
                 if let Some(info) = self.info_cache.write().get_mut(id) {
                     info.stats.error_count += 1;
                     info.stats.last_error = Some(e.to_string());
                 }
-
                 tracing::warn!(
                     extension_id = %id,
                     command = %command,
@@ -492,10 +501,7 @@ impl ExtensionRegistry {
                 Err(e)
             }
             Err(_) => {
-                // Timeout is treated as a failure for safety manager
                 self.safety_manager.record_failure(id).await;
-
-                // Update error stats for timeout
                 let error_msg = format!(
                     "Command '{}' timed out after {} seconds",
                     command, self.command_timeout_secs
@@ -504,7 +510,6 @@ impl ExtensionRegistry {
                     info.stats.error_count += 1;
                     info.stats.last_error = Some(error_msg.clone());
                 }
-
                 tracing::error!(
                     extension_id = %id,
                     command = %command,
@@ -875,5 +880,145 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+    }
+
+    /// Controllable interleaving: prepare → reload → execute_prepared must
+    /// refuse; the new instance's execute count stays 0.
+    #[tokio::test]
+    async fn prepare_then_reload_refuses_stale_prepared_execute() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::OnceLock;
+        static CALLS_V2: AtomicUsize = AtomicUsize::new(0);
+        CALLS_V2.store(0, Ordering::SeqCst);
+
+        struct V1;
+        #[async_trait::async_trait]
+        impl Extension for V1 {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("bind-ext", "Bind", "1.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ExtensionCommand {
+                    name: "ping".into(),
+                    display_name: "Ping".into(),
+                    description: String::new(),
+                    payload_template: String::new(),
+                    parameters: Vec::new(),
+                    fixed_values: std::collections::HashMap::new(),
+                    samples: Vec::new(),
+                    parameter_groups: Vec::new(),
+                    ai_exposed: true,
+                    effect: Some(crate::extension::system::CommandEffect::ReadOnly),
+                    replay_safety: Some(crate::extension::system::CommandReplaySafety::Safe),
+                    execution: Some(crate::extension::system::CommandExecutionKind::Immediate),
+                }]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> Result<serde_json::Value> {
+                Ok(serde_json::json!({"v": 1}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        struct V2;
+        #[async_trait::async_trait]
+        impl Extension for V2 {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("bind-ext", "Bind", "2.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ExtensionCommand {
+                    name: "ping".into(),
+                    display_name: "Ping".into(),
+                    description: String::new(),
+                    payload_template: String::new(),
+                    parameters: Vec::new(),
+                    fixed_values: std::collections::HashMap::new(),
+                    samples: Vec::new(),
+                    parameter_groups: Vec::new(),
+                    ai_exposed: true,
+                    effect: Some(crate::extension::system::CommandEffect::ReadOnly),
+                    replay_safety: Some(crate::extension::system::CommandReplaySafety::Safe),
+                    execution: Some(crate::extension::system::CommandExecutionKind::Immediate),
+                }]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> Result<serde_json::Value> {
+                CALLS_V2.fetch_add(1, Ordering::SeqCst);
+                Ok(serde_json::json!({"v": 2}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let registry = ExtensionRegistry::new();
+        registry
+            .register(
+                "bind-ext".into(),
+                Arc::new(tokio::sync::RwLock::new(Box::new(V1))),
+            )
+            .await
+            .unwrap();
+        let info = registry.get_info("bind-ext").await.unwrap();
+        let cmd = info.commands.iter().find(|c| c.name == "ping").unwrap();
+        let prepared = crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
+            instance_id: "bind-ext",
+            command: cmd,
+            raw_params: &serde_json::json!({}),
+            extension_version: Some(info.metadata.version.as_str()),
+            package_digest: None,
+            capability_generation: &info.capability_generation,
+        })
+        .unwrap();
+
+        // Pause → unload/reload → resume execute
+        registry.unregister("bind-ext").await.unwrap();
+        registry
+            .register(
+                "bind-ext".into(),
+                Arc::new(tokio::sync::RwLock::new(Box::new(V2))),
+            )
+            .await
+            .unwrap();
+
+        let err = registry.execute_prepared(&prepared).await.unwrap_err();
+        match err {
+            ExtensionError::InvalidArguments(msg) => {
+                assert!(
+                    msg.contains("stale prepared") || msg.contains("generation expired"),
+                    "{msg}"
+                );
+            }
+            other => panic!("expected stale InvalidArguments, got {other:?}"),
+        }
+        assert_eq!(
+            CALLS_V2.load(Ordering::SeqCst),
+            0,
+            "new instance must not run for a stale prepared invoke"
+        );
+
+        // Fresh prepare on the new load still executes once.
+        registry
+            .execute_command("bind-ext", "ping", &serde_json::json!({}))
+            .await
+            .unwrap();
+        assert_eq!(CALLS_V2.load(Ordering::SeqCst), 1);
     }
 }

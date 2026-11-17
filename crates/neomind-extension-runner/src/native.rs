@@ -524,8 +524,28 @@ pub(crate) fn parse_descriptor_json(
     json: &serde_json::Value,
 ) -> Result<ExtensionDescriptor, String> {
     use neomind_extension_sdk::{
-        ExtensionCommand, ExtensionMetadata, MetricDataType, MetricDescriptor, ParameterDefinition,
+        CommandEffect, CommandExecutionKind, CommandReplaySafety, ExtensionCommand,
+        ExtensionMetadata, MetricDataType, MetricDescriptor, ParameterDefinition,
     };
+
+    /// Parse an optional capability enum. Missing/null → `None` (undeclared;
+    /// host stays conservative). Present but illegal → contract error (never
+    /// silently coerce into a valid privilege).
+    fn parse_optional_cap<T: serde::de::DeserializeOwned>(
+        cmd: &serde_json::Value,
+        key: &str,
+        command_name: &str,
+    ) -> Result<Option<T>, String> {
+        match cmd.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => serde_json::from_value(v.clone()).map(Some).map_err(|e| {
+                format!(
+                    "command '{command_name}': invalid '{key}' value {v}: {e} \
+                     (expected a declared capability enum; refusing silent coercion)"
+                )
+            }),
+        }
+    }
 
     let metadata_json = json
         .get("metadata")
@@ -616,102 +636,185 @@ pub(crate) fn parse_descriptor_json(
         })
         .unwrap_or_default();
 
-    // Parse commands
-    let commands: Vec<ExtensionCommand> = json
-        .get("commands")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|c| {
-                    let name = c.get("name")?.as_str()?.to_string();
-                    let display_name = c
-                        .get("display_name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(&name)
-                        .to_string();
-                    let description = c
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let ai_exposed = c
-                        .get("ai_exposed")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(true);
+    // Parse commands — capability fields pass through as Option; illegal
+    // values fail the whole descriptor (contract error).
+    let commands: Vec<ExtensionCommand> = match json.get("commands").and_then(|v| v.as_array()) {
+        None => Vec::new(),
+        Some(arr) => {
+            let mut out = Vec::with_capacity(arr.len());
+            for c in arr {
+                let Some(name) = c.get("name").and_then(|v| v.as_str()).map(str::to_string) else {
+                    continue;
+                };
+                let display_name = c
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&name)
+                    .to_string();
+                let description = c
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let ai_exposed = c
+                    .get("ai_exposed")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
 
-                    // Parse parameters
-                    let parameters: Vec<ParameterDefinition> = c
-                        .get("parameters")
-                        .and_then(|v| v.as_array())
-                        .map(|params| {
-                            params
-                                .iter()
-                                .filter_map(|p| {
-                                    let param_name = p.get("name")?.as_str()?.to_string();
-                                    let param_display_name = p
-                                        .get("display_name")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or(&param_name)
-                                        .to_string();
-                                    let param_desc = p
-                                        .get("description")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                    let param_type_str = p
-                                        .get("param_type")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("string");
-                                    let param_type = match param_type_str {
-                                        "float" => MetricDataType::Float,
-                                        "integer" => MetricDataType::Integer,
-                                        "boolean" => MetricDataType::Boolean,
-                                        "binary" => MetricDataType::Binary,
-                                        _ => MetricDataType::String,
-                                    };
-                                    let required =
-                                        p.get("required").and_then(|v| v.as_bool()).unwrap_or(true);
+                let effect: Option<CommandEffect> = parse_optional_cap(c, "effect", &name)?;
+                let replay_safety: Option<CommandReplaySafety> =
+                    parse_optional_cap(c, "replay_safety", &name)?;
+                let execution: Option<CommandExecutionKind> =
+                    parse_optional_cap(c, "execution", &name)?;
 
-                                    Some(ParameterDefinition {
-                                        name: param_name,
-                                        display_name: param_display_name,
-                                        description: param_desc,
-                                        param_type,
-                                        required,
-                                        default_value: None,
-                                        min: None,
-                                        max: None,
-                                        options: Vec::new(),
-                                    })
+                let parameters: Vec<ParameterDefinition> = c
+                    .get("parameters")
+                    .and_then(|v| v.as_array())
+                    .map(|params| {
+                        params
+                            .iter()
+                            .filter_map(|p| {
+                                let param_name = p.get("name")?.as_str()?.to_string();
+                                let param_display_name = p
+                                    .get("display_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(&param_name)
+                                    .to_string();
+                                let param_desc = p
+                                    .get("description")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let param_type_str = p
+                                    .get("param_type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("string");
+                                let param_type = match param_type_str {
+                                    "float" => MetricDataType::Float,
+                                    "integer" => MetricDataType::Integer,
+                                    "boolean" => MetricDataType::Boolean,
+                                    "binary" => MetricDataType::Binary,
+                                    _ => MetricDataType::String,
+                                };
+                                let required =
+                                    p.get("required").and_then(|v| v.as_bool()).unwrap_or(true);
+
+                                Some(ParameterDefinition {
+                                    name: param_name,
+                                    display_name: param_display_name,
+                                    description: param_desc,
+                                    param_type,
+                                    required,
+                                    default_value: None,
+                                    min: None,
+                                    max: None,
+                                    options: Vec::new(),
                                 })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-
-                    // Parse samples
-                    let samples: Vec<serde_json::Value> = c
-                        .get("samples")
-                        .and_then(|v| v.as_array())
-                        .cloned()
-                        .unwrap_or_default();
-
-                    Some(ExtensionCommand {
-                        name,
-                        display_name,
-                        description,
-                        payload_template: String::new(),
-                        parameters,
-                        ai_exposed,
-                        fixed_values: HashMap::new(),
-                        samples,
-                        parameter_groups: Vec::new(),
+                            })
+                            .collect()
                     })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+                    .unwrap_or_default();
+
+                let samples: Vec<serde_json::Value> = c
+                    .get("samples")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                out.push(ExtensionCommand {
+                    name,
+                    display_name,
+                    description,
+                    payload_template: String::new(),
+                    parameters,
+                    ai_exposed,
+                    fixed_values: HashMap::new(),
+                    samples,
+                    parameter_groups: Vec::new(),
+                    effect,
+                    replay_safety,
+                    execution,
+                });
+            }
+            out
+        }
+    };
 
     Ok(ExtensionDescriptor::with_capabilities(
         metadata, commands, metrics,
     ))
+}
+
+#[cfg(test)]
+mod capability_field_parse_tests {
+    use super::parse_descriptor_json;
+    use neomind_extension_sdk::{CommandEffect, CommandReplaySafety};
+    use serde_json::json;
+
+    fn base_meta() -> serde_json::Value {
+        json!({"id": "cap-ext", "name": "Cap", "version": "1.0.0"})
+    }
+
+    #[test]
+    fn declared_read_only_safe_passes_through() {
+        let d = parse_descriptor_json(&json!({
+            "metadata": base_meta(),
+            "commands": [{
+                "name": "get",
+                "effect": "read_only",
+                "replay_safety": "safe",
+                "execution": "immediate"
+            }],
+            "metrics": []
+        }))
+        .unwrap();
+        let cmd = &d.commands[0];
+        assert_eq!(cmd.effect, Some(CommandEffect::ReadOnly));
+        assert_eq!(cmd.replay_safety, Some(CommandReplaySafety::Safe));
+    }
+
+    #[test]
+    fn explicit_mutating_unsafe_not_relaxed() {
+        let d = parse_descriptor_json(&json!({
+            "metadata": base_meta(),
+            "commands": [{
+                "name": "set",
+                "effect": "mutating",
+                "replay_safety": "unsafe",
+                "execution": "immediate"
+            }],
+            "metrics": []
+        }))
+        .unwrap();
+        assert_eq!(d.commands[0].effect, Some(CommandEffect::Mutating));
+        assert_eq!(
+            d.commands[0].replay_safety,
+            Some(CommandReplaySafety::Unsafe)
+        );
+    }
+
+    #[test]
+    fn missing_capability_fields_are_undeclared_none() {
+        let d = parse_descriptor_json(&json!({
+            "metadata": base_meta(),
+            "commands": [{"name": "legacy"}],
+            "metrics": []
+        }))
+        .unwrap();
+        assert!(d.commands[0].effect.is_none());
+        assert!(d.commands[0].replay_safety.is_none());
+        assert!(d.commands[0].execution.is_none());
+    }
+
+    #[test]
+    fn illegal_effect_is_contract_error() {
+        let err = parse_descriptor_json(&json!({
+            "metadata": base_meta(),
+            "commands": [{"name": "bad", "effect": "superuser"}],
+            "metrics": []
+        }))
+        .unwrap_err();
+        assert!(err.contains("invalid 'effect'"), "{err}");
+        assert!(err.contains("refusing silent coercion"), "{err}");
+    }
 }

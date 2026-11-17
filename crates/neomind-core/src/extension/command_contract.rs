@@ -128,6 +128,9 @@ pub struct PreparedInvoke {
     pub contract: BusinessCommandDef,
     pub canonical_params: Value,
     pub param_fingerprint: String,
+    /// Load-lifecycle generation bound at prepare. Execute must consume this
+    /// same token — a reload mints a new one and stale prepares are refused.
+    pub capability_generation: String,
 }
 
 #[derive(Debug, Clone)]
@@ -885,6 +888,7 @@ pub fn prepare_invoke(req: PrepareInvokeRequest<'_>) -> Result<PreparedInvoke, S
         contract,
         canonical_params,
         param_fingerprint,
+        capability_generation: req.capability_generation.as_str().to_string(),
     })
 }
 

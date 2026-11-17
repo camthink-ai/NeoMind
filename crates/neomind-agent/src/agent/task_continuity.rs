@@ -3557,9 +3557,19 @@ pub fn derive_tool_capability_resolved(
             // unknown side-effects. Keyword absence is NOT proven read-only.
             crate::toolkit::shell::classify_shell_capability(cmd)
         }
-        "file_read" | "web_search" | "web_fetch" | "vision" | "skill" => {
-            ToolCapability::read_query()
-        }
+        "file_read" | "web_search" | "web_fetch" | "vision" => ToolCapability::read_query(),
+        // Skill is polymorphic: search/load are RO; create/update/delete
+        // mutate persisted skill files — must enter the write gate (a blanket
+        // read_query let writes skip it). Missing/unknown action → fail closed.
+        "skill" => match canonical_arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+        {
+            "search" | "load" => ToolCapability::read_query(),
+            "create" | "update" | "delete" => ToolCapability::mutating_write(),
+            _ => ToolCapability::mutating_unknown_sensitive(),
+        },
         // Memory is polymorphic: most actions write durable facts. Classify
         // by `action` so add/rewrite/replace/remove/create enter the write
         // gate (a blanket read_query let 5/7 actions skip it).
@@ -3580,9 +3590,7 @@ pub fn derive_tool_capability_resolved(
             // Extension tools (`ext:cmd` / sanitized `ext_cmd`): capability
             // from the unified command contract (host override / declared),
             // not from name heuristics alone.
-            if let Some((ext_id, cmd)) =
-                neomind_core::extension::parse_extension_tool_name(other)
-            {
+            if let Some((ext_id, cmd)) = neomind_core::extension::parse_extension_tool_name(other) {
                 match neomind_core::extension::sync_effect_for_invoke(&ext_id, &cmd) {
                     neomind_core::extension::CommandEffect::ReadOnly => {
                         return ToolCapability::read_query();
@@ -5981,6 +5989,40 @@ mod tests {
         assert!(
             !missing.read_only,
             "missing action must fail closed into the write gate"
+        );
+    }
+
+    #[test]
+    fn skill_tool_capability_classifies_by_action() {
+        for action in ["search", "load"] {
+            let cap = derive_tool_capability(
+                "skill",
+                &serde_json::json!({"action": action, "query": "device"}),
+            );
+            assert!(
+                cap.read_only,
+                "{action} must stay read_query (skip write gate)"
+            );
+        }
+        for action in ["create", "update", "delete"] {
+            let cap = derive_tool_capability(
+                "skill",
+                &serde_json::json!({"action": action, "id": "x", "content": "y"}),
+            );
+            assert!(
+                !cap.read_only,
+                "{action} must enter the mutating write gate"
+            );
+        }
+        let missing = derive_tool_capability("skill", &serde_json::json!({}));
+        assert!(
+            !missing.read_only,
+            "missing skill action must fail closed into the write gate"
+        );
+        let unknown = derive_tool_capability("skill", &serde_json::json!({"action": "explode"}));
+        assert!(
+            !unknown.read_only,
+            "unknown skill action must fail closed into the write gate"
         );
     }
 

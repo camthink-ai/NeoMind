@@ -190,7 +190,10 @@ impl ExtensionRuntime {
         self.unload(id).await
     }
 
-    /// Execute a command on an extension.
+    /// Execute a command on an extension (isolated process by id).
+    ///
+    /// Prefer [`Self::execute_prepared`] when a [`super::PreparedInvoke`] is
+    /// already in hand — that path refuses stale generations after reload.
     pub async fn execute_command(
         &self,
         id: &str,
@@ -199,6 +202,32 @@ impl ExtensionRuntime {
     ) -> Result<serde_json::Value, ExtensionError> {
         self.isolated_manager
             .execute_command(id, command, args)
+            .await
+            .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))
+    }
+
+    /// Execute a prepared invoke: generation must still match the proxy
+    /// registry load snapshot, then the isolated process runs with the
+    /// bound canonical params (no re-prepare / no id-only re-resolve).
+    pub async fn execute_prepared(
+        &self,
+        prepared: &super::PreparedInvoke,
+    ) -> Result<serde_json::Value, ExtensionError> {
+        let id = prepared.target.instance_id.as_str();
+        let entry = self
+            .proxy_registry
+            .get_info(id)
+            .await
+            .ok_or_else(|| ExtensionError::NotFound(id.to_string()))?;
+        if entry.capability_generation.as_str() != prepared.capability_generation {
+            return Err(ExtensionError::InvalidArguments(format!(
+                "stale prepared invoke for '{id}' (operation {}): capability generation \
+                 expired after reload; re-discover and prepare again",
+                prepared.operation_id
+            )));
+        }
+        self.isolated_manager
+            .execute_command(id, &prepared.command, &prepared.canonical_params)
             .await
             .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))
     }

@@ -319,9 +319,12 @@ impl Tool for SkillTool {
         "skill"
     }
 
-    /// Read-only — retrieves skill documentation, no world side effects.
+    /// Tool-level replay: `create`/`update`/`delete` mutate skill files, so
+    /// the whole tool is [`ReplaySafety::Unsafe`]. Per-call RO vs write is
+    /// classified in [`crate::agent::task_continuity::derive_tool_capability`]
+    /// by `action` (search/load vs create/update/delete).
     fn replay_safety(&self) -> crate::toolkit::tool::ReplaySafety {
-        crate::toolkit::tool::ReplaySafety::Safe
+        crate::toolkit::tool::ReplaySafety::Unsafe
     }
 
     fn description(&self) -> &str {
