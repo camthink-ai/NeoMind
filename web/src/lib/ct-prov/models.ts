@@ -162,11 +162,7 @@ function fieldDeclared(declared: readonly string[] | undefined, field: string): 
 /**
  * Build CT `cellular` section gated by capabilities.fields.
  * Returns null when there is nothing to write (all empty / undeclared).
- *
- * Wi‑Fi-only Apply: if capabilities declare `apn` but the operator left it
- * blank, return null — do NOT emit a partial object like `{auth:"none"}`.
- * NE101 rejects that with INVALID_ARGUMENT "cellular.apn: required field missing".
- * Pre-provisioned SIMs that omit `apn` from capabilities.fields still work.
+ * Final gate: `pruneIncompleteConfigSections` before config.set.
  */
 export function cellularSectionFromFields(
   fields: CellularFields,
@@ -197,11 +193,7 @@ export function cellularSectionFromFields(
 
 /**
  * Build CT `webhook` section gated by capabilities.fields.
- *
- * Wi‑Fi-only Apply: default enable=false with empty url must NOT emit
- * `{enable:false}` — NE101 rejects that with INVALID_ARGUMENT
- * "webhook.url: required field missing". Only write when enabling (with url)
- * or when disabling with an explicit url present.
+ * Final gate: `pruneIncompleteConfigSections` before config.set.
  */
 export function webhookSectionFromFields(
   fields: WebhookFields,
@@ -218,6 +210,50 @@ export function webhookSectionFromFields(
   if (secret && fieldDeclared(declared, 'secret')) out.secret = secret
   const header = fields.header?.trim()
   if (header && fieldDeclared(declared, 'header')) out.header = header
+  return out
+}
+
+function nonEmptyString(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const t = v.trim()
+  return t.length > 0 ? t : null
+}
+
+/**
+ * Last-line filter before `config.set`: drop optional sections that devices
+ * reject as `INVALID_ARGUMENT: <section>.<field>: required field missing`.
+ *
+ * Rules (NE101 / neolink-style):
+ * - wifi / halow — need non-empty `ssid`
+ * - cellular — need non-empty `apn` (partial `{auth:"none"}` is invalid)
+ * - webhook — need non-empty `url` (bare `{enable:false}` is invalid)
+ * - mqtt — always kept (resolved by NeoMind; device rules differ by model)
+ *
+ * Unknown sections pass through unchanged.
+ */
+export function pruneIncompleteConfigSections(
+  sections: Record<string, Record<string, unknown>>,
+): Record<string, Record<string, unknown>> {
+  const out: Record<string, Record<string, unknown>> = {}
+  for (const [name, body] of Object.entries(sections)) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) continue
+    if (name === 'wifi' || name === 'halow') {
+      if (!nonEmptyString(body.ssid)) continue
+      out[name] = body
+      continue
+    }
+    if (name === 'cellular') {
+      if (!nonEmptyString(body.apn)) continue
+      out[name] = body
+      continue
+    }
+    if (name === 'webhook') {
+      if (!nonEmptyString(body.url)) continue
+      out[name] = body
+      continue
+    }
+    out[name] = body
+  }
   return out
 }
 

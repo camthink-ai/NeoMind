@@ -36,11 +36,19 @@ export function formatProvUserMessage(err: unknown): string {
   ) {
     return 'wifi_associate_failed'
   }
-  if (lower.includes('cellular.apn') || lower.includes('cellular apn')) {
-    return 'cellular_apn_required'
+  // Unified: any "section.field: required field missing" from the device.
+  const required = lower.match(
+    /([a-z0-9_]+)\.([a-z0-9_]+):\s*required field missing/,
+  )
+  if (required) {
+    const section = required[1]
+    const field = required[2]
+    if (section === 'cellular' && field === 'apn') return 'cellular_apn_required'
+    if (section === 'webhook' && field === 'url') return 'webhook_url_required'
+    return 'required_field_missing'
   }
-  if (lower.includes('webhook.url') || lower.includes('webhook url')) {
-    return 'webhook_url_required'
+  if (lower.includes('required field missing')) {
+    return 'required_field_missing'
   }
   if (lower.includes('storage_failed')) {
     return 'storage_failed'

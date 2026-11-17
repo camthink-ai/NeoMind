@@ -190,4 +190,22 @@ describe('ct-prov FakeTransport session path', () => {
       'request_timeout',
     )
   })
+
+  it('maps any section.field required-missing to stable codes', () => {
+    expect(
+      formatProvUserMessage(
+        new ProvSessionError('invalid_argument', 'INVALID_ARGUMENT: cellular.apn: required field missing'),
+      ),
+    ).toBe('cellular_apn_required')
+    expect(
+      formatProvUserMessage(
+        new ProvSessionError('invalid_argument', 'INVALID_ARGUMENT: webhook.url: required field missing'),
+      ),
+    ).toBe('webhook_url_required')
+    expect(
+      formatProvUserMessage(
+        new ProvSessionError('invalid_argument', 'INVALID_ARGUMENT: foo.bar: required field missing'),
+      ),
+    ).toBe('required_field_missing')
+  })
 })

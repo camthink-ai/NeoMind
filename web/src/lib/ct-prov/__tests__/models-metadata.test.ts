@@ -6,6 +6,7 @@ import {
   listApProvisionModels,
   modelNameFromCode,
   modelToDeviceType,
+  pruneIncompleteConfigSections,
   softapHostForModel,
   webhookSectionFromFields,
   type CtProvDeviceTypeRef,
@@ -213,6 +214,29 @@ describe('cellular / webhook section builders', () => {
       url: 'https://example.com/h',
       secret: 's',
       header: 'X-API-Key: abc',
+    })
+  })
+
+  it('pruneIncompleteConfigSections drops stub optional sections', () => {
+    const pruned = pruneIncompleteConfigSections({
+      mqtt: { enable: true, host: '192.168.1.1', port: 1883 },
+      wifi: { ssid: 'Office', password: 'x' },
+      cellular: { auth: 'none' },
+      webhook: { enable: false },
+      halow: { ssid: '', password: '' },
+    })
+    expect(pruned).toEqual({
+      mqtt: { enable: true, host: '192.168.1.1', port: 1883 },
+      wifi: { ssid: 'Office', password: 'x' },
+    })
+    expect(
+      pruneIncompleteConfigSections({
+        cellular: { apn: 'cmiot.iot', auth: 'none' },
+        webhook: { enable: true, url: 'https://example.com/h' },
+      }),
+    ).toEqual({
+      cellular: { apn: 'cmiot.iot', auth: 'none' },
+      webhook: { enable: true, url: 'https://example.com/h' },
     })
   })
 })

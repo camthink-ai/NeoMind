@@ -15,6 +15,7 @@ import {
   CT_PROV_BLE_SCAN_MS,
   openCtGattChannel,
   parseApSsid,
+  pruneIncompleteConfigSections,
   retainActiveBleSession,
   scanCtDevicesWithWebStash,
   softapFailureKind,
@@ -389,10 +390,15 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
           sections.webhook = opts.webhook as JsonObject
         }
 
+        // Unified gate: never send stub optional sections (empty APN / webhook
+        // without URL / wifi without SSID) — devices reject those as
+        // INVALID_ARGUMENT "<section>.<field>: required field missing".
+        const pruned = pruneIncompleteConfigSections(sections)
+
         // Pass the long timeout into setConfig itself — the GATT transport's
         // per-request timer (default 15s) is what actually races the reply.
         const result = await withTimeout(
-          client.setConfig(sections, CONFIG_SET_TIMEOUT_MS),
+          client.setConfig(pruned, CONFIG_SET_TIMEOUT_MS),
           CONFIG_SET_TIMEOUT_MS + 5_000,
           'config.set',
         )
