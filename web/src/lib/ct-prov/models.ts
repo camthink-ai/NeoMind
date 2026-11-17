@@ -48,7 +48,13 @@ export interface CtProvDeviceTypeRef {
   ct_prov?: CtProvTypeMetadata | null
 }
 
-/** MQTT config returned by POST /devices/ble-provision (resolve phase). */
+/**
+ * MQTT config returned by POST /devices/ble-provision (resolve phase).
+ *
+ * CT-Prov/1 mqtt section schema (neolink golden capabilities):
+ * enable, host, port, client_id, username, password, tls, topic, qos.
+ * keep_alive / clean_session / will / alpn are NOT in the protocol — omit.
+ */
 export interface CtMqttConfig {
   host: string
   port: number
@@ -58,6 +64,10 @@ export interface CtMqttConfig {
   client_id: string
   /** Explicit TLS; when omitted, inferred from port === 8883. */
   tls?: boolean
+  /** MQTT enable flag; defaults to true on write. */
+  enable?: boolean
+  /** Publish/subscribe QoS 0–2; defaults to 1 on write. */
+  qos?: number
 }
 
 /** Device-custom broker fields sent as `custom_mqtt` on ble-provision. */
@@ -67,8 +77,31 @@ export interface CustomMqttFields {
   username?: string
   password?: string
   tls?: boolean
+  enable?: boolean
+  qos?: number
   topic_prefix?: string
   client_id?: string
+}
+
+/** CT-Prov/1 mqtt section field names (capabilities.fields order). */
+export const CT_MQTT_SECTION_FIELDS = [
+  'enable',
+  'host',
+  'port',
+  'client_id',
+  'username',
+  'password',
+  'tls',
+  'topic',
+  'qos',
+] as const
+
+export type CtMqttQos = 0 | 1 | 2
+
+export function normalizeMqttQos(value: unknown, fallback: CtMqttQos = 1): CtMqttQos {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (n === 0 || n === 1 || n === 2) return n
+  return fallback
 }
 
 function normalizeModel(model: string): string {
@@ -221,15 +254,18 @@ export function mqttSectionFromResolve(cfg: CtMqttConfig): Record<string, unknow
       : prefix.endsWith('/uplink')
         ? prefix
         : `${prefix}/uplink`
+  // Write the full CT-Prov/1 mqtt section (all capabilities.fields keys).
+  // Empty username/password stay omitted so firmware optional-auth stays clean.
   return {
-    enable: true,
+    enable: cfg.enable ?? true,
     host: cfg.host,
     port: cfg.port,
+    client_id: cfg.client_id,
     username: cfg.username || undefined,
     password: cfg.password || undefined,
-    client_id: cfg.client_id,
     tls: cfg.tls ?? cfg.port === 8883,
     topic,
+    qos: normalizeMqttQos(cfg.qos, 1),
   }
 }
 

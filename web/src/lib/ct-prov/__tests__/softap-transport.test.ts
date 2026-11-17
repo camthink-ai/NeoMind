@@ -120,6 +120,7 @@ describe('ct-prov model stubs', () => {
       tls: true,
       client_id: '000012e186d30000',
       topic: 'device/ne101_camera/000012e186d30000/uplink',
+      qos: 1,
     })
     // Already-suffixed prefix must not double /uplink
     expect(
@@ -132,6 +133,44 @@ describe('ct-prov model stubs', () => {
         client_id: 'id',
       }).topic,
     ).toBe('device/t/id/uplink')
+  })
+
+  it('writes the full CT-Prov/1 mqtt field set (enable…qos)', () => {
+    const section = mqttSectionFromResolve({
+      host: 'broker.lan',
+      port: 1883,
+      username: 'u',
+      password: 'p',
+      topic_prefix: 'device/t/id',
+      client_id: 'id',
+      tls: false,
+      enable: true,
+      qos: 2,
+    })
+    expect(Object.keys(section).sort()).toEqual(
+      [
+        'client_id',
+        'enable',
+        'host',
+        'password',
+        'port',
+        'qos',
+        'tls',
+        'topic',
+        'username',
+      ].sort(),
+    )
+    expect(section).toMatchObject({
+      enable: true,
+      host: 'broker.lan',
+      port: 1883,
+      client_id: 'id',
+      username: 'u',
+      password: 'p',
+      tls: false,
+      topic: 'device/t/id/uplink',
+      qos: 2,
+    })
   })
 
   it('honors explicit tls for custom brokers (not only port 8883)', () => {

@@ -19,8 +19,12 @@ use crate::server::types::ServerState;
 // Request / Response types
 // ---------------------------------------------------------------------------
 
-/// Device-defined MQTT broker fields (host/port/TLS/creds/topic).
+/// Device-defined MQTT broker fields matching the CT-Prov/1 mqtt section.
 /// Used when `broker_id` is `"custom"` or when this object is present.
+///
+/// Protocol fields: enable, host, port, client_id, username, password, tls,
+/// topic (via topic_prefix), qos. keep_alive / clean_session / will / alpn
+/// are not part of CT-Prov/1 — do not invent them here.
 #[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct CustomMqttRequest {
     /// Broker hostname or IP.
@@ -36,6 +40,12 @@ pub struct CustomMqttRequest {
     /// Whether the device should use TLS (mqtts).
     #[serde(default)]
     pub tls: bool,
+    /// MQTT enable flag (default true).
+    #[serde(default = "default_mqtt_enable")]
+    pub enable: bool,
+    /// Publish/subscribe QoS 0–2 (default 1).
+    #[serde(default = "default_mqtt_qos")]
+    pub qos: u8,
     /// Optional topic prefix override (default `device/{type}/{id}`).
     /// May already end with `/uplink`; the CT write path normalizes it.
     #[serde(default)]
@@ -43,6 +53,14 @@ pub struct CustomMqttRequest {
     /// Optional MQTT client id override (default = device_id from SN).
     #[serde(default)]
     pub client_id: Option<String>,
+}
+
+fn default_mqtt_enable() -> bool {
+    true
+}
+
+fn default_mqtt_qos() -> u8 {
+    1
 }
 
 /// BLE provision request body.
@@ -70,6 +88,8 @@ pub struct BleProvisionRequest {
 }
 
 /// MQTT configuration returned to the BLE client so the device can connect.
+/// Mirrors the CT-Prov/1 mqtt section (enable/host/port/client_id/username/
+/// password/tls/topic/qos) — `topic` is derived from `topic_prefix` on write.
 #[derive(Debug, Serialize)]
 pub struct MqttConfigResponse {
     pub host: String,
@@ -81,6 +101,10 @@ pub struct MqttConfigResponse {
     pub client_id: String,
     /// Explicit TLS flag for the device CT `mqtt.tls` field.
     pub tls: bool,
+    /// CT `mqtt.enable` (normally true for provision).
+    pub enable: bool,
+    /// CT `mqtt.qos` (0–2).
+    pub qos: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +167,11 @@ fn resolve_mqtt_config(
                 "custom_mqtt.port must be between 1 and 65535",
             ));
         }
+        if custom.qos > 2 {
+            return Err(ErrorResponse::bad_request(
+                "custom_mqtt.qos must be 0, 1, or 2",
+            ));
+        }
         let topic_prefix = custom
             .topic_prefix
             .as_ref()
@@ -163,6 +192,8 @@ fn resolve_mqtt_config(
             topic_prefix,
             client_id,
             tls: custom.tls,
+            enable: custom.enable,
+            qos: custom.qos,
         });
     }
 
@@ -181,6 +212,8 @@ fn resolve_mqtt_config(
         topic_prefix: default_prefix,
         client_id: device_id.to_string(),
         tls,
+        enable: true,
+        qos: default_mqtt_qos(),
     })
 }
 
@@ -401,6 +434,8 @@ mod tests {
             username: "u".into(),
             password: "p".into(),
             tls: true,
+            enable: true,
+            qos: 2,
             topic_prefix: Some("acme/devices/cam1/uplink".into()),
             client_id: Some("cam1".into()),
         }));
@@ -408,6 +443,8 @@ mod tests {
         assert_eq!(cfg.host, "broker.lan");
         assert_eq!(cfg.port, 8883);
         assert!(cfg.tls);
+        assert!(cfg.enable);
+        assert_eq!(cfg.qos, 2);
         assert_eq!(cfg.topic_prefix, "acme/devices/cam1/uplink");
         assert_eq!(cfg.client_id, "cam1");
         assert_eq!(cfg.username, "u");
@@ -421,6 +458,8 @@ mod tests {
             username: String::new(),
             password: String::new(),
             tls: false,
+            enable: true,
+            qos: 1,
             topic_prefix: None,
             client_id: None,
         }));
@@ -428,6 +467,24 @@ mod tests {
         assert_eq!(cfg.topic_prefix, "device/ne101_camera/ne101_a2f003");
         assert_eq!(cfg.client_id, "ne101_a2f003");
         assert!(!cfg.tls);
+        assert!(cfg.enable);
+        assert_eq!(cfg.qos, 1);
+    }
+
+    #[test]
+    fn custom_mqtt_rejects_invalid_qos() {
+        let req = base_req(Some(CustomMqttRequest {
+            host: "broker.lan".into(),
+            port: 1883,
+            username: String::new(),
+            password: String::new(),
+            tls: false,
+            enable: true,
+            qos: 3,
+            topic_prefix: None,
+            client_id: None,
+        }));
+        assert!(resolve_mqtt_config(&req, "ne101_camera", "id").is_err());
     }
 
     #[test]
@@ -447,6 +504,8 @@ mod tests {
             username: String::new(),
             password: String::new(),
             tls: false,
+            enable: true,
+            qos: 1,
             topic_prefix: None,
             client_id: None,
         }));

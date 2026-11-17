@@ -29,7 +29,9 @@ import type { UseCtProvisionReturn } from '@/hooks/useCtProvision'
 import {
   formatProvUserMessage,
   modelToDeviceType,
+  normalizeMqttQos,
   type CtMqttConfig,
+  type CtMqttQos,
   type CustomMqttFields,
   type NetworkScanItem,
 } from '@/lib/ct-prov'
@@ -199,13 +201,15 @@ export function CtProvisionWizard({
   const [brokerId, setBrokerId] = useState('embedded')
   const [brokers, setBrokers] = useState<BrokerOption[]>([])
   const [brokerSource, setBrokerSource] = useState<BrokerSource>('neomind')
+  const [customEnable, setCustomEnable] = useState(true)
   const [customHost, setCustomHost] = useState('')
   const [customPort, setCustomPort] = useState('1883')
   const [customTls, setCustomTls] = useState(false)
   const [customUsername, setCustomUsername] = useState('')
   const [customPassword, setCustomPassword] = useState('')
-  const [customTopic, setCustomTopic] = useState('')
   const [customClientId, setCustomClientId] = useState('')
+  const [customTopic, setCustomTopic] = useState('')
+  const [customQos, setCustomQos] = useState<CtMqttQos>(1)
   const [mqttFormError, setMqttFormError] = useState<string | null>(null)
   const [deviceId, setDeviceId] = useState<string | null>(null)
   const [registerError, setRegisterError] = useState<string | null>(null)
@@ -291,6 +295,27 @@ export function CtProvisionWizard({
   // device Wi-Fi stack in wifi_init failure before config.set (EK410/BLE).
 
   const buildCustomMqtt = useCallback((): CustomMqttFields | null => {
+    const qos = normalizeMqttQos(customQos, 1)
+    const topic = customTopic.trim()
+    const clientId = customClientId.trim()
+
+    // enable=false is a complete CT mqtt write (device clears broker); host optional.
+    if (!customEnable) {
+      setMqttFormError(null)
+      const portNum = Number.parseInt(customPort.trim() || '1883', 10)
+      return {
+        enable: false,
+        host: customHost.trim() || '0.0.0.0',
+        port: Number.isFinite(portNum) && portNum >= 1 && portNum <= 65535 ? portNum : 1883,
+        username: customUsername.trim() || undefined,
+        password: customPassword || undefined,
+        tls: customTls,
+        qos,
+        topic_prefix: topic || undefined,
+        client_id: clientId || undefined,
+      }
+    }
+
     const host = customHost.trim()
     if (!host) {
       setMqttFormError(t('devices:ctProv.customHostRequired'))
@@ -302,18 +327,19 @@ export function CtProvisionWizard({
       return null
     }
     setMqttFormError(null)
-    const topic = customTopic.trim()
-    const clientId = customClientId.trim()
     return {
+      enable: true,
       host,
       port: portNum,
       username: customUsername.trim() || undefined,
       password: customPassword || undefined,
       tls: customTls,
+      qos,
       topic_prefix: topic || undefined,
       client_id: clientId || undefined,
     }
   }, [
+    customEnable,
     customHost,
     customPort,
     customTls,
@@ -321,6 +347,7 @@ export function CtProvisionWizard({
     customPassword,
     customTopic,
     customClientId,
+    customQos,
     t,
   ])
 
@@ -740,23 +767,40 @@ export function CtProvisionWizard({
                     </div>
 
                     {brokerSource === 'neomind' ? (
-                      <Field>
-                        <FieldLabel>{t('devices:ble.broker')}</FieldLabel>
-                        <Select value={brokerId} onValueChange={setBrokerId}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {brokers.map((b) => (
-                              <SelectItem key={b.id} value={b.id}>
-                                {b.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </Field>
+                      <div className="space-y-3">
+                        <Field>
+                          <FieldLabel>{t('devices:ble.broker')}</FieldLabel>
+                          <Select value={brokerId} onValueChange={setBrokerId}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {brokers.map((b) => (
+                                <SelectItem key={b.id} value={b.id}>
+                                  {b.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
+                        <p className="text-xs text-muted-foreground">
+                          {t('devices:ctProv.neomindMqttFullHint')}
+                        </p>
+                      </div>
                     ) : (
                       <div className="space-y-3">
+                        {/* CT-Prov/1 mqtt fields: enable, host, port, client_id,
+                            username, password, tls, topic, qos */}
+                        <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+                          <FieldLabel htmlFor="ct-mqtt-enable" className="mb-0">
+                            {t('devices:ctProv.customEnable')}
+                          </FieldLabel>
+                          <Switch
+                            id="ct-mqtt-enable"
+                            checked={customEnable}
+                            onCheckedChange={setCustomEnable}
+                          />
+                        </div>
                         <div className="grid gap-3 sm:grid-cols-2">
                           <Field>
                             <FieldLabel htmlFor="ct-mqtt-host">
@@ -790,23 +834,21 @@ export function CtProvisionWizard({
                             />
                           </Field>
                         </div>
-                        <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
-                          <FieldLabel htmlFor="ct-mqtt-tls" className="mb-0">
-                            {t('devices:ctProv.customTls')}
+                        <Field>
+                          <FieldLabel htmlFor="ct-mqtt-client-id">
+                            {t('devices:ctProv.customClientId')}
                           </FieldLabel>
-                          <Switch
-                            id="ct-mqtt-tls"
-                            checked={customTls}
-                            onCheckedChange={(checked) => {
-                              setCustomTls(checked)
-                              if (checked && (customPort === '1883' || customPort.trim() === '')) {
-                                setCustomPort('8883')
-                              } else if (!checked && customPort === '8883') {
-                                setCustomPort('1883')
-                              }
-                            }}
+                          <Input
+                            id="ct-mqtt-client-id"
+                            value={customClientId}
+                            onChange={(e) => setCustomClientId(e.target.value)}
+                            className="font-mono text-sm"
+                            autoComplete="off"
                           />
-                        </div>
+                          <p className="text-xs text-muted-foreground">
+                            {t('devices:ctProv.customClientIdHint')}
+                          </p>
+                        </Field>
                         <div className="grid gap-3 sm:grid-cols-2">
                           <Field>
                             <FieldLabel htmlFor="ct-mqtt-username">
@@ -831,6 +873,23 @@ export function CtProvisionWizard({
                             />
                           </Field>
                         </div>
+                        <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+                          <FieldLabel htmlFor="ct-mqtt-tls" className="mb-0">
+                            {t('devices:ctProv.customTls')}
+                          </FieldLabel>
+                          <Switch
+                            id="ct-mqtt-tls"
+                            checked={customTls}
+                            onCheckedChange={(checked) => {
+                              setCustomTls(checked)
+                              if (checked && (customPort === '1883' || customPort.trim() === '')) {
+                                setCustomPort('8883')
+                              } else if (!checked && customPort === '8883') {
+                                setCustomPort('1883')
+                              }
+                            }}
+                          />
+                        </div>
                         <Field>
                           <FieldLabel htmlFor="ct-mqtt-topic">
                             {t('devices:ctProv.customTopic')}
@@ -848,18 +907,22 @@ export function CtProvisionWizard({
                           </p>
                         </Field>
                         <Field>
-                          <FieldLabel htmlFor="ct-mqtt-client-id">
-                            {t('devices:ctProv.customClientId')}
-                          </FieldLabel>
-                          <Input
-                            id="ct-mqtt-client-id"
-                            value={customClientId}
-                            onChange={(e) => setCustomClientId(e.target.value)}
-                            className="font-mono text-sm"
-                            autoComplete="off"
-                          />
+                          <FieldLabel>{t('devices:ctProv.customQos')}</FieldLabel>
+                          <Select
+                            value={String(customQos)}
+                            onValueChange={(v) => setCustomQos(normalizeMqttQos(Number(v), 1))}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="0">{t('devices:ctProv.customQos0')}</SelectItem>
+                              <SelectItem value="1">{t('devices:ctProv.customQos1')}</SelectItem>
+                              <SelectItem value="2">{t('devices:ctProv.customQos2')}</SelectItem>
+                            </SelectContent>
+                          </Select>
                           <p className="text-xs text-muted-foreground">
-                            {t('devices:ctProv.customClientIdHint')}
+                            {t('devices:ctProv.customQosHint')}
                           </p>
                         </Field>
                       </div>
@@ -914,7 +977,7 @@ export function CtProvisionWizard({
                 disabled={
                   (needsWifi && !wifiSsid.trim()) ||
                   ct.provisioning ||
-                  (brokerSource === 'custom' && !customHost.trim())
+                  (brokerSource === 'custom' && customEnable && !customHost.trim())
                 }
               >
                 <ChevronRight className="mr-2 h-4 w-4" />
