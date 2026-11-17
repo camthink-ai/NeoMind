@@ -126,14 +126,14 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
 
   if (ct.scannedDevices.length > 0) {
     return (
-      <div className="flex h-full min-h-[min(60vh,520px)] flex-col py-6">
+      <div className="mx-auto flex h-full min-h-[min(60vh,520px)] w-full max-w-md flex-col self-center py-6">
         <div className="mb-5 text-center">
           <h3 className="text-lg font-medium">{t('devices:ble.selectDevice')}</h3>
           <p className="mt-1 text-sm text-muted-foreground">
             {t('devices:ble.foundDevices', { count: ct.scannedDevices.length })}
           </p>
         </div>
-        <div className="mx-auto w-full max-w-md flex-1 space-y-2 overflow-y-auto">
+        <div className="w-full flex-1 space-y-2 overflow-y-auto">
           {ct.scannedDevices.map((dev) => {
             const busy = dev.discovered?.busy
             const codeName =

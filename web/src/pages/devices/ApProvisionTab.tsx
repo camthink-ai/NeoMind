@@ -184,8 +184,8 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
 
   // —— First viewport: unmistakable hand-join ——
   return (
-    <div className="flex h-full min-h-[min(60vh,520px)] flex-col py-6">
-      <div className="mx-auto mb-5 max-w-md space-y-2 text-center">
+    <div className="mx-auto flex h-full min-h-[min(60vh,520px)] w-full max-w-md flex-col self-center py-6">
+      <div className="mb-5 space-y-2 text-center">
         <CtProvisionHero size="md">
           <Wifi className="h-7 w-7 text-primary" />
         </CtProvisionHero>
@@ -193,7 +193,7 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
         <p className="text-sm text-muted-foreground">{t('devices:ap.joinDescStrong')}</p>
       </div>
 
-      <div className="mx-auto w-full max-w-md space-y-4">
+      <div className="w-full space-y-4">
         <div className="space-y-3 rounded-xl border border-border bg-card p-4">
           <Field>
             <FieldLabel>{t('devices:ap.model')}</FieldLabel>

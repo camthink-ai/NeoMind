@@ -196,16 +196,18 @@ export function AddDeviceGlobalDialog({
             />
           )}
           {/* Main scrollable content */}
-          {/* BLE/AP own their scroll + sticky step actions; Main must not scroll. */}
+          {/* BLE/AP own their scroll + sticky step actions; Main must not scroll.
+              Center the content column with items-center (more reliable than mx-auto
+              alone on a flex-1 child in WKWebView). */}
           <FullScreenDialogMain
             className={cn(
-              'flex flex-col',
+              'flex flex-col items-center',
               (activeTab === 'ble' || activeTab === 'ap') && 'overflow-hidden',
             )}
           >
             <div
               className={cn(
-                'max-w-2xl mx-auto w-full flex-1 flex flex-col',
+                'flex w-full max-w-2xl flex-1 flex-col',
                 isMobile ? 'px-3 py-4' : 'px-5 py-6 md:px-8',
                 (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 py-0 md:py-0',
               )}
@@ -213,7 +215,7 @@ export function AddDeviceGlobalDialog({
 
               {/* Tab content */}
               {activeTab === 'ble' && open && (
-                <div className="flex-1 flex flex-col min-h-0">
+                <div className="flex min-h-0 w-full flex-1 flex-col items-center">
                   <BleProvisionTab
                     onComplete={() => {
                       fetchCache.invalidate('devices')
@@ -225,7 +227,7 @@ export function AddDeviceGlobalDialog({
               )}
 
               {activeTab === 'ap' && open && (
-                <div className="flex-1 flex flex-col min-h-0">
+                <div className="flex min-h-0 w-full flex-1 flex-col items-center">
                   <ApProvisionTab
                     onComplete={() => {
                       fetchCache.invalidate('devices')

@@ -156,9 +156,11 @@ export function CtProvisionCenter({
   return (
     <div
       className={cn(
-        // Fill the add-device panel so spinners sit in the visual center, not under the tab strip.
+        // Fill the add-device panel so hero/status states sit in the visual center.
+        // w-full + flex-1: without width, a shrink-wrapped column can sit left in the
+        // pane when a parent uses items-center; flex-1 keeps vertical fill reliable.
         // Horizontal padding comes from AddDeviceGlobalDialog — avoid double inset.
-        'flex h-full min-h-[min(60vh,520px)] flex-col items-center justify-center gap-6 py-6',
+        'flex h-full min-h-[min(60vh,520px)] w-full flex-1 flex-col items-center justify-center gap-6 py-6',
         className,
       )}
     >
@@ -405,7 +407,7 @@ export function CtProvisionWizard({
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-1 flex-col py-4">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-1 flex-col self-center py-4">
       <StepDots current={step} />
 
       {/* Connected strip — compact, not a competing card stack */}
