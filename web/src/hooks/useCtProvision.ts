@@ -11,6 +11,7 @@ import {
   SoftapTransportError,
   isTauriEnv,
   mqttSectionFromResolve,
+  CONFIG_SET_TIMEOUT_MS,
   CT_PROV_BLE_SCAN_MS,
   openCtGattChannel,
   parseApSsid,
@@ -388,7 +389,13 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
           sections.webhook = opts.webhook as JsonObject
         }
 
-        const result = await withTimeout(client.setConfig(sections), 20_000, 'config.set')
+        // Pass the long timeout into setConfig itself — the GATT transport's
+        // per-request timer (default 15s) is what actually races the reply.
+        const result = await withTimeout(
+          client.setConfig(sections, CONFIG_SET_TIMEOUT_MS),
+          CONFIG_SET_TIMEOUT_MS + 5_000,
+          'config.set',
+        )
         setProvisioningStep('closing')
         try {
           await client.closeSession()

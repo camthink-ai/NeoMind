@@ -28,8 +28,22 @@ export function formatProvUserMessage(err: unknown): string {
   if (lower.includes('wifi_init')) {
     return 'wifi_init_failed'
   }
+  // Device tried to join the SSID and failed (wrong password / out of range / …).
+  if (
+    lower.includes('wifi associate') ||
+    lower.includes('associate failed') ||
+    (lower.includes('storage_failed') && lower.includes('wifi'))
+  ) {
+    return 'wifi_associate_failed'
+  }
+  if (lower.includes('storage_failed')) {
+    return 'storage_failed'
+  }
   if (lower.includes('busy')) {
     return 'device_busy'
+  }
+  if (lower.includes('timed out') || lower.includes('timeout')) {
+    return 'request_timeout'
   }
   if (err instanceof ProvSessionError) {
     if (err.reason === 'internal_error' || lower.includes('internal_error')) {
@@ -37,6 +51,9 @@ export function formatProvUserMessage(err: unknown): string {
     }
     if (err.reason === 'not_open') {
       return 'not_connected'
+    }
+    if (err.reason === 'storage_failed') {
+      return 'storage_failed'
     }
   }
   if (lower.includes('not connected') || lower.includes('not_open')) {

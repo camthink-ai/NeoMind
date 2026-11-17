@@ -176,4 +176,18 @@ describe('ct-prov FakeTransport session path', () => {
       'wifi_init_failed',
     )
   })
+
+  it('maps STORAGE_FAILED wifi associate and GATT timeout to stable codes', () => {
+    expect(
+      formatProvUserMessage(
+        new ProvSessionError('storage_failed', 'STORAGE_FAILED: wifi associate failed'),
+      ),
+    ).toBe('wifi_associate_failed')
+    expect(formatProvUserMessage(new ProvSessionError('storage_failed', 'STORAGE_FAILED: nvs write'))).toBe(
+      'storage_failed',
+    )
+    expect(formatProvUserMessage(new Error('CT-Prov request timed out after 15000ms'))).toBe(
+      'request_timeout',
+    )
+  })
 })

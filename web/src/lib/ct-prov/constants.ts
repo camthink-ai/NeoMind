@@ -62,3 +62,10 @@ export const SOFTAP_DEFAULT_HOST: Readonly<Record<string, string>> = {
 }
 
 export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
+
+/**
+ * config.set often waits on device Wi‑Fi associate before answering.
+ * EK410/BLE logs showed STORAGE_FAILED replies arriving ~20s after the write —
+ * longer than the default 15s request timeout (UI falsely said "timed out").
+ */
+export const CONFIG_SET_TIMEOUT_MS = 45_000

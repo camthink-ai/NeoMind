@@ -157,6 +157,9 @@ function provErrorCopy(
       ? t('devices:ctProv.errorWifiInitScan')
       : t('devices:ctProv.errorWifiInit')
   }
+  if (code === 'wifi_associate_failed') return t('devices:ctProv.errorWifiAssociate')
+  if (code === 'storage_failed') return t('devices:ctProv.errorStorageFailed')
+  if (code === 'request_timeout') return t('devices:ctProv.errorTimeout')
   if (code === 'device_busy') return t('devices:ctProv.errorBusy')
   if (code === 'not_connected') return t('devices:ctProv.errorNotConnected')
   if (code === 'internal_error') return t('devices:ctProv.errorInternal')
