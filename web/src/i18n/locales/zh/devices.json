@@ -1018,6 +1018,9 @@
     "webhookHeaderHint": "格式：Name: Value（必须含冒号）。",
     "webhookHeaderInvalid": "请求头须为 Name: Value 格式。",
     "errorWifiInit": "设备 Wi‑Fi 初始化失败。请跳过扫描、手动填写 SSID 后重试；若仍失败，重启设备后再配网。",
+    "errorWifiInitScan": "无法扫描附近网络——设备没能启动 Wi‑Fi 射频。请在下方手动填写 SSID 与密码后点「应用」。若应用也报同样错误，请重启设备后再配网。",
+    "wifiScanFailedTitle": "未能扫描附近网络",
+    "wifiManualFallbackHint": "仍可手动填写并完成配网。",
     "errorBusy": "设备正忙，请稍候再试。",
     "errorNotConnected": "与设备的配网会话已断开，请重新连接。",
     "errorInternal": "设备返回内部错误。请重试；若反复出现，检查固件或重启设备。"

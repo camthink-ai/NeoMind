@@ -1018,6 +1018,9 @@
     "webhookHeaderHint": "Format: Name: Value (colon required).",
     "webhookHeaderInvalid": "Header must look like Name: Value.",
     "errorWifiInit": "The device failed to initialize Wi‑Fi. Skip scanning, enter the SSID manually, and retry. If it keeps failing, reboot the device and try again.",
+    "errorWifiInitScan": "Scan unavailable — the device could not start its Wi‑Fi radio. Enter the SSID and password below, then Apply. If Apply fails with the same error, reboot the device and try again.",
+    "wifiScanFailedTitle": "Couldn't scan nearby networks",
+    "wifiManualFallbackHint": "Manual entry still works for provisioning.",
     "errorBusy": "The device is busy. Wait a moment and try again.",
     "errorNotConnected": "The provisioning session disconnected. Reconnect to the device.",
     "errorInternal": "The device reported an internal error. Retry; if it persists, check firmware or reboot the device."

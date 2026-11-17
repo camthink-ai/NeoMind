@@ -148,9 +148,15 @@ function StepDots({ current }: { current: CtWizardStep }) {
 function provErrorCopy(
   t: (key: string, opts?: Record<string, string>) => string,
   err: unknown,
+  opts?: { forScan?: boolean },
 ): string {
   const code = formatProvUserMessage(err)
-  if (code === 'wifi_init_failed') return t('devices:ctProv.errorWifiInit')
+  if (code === 'wifi_init_failed') {
+    // Scan path: emphasize manual SSID still works. Apply path keeps the fuller reboot hint.
+    return opts?.forScan
+      ? t('devices:ctProv.errorWifiInitScan')
+      : t('devices:ctProv.errorWifiInit')
+  }
   if (code === 'device_busy') return t('devices:ctProv.errorBusy')
   if (code === 'not_connected') return t('devices:ctProv.errorNotConnected')
   if (code === 'internal_error') return t('devices:ctProv.errorInternal')
@@ -351,7 +357,9 @@ export function CtProvisionWizard({
     } catch (err) {
       setWifiNetworks([])
       setWifiSelect(WIFI_MANUAL)
-      setWifiScanError(provErrorCopy(t, err))
+      // Device-side wifi_init (common on some BLE firmwares) — not a NeoMind wire bug.
+      // Keep the session usable: fall through to manual SSID fields.
+      setWifiScanError(provErrorCopy(t, err, { forScan: true }))
     } finally {
       setWifiScanning(false)
     }
@@ -905,9 +913,26 @@ export function CtProvisionWizard({
                 )}
 
                 {wifiScannable && !wifiScanning && wifiScanAttempted && wifiNetworks.length === 0 && (
-                  <p className="rounded-lg border border-border bg-muted-30 px-3 py-2 text-xs text-muted-foreground">
-                    {wifiScanError || t('devices:ctProv.wifiScanEmpty')}
-                  </p>
+                  <div
+                    className="space-y-1 rounded-lg border border-border bg-muted-30 px-3 py-2.5"
+                    role="status"
+                  >
+                    <p className="text-sm font-medium text-foreground">
+                      {wifiScanError
+                        ? t('devices:ctProv.wifiScanFailedTitle')
+                        : t('devices:ctProv.wifiScanEmpty')}
+                    </p>
+                    {wifiScanError ? (
+                      <>
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                          {wifiScanError}
+                        </p>
+                        <p className="text-xs font-medium text-foreground">
+                          {t('devices:ctProv.wifiManualFallbackHint')}
+                        </p>
+                      </>
+                    ) : null}
+                  </div>
                 )}
 
                 {(!wifiScannable ||
@@ -924,6 +949,7 @@ export function CtProvisionWizard({
                       }}
                       placeholder={t('devices:ble.ssidPlaceholder')}
                       autoComplete="off"
+                      autoFocus={!!wifiScanError}
                     />
                   </Field>
                 )}
@@ -1415,10 +1441,10 @@ export function CtProvisionWizard({
                 {t('devices:ble.apply')}
               </Button>
             </div>
-            {(wifiScanError || mqttFormError || cellFormError || webhookFormError || ct.error) && (
+            {/* Scan wifi_init is already explained in the Wi‑Fi card — don't duplicate in footer. */}
+            {(mqttFormError || cellFormError || webhookFormError || ct.error) && (
               <p className="text-center text-sm text-error">
-                {wifiScanError ||
-                  mqttFormError ||
+                {mqttFormError ||
                   cellFormError ||
                   webhookFormError ||
                   (ct.error ? provErrorCopy(t, ct.error) : null)}
