@@ -468,7 +468,7 @@ impl MqttAdapter {
                 // Discovery-rule identity (adapter config / auto-detect). Used for
                 // unknown identities and as fallback when no approved per-device rule.
                 let identity = resolve_mqtt_device_identity(&topic, &payload, config);
-                info!(
+                debug!(
                     "Resolved MQTT identity topic='{}' id='{}' source={} field={:?}",
                     topic,
                     identity.device_id,
