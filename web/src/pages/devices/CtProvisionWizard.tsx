@@ -553,11 +553,11 @@ export function CtProvisionWizard({
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pb-3">
         {step === 'info' && (
           <div className="space-y-4">
-            <div className="text-center">
+            <div className="space-y-1 text-center">
               <h3 className="text-base font-medium">{t('devices:ctProv.stepInfoTitle')}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">{t('devices:ctProv.stepInfoDesc')}</p>
+              <p className="text-sm text-muted-foreground">{t('devices:ctProv.stepInfoDesc')}</p>
             </div>
-            <div className="space-y-3 rounded-xl border border-border bg-card p-4 text-sm">
+            <div className="space-y-3 rounded-xl border border-border p-4 text-sm">
               <InfoRow label={t('devices:ble.deviceName')} value={ct.deviceInfo?.deviceName || '—'} />
               <InfoRow
                 label={t('devices:ctProv.serialNumber')}
@@ -571,11 +571,11 @@ export function CtProvisionWizard({
 
         {step === 'capabilities' && (
           <div className="space-y-4">
-            <div className="text-center">
+            <div className="space-y-1 text-center">
               <h3 className="text-base font-medium">{t('devices:ctProv.stepCapsTitle')}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">{t('devices:ctProv.stepCapsDesc')}</p>
+              <p className="text-sm text-muted-foreground">{t('devices:ctProv.stepCapsDesc')}</p>
             </div>
-            <div className="space-y-2 rounded-xl border border-border bg-card p-4">
+            <div className="space-y-2 rounded-xl border border-border p-4">
               <p className="text-sm">
                 {needsWifi
                   ? wifiSection === 'halow'
@@ -619,9 +619,9 @@ export function CtProvisionWizard({
 
         {step === 'edit' && (
           <div className="space-y-4">
-            <div className="text-center">
+            <div className="space-y-1 text-center">
               <h3 className="text-base font-medium">{t('devices:ctProv.stepEditTitle')}</h3>
-              <p className="mt-1 text-sm text-muted-foreground">{t('devices:ctProv.stepEditDesc')}</p>
+              <p className="text-sm text-muted-foreground">{t('devices:ctProv.stepEditDesc')}</p>
             </div>
 
             <Field>
@@ -636,7 +636,7 @@ export function CtProvisionWizard({
             </Field>
 
             {needsWifi && (
-              <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+              <div className="space-y-3 rounded-xl border border-border p-4">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Wifi className="h-4 w-4 text-primary" />
@@ -741,7 +741,7 @@ export function CtProvisionWizard({
             )}
 
             {!needsWifi && (
-              <div className="space-y-2 rounded-xl border border-border bg-card p-4">
+              <div className="space-y-2 rounded-xl border border-border p-4">
                 <div className="flex items-center gap-2">
                   <Signal className="h-4 w-4 text-primary" />
                   <span className="text-sm font-medium">{t('devices:ble.cat1NoWifi')}</span>
@@ -751,7 +751,7 @@ export function CtProvisionWizard({
             )}
 
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <div className="rounded-xl border border-border bg-card">
+              <div className="rounded-xl border border-border">
                 <CollapsibleTrigger className="flex w-full items-center justify-between p-4 text-left">
                   <div className="flex items-center gap-2">
                     <Server className="h-4 w-4 text-primary" />

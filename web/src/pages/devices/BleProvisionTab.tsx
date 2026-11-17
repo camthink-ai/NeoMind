@@ -139,7 +139,7 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
         <CtProvisionHero>
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </CtProvisionHero>
-        <div className="space-y-2 text-center">
+        <div className="space-y-1.5 text-center">
           <h3 className="text-lg font-medium">{t('devices:ble.scanning')}</h3>
           <p className="text-sm text-muted-foreground">{t('devices:ble.scanningHint')}</p>
         </div>
@@ -217,13 +217,13 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
       <CtProvisionHero size="md">
         <Bluetooth className="h-7 w-7 text-primary" />
       </CtProvisionHero>
-      <div className="max-w-sm space-y-2 text-center">
+      <div className="max-w-sm space-y-1.5 text-center">
         <h3 className="text-lg font-medium">{t('devices:ble.scanTitle')}</h3>
         <p className="text-sm text-muted-foreground">{t('devices:ble.scanDescShort')}</p>
       </div>
 
       {!bleSupported ? (
-        <div className="max-w-sm space-y-3 text-center">
+        <div className="max-w-sm space-y-2 text-center">
           <p className="text-sm text-warning">{t('devices:ble.notSupported')}</p>
           <p className="text-xs text-muted-foreground">{t('devices:ble.notSupportedHint')}</p>
         </div>
@@ -233,10 +233,6 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
           {t('devices:ble.scanBtn')}
         </Button>
       )}
-
-      <p className="max-w-sm text-center text-xs text-muted-foreground">
-        {t('devices:ble.scanHint')}
-      </p>
 
       {ct.error && (
         <p className="max-w-sm text-center text-sm text-error">{bleErrorCopy(t, ct.error)}</p>

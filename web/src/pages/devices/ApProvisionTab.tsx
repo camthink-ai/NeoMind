@@ -50,6 +50,7 @@ export function ApProvisionTab({ onComplete, dismissSignal = 0 }: ApProvisionTab
   const [phase, setPhase] = useState<Phase>('join')
   const [modelPick, setModelPick] = useState<string>('NE101')
   const [joinedAck, setJoinedAck] = useState(false)
+  const [howOpen, setHowOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [failKind, setFailKind] = useState<'not_on_softap' | 'http' | 'protocol' | 'other'>(
     'not_on_softap',
@@ -194,7 +195,6 @@ export function ApProvisionTab({ onComplete, dismissSignal = 0 }: ApProvisionTab
               : t('devices:ap.connectingTitle')}
           </h3>
           <p className="font-mono text-sm text-muted-foreground">{selectedHost}</p>
-          <p className="max-w-sm text-xs text-muted-foreground">{t('devices:ap.probingHint')}</p>
         </div>
         <Button variant="outline" onClick={reset}>
           {t('common:cancel')}
@@ -206,6 +206,8 @@ export function ApProvisionTab({ onComplete, dismissSignal = 0 }: ApProvisionTab
   // —— First viewport: unmistakable hand-join ——
   // Mirror BLE scan-list shell: Main is overflow-hidden for sticky wizard
   // actions, so this pane must own overflow-y-auto (min-h-0 flex chain).
+  // Flat hierarchy (no stacked cards/shadows on ack) — progressive disclosure
+  // for steps + advanced overrides.
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-1 flex-col self-center py-6">
       <div className="mb-5 shrink-0 space-y-2 text-center">
@@ -216,85 +218,94 @@ export function ApProvisionTab({ onComplete, dismissSignal = 0 }: ApProvisionTab
         <p className="text-sm text-muted-foreground">{t('devices:ap.joinDescStrong')}</p>
       </div>
 
-      <div className="min-h-0 w-full flex-1 space-y-4 overflow-y-auto pb-2">
-        <div className="space-y-3 rounded-xl border border-border bg-card p-4">
-          <Field>
-            <FieldLabel>{t('devices:ap.model')}</FieldLabel>
-            <Select value={modelPick} onValueChange={handleModelChange}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {apModels.map((m) => (
-                  <SelectItem key={m.model} value={m.model}>
-                    {m.model} · {m.host}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
+      <div className="min-h-0 w-full flex-1 space-y-5 overflow-y-auto pb-2">
+        <Field>
+          <FieldLabel>{t('devices:ap.model')}</FieldLabel>
+          <Select value={modelPick} onValueChange={handleModelChange}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {apModels.map((m) => (
+                <SelectItem key={m.model} value={m.model}>
+                  {m.model} · {m.host}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
 
-          <ol className="list-inside list-decimal space-y-2.5 text-sm text-foreground">
-            <li>{t('devices:ap.handStep1')}</li>
-            <li>
-              {t('devices:ap.handStep2', {
-                ssid: ssidExampleForFamily(modelPick),
-              })}
-            </li>
-            <li>{t('devices:ap.handStep3')}</li>
-          </ol>
+        <p className="text-xs text-muted-foreground">
+          <span className="font-mono font-medium text-foreground">
+            {ssidExampleForFamily(modelPick)}
+          </span>
+          <span> · </span>
+          <span className="font-mono">{selectedHost}</span>
+        </p>
 
-          <div className="space-y-1 rounded-lg bg-muted-30 px-3 py-2.5 text-xs">
-            <p>
-              <span className="text-muted-foreground">{t('devices:ap.ssidPatternLabel')}: </span>
-              <span className="font-mono font-medium">{ssidExampleForFamily(modelPick)}</span>
-              <span className="text-muted-foreground"> · {t('devices:ap.ssidPatternHint')}</span>
+        <Collapsible open={howOpen} onOpenChange={setHowOpen}>
+          <CollapsibleTrigger className="flex w-full items-center justify-between py-1 text-left">
+            <span className="text-sm font-medium">{t('devices:ap.prepTitle')}</span>
+            <ChevronDown
+              className={cn(
+                'h-4 w-4 text-muted-foreground transition-transform',
+                howOpen && 'rotate-180',
+              )}
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <ol className="mt-2 list-inside list-decimal space-y-2 text-sm text-muted-foreground">
+              <li>{t('devices:ap.handStep1')}</li>
+              <li>
+                {t('devices:ap.handStep2', {
+                  ssid: ssidExampleForFamily(modelPick),
+                })}
+              </li>
+              <li>{t('devices:ap.handStep3')}</li>
+            </ol>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {t('devices:ap.ssidPatternHint')}
             </p>
-            <p>
-              <span className="text-muted-foreground">{t('devices:ap.host')}: </span>
-              <span className="font-mono font-medium">{selectedHost}</span>
-            </p>
-            <p className="text-muted-foreground">{t('devices:ap.noProgrammaticJoin')}</p>
-          </div>
-        </div>
+          </CollapsibleContent>
+        </Collapsible>
 
         <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-          <div className="rounded-xl border border-border bg-card">
-            <CollapsibleTrigger className="flex w-full items-center justify-between p-3.5 text-left">
-              <span className="text-sm font-medium">{t('devices:ap.advancedOptions')}</span>
-              <ChevronDown
-                className={cn(
-                  'h-4 w-4 text-muted-foreground transition-transform',
-                  advancedOpen && 'rotate-180',
-                )}
-              />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="space-y-3 border-t border-border px-3.5 pb-3.5 pt-3">
-                <Field>
-                  <FieldLabel>{t('devices:ap.ssidOptional')}</FieldLabel>
-                  <Input
-                    value={ct.apSsidInput}
-                    onChange={(e) => ct.setApSsidInput(e.target.value)}
-                    placeholder={t('devices:ap.ssidPlaceholder')}
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel>{t('devices:ap.host')}</FieldLabel>
-                  <Input
-                    value={ct.apHost}
-                    onChange={(e) => ct.setApHost(e.target.value)}
-                    placeholder={softapHostForModel(modelPick, deviceTypes)}
-                  />
-                </Field>
-              </div>
-            </CollapsibleContent>
-          </div>
+          <CollapsibleTrigger className="flex w-full items-center justify-between py-1 text-left">
+            <span className="text-sm font-medium">{t('devices:ap.advancedOptions')}</span>
+            <ChevronDown
+              className={cn(
+                'h-4 w-4 text-muted-foreground transition-transform',
+                advancedOpen && 'rotate-180',
+              )}
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="mt-2 space-y-3">
+              <Field>
+                <FieldLabel>{t('devices:ap.ssidOptional')}</FieldLabel>
+                <Input
+                  value={ct.apSsidInput}
+                  onChange={(e) => ct.setApSsidInput(e.target.value)}
+                  placeholder={t('devices:ap.ssidPlaceholder')}
+                />
+              </Field>
+              <Field>
+                <FieldLabel>{t('devices:ap.host')}</FieldLabel>
+                <Input
+                  value={ct.apHost}
+                  onChange={(e) => ct.setApHost(e.target.value)}
+                  placeholder={softapHostForModel(modelPick, deviceTypes)}
+                />
+              </Field>
+              <p className="text-xs text-muted-foreground">{t('devices:ap.noProgrammaticJoin')}</p>
+            </div>
+          </CollapsibleContent>
         </Collapsible>
       </div>
 
       <div className="mt-auto shrink-0 space-y-3 border-t border-border bg-background pt-3">
-        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border bg-card p-3.5">
+        {/* Flat ack — no card/shadow; sticky footer border is the only divider. */}
+        <label className="flex cursor-pointer items-start gap-3 py-0.5">
           <Checkbox
             checked={joinedAck}
             onCheckedChange={(v) => setJoinedAck(v === true)}
