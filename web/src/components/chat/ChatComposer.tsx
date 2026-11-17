@@ -1413,11 +1413,11 @@ export function ChatComposer({
               type="button"
               onClick={onCancel}
               variant="outline"
-              className="h-10 w-10 rounded-full flex-shrink-0 p-0 border-destructive text-destructive hover:bg-destructive-light"
+              className="h-8 w-8 rounded-full flex-shrink-0 p-0 border-border text-muted-foreground hover:bg-muted-30 hover:text-foreground"
               title={t("chat:input.cancel")}
               aria-label={t("chat:input.cancel")}
             >
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
             </Button>
           ) : (
             <Button
@@ -1425,13 +1425,13 @@ export function ChatComposer({
               onClick={onSend}
               disabled={!canSend}
               className={cn(
-                "h-10 w-10 rounded-full flex-shrink-0 p-0 transition-all",
+                "h-8 w-8 rounded-full flex-shrink-0 p-0 transition-all",
                 !canSend
                   ? "bg-muted text-muted-foreground"
                   : "bg-primary hover:bg-primary-hover text-primary-foreground"
               )}
             >
-              <ArrowUp className="h-4 w-4" />
+              <ArrowUp className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
