@@ -3301,10 +3301,7 @@ mod unify_subscribe_protocol {
             let a = adapter.clone();
             let deny = i % 2 == 0;
             victims.push(tokio::spawn(async move {
-                let topic = format!(
-                    "review/{}/{i}",
-                    if deny { "deny" } else { "allow" }
-                );
+                let topic = format!("review/{}/{i}", if deny { "deny" } else { "allow" });
                 let r = a.subscribe_topic(&topic).await;
                 (topic, deny, r)
             }));
@@ -3355,9 +3352,7 @@ mod unify_subscribe_protocol {
         let settle_task = tokio::spawn(async move {
             for _ in 0..200 {
                 for t in &topics_ok {
-                    settler
-                        .settle_test_pending_suback("mixed", t, Ok(()))
-                        .await;
+                    settler.settle_test_pending_suback("mixed", t, Ok(())).await;
                 }
                 for t in &topics_bad {
                     settler

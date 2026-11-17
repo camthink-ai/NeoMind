@@ -369,10 +369,7 @@ impl MqttAdapter {
             // Owner timed out before enqueue: the send future is gone — fail
             // every waiter and drop without Absorb (no protocol event).
             if owner_cancelled && !slot.enqueued {
-                cancelled
-                    .into_iter()
-                    .chain(remaining)
-                    .collect::<Vec<_>>()
+                cancelled.into_iter().chain(remaining).collect::<Vec<_>>()
             } else if remaining.is_empty() {
                 if slot.enqueued {
                     let absorb = PendingQueueEntry::Absorb {

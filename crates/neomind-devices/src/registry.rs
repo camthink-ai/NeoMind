@@ -1473,12 +1473,10 @@ mod tests {
             Some("sensors/retry-device"),
             "retry must update connection_config"
         );
-        assert!(
-            registry
-                .list_devices_by_type("new")
-                .iter()
-                .any(|d| d.device_id == "retry-device")
-        );
+        assert!(registry
+            .list_devices_by_type("new")
+            .iter()
+            .any(|d| d.device_id == "retry-device"));
         assert!(
             !registry
                 .list_devices_by_type("old")
