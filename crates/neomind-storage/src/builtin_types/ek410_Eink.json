@@ -52,6 +52,77 @@
       "max": 0
     },
     {
+      "name": "frame_present",
+      "display_name": "Preview Frame Present",
+      "data_type": "Boolean",
+      "required": false
+    },
+    {
+      "name": "frame_seq",
+      "display_name": "Preview Frame Seq",
+      "data_type": "Integer",
+      "required": false,
+      "min": 0
+    },
+    {
+      "name": "frame_crc32",
+      "display_name": "Preview Frame CRC32",
+      "data_type": "Integer",
+      "required": false,
+      "min": 0
+    },
+    {
+      "name": "frame_saved_us",
+      "display_name": "Preview Frame Saved At",
+      "data_type": "Integer",
+      "required": false,
+      "unit": "us",
+      "min": 0
+    },
+    {
+      "name": "frame_source",
+      "display_name": "Preview Frame Source",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "frame_bytes",
+      "display_name": "Preview Frame Bytes",
+      "data_type": "Integer",
+      "required": false,
+      "unit": "B",
+      "min": 0
+    },
+    {
+      "name": "frame_preview_b64",
+      "display_name": "Panel Preview (Base64 BMP)",
+      "data_type": "String",
+      "required": false,
+      "help_text": "400×300 8-bit paletted BMP; full telemetry JSON (meta+base64) ≤200KB. Decode as image/bmp. Full 960000B frame is too large for MQTT."
+    },
+    {
+      "name": "frame_preview_mime",
+      "display_name": "Panel Preview MIME",
+      "data_type": "String",
+      "required": false
+    },
+    {
+      "name": "frame_preview_w",
+      "display_name": "Panel Preview Width",
+      "data_type": "Integer",
+      "required": false,
+      "unit": "px",
+      "min": 0
+    },
+    {
+      "name": "frame_preview_h",
+      "display_name": "Panel Preview Height",
+      "data_type": "Integer",
+      "required": false,
+      "unit": "px",
+      "min": 0
+    },
+    {
       "name": "heap_free",
       "display_name": "Free Heap",
       "data_type": "Integer",
@@ -249,7 +320,7 @@
     {
       "name": "render_text",
       "display_name": "Render Text",
-      "description": "Centered multi-line UTF-8 text (newline-separated, max 10 lines). ASCII 8×16 + GB2312 16×16 CJK (emoji/rare chars degrade). scale 1–8, default 3.",
+      "description": "Centered multi-line UTF-8 text (newline-separated, max 10 lines). ASCII 8×16 + GB2312 16×16 CJK (emoji/rare chars degrade). scale 1–13, default 3.",
       "payload_template": "{\"cmd\": \"render_text\", \"params\": {\"text\": ${text}, \"color\": ${color}, \"bg\": ${bg}, \"scale\": ${scale}}}",
       "parameters": [
         {
@@ -302,7 +373,7 @@
           "required": false,
           "default_value": 3,
           "min": 1,
-          "max": 8
+          "max": 13
         }
       ],
       "samples": [
