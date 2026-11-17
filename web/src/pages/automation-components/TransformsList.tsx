@@ -213,22 +213,22 @@ export function TransformsList({
         {
           key: 'name',
           label: t('automation:name'),
-          width: '28%',
+          width: '20%',
         },
         {
           key: 'scope',
           label: t('automation:scope'),
-          width: '18%',
+          width: '30%',
         },
         {
           key: 'createdAt',
           label: t('common:createdAt', 'Created'),
-          width: '18%',
+          width: '16%',
         },
         {
           key: 'lastExecuted',
           label: t('automation:lastExecuted', 'Last Executed'),
-          width: '18%',
+          width: '16%',
         },
         {
           key: 'status',
@@ -269,9 +269,9 @@ export function TransformsList({
 
           case 'scope':
             return (
-              <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
-                <ScopeIcon className="h-3 w-3" />
-                {getScopeLabel(transform.scope)}
+              <Badge variant="outline" className="max-w-full gap-1 text-xs text-muted-foreground">
+                <ScopeIcon className="h-3 w-3 shrink-0" />
+                <span className="truncate">{getScopeLabel(transform.scope)}</span>
               </Badge>
             )
 

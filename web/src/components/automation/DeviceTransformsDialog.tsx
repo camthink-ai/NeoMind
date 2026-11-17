@@ -1,19 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Card } from '@/components/ui/card'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import { Button, IconButton } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { Database, Play, Edit, Trash2, Sparkles } from 'lucide-react'
+import { Play, Edit, Trash2 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { confirm } from '@/hooks/use-confirm'
 import { TransformBuilder as TransformBuilderSplit } from './TransformBuilderSplit'
@@ -200,242 +190,88 @@ export function DeviceTransformsDialog({
     setBuilderOpen(true)
   }
 
-  const getScopeBadgeVariant = (scope: TransformAutomation['scope']) => {
-    if (scope === 'global') return 'default'
-    if (typeof scope === 'object') {
-      if ('device_type' in scope) return 'secondary'
-      if ('device' in scope) return 'outline'
-      if ('user' in scope) return 'destructive' as const
-    }
-    return 'default'
-  }
-
-  const getScopeLabel = (scope: TransformAutomation['scope']) => {
-    if (scope === 'global') return t('automation:scopeGlobal', { defaultValue: 'Global' })
-    if (typeof scope === 'object') {
-      if ('device_type' in scope) return t('automation:scopeDeviceType', { device_type: scope.device_type })
-      if ('device' in scope) return t('automation:scopeDevice', { device_id: scope.device })
-    }
-    return String(scope)
-  }
-
   const dialogTitle = deviceId
     ? t('automation:deviceTransforms', { defaultValue: 'Transforms for Device' })
     : deviceTypeId
       ? t('automation:deviceTypeTransforms', { defaultValue: 'Transforms for Device Type' })
       : t('automation:allTransforms', { defaultValue: 'All Transforms' })
 
-  const dialogDescription = deviceName
-    ? t('automation:transformsForDesc', { defaultValue: 'Data transforms for {{name}}', name: deviceName })
-    : t('automation:manageTransformsDesc', { defaultValue: 'Manage data transforms for this device.' })
-
   return (
     <>
       <UnifiedFormDialog
         open={open}
         onOpenChange={onOpenChange}
-        title={dialogTitle}
-        description={dialogDescription}
-        icon={<Database className="h-5 w-5 text-primary" />}
-        width="3xl"
+        title={deviceName ? `${dialogTitle} · ${deviceName}` : dialogTitle}
+        width="lg"
         loading={loading && transforms.length === 0}
         preventCloseOnSubmit={false}
         footer={
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t('common:close')}
-          </Button>
-        }
-      >
-        <div className="space-y-4">
-          {/* Create Button */}
-          <div className="flex justify-between items-center">
-            <div className="text-sm text-muted-foreground">
-              {transforms.length} {t('automation:transforms', { defaultValue: 'transforms' })}
-            </div>
-            <Button onClick={handleCreateNew} size="sm" className="bg-accent-purple hover:opacity-90">
-              <Sparkles className="mr-2 h-4 w-4" />
+          <>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              {t('common:close')}
+            </Button>
+            <Button onClick={handleCreateNew}>
               {t('automation:createTransform', { defaultValue: 'Create Transform' })}
             </Button>
-          </div>
-
-          {/* Mobile: Cards */}
-          <div className="md:hidden space-y-3">
-            {transforms.length === 0 ? (
-              <Card className="p-8 text-center">
-                <Database className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-muted-foreground mb-4">
-                  {t('automation:noTransformsForDevice', { defaultValue: 'No transforms configured yet.' })}
-                </p>
-                <Button onClick={handleCreateNew} variant="outline">
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  {t('automation:createFirstTransform', { defaultValue: 'Create First Transform' })}
-                </Button>
-              </Card>
-            ) : (
-              transforms.map((transform) => (
-                <Card key={transform.id} className="p-4 space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{transform.name}</div>
-                      <div className="text-sm text-muted-foreground line-clamp-2">{transform.description}</div>
-                    </div>
-                    <Switch
-                      checked={transform.enabled}
-                      onCheckedChange={() => handleToggleTransform(transform)}
-                    />
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <Badge variant={getScopeBadgeVariant(transform.scope)}>
-                      {getScopeLabel(transform.scope)}
-                    </Badge>
-                    {transform.js_code ? (
-                      <Badge variant="outline" className="text-xs bg-accent-purple-light text-accent-purple">
-                        {t('automation:jsCode', { defaultValue: 'JavaScript' })}
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-xs text-muted-foreground">
-                        {t('automation:noCode', { defaultValue: 'No code' })}
-                      </Badge>
+          </>
+        }
+      >
+        {transforms.length === 0 ? (
+          <p className="py-8 text-center text-sm text-muted-foreground">
+            {t('automation:noTransformsForDevice', { defaultValue: 'No transforms configured yet.' })}
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {transforms.map((transform) => {
+              const subtitle = transform.description?.trim()
+              const showSubtitle = !!subtitle && subtitle !== '-'
+              return (
+                <div key={transform.id} className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{transform.name}</div>
+                    {showSubtitle && (
+                      <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
                     )}
                   </div>
-
-                  <div className="flex justify-end gap-2 pt-2 border-t">
-                    <Button
-                      variant="ghost"
-                      size="sm"
+                  <Switch
+                    checked={transform.enabled}
+                    onCheckedChange={() => handleToggleTransform(transform)}
+                    aria-label={t('common:status', { defaultValue: 'Status' })}
+                  />
+                  <div className="flex shrink-0 items-center">
+                    <IconButton
+                      aria-label={t('automation:testTransform', { defaultValue: 'Test' })}
+                      title={t('automation:testTransform', { defaultValue: 'Test' })}
                       onClick={() => {
                         setTestingTransformId(transform.id)
                         setTestDialogOpen(true)
                       }}
                     >
-                      <Play className="h-4 w-4 mr-1" />
-                      {t('automation:testTransform', { defaultValue: 'Test' })}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
+                      <Play className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton
+                      aria-label={t('common:edit', { defaultValue: 'Edit' })}
+                      title={t('common:edit', { defaultValue: 'Edit' })}
                       onClick={() => {
                         setEditingTransform(transform)
                         setBuilderOpen(true)
                       }}
                     >
-                      <Edit className="h-4 w-4 mr-1" />
-                      {t('common:edit', { defaultValue: 'Edit' })}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
+                      <Edit className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton
+                      aria-label={t('common:delete', { defaultValue: 'Delete' })}
+                      title={t('common:delete', { defaultValue: 'Delete' })}
                       onClick={() => handleDeleteTransform(transform.id)}
                     >
-                      <Trash2 className="h-4 w-4 mr-1" />
-                      {t('common:delete', { defaultValue: 'Delete' })}
-                    </Button>
+                      <Trash2 className="h-4 w-4" />
+                    </IconButton>
                   </div>
-                </Card>
-              ))
-            )}
+                </div>
+              )
+            })}
           </div>
-
-          {/* Desktop: Table */}
-          <div className="hidden md:block">
-            {transforms.length === 0 ? (
-              <Card className="p-8 text-center">
-                <Database className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-muted-foreground mb-4">
-                  {t('automation:noTransformsForDevice', { defaultValue: 'No transforms configured for this device yet.' })}
-                </p>
-                <Button onClick={handleCreateNew} variant="outline">
-                  <Sparkles className="mr-2 h-4 w-4" />
-                  {t('automation:createFirstTransform', { defaultValue: 'Create First Transform' })}
-                </Button>
-              </Card>
-            ) : (
-              <Card>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('automation:name', { defaultValue: 'Name' })}</TableHead>
-                      <TableHead>{t('automation:scope', { defaultValue: 'Scope' })}</TableHead>
-                      <TableHead>{t('automation:operations', { defaultValue: 'Operations' })}</TableHead>
-                      <TableHead>{t('common:status', { defaultValue: 'Status' })}</TableHead>
-                      <TableHead className="text-right">{t('common:actions', { defaultValue: 'Actions' })}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {transforms.map((transform) => (
-                      <TableRow key={transform.id}>
-                        <TableCell>
-                          <div className="font-medium">{transform.name}</div>
-                          <div className="text-sm text-muted-foreground">{transform.description}</div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={getScopeBadgeVariant(transform.scope)}>
-                            {getScopeLabel(transform.scope)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {transform.js_code ? (
-                            <Badge variant="outline" className="text-xs bg-accent-purple-light text-accent-purple">
-                              {t('automation:jsCode', { defaultValue: 'JavaScript' })}
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-xs text-muted-foreground">
-                              {t('automation:noCode', { defaultValue: 'No code' })}
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Switch
-                            checked={transform.enabled}
-                            onCheckedChange={() => handleToggleTransform(transform)}
-                          />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 sm:h-8 sm:w-8"
-                              onClick={() => {
-                                setTestingTransformId(transform.id)
-                                setTestDialogOpen(true)
-                              }}
-                              title={t('automation:testTransform', { defaultValue: 'Test' })}
-                            >
-                              <Play className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 sm:h-8 sm:w-8"
-                              onClick={() => {
-                                setEditingTransform(transform)
-                                setBuilderOpen(true)
-                              }}
-                              title={t('common:edit', { defaultValue: 'Edit' })}
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 sm:h-8 sm:w-8"
-                              onClick={() => handleDeleteTransform(transform.id)}
-                              title={t('common:delete', { defaultValue: 'Delete' })}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Card>
-            )}
-          </div>
-        </div>
+        )}
       </UnifiedFormDialog>
 
       {/* Transform Builder Dialog */}

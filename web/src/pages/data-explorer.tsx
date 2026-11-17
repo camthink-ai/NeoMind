@@ -102,6 +102,7 @@ export function DataExplorerPage() {
 
   // Filters
   const [search, setSearch] = useState('')
+  const [pushSearch, setPushSearch] = useState('')
   const [selectedSourceName, setSelectedSourceName] = useState<string>('__all__')
   const [page, setPage] = useState(1)
   const pageSize = 10
@@ -541,6 +542,14 @@ export function DataExplorerPage() {
                     autoFocus={!isMobile}
                   />
                 </div>
+              ) : activeTab === 'push' ? (
+                <SearchInput
+                  value={pushSearch}
+                  onChange={setPushSearch}
+                  placeholder={t('common:dataPush.searchTargets', 'Search push targets...')}
+                  aria-label={t('common:dataPush.searchTargets', 'Search push targets...')}
+                  className="min-w-0 flex-1 md:w-[240px] md:flex-none"
+                />
               ) : undefined
             }
           />
@@ -561,7 +570,7 @@ export function DataExplorerPage() {
           {dataTable}
         </PageTabsContent>
         <PageTabsContent value="push" activeTab={activeTab}>
-          <PushTargetsTab />
+          <PushTargetsTab searchQuery={pushSearch} />
         </PageTabsContent>
       </PageLayout>
 

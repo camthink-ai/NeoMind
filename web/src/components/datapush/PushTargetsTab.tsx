@@ -8,7 +8,7 @@ import { useStore } from '@/store'
 import { useDataVersion } from '@/hooks/useDataVersion'
 import { useTranslation } from 'react-i18next'
 import { useIsMobile } from '@/hooks/useMobile'
-import { ResponsiveTable, type TableColumn, type TableRowAction, EmptyState, Pagination, SearchInput } from '@/components/shared'
+import { ResponsiveTable, type TableColumn, type TableRowAction, EmptyState, Pagination } from '@/components/shared'
 import { Play, FlaskConical, FileText, Pencil, Trash2, Loader2, Globe, Radio } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { textMini } from '@/design-system/tokens/typography'
@@ -21,7 +21,7 @@ import { PushTargetDialog } from './PushTargetDialog'
 
 const PAGE_SIZE = 10
 
-export function PushTargetsTab() {
+export function PushTargetsTab({ searchQuery = '' }: { searchQuery?: string } = {}) {
   const { t } = useTranslation()
   const isMobile = useIsMobile()
   const {
@@ -228,10 +228,9 @@ export function PushTargetsTab() {
 
   // List search — client-side over the full target array (the table is
   // client-paginated, so the filter sits BEFORE the pagination slice).
-  // Matches name / type / endpoint / source patterns.
-  const [targetSearch, setTargetSearch] = useState('')
+  // The input lives in the page tab bar, to the left of the create button.
   const filteredTargets = (() => {
-    const q = targetSearch.trim().toLowerCase()
+    const q = searchQuery.trim().toLowerCase()
     if (!q) return pushTargets
     return pushTargets.filter((target) => {
       const endpoint = typeof target.config?.endpoint === 'string' ? target.config.endpoint : ''
@@ -240,7 +239,7 @@ export function PushTargetsTab() {
         .some((field) => field?.toLowerCase().includes(q))
     })
   })()
-  useEffect(() => { setPage(1) }, [targetSearch])
+  useEffect(() => { setPage(1) }, [searchQuery])
 
   // Mobile infinite scroll: cumulative slice (0 to current page) so previous items stay
   // visible as the user scrolls. Desktop: current-page slice only. Matches automation.tsx.
@@ -250,17 +249,6 @@ export function PushTargetsTab() {
 
   return (
     <div className="space-y-4">
-      {/* Toolbar: search leads (utility class); the tab row's actions
-          anchor the trailing edge above. */}
-      <div className="flex items-center gap-2">
-        <SearchInput
-          value={targetSearch}
-          onChange={setTargetSearch}
-          placeholder={t('common:dataPush.searchTargets', 'Search push targets...')}
-          aria-label={t('common:dataPush.searchTargets', 'Search push targets...')}
-          className="w-full sm:max-w-md"
-        />
-      </div>
       {/* Table */}
       <ResponsiveTable
         columns={columns}

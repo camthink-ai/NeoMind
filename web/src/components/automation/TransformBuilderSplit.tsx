@@ -900,8 +900,8 @@ function TransformWorkspace({
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(0,1fr)_20rem] md:[grid-template-rows:minmax(0,1fr)]">
         <div className="flex min-h-0 min-w-0 flex-col">
-          <div className="flex h-14 shrink-0 items-stretch border-b border-border px-1">
-            <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:thin]">
+          <div className="flex h-14 min-w-0 shrink-0 items-stretch overflow-hidden border-b border-border">
+            <div className="scrollbar-none flex min-w-0 flex-1 items-stretch overflow-x-auto overflow-y-hidden">
               {templates.map((tpl) => (
                 <button
                   key={tpl.key}

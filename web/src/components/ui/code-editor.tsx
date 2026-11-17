@@ -10,7 +10,9 @@
 import React from 'react'
 import CodeMirror, { ReactCodeMirrorRef } from '@uiw/react-codemirror'
 import { javascript } from '@codemirror/lang-javascript'
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { EditorView } from '@codemirror/view'
+import { tags } from '@lezer/highlight'
 import { cn } from '@/lib/utils'
 import { fontMonoStack } from '@/design-system/tokens/typography'
 
@@ -43,10 +45,12 @@ export interface CodeEditorProps {
  * See `--syntax-*` tokens in index.css for the color source-of-truth.
  */
 const editorTheme = EditorView.theme({
-  // Base editor styles
+  // Base editor styles. Background follows the app theme; the library's
+  // default light theme paints a hardcoded white and ignores dark mode.
   '&': {
     fontSize: '14px',
     color: 'var(--syntax-text)',
+    backgroundColor: 'var(--background)',
   },
   // Scroller (main content area)
   '.cm-scroller': {
@@ -160,6 +164,20 @@ const compactTheme = EditorView.theme({
   '.cm-gutters': { fontSize: '12px' },
 })
 
+// Token colors read --syntax-* so the same style works in light and dark.
+// The bundled highlighter is a light-only fallback and is turned off below.
+const editorHighlight = HighlightStyle.define([
+  { tag: tags.keyword, color: 'var(--syntax-keyword)', fontWeight: '500' },
+  { tag: tags.operator, color: 'var(--syntax-keyword)' },
+  { tag: tags.string, color: 'var(--syntax-string)' },
+  { tag: tags.number, color: 'var(--syntax-number)' },
+  { tag: [tags.bool, tags.null], color: 'var(--syntax-number)' },
+  { tag: tags.comment, color: 'var(--syntax-comment)', fontStyle: 'italic' },
+  { tag: [tags.definition(tags.variableName), tags.function(tags.variableName)], color: 'var(--syntax-def)' },
+  { tag: tags.propertyName, color: 'var(--syntax-property)' },
+  { tag: [tags.variableName, tags.punctuation, tags.bracket], color: 'var(--syntax-text)' },
+])
+
 export const CodeEditor = React.forwardRef<ReactCodeMirrorRef, CodeEditorProps>(
   ({
     value,
@@ -185,12 +203,14 @@ export const CodeEditor = React.forwardRef<ReactCodeMirrorRef, CodeEditorProps>(
           ref={ref}
           value={value}
           height={height}
+          theme="none"
           className="flex-1 min-h-0"
           minHeight={minHeight}
           maxHeight={maxHeight}
           extensions={[
             javascript({ jsx: true }),
             EditorView.lineWrapping,
+            syntaxHighlighting(editorHighlight),
             editorTheme,
             ...(compact ? [compactTheme] : []),
           ]}
@@ -211,6 +231,7 @@ export const CodeEditor = React.forwardRef<ReactCodeMirrorRef, CodeEditorProps>(
             autocompletion: false,
             rectangularSelection: false,
             crosshairCursor: false,
+            syntaxHighlighting: false,
             highlightActiveLine: true,
             highlightSelectionMatches: false,
             closeBracketsKeymap: true,
