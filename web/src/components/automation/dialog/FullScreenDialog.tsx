@@ -119,7 +119,7 @@ export interface FullScreenDialogHeaderProps {
   iconBg?: string
   /** @deprecated */
   iconColor?: string
-  /** @deprecated */
+  /** Secondary line under the title. Omitted on the compact mobile header. */
   subtitle?: string
 }
 
@@ -153,27 +153,28 @@ export function FullScreenDialogHeader({
   }
 
   return (
-    <header className="shrink-0 flex items-center justify-between gap-3 px-4 md:px-6 h-14 border-b border-border">
+    <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2.5 md:px-6">
       <div className="min-w-0 flex-1">
-        <h1 id={titleId} className="text-base md:text-lg font-semibold truncate text-foreground">
+        <h1 id={titleId} className="truncate text-base font-semibold text-foreground md:text-lg">
           {title}
         </h1>
         {subtitle && (
-          <p className="text-nano text-muted-foreground truncate">{subtitle}</p>
+          <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
         )}
       </div>
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex shrink-0 items-center gap-2">
         {actions}
         <button
+          type="button"
           onClick={onClose}
+          aria-label={t('cancel')}
           className={cn(
-            "shrink-0 flex items-center justify-center w-8 h-8 md:w-9 md:h-9",
-            "rounded-lg text-muted-foreground hover:text-foreground",
-            "bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10",
-            "transition-all"
+            "flex h-8 w-8 shrink-0 items-center justify-center md:h-9 md:w-9",
+            "rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground",
+            "transition-colors"
           )}
         >
-          <X className="w-5 h-5" />
+          <X className="h-5 w-5" />
         </button>
       </div>
     </header>

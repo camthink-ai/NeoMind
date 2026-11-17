@@ -35,7 +35,7 @@ export interface BuilderShellProps {
   config: ReactNode
   /** Main workspace content (the builder's core canvas). */
   workspace: ReactNode
-  /** Footer actions. Container is justify-between: put secondary actions first, primary last. */
+  /** Footer actions. Container is justify-end. */
   footer: ReactNode
   /** Optional label for mobile config collapse (defaults to '配置'). */
   mobileConfigLabel?: string
@@ -80,14 +80,14 @@ export function BuilderShell({
           </FullScreenDialogMain>
         ) : (
           <>
-            <FullScreenDialogSidebar className="w-[440px] md:w-[440px] overflow-y-auto p-4">
+            <FullScreenDialogSidebar className="w-80 overflow-y-auto bg-[var(--sidebar-bg)] p-6 md:w-80 md:bg-[var(--sidebar-bg)] md:dark:bg-[var(--sidebar-bg)]">
               {config}
             </FullScreenDialogSidebar>
-            <FullScreenDialogMain className="p-5">{workspace}</FullScreenDialogMain>
+            <FullScreenDialogMain className="bg-background p-6">{workspace}</FullScreenDialogMain>
           </>
         )}
       </FullScreenDialogContent>
-      <FullScreenDialogFooter className="justify-between">{footer}</FullScreenDialogFooter>
+      <FullScreenDialogFooter className="justify-end">{footer}</FullScreenDialogFooter>
     </FullScreenDialog>
   )
 }

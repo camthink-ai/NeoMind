@@ -288,7 +288,9 @@ describe('translation keys referenced from source', () => {
     // goalStatus frontend wire — ratchet to measured tip so the gate is honest.
     // 251 -> 253 (1.3.0 chat drawer): measured tip before this change already
     // soft=253; ratchet so the gate stays honest.
-    const FROZEN = 253
+    // 253 -> 252 (1.3.0 review fix 08e57c32): chat:mention.insert added to
+    // BOTH locales — one soft gap resolved, ratchet down so it cannot creep back.
+    const FROZEN = 252
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )

@@ -11,7 +11,6 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { cardPadded } from '@/design-system/tokens/size'
 import { useIsMobile } from '@/hooks/useMobile'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -30,7 +29,6 @@ import {
   FlaskConical,
   Plus,
   Puzzle,
-  FileCode,
   Zap,
 } from 'lucide-react'
 import { TransformTestResultPanel } from './TransformTestResultPanel'
@@ -396,10 +394,7 @@ function VariablesRail({
 
   if (loadingExtensions) {
     return (
-      <div className={cn(
-        "h-full min-h-0",
-        isMobile ? "w-full" : "w-72"
-      )}>
+      <div className="h-full min-h-0 w-full">
         <LoadingState variant="page" />
       </div>
     )
@@ -417,112 +412,33 @@ function VariablesRail({
   const activeTab = tabs.some(t => t.id === varTab) ? varTab : 'device'
 
   return (
-    <div className={cn(
-      "flex flex-col h-full min-h-0",
-      isMobile ? "w-full" : "w-72"
-    )}>
-      {/* Unified header: title + segmented tabs + actions */}
-      <div className={cn(
-        "border-b flex items-center gap-1.5 shrink-0",
-        isMobile ? "px-3 py-2" : "px-2.5 py-1.5"
-      )}>
-        <Database className={cn("text-info shrink-0", isMobile ? "h-4 w-4" : "h-3.5 w-3.5")} />
-        <span className={cn(
-          "font-medium min-w-0 truncate mr-auto",
-          isMobile ? "text-sm" : "text-xs"
-        )} title={tBuilder('availableVars')}>
-          {tBuilder('availableVars')}
-        </span>
-        {/* Segmented tabs */}
-        <div className="flex items-center gap-0.5 shrink-0">
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <div className="shrink-0 border-b border-border p-2">
+        <div className={cn("grid gap-1 rounded-lg bg-muted-30 p-1", tabs.length > 2 ? "grid-cols-3" : "grid-cols-2")}>
           {tabs.map((tab) => (
             <button
               key={tab.id}
               type="button"
               onClick={() => setVarTab(tab.id)}
               className={cn(
-                "flex items-center gap-1 px-1.5 h-6 text-mini font-medium rounded-md transition-colors",
+                "flex h-8 min-w-0 items-center justify-center gap-1 overflow-hidden rounded-md px-1.5 text-xs font-medium whitespace-nowrap",
                 activeTab === tab.id
-                  ? "bg-card text-foreground shadow-sm border border-border"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                  ? "bg-card text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               )}
             >
-              <span>{tab.label}</span>
+              <span className="min-w-0 truncate">{tab.label}</span>
               {tab.count > 0 && (
-                <span className={cn(
-                  "inline-flex items-center justify-center rounded-full min-w-[15px] h-[15px] text-micro leading-none px-1 font-semibold",
-                  activeTab === tab.id
-                    ? "bg-muted text-foreground"
-                    : "bg-muted text-muted-foreground"
-                )}>
-                  {tab.count}
-                </span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">{tab.count}</span>
               )}
             </button>
           ))}
         </div>
-        {/* Select sources (extension tab only) */}
-        {activeTab === 'extension' && (
-          <Popover open={extensionPopoverOpen} onOpenChange={setExtensionPopoverOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="ghost" size="sm" className="shrink-0 h-6 w-6 p-0 sm:h-6 sm:w-6" aria-label={tBuilder('selectSources')}>
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-72 max-h-80 overflow-auto p-3" align="end">
-              {extensions.length === 0 ? (
-                <div className="text-center py-4 text-sm text-muted-foreground">
-                  {tBuilder('noExtensionSources')}
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {extensions.map((ext) => (
-                    <div key={ext.extension_id} className="space-y-1.5">
-                      <div className="font-medium text-xs flex items-center gap-2">
-                        <Puzzle className="h-4 w-4 text-accent-purple" />
-                        {ext.extension_name}
-                      </div>
-                      {ext.commands.map((cmd) => (
-                        <div key={cmd.command} className="ml-4 space-y-1">
-                          {cmd.fields.map((field) => (
-                            <div key={field.field} className="flex items-center gap-2 min-w-0 py-0.5">
-                              <Checkbox
-                                id={`field-${ext.extension_id}-${cmd.command}-${field.field}`}
-                                checked={isSourceSelected(ext.extension_id, field.field)}
-                                className="h-4 w-4 shrink-0"
-                                onCheckedChange={() => toggleSource(
-                                  ext.extension_id,
-                                  ext.extension_name,
-                                  field.field,
-                                  field.display_name,
-                                  field.data_type,
-                                  field.unit
-                                )}
-                              />
-                              <label
-                                htmlFor={`field-${ext.extension_id}-${cmd.command}-${field.field}`}
-                                className="text-xs text-muted-foreground cursor-pointer flex-1 min-w-0 truncate"
-                                title={field.display_name}
-                              >
-                                {field.field}
-                                {field.unit && <span className="ml-1 text-muted-foreground">({field.unit})</span>}
-                              </label>
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </PopoverContent>
-          </Popover>
-        )}
       </div>
 
       {/* Scrollable list */}
       <div className={cn(
-        "overflow-y-auto overflow-x-hidden flex-1 min-h-0",
+        "flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto",
         isMobile ? "p-3" : "p-2"
       )}>
         {/* --- Device Metrics tab --- */}
@@ -534,8 +450,8 @@ function VariablesRail({
                   <div
                     key={idx}
                     className={cn(
-                      "flex items-center justify-between bg-background border rounded hover:bg-muted hover:border-border transition-all cursor-pointer group",
-                      isMobile ? "px-4 py-3" : "px-2 py-1.5"
+                      "flex cursor-pointer items-center justify-between rounded-md hover:bg-muted",
+                      isMobile ? "px-3 py-2.5" : "px-2 py-2"
                     )}
                     onClick={() => {
                       // Add ?. for nested paths (e.g., "metadata.height" -> "metadata?.height")
@@ -545,7 +461,7 @@ function VariablesRail({
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <code className={cn(
-                        "font-mono text-info truncate",
+                        "truncate font-mono text-foreground",
                         isMobile ? "text-sm" : "text-xs"
                       )}>
                         {metric.name}
@@ -570,12 +486,9 @@ function VariablesRail({
                 ))}
               </div>
             ) : (
-              <div className={cn(
-                "text-center text-muted-foreground py-4 px-2",
-                isMobile ? "text-sm" : "text-xs"
-              )}>
-                <Database className={cn("mx-auto mb-1.5 opacity-30", isMobile ? "h-8 w-8" : "h-6 w-6")} />
-                <div>{tBuilder('noVariablesHint')}</div>
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+                <Database className="h-5 w-5 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">{tBuilder('noVariablesHint')}</p>
               </div>
             )}
           </>
@@ -589,9 +502,9 @@ function VariablesRail({
                 {Object.entries(groupedExtensions).map(([extId, commands]) => {
                   const extName = extensionSources.find(s => s.extension_id === extId)?.extension_name || extId
                   return (
-                    <div key={extId} className="border rounded bg-accent-purple-light overflow-hidden">
+                    <div key={extId} className="overflow-hidden rounded-lg border border-border bg-muted-30">
                       <div className={cn(
-                        "border-b font-medium text-accent-purple",
+                        "border-b border-border font-medium text-foreground",
                         isMobile ? "px-4 py-2.5 text-sm" : "px-2.5 py-1.5 text-xs"
                       )}>
                         {extName}
@@ -604,14 +517,14 @@ function VariablesRail({
                               <div
                                 key={idx}
                                 className={cn(
-                                  "flex items-center justify-between bg-background border rounded hover:bg-muted hover:border-border transition-all cursor-pointer group",
-                                  isMobile ? "px-4 py-3" : "px-2 py-1.5"
+                                  "flex cursor-pointer items-center justify-between rounded-md hover:bg-muted",
+                                  isMobile ? "px-3 py-2.5" : "px-2 py-2"
                                 )}
                                 onClick={() => onInsertVariable(`input.extensions?.${extId}?.${field.field}`)}
                               >
                                 <div className="flex items-center gap-2 min-w-0 flex-1">
                                   <code className={cn(
-                                    "font-mono text-accent-purple truncate",
+                                    "truncate font-mono text-foreground",
                                     isMobile ? "text-sm" : "text-xs"
                                   )}>
                                     {field.field}
@@ -642,12 +555,9 @@ function VariablesRail({
                 })}
               </div>
             ) : (
-              <div className={cn(
-                "text-center text-muted-foreground py-4 px-2",
-                isMobile ? "text-sm" : "text-xs"
-              )}>
-                <Puzzle className={cn("mx-auto mb-1.5 opacity-30", isMobile ? "h-8 w-8" : "h-6 w-6")} />
-                <div>{tBuilder('noSourcesSelectedHint')}</div>
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+                <Puzzle className="h-5 w-5 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">{tBuilder('noSourcesSelectedHint')}</p>
               </div>
             )}
           </>
@@ -662,16 +572,16 @@ function VariablesRail({
                   <div
                     key={idx}
                     className={cn(
-                      "flex items-center justify-between bg-background border rounded hover:bg-muted hover:border-border transition-all cursor-pointer group",
-                      isMobile ? "px-4 py-3" : "px-2 py-1.5"
+                      "flex cursor-pointer items-center justify-between rounded-md hover:bg-muted",
+                      isMobile ? "px-3 py-2.5" : "px-2 py-2"
                     )}
                     onClick={() => handleInvokeCommand(cmd)}
                     title={cmd.description || undefined}
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <Zap className={cn("text-warning shrink-0", isMobile ? "h-4 w-4" : "h-3.5 w-3.5")} />
+                      <Zap className={cn("shrink-0 text-muted-foreground", isMobile ? "h-4 w-4" : "h-3.5 w-3.5")} />
                       <div className="min-w-0 flex flex-col">
-                        <code className={cn("font-mono text-warning truncate", isMobile ? "text-sm" : "text-xs")}>
+                        <code className={cn("truncate font-mono text-foreground", isMobile ? "text-sm" : "text-xs")}>
                           {cmd.display_name}
                         </code>
                         <span className={cn("text-muted-foreground truncate", isMobile ? "text-sm" : "text-xs")}>
@@ -683,7 +593,7 @@ function VariablesRail({
                       </div>
                     </div>
                     <Badge variant="outline" className={cn(
-                      'py-0 shrink-0 text-warning border-warning',
+                      'shrink-0 py-0',
                       isMobile ? 'h-7 px-2 text-sm' : 'h-5 px-1.5 text-xs'
                     )}>
                       {tBuilder('call')}
@@ -692,17 +602,72 @@ function VariablesRail({
                 ))}
               </div>
             ) : (
-              <div className={cn(
-                "text-center text-muted-foreground py-4 px-2",
-                isMobile ? "text-sm" : "text-xs"
-              )}>
-                <Zap className={cn("mx-auto mb-1.5 opacity-30", isMobile ? "h-8 w-8" : "h-6 w-6")} />
-                <div>{tBuilder('noActionsHint')}</div>
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+                <Zap className="h-5 w-5 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">{tBuilder('noActionsHint')}</p>
               </div>
             )}
           </>
         )}
       </div>
+      {activeTab === 'extension' && (
+        <div className="shrink-0 px-2 pb-2">
+          <Popover open={extensionPopoverOpen} onOpenChange={setExtensionPopoverOpen}>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="text-muted-foreground">
+                <Plus className="mr-1.5 h-4 w-4" />
+                {tBuilder('selectSources')}
+              </Button>            </PopoverTrigger>
+            <PopoverContent className="w-72 max-h-80 overflow-auto p-3" align="end">
+              {extensions.length === 0 ? (
+                <div className="py-4 text-center text-sm text-muted-foreground">
+                  {tBuilder('noExtensionSources')}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {extensions.map((ext) => (
+                    <div key={ext.extension_id} className="space-y-1.5">
+                      <div className="flex items-center gap-2 text-xs font-medium">
+                        <Puzzle className="h-4 w-4 text-muted-foreground" />
+                        {ext.extension_name}
+                      </div>
+                      {ext.commands.map((cmd) => (
+                        <div key={cmd.command} className="ml-4 space-y-1">
+                          {cmd.fields.map((field) => (
+                            <div key={field.field} className="flex min-w-0 items-center gap-2 py-0.5">
+                              <Checkbox
+                                id={`field-${ext.extension_id}-${cmd.command}-${field.field}`}
+                                checked={isSourceSelected(ext.extension_id, field.field)}
+                                className="h-4 w-4 shrink-0"
+                                onCheckedChange={() => toggleSource(
+                                  ext.extension_id,
+                                  ext.extension_name,
+                                  field.field,
+                                  field.display_name,
+                                  field.data_type,
+                                  field.unit
+                                )}
+                              />
+                              <label
+                                htmlFor={`field-${ext.extension_id}-${cmd.command}-${field.field}`}
+                                className="min-w-0 flex-1 cursor-pointer truncate text-xs text-muted-foreground"
+                                title={field.display_name}
+                              >
+                                {field.field}
+                                {field.unit && <span className="ml-1 text-muted-foreground">({field.unit})</span>}
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
+      )}
     </div>
   )
 }
@@ -814,28 +779,24 @@ function TestStrip({
   }, [deviceTypeMetrics, extensionSources, onTestInputChange])
 
   return (
-    <div className={cn(cardPadded, "space-y-3")}>
-      {/* Title + inline actions */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <Play className="h-4 w-4 text-muted-foreground shrink-0" />
-          <span className="text-sm font-medium truncate">{tBuilder('testPanel')}</span>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+    <div className="space-y-3 rounded-lg border border-border bg-card p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="min-w-0 truncate text-sm font-semibold text-foreground">{tBuilder('testPanel')}</h3>
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             variant="outline"
-            className="h-7 px-2.5 text-xs"
+            size="sm"
             onClick={generateMockData}
           >
-            <FlaskConical className="h-3.5 w-3.5 mr-1" />
+            <FlaskConical className="mr-1.5 h-4 w-4" />
             {tBuilder('generateMock')}
           </Button>
           <Button
-            className="h-7 px-2.5 text-xs"
+            size="sm"
             onClick={onTest}
             disabled={!jsCode || testRunning}
           >
-            {testRunning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5 mr-1" />}
+            {testRunning ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
             {tBuilder('run')}
           </Button>
         </div>
@@ -856,14 +817,14 @@ function TestStrip({
             <span className="text-xs text-muted-foreground">{tBuilder('outputData')}</span>
             <Button
               variant="ghost"
-              className="h-6 px-2 text-xs shrink-0"
+              size="sm"
               onClick={onClearTest}
             >
               {tBuilder('clear')}
             </Button>
           </div>
           {testError && (
-            <div className="p-1.5 bg-muted border border-error rounded text-xs text-error font-mono">
+            <div className="rounded-lg border border-error bg-error-light p-3 font-mono text-sm text-error">
               {testError}
             </div>
           )}
@@ -932,72 +893,44 @@ function TransformWorkspace({
   tBuilder,
   t,
 }: TransformWorkspaceProps) {
-  const _isMobile = useIsMobile()
-
-  // Grouped selected extension sources for badge display
-  const selectedSourceBadges = useMemo(() => {
-    if (!extensionSources || extensionSources.length === 0) return []
-    const grouped: Record<string, { name: string; count: number }> = {}
-    for (const s of extensionSources) {
-      if (!grouped[s.extension_id]) {
-        grouped[s.extension_id] = { name: s.extension_name, count: 0 }
-      }
-      grouped[s.extension_id].count++
-    }
-    return Object.entries(grouped).map(([id, info]) => ({ id, ...info }))
-  }, [extensionSources])
+  const [activeTemplate, setActiveTemplate] = useState<string | null>(null)
 
   return (
-    <div className="flex flex-col gap-4 h-full">
-      {/* Sub-toolbar: templates dropdown + selected sources — fixed single-row height */}
-      <div className="rounded-lg border border-border px-3 py-2 shrink-0 flex items-center gap-2">
-        <Select
-          onValueChange={(key) => {
-            const tpl = templates.find((t) => t.key === key)
-            if (tpl) onApplyTemplate(tpl.code)
-          }}
-        >
-          <SelectTrigger className="h-7 w-[150px] text-xs gap-1.5 shrink-0">
-            <FileCode className="h-3.5 w-3.5 text-muted-foreground" />
-            <SelectValue placeholder={tBuilder('templatesLabel')} />
-          </SelectTrigger>
-          <SelectContent>
-            {templates.map((tpl) => (
-              <SelectItem key={tpl.key} value={tpl.key} className="text-xs">
-                {tBuilder(tpl.nameKey)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {/* Selected extension source badges */}
-        {selectedSourceBadges.length > 0 && (
-          <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden flex-nowrap min-w-0 ml-auto [scrollbar-width:thin]">
-            {selectedSourceBadges.map(({ id, name, count }) => (
-              <Badge key={id} variant="secondary" className="h-6 text-xs gap-1 shrink-0 whitespace-nowrap">
-                <Puzzle className="h-3 w-3 text-accent-purple" />
-                {name}
-                <span className="text-muted-foreground">x{count}</span>
-              </Badge>
-            ))}
+    <div className="flex h-full flex-col gap-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
+      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[minmax(0,1fr)_20rem] md:[grid-template-rows:minmax(0,1fr)]">
+        <div className="flex min-h-0 min-w-0 flex-col">
+          <div className="flex h-14 shrink-0 items-stretch border-b border-border px-1">
+            <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:thin]">
+              {templates.map((tpl) => (
+                <button
+                  key={tpl.key}
+                  type="button"
+                  onClick={() => {
+                    setActiveTemplate(tpl.key)
+                    onApplyTemplate(tpl.code)
+                  }}
+                  className={cn(
+                    "shrink-0 border-b-2 px-3 text-sm whitespace-nowrap",
+                    activeTemplate === tpl.key
+                      ? "border-foreground font-medium text-foreground"
+                      : "border-transparent text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {tBuilder(tpl.nameKey)}
+                </button>
+              ))}
+            </div>
           </div>
-        )}
-      </div>
-
-      {/* Unified panel: CSS Grid with minmax(0,1fr) row — height is container-driven,
-          never inflated by rail tab content. Mobile stacks naturally. */}
-      <div className="flex-1 min-h-0 rounded-lg border border-border overflow-hidden grid grid-cols-1 md:grid-cols-[1fr_288px] md:[grid-template-rows:minmax(0,1fr)]">
-        <div className="min-w-0 min-h-0 flex flex-col">
+          {formErrors.code && (
+            <p className="shrink-0 truncate border-b border-border px-3 py-1.5 text-sm text-error">{formErrors.code}</p>
+          )}
           <CodeEditor
             value={jsCode}
             onChange={onCodeChange}
             height="100%"
             className="border-0 rounded-none flex-1 min-h-0 focus-within:ring-0 focus-within:ring-offset-0"
           />
-          {formErrors.code && (
-            <div className="px-3 pb-2 shrink-0">
-              <p className="text-xs text-error">{formErrors.code}</p>
-            </div>
-          )}
         </div>
         {/* Variables rail — grid cell stretches to row height; content scrolls internally */}
         <div className="border-t md:border-t-0 md:border-l min-h-0 overflow-hidden">
@@ -1012,6 +945,7 @@ function TransformWorkspace({
             />
           </div>
         </div>
+      </div>
       </div>
 
       {/* Test strip */}
@@ -1395,16 +1329,15 @@ export function TransformBuilder({
         <FieldDescription>{tBuilder('outputPrefixHint')}</FieldDescription>
       </Field>
 
-      {/* Enabled */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <Label htmlFor="transform-enabled" className="cursor-pointer text-sm font-medium">
+          {tBuilder('enabled')}
+        </Label>
         <Switch
           id="transform-enabled"
           checked={enabled}
           onCheckedChange={(checked) => setEnabled(!!checked)}
         />
-        <Label htmlFor="transform-enabled" className="text-sm font-medium cursor-pointer">
-          {tBuilder('enabled')}
-        </Label>
       </div>
     </div>
   )
@@ -1426,18 +1359,9 @@ export function TransformBuilder({
 
   // --- Footer ---
   const footer = (
-    <>
-      <div />
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={!name.trim()}
-        >
-          {tBuilder('save')}
-        </Button>
-      </div>
-    </>
+    <Button onClick={handleSave} disabled={!name.trim()}>
+      {tBuilder('save')}
+    </Button>
   )
 
   return (

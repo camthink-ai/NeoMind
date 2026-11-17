@@ -37,11 +37,17 @@ interface RulesListProps {
 }
 
 // Action configuration for display
-const ACTION_CONFIG: Record<string, { icon: typeof Zap; label: string; color: string }> = {
-  execute: { icon: Zap, label: 'automation:ruleBuilder.actionType.execute', color: 'text-warning bg-warning-light border-warning' },
-  notify: { icon: Bell, label: 'automation:ruleBuilder.actionType.notify', color: 'text-info bg-info-light border-info' },
-  trigger_agent: { icon: Sparkles, label: 'automation:ruleBuilder.actionType.triggerAgent', color: 'text-accent-purple bg-accent-purple-light border-accent-purple-light' },
-  run_operator: { icon: Bot, label: 'automation:ruleBuilder.actionType.runOperator', color: 'text-accent-purple bg-accent-purple-light border-accent-purple-light' },
+const ACTION_CONFIG: Record<string, { icon: typeof Zap; label: string }> = {
+  execute: { icon: Zap, label: 'automation:ruleBuilder.actionType.execute' },
+  notify: { icon: Bell, label: 'automation:ruleBuilder.actionType.notify' },
+  trigger_agent: { icon: Sparkles, label: 'automation:ruleBuilder.actionType.triggerAgent' },
+  run_operator: { icon: Bot, label: 'automation:ruleBuilder.actionType.runOperator' },
+}
+
+function listSubtitle(value?: string | null): string | null {
+  const text = value?.trim()
+  if (!text || text === '-') return null
+  return text
 }
 
 export const ITEMS_PER_PAGE = 10
@@ -455,23 +461,22 @@ export function RulesList({
         const rule = rowData
 
         switch (columnKey) {
-          case 'name':
+          case 'name': {
+            const subtitle = listSubtitle(rule.description)
             return (
               <div className="flex items-center gap-3">
-                <div className={cn(
-                  "w-9 h-9 rounded-lg flex items-center justify-center transition-colors shrink-0",
-                  rule.enabled ? "bg-warning-light text-warning" : "bg-muted text-muted-foreground"
-                )}>
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
                   <Sparkles className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <div className="font-medium text-sm truncate">{rule.name}</div>
-                  <div className="text-xs text-muted-foreground line-clamp-1">
-                    {rule.description || '-'}
-                  </div>
+                  <div className="truncate text-sm font-medium">{rule.name}</div>
+                  {subtitle && (
+                    <div className="line-clamp-1 text-xs text-muted-foreground">{subtitle}</div>
+                  )}
                 </div>
               </div>
             )
+          }
 
           case 'trigger': {
             const condition = formatConditionDisplay(rule)
@@ -510,7 +515,7 @@ export function RulesList({
                     <Badge
                       key={i}
                       variant="outline"
-                      className={cn("text-xs gap-1", config.color)}
+                      className="gap-1 text-xs text-muted-foreground"
                     >
                       <Icon className="h-3 w-3" />
                       {t(config.label)}

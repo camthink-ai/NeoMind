@@ -221,7 +221,8 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
       <ResponsiveTable
         className="table-fixed"
         columns={[
-          { key: "name", label: t("agents:detail.toolsColumnName", "Tool"), width: "w-[440px]" },
+          { key: "name", label: t("agents:detail.toolsColumnName", "Tool"), width: "w-[220px]" },
+          { key: "description", label: t("agents:detail.toolsColumnDesc", "Description") },
           {
             key: "version",
             label: t("agents:detail.toolsColumnVersion", "Version"),
@@ -308,11 +309,20 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
                         </span>
                       )}
                     </div>
-                    <div className="hidden text-xs text-muted-foreground line-clamp-2 break-words overflow-hidden md:block">
-                      {row.description}
-                    </div>
                   </div>
                 </div>
+              )
+
+            case "description":
+              return row.description ? (
+                <p
+                  className="line-clamp-2 max-h-10 overflow-hidden break-words text-xs leading-5 text-muted-foreground"
+                  title={row.description}
+                >
+                  {row.description}
+                </p>
+              ) : (
+                <span className="text-xs text-muted-foreground">—</span>
               )
 
             case "source":

@@ -27,10 +27,16 @@ interface TransformsListProps {
 }
 
 // Scope configuration
-const SCOPE_CONFIG: Record<string, { label: string; icon: typeof Globe; color: string }> = {
-  global: { label: 'automation:transformBuilder.scopes.global', icon: Globe, color: 'text-accent-purple bg-accent-purple-light border-accent-purple-light' },
-  device_type: { label: 'automation:transformBuilder.scopes.deviceType', icon: Cpu, color: 'text-info bg-info-light border-info' },
-  device: { label: 'automation:transformBuilder.scopes.device', icon: HardDrive, color: 'text-success bg-success-light border-success-light dark:text-success dark:bg-success-light dark:border-success-light' },
+const SCOPE_CONFIG: Record<string, { label: string; icon: typeof Globe }> = {
+  global: { label: 'automation:transformBuilder.scopes.global', icon: Globe },
+  device_type: { label: 'automation:transformBuilder.scopes.deviceType', icon: Cpu },
+  device: { label: 'automation:transformBuilder.scopes.device', icon: HardDrive },
+}
+
+function listSubtitle(value?: string | null): string | null {
+  const text = value?.trim()
+  if (!text || text === '-') return null
+  return text
 }
 
 export const ITEMS_PER_PAGE = 10
@@ -129,7 +135,7 @@ export function TransformsList({
       : transforms.slice(startIndex, endIndex)
   )
 
-  function getScopeInfo(scope: any): { label: string; icon: typeof Globe; color: string } {
+  function getScopeInfo(scope: any): { label: string; icon: typeof Globe } {
     if (!scope || scope === 'global' || (typeof scope === 'string' && scope === 'global')) {
       return SCOPE_CONFIG.global
     }
@@ -244,27 +250,26 @@ export function TransformsList({
         const ScopeIcon = scopeInfo.icon
 
         switch (columnKey) {
-          case 'name':
+          case 'name': {
+            const subtitle = listSubtitle(transform.description)
             return (
               <div className="flex items-center gap-3">
-                <div className={cn(
-                  "w-9 h-9 rounded-lg flex items-center justify-center transition-colors shrink-0",
-                  transform.enabled ? "bg-accent-cyan-light text-accent-cyan" : "bg-muted text-muted-foreground"
-                )}>
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
                   <Code className="h-4 w-4" />
                 </div>
                 <div className="min-w-0">
-                  <div className="font-medium text-sm truncate">{transform.name}</div>
-                  <div className="text-xs text-muted-foreground line-clamp-1">
-                    {transform.description || <code>{(transform.output_prefix || 'transform')}.</code>}
-                  </div>
+                  <div className="truncate text-sm font-medium">{transform.name}</div>
+                  {subtitle && (
+                    <div className="line-clamp-1 text-xs text-muted-foreground">{subtitle}</div>
+                  )}
                 </div>
               </div>
             )
+          }
 
           case 'scope':
             return (
-              <Badge variant="outline" className={cn("text-xs gap-1", scopeInfo.color)}>
+              <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
                 <ScopeIcon className="h-3 w-3" />
                 {getScopeLabel(transform.scope)}
               </Badge>
