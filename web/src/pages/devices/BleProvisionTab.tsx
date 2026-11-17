@@ -39,6 +39,7 @@ function bleErrorCopy(
   if (code === 'wifi_init_failed') return t('devices:ctProv.errorWifiInit')
   if (code === 'wifi_associate_failed') return t('devices:ctProv.errorWifiAssociate')
   if (code === 'cellular_apn_required') return t('devices:ctProv.errorCellularApn')
+  if (code === 'webhook_url_required') return t('devices:ctProv.errorWebhookUrl')
   if (code === 'storage_failed') return t('devices:ctProv.errorStorageFailed')
   if (code === 'request_timeout') return t('devices:ctProv.errorTimeout')
   if (code === 'device_busy') return t('devices:ctProv.errorBusy')

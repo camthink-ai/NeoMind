@@ -197,15 +197,22 @@ export function cellularSectionFromFields(
 
 /**
  * Build CT `webhook` section gated by capabilities.fields.
- * enable=false is a complete write (device clears outbound webhook).
+ *
+ * Wi‑Fi-only Apply: default enable=false with empty url must NOT emit
+ * `{enable:false}` — NE101 rejects that with INVALID_ARGUMENT
+ * "webhook.url: required field missing". Only write when enabling (with url)
+ * or when disabling with an explicit url present.
  */
 export function webhookSectionFromFields(
   fields: WebhookFields,
   declared?: readonly string[],
 ): Record<string, unknown> | null {
   if (!fieldDeclared(declared, 'enable')) return null
-  const out: Record<string, unknown> = { enable: fields.enable }
   const url = fields.url.trim()
+  if (!fields.enable && !url) {
+    return null
+  }
+  const out: Record<string, unknown> = { enable: fields.enable }
   if (url && fieldDeclared(declared, 'url')) out.url = url
   const secret = fields.secret?.trim()
   if (secret && fieldDeclared(declared, 'secret')) out.secret = secret

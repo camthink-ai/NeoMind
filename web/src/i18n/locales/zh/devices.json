@@ -1021,6 +1021,7 @@
     "errorWifiInitScan": "无法扫描附近网络——设备没能启动 Wi‑Fi 射频。请在下方手动填写 SSID 与密码后点「应用」。若应用也报同样错误，请重启设备后再配网。",
     "errorWifiAssociate": "设备未能加入该 Wi‑Fi。请核对 SSID/密码，靠近路由器后重试应用。",
     "errorCellularApn": "配置蜂窝网络时必须填写 APN。仅用 Wi‑Fi 时请留空蜂窝项；若要用蜂窝，请填写 APN 后再应用。",
+    "errorWebhookUrl": "配置 Webhook 时必须填写 URL。不用 Webhook 请保持关闭；若要用，请填写 URL 后再应用。",
     "errorStorageFailed": "设备未能保存配置。请重试；若反复失败，请重启设备。",
     "errorTimeout": "设备经蓝牙回复超时。请靠近设备、保持对话框打开后重试；若仍失败，请重启设备。",
     "wifiScanFailedTitle": "未能扫描附近网络",

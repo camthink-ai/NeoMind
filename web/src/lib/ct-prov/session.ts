@@ -39,6 +39,9 @@ export function formatProvUserMessage(err: unknown): string {
   if (lower.includes('cellular.apn') || lower.includes('cellular apn')) {
     return 'cellular_apn_required'
   }
+  if (lower.includes('webhook.url') || lower.includes('webhook url')) {
+    return 'webhook_url_required'
+  }
   if (lower.includes('storage_failed')) {
     return 'storage_failed'
   }

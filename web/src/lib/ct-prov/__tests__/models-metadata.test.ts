@@ -181,13 +181,22 @@ describe('cellular / webhook section builders', () => {
     expect(cellularSectionFromFields({ auth: 'none' }, ['auth'])).toBeNull()
   })
 
-  it('builds webhook enable=false and gates secret/header', () => {
+  it('builds webhook enable=true and skips blank enable=false', () => {
+    // Default off + empty url → omit (NE101 requires url if webhook present)
     expect(
       webhookSectionFromFields(
         { enable: false, url: '', secret: 's', header: 'X: 1' },
         ['enable', 'url'],
       ),
-    ).toEqual({ enable: false })
+    ).toBeNull()
+
+    // Explicit disable with url still writes
+    expect(
+      webhookSectionFromFields(
+        { enable: false, url: 'https://example.com/h', secret: '', header: '' },
+        ['enable', 'url'],
+      ),
+    ).toEqual({ enable: false, url: 'https://example.com/h' })
 
     expect(
       webhookSectionFromFields(

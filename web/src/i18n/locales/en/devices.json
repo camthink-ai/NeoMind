@@ -1021,6 +1021,7 @@
     "errorWifiInitScan": "Scan unavailable — the device could not start its Wi‑Fi radio. Enter the SSID and password below, then Apply. If Apply fails with the same error, reboot the device and try again.",
     "errorWifiAssociate": "The device could not join that Wi‑Fi network. Check the SSID and password, move closer to the router, then Apply again.",
     "errorCellularApn": "Cellular APN is required when configuring mobile network. Leave Cellular blank to use Wi‑Fi only, or fill in the APN and Apply again.",
+    "errorWebhookUrl": "Webhook URL is required when configuring webhook. Leave Webhook off to skip it, or fill in the URL and Apply again.",
     "errorStorageFailed": "The device could not save the configuration. Retry; if it persists, reboot the device.",
     "errorTimeout": "The device took too long to reply over Bluetooth. Stay close, keep the dialog open, and retry. If it keeps failing, reboot the device.",
     "wifiScanFailedTitle": "Couldn't scan nearby networks",
