@@ -1021,4 +1021,156 @@ mod tests {
             .unwrap();
         assert_eq!(CALLS_V2.load(Ordering::SeqCst), 1);
     }
+
+    /// Stronger interleaving: generation check has already passed and the
+    /// bound instance has entered `execute_command`, then reload replaces the
+    /// id — the new instance must still see call count 0 (bound Arc, not
+    /// id re-lookup).
+    #[tokio::test]
+    async fn pass_gen_check_then_reload_before_finish_new_instance_untouched() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::OnceLock;
+
+        static ENTERED_V1: AtomicBool = AtomicBool::new(false);
+        static RELEASE_V1: AtomicBool = AtomicBool::new(false);
+        static CALLS_V2: AtomicUsize = AtomicUsize::new(0);
+        ENTERED_V1.store(false, Ordering::SeqCst);
+        RELEASE_V1.store(false, Ordering::SeqCst);
+        CALLS_V2.store(0, Ordering::SeqCst);
+
+        struct V1;
+        #[async_trait::async_trait]
+        impl Extension for V1 {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("bind-mid", "Bind Mid", "1.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ExtensionCommand {
+                    name: "ping".into(),
+                    display_name: "Ping".into(),
+                    description: String::new(),
+                    payload_template: String::new(),
+                    parameters: Vec::new(),
+                    fixed_values: std::collections::HashMap::new(),
+                    samples: Vec::new(),
+                    parameter_groups: Vec::new(),
+                    ai_exposed: true,
+                    effect: Some(crate::extension::system::CommandEffect::ReadOnly),
+                    replay_safety: Some(crate::extension::system::CommandReplaySafety::Safe),
+                    execution: Some(crate::extension::system::CommandExecutionKind::Immediate),
+                }]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> Result<serde_json::Value> {
+                ENTERED_V1.store(true, Ordering::SeqCst);
+                while !RELEASE_V1.load(Ordering::SeqCst) {
+                    tokio::task::yield_now().await;
+                }
+                Ok(serde_json::json!({"v": 1}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        struct V2;
+        #[async_trait::async_trait]
+        impl Extension for V2 {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("bind-mid", "Bind Mid", "2.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ExtensionCommand {
+                    name: "ping".into(),
+                    display_name: "Ping".into(),
+                    description: String::new(),
+                    payload_template: String::new(),
+                    parameters: Vec::new(),
+                    fixed_values: std::collections::HashMap::new(),
+                    samples: Vec::new(),
+                    parameter_groups: Vec::new(),
+                    ai_exposed: true,
+                    effect: Some(crate::extension::system::CommandEffect::ReadOnly),
+                    replay_safety: Some(crate::extension::system::CommandReplaySafety::Safe),
+                    execution: Some(crate::extension::system::CommandExecutionKind::Immediate),
+                }]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> Result<serde_json::Value> {
+                CALLS_V2.fetch_add(1, Ordering::SeqCst);
+                Ok(serde_json::json!({"v": 2}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let registry = ExtensionRegistry::new().with_command_timeout_secs(30);
+        registry
+            .register(
+                "bind-mid".into(),
+                Arc::new(tokio::sync::RwLock::new(Box::new(V1))),
+            )
+            .await
+            .unwrap();
+        let info = registry.get_info("bind-mid").await.unwrap();
+        let cmd = info.commands.iter().find(|c| c.name == "ping").unwrap();
+        let prepared = crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
+            instance_id: "bind-mid",
+            command: cmd,
+            raw_params: &serde_json::json!({}),
+            extension_version: Some(info.metadata.version.as_str()),
+            package_digest: None,
+            capability_generation: &info.capability_generation,
+        })
+        .unwrap();
+
+        let registry = Arc::new(registry);
+        let reg_exec = Arc::clone(&registry);
+        let prepared_clone = prepared.clone();
+        let join = tokio::spawn(async move { reg_exec.execute_prepared(&prepared_clone).await });
+
+        // Wait until gen check passed and bound V1 entered execute.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !ENTERED_V1.load(Ordering::SeqCst) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "V1 never entered execute_command"
+            );
+            tokio::task::yield_now().await;
+        }
+
+        // Pause point: reload under the same id while V1 is mid-execute.
+        registry.unregister("bind-mid").await.unwrap();
+        registry
+            .register(
+                "bind-mid".into(),
+                Arc::new(tokio::sync::RwLock::new(Box::new(V2))),
+            )
+            .await
+            .unwrap();
+
+        RELEASE_V1.store(true, Ordering::SeqCst);
+        let out = join.await.expect("join").expect("bound V1 should finish");
+        assert_eq!(out, serde_json::json!({"v": 1}));
+        assert_eq!(
+            CALLS_V2.load(Ordering::SeqCst),
+            0,
+            "new instance must not run when execute already bound to prior snapshot"
+        );
+    }
 }

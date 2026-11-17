@@ -206,30 +206,18 @@ impl ExtensionRuntime {
             .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))
     }
 
-    /// Execute a prepared invoke: generation must still match the proxy
-    /// registry load snapshot, then the isolated process runs with the
-    /// bound canonical params (no re-prepare / no id-only re-resolve).
+    /// Execute a prepared invoke against the **bound** load-snapshot instance.
+    ///
+    /// Delegates to [`ExtensionRegistry::execute_prepared`] on the proxy
+    /// registry (same Arc as host `ExtensionState.registry`). That path
+    /// checks generation and then calls the snapshot's `instance` handle —
+    /// it must **never** re-query `isolated_manager` by id after the check,
+    /// or a reload between check and lookup would enter the new process.
     pub async fn execute_prepared(
         &self,
         prepared: &super::PreparedInvoke,
     ) -> Result<serde_json::Value, ExtensionError> {
-        let id = prepared.target.instance_id.as_str();
-        let entry = self
-            .proxy_registry
-            .get_info(id)
-            .await
-            .ok_or_else(|| ExtensionError::NotFound(id.to_string()))?;
-        if entry.capability_generation.as_str() != prepared.capability_generation {
-            return Err(ExtensionError::InvalidArguments(format!(
-                "stale prepared invoke for '{id}' (operation {}): capability generation \
-                 expired after reload; re-discover and prepare again",
-                prepared.operation_id
-            )));
-        }
-        self.isolated_manager
-            .execute_command(id, &prepared.command, &prepared.canonical_params)
-            .await
-            .map_err(|e| ExtensionError::ExecutionFailed(e.to_string()))
+        self.proxy_registry.execute_prepared(prepared).await
     }
 
     /// Get metrics from an extension.
@@ -452,5 +440,163 @@ impl ExtensionRuntime {
     /// Get runtime configuration.
     pub fn config(&self) -> &ExtensionRuntimeConfig {
         &self.config
+    }
+}
+
+#[cfg(test)]
+mod bound_execute_tests {
+    use super::*;
+    use crate::extension::system::{
+        Extension, ExtensionCommand, ExtensionMetadata, MetricDefinition,
+    };
+    use crate::extension::ExtensionRegistry;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::OnceLock;
+
+    /// HTTP/CLI consume `ExtensionRuntime::execute_prepared`. Prove it uses the
+    /// registry-bound instance (not isolated_manager id re-lookup): mid-execute
+    /// reload must leave the new instance at call count 0.
+    #[tokio::test]
+    async fn runtime_execute_prepared_survives_mid_execute_reload() {
+        static ENTERED_V1: AtomicBool = AtomicBool::new(false);
+        static RELEASE_V1: AtomicBool = AtomicBool::new(false);
+        static CALLS_V2: AtomicUsize = AtomicUsize::new(0);
+        ENTERED_V1.store(false, Ordering::SeqCst);
+        RELEASE_V1.store(false, Ordering::SeqCst);
+        CALLS_V2.store(0, Ordering::SeqCst);
+
+        struct V1;
+        #[async_trait::async_trait]
+        impl Extension for V1 {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("rt-bind", "RT Bind", "1.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ExtensionCommand {
+                    name: "ping".into(),
+                    display_name: "Ping".into(),
+                    description: String::new(),
+                    payload_template: String::new(),
+                    parameters: Vec::new(),
+                    fixed_values: std::collections::HashMap::new(),
+                    samples: Vec::new(),
+                    parameter_groups: Vec::new(),
+                    ai_exposed: true,
+                    effect: Some(crate::extension::system::CommandEffect::ReadOnly),
+                    replay_safety: Some(crate::extension::system::CommandReplaySafety::Safe),
+                    execution: Some(crate::extension::system::CommandExecutionKind::Immediate),
+                }]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> Result<serde_json::Value, ExtensionError> {
+                ENTERED_V1.store(true, Ordering::SeqCst);
+                while !RELEASE_V1.load(Ordering::SeqCst) {
+                    tokio::task::yield_now().await;
+                }
+                Ok(serde_json::json!({"v": 1}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        struct V2;
+        #[async_trait::async_trait]
+        impl Extension for V2 {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("rt-bind", "RT Bind", "2.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ExtensionCommand {
+                    name: "ping".into(),
+                    display_name: "Ping".into(),
+                    description: String::new(),
+                    payload_template: String::new(),
+                    parameters: Vec::new(),
+                    fixed_values: std::collections::HashMap::new(),
+                    samples: Vec::new(),
+                    parameter_groups: Vec::new(),
+                    ai_exposed: true,
+                    effect: Some(crate::extension::system::CommandEffect::ReadOnly),
+                    replay_safety: Some(crate::extension::system::CommandReplaySafety::Safe),
+                    execution: Some(crate::extension::system::CommandExecutionKind::Immediate),
+                }]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> Result<serde_json::Value, ExtensionError> {
+                CALLS_V2.fetch_add(1, Ordering::SeqCst);
+                Ok(serde_json::json!({"v": 2}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let registry = Arc::new(ExtensionRegistry::new().with_command_timeout_secs(30));
+        let runtime = ExtensionRuntime::with_defaults(Arc::clone(&registry));
+        registry
+            .register(
+                "rt-bind".into(),
+                Arc::new(tokio::sync::RwLock::new(Box::new(V1))),
+            )
+            .await
+            .unwrap();
+        let info = registry.get_info("rt-bind").await.unwrap();
+        let cmd = info.commands.iter().find(|c| c.name == "ping").unwrap();
+        let prepared = crate::extension::prepare_invoke(crate::extension::PrepareInvokeRequest {
+            instance_id: "rt-bind",
+            command: cmd,
+            raw_params: &serde_json::json!({}),
+            extension_version: Some(info.metadata.version.as_str()),
+            package_digest: None,
+            capability_generation: &info.capability_generation,
+        })
+        .unwrap();
+
+        let rt = Arc::new(runtime);
+        let rt_exec = Arc::clone(&rt);
+        let prepared_clone = prepared.clone();
+        let join = tokio::spawn(async move { rt_exec.execute_prepared(&prepared_clone).await });
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !ENTERED_V1.load(Ordering::SeqCst) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "V1 never entered execute_command via runtime path"
+            );
+            tokio::task::yield_now().await;
+        }
+
+        registry.unregister("rt-bind").await.unwrap();
+        registry
+            .register(
+                "rt-bind".into(),
+                Arc::new(tokio::sync::RwLock::new(Box::new(V2))),
+            )
+            .await
+            .unwrap();
+
+        RELEASE_V1.store(true, Ordering::SeqCst);
+        let out = join.await.expect("join").expect("bound V1 should finish");
+        assert_eq!(out, serde_json::json!({"v": 1}));
+        assert_eq!(
+            CALLS_V2.load(Ordering::SeqCst),
+            0,
+            "runtime execute_prepared must not re-query by id into the new instance"
+        );
     }
 }
