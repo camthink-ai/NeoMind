@@ -118,9 +118,17 @@ pub async fn create_transform(
     let transform_id = data
         .get("data")
         .and_then(|d| d.get("automation"))
-        .and_then(|a| a.get("metadata"))
-        .and_then(|m| m.get("id"))
-        .and_then(|v| v.as_str())
+        // The create response carries the id directly under `automation`
+        // ({"automation":{"id":...}}); the metadata path was legacy. Prefer
+        // both before giving up — "unknown" in the success hint sent users
+        // (and models) to `transform executions unknown`.
+        .and_then(|a| {
+            a.get("id").and_then(|v| v.as_str()).or_else(|| {
+                a.get("metadata")
+                    .and_then(|m| m.get("id"))
+                    .and_then(|v| v.as_str())
+            })
+        })
         .unwrap_or("unknown")
         .to_string();
     Ok(CliResponse::success(
