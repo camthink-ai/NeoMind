@@ -214,23 +214,71 @@ pub async fn invoke_extension_handler(
     }))
 }
 
+/// Resolve persisted AI toggles from the **shared** extension store.
+///
+/// Fail closed:
+/// - storage/`load` errors → [`ErrorResponse::service_unavailable`] (deny execute)
+/// - missing record → forbidden (never default to allow)
+/// - `uninstalled` → forbidden (never default to allow)
+///
+/// Scope note: HTTP `execute` / `invoke` both call this via
+/// [`prepare_extension_invoke`], so the gate applies to **all** HTTP callers
+/// including the human admin UI (intentional bypass prevention until a
+/// trusted server-side caller identity exists — clients must not self-claim
+/// "admin").
+fn ai_policy_from_store(
+    store: &neomind_storage::ExtensionStore,
+    instance_id: &str,
+) -> Result<(bool, Vec<String>), ErrorResponse> {
+    let loaded = store.load(instance_id).map_err(|e| {
+        ErrorResponse::service_unavailable(format!(
+            "extension AI policy store unavailable for '{instance_id}': {e}"
+        ))
+    })?;
+    ai_policy_from_loaded_record(instance_id, loaded)
+}
+
+/// Interpret an already-loaded policy record (or absence). Pure for tests.
+fn ai_policy_from_loaded_record(
+    instance_id: &str,
+    loaded: Option<neomind_storage::ExtensionRecord>,
+) -> Result<(bool, Vec<String>), ErrorResponse> {
+    match loaded {
+        None => Err(ErrorResponse::forbidden(format!(
+            "no persisted AI policy record for extension '{instance_id}'; refuse invoke"
+        ))),
+        Some(r) if r.uninstalled => Err(ErrorResponse::forbidden(format!(
+            "extension '{instance_id}' is marked uninstalled; refuse invoke"
+        ))),
+        Some(r) => Ok((r.enabled, r.disabled_commands)),
+    }
+}
+
 /// Shared prepare for HTTP execute + invoke (same path as CLI / tools).
 ///
 /// Enforces AI access policy (`enabled` / `disabled_commands` / `ai_exposed`)
 /// at this boundary so Chat shell → `extension invoke` cannot bypass the
 /// toggles that already hide direct tools from the LLM.
+///
+/// **Applies to every HTTP execute/invoke caller** (including human admin UI)
+/// because there is no trusted server-side caller identity yet. Softening to
+/// AI-only requires a non-client-claimable context, not a request flag.
 async fn prepare_extension_invoke(
     state: &ServerState,
     instance_id: &str,
     command_name: &str,
     raw_params: &serde_json::Value,
 ) -> Result<neomind_core::extension::PreparedInvoke, ErrorResponse> {
+    // Descriptor + generation from the proxy registry load snapshot (same
+    // entry execute binds). Do not require isolated liveness here — the
+    // outer handler already checked presence; policy/prepare must work from
+    // the registered snapshot alone.
     let info = state
         .extensions
-        .runtime
-        .get(instance_id)
+        .registry
+        .get_info(instance_id)
         .await
-        .ok_or_else(|| ErrorResponse::not_found(format!("Extension '{instance_id}' not found")))?;
+        .ok_or_else(|| ErrorResponse::not_found(format!("Extension '{instance_id}'")))?;
 
     let cmd = info
         .commands
@@ -245,15 +293,10 @@ async fn prepare_extension_invoke(
             ))
         })?;
 
-    // Persisted AI toggles — same semantics as tool-registry disable bootstrap.
+    // Shared pre-opened store — never reopen via global path (and never
+    // default-allow on open/load failure).
     let (ext_ai_enabled, disabled_cmds) =
-        match neomind_storage::ExtensionStore::open(crate::server::paths::extension_store_path()) {
-            Ok(store) => match store.load(instance_id) {
-                Ok(Some(r)) if !r.uninstalled => (r.enabled, r.disabled_commands),
-                _ => (true, Vec::new()),
-            },
-            Err(_) => (true, Vec::new()),
-        };
+        ai_policy_from_store(state.extensions.store.as_ref(), instance_id)?;
     if let Some(reason) = neomind_core::extension::ai_command_access_denied(
         ext_ai_enabled,
         &disabled_cmds,
@@ -420,12 +463,10 @@ pub async fn list_extension_commands_handler(
         .await
         .ok_or_else(|| ErrorResponse::not_found(format!("Extension {}", id)))?;
 
-    // Load persisted disable state so `disabled` flag reflects current setting.
-    let (ext_enabled, disabled_cmds): (bool, std::collections::HashSet<String>) =
-        match state.extensions.store.load(&id).ok().flatten() {
-            Some(r) => (r.enabled, r.disabled_commands.iter().cloned().collect()),
-            None => (true, Default::default()),
-        };
+    // Same fail-closed policy source as invoke/execute (shared store).
+    let (ext_enabled, disabled_cmds_vec) =
+        ai_policy_from_store(state.extensions.store.as_ref(), &id)?;
+    let disabled_cmds: std::collections::HashSet<String> = disabled_cmds_vec.into_iter().collect();
 
     let version = Some(info.metadata.version.as_str());
     let result: Vec<CommandDescriptorDto> = info
@@ -571,4 +612,283 @@ pub async fn set_extension_command_enabled_handler(
         "extension command tool-toggle updated"
     );
     ok(json!({ "id": id, "command": cmd, "enabled": req.enabled }))
+}
+
+#[cfg(test)]
+mod ai_policy_fail_closed_tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use neomind_core::extension::system::{
+        DynExtension, Extension, ExtensionCommand, ExtensionMetadata, MetricDefinition,
+    };
+    use neomind_storage::ExtensionRecord;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, OnceLock};
+
+    fn ping_cmd() -> ExtensionCommand {
+        ExtensionCommand {
+            name: "ping".into(),
+            display_name: "Ping".into(),
+            description: "test".into(),
+            payload_template: String::new(),
+            parameters: Vec::new(),
+            fixed_values: std::collections::HashMap::new(),
+            samples: Vec::new(),
+            parameter_groups: Vec::new(),
+            ai_exposed: true,
+            effect: Some(neomind_core::extension::system::CommandEffect::ReadOnly),
+            replay_safety: Some(neomind_core::extension::system::CommandReplaySafety::Safe),
+            execution: Some(neomind_core::extension::system::CommandExecutionKind::Immediate),
+        }
+    }
+
+    struct CountingExt {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Extension for CountingExt {
+        fn metadata(&self) -> &ExtensionMetadata {
+            static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+            M.get_or_init(|| ExtensionMetadata::new("ai-policy-ext", "AI Policy Ext", "1.0.0"))
+        }
+        fn metrics(&self) -> Vec<MetricDefinition> {
+            Vec::new()
+        }
+        fn commands(&self) -> Vec<ExtensionCommand> {
+            vec![ping_cmd()]
+        }
+        async fn execute_command(
+            &self,
+            _command: &str,
+            _args: &serde_json::Value,
+        ) -> neomind_core::extension::system::Result<serde_json::Value> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!({"ok": true}))
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+
+    fn base_record(id: &str) -> ExtensionRecord {
+        ExtensionRecord::new(
+            id.into(),
+            "AI Policy Ext".into(),
+            "/tmp/ai-policy-ext".into(),
+            "native".into(),
+            "1.0.0".into(),
+        )
+    }
+
+    /// Mirror HTTP invoke/execute: prepare (AI gate) then registry execute.
+    /// Counts prove a failed gate never reaches the extension business fn.
+    async fn http_prepare_then_registry_execute(
+        state: &ServerState,
+        id: &str,
+        command: &str,
+        calls: &AtomicUsize,
+    ) -> Result<serde_json::Value, ErrorResponse> {
+        let before = calls.load(Ordering::SeqCst);
+        let prepared = prepare_extension_invoke(state, id, command, &json!({})).await?;
+        let out = state
+            .extensions
+            .registry
+            .execute_command(id, command, &prepared.canonical_params)
+            .await
+            .map_err(|e| ErrorResponse::internal(e.to_string()))?;
+        assert!(
+            calls.load(Ordering::SeqCst) > before,
+            "successful prepare must reach extension execute"
+        );
+        Ok(out)
+    }
+
+    #[test]
+    fn loaded_record_none_and_uninstalled_never_default_allow() {
+        let err = ai_policy_from_loaded_record("x", None).unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        assert!(err.message.contains("no persisted AI policy"));
+
+        let mut r = base_record("x");
+        r.uninstalled = true;
+        let err = ai_policy_from_loaded_record("x", Some(r)).unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        assert!(err.message.contains("uninstalled"));
+    }
+
+    #[test]
+    fn store_load_error_is_service_unavailable() {
+        let store = neomind_storage::ExtensionStore::open(":memory:").unwrap();
+        store
+            .insert_unreadable_bytes_for_test("broken", b"{not-json")
+            .unwrap();
+        let err = ai_policy_from_store(store.as_ref(), "broken").unwrap_err();
+        assert_eq!(err.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(err.message.contains("policy store unavailable"));
+    }
+
+    #[tokio::test]
+    async fn persisted_disable_blocks_http_prepare_before_execute() {
+        let state = ServerState::new_for_testing().await;
+        let id = "ai-policy-ext";
+        let calls = Arc::new(AtomicUsize::new(0));
+        let ext: DynExtension = Arc::new(tokio::sync::RwLock::new(Box::new(CountingExt {
+            calls: calls.clone(),
+        })));
+        state
+            .extensions
+            .registry
+            .register(id.into(), ext)
+            .await
+            .unwrap();
+
+        let mut rec = base_record(id);
+        rec.disabled_commands = vec!["ping".into()];
+        state.extensions.store.save(&rec).unwrap();
+
+        let err = http_prepare_then_registry_execute(&state, id, "ping", calls.as_ref())
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN, "msg={}", err.message);
+        assert!(
+            err.message.contains("disabled_commands") || err.message.contains("disabled"),
+            "got: {}",
+            err.message
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "disabled command must not reach extension execute"
+        );
+    }
+
+    #[tokio::test]
+    async fn store_read_failure_after_disable_never_reaches_execute() {
+        let state = ServerState::new_for_testing().await;
+        let id = "ai-policy-readfail";
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        // Distinct metadata id must match register id for snapshot lookup.
+        struct CountingExt2 {
+            id: String,
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Extension for CountingExt2 {
+            fn metadata(&self) -> &ExtensionMetadata {
+                // Leak one metadata per test id — fine in unit tests.
+                Box::leak(Box::new(ExtensionMetadata::new(
+                    self.id.clone(),
+                    "RF",
+                    "1.0.0",
+                )))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ping_cmd()]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> neomind_core::extension::system::Result<serde_json::Value> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({"ok": true}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let ext: DynExtension = Arc::new(tokio::sync::RwLock::new(Box::new(CountingExt2 {
+            id: id.into(),
+            calls: calls.clone(),
+        })));
+        state
+            .extensions
+            .registry
+            .register(id.into(), ext)
+            .await
+            .unwrap();
+
+        // Persist a real disable first (policy intent), then corrupt the row so
+        // the next load errors — must stay deny, never fall open to execute.
+        let mut rec = base_record(id);
+        rec.disabled_commands = vec!["ping".into()];
+        state.extensions.store.save(&rec).unwrap();
+        state
+            .extensions
+            .store
+            .insert_unreadable_bytes_for_test(id, b"{\"enabled\":true,\"disabled_commands\":[]")
+            .unwrap();
+
+        let err = http_prepare_then_registry_execute(&state, id, "ping", calls.as_ref())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "msg={}",
+            err.message
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "store read failure must not reach extension execute"
+        );
+    }
+
+    #[tokio::test]
+    async fn enabled_policy_allows_prepare_and_execute() {
+        let state = ServerState::new_for_testing().await;
+        let id = "ai-policy-ok";
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        struct CountingExt3 {
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Extension for CountingExt3 {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("ai-policy-ok", "OK", "1.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ping_cmd()]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> neomind_core::extension::system::Result<serde_json::Value> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({"ok": true}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let ext: DynExtension = Arc::new(tokio::sync::RwLock::new(Box::new(CountingExt3 {
+            calls: calls.clone(),
+        })));
+        state
+            .extensions
+            .registry
+            .register(id.into(), ext)
+            .await
+            .unwrap();
+        state.extensions.store.save(&base_record(id)).unwrap();
+
+        http_prepare_then_registry_execute(&state, id, "ping", calls.as_ref())
+            .await
+            .expect("enabled policy must allow");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
 }

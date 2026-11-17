@@ -310,6 +310,20 @@ impl ExtensionStore {
         }
     }
 
+    /// Write opaque table bytes that [`Self::load`] cannot deserialize.
+    ///
+    /// Used by API fail-closed AI-policy tests to force a storage/read error
+    /// without mocking the store. Not a supported product API.
+    pub fn insert_unreadable_bytes_for_test(&self, id: &str, bytes: &[u8]) -> Result<(), Error> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(EXTENSIONS_TABLE)?;
+            table.insert(id, bytes)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
     /// Load all extension records
     pub fn load_all(&self) -> Result<Vec<ExtensionRecord>, Error> {
         let read_txn = self.db.begin_read()?;
