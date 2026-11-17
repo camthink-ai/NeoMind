@@ -1,0 +1,106 @@
+{
+  "method": "Spark local tokenizer + apply-template only; builtin tools; no inference/history/extensions/skills/session suffix/task state",
+  "baseline": "18715a40 (CLI-only); old system/remaining definitions unchanged vs d5a49db4 snapshot",
+  "before": {
+    "tool_count": 10,
+    "system_raw_tokens": 2279,
+    "system_and_tools_tokens": 8227
+  },
+  "after": {
+    "tool_count": 10,
+    "system_raw_tokens": 912,
+    "system_and_tools_tokens": 6855
+  },
+  "skills": [
+    {
+      "id": "agent-management",
+      "old_body_tokens": 5044,
+      "overview_tokens": 522,
+      "reference_titles_tokens": 57
+    },
+    {
+      "id": "connector-management",
+      "old_body_tokens": 1617,
+      "overview_tokens": 414,
+      "reference_titles_tokens": 34
+    },
+    {
+      "id": "dashboard-management",
+      "old_body_tokens": 6132,
+      "overview_tokens": 365,
+      "reference_titles_tokens": 128
+    },
+    {
+      "id": "data-push-management",
+      "old_body_tokens": 2105,
+      "overview_tokens": 335,
+      "reference_titles_tokens": 49
+    },
+    {
+      "id": "device-onboarding",
+      "old_body_tokens": 5470,
+      "overview_tokens": 551,
+      "reference_titles_tokens": 71
+    },
+    {
+      "id": "extension-development",
+      "old_body_tokens": 4313,
+      "overview_tokens": 171,
+      "reference_titles_tokens": 71
+    },
+    {
+      "id": "extension-management",
+      "old_body_tokens": 816,
+      "overview_tokens": 463,
+      "reference_titles_tokens": 13
+    },
+    {
+      "id": "llm-management",
+      "old_body_tokens": 3049,
+      "overview_tokens": 315,
+      "reference_titles_tokens": 88
+    },
+    {
+      "id": "message-management",
+      "old_body_tokens": 2897,
+      "overview_tokens": 421,
+      "reference_titles_tokens": 62
+    },
+    {
+      "id": "rule-management",
+      "old_body_tokens": 3453,
+      "overview_tokens": 476,
+      "reference_titles_tokens": 123
+    },
+    {
+      "id": "settings-management",
+      "old_body_tokens": 411,
+      "overview_tokens": 116,
+      "reference_titles_tokens": 10
+    },
+    {
+      "id": "system-info",
+      "old_body_tokens": 628,
+      "overview_tokens": 159,
+      "reference_titles_tokens": 10
+    },
+    {
+      "id": "transform-management",
+      "old_body_tokens": 2846,
+      "overview_tokens": 445,
+      "reference_titles_tokens": 60
+    },
+    {
+      "id": "widget-development",
+      "old_body_tokens": 5732,
+      "overview_tokens": 153,
+      "reference_titles_tokens": 64
+    },
+    {
+      "id": "widget-management",
+      "old_body_tokens": 515,
+      "overview_tokens": 377,
+      "reference_titles_tokens": 13
+    }
+  ]
+}
