@@ -11,6 +11,7 @@ import {
   SoftapTransportError,
   isTauriEnv,
   mqttSectionFromResolve,
+  CT_PROV_BLE_SCAN_MS,
   openCtGattChannel,
   parseApSsid,
   retainActiveBleSession,
@@ -154,7 +155,14 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
     setScannedDevices([])
     await new Promise((r) => setTimeout(r, 0))
     try {
-      const devices = await scanCtDevicesWithWebStash({ durationMs: 10_000 })
+      const devices = await scanCtDevicesWithWebStash({
+        durationMs: CT_PROV_BLE_SCAN_MS,
+        // Progressive list so a 30s window can show multiple devices as they appear.
+        onDevices: (partial) => {
+          if (gen !== opGenRef.current) return
+          setScannedDevices(partial)
+        },
+      })
       if (gen !== opGenRef.current) return []
       setScannedDevices(devices)
       return devices
@@ -203,6 +211,8 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
   const selectBleDevice = useCallback(
     async (device: CtScanDevice): Promise<boolean> => {
       const gen = ++opGenRef.current
+      // Selecting mid-scan cancels progressive updates (gen bump) and clears spinner.
+      setScanning(false)
       setSelectedScan(device)
       setConnecting(true)
       setError(null)

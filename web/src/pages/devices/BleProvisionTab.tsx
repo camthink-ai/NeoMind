@@ -133,7 +133,8 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
     )
   }
 
-  if (ct.scanning) {
+  // Empty scan-in-progress (no hits yet) — full-pane spinner.
+  if (ct.scanning && ct.scannedDevices.length === 0) {
     return (
       <CtProvisionCenter>
         <CtProvisionHero>
@@ -150,13 +151,16 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
     )
   }
 
+  // One or more devices — list while scanning continues so late advertisers appear.
   if (ct.scannedDevices.length > 0) {
     return (
       <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col self-center py-4">
         <div className="mb-3 shrink-0 space-y-0.5 text-center">
           <h3 className="text-base font-medium">{t('devices:ble.selectDevice')}</h3>
           <p className="text-xs text-muted-foreground">
-            {t('devices:ble.foundDevices', { count: ct.scannedDevices.length })}
+            {ct.scanning
+              ? t('devices:ble.scanningFound', { count: ct.scannedDevices.length })
+              : t('devices:ble.foundDevices', { count: ct.scannedDevices.length })}
           </p>
         </div>
         <div className="min-h-0 w-full flex-1 space-y-2 overflow-y-auto">
@@ -176,8 +180,8 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
               <button
                 key={dev.id}
                 type="button"
-                onClick={() => !busy && handleSelectDevice(dev)}
-                disabled={!!busy}
+                onClick={() => !busy && !ct.connecting && handleSelectDevice(dev)}
+                disabled={!!busy || ct.connecting}
                 className="flex w-full items-center gap-3 rounded-xl border border-border bg-card p-3 text-left transition-colors hover:bg-muted-30 disabled:opacity-50"
               >
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-light">
@@ -202,11 +206,22 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
             )
           })}
         </div>
-        <div className="mt-auto flex shrink-0 justify-center pt-3">
-          <Button variant="outline" onClick={handleScan} disabled={ct.scanning}>
-            <Bluetooth className="mr-2 h-4 w-4" />
-            {t('devices:ble.rescan')}
-          </Button>
+        <div className="mt-auto flex shrink-0 flex-col items-center gap-2 pt-3">
+          {ct.scanning ? (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {t('devices:ble.scanningHint')}
+            </p>
+          ) : null}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={reset} disabled={ct.connecting}>
+              {t('common:cancel')}
+            </Button>
+            <Button variant="outline" onClick={handleScan} disabled={ct.scanning || ct.connecting}>
+              <Bluetooth className="mr-2 h-4 w-4" />
+              {t('devices:ble.rescan')}
+            </Button>
+          </div>
         </div>
       </div>
     )

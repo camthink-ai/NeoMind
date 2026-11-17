@@ -88,21 +88,37 @@ function tryParseAdvFromServiceData(
 // Scan
 // ---------------------------------------------------------------------------
 
+/** Default BLE scan window (Tauri). Web Bluetooth uses the system picker instead. */
+export const CT_PROV_BLE_SCAN_MS = 30_000
+
 export async function scanCtDevices(opts?: {
   durationMs?: number
+  /** Fired whenever the discovered list grows (Tauri progressive UI). */
+  onDevices?: (devices: CtScanDevice[]) => void
 }): Promise<CtScanDevice[]> {
   if (isTauriEnv()) {
-    return scanTauri(opts?.durationMs ?? 10_000)
+    return scanTauri(opts?.durationMs ?? CT_PROV_BLE_SCAN_MS, opts?.onDevices)
   }
   return scanWebBluetooth()
 }
 
-async function scanTauri(durationMs: number): Promise<CtScanDevice[]> {
+async function scanTauri(
+  durationMs: number,
+  onDevices?: (devices: CtScanDevice[]) => void,
+): Promise<CtScanDevice[]> {
   const { startScan, stopScan } = await import('@mnlphlp/plugin-blec')
   const devices: CtScanDevice[] = []
   const seen = new Set<string>()
 
+  const publish = () => {
+    const sorted = [...devices]
+      .filter((d) => d.hasCtService)
+      .sort((a, b) => (b.rssi ?? -100) - (a.rssi ?? -100))
+    onDevices?.(sorted)
+  }
+
   await startScan((found) => {
+    let added = false
     for (const d of found) {
       if (seen.has(d.address)) continue
       const hasCt = deviceHasCtService(d)
@@ -124,13 +140,17 @@ async function scanTauri(durationMs: number): Promise<CtScanDevice[]> {
         discovered,
         hasCtService: hasCt || !!discovered,
       })
+      added = true
     }
+    if (added) publish()
   }, durationMs)
 
   await new Promise((r) => setTimeout(r, durationMs))
   await stopScan()
   devices.sort((a, b) => (b.rssi ?? -100) - (a.rssi ?? -100))
-  return devices.filter((d) => d.hasCtService)
+  const finalList = devices.filter((d) => d.hasCtService)
+  onDevices?.(finalList)
+  return finalList
 }
 
 async function scanWebBluetooth(): Promise<CtScanDevice[]> {
@@ -297,21 +317,27 @@ class WebBluetoothCtGattChannel implements CtGattChannel {
 let lastWebDevice: BluetoothDevice | null = null
 
 export async function scanCtDevicesWithWebStash(
-  opts?: { durationMs?: number },
+  opts?: {
+    durationMs?: number
+    onDevices?: (devices: CtScanDevice[]) => void
+  },
 ): Promise<CtScanDevice[]> {
   if (!isTauriEnv() && navigator.bluetooth) {
+    // Browser Web Bluetooth: system picker returns a single chosen device.
     const selected = await navigator.bluetooth.requestDevice({
       filters: [{ services: [CT_SERVICE] }],
       optionalServices: [CT_SERVICE],
     })
     lastWebDevice = selected
-    return [
+    const one: CtScanDevice[] = [
       {
         id: selected.id,
         name: selected.name,
         hasCtService: true,
       },
     ]
+    opts?.onDevices?.(one)
+    return one
   }
   return scanCtDevices(opts)
 }
