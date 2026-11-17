@@ -39,7 +39,7 @@ import { useExtensionPages } from '@/hooks/useExtensionPages'
 import { ExtensionPageHost } from '@/components/extensions/ExtensionPageHost'
 import { toast } from '@/components/ui/use-toast'
 import { api } from '@/lib/api'
-import { CT_PROV_SOFTAP_UI_ENABLED } from '@/lib/ct-prov'
+import { CT_PROV_SOFTAP_UI_ENABLED, releaseActiveBleSession } from '@/lib/ct-prov'
 import { useServerUrl } from '@/lib/server-url'
 import { useStore } from '@/store'
 import { fetchCache } from '@/lib/utils/async'
@@ -136,7 +136,11 @@ export function AddDeviceGlobalDialog({
 
   const handleOpenChange = useCallback(
     (next: boolean) => {
-      if (!next) setDismissSignal((n) => n + 1)
+      if (!next) {
+        setDismissSignal((n) => n + 1)
+        // Explicit — don't rely only on BleProvisionTab unmount timing.
+        releaseActiveBleSession()
+      }
       onOpenChange(next)
     },
     [onOpenChange],
@@ -146,6 +150,14 @@ export function AddDeviceGlobalDialog({
   useEffect(() => {
     if (open) fetchDeviceTypes()
   }, [open, fetchDeviceTypes])
+
+  // Leaving the BLE tab (or closing the dialog) must free the GATT link so the
+  // device is not left BUSY while Manual/Auto stay open.
+  useEffect(() => {
+    if (!open || activeTab !== 'ble') {
+      releaseActiveBleSession()
+    }
+  }, [open, activeTab])
 
   // Reset footer when switching tabs (old tab unmounts, new tab hasn't set its footer yet)
   useEffect(() => {

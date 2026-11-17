@@ -17,6 +17,7 @@ export * from './models'
 export * from './ble-channel'
 export * from './gatt-transport'
 export * from './softap-transport'
+export * from './active-ble-session'
 export {
   FRAGMENT_VECTORS,
   ENVELOPE_VECTORS,

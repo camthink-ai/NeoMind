@@ -13,6 +13,7 @@ import {
   mqttSectionFromResolve,
   openCtGattChannel,
   parseApSsid,
+  retainActiveBleSession,
   scanCtDevicesWithWebStash,
   softapFailureKind,
   softapHostForModel,
@@ -109,8 +110,17 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
   const transportRef = useRef<ProvTransport | null>(null)
   /** Bumped on disconnect/cancel so in-flight scan/connect ignore late results. */
   const opGenRef = useRef(0)
+  /** Unregister from the process-wide BLE session registry (does not release). */
+  const clearBleRetainRef = useRef<(() => void) | null>(null)
+  /** Stable disconnect entry for retainActiveBleSession (avoids stale closures). */
+  const disconnectImplRef = useRef<() => void>(() => {})
 
   const clearError = useCallback(() => setError(null), [])
+
+  const clearBleRetain = useCallback(() => {
+    clearBleRetainRef.current?.()
+    clearBleRetainRef.current = null
+  }, [])
 
   const disposeSession = useCallback(async () => {
     try {
@@ -177,9 +187,17 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
       const caps = await withTimeout(client.fetchCapabilities(), 15_000, 'capabilities.get')
       setCapabilities(caps)
       setConnected(true)
+
+      // BLE only: advertise this GATT session so route / dialog guards can drop it.
+      if (channel === 'ble' && transport instanceof BleGattCtTransport) {
+        clearBleRetain()
+        clearBleRetainRef.current = retainActiveBleSession(() => {
+          disconnectImplRef.current()
+        })
+      }
       return true
     },
-    [disposeSession],
+    [channel, clearBleRetain, disposeSession],
   )
 
   const selectBleDevice = useCallback(
@@ -369,6 +387,9 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
         }
         setProvisioningStep('done')
         setConnected(false)
+        // Free GATT so the device is not left BUSY after a successful apply.
+        clearBleRetain()
+        await disposeSession()
         return result
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -381,11 +402,12 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
         setProvisioningStep(null)
       }
     },
-    [capabilities],
+    [capabilities, clearBleRetain, disposeSession],
   )
 
   const disconnect = useCallback(() => {
     opGenRef.current += 1
+    clearBleRetain()
     void disposeSession()
     setScanning(false)
     setConnecting(false)
@@ -397,7 +419,9 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
     setError(null)
     setProvisioningStep(null)
     setScannedDevices([])
-  }, [disposeSession])
+  }, [clearBleRetain, disposeSession])
+
+  disconnectImplRef.current = disconnect
 
   return {
     channel,

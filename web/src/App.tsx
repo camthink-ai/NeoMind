@@ -15,6 +15,7 @@ import { useDataChangeEvents } from "@/hooks/useDataChangeEvents"
 import { Toaster } from "@/components/ui/toaster"
 import { Confirmer } from "@/components/ui/confirmer"
 import { tokenManager, getApiBase, isTauriEnv, setApiBase, getApiKey } from "@/lib/api"
+import { releaseActiveBleSession } from "@/lib/ct-prov"
 import { prefetchServerUrl } from "@/lib/server-url"
 import { StartupLoading } from "@/components/StartupLoading"
 import { LoadingState } from "@/components/shared/LoadingState"
@@ -315,6 +316,21 @@ function App() {
     showNotification: true,
   })
   const location = useLocation()
+  const setAddDeviceDialogOpen = useStore((s) => s.setAddDeviceDialogOpen)
+  const bleRoutePathRef = useRef(location.pathname)
+  // Any SPA route change must drop an open CT-Prov BLE GATT link — otherwise
+  // the device stays BUSY / connected after the operator leaves Devices.
+  useEffect(() => {
+    if (bleRoutePathRef.current === location.pathname) return
+    bleRoutePathRef.current = location.pathname
+    releaseActiveBleSession()
+    setAddDeviceDialogOpen(false)
+  }, [location.pathname, setAddDeviceDialogOpen])
+  useEffect(() => {
+    const onPageHide = () => releaseActiveBleSession()
+    window.addEventListener('pagehide', onPageHide)
+    return () => window.removeEventListener('pagehide', onPageHide)
+  }, [])
   const [backendReady, setBackendReady] = useState(false)
   const [isTauri, setIsTauri] = useState(false)
   const [initialCheckDone, setInitialCheckDone] = useState(false)
