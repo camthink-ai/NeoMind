@@ -368,37 +368,66 @@ impl LlamaCppRuntime {
     }
 
     /// Convert messages to OpenAI-compatible format.
+    ///
+    /// Text-only primaries (Spark / no mmproj) must never receive `image_url`
+    /// parts — history still keeps display attachments and companion
+    /// delegation leaves those bytes on earlier user turns. Mirror the
+    /// CloudRuntime strip so follow-up turns in an image session do not
+    /// 500 with `image input is not supported`.
     fn messages_to_api(&self, messages: &[Message]) -> Vec<ApiMessage> {
+        let can_multimodal = self.supports_multimodal();
+
         messages
             .iter()
             .map(|msg| {
                 let content = match &msg.content {
                     Content::Text(text) => ApiContent::Text(text.clone()),
                     Content::Parts(parts) => {
-                        let api_parts: Vec<ApiContentPart> = parts
+                        let mut api_parts: Vec<ApiContentPart> = parts
                             .iter()
-                            .map(|part| match part {
+                            .filter_map(|part| match part {
                                 ContentPart::Text { text } => {
-                                    ApiContentPart::Text { text: text.clone() }
+                                    Some(ApiContentPart::Text { text: text.clone() })
                                 }
-                                ContentPart::ImageUrl { url, .. } => ApiContentPart::ImageUrl {
-                                    image_url: ImageUrlContent {
-                                        url: url.clone(),
-                                        detail: Some("auto".to_string()),
-                                    },
-                                },
+                                ContentPart::ImageUrl { url, .. } => {
+                                    if !can_multimodal {
+                                        return None;
+                                    }
+                                    Some(ApiContentPart::ImageUrl {
+                                        image_url: ImageUrlContent {
+                                            url: url.clone(),
+                                            detail: Some("auto".to_string()),
+                                        },
+                                    })
+                                }
                                 ContentPart::ImageBase64 {
                                     data,
                                     mime_type,
                                     detail: _,
-                                } => ApiContentPart::ImageUrl {
-                                    image_url: ImageUrlContent {
-                                        url: format!("data:{};base64,{}", mime_type, data),
-                                        detail: Some("auto".to_string()),
-                                    },
-                                },
+                                } => {
+                                    if !can_multimodal {
+                                        return None;
+                                    }
+                                    Some(ApiContentPart::ImageUrl {
+                                        image_url: ImageUrlContent {
+                                            url: format!("data:{};base64,{}", mime_type, data),
+                                            detail: Some("auto".to_string()),
+                                        },
+                                    })
+                                }
                             })
                             .collect();
+
+                        // Image-only history turn on a text model: keep a
+                        // non-empty placeholder so the API accepts the message
+                        // and the model knows context was omitted.
+                        if api_parts.is_empty() {
+                            api_parts.push(ApiContentPart::Text {
+                                text: "[image content omitted — current model does not support image input]"
+                                    .to_string(),
+                            });
+                        }
+
                         ApiContent::Parts(api_parts)
                     }
                 };
@@ -1957,6 +1986,217 @@ mod tests {
         assert!(caps.function_calling);
         assert!(caps.thinking_display);
         assert_eq!(caps.max_context, Some(32768));
+    }
+
+    /// NM-231: Spark / text-only builtin primary must not receive `image_url`
+    /// parts when history still carries companion-era attachments (including
+    /// follow-up text turns in an image session).
+    #[test]
+    fn messages_to_api_strips_images_for_text_only_primary() {
+        let runtime = LlamaCppRuntime::new(LlamaCppConfig::new("sparkx2.6-1.7b"))
+            .unwrap()
+            .with_capabilities_override(false, true, true, 32_768);
+        assert!(
+            !runtime.supports_multimodal(),
+            "test fixture must be text-only"
+        );
+
+        let history_with_image = Message::new(
+            MessageRole::User,
+            Content::Parts(vec![
+                ContentPart::Text {
+                    text: "what is in this picture".to_string(),
+                },
+                ContentPart::ImageBase64 {
+                    data: "ZmFrZS1pbWFnZS1kYXRh".to_string(),
+                    mime_type: "image/png".to_string(),
+                    detail: None,
+                },
+            ]),
+        );
+        let image_only = Message::new(
+            MessageRole::User,
+            Content::Parts(vec![ContentPart::ImageBase64 {
+                data: "ZmFrZS1pbWFnZS1kYXRh".to_string(),
+                mime_type: "image/png".to_string(),
+                detail: None,
+            }]),
+        );
+        let followup = Message::new(
+            MessageRole::User,
+            Content::Text(
+                "[The user attached 1 image(s); a local vision model has ALREADY analyzed them]"
+                    .to_string(),
+            ),
+        );
+
+        let api_msgs = runtime.messages_to_api(&[history_with_image, image_only, followup]);
+
+        let mut saw_image = false;
+        let mut saw_placeholder = false;
+        let mut saw_history_text = false;
+        let mut saw_delegation_text = false;
+        for msg in &api_msgs {
+            match &msg.content {
+                ApiContent::Parts(parts) => {
+                    for part in parts {
+                        match part {
+                            ApiContentPart::ImageUrl { .. } => saw_image = true,
+                            ApiContentPart::Text { text } => {
+                                if text.starts_with("[image content omitted") {
+                                    saw_placeholder = true;
+                                }
+                                if text == "what is in this picture" {
+                                    saw_history_text = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                ApiContent::Text(text) => {
+                    if text.contains("local vision model has ALREADY analyzed") {
+                        saw_delegation_text = true;
+                    }
+                }
+            }
+        }
+        assert!(
+            !saw_image,
+            "text-only llama.cpp primary must not receive image_url parts"
+        );
+        assert!(saw_history_text, "mixed-turn text must survive image strip");
+        assert!(
+            saw_placeholder,
+            "image-only history turn needs a non-empty placeholder"
+        );
+        assert!(
+            saw_delegation_text,
+            "companion/OCR summary text must stay on the wire"
+        );
+    }
+
+    /// Multimodal primary (or intentional vision backend) still gets images.
+    #[test]
+    fn messages_to_api_keeps_images_for_multimodal_primary() {
+        let runtime = LlamaCppRuntime::new(LlamaCppConfig::new("minicpm-v"))
+            .unwrap()
+            .with_capabilities_override(true, true, true, 32_768);
+        assert!(runtime.supports_multimodal());
+
+        let msg = Message::new(
+            MessageRole::User,
+            Content::Parts(vec![
+                ContentPart::Text {
+                    text: "describe".to_string(),
+                },
+                ContentPart::ImageBase64 {
+                    data: "ZmFrZS1pbWFnZS1kYXRh".to_string(),
+                    mime_type: "image/png".to_string(),
+                    detail: None,
+                },
+            ]),
+        );
+        let api_msgs = runtime.messages_to_api(&[msg]);
+        let saw_image = api_msgs.iter().any(|m| match &m.content {
+            ApiContent::Parts(parts) => parts
+                .iter()
+                .any(|p| matches!(p, ApiContentPart::ImageUrl { .. })),
+            ApiContent::Text(_) => false,
+        });
+        assert!(
+            saw_image,
+            "multimodal llama.cpp primary must still receive image_url parts"
+        );
+    }
+
+    /// Wire regression: a follow-up text turn with image history must not put
+    /// `image_url` into the HTTP body when the primary is text-only.
+    #[tokio::test]
+    async fn text_only_primary_http_body_has_no_image_url() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                socket.read_exact(&mut byte).unwrap();
+                headers.push(byte[0]);
+                assert!(headers.len() < 8192);
+            }
+            let headers = String::from_utf8(headers).unwrap();
+            let length = headers
+                .lines()
+                .find_map(|line| {
+                    let (key, value) = line.split_once(':')?;
+                    key.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap();
+            let mut bytes = vec![0; length];
+            socket.read_exact(&mut bytes).unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let response =
+                "{\"choices\":[{\"message\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}";
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                response.len()
+            )
+            .unwrap();
+            request
+        });
+
+        let runtime = LlamaCppRuntime::new(
+            LlamaCppConfig::new("sparkx2.6-1.7b")
+                .with_endpoint(format!("http://{address}"))
+                .with_timeout_secs(5),
+        )
+        .unwrap()
+        .with_capabilities_override(false, true, true, 32_768);
+
+        let history = Message::new(
+            MessageRole::User,
+            Content::Parts(vec![
+                ContentPart::Text {
+                    text: "earlier image turn".to_string(),
+                },
+                ContentPart::ImageBase64 {
+                    data: "ZmFrZS1pbWFnZS1kYXRh".to_string(),
+                    mime_type: "image/png".to_string(),
+                    detail: None,
+                },
+            ]),
+        );
+        let followup = Message::user("follow-up without a new image");
+        let input = neomind_core::llm::backend::LlmInput {
+            messages: vec![history, followup],
+            params: Default::default(),
+            model: None,
+            stream: false,
+            tools: None,
+        };
+        runtime.generate(input).await.unwrap();
+        let request = server.join().unwrap();
+        let body = request.to_string();
+        assert!(
+            !body.contains("image_url") && !body.contains("data:image/"),
+            "text-only primary HTTP body must not carry image payloads: {body}"
+        );
+        assert!(
+            body.contains("follow-up without a new image"),
+            "follow-up text must remain"
+        );
+        assert!(
+            body.contains("earlier image turn"),
+            "history text must remain after strip"
+        );
     }
 }
 
