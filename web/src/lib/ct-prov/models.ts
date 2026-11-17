@@ -162,14 +162,23 @@ function fieldDeclared(declared: readonly string[] | undefined, field: string): 
 /**
  * Build CT `cellular` section gated by capabilities.fields.
  * Returns null when there is nothing to write (all empty / undeclared).
- * APN may be omitted entirely for pre-provisioned SIMs (fields without apn).
+ *
+ * Wi‑Fi-only Apply: if capabilities declare `apn` but the operator left it
+ * blank, return null — do NOT emit a partial object like `{auth:"none"}`.
+ * NE101 rejects that with INVALID_ARGUMENT "cellular.apn: required field missing".
+ * Pre-provisioned SIMs that omit `apn` from capabilities.fields still work.
  */
 export function cellularSectionFromFields(
   fields: CellularFields,
   declared?: readonly string[],
 ): Record<string, unknown> | null {
-  const out: Record<string, unknown> = {}
   const apn = fields.apn?.trim() ?? ''
+  // Declared APN left empty → skip the whole cellular write (Wi‑Fi path).
+  if (fieldDeclared(declared, 'apn') && !apn) {
+    return null
+  }
+
+  const out: Record<string, unknown> = {}
   if (apn && fieldDeclared(declared, 'apn')) out.apn = apn
   const username = fields.username?.trim()
   if (username && fieldDeclared(declared, 'username')) out.username = username
@@ -178,6 +187,11 @@ export function cellularSectionFromFields(
   if (pin && fieldDeclared(declared, 'pin')) out.pin = pin
   if (fields.auth && fieldDeclared(declared, 'auth')) out.auth = fields.auth
   if (fields.roaming != null && fieldDeclared(declared, 'roaming')) out.roaming = fields.roaming
+
+  // Default auth=none alone is not a real cellular configuration.
+  if (Object.keys(out).length === 1 && out.auth === 'none') {
+    return null
+  }
   return Object.keys(out).length > 0 ? out : null
 }
 

@@ -166,6 +166,19 @@ describe('cellular / webhook section builders', () => {
 
     // Pre-provisioned SIM: no apn in fields, empty payload → null
     expect(cellularSectionFromFields({ apn: '' }, ['username'])).toBeNull()
+
+    // Wi‑Fi-only: APN declared but blank — must NOT emit {auth:"none"}
+    // (NE101: INVALID_ARGUMENT cellular.apn required field missing).
+    expect(
+      cellularSectionFromFields({ apn: '', auth: 'none' }, [
+        'apn',
+        'username',
+        'password',
+        'pin',
+        'auth',
+      ]),
+    ).toBeNull()
+    expect(cellularSectionFromFields({ auth: 'none' }, ['auth'])).toBeNull()
   })
 
   it('builds webhook enable=false and gates secret/header', () => {

@@ -36,6 +36,9 @@ export function formatProvUserMessage(err: unknown): string {
   ) {
     return 'wifi_associate_failed'
   }
+  if (lower.includes('cellular.apn') || lower.includes('cellular apn')) {
+    return 'cellular_apn_required'
+  }
   if (lower.includes('storage_failed')) {
     return 'storage_failed'
   }
