@@ -958,6 +958,7 @@
     "customHost": "Broker 主机",
     "customPort": "端口",
     "customTls": "启用 TLS（mqtts）",
+    "customTlsHint": "使用 mqtts（端口通常为 8883）。设备需信任 Broker 证书——请使用固件已内置信任的 CA，或公有 CA。此处不配置客户端证书。",
     "customTopic": "发布 Topic",
     "customTopicHint": "留空则使用 device/{type}/{id}/uplink。",
     "customClientId": "Client ID",

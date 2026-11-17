@@ -14,10 +14,19 @@ export const CT_PROV_PRODUCT_NAME = 'CamThink CT-Prov'
 /** Protocol family label on the wire / docs. */
 export const CT_PROV_PROTOCOL = 'CT-Prov/1'
 
-export const CT_PROV_SERVICE_UUID = '7B1E0001-9D5B-4B5B-8F6D-2A4C0B7E0100'
-export const CT_PROV_C2D_UUID = '7B1E0002-9D5B-4B5B-8F6D-2A4C0B7E0100'
-export const CT_PROV_D2C_UUID = '7B1E0003-9D5B-4B5B-8F6D-2A4C0B7E0100'
-export const CT_PROV_META_UUID = '7B1E0004-9D5B-4B5B-8F6D-2A4C0B7E0100'
+/**
+ * Web Bluetooth requires lowercase hex UUIDs in requestDevice / getPrimaryService /
+ * getCharacteristic. Keep these canonical lowercase; Tauri blec accepts either case.
+ */
+export const CT_PROV_SERVICE_UUID = '7b1e0001-9d5b-4b5b-8f6d-2a4c0b7e0100'
+export const CT_PROV_C2D_UUID = '7b1e0002-9d5b-4b5b-8f6d-2a4c0b7e0100'
+export const CT_PROV_D2C_UUID = '7b1e0003-9d5b-4b5b-8f6d-2a4c0b7e0100'
+export const CT_PROV_META_UUID = '7b1e0004-9d5b-4b5b-8f6d-2a4c0b7e0100'
+
+/** Normalize a BLE UUID for Web Bluetooth (lowercase, strip braces). */
+export function normalizeBleUuid(uuid: string): string {
+  return uuid.toLowerCase().replace(/[{}]/g, '')
+}
 
 /** Service UUID little-endian bytes as they appear in Advertising Data. */
 export const CT_PROV_SERVICE_UUID_LE = new Uint8Array([

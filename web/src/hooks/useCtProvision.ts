@@ -103,6 +103,8 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
 
   const clientRef = useRef<CtSessionClient | null>(null)
   const transportRef = useRef<ProvTransport | null>(null)
+  /** Bumped on disconnect/cancel so in-flight scan/connect ignore late results. */
+  const opGenRef = useRef(0)
 
   const clearError = useCallback(() => setError(null), [])
 
@@ -132,15 +134,18 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
   }, [channel])
 
   const scan = useCallback(async (): Promise<CtScanDevice[]> => {
+    const gen = ++opGenRef.current
     setScanning(true)
     setError(null)
     setScannedDevices([])
     await new Promise((r) => setTimeout(r, 0))
     try {
       const devices = await scanCtDevicesWithWebStash({ durationMs: 10_000 })
+      if (gen !== opGenRef.current) return []
       setScannedDevices(devices)
       return devices
     } catch (err: unknown) {
+      if (gen !== opGenRef.current) return []
       if (err instanceof DOMException && err.name === 'NotFoundError') {
         setScannedDevices([])
         return []
@@ -148,7 +153,7 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
       setError(err instanceof Error ? err.message : String(err))
       return []
     } finally {
-      setScanning(false)
+      if (gen === opGenRef.current) setScanning(false)
     }
   }, [])
 
@@ -175,6 +180,7 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
 
   const selectBleDevice = useCallback(
     async (device: CtScanDevice): Promise<boolean> => {
+      const gen = ++opGenRef.current
       setSelectedScan(device)
       setConnecting(true)
       setError(null)
@@ -194,7 +200,15 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
           30_000,
           'BLE connect',
         )
+        if (gen !== opGenRef.current) {
+          channelGatt.disconnect()
+          return false
+        }
         const meta = await channelGatt.readMeta()
+        if (gen !== opGenRef.current) {
+          channelGatt.disconnect()
+          return false
+        }
         if (meta?.busy) {
           channelGatt.disconnect()
           throw new Error('Device META reports BUSY')
@@ -202,12 +216,13 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
         const transport = new BleGattCtTransport(channelGatt)
         return await openWithTransport(transport)
       } catch (err: unknown) {
+        if (gen !== opGenRef.current) return false
         setError(err instanceof Error ? err.message : String(err))
         setConnected(false)
         await disposeSession()
         return false
       } finally {
-        setConnecting(false)
+        if (gen === opGenRef.current) setConnecting(false)
       }
     },
     [disposeSession, openWithTransport],
@@ -361,7 +376,11 @@ export function useCtProvision(channel: CtProvisionChannel): UseCtProvisionRetur
   )
 
   const disconnect = useCallback(() => {
+    opGenRef.current += 1
     void disposeSession()
+    setScanning(false)
+    setConnecting(false)
+    setProvisioning(false)
     setConnected(false)
     setDeviceInfo(null)
     setCapabilities(null)

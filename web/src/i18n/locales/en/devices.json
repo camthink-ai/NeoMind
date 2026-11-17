@@ -958,6 +958,7 @@
     "customHost": "Broker host",
     "customPort": "Port",
     "customTls": "Use TLS (mqtts)",
+    "customTlsHint": "Uses mqtts (port usually 8883). The device must trust the broker certificate — embed a CA the firmware already trusts, or use a public CA. Client certificates are not configured here.",
     "customTopic": "Publish topic",
     "customTopicHint": "Leave empty for device/{type}/{id}/uplink.",
     "customClientId": "Client ID",

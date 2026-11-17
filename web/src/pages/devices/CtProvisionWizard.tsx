@@ -69,6 +69,7 @@ function StepDots({ current }: { current: CtWizardStep }) {
     t('ctProv.stepCapabilities'),
     t('ctProv.stepConfigure'),
   ]
+  const n = STEP_ORDER.length
   return (
     <ol
       className="mb-5 grid grid-cols-3 gap-0"
@@ -77,31 +78,53 @@ function StepDots({ current }: { current: CtWizardStep }) {
       {STEP_ORDER.map((step, i) => {
         const active = i === idx
         const done = idx > i
+        const lineDone = idx >= i
         return (
-          <li key={step} className="relative flex flex-col items-center gap-1.5 px-1">
-            {i > 0 && (
-              <span
-                aria-hidden
-                className={cn(
-                  'pointer-events-none absolute top-3.5 right-1/2 left-[-50%] h-px',
-                  done || active ? 'bg-primary' : 'bg-border',
-                )}
-              />
-            )}
-            <span
-              className={cn(
-                'relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium',
-                done && 'bg-success-light text-success',
-                active && 'bg-primary text-primary-foreground',
-                !done && !active && 'bg-muted text-muted-foreground',
+          <li key={step} className="flex flex-col items-center gap-1.5 px-1">
+            {/* Circle row only — connectors stay here so they never slice labels. */}
+            <div className="relative flex h-7 w-full items-center justify-center">
+              {i > 0 && (
+                <span
+                  aria-hidden
+                  className={cn(
+                    'pointer-events-none absolute inset-y-0 left-0 right-1/2 z-0 flex items-center',
+                  )}
+                >
+                  <span
+                    className={cn('h-px w-full', lineDone ? 'bg-primary' : 'bg-border')}
+                  />
+                </span>
               )}
-              aria-current={active ? 'step' : undefined}
-            >
-              {done ? <CheckCircle2 className="h-4 w-4" aria-hidden /> : i + 1}
-            </span>
+              {i < n - 1 && (
+                <span
+                  aria-hidden
+                  className={cn(
+                    'pointer-events-none absolute inset-y-0 left-1/2 right-0 z-0 flex items-center',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'h-px w-full',
+                      idx > i ? 'bg-primary' : 'bg-border',
+                    )}
+                  />
+                </span>
+              )}
+              <span
+                className={cn(
+                  'relative z-10 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium',
+                  done && 'bg-success-light text-success',
+                  active && 'bg-primary text-primary-foreground',
+                  !done && !active && 'bg-muted text-muted-foreground',
+                )}
+                aria-current={active ? 'step' : undefined}
+              >
+                {done ? <CheckCircle2 className="h-4 w-4" aria-hidden /> : i + 1}
+              </span>
+            </div>
             <span
               className={cn(
-                'text-nano text-center leading-tight',
+                'relative z-10 max-w-full px-0.5 text-center text-nano leading-tight',
                 active ? 'font-medium text-foreground' : 'text-muted-foreground',
               )}
             >
@@ -454,6 +477,9 @@ export function CtProvisionWizard({
             {!ct.provisioningStep && t('devices:ctProv.applyingHint')}
           </p>
         </div>
+        <Button variant="outline" onClick={onReset}>
+          {t('common:cancel')}
+        </Button>
       </CtProvisionCenter>
     )
   }
@@ -791,7 +817,7 @@ export function CtProvisionWizard({
                       <div className="space-y-3">
                         {/* CT-Prov/1 mqtt fields: enable, host, port, client_id,
                             username, password, tls, topic, qos */}
-                        <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
+                        <div className="flex items-center justify-between gap-3 py-1">
                           <FieldLabel htmlFor="ct-mqtt-enable" className="mb-0">
                             {t('devices:ctProv.customEnable')}
                           </FieldLabel>
@@ -873,22 +899,29 @@ export function CtProvisionWizard({
                             />
                           </Field>
                         </div>
-                        <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2">
-                          <FieldLabel htmlFor="ct-mqtt-tls" className="mb-0">
-                            {t('devices:ctProv.customTls')}
-                          </FieldLabel>
-                          <Switch
-                            id="ct-mqtt-tls"
-                            checked={customTls}
-                            onCheckedChange={(checked) => {
-                              setCustomTls(checked)
-                              if (checked && (customPort === '1883' || customPort.trim() === '')) {
-                                setCustomPort('8883')
-                              } else if (!checked && customPort === '8883') {
-                                setCustomPort('1883')
-                              }
-                            }}
-                          />
+                        <div className="space-y-1.5 border-y border-border py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <FieldLabel htmlFor="ct-mqtt-tls" className="mb-0">
+                              {t('devices:ctProv.customTls')}
+                            </FieldLabel>
+                            <Switch
+                              id="ct-mqtt-tls"
+                              checked={customTls}
+                              onCheckedChange={(checked) => {
+                                setCustomTls(checked)
+                                if (checked && (customPort === '1883' || customPort.trim() === '')) {
+                                  setCustomPort('8883')
+                                } else if (!checked && customPort === '8883') {
+                                  setCustomPort('1883')
+                                }
+                              }}
+                            />
+                          </div>
+                          {customTls && (
+                            <p className="text-xs text-muted-foreground">
+                              {t('devices:ctProv.customTlsHint')}
+                            </p>
+                          )}
                         </div>
                         <Field>
                           <FieldLabel htmlFor="ct-mqtt-topic">
@@ -945,21 +978,31 @@ export function CtProvisionWizard({
       {/* Sticky step actions — outside the scroll region (Main must be overflow-hidden). */}
       {step === 'info' && (
         <StepActions>
-          <Button className="w-full" onClick={() => setStep('capabilities')}>
-            <ChevronRight className="mr-2 h-4 w-4" />
-            {t('devices:ctProv.continue')}
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={onReset}>
+              {t('common:cancel')}
+            </Button>
+            <Button className="flex-1" onClick={() => setStep('capabilities')}>
+              <ChevronRight className="mr-2 h-4 w-4" />
+              {t('devices:ctProv.continue')}
+            </Button>
+          </div>
         </StepActions>
       )}
       {step === 'capabilities' && (
         <StepActions>
-          <div className="flex gap-2">
-            <Button variant="outline" className="flex-1" onClick={() => setStep('info')}>
-              {t('common:back')}
-            </Button>
-            <Button className="flex-1" onClick={() => setStep('edit')}>
-              <ChevronRight className="mr-2 h-4 w-4" />
-              {t('devices:ctProv.continue')}
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setStep('info')}>
+                {t('common:back')}
+              </Button>
+              <Button className="flex-1" onClick={() => setStep('edit')}>
+                <ChevronRight className="mr-2 h-4 w-4" />
+                {t('devices:ctProv.continue')}
+              </Button>
+            </div>
+            <Button variant="ghost" className="w-full" onClick={onReset}>
+              {t('common:cancel')}
             </Button>
           </div>
         </StepActions>
@@ -984,6 +1027,9 @@ export function CtProvisionWizard({
                 {t('devices:ble.apply')}
               </Button>
             </div>
+            <Button variant="ghost" className="w-full" onClick={onReset}>
+              {t('common:cancel')}
+            </Button>
             {(wifiScanError || mqttFormError || ct.error) && (
               <p className="text-center text-sm text-error">
                 {wifiScanError ||

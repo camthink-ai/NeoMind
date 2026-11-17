@@ -4,7 +4,7 @@
  * device SoftAP in System Settings, then Continue (after ack + reachability probe).
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, Loader2, Wifi } from 'lucide-react'
 
@@ -31,6 +31,8 @@ import {
 
 interface ApProvisionTabProps {
   onComplete?: (deviceId: string) => void
+  /** Parent dialog dismiss counter — tear down SoftAP session on close. */
+  dismissSignal?: number
 }
 
 type Phase = 'join' | 'probing' | 'connecting' | 'wizard' | 'failed'
@@ -39,7 +41,7 @@ function ssidExampleForFamily(model: string): string {
   return `${model}-…`
 }
 
-export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
+export function ApProvisionTab({ onComplete, dismissSignal = 0 }: ApProvisionTabProps) {
   const { t } = useTranslation(['common', 'devices'])
   const ct = useCtProvision('ap')
   const deviceTypes = useStore((s) => s.deviceTypes)
@@ -52,6 +54,22 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
   const [failKind, setFailKind] = useState<'not_on_softap' | 'http' | 'protocol' | 'other'>(
     'not_on_softap',
   )
+  const disconnectRef = useRef(ct.disconnect)
+  disconnectRef.current = ct.disconnect
+
+  useEffect(() => {
+    return () => {
+      disconnectRef.current()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (dismissSignal > 0) {
+      disconnectRef.current()
+      setJoinedAck(false)
+      setPhase('join')
+    }
+  }, [dismissSignal])
 
   useEffect(() => {
     if (apModels.length && !apModels.some((m) => m.model === modelPick)) {
@@ -178,6 +196,9 @@ export function ApProvisionTab({ onComplete }: ApProvisionTabProps) {
           <p className="font-mono text-sm text-muted-foreground">{selectedHost}</p>
           <p className="max-w-sm text-xs text-muted-foreground">{t('devices:ap.probingHint')}</p>
         </div>
+        <Button variant="outline" onClick={reset}>
+          {t('common:cancel')}
+        </Button>
       </CtProvisionCenter>
     )
   }

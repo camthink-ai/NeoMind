@@ -9,13 +9,33 @@ import {
   parseNetworkScan,
 } from '../session'
 import { FakeTransport } from '../transport'
-import { NEOLINK_REF_COMMIT, CT_PROV_PRODUCT_NAME } from '../constants'
+import {
+  NEOLINK_REF_COMMIT,
+  CT_PROV_PRODUCT_NAME,
+  CT_PROV_SERVICE_UUID,
+  CT_PROV_C2D_UUID,
+  CT_PROV_D2C_UUID,
+  CT_PROV_META_UUID,
+  normalizeBleUuid,
+} from '../constants'
 import { NEOLINK_VECTORS_REF } from '../vectors'
 
 describe('ct-prov FakeTransport session path', () => {
   it('pins the neolink reference commit used for golden vectors', () => {
     expect(NEOLINK_REF_COMMIT).toBe(NEOLINK_VECTORS_REF.commit)
     expect(CT_PROV_PRODUCT_NAME).toBe('CamThink CT-Prov')
+  })
+
+  it('exposes lowercase CT-Prov GATT UUIDs for Web Bluetooth', () => {
+    for (const uuid of [
+      CT_PROV_SERVICE_UUID,
+      CT_PROV_C2D_UUID,
+      CT_PROV_D2C_UUID,
+      CT_PROV_META_UUID,
+    ]) {
+      expect(uuid).toBe(uuid.toLowerCase())
+      expect(normalizeBleUuid(uuid.toUpperCase())).toBe(uuid)
+    }
   })
 
   it('runs device.info.get → capabilities.get → config.set → session.close', async () => {

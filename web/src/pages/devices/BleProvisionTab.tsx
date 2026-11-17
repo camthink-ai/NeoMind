@@ -3,7 +3,7 @@
  * After GATT + CT-Prov session open, shared wizard: info → caps → edit → apply.
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Bluetooth, Loader2, Signal } from 'lucide-react'
 
@@ -24,6 +24,8 @@ import {
 
 interface BleProvisionTabProps {
   onComplete?: (deviceId: string) => void
+  /** Called when the parent dialog is dismissed so we can drop the GATT session. */
+  dismissSignal?: number
 }
 
 type Phase = 'scan' | 'connecting' | 'wizard' | 'failed'
@@ -41,12 +43,30 @@ function bleErrorCopy(
   return code
 }
 
-export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
+export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionTabProps) {
   const { t } = useTranslation(['common', 'devices'])
   const ct = useCtProvision('ble')
   const deviceTypes = useStore((s) => s.deviceTypes)
 
   const [phase, setPhase] = useState<Phase>('scan')
+  const disconnectRef = useRef(ct.disconnect)
+  disconnectRef.current = ct.disconnect
+
+  // Drop GATT / CT-Prov session on unmount (tab switch or dialog close).
+  useEffect(() => {
+    return () => {
+      disconnectRef.current()
+    }
+  }, [])
+
+  // Parent dialog X / Escape / backdrop — bump signal so we disconnect even if
+  // the tab stays mounted briefly while the dialog hides.
+  useEffect(() => {
+    if (dismissSignal > 0) {
+      disconnectRef.current()
+      setPhase('scan')
+    }
+  }, [dismissSignal])
 
   const handleScan = useCallback(async () => {
     await ct.scan()
@@ -106,6 +126,9 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
             {ct.selectedScan?.name || ct.selectedScan?.id}
           </p>
         </div>
+        <Button variant="outline" onClick={reset}>
+          {t('common:cancel')}
+        </Button>
       </CtProvisionCenter>
     )
   }
@@ -120,6 +143,9 @@ export function BleProvisionTab({ onComplete }: BleProvisionTabProps) {
           <h3 className="text-lg font-medium">{t('devices:ble.scanning')}</h3>
           <p className="text-sm text-muted-foreground">{t('devices:ble.scanningHint')}</p>
         </div>
+        <Button variant="outline" onClick={reset}>
+          {t('common:cancel')}
+        </Button>
       </CtProvisionCenter>
     )
   }

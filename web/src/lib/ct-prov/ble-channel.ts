@@ -8,6 +8,7 @@ import {
   CT_PROV_D2C_UUID,
   CT_PROV_META_UUID,
   CT_PROV_SERVICE_UUID,
+  normalizeBleUuid,
 } from './constants'
 import {
   applyScanResponse,
@@ -39,19 +40,18 @@ function isTauriEnv(): boolean {
   return !!(window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
 }
 
-function normalizeUuid(u: string): string {
-  return u.toLowerCase().replace(/[{}]/g, '')
-}
-
-const CT_SERVICE = normalizeUuid(CT_PROV_SERVICE_UUID)
+const CT_SERVICE = normalizeBleUuid(CT_PROV_SERVICE_UUID)
+const CT_C2D = normalizeBleUuid(CT_PROV_C2D_UUID)
+const CT_D2C = normalizeBleUuid(CT_PROV_D2C_UUID)
+const CT_META = normalizeBleUuid(CT_PROV_META_UUID)
 
 function deviceHasCtService(d: {
   services?: string[]
   serviceData?: Record<string, number[]>
 }): boolean {
-  if (d.services?.some((s) => normalizeUuid(s) === CT_SERVICE)) return true
+  if (d.services?.some((s) => normalizeBleUuid(s) === CT_SERVICE)) return true
   if (d.serviceData) {
-    return Object.keys(d.serviceData).some((k) => normalizeUuid(k) === CT_SERVICE)
+    return Object.keys(d.serviceData).some((k) => normalizeBleUuid(k) === CT_SERVICE)
   }
   return false
 }
@@ -61,7 +61,7 @@ function tryParseAdvFromServiceData(
 ): CtDiscoveredDevice | undefined {
   if (!serviceData) return undefined
   for (const [key, payload] of Object.entries(serviceData)) {
-    if (normalizeUuid(key) !== CT_SERVICE) continue
+    if (normalizeBleUuid(key) !== CT_SERVICE) continue
     // WinRT/Apple: payload is the 6B discovery fields; Android may prepend UUID.
     // Rebuild full 27B AD for parseAdvertisingData.
     let fields = payload
@@ -138,8 +138,8 @@ async function scanWebBluetooth(): Promise<CtScanDevice[]> {
     throw new Error('Web Bluetooth is not supported')
   }
   const selected = await navigator.bluetooth.requestDevice({
-    filters: [{ services: [CT_PROV_SERVICE_UUID] }],
-    optionalServices: [CT_PROV_SERVICE_UUID],
+    filters: [{ services: [CT_SERVICE] }],
+    optionalServices: [CT_SERVICE],
   })
   return [
     {
@@ -167,13 +167,13 @@ class TauriCtGattChannel implements CtGattChannel {
 
   async writeC2d(frame: Uint8Array): Promise<void> {
     const { send } = await import('@mnlphlp/plugin-blec')
-    await send(CT_PROV_C2D_UUID, Array.from(frame), 'withResponse', CT_PROV_SERVICE_UUID)
+    await send(CT_C2D, Array.from(frame), 'withResponse', CT_SERVICE)
   }
 
   async subscribeD2c(handler: (frame: Uint8Array) => void): Promise<void> {
     this.d2cHandler = handler
     const { subscribe } = await import('@mnlphlp/plugin-blec')
-    await subscribe(CT_PROV_D2C_UUID, (data) => {
+    await subscribe(CT_D2C, (data) => {
       this.d2cHandler?.(new Uint8Array(data))
     })
   }
@@ -181,7 +181,7 @@ class TauriCtGattChannel implements CtGattChannel {
   async readMeta(): Promise<CtMetaInfo | null> {
     const { read } = await import('@mnlphlp/plugin-blec')
     try {
-      const bytes = await read(CT_PROV_META_UUID, CT_PROV_SERVICE_UUID)
+      const bytes = await read(CT_META, CT_SERVICE)
       return parseMeta(bytes)
     } catch {
       return null
@@ -192,7 +192,7 @@ class TauriCtGattChannel implements CtGattChannel {
     import('@mnlphlp/plugin-blec')
       .then(async ({ unsubscribe, disconnect }) => {
         try {
-          await unsubscribe(CT_PROV_D2C_UUID)
+          await unsubscribe(CT_D2C)
         } catch {
           /* ignore */
         }
@@ -221,8 +221,8 @@ class WebBluetoothCtGattChannel implements CtGattChannel {
       // Re-request if scan did not stash the device (rare)
       if (!navigator.bluetooth) throw new Error('Web Bluetooth is not supported')
       this.bleDevice = await navigator.bluetooth.requestDevice({
-        filters: [{ services: [CT_PROV_SERVICE_UUID] }],
-        optionalServices: [CT_PROV_SERVICE_UUID],
+        filters: [{ services: [CT_SERVICE] }],
+        optionalServices: [CT_SERVICE],
       })
     }
     if (onDisconnect) {
@@ -239,11 +239,11 @@ class WebBluetoothCtGattChannel implements CtGattChannel {
       await new Promise((r) => setTimeout(r, 500))
     }
     const server = await gatt.connect()
-    const service = await server.getPrimaryService(CT_PROV_SERVICE_UUID)
-    this.c2d = await service.getCharacteristic(CT_PROV_C2D_UUID)
-    this.d2c = await service.getCharacteristic(CT_PROV_D2C_UUID)
+    const service = await server.getPrimaryService(CT_SERVICE)
+    this.c2d = await service.getCharacteristic(CT_C2D)
+    this.d2c = await service.getCharacteristic(CT_D2C)
     try {
-      this.meta = await service.getCharacteristic(CT_PROV_META_UUID)
+      this.meta = await service.getCharacteristic(CT_META)
     } catch {
       this.meta = null
     }
@@ -282,6 +282,10 @@ class WebBluetoothCtGattChannel implements CtGattChannel {
     } catch {
       /* ignore */
     }
+    if (lastWebDevice && this.bleDevice && lastWebDevice.id === this.bleDevice.id) {
+      lastWebDevice = null
+    }
+    this.bleDevice = null
     this.c2d = null
     this.d2c = null
     this.meta = null
@@ -297,8 +301,8 @@ export async function scanCtDevicesWithWebStash(
 ): Promise<CtScanDevice[]> {
   if (!isTauriEnv() && navigator.bluetooth) {
     const selected = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [CT_PROV_SERVICE_UUID] }],
-      optionalServices: [CT_PROV_SERVICE_UUID],
+      filters: [{ services: [CT_SERVICE] }],
+      optionalServices: [CT_SERVICE],
     })
     lastWebDevice = selected
     return [

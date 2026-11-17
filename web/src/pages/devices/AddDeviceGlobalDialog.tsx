@@ -111,6 +111,8 @@ export function AddDeviceGlobalDialog({
   const fetchDevices = useStore((s) => s.fetchDevices)
   const fetchDeviceTypes = useStore((s) => s.fetchDeviceTypes)
   const [activeTab, setActiveTab] = useState<TabValue>('ble')
+  // Bumped on intentional dismiss so BLE/SoftAP tabs drop their live sessions.
+  const [dismissSignal, setDismissSignal] = useState(0)
   const { pages: extensionPages } = useExtensionPages()
   // Extension-contributed tabs: pages that opt into the add-device dialog
   // via nav_section "add-device" render as a tab hosting their bundle.
@@ -128,6 +130,14 @@ export function AddDeviceGlobalDialog({
   const [footer, setFooter] = useState<ReactNode>(null)
   const setTabFooter = useCallback((node: ReactNode) => setFooter(node), [])
 
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      if (!next) setDismissSignal((n) => n + 1)
+      onOpenChange(next)
+    },
+    [onOpenChange],
+  )
+
   // Ensure device types are loaded when dialog opens
   useEffect(() => {
     if (open) fetchDeviceTypes()
@@ -139,14 +149,14 @@ export function AddDeviceGlobalDialog({
   }, [activeTab])
 
   return (
-    <FullScreenDialog open={open} onOpenChange={onOpenChange}>
+    <FullScreenDialog open={open} onOpenChange={handleOpenChange}>
       <FullScreenDialogHeader
         icon={<Cpu className="w-5 h-5" />}
         iconBg="bg-info-light"
         iconColor="text-info"
         title={t('devices:addDevice')}
         subtitle={t('devices:globalDialog.subtitle')}
-        onClose={() => onOpenChange(false)}
+        onClose={() => handleOpenChange(false)}
       />
 
       <FullScreenDialogContent>
@@ -217,10 +227,11 @@ export function AddDeviceGlobalDialog({
               {activeTab === 'ble' && open && (
                 <div className="flex min-h-0 w-full flex-1 flex-col items-center">
                   <BleProvisionTab
+                    dismissSignal={dismissSignal}
                     onComplete={() => {
                       fetchCache.invalidate('devices')
                       fetchDevices()
-                      onOpenChange(false)
+                      handleOpenChange(false)
                     }}
                   />
                 </div>
@@ -229,10 +240,11 @@ export function AddDeviceGlobalDialog({
               {activeTab === 'ap' && open && (
                 <div className="flex min-h-0 w-full flex-1 flex-col items-center">
                   <ApProvisionTab
+                    dismissSignal={dismissSignal}
                     onComplete={() => {
                       fetchCache.invalidate('devices')
                       fetchDevices()
-                      onOpenChange(false)
+                      handleOpenChange(false)
                     }}
                   />
                 </div>
@@ -243,7 +255,7 @@ export function AddDeviceGlobalDialog({
                   deviceTypes={deviceTypes}
                   onAdd={onAdd}
                   adding={adding}
-                  onSuccess={() => onOpenChange(false)}
+                  onSuccess={() => handleOpenChange(false)}
                   renderFooter={setTabFooter}
                 />
               )}
