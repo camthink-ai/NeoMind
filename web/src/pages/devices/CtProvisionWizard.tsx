@@ -659,7 +659,7 @@ export function CtProvisionWizard({
   }
 
   return (
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-1 flex-col self-center py-4">
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col self-center py-4">
       <StepDots current={step} />
 
       {/* Connected strip — compact, not a competing card stack */}
@@ -703,24 +703,52 @@ export function CtProvisionWizard({
               <h3 className="text-base font-medium">{t('devices:ctProv.stepCapsTitle')}</h3>
               <p className="text-sm text-muted-foreground">{t('devices:ctProv.stepCapsDesc')}</p>
             </div>
-            <div className="space-y-2 rounded-xl border border-border p-4">
-              <ul className="space-y-1 text-sm">
+            <div className="space-y-3 rounded-xl border border-border p-4">
+              {/* Operator checklist — not raw protocol section names. */}
+              <ul className="space-y-2.5">
                 {needsWifi && (
-                  <li>
-                    {wifiSection === 'halow'
-                      ? t('devices:ble.wifiConfigHalow')
-                      : t('devices:ble.wifiConfig')}
-                  </li>
+                  <CapsChecklistItem
+                    icon={Wifi}
+                    title={
+                      wifiSection === 'halow'
+                        ? t('devices:ctProv.capsItemHalow')
+                        : t('devices:ctProv.capsItemWifi')
+                    }
+                    hint={t('devices:ctProv.capsItemWifiHint')}
+                  />
                 )}
-                {needsCellular && <li>{t('devices:ctProv.cellularConfig')}</li>}
-                {needsWebhook && <li>{t('devices:ctProv.webhookConfig')}</li>}
+                {needsCellular && (
+                  <CapsChecklistItem
+                    icon={Radio}
+                    title={t('devices:ctProv.capsItemCellular')}
+                    hint={t('devices:ctProv.capsItemCellularHint')}
+                  />
+                )}
                 {!needsWifi && !needsCellular && (
-                  <li>{t('devices:ble.cat1NoWifi')}</li>
+                  <CapsChecklistItem
+                    icon={Signal}
+                    title={t('devices:ctProv.capsItemNoWifi')}
+                    hint={t('devices:ble.cat1Hint')}
+                  />
+                )}
+                <CapsChecklistItem
+                  icon={Server}
+                  title={t('devices:ctProv.capsItemMqtt')}
+                  hint={t('devices:ctProv.capsItemMqttHint')}
+                />
+                {needsWebhook && (
+                  <CapsChecklistItem
+                    icon={Globe}
+                    title={t('devices:ctProv.capsItemWebhook')}
+                    hint={t('devices:ctProv.capsItemWebhookHint')}
+                  />
                 )}
               </ul>
               {ct.capabilities?.currentNetwork && (
                 <p className="text-xs text-muted-foreground">
-                  {t('devices:ctProv.currentNetwork', { network: ct.capabilities.currentNetwork })}
+                  {t('devices:ctProv.currentNetwork', {
+                    network: humanizeNetworkName(ct.capabilities.currentNetwork, t),
+                  })}
                 </p>
               )}
               <Collapsible open={capsDetailOpen} onOpenChange={setCapsDetailOpen}>
@@ -731,15 +759,21 @@ export function CtProvisionWizard({
                   {t('devices:ctProv.showCapabilities')}
                 </CollapsibleTrigger>
                 <CollapsibleContent className="space-y-1 pt-2">
+                  <p className="pb-1 text-xs text-muted-foreground">
+                    {t('devices:ctProv.capsTechnicalHint')}
+                  </p>
                   {(ct.capabilities?.sections ?? []).map((s) => (
                     <div
                       key={s.name}
                       className="flex items-center justify-between rounded-lg bg-muted-30 px-2.5 py-1.5 text-xs"
                     >
-                      <span className="font-medium">{s.name}</span>
+                      <span className="font-medium">
+                        {humanizeSectionName(s.name, t)}
+                      </span>
                       <span className="text-muted-foreground">
-                        {s.kind}
-                        {s.configurable ? ` · ${t('devices:ctProv.configurable')}` : ''}
+                        {s.configurable
+                          ? t('devices:ctProv.configurable')
+                          : t('devices:ctProv.readOnly')}
                       </span>
                     </div>
                   ))}
@@ -1404,4 +1438,64 @@ function InfoRow({ label, value }: { label: string; value: string }) {
       <span className="break-all text-right font-medium">{value}</span>
     </div>
   )
+}
+
+function CapsChecklistItem({
+  icon: Icon,
+  title,
+  hint,
+}: {
+  icon: typeof Wifi
+  title: string
+  hint: string
+}) {
+  return (
+    <li className="flex gap-3">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-card ring-1 ring-inset ring-border">
+        <Icon className="size-4 text-primary" aria-hidden />
+      </div>
+      <div className="min-w-0 space-y-0.5 pt-0.5">
+        <p className="text-sm font-medium">{title}</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">{hint}</p>
+      </div>
+    </li>
+  )
+}
+
+type CapsT = (key: string, opts?: Record<string, string>) => string
+
+function humanizeSectionName(name: string, t: CapsT): string {
+  switch (name) {
+    case 'wifi':
+      return t('devices:ctProv.capsItemWifi')
+    case 'halow':
+      return t('devices:ctProv.capsItemHalow')
+    case 'cellular':
+      return t('devices:ctProv.capsItemCellular')
+    case 'mqtt':
+      return t('devices:ctProv.capsItemMqtt')
+    case 'webhook':
+      return t('devices:ctProv.capsItemWebhook')
+    case 'ethernet':
+      return t('devices:ctProv.sectionEthernet')
+    case 'comm':
+      return t('devices:ctProv.sectionComm')
+    default:
+      return name
+  }
+}
+
+function humanizeNetworkName(network: string, t: CapsT): string {
+  switch (network) {
+    case 'wifi':
+      return t('devices:ctProv.networkWifi')
+    case 'halow':
+      return t('devices:ctProv.networkHalow')
+    case 'cellular':
+      return t('devices:ctProv.networkCellular')
+    case 'ethernet':
+      return t('devices:ctProv.networkEthernet')
+    default:
+      return network
+  }
 }

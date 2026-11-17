@@ -152,7 +152,7 @@ export function BleProvisionTab({ onComplete, dismissSignal = 0 }: BleProvisionT
 
   if (ct.scannedDevices.length > 0) {
     return (
-      <div className="mx-auto flex h-full min-h-0 w-full max-w-md flex-1 flex-col self-center py-4">
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-1 flex-col self-center py-4">
         <div className="mb-3 shrink-0 space-y-0.5 text-center">
           <h3 className="text-base font-medium">{t('devices:ble.selectDevice')}</h3>
           <p className="text-xs text-muted-foreground">

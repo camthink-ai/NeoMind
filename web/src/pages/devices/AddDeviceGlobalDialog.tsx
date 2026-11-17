@@ -216,10 +216,10 @@ export function AddDeviceGlobalDialog({
               shrinkable so inner overflow-y-auto can scroll instead of clipping. */}
           <FullScreenDialogMain
             className={cn(
-              // Full pane width for Manual/Auto (no max-w-2xl squeeze).
-              // BLE/AP still center their own max-w-md wizard column.
+              // Full pane width — Manual/Auto/BLE share the right column.
+              // BLE wizard uses a soft max-w-3xl inside; no outer max-w-2xl squeeze.
               'flex flex-col',
-              (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 items-center overflow-hidden',
+              (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 overflow-hidden',
             )}
           >
             <div
