@@ -396,7 +396,10 @@ mod tests {
             !out.contains("prefix"),
             "escaped-quote password prefix leaked: {out}"
         );
-        assert!(out.contains("[REDACTED]"), "missing redaction marker: {out}");
+        assert!(
+            out.contains("[REDACTED]"),
+            "missing redaction marker: {out}"
+        );
     }
 
     #[test]

@@ -470,6 +470,13 @@ pub struct LlmInterface {
     /// overhead the old 60%-of-window threshold could be unreachable while
     /// history was already being truncated every turn (2026-10-30).
     history_truncated: Arc<std::sync::atomic::AtomicBool>,
+    /// Set when the streaming context window (outer builder) evicted the
+    /// newest complete tool group under hard budget. The inner history
+    /// selector inspects the ALREADY-TRIMMED window, so its survives-check
+    /// would vacuously pass; the assemble gate consumes this flag (only on
+    /// tool-capable requests) to refuse tools instead of continuing a
+    /// feedback-less tool loop.
+    history_window_dropped_latest_feedback: Arc<std::sync::atomic::AtomicBool>,
     /// Last desensitized prompt archive recorded at the final LLM send
     /// boundary (roles/lengths/hashes/budget + tool-feedback survival).
     /// No auth headers / raw secrets. Take/peek for failure forensics.
@@ -610,6 +617,9 @@ impl LlmInterface {
             temperature_override: Arc::new(RwLock::new(None)),
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
             history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            history_window_dropped_latest_feedback: Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            )),
             last_prompt_archive: Arc::new(tokio::sync::Mutex::new(None)),
             intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
@@ -649,6 +659,9 @@ impl LlmInterface {
             temperature_override: Arc::new(RwLock::new(None)),
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
             history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            history_window_dropped_latest_feedback: Arc::new(std::sync::atomic::AtomicBool::new(
+                false,
+            )),
             last_prompt_archive: Arc::new(tokio::sync::Mutex::new(None)),
             intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
@@ -695,6 +708,21 @@ impl LlmInterface {
 
     pub fn take_history_truncated(&self) -> bool {
         self.history_truncated
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Mark that the outer context window dropped the newest complete tool
+    /// group (hard-budget eviction). The next tool-capable assemble request
+    /// consumes this and refuses tools.
+    pub fn mark_history_window_dropped_latest_feedback(&self) {
+        self.history_window_dropped_latest_feedback
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Take (read-and-clear) the outer-window feedback-drop flag. Called only
+    /// on tool-capable requests so summary/no-tool requests never consume it.
+    pub fn take_history_window_dropped_latest_feedback(&self) -> bool {
+        self.history_window_dropped_latest_feedback
             .swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 
@@ -1826,15 +1854,26 @@ impl LlmInterface {
             vec![system_msg, user_msg]
         };
 
+        // Outer context window (streaming layer) may have evicted the newest
+        // complete tool group under hard budget — the inner survives-check
+        // below inspects the already-trimmed window and would vacuously pass.
+        // Consume the flag only on tool-capable requests.
+        let outer_window_dropped_latest_feedback = if has_tools {
+            self.take_history_window_dropped_latest_feedback()
+        } else {
+            false
+        };
         let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
             history_reason,
             &history_before_trim,
             &selected_history,
             has_tools,
+            outer_window_dropped_latest_feedback,
         );
         if has_tools && !attach_tools {
             tracing::warn!(
                 reason = ?history_reason,
+                outer_window_dropped_latest_feedback,
                 "no_feedback_degrade_no_tools: refusing tool-enabled assemble when latest tool feedback cannot be kept"
             );
         }
@@ -2024,15 +2063,26 @@ impl LlmInterface {
             vec![system_msg, user_message]
         };
 
+        // Outer context window (streaming layer) may have evicted the newest
+        // complete tool group under hard budget — the inner survives-check
+        // below inspects the already-trimmed window and would vacuously pass.
+        // Consume the flag only on tool-capable requests.
+        let outer_window_dropped_latest_feedback = if has_tools {
+            self.take_history_window_dropped_latest_feedback()
+        } else {
+            false
+        };
         let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
             history_reason,
             &history_before_trim,
             &selected_history,
             has_tools,
+            outer_window_dropped_latest_feedback,
         );
         if has_tools && !attach_tools {
             tracing::warn!(
                 reason = ?history_reason,
+                outer_window_dropped_latest_feedback,
                 "no_feedback_degrade_no_tools: refusing tool-enabled assemble when latest tool feedback cannot be kept"
             );
         }
@@ -2353,15 +2403,26 @@ impl LlmInterface {
             vec![system_msg, user_message]
         };
 
+        // Outer context window (streaming layer) may have evicted the newest
+        // complete tool group under hard budget — the inner survives-check
+        // below inspects the already-trimmed window and would vacuously pass.
+        // Consume the flag only on tool-capable requests.
+        let outer_window_dropped_latest_feedback = if include_tools {
+            self.take_history_window_dropped_latest_feedback()
+        } else {
+            false
+        };
         let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
             history_reason,
             &history_before_trim,
             &selected_history,
             include_tools,
+            outer_window_dropped_latest_feedback,
         );
         if include_tools && !attach_tools {
             tracing::warn!(
                 reason = ?history_reason,
+                outer_window_dropped_latest_feedback,
                 "no_feedback_degrade_no_tools: refusing tool-enabled assemble when latest tool feedback cannot be kept"
             );
         }
@@ -2707,15 +2768,26 @@ impl LlmInterface {
             vec![system_msg, user_msg]
         };
 
+        // Outer context window (streaming layer) may have evicted the newest
+        // complete tool group under hard budget — the inner survives-check
+        // below inspects the already-trimmed window and would vacuously pass.
+        // Consume the flag only on tool-capable requests.
+        let outer_window_dropped_latest_feedback = if include_tools {
+            self.take_history_window_dropped_latest_feedback()
+        } else {
+            false
+        };
         let attach_tools = crate::agent::history_select::tools_allowed_after_history_select(
             history_reason,
             &history_before_trim,
             &selected_history,
             include_tools,
+            outer_window_dropped_latest_feedback,
         );
         if include_tools && !attach_tools {
             tracing::warn!(
                 reason = ?history_reason,
+                outer_window_dropped_latest_feedback,
                 "no_feedback_degrade_no_tools: refusing tool-enabled assemble when latest tool feedback cannot be kept"
             );
         }

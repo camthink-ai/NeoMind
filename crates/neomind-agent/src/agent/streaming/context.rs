@@ -44,7 +44,10 @@ pub(crate) fn build_context_window_with_summary_tracked(
         summary,
         summary_up_to_index,
     );
-    (built.messages, built.pressure || built.latest_tool_feedback_dropped)
+    (
+        built.messages,
+        built.pressure || built.latest_tool_feedback_dropped,
+    )
 }
 
 pub(crate) fn build_context_window_with_summary_marked(
@@ -124,6 +127,10 @@ pub(crate) fn build_context_window_with_summary_marked(
     }
 }
 
+/// Unmarked hard-budget window (drops the drop-flag). Prefer
+/// [`build_context_window_with_config_marked`] when callers need to know if
+/// the latest tool group was evicted.
+///
 /// Build context window with custom compaction configuration.
 ///
 /// This function applies the compaction strategy to AgentMessage sequences,
@@ -133,9 +140,6 @@ pub(crate) fn build_context_window_with_summary_marked(
 /// - `messages`: The message history to compact
 /// - `max_tokens`: Maximum tokens available for history
 /// - `config`: Compaction configuration
-/// Unmarked hard-budget window (drops the drop-flag). Prefer
-/// [`build_context_window_with_config_marked`] when callers need to know if
-/// the latest tool group was evicted.
 #[allow(dead_code)] // public/test helper; live loop uses the `_marked` variant
 pub fn build_context_window_with_config(
     messages: &[AgentMessage],
@@ -153,12 +157,16 @@ fn agent_group_is_complete_tool_interaction(group: &[AgentMessage]) -> bool {
 
 fn latest_complete_tool_fingerprint(messages: &[AgentMessage]) -> Option<String> {
     let groups = partition_agent_groups(messages);
-    groups.iter().rev().find(|g| agent_group_is_complete_tool_interaction(g)).map(|g| {
-        g.iter()
-            .map(|m| format!("{}:{}", m.role, m.content.len()))
-            .collect::<Vec<_>>()
-            .join("|")
-    })
+    groups
+        .iter()
+        .rev()
+        .find(|g| agent_group_is_complete_tool_interaction(g))
+        .map(|g| {
+            g.iter()
+                .map(|m| format!("{}:{}", m.role, m.content.len()))
+                .collect::<Vec<_>>()
+                .join("|")
+        })
 }
 
 fn build_context_window_with_config_marked(
@@ -524,24 +532,32 @@ impl TurnContext {
     pub(crate) fn new(summary: Option<String>, up_to: Option<u64>) -> Self {
         Self { summary, up_to }
     }
+    /// Build the LLM history window. The returned bool is
+    /// [`ContextWindowBuild::latest_tool_feedback_dropped`]: hard-budget
+    /// eviction removed the newest complete tool group. Callers feeding a
+    /// TOOL-CAPABLE request MUST forward it via
+    /// [`crate::llm::LlmInterface::mark_history_window_dropped_latest_feedback`]
+    /// so the assemble gate refuses tools — the inner history selector sees
+    /// only this already-trimmed window and would vacuously pass. Summary-only
+    /// consumers may ignore it.
     pub(crate) fn build_for_llm(
         &self,
         messages: &[AgentMessage],
         budget: usize,
         llm: &crate::llm::LlmInterface,
-    ) -> Vec<AgentMessage> {
-        let (window, pressure) = self.build_tracked(messages, budget);
-        if pressure {
+    ) -> (Vec<AgentMessage>, bool) {
+        let built = self.build_marked(messages, budget);
+        if built.pressure || built.latest_tool_feedback_dropped {
             llm.mark_history_truncated();
         }
-        window
+        (built.messages, built.latest_tool_feedback_dropped)
     }
-    fn build_tracked(&self, messages: &[AgentMessage], budget: usize) -> (Vec<AgentMessage>, bool) {
+    fn build_marked(&self, messages: &[AgentMessage], budget: usize) -> ContextWindowBuild {
         let mut messages = messages.to_vec();
         let drained = crate::agent::apply_chat_history_depth(&mut messages);
         let up_to = crate::agent::adjust_summary_index_after_drain(self.up_to, drained);
         crate::agent::strip_stale_images(&mut messages);
-        build_context_window_with_summary_tracked(&messages, budget, self.summary.as_deref(), up_to)
+        build_context_window_with_summary_marked(&messages, budget, self.summary.as_deref(), up_to)
     }
 }
 
@@ -593,7 +609,7 @@ mod tests {
             history.push(AgentMessage::assistant("old tool evidence ".repeat(200)));
         }
         let turn = TurnContext::new(None, None);
-        let out = turn.build_for_llm(&history, 1200, &llm);
+        let (out, _) = turn.build_for_llm(&history, 1200, &llm);
         assert!(llm.take_history_truncated());
         assert!(!llm.take_history_truncated());
         assert!(out.iter().any(|m| m.role == "user"));
@@ -686,5 +702,43 @@ mod tests {
             assert!(!dropped || has_latest);
         }
         assert!(out.iter().map(estimate_message_tokens).sum::<usize>() <= budget);
+    }
+
+    #[test]
+    fn turn_context_build_marked_propagates_latest_tool_feedback_drop() {
+        // TurnContext::build_for_llm must surface the drop flag so callers
+        // can refuse tools on the next request (inner selector cannot see it).
+        let latest_tool = "TURN_CTX_LATEST_TOOL_MARK";
+        let mut messages = vec![AgentMessage::user("keep")];
+        for i in 0..8 {
+            messages.push(AgentMessage::assistant(format!(
+                "old assistant {i} {}",
+                "x".repeat(800)
+            )));
+            messages.push(AgentMessage::tool_result(
+                "shell",
+                format!("old tool {i} {}", "y".repeat(800)),
+            ));
+        }
+        messages.push(AgentMessage::assistant("latest call"));
+        messages.push(AgentMessage::tool_result("shell", latest_tool));
+
+        let ctx = TurnContext::new(None, None);
+        let built = ctx.build_marked(&messages, 400);
+        let has_latest = built
+            .messages
+            .iter()
+            .any(|m| m.content.as_ref() == latest_tool);
+        assert_eq!(
+            built.latest_tool_feedback_dropped, !has_latest,
+            "drop flag must track the latest tool group exactly"
+        );
+        // Generous budget keeps the latest group → flag must be false.
+        let roomy = ctx.build_marked(&messages, 100_000);
+        assert!(!roomy.latest_tool_feedback_dropped);
+        assert!(roomy
+            .messages
+            .iter()
+            .any(|m| m.content.as_ref() == latest_tool));
     }
 }

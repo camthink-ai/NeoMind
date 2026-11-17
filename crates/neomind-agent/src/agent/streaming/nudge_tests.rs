@@ -1149,10 +1149,7 @@ mod multimodal_shell_deny {
         MockResponse::tool_call("shell", serde_json::json!({ "command": DENIED }))
     }
 
-    async fn run_mm(
-        rt: &MockLlmRuntime,
-        user: &str,
-    ) -> (Vec<AgentEvent>, Vec<String>) {
+    async fn run_mm(rt: &MockLlmRuntime, user: &str) -> (Vec<AgentEvent>, Vec<String>) {
         let (iface, state, _) = harness(rt);
         let commands = Arc::new(Mutex::new(Vec::new()));
         let mut registry = ToolRegistry::new();
@@ -1180,19 +1177,16 @@ mod multimodal_shell_deny {
 
     fn blocked_in_events(events: &[AgentEvent]) -> bool {
         events.iter().any(|e| match e {
-            AgentEvent::ToolCallEnd { result, success, .. } => {
-                !*success && result.contains("Blocked by safety policy")
-            }
+            AgentEvent::ToolCallEnd {
+                result, success, ..
+            } => !*success && result.contains("Blocked by safety policy"),
             _ => false,
         })
     }
 
     #[tokio::test]
     async fn first_pass_blocks_denied_shell() {
-        let rt = MockLlmRuntime::new(vec![
-            denied_shell(),
-            MockResponse::text("cannot run that"),
-        ]);
+        let rt = MockLlmRuntime::new(vec![denied_shell(), MockResponse::text("cannot run that")]);
         let (events, executed) = run_mm(&rt, "清理系统盘").await;
         assert!(
             executed.is_empty(),

@@ -1155,6 +1155,66 @@ async fn zero_budget_history_strips_tools_on_real_stream_request() {
 }
 
 #[tokio::test]
+async fn outer_window_feedback_drop_strips_tools_on_real_request() {
+    // Streaming-layer outer window evicted the newest complete tool group
+    // (mark_history_window_dropped_latest_feedback). The inner selector only
+    // sees the already-trimmed window and would vacuously report "feedback
+    // survives" — the assemble gate must still refuse tools on the wire.
+    let (iface, requests) = harness(vec![MockResponse::text("ok"), MockResponse::text("ok")]).await;
+    iface.set_tool_definitions(vec![tool("shell")]).await;
+    let history = vec![
+        Message::user("把天气写到 EK410"),
+        Message::assistant("calling shell"),
+        Message::user("[Tool: shell returned]\nLATEST_RESULT_MARK_7C31"),
+    ];
+
+    // Flagged round: history fully fits the inner selection, only the outer
+    // flag says the latest tool feedback is gone → no tools on the request.
+    iface.mark_history_window_dropped_latest_feedback();
+    drain(
+        iface
+            .chat_stream_with_history("继续查询设备列表", &history)
+            .await
+            .unwrap(),
+    )
+    .await;
+    {
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(
+            captured[0]["tools_count"], 0,
+            "outer-window feedback drop must not assemble a tool-enabled request: {:?}",
+            captured[0]["tool_names"]
+        );
+    }
+
+    // Control: identical request without the flag keeps tools (the flag was
+    // consumed by the previous request — take semantics).
+    requests.lock().unwrap().clear();
+    drain(
+        iface
+            .chat_stream_with_history("继续查询设备列表", &history)
+            .await
+            .unwrap(),
+    )
+    .await;
+    {
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(
+            captured[0]["tools_count"], 1,
+            "without the outer drop flag a fitting history must keep tools: {:?}",
+            captured[0]["tool_names"]
+        );
+        assert!(captured[0]["tool_names"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n == "shell"));
+    }
+}
+
+#[tokio::test]
 async fn task_state_prompt_injected_into_system_on_stream_request() {
     let (iface, requests) = harness(vec![MockResponse::text("ok")]).await;
     iface

@@ -2499,8 +2499,7 @@ impl AgentInternalState {
                         self.task_state.pending_system_notes.push(format!(
                             "Authorization was not applied ({reason}). The write was not re-authorized."
                         ));
-                        if reason == "confirm_request_not_found" && !submit.request_id.is_empty()
-                        {
+                        if reason == "confirm_request_not_found" && !submit.request_id.is_empty() {
                             self.task_state.confirm_lifecycle_notices.push(
                                 super::task_continuity::ConfirmLifecycleNotice::Removed {
                                     request_id: submit.request_id.clone(),
@@ -3032,11 +3031,7 @@ mod tests {
             write_fingerprint: req.write_fingerprint.clone(),
         };
 
-        let _ = state.accept_user_message(
-            AgentMessage::user("confirm re-run"),
-            Some(submit),
-            None,
-        );
+        let _ = state.accept_user_message(AgentMessage::user("confirm re-run"), Some(submit), None);
         assert!(state.task_state.user_authorized_new_op.is_some());
         assert_eq!(state.memory.len(), 1);
 

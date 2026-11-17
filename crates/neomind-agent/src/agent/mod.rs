@@ -1080,11 +1080,10 @@ impl Agent {
         message: crate::agent::types::AgentMessage,
         authorization: Option<task_continuity::AuthorizeNewOpSubmit>,
     ) -> crate::agent::types::AcceptedTurnContext {
-        self.internal_state.write().await.accept_user_message(
-            message,
-            authorization,
-            None,
-        )
+        self.internal_state
+            .write()
+            .await
+            .accept_user_message(message, authorization, None)
     }
 }
 /// Apply storage-derived `BackendCapabilities` to a freshly-constructed

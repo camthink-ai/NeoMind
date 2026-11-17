@@ -300,16 +300,22 @@ pub async fn process_stream_events_with_safeguards(
     }
 
     let history_for_llm: Vec<neomind_core::Message> = {
-        let (window, pressure) = super::context::build_context_window_with_summary_tracked(
+        let built = super::context::build_context_window_with_summary_marked(
             &history_messages,
             effective_max,
             conversation_summary.as_deref(),
             summary_up_to_index,
         );
-        if pressure {
+        if built.pressure || built.latest_tool_feedback_dropped {
             llm_interface.mark_history_truncated();
         }
-        window
+        if built.latest_tool_feedback_dropped {
+            // Tool-capable request follows: feed the assemble gate — the
+            // inner selector sees only the trimmed window and would
+            // vacuously keep tools.
+            llm_interface.mark_history_window_dropped_latest_feedback();
+        }
+        built.messages
     }
     .iter()
     .map(|msg| msg.to_core())
@@ -670,7 +676,13 @@ pub async fn process_stream_events_with_safeguards(
                     let history_for_llm: Vec<neomind_core::Message> = {
                         // Build context with the same budget-managed context
                         // builder as the initial call.
-                        let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                        let (compacted, outer_feedback_dropped) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                        if outer_feedback_dropped {
+                            // Tool-capable request follows: feed the assemble gate so tools
+                            // are refused when the newest tool feedback was evicted (the inner
+                            // selector cannot see the loss).
+                            llm_interface.mark_history_window_dropped_latest_feedback();
+                        }
                         compacted.iter().map(|msg| {
                             if !guide_recovery_this_round { return msg.to_core(); }
                             let mut clean = msg.clone();
@@ -877,7 +889,7 @@ pub async fn process_stream_events_with_safeguards(
 
                                 let summary_history: Vec<neomind_core::Message> = {
                                     let state_guard = internal_state.read().await;
-                                    let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                                    let (compacted, _) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                                     compacted.iter().map(|msg| msg.to_core()).collect()
                                 };
 
@@ -2546,7 +2558,7 @@ pub async fn process_stream_events_with_safeguards(
                             Vec::new()
                         } else {
                             let state_guard = internal_state.read().await;
-                            let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                            let (compacted, _) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                             compacted.iter().map(|msg| msg.to_core()).collect()
                         };
 
@@ -2898,7 +2910,7 @@ pub async fn process_stream_events_with_safeguards(
 
                         let summary_history: Vec<neomind_core::Message> = {
                             let state_guard = internal_state.read().await;
-                            let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                            let (compacted, _) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                             compacted.iter().map(|msg| msg.to_core()).collect()
                         };
 
@@ -2974,7 +2986,13 @@ pub async fn process_stream_events_with_safeguards(
                         // Build a compact history for the retry (keep last few messages)
                         let state_guard = internal_state.read().await;
                         let retry_history: Vec<neomind_core::Message> = {
-                            let context = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                            let (context, outer_feedback_dropped) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                            if outer_feedback_dropped {
+                                // Tool-capable request follows: feed the assemble gate so tools
+                                // are refused when the newest tool feedback was evicted (the inner
+                                // selector cannot see the loss).
+                                llm_interface.mark_history_window_dropped_latest_feedback();
+                            }
                             let non_system: Vec<&AgentMessage> = context.iter().collect();
                             // Keep at most last 6 messages to reduce prompt size
                             let keep = non_system.len().saturating_sub(6);

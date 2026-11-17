@@ -48,13 +48,24 @@ pub struct HistorySelectResult {
 /// window dropped it, tools must stay off — never continue a feedback-less
 /// tool loop. Zero soft budget / cannot-keep reasons with non-empty prior
 /// history also refuse tools.
+///
+/// `outer_window_dropped_latest_feedback` covers the OTHER trimming layer:
+/// the streaming context window (outer builder) may evict the newest
+/// complete tool group under hard budget BEFORE this selector runs. The
+/// survives-check below compares against that already-trimmed window and
+/// would vacuously pass (no latest tool result → "survives"), so the outer
+/// drop must refuse tools explicitly.
 pub fn tools_allowed_after_history_select(
     reason: HistorySelectReason,
     history_before_trim: &[Message],
     selected_history: &[Message],
     requested_tools: bool,
+    outer_window_dropped_latest_feedback: bool,
 ) -> bool {
     if !requested_tools {
+        return false;
+    }
+    if outer_window_dropped_latest_feedback {
         return false;
     }
     let history_was_nonempty = !history_before_trim.is_empty();
@@ -964,26 +975,41 @@ mod tests {
             HistorySelectReason::ZeroBudget,
             &hist,
             &[],
-            true
+            true,
+            false
         ));
         assert!(tools_allowed_after_history_select(
             HistorySelectReason::Fits,
             &hist,
             &hist,
-            true
+            true,
+            false
         ));
         // Empty prior history + ZeroBudget is not the feedback-drop shape.
         assert!(tools_allowed_after_history_select(
             HistorySelectReason::ZeroBudget,
             &[],
             &[],
-            true
+            true,
+            false
         ));
         assert!(!tools_allowed_after_history_select(
             HistorySelectReason::Fits,
             &hist,
             &hist,
+            false,
             false
+        ));
+        // Outer window already dropped the latest tool group: the inner
+        // survives-check below would vacuously pass (trimmed history has no
+        // tool result at all) — the flag must refuse tools regardless.
+        let trimmed_no_tools = vec![user("task")];
+        assert!(!tools_allowed_after_history_select(
+            HistorySelectReason::Fits,
+            &trimmed_no_tools,
+            &trimmed_no_tools,
+            true,
+            true
         ));
     }
 
@@ -1022,7 +1048,8 @@ mod tests {
             got.reason,
             &history,
             &got.messages,
-            true
+            true,
+            false
         ));
     }
 
@@ -1049,7 +1076,8 @@ mod tests {
             got.reason,
             &history,
             &got.messages,
-            true
+            true,
+            false
         ));
     }
 
@@ -1158,10 +1186,7 @@ mod tests {
             r#"{{"success":true,"device_id":"cam-single-01","blob":"{}"}}"#,
             "中文blob".repeat(8_000)
         );
-        assert!(
-            !payload.contains('\n'),
-            "fixture must stay single-line"
-        );
+        assert!(!payload.contains('\n'), "fixture must stay single-line");
         let history = vec![
             user("读大 JSON"),
             assistant("In a previous turn I called the shell tool."),
@@ -1350,9 +1375,8 @@ mod tests {
         );
 
         // System-stamped metadata still reuses across multi-pass compression.
-        let mut msg = Message::user(
-            "[Tool: device_command]\n{\"success\":false,\"operation_id\":\"op-1\"}",
-        );
+        let mut msg =
+            Message::user("[Tool: device_command]\n{\"success\":false,\"operation_id\":\"op-1\"}");
         compress_tool_result_message(&mut msg, 40);
         assert!(
             msg.compress_evidence

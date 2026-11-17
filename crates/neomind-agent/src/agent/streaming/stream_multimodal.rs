@@ -136,16 +136,22 @@ pub async fn process_multimodal_stream_events_with_safeguards(
     let effective_max = super::stream_core::effective_history_budget(max_context, prompt_overhead);
 
     let history_for_llm: Vec<neomind_core::Message> = {
-        let (window, pressure) = super::context::build_context_window_with_summary_tracked(
+        let built = super::context::build_context_window_with_summary_marked(
             &history_messages,
             effective_max,
             conversation_summary.as_deref(),
             summary_up_to_index,
         );
-        if pressure {
+        if built.pressure || built.latest_tool_feedback_dropped {
             llm_interface.mark_history_truncated();
         }
-        window
+        if built.latest_tool_feedback_dropped {
+            // Tool-capable request follows: feed the assemble gate — the
+            // inner selector sees only the trimmed window and would
+            // vacuously keep tools.
+            llm_interface.mark_history_window_dropped_latest_feedback();
+        }
+        built.messages
     }
     .iter()
     .map(|msg| msg.to_core())
@@ -780,7 +786,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 // is already in history as a prior turn)
                 let cont_history: Vec<neomind_core::Message> = {
                     let state_guard = internal_state.read().await;
-                    let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                    let (compacted, outer_feedback_dropped) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                    if outer_feedback_dropped {
+                        // Tool-capable request follows: feed the assemble gate so tools
+                        // are refused when the newest tool feedback was evicted (the inner
+                        // selector cannot see the loss).
+                        llm_interface.mark_history_window_dropped_latest_feedback();
+                    }
                     compacted.iter().map(|msg| msg.to_core()).collect()
                 };
 
@@ -1005,7 +1017,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             // This avoids dumping raw tool JSON to the user
             let summary_history: Vec<neomind_core::Message> = {
                 let state_guard = internal_state.read().await;
-                let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                let (compacted, _) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                 compacted.iter().map(|msg| msg.to_core()).collect()
             };
 
@@ -1113,7 +1125,13 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 // dead-end continuation above.
                 let nudge_history: Vec<neomind_core::Message> = {
                     let state_guard = internal_state.read().await;
-                    let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                    let (compacted, outer_feedback_dropped) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                    if outer_feedback_dropped {
+                        // Tool-capable request follows: feed the assemble gate so tools
+                        // are refused when the newest tool feedback was evicted (the inner
+                        // selector cannot see the loss).
+                        llm_interface.mark_history_window_dropped_latest_feedback();
+                    }
                     compacted.iter().map(|m| m.to_core()).collect()
                 };
                 let nudge_result = llm_interface
@@ -1399,7 +1417,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                     // main tool path).
                     let summary_history: Vec<neomind_core::Message> = {
                         let state_guard = internal_state.read().await;
-                        let compacted = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
+                        let (compacted, _) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                         compacted.iter().map(|msg| msg.to_core()).collect()
                     };
                     let summary_prompt = "Based on the tool execution results in the conversation above,                         provide a concise analysis and summary. Do NOT output any tool calls —                         give a direct text response to the user's question.";
