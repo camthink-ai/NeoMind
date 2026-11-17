@@ -1002,7 +1002,7 @@
     "unreachableHint": "Make sure this computer is joined to the device hotspot, then retry.",
     "joinTitle": "Connect over SoftAP",
     "joinDesc": "Pick the device family and gateway, join its Wi‑Fi hotspot in system settings, then continue here.",
-    "joinDescStrong": "Join the device hotspot in System Settings, then continue.",
+    "joinDescStrong": "Join the device hotspot in System Settings.",
     "ssidPatternLabel": "Look for an SSID like",
     "ssidPatternHint": "Also supports newer CT-AP-… names.",
     "joinedContinue": "I’ve joined — continue",
@@ -1075,7 +1075,7 @@
       "done": "Provisioning complete",
       "failed": "Failed"
     },
-    "scanDescShort": "Scan nearby devices to configure network and MQTT.",
+    "scanDescShort": "Scan nearby devices to configure network + MQTT.",
     "scanHint": "Put the device in provisionable mode, then scan."
   },
   "auto": {

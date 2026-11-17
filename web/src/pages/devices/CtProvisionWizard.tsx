@@ -156,15 +156,16 @@ export function CtProvisionHero({
   children,
 }: {
   tone?: 'primary' | 'success' | 'error'
-  /** `md` = first-viewport SoftAP/Manual/Auto language (w-14); `lg` = status states. */
-  size?: 'md' | 'lg'
+  /** `sm` = first-viewport SoftAP/BLE; `md` legacy alias → sm; `lg` = status states. */
+  size?: 'sm' | 'md' | 'lg'
   children: ReactNode
 }) {
+  const compact = size === 'sm' || size === 'md'
   return (
     <div
       className={cn(
-        'mx-auto flex shrink-0 items-center justify-center rounded-xl',
-        size === 'md' ? 'h-14 w-14' : 'h-16 w-16',
+        'mx-auto flex shrink-0 items-center justify-center rounded-lg',
+        compact ? 'h-10 w-10' : 'h-14 w-14',
         tone === 'primary' && 'bg-primary-light',
         tone === 'success' && 'bg-success-light',
         tone === 'error' && 'bg-error-light',
@@ -185,11 +186,11 @@ export function CtProvisionCenter({
   return (
     <div
       className={cn(
-        // Fill the add-device panel so hero/status states sit in the visual center.
+        // Fill the add-device panel so short hero/status states sit mid-pane.
         // w-full + flex-1: without width, a shrink-wrapped column can sit left in the
         // pane when a parent uses items-center; flex-1 keeps vertical fill reliable.
         // Horizontal padding comes from AddDeviceGlobalDialog — avoid double inset.
-        'flex h-full min-h-[min(60vh,520px)] w-full flex-1 flex-col items-center justify-center gap-6 py-6',
+        'flex h-full min-h-0 w-full flex-1 flex-col items-center justify-center gap-3 py-4',
         className,
       )}
     >
@@ -199,8 +200,10 @@ export function CtProvisionCenter({
 }
 
 function StepActions({ children }: { children: ReactNode }) {
+  // Flat on the pane (no tinted strip). Border only separates sticky actions
+  // when the step body scrolls underneath.
   return (
-    <div className="mt-auto shrink-0 border-t border-border bg-background pt-3">
+    <div className="mt-auto shrink-0 border-t border-border pt-3">
       {children}
     </div>
   )
@@ -466,10 +469,10 @@ export function CtProvisionWizard({
     return (
       <CtProvisionCenter>
         <CtProvisionHero>
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <Loader2 className="h-7 w-7 animate-spin text-primary" />
         </CtProvisionHero>
-        <div className="space-y-2 text-center">
-          <h3 className="text-lg font-medium">{t('devices:ble.provisioning')}</h3>
+        <div className="space-y-1 text-center">
+          <h3 className="text-base font-medium">{t('devices:ble.provisioning')}</h3>
           <p className="text-sm text-muted-foreground">
             {ct.provisioningStep === 'writingConfig' && t('devices:ble.status.writingMqtt')}
             {ct.provisioningStep === 'closing' && t('devices:ctProv.closingSession')}
@@ -488,13 +491,13 @@ export function CtProvisionWizard({
     return (
       <CtProvisionCenter>
         <CtProvisionHero tone="success">
-          <CheckCircle2 className="h-8 w-8 text-success" />
+          <CheckCircle2 className="h-7 w-7 text-success" />
         </CtProvisionHero>
-        <div className="text-center">
-          <h3 className="text-lg font-medium">
+        <div className="space-y-0.5 text-center">
+          <h3 className="text-base font-medium">
             {isReprovision ? t('devices:ble.reprovisionTitle') : t('devices:ble.successTitle')}
           </h3>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             {isReprovision ? t('devices:ble.reprovisionDesc') : t('devices:ble.successDesc')}
           </p>
         </div>
@@ -518,10 +521,10 @@ export function CtProvisionWizard({
     return (
       <CtProvisionCenter>
         <CtProvisionHero tone="error">
-          <XCircle className="h-8 w-8 text-error" />
+          <XCircle className="h-7 w-7 text-error" />
         </CtProvisionHero>
-        <div className="max-w-sm space-y-2 text-center">
-          <h3 className="text-lg font-medium">{t('devices:ble.failedTitle')}</h3>
+        <div className="max-w-sm space-y-1 text-center">
+          <h3 className="text-base font-medium">{t('devices:ble.failedTitle')}</h3>
           <p className="text-sm text-muted-foreground">{failMsg}</p>
           {failureHint && <p className="text-xs text-muted-foreground">{failureHint}</p>}
         </div>

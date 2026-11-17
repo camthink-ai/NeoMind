@@ -1002,7 +1002,7 @@
     "unreachableHint": "请确认本机已加入设备热点后再重试。",
     "joinTitle": "经 SoftAP 连接",
     "joinDesc": "先选择设备型号与网关，在系统 Wi‑Fi 中加入设备热点，再回到此处继续。",
-    "joinDescStrong": "请先在系统设置中加入设备热点，再继续。",
+    "joinDescStrong": "请先在系统设置中加入设备热点。",
     "ssidPatternLabel": "热点名称通常形如",
     "ssidPatternHint": "也支持较新的 CT-AP-… 命名。",
     "joinedContinue": "我已加入 — 继续",
