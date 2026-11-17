@@ -264,6 +264,43 @@ fn default_true() -> bool {
     true
 }
 
+/// Business side-effect class for an extension command.
+///
+/// Missing metadata MUST be treated as [`CommandEffect::Mutating`] — never
+/// infer privilege from command names alone. Host may override at install /
+/// resolve time (see NeoMind `command_contract`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandEffect {
+    /// Does not mutate business state or the outside world.
+    ReadOnly,
+    /// May create, update, delete, or otherwise change state.
+    #[default]
+    Mutating,
+}
+
+/// Whether re-issuing the same request is known-safe after interruption.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandReplaySafety {
+    /// Re-run after timeout/cancel cannot double-apply an effect.
+    Safe,
+    /// Outcome may already have landed — verify before retry.
+    #[default]
+    Unsafe,
+}
+
+/// How the command returns a result to the caller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandExecutionKind {
+    /// Result is available when the call returns.
+    #[default]
+    Immediate,
+    /// Long-running: accept + `operation_id`, then query (Phase 2).
+    Async,
+}
+
 /// Command definition/descriptor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommandDescriptor {
@@ -296,6 +333,16 @@ pub struct CommandDescriptor {
     /// admin toggles (the author's decision wins).
     #[serde(default = "default_true")]
     pub ai_exposed: bool,
+    /// Side-effect class. Default mutating (conservative) when omitted by
+    /// older extensions / IPC payloads.
+    #[serde(default)]
+    pub effect: CommandEffect,
+    /// Replay safety after interruption. Default unsafe (conservative).
+    #[serde(default)]
+    pub replay_safety: CommandReplaySafety,
+    /// Immediate vs async track. Default immediate.
+    #[serde(default)]
+    pub execution: CommandExecutionKind,
 }
 
 impl Default for CommandDescriptor {
@@ -310,6 +357,9 @@ impl Default for CommandDescriptor {
             samples: Vec::new(),
             parameter_groups: Vec::new(),
             ai_exposed: true,
+            effect: CommandEffect::Mutating,
+            replay_safety: CommandReplaySafety::Unsafe,
+            execution: CommandExecutionKind::Immediate,
         }
     }
 }
@@ -338,6 +388,27 @@ impl CommandDescriptor {
     /// Mark this command as not exposed to the LLM tool registry.
     pub fn ai_exposed_false(mut self) -> Self {
         self.ai_exposed = false;
+        self
+    }
+
+    /// Declare side-effect / replay / execution metadata.
+    pub fn with_capability(
+        mut self,
+        effect: CommandEffect,
+        replay_safety: CommandReplaySafety,
+        execution: CommandExecutionKind,
+    ) -> Self {
+        self.effect = effect;
+        self.replay_safety = replay_safety;
+        self.execution = execution;
+        self
+    }
+
+    /// Convenience: read-only, replay-safe, immediate.
+    pub fn read_only(mut self) -> Self {
+        self.effect = CommandEffect::ReadOnly;
+        self.replay_safety = CommandReplaySafety::Safe;
+        self.execution = CommandExecutionKind::Immediate;
         self
     }
 

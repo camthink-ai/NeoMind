@@ -459,6 +459,15 @@ pub struct SdkCommandDefinition {
     /// Whether this command is exposed to the LLM as a tool (default true).
     #[serde(default = "default_true")]
     pub ai_exposed: bool,
+    /// Side-effect class (default mutating).
+    #[serde(default)]
+    pub effect: crate::CommandEffect,
+    /// Replay safety (default unsafe).
+    #[serde(default)]
+    pub replay_safety: crate::CommandReplaySafety,
+    /// Immediate vs async (default immediate).
+    #[serde(default)]
+    pub execution: crate::CommandExecutionKind,
 }
 
 /// Parameter group for organizing command parameters
@@ -490,6 +499,9 @@ impl SdkCommandDefinition {
             samples: Vec::new(),
             parameter_groups: Vec::new(),
             ai_exposed: true,
+            effect: Default::default(),
+            replay_safety: Default::default(),
+            execution: Default::default(),
         }
     }
 
@@ -517,6 +529,9 @@ impl From<SdkCommandDefinition> for CommandDescriptor {
             fixed_values: c.fixed_values,
             samples: c.samples,
             ai_exposed: c.ai_exposed,
+            effect: c.effect,
+            replay_safety: c.replay_safety,
+            execution: c.execution,
             parameter_groups: c
                 .parameter_groups
                 .into_iter()

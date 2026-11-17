@@ -158,6 +158,9 @@ pub use ipc_types::{
     CExtensionMetadata,
     CommandDefinition,
     CommandDescriptor,
+    CommandEffect,
+    CommandExecutionKind,
+    CommandReplaySafety,
     ErrorKind,
     ExtensionCommand,
     ExtensionDescriptor,
@@ -382,6 +385,9 @@ impl CommandBuilder {
                 samples: Vec::new(),
                 parameter_groups: Vec::new(),
                 ai_exposed: true,
+                effect: Default::default(),
+                replay_safety: Default::default(),
+                execution: Default::default(),
             },
         }
     }
@@ -390,6 +396,27 @@ impl CommandBuilder {
     /// that only the web UI or automations invoke directly.
     pub fn without_ai(mut self) -> Self {
         self.command.ai_exposed = false;
+        self
+    }
+
+    /// Mark as read-only / replay-safe / immediate (queries).
+    pub fn read_only(mut self) -> Self {
+        self.command.effect = crate::CommandEffect::ReadOnly;
+        self.command.replay_safety = crate::CommandReplaySafety::Safe;
+        self.command.execution = crate::CommandExecutionKind::Immediate;
+        self
+    }
+
+    /// Set capability axes explicitly.
+    pub fn capability(
+        mut self,
+        effect: crate::CommandEffect,
+        replay_safety: crate::CommandReplaySafety,
+        execution: crate::CommandExecutionKind,
+    ) -> Self {
+        self.command.effect = effect;
+        self.command.replay_safety = replay_safety;
+        self.command.execution = execution;
         self
     }
 

@@ -111,6 +111,9 @@ impl Extension for LifecycleTrackingExtension {
                         samples: vec![],
                         parameter_groups: vec![],
                         ai_exposed: true,
+                        effect: Default::default(),
+                        replay_safety: Default::default(),
+                        execution: Default::default(),
                     },
                     ExtensionCommand {
                         name: "get_stats".to_string(),
@@ -122,6 +125,9 @@ impl Extension for LifecycleTrackingExtension {
                         samples: vec![],
                         parameter_groups: vec![],
                         ai_exposed: true,
+                        effect: Default::default(),
+                        replay_safety: Default::default(),
+                        execution: Default::default(),
                     },
                 ]
             })

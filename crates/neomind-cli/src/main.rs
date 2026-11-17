@@ -1499,6 +1499,10 @@ impl Extension for {struct_name} {{
             fixed_values: std::collections::HashMap::new(),
             samples: vec![json!({{"name": "world"}})],
             parameter_groups: Vec::new(),
+            ai_exposed: true,
+            effect: Default::default(),
+            replay_safety: Default::default(),
+            execution: Default::default(),
         }}]
     }}
 

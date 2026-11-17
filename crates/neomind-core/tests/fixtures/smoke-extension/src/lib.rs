@@ -91,6 +91,9 @@ impl Extension for NativeCapabilitySmokeExtension {
                 })],
                 parameter_groups: Vec::new(),
                 ai_exposed: true,
+                effect: Default::default(),
+                replay_safety: Default::default(),
+                execution: Default::default(),
             },
             ExtensionCommand {
                 name: "get_last_event_result".to_string(),
@@ -103,6 +106,9 @@ impl Extension for NativeCapabilitySmokeExtension {
                 samples: vec![json!({})],
                 parameter_groups: Vec::new(),
                 ai_exposed: true,
+                effect: Default::default(),
+                replay_safety: Default::default(),
+                execution: Default::default(),
             },
         ]
     }

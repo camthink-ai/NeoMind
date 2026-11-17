@@ -129,6 +129,9 @@ impl Extension for WeatherExtension {
                         samples: vec![json!({"city": "Beijing", "days": 3})],
                         parameter_groups: vec![],
                         ai_exposed: true,
+                        effect: Default::default(),
+                        replay_safety: Default::default(),
+                        execution: Default::default(),
                     },
                     ExtensionCommand {
                         name: "get_current".to_string(),
@@ -150,6 +153,9 @@ impl Extension for WeatherExtension {
                         samples: vec![json!({"city": "Shanghai"})],
                         parameter_groups: vec![],
                         ai_exposed: true,
+                        effect: Default::default(),
+                        replay_safety: Default::default(),
+                        execution: Default::default(),
                     },
                 ]
             })
@@ -321,6 +327,9 @@ impl Extension for SensorExtension {
                         samples: vec![],
                         parameter_groups: vec![],
                         ai_exposed: true,
+                        effect: Default::default(),
+                        replay_safety: Default::default(),
+                        execution: Default::default(),
                     },
                     ExtensionCommand {
                         name: "read_sensor".to_string(),
@@ -349,6 +358,9 @@ impl Extension for SensorExtension {
                         samples: vec![json!({"sensor": "temperature"})],
                         parameter_groups: vec![],
                         ai_exposed: true,
+                        effect: Default::default(),
+                        replay_safety: Default::default(),
+                        execution: Default::default(),
                     },
                 ]
             })

@@ -438,6 +438,9 @@ mod tests {
             samples: vec![],
             parameter_groups: vec![],
             ai_exposed: true,
+            effect: Default::default(),
+            replay_safety: Default::default(),
+            execution: Default::default(),
         };
 
         let result = executor

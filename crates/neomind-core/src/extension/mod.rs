@@ -13,6 +13,7 @@
 
 pub mod accel;
 pub mod capability_services;
+pub mod command_contract;
 pub mod context;
 pub mod event_dispatcher;
 pub mod event_subscription;
@@ -56,11 +57,16 @@ pub use stream::{
     ClientInfo, DataChunk, FlowControl, SessionStats, StreamCapability, StreamDataType,
     StreamDirection, StreamError, StreamMode, StreamResult, StreamSession,
 };
+pub use command_contract::{
+    build_input_schema, from_extension_command, parse_extension_tool_name, resolve_capability,
+    sync_effect_for_invoke, validate_params, BusinessCommandDef,
+};
 pub use system::{
-    CExtensionMetadata, CommandDefinition, Extension, ExtensionCommand, ExtensionMetadata,
-    ExtensionMetricValue, ExtensionState, ExtensionStats, MetricDataType, MetricDefinition,
-    MetricDescriptor, ParamMetricValue, ParameterDefinition, ParameterGroup, PushOutputMessage,
-    ToolDescriptor, ValidationRule, ABI_VERSION,
+    CExtensionMetadata, CommandDefinition, CommandEffect, CommandExecutionKind,
+    CommandReplaySafety, Extension, ExtensionCommand, ExtensionMetadata, ExtensionMetricValue,
+    ExtensionState, ExtensionStats, MetricDataType, MetricDefinition, MetricDescriptor,
+    ParamMetricValue, ParameterDefinition, ParameterGroup, PushOutputMessage, ToolDescriptor,
+    ValidationRule, ABI_VERSION,
 };
 pub use tracing::{
     current_span_id, current_trace_id, extension_command_span, extension_load_span,
