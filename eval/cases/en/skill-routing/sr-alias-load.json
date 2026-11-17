@@ -1,0 +1,59 @@
+{
+ "id": "sr-alias-load",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "Alias/short-name load: dashboard→dashboard-management resolves",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Just load the dashboard guide — the overview is enough."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Just load the dashboard guide — the overview is enough."
+  ],
+  "overall": "Alias/short-name load: dashboard→dashboard-management resolves"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "dashboard-management"
+  ],
+  "irrelevant": [
+   "device-onboarding"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "dashboard"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

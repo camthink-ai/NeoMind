@@ -1,0 +1,58 @@
+{
+ "id": "sr-none-llm-list",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "No guide needed: list backends (echo eval-agent)",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Which LLM backends are configured right now?"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Which LLM backends are configured right now?"
+  ],
+  "overall": "No guide needed: list backends (echo eval-agent)"
+ },
+ "skill_routing": {
+  "policy": "none",
+  "acceptable": [],
+  "irrelevant": [
+   "llm-management",
+   "settings-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "eval-agent"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

@@ -1,0 +1,58 @@
+{
+ "id": "sr-none-rule-list",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "无需指南：列规则（回显种子规则名）",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "列出现在所有的规则。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "列出现在所有的规则。"
+  ],
+  "overall": "无需指南：列规则（回显种子规则名）"
+ },
+ "skill_routing": {
+  "policy": "none",
+  "acceptable": [],
+  "irrelevant": [
+   "rule-management",
+   "message-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "rule-battery-low"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+{
+ "id": "sr-multi-wrong-device",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "multi_turn",
+ "split": "dev",
+ "description": "Multi-turn correction: retarget in place, exactly one new rule",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Create a low-battery rule named sensor-battery-rule for sensor-002, notify me below 25."
+  },
+  {
+   "user": "Wait — I meant sensor-001, not sensor-002. Fix it."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Create a low-battery rule named sensor-battery-rule for sensor-002, notify me below 25.",
+   "Wait — I meant sensor-001, not sensor-002. Fix it."
+  ],
+  "overall": "Multi-turn correction: retarget in place, exactly one new rule"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "rule-management"
+  ],
+  "irrelevant": [
+   "device-onboarding"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 2
+  },
+  {
+   "type": "rule_references_source",
+   "params": {
+    "name": "sensor-battery-rule",
+    "source": "sensor-001"
+   },
+   "expected": true
+  }
+ ]
+}

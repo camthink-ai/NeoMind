@@ -1,0 +1,55 @@
+{
+ "id": "sr-clear-push",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "明确单一任务：配置数据推送",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "把 sensor-001 的数据推送到外部系统：webhook 地址 https://ops.example.com/ingest。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "把 sensor-001 的数据推送到外部系统：webhook 地址 https://ops.example.com/ingest。"
+  ],
+  "overall": "明确单一任务：配置数据推送"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "data-push-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "ops.example.com"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  }
+ ]
+}

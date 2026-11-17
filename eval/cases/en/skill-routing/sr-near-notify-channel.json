@@ -1,0 +1,55 @@
+{
+ "id": "sr-near-notify-channel",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "Near-keyword: channel config must NOT create a rule",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Configure a webhook notification channel at http://ops.example.com/alert for rule alerts."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Configure a webhook notification channel at http://ops.example.com/alert for rule alerts."
+  ],
+  "overall": "Near-keyword: channel config must NOT create a rule"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "message-management"
+  ],
+  "irrelevant": [
+   "transform-management",
+   "device-onboarding"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "ops.example.com/alert"
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  }
+ ]
+}

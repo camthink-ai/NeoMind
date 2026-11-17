@@ -1,0 +1,60 @@
+{
+ "id": "sr-clear-rule",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "明确单一任务：创建规则",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "创建一条规则，名字叫 battery-low-002：sensor-002 的 values.battery 低于 25 时给我发通知。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "创建一条规则，名字叫 battery-low-002：sensor-002 的 values.battery 低于 25 时给我发通知。"
+  ],
+  "overall": "明确单一任务：创建规则"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "rule-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "transform-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected_min": 2
+  },
+  {
+   "type": "rule_exists",
+   "params": {
+    "name": "battery-low-002"
+   },
+   "expected": true
+  },
+  {
+   "type": "rule_references_source",
+   "params": {
+    "name": "battery-low-002",
+    "source": "sensor-002"
+   },
+   "expected": true
+  }
+ ]
+}

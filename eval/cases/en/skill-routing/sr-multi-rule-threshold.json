@@ -1,0 +1,54 @@
+{
+ "id": "sr-multi-rule-threshold",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "multi_turn",
+ "split": "dev",
+ "description": "Multi-turn: edit threshold in place, no duplicate rule",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Change rule-battery-low's threshold from 20 to 15."
+  },
+  {
+   "user": "Confirm what the threshold is now."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Change rule-battery-low's threshold from 20 to 15.",
+   "Confirm what the threshold is now."
+  ],
+  "overall": "Multi-turn: edit threshold in place, no duplicate rule"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "rule-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "dashboard-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "15"
+  }
+ ]
+}

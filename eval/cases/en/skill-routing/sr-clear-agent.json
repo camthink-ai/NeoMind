@@ -1,0 +1,52 @@
+{
+ "id": "sr-clear-agent",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "Clear single task: create a scheduled agent",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Create a scheduled agent named battery-checker that checks sensor-001's battery every day at 8am and notifies me below 20."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Create a scheduled agent named battery-checker that checks sensor-001's battery every day at 8am and notifies me below 20."
+  ],
+  "overall": "Clear single task: create a scheduled agent"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "agent-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "dashboard-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "agent_exists",
+   "params": {
+    "name": "battery-checker"
+   },
+   "expected": true
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

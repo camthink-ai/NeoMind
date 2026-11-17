@@ -1,0 +1,68 @@
+{
+ "name": "seed-skill-routing",
+ "description": "seed-default entities + one user-authored coldroom-checklist skill (skill-routing eval)",
+ "devices": [
+  {
+   "device_id": "sensor-001",
+   "name": "Living Room Sensor",
+   "device_type": "ne101_camera",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "sensor-002",
+   "name": "Bedroom Sensor",
+   "device_type": "ne101_camera",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  },
+  {
+   "device_id": "camera-001",
+   "name": "Front Door Camera",
+   "device_type": "ne101_camera",
+   "adapter_type": "mqtt",
+   "connection_config": {}
+  }
+ ],
+ "metrics": [
+  {
+   "device_id": "sensor-001",
+   "metric": "values.battery",
+   "value": 75
+  },
+  {
+   "device_id": "sensor-002",
+   "metric": "values.battery",
+   "value": 82
+  }
+ ],
+ "rules": [
+  {
+   "name": "rule-battery-low",
+   "description": "Low-battery alert — fires when sensor-001 reports values.battery < 20.",
+   "enabled": true,
+   "trigger": {
+    "trigger_type": "data_change"
+   },
+   "condition": {
+    "condition_type": "comparison",
+    "source": "device:sensor-001:values.battery",
+    "operator": "less_than",
+    "threshold": 20.0
+   },
+   "actions": [
+    {
+     "type": "notify",
+     "message": "sensor-001 battery low: {value}%",
+     "severity": "warning"
+    }
+   ],
+   "cooldown": 60000
+  }
+ ],
+ "skills": [
+  {
+   "content": "---\nid: coldroom-checklist\nname: Coldroom Inspection Checklist\ndescription: Use when the user asks about coldroom (冷库) inspection routines, walk-through checklists, or daily 巡检 steps (\"冷库巡检\", \"daily coldroom walkthrough\"). Includes 冷库/巡检/检查单.\ncategory: general\ntriggers:\n  keywords: [冷库, 巡检, coldroom, inspection checklist]\n---\n\n# Coldroom Inspection Checklist\n\nDaily walk-through steps:\n1. Check compressor pressure gauge reading is within the green zone.\n2. Verify door seal integrity (no frost buildup on the gasket).\n3. Record the coldroom core temperature from the panel display.\n4. Confirm the alarm buzzer test button responds.\n\nReport any abnormal reading to the shift lead before end of shift."
+  }
+ ]
+}

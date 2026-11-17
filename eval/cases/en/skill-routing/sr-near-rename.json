@@ -1,0 +1,56 @@
+{
+ "id": "sr-near-rename",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "Near-keyword: simple rename, direct CLI, no onboarding guide",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Rename sensor-002 to \"Bedroom Sensor 2\"."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Rename sensor-002 to \"Bedroom Sensor 2\"."
+  ],
+  "overall": "Near-keyword: simple rename, direct CLI, no onboarding guide"
+ },
+ "skill_routing": {
+  "policy": "none",
+  "acceptable": [],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management",
+   "dashboard-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "device_exists",
+   "params": {
+    "name": "Bedroom Sensor 2"
+   },
+   "expected": true
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

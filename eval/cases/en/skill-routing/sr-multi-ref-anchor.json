@@ -1,0 +1,59 @@
+{
+ "id": "sr-multi-ref-anchor",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "multi_turn",
+ "split": "heldout",
+ "description": "@-reference anchoring: target from the reference, never create a device",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Put this device's battery level on a dashboard named battery-board.",
+   "references": [
+    {
+     "type": "device",
+     "id": "sensor-001",
+     "label": "Living Room Sensor"
+    }
+   ]
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Put this device's battery level on a dashboard named battery-board."
+  ],
+  "overall": "@-reference anchoring: target from the reference, never create a device"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "dashboard-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "dashboard_exists",
+   "params": {
+    "name": "battery-board"
+   },
+   "expected": true
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  }
+ ]
+}

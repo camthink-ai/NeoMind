@@ -1,0 +1,51 @@
+{
+ "id": "sr-near-unit-convert",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "Near-keyword: unit conversion→transform, not dashboard",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Convert sensor-001's reported battery value — multiply it by 10 before it's used for display."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Convert sensor-001's reported battery value — multiply it by 10 before it's used for display."
+  ],
+  "overall": "Near-keyword: unit conversion→transform, not dashboard"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "transform-management"
+  ],
+  "irrelevant": [
+   "dashboard-management",
+   "rule-management",
+   "device-onboarding"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected_min": 1
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

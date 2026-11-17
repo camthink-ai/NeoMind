@@ -1,0 +1,56 @@
+{
+ "id": "sr-near-rename",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "关键词相近：简单改名，直接 CLI，无需接入指南",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "把 sensor-002 的名字改成「次卧传感器」。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "把 sensor-002 的名字改成「次卧传感器」。"
+  ],
+  "overall": "关键词相近：简单改名，直接 CLI，无需接入指南"
+ },
+ "skill_routing": {
+  "policy": "none",
+  "acceptable": [],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management",
+   "dashboard-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "device_exists",
+   "params": {
+    "name": "次卧传感器"
+   },
+   "expected": true
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

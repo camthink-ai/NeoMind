@@ -1,0 +1,51 @@
+{
+ "id": "sr-cross-chain",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "Cross-domain chain: transform→rule",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Transform sensor-001's battery percentage by multiplying by 10, then notify me when it's below 800."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Transform sensor-001's battery percentage by multiplying by 10, then notify me when it's below 800."
+  ],
+  "overall": "Cross-domain chain: transform→rule"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "transform-management",
+   "rule-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "dashboard-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected_min": 1
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected_min": 2
+  }
+ ]
+}

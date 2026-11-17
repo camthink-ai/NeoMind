@@ -1,0 +1,52 @@
+{
+ "id": "sr-near-dashboard-display",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "Near-keyword: 'show battery'→dashboard, not onboarding",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Show sensor-001's battery level on a dashboard named battery-board."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Show sensor-001's battery level on a dashboard named battery-board."
+  ],
+  "overall": "Near-keyword: 'show battery'→dashboard, not onboarding"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "dashboard-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "dashboard_exists",
+   "params": {
+    "name": "battery-board"
+   },
+   "expected": true
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  }
+ ]
+}

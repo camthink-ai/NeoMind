@@ -1,0 +1,58 @@
+{
+ "id": "sr-none-list-devices",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "No guide needed: list devices",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "List all devices."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "List all devices."
+  ],
+  "overall": "No guide needed: list devices"
+ },
+ "skill_routing": {
+  "policy": "none",
+  "acceptable": [],
+  "irrelevant": [
+   "device-onboarding",
+   "dashboard-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "sensor-002"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

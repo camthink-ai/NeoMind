@@ -1,0 +1,67 @@
+{
+ "id": "sr-none-metric-read",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "No guide needed: latest telemetry read (75)",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "What's sensor-001's latest battery level?"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "What's sensor-001's latest battery level?"
+  ],
+  "overall": "No guide needed: latest telemetry read (75)"
+ },
+ "skill_routing": {
+  "policy": "none",
+  "acceptable": [],
+  "irrelevant": [
+   "device-onboarding",
+   "dashboard-management",
+   "transform-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "latest_telemetry",
+   "params": {
+    "device_id": "sensor-001",
+    "metric": "values.battery"
+   },
+   "expected": 75
+  },
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "75"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

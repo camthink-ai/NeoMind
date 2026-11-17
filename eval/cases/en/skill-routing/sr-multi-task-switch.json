@@ -1,0 +1,61 @@
+{
+ "id": "sr-multi-task-switch",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "multi_turn",
+ "split": "dev",
+ "description": "Multi-turn task switch: read→dashboard, second turn changes domain",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "What's sensor-001's battery level right now?"
+  },
+  {
+   "user": "While you're at it, put it on a dashboard named battery-board."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "What's sensor-001's battery level right now?",
+   "While you're at it, put it on a dashboard named battery-board."
+  ],
+  "overall": "Multi-turn task switch: read→dashboard, second turn changes domain"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "dashboard-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "transform-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "dashboard_exists",
+   "params": {
+    "name": "battery-board"
+   },
+   "expected": true
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

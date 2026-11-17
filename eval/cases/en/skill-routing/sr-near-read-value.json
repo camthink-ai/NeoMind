@@ -1,0 +1,68 @@
+{
+ "id": "sr-near-read-value",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "Near-keyword: plain read, direct CLI, no guide needed",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "What is sensor-002's battery level right now?"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "What is sensor-002's battery level right now?"
+  ],
+  "overall": "Near-keyword: plain read, direct CLI, no guide needed"
+ },
+ "skill_routing": {
+  "policy": "none",
+  "acceptable": [],
+  "irrelevant": [
+   "device-onboarding",
+   "dashboard-management",
+   "rule-management",
+   "transform-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "latest_telemetry",
+   "params": {
+    "device_id": "sensor-002",
+    "metric": "values.battery"
+   },
+   "expected": 82
+  },
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "82"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

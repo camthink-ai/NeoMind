@@ -46,17 +46,40 @@ def _is_template_race(resp_text: str) -> bool:
     return "not found" in t and "template" in t
 
 
+def _is_adapter_startup_window(resp_text: str) -> bool:
+    """True for the internal-mqtt adapter startup window.
+
+    /health goes green ~1-3s after spawn, but the internal-mqtt adapter only
+    finishes connecting ~15-17s in (observed 2026-11-17 diagnostic: broker
+    listens at t=0 but the adapter's connection ack lands at t≈16s). With the
+    BindIncomplete strictness, a device POST in that window returns
+    "No MQTT adapter found to subscribe device ..." with config_applied=true
+    — retrying the same POST re-binds the already-registered device.
+    """
+    t = (resp_text or "").lower()
+    if "no mqtt adapter found" in t and "config_applied" in t:
+        return True
+    # Same window, later phase: the adapter exists but its broker session
+    # isn't ConnAcked yet — the server's own error text says "retry after
+    # ConnAck (config_applied=true)". Observed 2026-11-17: 4/40 seeds hit
+    # this after the adapter-found fix landed.
+    return "session not ready" in t and "retry after connack" in t
+
+
 def _seed_devices(server, items: list):
     for d in items or []:
-        # Bounded retry on the template-seeding race (see _is_template_race).
-        # Other failures (real 400/500) raise immediately.
-        deadline = time.monotonic() + 5.0
+        # Bounded retries on STARTUP RACES only (see _is_template_race and
+        # _is_adapter_startup_window): /health precedes both template seeding
+        # (~1-2s) and the internal-mqtt adapter connect (~15-17s). Real
+        # 400/500 failures raise immediately.
+        deadline = time.monotonic() + 30.0
         while True:
             r = _post(server, "/devices", d)
             if r.ok:
                 break
-            if _is_template_race(r.text) and time.monotonic() < deadline:
-                time.sleep(0.5)
+            race = _is_template_race(r.text) or _is_adapter_startup_window(r.text)
+            if race and time.monotonic() < deadline:
+                time.sleep(1.0)
                 continue
             raise RuntimeError(
                 f"seed device {d.get('device_id') or d.get('id')} -> "
@@ -110,6 +133,25 @@ def _seed_llm_backends(server, items: list):
             )
 
 
+def _seed_skills(server, items: list):
+    """Register USER skills (POST /skills {content}) before the trial.
+
+    Used by skill-routing cases that need a custom user-authored guide in the
+    registry (custom-skill routing / builtin-override scenarios). Idempotent:
+    a re-register of the same id returns a conflict we treat as success.
+    """
+    for s in items or []:
+        content = s.get("content") if isinstance(s, dict) else None
+        if not content:
+            raise RuntimeError(f"fixture skill missing 'content': {s!r}")
+        r = _post(server, "/skills", {"content": content})
+        if not r.ok:
+            tlow = (r.text or "").lower()
+            if "exist" in tlow or "duplicate" in tlow or "already" in tlow:
+                continue
+            raise RuntimeError(f"seed skill -> {r.status_code}: {r.text}")
+
+
 def seed_fixture(server, fixture: dict):
     # Register custom device-type templates FIRST — devices below reference
     # them, and a missing template 500s the device POST (see _seed_devices
@@ -122,6 +164,7 @@ def seed_fixture(server, fixture: dict):
     _seed_simple(server, fixture.get("transforms"), "/automations", "transform")
     _seed_simple(server, fixture.get("dashboards"), "/dashboards", "dashboard")
     _seed_simple(server, fixture.get("channels"), "/messages/channels", "channel")
+    _seed_skills(server, fixture.get("skills"))
     _seed_llm_backends(server, fixture.get("llm_backends"))
     # extensions omitted — Tier 1 doesn't ship .nep binaries
 

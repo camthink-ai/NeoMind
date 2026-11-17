@@ -1,0 +1,50 @@
+{
+ "id": "sr-clear-transform",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "明确单一任务：创建转换",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "创建一个转换：把 sensor-001 的 values.battery 百分比乘以 100，输出成千分比指标。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "创建一个转换：把 sensor-001 的 values.battery 百分比乘以 100，输出成千分比指标。"
+  ],
+  "overall": "明确单一任务：创建转换"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "transform-management"
+  ],
+  "irrelevant": [
+   "dashboard-management",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected_min": 1
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

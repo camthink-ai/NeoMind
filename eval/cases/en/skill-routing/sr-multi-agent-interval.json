@@ -1,0 +1,59 @@
+{
+ "id": "sr-multi-agent-interval",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "multi_turn",
+ "split": "dev",
+ "description": "Multi-turn: interval edit anchors to the current agent",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Create an agent named battery-checker that checks sensor-001's battery every 5 minutes."
+  },
+  {
+   "user": "Change it to every 10 minutes."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Create an agent named battery-checker that checks sensor-001's battery every 5 minutes.",
+   "Change it to every 10 minutes."
+  ],
+  "overall": "Multi-turn: interval edit anchors to the current agent"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "agent-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "agent_exists",
+   "params": {
+    "name": "battery-checker"
+   },
+   "expected": true
+  },
+  {
+   "type": "agent_config",
+   "params": {
+    "name": "battery-checker",
+    "field": "interval_seconds"
+   },
+   "expected": 600
+  }
+ ]
+}

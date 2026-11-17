@@ -1,0 +1,54 @@
+{
+ "id": "sr-multi-channel-switch",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "multi_turn",
+ "split": "heldout",
+ "description": "Multi-turn: channel address edit anchors to the channel",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Create a webhook notification channel pointing at http://a.example.com/alert."
+  },
+  {
+   "user": "Switch the address to http://b.example.com/alert."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Create a webhook notification channel pointing at http://a.example.com/alert.",
+   "Switch the address to http://b.example.com/alert."
+  ],
+  "overall": "Multi-turn: channel address edit anchors to the channel"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "message-management"
+  ],
+  "irrelevant": [
+   "rule-management",
+   "transform-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "b.example.com"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

@@ -1,0 +1,51 @@
+{
+ "id": "sr-near-unit-convert",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "关键词相近：数值换算→Transform 而非 Dashboard",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "把 sensor-001 上报的电池数值做个换算，乘以 10 之后再用于展示。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "把 sensor-001 上报的电池数值做个换算，乘以 10 之后再用于展示。"
+  ],
+  "overall": "关键词相近：数值换算→Transform 而非 Dashboard"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "transform-management"
+  ],
+  "irrelevant": [
+   "dashboard-management",
+   "rule-management",
+   "device-onboarding"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected_min": 1
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

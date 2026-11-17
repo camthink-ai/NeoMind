@@ -1,0 +1,55 @@
+{
+ "id": "sr-clear-push",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "Clear single task: configure data push",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Push sensor-001's data to an external system: webhook https://ops.example.com/ingest."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Push sensor-001's data to an external system: webhook https://ops.example.com/ingest."
+  ],
+  "overall": "Clear single task: configure data push"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "data-push-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "ops.example.com"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  }
+ ]
+}

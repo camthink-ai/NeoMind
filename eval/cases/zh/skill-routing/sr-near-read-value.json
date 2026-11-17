@@ -1,0 +1,68 @@
+{
+ "id": "sr-near-read-value",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "关键词相近：读数查询，直接 CLI，无需指南",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "查一下 sensor-002 现在的电池电量是多少？"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "查一下 sensor-002 现在的电池电量是多少？"
+  ],
+  "overall": "关键词相近：读数查询，直接 CLI，无需指南"
+ },
+ "skill_routing": {
+  "policy": "none",
+  "acceptable": [],
+  "irrelevant": [
+   "device-onboarding",
+   "dashboard-management",
+   "rule-management",
+   "transform-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "latest_telemetry",
+   "params": {
+    "device_id": "sensor-002",
+    "metric": "values.battery"
+   },
+   "expected": 82
+  },
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "82"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

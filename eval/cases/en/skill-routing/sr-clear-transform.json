@@ -1,0 +1,50 @@
+{
+ "id": "sr-clear-transform",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "Clear single task: create a transform",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Create a transform: multiply sensor-001's values.battery percentage by 100 into a per-mille metric."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Create a transform: multiply sensor-001's values.battery percentage by 100 into a per-mille metric."
+  ],
+  "overall": "Clear single task: create a transform"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "transform-management"
+  ],
+  "irrelevant": [
+   "dashboard-management",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected_min": 1
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

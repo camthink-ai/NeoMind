@@ -1,0 +1,54 @@
+{
+ "id": "sr-multi-rule-threshold",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "multi_turn",
+ "split": "dev",
+ "description": "多轮：改阈值须编辑原规则，不得新建（count 恒 1）",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "把 rule-battery-low 的阈值从 20 改成 15。"
+  },
+  {
+   "user": "确认一下现在的阈值是多少？"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "把 rule-battery-low 的阈值从 20 改成 15。",
+   "确认一下现在的阈值是多少？"
+  ],
+  "overall": "多轮：改阈值须编辑原规则，不得新建（count 恒 1）"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "rule-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "dashboard-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "15"
+  }
+ ]
+}

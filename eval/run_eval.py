@@ -142,6 +142,8 @@ def _build_turn_record(user_msg: str, resp: dict, pt_ms: int) -> dict:
             "ws_error": resp.get("error"),
             "generation_complete": resp.get("generation_complete"),
             "transient_stall_retry_count": resp.get("transient_stall_retry_count", 0),
+            # Measured context meter (ContextUsage WS events; last = final ask).
+            "context_usage": resp.get("context_usage") or [],
         }
 
     # === Fallback: parse history delta (HTTP path or WS without stream data) ===
@@ -288,7 +290,8 @@ def run_case(case_path: str) -> dict:
             t0 = time.monotonic()
             try:
                 resp = srv.chat(sid, turn["user"],
-                                images=turn.get("images") or case.get("images"))
+                                images=turn.get("images") or case.get("images"),
+                                references=turn.get("references"))
             except _CaseTimeout:
                 # The per-case SIGALRM cap fired inside this turn's WS wait.
                 # This is a TIMEOUT, not an agent error: before 2026-11-09 the

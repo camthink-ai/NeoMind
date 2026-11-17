@@ -1,0 +1,51 @@
+{
+ "id": "sr-cross-chain",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "跨域链：转换→规则两步",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "给 sensor-001 的电池百分比做一个转换乘以 10，然后低于 800 时通知我。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "给 sensor-001 的电池百分比做一个转换乘以 10，然后低于 800 时通知我。"
+  ],
+  "overall": "跨域链：转换→规则两步"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "transform-management",
+   "rule-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "dashboard-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected_min": 1
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected_min": 2
+  }
+ ]
+}

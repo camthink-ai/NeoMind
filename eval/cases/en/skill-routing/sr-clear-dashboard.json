@@ -1,0 +1,52 @@
+{
+ "id": "sr-clear-dashboard",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "Clear single task: create a dashboard",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Create a dashboard named battery-board showing sensor-001's battery level."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Create a dashboard named battery-board showing sensor-001's battery level."
+  ],
+  "overall": "Clear single task: create a dashboard"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "dashboard-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "dashboard_exists",
+   "params": {
+    "name": "battery-board"
+   },
+   "expected": true
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

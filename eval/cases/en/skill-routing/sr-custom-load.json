@@ -1,0 +1,60 @@
+{
+ "id": "sr-custom-load",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "Custom guide: load the user skill, actually read it",
+ "setup": {
+  "fixture": "seed-skill-routing"
+ },
+ "turns": [
+  {
+   "user": "Load the coldroom inspection checklist guide and tell me what step 1 checks."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Load the coldroom inspection checklist guide and tell me what step 1 checks."
+  ],
+  "overall": "Custom guide: load the user skill, actually read it"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "coldroom-checklist"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "compressor"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

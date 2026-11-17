@@ -1,0 +1,52 @@
+{
+ "id": "sr-clear-onboard",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "明确单一任务：接入 MQTT 设备",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "帮我接入一个新的 MQTT 温度传感器：broker 是 192.168.1.10:1883，主题 uplink/temp-01，就叫它 temp-01 好了。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "帮我接入一个新的 MQTT 温度传感器：broker 是 192.168.1.10:1883，主题 uplink/temp-01，就叫它 temp-01 好了。"
+  ],
+  "overall": "明确单一任务：接入 MQTT 设备"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "device-onboarding"
+  ],
+  "irrelevant": [
+   "rule-management",
+   "transform-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "device_exists",
+   "params": {
+    "name": "temp-01"
+   },
+   "expected": true
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

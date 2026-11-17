@@ -1,0 +1,51 @@
+{
+ "id": "sr-cross-rule-email",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "跨域+信息不足：规则可建，邮箱缺失须追问，不得编造地址",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "sensor-001 的电量低于 15 的时候给我发邮件通知。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "sensor-001 的电量低于 15 的时候给我发邮件通知。"
+  ],
+  "overall": "跨域+信息不足：规则可建，邮箱缺失须追问，不得编造地址"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "rule-management",
+   "message-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "transform-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected_min": 2
+  },
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "邮箱"
+  }
+ ]
+}

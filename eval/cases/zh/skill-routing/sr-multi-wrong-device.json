@@ -1,0 +1,56 @@
+{
+ "id": "sr-multi-wrong-device",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "multi_turn",
+ "split": "dev",
+ "description": "多轮纠正：换监控对象须编辑，不得复制出新规则",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "给 sensor-002 创建一条名叫 sensor-battery-rule 的低电量规则，低于 25 就通知我。"
+  },
+  {
+   "user": "不对，我要监控的是 sensor-001，不是 sensor-002，请改过来。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "给 sensor-002 创建一条名叫 sensor-battery-rule 的低电量规则，低于 25 就通知我。",
+   "不对，我要监控的是 sensor-001，不是 sensor-002，请改过来。"
+  ],
+  "overall": "多轮纠正：换监控对象须编辑，不得复制出新规则"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "rule-management"
+  ],
+  "irrelevant": [
+   "device-onboarding"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 2
+  },
+  {
+   "type": "rule_references_source",
+   "params": {
+    "name": "sensor-battery-rule",
+    "source": "sensor-001"
+   },
+   "expected": true
+  }
+ ]
+}

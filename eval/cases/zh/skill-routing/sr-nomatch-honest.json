@@ -1,0 +1,55 @@
+{
+ "id": "sr-nomatch-honest",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "无匹配：诚实报告不存在，不得编造内容或创建同名skill",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "加载一下 xyzzy-guide 这份指南。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "加载一下 xyzzy-guide 这份指南。"
+  ],
+  "overall": "无匹配：诚实报告不存在，不得编造内容或创建同名skill"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [],
+  "irrelevant": []
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "xyzzy"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

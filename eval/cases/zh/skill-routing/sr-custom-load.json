@@ -1,0 +1,60 @@
+{
+ "id": "sr-custom-load",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "自定义指南：按名称加载用户 skill 并真实读取内容",
+ "setup": {
+  "fixture": "seed-skill-routing"
+ },
+ "turns": [
+  {
+   "user": "加载冷库巡检指南，告诉我第一步要检查什么。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "加载冷库巡检指南，告诉我第一步要检查什么。"
+  ],
+  "overall": "自定义指南：按名称加载用户 skill 并真实读取内容"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "coldroom-checklist"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "压缩机"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

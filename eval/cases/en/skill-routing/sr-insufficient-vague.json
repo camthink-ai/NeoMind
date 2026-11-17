@@ -1,0 +1,55 @@
+{
+ "id": "sr-insufficient-vague",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "Insufficient info: unspecified device, must clarify, no invention",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Hook this device up to the system for me."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Hook this device up to the system for me."
+  ],
+  "overall": "Insufficient info: unspecified device, must clarify, no invention"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "device-onboarding"
+  ],
+  "irrelevant": [
+   "rule-management",
+   "dashboard-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

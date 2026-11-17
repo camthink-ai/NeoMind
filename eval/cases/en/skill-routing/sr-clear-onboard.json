@@ -1,0 +1,52 @@
+{
+ "id": "sr-clear-onboard",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "Clear single task: onboard an MQTT device",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Onboard a new MQTT temperature sensor: broker 192.168.1.10:1883, topic uplink/temp-01, name it temp-01."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Onboard a new MQTT temperature sensor: broker 192.168.1.10:1883, topic uplink/temp-01, name it temp-01."
+  ],
+  "overall": "Clear single task: onboard an MQTT device"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "device-onboarding"
+  ],
+  "irrelevant": [
+   "rule-management",
+   "transform-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "device_exists",
+   "params": {
+    "name": "temp-01"
+   },
+   "expected": true
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

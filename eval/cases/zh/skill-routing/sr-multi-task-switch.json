@@ -1,0 +1,61 @@
+{
+ "id": "sr-multi-task-switch",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "multi_turn",
+ "split": "dev",
+ "description": "多轮任务切换：读数→上屏，第二turn换域不迷路",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "看一下 sensor-001 现在的电量是多少。"
+  },
+  {
+   "user": "顺便把它显示到一个名叫 battery-board 的仪表盘上。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "看一下 sensor-001 现在的电量是多少。",
+   "顺便把它显示到一个名叫 battery-board 的仪表盘上。"
+  ],
+  "overall": "多轮任务切换：读数→上屏，第二turn换域不迷路"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "dashboard-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "transform-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "dashboard_exists",
+   "params": {
+    "name": "battery-board"
+   },
+   "expected": true
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  }
+ ]
+}

@@ -1,0 +1,59 @@
+{
+ "id": "sr-multi-ref-anchor",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "multi_turn",
+ "split": "heldout",
+ "description": "@引用锚定：指代对象来自引用而非猜测，不得新建设备",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "把这个设备的电池电量放到一个名叫 battery-board 的仪表盘上。",
+   "references": [
+    {
+     "type": "device",
+     "id": "sensor-001",
+     "label": "Living Room Sensor"
+    }
+   ]
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "把这个设备的电池电量放到一个名叫 battery-board 的仪表盘上。"
+  ],
+  "overall": "@引用锚定：指代对象来自引用而非猜测，不得新建设备"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "dashboard-management"
+  ],
+  "irrelevant": [
+   "device-onboarding",
+   "rule-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "dashboard_exists",
+   "params": {
+    "name": "battery-board"
+   },
+   "expected": true
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  }
+ ]
+}

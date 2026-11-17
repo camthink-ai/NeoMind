@@ -1,0 +1,55 @@
+{
+ "id": "sr-near-notify-channel",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "关键词相近：渠道配置≠创建规则（rule_count 必须不变）",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "配置一个 webhook 通知渠道，地址是 http://ops.example.com/alert，规则告警要用它。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "配置一个 webhook 通知渠道，地址是 http://ops.example.com/alert，规则告警要用它。"
+  ],
+  "overall": "关键词相近：渠道配置≠创建规则（rule_count 必须不变）"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "message-management"
+  ],
+  "irrelevant": [
+   "transform-management",
+   "device-onboarding"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "ops.example.com/alert"
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  }
+ ]
+}

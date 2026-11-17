@@ -1,0 +1,55 @@
+{
+ "id": "sr-nomatch-honest",
+ "lang": "en",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "heldout",
+ "description": "No-match: honestly report missing, never invent or create it",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "Load the xyzzy-guide skill."
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "Load the xyzzy-guide skill."
+  ],
+  "overall": "No-match: honestly report missing, never invent or create it"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [],
+  "irrelevant": []
+ },
+ "state_queries": [
+  {
+   "type": "response_contains",
+   "params": {},
+   "expected": "xyzzy"
+  },
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}

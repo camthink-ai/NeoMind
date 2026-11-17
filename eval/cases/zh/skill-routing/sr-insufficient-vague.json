@@ -1,0 +1,55 @@
+{
+ "id": "sr-insufficient-vague",
+ "lang": "zh",
+ "category": "skill-routing",
+ "workflow": "skill-routing",
+ "scenario_type": "single_turn",
+ "split": "dev",
+ "description": "信息不足：对象未指明，须澄清，不得凭空创建",
+ "setup": {
+  "fixture": "seed-default"
+ },
+ "turns": [
+  {
+   "user": "帮我把这个设备接到系统里。"
+  }
+ ],
+ "applies": [
+  "tool_accuracy",
+  "task_completion",
+  "language_adherence"
+ ],
+ "expectations": {
+  "per_turn": [
+   "帮我把这个设备接到系统里。"
+  ],
+  "overall": "信息不足：对象未指明，须澄清，不得凭空创建"
+ },
+ "skill_routing": {
+  "policy": "optional",
+  "acceptable": [
+   "device-onboarding"
+  ],
+  "irrelevant": [
+   "rule-management",
+   "dashboard-management"
+  ]
+ },
+ "state_queries": [
+  {
+   "type": "rule_count",
+   "params": {},
+   "expected": 1
+  },
+  {
+   "type": "device_count",
+   "params": {},
+   "expected": 3
+  },
+  {
+   "type": "transform_count",
+   "params": {},
+   "expected": 0
+  }
+ ]
+}
