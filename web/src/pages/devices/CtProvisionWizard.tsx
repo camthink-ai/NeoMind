@@ -272,7 +272,9 @@ export function CtProvisionWizard({
   const [wifiScanAttempted, setWifiScanAttempted] = useState(false)
   const [wifiScanError, setWifiScanError] = useState<string | null>(null)
 
-  // Cellular (capabilities-gated)
+  // Cellular (capabilities-gated). Off by default for Wi‑Fi-only; Cat.1-only
+  // devices force it on via cellularActive below.
+  const [cellEnable, setCellEnable] = useState(false)
   const [cellApn, setCellApn] = useState('')
   const [cellUsername, setCellUsername] = useState('')
   const [cellPassword, setCellPassword] = useState('')
@@ -334,6 +336,8 @@ export function CtProvisionWizard({
   }, [ct.capabilities])
   const cellularFields = useMemo(() => cellularSection?.fields ?? [], [cellularSection])
   const needsCellular = cellularSection !== null
+  /** Cat.1-only: cellular is the transport — always "on". Else operator toggle. */
+  const cellularActive = needsCellular && (!needsWifi || cellEnable)
 
   const webhookSection = useMemo(() => {
     return ct.capabilities?.sections.find((s) => s.name === 'webhook' && s.configurable) ?? null
@@ -457,9 +461,11 @@ export function CtProvisionWizard({
     setWebhookFormError(null)
 
     let cellularPayload: Record<string, unknown> | undefined
-    if (needsCellular) {
-      // APN is optional even when declared (neolink: empty APN omitted from
-      // payload; only non-empty values are length-checked). Do not block Apply.
+    if (cellularActive) {
+      if (cellularFields.includes('apn') && !cellApn.trim()) {
+        setCellFormError(t('devices:ctProv.cellularApnRequired'))
+        return
+      }
       if (cellularFields.includes('pin') && cellPin.trim()) {
         if (!/^\d{4,8}$/.test(cellPin.trim())) {
           setCellFormError(t('devices:ctProv.cellularPinInvalid'))
@@ -582,7 +588,7 @@ export function CtProvisionWizard({
     buildCustomMqtt,
     needsWifi,
     wifiSection,
-    needsCellular,
+    cellularActive,
     cellularFields,
     cellApn,
     cellUsername,
@@ -941,7 +947,12 @@ export function CtProvisionWizard({
                   wifiSelect === WIFI_MANUAL ||
                   (!wifiScanning && wifiNetworks.length === 0)) && (
                   <Field>
-                    <FieldLabel htmlFor="ct-wifi-ssid">{t('devices:ble.ssid')}</FieldLabel>
+                    <FieldLabel htmlFor="ct-wifi-ssid">
+                      {t('devices:ble.ssid')}
+                      <span className="ml-0.5 text-error" aria-hidden>
+                        *
+                      </span>
+                    </FieldLabel>
                     <Input
                       id="ct-wifi-ssid"
                       value={wifiSsid}
@@ -952,6 +963,8 @@ export function CtProvisionWizard({
                       placeholder={t('devices:ble.ssidPlaceholder')}
                       autoComplete="off"
                       autoFocus={!!wifiScanError}
+                      required
+                      aria-required
                     />
                   </Field>
                 )}
@@ -971,14 +984,38 @@ export function CtProvisionWizard({
 
             {needsCellular && (
               <div className="space-y-3 rounded-xl border border-border p-4">
-                <div className="flex items-center gap-2">
-                  <Radio className="h-4 w-4 text-primary" />
-                  <span className="text-sm font-medium">{t('devices:ctProv.cellularConfig')}</span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Radio className="h-4 w-4 text-primary" />
+                    <span className="text-sm font-medium">{t('devices:ctProv.cellularConfig')}</span>
+                  </div>
+                  {needsWifi && (
+                    <Switch
+                      id="ct-cell-enable"
+                      checked={cellEnable}
+                      onCheckedChange={(v) => {
+                        setCellEnable(v)
+                        setCellFormError(null)
+                      }}
+                      aria-label={t('devices:ctProv.cellularConfig')}
+                    />
+                  )}
                 </div>
-                <p className="text-xs text-muted-foreground">{t('devices:ctProv.cellularHint')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {needsWifi
+                    ? t('devices:ctProv.cellularHintOptional')
+                    : t('devices:ctProv.cellularHintRequired')}
+                </p>
                 {cellularFields.includes('apn') && (
                   <Field>
-                    <FieldLabel htmlFor="ct-cell-apn">{t('devices:ctProv.cellularApn')}</FieldLabel>
+                    <FieldLabel htmlFor="ct-cell-apn">
+                      {t('devices:ctProv.cellularApn')}
+                      {cellularActive ? (
+                        <span className="ml-0.5 text-error" aria-hidden>
+                          *
+                        </span>
+                      ) : null}
+                    </FieldLabel>
                     <Input
                       id="ct-cell-apn"
                       value={cellApn}
@@ -988,6 +1025,9 @@ export function CtProvisionWizard({
                       }}
                       placeholder="cmiot.iot"
                       autoComplete="off"
+                      disabled={!cellularActive}
+                      required={cellularActive}
+                      aria-required={cellularActive}
                     />
                   </Field>
                 )}
@@ -1003,6 +1043,7 @@ export function CtProvisionWizard({
                           value={cellUsername}
                           onChange={(e) => setCellUsername(e.target.value)}
                           autoComplete="off"
+                          disabled={!cellularActive}
                         />
                       </Field>
                     )}
@@ -1016,6 +1057,7 @@ export function CtProvisionWizard({
                           value={cellPassword}
                           onChange={(e) => setCellPassword(e.target.value)}
                           autoComplete="new-password"
+                          disabled={!cellularActive}
                         />
                       </Field>
                     )}
@@ -1034,6 +1076,7 @@ export function CtProvisionWizard({
                       }}
                       placeholder="1234"
                       autoComplete="off"
+                      disabled={!cellularActive}
                     />
                     <p className="text-xs text-muted-foreground">
                       {t('devices:ctProv.cellularPinHint')}
@@ -1046,6 +1089,7 @@ export function CtProvisionWizard({
                     <Select
                       value={cellAuth}
                       onValueChange={(v) => setCellAuth(normalizeCellularAuth(v))}
+                      disabled={!cellularActive}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -1070,6 +1114,7 @@ export function CtProvisionWizard({
                       id="ct-cell-roaming"
                       checked={cellRoaming}
                       onCheckedChange={setCellRoaming}
+                      disabled={!cellularActive}
                     />
                   </div>
                 )}
@@ -1105,11 +1150,18 @@ export function CtProvisionWizard({
                     />
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">{t('devices:ctProv.webhookHint')}</p>
+                <p className="text-xs text-muted-foreground">
+                  {t('devices:ctProv.webhookHintOptional')}
+                </p>
                 {webhookFields.includes('url') && (
                   <Field>
                     <FieldLabel htmlFor="ct-webhook-url">
                       {t('devices:ctProv.webhookUrl')}
+                      {webhookEnable ? (
+                        <span className="ml-0.5 text-error" aria-hidden>
+                          *
+                        </span>
+                      ) : null}
                     </FieldLabel>
                     <Input
                       id="ct-webhook-url"
@@ -1120,6 +1172,8 @@ export function CtProvisionWizard({
                       }}
                       placeholder="https://example.com/hook"
                       disabled={webhookFields.includes('enable') && !webhookEnable}
+                      required={webhookEnable}
+                      aria-required={webhookEnable}
                       className="font-mono text-sm"
                       autoComplete="off"
                     />
@@ -1435,6 +1489,12 @@ export function CtProvisionWizard({
                 onClick={handleApply}
                 disabled={
                   (needsWifi && !wifiSsid.trim()) ||
+                  (cellularActive &&
+                    cellularFields.includes('apn') &&
+                    !cellApn.trim()) ||
+                  (webhookEnable &&
+                    webhookFields.includes('url') &&
+                    !webhookUrl.trim()) ||
                   ct.provisioning ||
                   (brokerSource === 'custom' && customEnable && !customHost.trim())
                 }
