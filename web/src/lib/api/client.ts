@@ -157,6 +157,8 @@ export interface FetchOptions extends RequestInit {
   skipAuth?: boolean
   skipGlobalError?: boolean
   skipErrorToast?: boolean  // Skip automatic error toast notification
+  /** Skip gateway-style retries (429/502/503/504). Use for app-level 503s like BindIncomplete. */
+  skipRetry?: boolean
   successMessage?: string   // Auto-show success toast with this message
   signal?: AbortSignal      // For timeout/cancellation support
 }
@@ -169,6 +171,7 @@ export async function fetchAPI<T>(
     skipAuth = false,
     skipGlobalError = false,
     skipErrorToast = false,
+    skipRetry = false,
     successMessage,
     signal,
     ...fetchOptions
@@ -211,7 +214,7 @@ export async function fetchAPI<T>(
     signal,
   })
 
-  if (RETRYABLE_STATUS.includes(response.status) && !signal?.aborted) {
+  if (!skipRetry && RETRYABLE_STATUS.includes(response.status) && !signal?.aborted) {
     for (let i = 0; i < MAX_RETRIES; i++) {
       // For 429, wait longer before retrying
       const delay = response.status === 429 ? RETRY_DELAYS[i] * 2 : RETRY_DELAYS[i]
@@ -233,13 +236,14 @@ export async function fetchAPI<T>(
 
       const json = JSON.parse(text)
 
-      // Format: { code: "...", message: "..." } - Unified ErrorResponse format
+      // Format: { code: "...", message: "...", hint?: "..." } - Unified ErrorResponse
       if (json.message) {
+        const hint = typeof json.hint === 'string' && json.hint ? `\n${json.hint}` : ''
         // If there's a code, include it for context but show the message
         if (json.code && json.code !== 'INTERNAL_ERROR') {
-          return `${json.code}: ${json.message}`
+          return `${json.code}: ${json.message}${hint}`
         }
-        return json.message
+        return `${json.message}${hint}`
       }
 
       // Handle different error response formats (legacy)

@@ -28,13 +28,30 @@ use crate::unified_extractor::UnifiedExtractor;
 use base64::Engine as _;
 use futures::StreamExt;
 use neomind_core::EventBus;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, oneshot, Mutex, RwLock};
 // TLS support
+
+/// Default wait for broker SUBACK after queueing a Subscribe (production).
+pub(crate) const DEFAULT_SUBACK_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// One in-flight Subscribe awaiting SubAck correlation (pkid + waiters).
+pub(crate) struct PendingSubscribeSlot {
+    pub(crate) topic: String,
+    /// Set when the event loop sees `Outgoing::Subscribe(pkid)`.
+    pub(crate) pkid: Option<u16>,
+    pub(crate) waiters: Vec<oneshot::Sender<Result<(), String>>>,
+}
+
+/// Pending (queued, not yet SubAck'd) subscription waiters for one broker.
+#[derive(Default)]
+pub(crate) struct PendingSubscribeState {
+    pub(crate) queue: VecDeque<PendingSubscribeSlot>,
+}
 
 /// Single MQTT broker connection
 pub(crate) struct MqttClientInner {
@@ -46,8 +63,19 @@ pub(crate) struct MqttClientInner {
     pub(crate) client: rumqttc::AsyncClient,
     /// Running flag for the event loop task
     pub(crate) running: Arc<RwLock<bool>>,
-    /// Subscribed topics for this broker
+    /// **Confirmed** subscriptions only (successful SUBACK, or bootstrap
+    /// topics inserted after queue-Ok on add_broker). Pending queue-Ok must
+    /// NOT land here — that previously made association confirm claim
+    /// `subscription_ready` before the broker granted the filter.
     pub(crate) subscribed_topics: Arc<RwLock<std::collections::HashSet<String>>>,
+    /// In-flight Subscribe requests waiting for SubAck (or disconnect/timeout).
+    pub(crate) pending_subscribes: Arc<Mutex<PendingSubscribeState>>,
+    /// When false (test broker slots without a polled event loop), queue-Ok
+    /// is treated as an immediate successful SubAck so existing unit tests
+    /// keep working. Production brokers always leave this true.
+    pub(crate) await_suback: bool,
+    /// How long `subscribe_topic` waits outside the MQTT callback for SubAck.
+    pub(crate) suback_timeout: Duration,
     /// True only after ConnAck Success; false while created/queued or reconnecting.
     /// `client.subscribe` may queue before this flips — do not treat queue-Ok as ready.
     pub(crate) session_ready: AtomicBool,

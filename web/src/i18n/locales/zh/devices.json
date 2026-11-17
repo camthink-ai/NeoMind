@@ -538,7 +538,11 @@
       "pendingIdForbidden": "不能将 pending-assoc-* 用作真实设备 ID",
       "confirmFailed": "确认关联失败",
       "confirmed": "已挂载设备 {{deviceId}}",
-      "dismissed": "已忽略关联异常"
+      "dismissed": "已忽略关联异常",
+      "incompleteTitle": "配置已保存，但 broker 订阅未完成",
+      "incompleteHint": "草稿已保留。修好 ACL 或 broker 连通后点重试。忽略会保留草稿，且不会把设备标为在线。",
+      "retrySubscribe": "重试订阅",
+      "ignoreKeepDraft": "忽略（保留草稿）"
     },
     "typeNamePlaceholder": "例如: 温湿度传感器",
     "typeDescPlaceholder": "描述此设备类型的用途...",

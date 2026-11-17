@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use std::time::Duration;
 
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Mutex, RwLock};
 
 use tracing::{debug, info, warn};
 
@@ -375,6 +375,9 @@ impl MqttAdapter {
             client,
             running: running.clone(),
             subscribed_topics,
+            pending_subscribes: Arc::new(Mutex::new(PendingSubscribeState::default())),
+            await_suback: true,
+            suback_timeout: DEFAULT_SUBACK_TIMEOUT,
             session_ready: AtomicBool::new(false),
         };
         self.mqtt_clients
@@ -504,6 +507,14 @@ impl MqttAdapter {
                             &notification,
                         )
                         .await;
+                        // SubAck correlation lives in the poll loop (complete
+                        // waiters only). Confirm/subscribe waits OUTSIDE.
+                        Self::apply_subscription_events(
+                            &mqtt_clients,
+                            &broker_id_clone,
+                            &notification,
+                        )
+                        .await;
                         if was_disconnected {
                             was_disconnected = false;
                             if let Err(panic) = std::panic::AssertUnwindSafe(
@@ -564,6 +575,13 @@ impl MqttAdapter {
                             false,
                         )
                         .await;
+                        if let Some(inner) = mqtt_clients.read().await.get(&broker_id_clone) {
+                            Self::fail_all_pending_subscribes(
+                                inner,
+                                &format!("MQTT broker disconnected: {e}"),
+                            )
+                            .await;
+                        }
                         // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
                         // rumqttc handles reconnection internally — just keep polling
                         let backoff = Duration::from_secs((1u64 << error_count.min(5)).min(30));
@@ -577,7 +595,9 @@ impl MqttAdapter {
             }
 
             // Remove this broker from clients map when task ends
-            mqtt_clients.write().await.remove(&broker_id_clone);
+            if let Some(inner) = mqtt_clients.write().await.remove(&broker_id_clone) {
+                Self::fail_all_pending_subscribes(&inner, "MQTT broker connection closed").await;
+            }
             info!("MQTT broker {} connection closed", broker_id_clone);
         });
 
@@ -752,6 +772,9 @@ impl MqttAdapter {
             client,
             running: running.clone(),
             subscribed_topics,
+            pending_subscribes: Arc::new(Mutex::new(PendingSubscribeState::default())),
+            await_suback: true,
+            suback_timeout: DEFAULT_SUBACK_TIMEOUT,
             session_ready: AtomicBool::new(false),
         };
         self.mqtt_clients
@@ -877,6 +900,12 @@ impl MqttAdapter {
                             &notification,
                         )
                         .await;
+                        Self::apply_subscription_events(
+                            &mqtt_clients,
+                            &broker_id_clone2,
+                            &notification,
+                        )
+                        .await;
                         if was_disconnected {
                             was_disconnected = false;
                             if let Err(panic) = std::panic::AssertUnwindSafe(
@@ -906,6 +935,13 @@ impl MqttAdapter {
                             false,
                         )
                         .await;
+                        if let Some(inner) = mqtt_clients.read().await.get(&broker_id_clone2) {
+                            Self::fail_all_pending_subscribes(
+                                inner,
+                                &format!("MQTT broker disconnected: {e}"),
+                            )
+                            .await;
+                        }
                         // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
                         // rumqttc handles reconnection internally — just keep polling
                         let backoff = Duration::from_secs((1u64 << error_count.min(5)).min(30));
@@ -918,7 +954,9 @@ impl MqttAdapter {
                 }
             }
 
-            mqtt_clients.write().await.remove(&broker_id_clone2);
+            if let Some(inner) = mqtt_clients.write().await.remove(&broker_id_clone2) {
+                Self::fail_all_pending_subscribes(&inner, "MQTT broker connection closed").await;
+            }
             info!("MQTT broker {} connection closed", broker_id_clone2);
         });
 
@@ -1196,8 +1234,143 @@ impl MqttAdapter {
     ) {
         if let rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(ack)) = notification {
             let ready = ack.code == rumqttc::ConnectReturnCode::Success;
-            Self::set_broker_session_ready(mqtt_clients, connection_status, broker_id, ready)
-                .await;
+            Self::set_broker_session_ready(mqtt_clients, connection_status, broker_id, ready).await;
+        }
+    }
+
+    /// Correlate Outgoing Subscribe pkids and Incoming SubAck **in the poll
+    /// loop**. Completes oneshot waiters only — never blocks waiting for SubAck
+    /// inside the MQTT notification/message handler.
+    pub(crate) async fn apply_subscription_events(
+        mqtt_clients: &Arc<RwLock<HashMap<String, MqttClientInner>>>,
+        broker_id: &str,
+        notification: &rumqttc::Event,
+    ) {
+        match notification {
+            rumqttc::Event::Outgoing(rumqttc::Outgoing::Subscribe(pkid)) => {
+                let clients = mqtt_clients.read().await;
+                let Some(inner) = clients.get(broker_id) else {
+                    return;
+                };
+                let mut pending = inner.pending_subscribes.lock().await;
+                if let Some(slot) = pending.queue.iter_mut().find(|s| s.pkid.is_none()) {
+                    slot.pkid = Some(*pkid);
+                    debug!(
+                        broker = %broker_id,
+                        pkid,
+                        topic = %slot.topic,
+                        "MQTT Subscribe outgoing — awaiting SubAck"
+                    );
+                } else {
+                    warn!(
+                        broker = %broker_id,
+                        pkid,
+                        "Outgoing Subscribe with no unmatched pending topic"
+                    );
+                }
+            }
+            rumqttc::Event::Incoming(rumqttc::Packet::SubAck(suback)) => {
+                let clients = mqtt_clients.read().await;
+                let Some(inner) = clients.get(broker_id) else {
+                    return;
+                };
+                let slot = {
+                    let mut pending = inner.pending_subscribes.lock().await;
+                    let idx = pending
+                        .queue
+                        .iter()
+                        .position(|s| s.pkid == Some(suback.pkid));
+                    idx.and_then(|i| pending.queue.remove(i))
+                };
+                let Some(slot) = slot else {
+                    debug!(
+                        broker = %broker_id,
+                        pkid = suback.pkid,
+                        "SubAck for unknown/expired pending Subscribe — ignored"
+                    );
+                    return;
+                };
+                let rejected = suback
+                    .return_codes
+                    .iter()
+                    .any(|c| matches!(c, rumqttc::SubscribeReasonCode::Failure));
+                if rejected {
+                    let msg = format!(
+                        "Broker rejected Subscribe for '{}' (pkid={}, codes={:?})",
+                        slot.topic, suback.pkid, suback.return_codes
+                    );
+                    warn!(broker = %broker_id, %msg);
+                    for tx in slot.waiters {
+                        let _ = tx.send(Err(msg.clone()));
+                    }
+                    // Do NOT insert into confirmed set.
+                } else {
+                    info!(
+                        broker = %broker_id,
+                        topic = %slot.topic,
+                        pkid = suback.pkid,
+                        "MQTT SubAck success — subscription confirmed"
+                    );
+                    inner
+                        .subscribed_topics
+                        .write()
+                        .await
+                        .insert(slot.topic.clone());
+                    for tx in slot.waiters {
+                        let _ = tx.send(Ok(()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Fail every pending Subscribe waiter (disconnect / poll error). Confirmed
+    /// set is left intact for reconnect resubscribe.
+    pub(crate) async fn fail_all_pending_subscribes(inner: &MqttClientInner, reason: &str) {
+        let mut pending = inner.pending_subscribes.lock().await;
+        while let Some(slot) = pending.queue.pop_front() {
+            for tx in slot.waiters {
+                let _ = tx.send(Err(format!(
+                    "Subscribe to '{}' incomplete: {reason}",
+                    slot.topic
+                )));
+            }
+        }
+    }
+
+    pub(crate) async fn complete_pending_subscribe_success(inner: &MqttClientInner, topic: &str) {
+        let slot = {
+            let mut pending = inner.pending_subscribes.lock().await;
+            let idx = pending.queue.iter().position(|s| s.topic == topic);
+            idx.and_then(|i| pending.queue.remove(i))
+        };
+        if let Some(slot) = slot {
+            inner
+                .subscribed_topics
+                .write()
+                .await
+                .insert(slot.topic.clone());
+            for tx in slot.waiters {
+                let _ = tx.send(Ok(()));
+            }
+        }
+    }
+
+    pub(crate) async fn complete_pending_subscribe_failure(
+        inner: &MqttClientInner,
+        topic: &str,
+        message: String,
+    ) {
+        let slot = {
+            let mut pending = inner.pending_subscribes.lock().await;
+            let idx = pending.queue.iter().position(|s| s.topic == topic);
+            idx.and_then(|i| pending.queue.remove(i))
+        };
+        if let Some(slot) = slot {
+            for tx in slot.waiters {
+                let _ = tx.send(Err(message.clone()));
+            }
         }
     }
 
@@ -1235,6 +1408,11 @@ impl MqttAdapter {
                 client,
                 running: Arc::new(RwLock::new(true)),
                 subscribed_topics: Arc::new(RwLock::new(std::collections::HashSet::new())),
+                pending_subscribes: Arc::new(Mutex::new(PendingSubscribeState::default())),
+                // No polled event loop → no SubAck. Default bypass keeps existing
+                // unit tests working; SubAck-honesty tests call enable_test_suback_wait.
+                await_suback: false,
+                suback_timeout: DEFAULT_SUBACK_TIMEOUT,
                 // Tests need an honest "session ready" stand-in without ConnAck.
                 session_ready: AtomicBool::new(true),
             },
@@ -1253,6 +1431,101 @@ impl MqttAdapter {
             ready,
         )
         .await;
+    }
+
+    /// Test/helper: require real SubAck wait (or [`settle_test_pending_suback`])
+    /// instead of the test-slot queue-Ok bypass.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn enable_test_suback_wait(&self, broker_id: &str, timeout: Duration) {
+        let mut clients = self.mqtt_clients.write().await;
+        if let Some(inner) = clients.get_mut(broker_id) {
+            inner.await_suback = true;
+            inner.suback_timeout = timeout;
+        }
+    }
+
+    /// Test/helper: complete a pending Subscribe as if SubAck arrived.
+    /// `Ok(())` moves the topic into the confirmed set; `Err` does not.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn settle_test_pending_suback(
+        &self,
+        broker_id: &str,
+        topic: &str,
+        result: Result<(), String>,
+    ) {
+        let clients = self.mqtt_clients.read().await;
+        let Some(inner) = clients.get(broker_id) else {
+            return;
+        };
+        match result {
+            Ok(()) => Self::complete_pending_subscribe_success(inner, topic).await,
+            Err(msg) => Self::complete_pending_subscribe_failure(inner, topic, msg).await,
+        }
+    }
+
+    /// Test/helper: settle every currently pending Subscribe (main + bare alias).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn settle_all_test_pending_subacks(
+        &self,
+        broker_id: &str,
+        result: Result<(), String>,
+    ) {
+        let topics: Vec<String> = {
+            let clients = self.mqtt_clients.read().await;
+            let Some(inner) = clients.get(broker_id) else {
+                return;
+            };
+            let pending = inner.pending_subscribes.lock().await;
+            pending.queue.iter().map(|s| s.topic.clone()).collect()
+        };
+        for topic in topics {
+            self.settle_test_pending_suback(broker_id, &topic, result.clone())
+                .await;
+        }
+    }
+
+    /// Test/helper: fail every pending Subscribe (disconnect / broker drop).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn fail_test_pending_subscribes(&self, broker_id: &str, reason: &str) {
+        let clients = self.mqtt_clients.read().await;
+        if let Some(inner) = clients.get(broker_id) {
+            Self::fail_all_pending_subscribes(inner, reason).await;
+        }
+    }
+
+    /// Test/helper: snapshot whether a topic is in the **confirmed** set.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn test_topic_confirmed(&self, broker_id: &str, topic: &str) -> bool {
+        let clients = self.mqtt_clients.read().await;
+        let Some(inner) = clients.get(broker_id) else {
+            return false;
+        };
+        let hit = inner.subscribed_topics.read().await.contains(topic);
+        hit
+    }
+
+    /// Test/helper: insert a topic into the confirmed set (e.g. seed `"#"`).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn seed_test_confirmed_topic(&self, broker_id: &str, topic: &str) {
+        let clients = self.mqtt_clients.read().await;
+        if let Some(inner) = clients.get(broker_id) {
+            inner
+                .subscribed_topics
+                .write()
+                .await
+                .insert(topic.to_string());
+        }
+    }
+
+    /// Test/helper: how many Subscribe requests are awaiting SubAck.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn test_pending_subscribe_count(&self, broker_id: &str) -> usize {
+        let clients = self.mqtt_clients.read().await;
+        let Some(inner) = clients.get(broker_id) else {
+            return 0;
+        };
+        let n = inner.pending_subscribes.lock().await.queue.len();
+        n
     }
 
     /// Update overall connection status from session-ready brokers (not mere

@@ -69,6 +69,8 @@ export function PendingDevicesList({
   const [assocIdentityField, setAssocIdentityField] = useState('')
   const [assocDeviceName, setAssocDeviceName] = useState('')
   const [assocErrors, setAssocErrors] = useState<{ deviceId?: string; identityField?: string }>({})
+  /** Broker/subscribe incomplete reason — keep form open for retry/ignore. */
+  const [assocIncompleteReason, setAssocIncompleteReason] = useState<string | null>(null)
 
   // Unified dialog state
   const [showApproveDialog, setShowApproveDialog] = useState(false)
@@ -309,6 +311,7 @@ export function PendingDevicesList({
   const openAssociationDialog = (draft: DraftDevice) => {
     setAssocDraft(draft)
     setAssocErrors({})
+    setAssocIncompleteReason(null)
     // Never prefill pending-assoc / blocked ids — operator must type the real identity.
     setAssocDeviceId('')
     const preview = draft.sample_preview
@@ -339,6 +342,7 @@ export function PendingDevicesList({
     setAssocIdentityField('')
     setAssocDeviceName('')
     setAssocErrors({})
+    setAssocIncompleteReason(null)
   }, [])
 
   const handleConfirmAssociation = async () => {
@@ -358,6 +362,7 @@ export function PendingDevicesList({
     if (Object.keys(errors).length > 0) return
 
     setProcessing(assocDraft.id)
+    setAssocIncompleteReason(null)
     try {
       const result = await api.confirmAssociationDraft(assocDraft.device_id, {
         device_id: realId,
@@ -365,6 +370,13 @@ export function PendingDevicesList({
         identity_source: assocDraft.mqtt_identity_source || 'auto_payload',
         device_name: assocDeviceName.trim() || undefined,
       })
+      // Only toast + close after subscription_ready (SubAck success). Never mark online here.
+      if (!result.subscription_ready) {
+        setAssocIncompleteReason(
+          result.message || t('devices:pending.associationException.incompleteHint')
+        )
+        return
+      }
       toast({
         title: t('common:success'),
         description:
@@ -373,15 +385,19 @@ export function PendingDevicesList({
             deviceId: result.system_device_id,
           }),
       })
-      // Bound ≠ online; dialog closes only after subscription_ready success.
       closeAssociationDialog()
       await fetchDrafts()
       onRefresh?.()
     } catch (error) {
-      // Keep dialog open so the operator can retry without re-opening.
+      // BindIncomplete / SubAck reject-timeout: keep form, show broker reason, retry/ignore.
+      const reason =
+        error instanceof Error && error.message
+          ? error.message
+          : t('devices:pending.associationException.confirmFailed')
+      setAssocIncompleteReason(reason)
       handleError(error, {
         operation: 'Confirm association',
-        showToast: true,
+        showToast: false,
         userMessage: t('devices:pending.associationException.confirmFailed'),
       })
     } finally {
@@ -1455,8 +1471,15 @@ export function PendingDevicesList({
               >
                 {t('devices:pending.associationException.dismiss')}
               </Button>
-              <Button variant="outline" size="sm" onClick={closeAssociationDialog}>
-                {t('common:cancel')}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={closeAssociationDialog}
+                disabled={processing === assocDraft.id}
+              >
+                {assocIncompleteReason
+                  ? t('devices:pending.associationException.ignoreKeepDraft')
+                  : t('common:cancel')}
               </Button>
               <Button
                 size="sm"
@@ -1465,7 +1488,9 @@ export function PendingDevicesList({
               >
                 {processing === assocDraft.id
                   ? t('common:processing')
-                  : t('devices:pending.associationException.confirm')}
+                  : assocIncompleteReason
+                    ? t('devices:pending.associationException.retrySubscribe')
+                    : t('devices:pending.associationException.confirm')}
               </Button>
             </div>
           }
@@ -1478,6 +1503,23 @@ export function PendingDevicesList({
                   ? t('devices:pending.associationException.kindConflict')
                   : t('devices:pending.associationException.kindGeneric')}
             </p>
+
+            {assocIncompleteReason && (
+              <div
+                role="alert"
+                className="rounded-lg border border-warning bg-warning-light p-3 space-y-1 text-sm"
+              >
+                <p className="font-medium text-warning">
+                  {t('devices:pending.associationException.incompleteTitle')}
+                </p>
+                <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+                  {assocIncompleteReason}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t('devices:pending.associationException.incompleteHint')}
+                </p>
+              </div>
+            )}
 
             <div className="rounded-lg border border-border bg-muted-30 p-3 space-y-2 text-sm">
               {assocDraft.claimed_identity && (

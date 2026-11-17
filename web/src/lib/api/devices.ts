@@ -259,6 +259,10 @@ export const devicesApi = {
     }>(`/devices/drafts/${draftId}/confirm-association`, {
       method: 'POST',
       body: JSON.stringify(request),
+      // BindIncomplete is app-level 503 (config saved, sub not done) — not a
+      // gateway blip. Do not auto-retry or toast success; dialog shows reason.
+      skipRetry: true,
+      skipErrorToast: true,
     }),
 
 }

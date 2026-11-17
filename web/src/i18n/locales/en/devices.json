@@ -538,7 +538,11 @@
       "pendingIdForbidden": "pending-assoc-* cannot be used as a real device id",
       "confirmFailed": "Failed to confirm association",
       "confirmed": "Attached device {{deviceId}}",
-      "dismissed": "Association exception dismissed"
+      "dismissed": "Association exception dismissed",
+      "incompleteTitle": "Config saved — broker subscribe not finished",
+      "incompleteHint": "The draft is kept. Fix ACL or broker connectivity, then retry. Ignore keeps the draft without marking the device online.",
+      "retrySubscribe": "Retry subscribe",
+      "ignoreKeepDraft": "Ignore (keep draft)"
     },
     "typeNamePlaceholder": "e.g. Temperature & Humidity Sensor",
     "typeDescPlaceholder": "Describe the purpose of this device type...",

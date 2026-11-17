@@ -1321,3 +1321,268 @@ async fn confirm_concurrent_same_device_from_two_drafts_coordinates() {
         }
     }
 }
+
+/// NM-199: background settler — completes pending SubAcks while confirm awaits.
+async fn settle_pending_loop(adapter: Arc<MqttAdapter>, broker_id: &str, ok: bool) {
+    let reason = "ACL denied (test)".to_string();
+    for _ in 0..200 {
+        if ok {
+            adapter
+                .settle_all_test_pending_subacks(broker_id, Ok(()))
+                .await;
+        } else {
+            adapter
+                .settle_all_test_pending_subacks(broker_id, Err(reason.clone()))
+                .await;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// 1) SUBACK success → draft consumed; subscription_ready; not online.
+#[tokio::test]
+async fn acceptance_suback_success_consumes_draft() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let adapter = register_confirm_adapter(&state, "test").await;
+    adapter
+        .enable_test_suback_wait("test", Duration::from_secs(3))
+        .await;
+    let settler = adapter.clone();
+    tokio::spawn(async move { settle_pending_loop(settler, "test", true).await });
+
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    let result = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("B".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await
+    .expect("SUBACK success must complete confirm");
+    let body = result.0.data.expect("body");
+    assert!(body.subscription_ready);
+    assert!(!body.online, "must not mark online on config+sub success");
+    assert!(
+        manager.get_draft(&pending).await.is_none(),
+        "draft consumed only after SubAck success"
+    );
+    assert!(
+        adapter
+            .test_topic_confirmed("test", "device/gw/A/uplink")
+            .await,
+        "topic must enter confirmed set"
+    );
+}
+
+/// 2) SubAck reject → draft kept; no success; topic not confirmed.
+#[tokio::test]
+async fn acceptance_suback_reject_keeps_draft_no_success() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let adapter = register_confirm_adapter(&state, "test").await;
+    adapter
+        .enable_test_suback_wait("test", Duration::from_secs(3))
+        .await;
+    let settler = adapter.clone();
+    tokio::spawn(async move { settle_pending_loop(settler, "test", false).await });
+
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    let err = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("B".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(err.is_err(), "reject must not claim success");
+    assert!(
+        manager.get_draft(&pending).await.is_some(),
+        "draft kept after SubAck reject"
+    );
+    assert!(
+        state.devices.service.get_device("B").is_some(),
+        "config saved (no rollback)"
+    );
+    assert!(
+        !adapter
+            .test_topic_confirmed("test", "device/gw/A/uplink")
+            .await,
+        "reject must not leave topic in confirmed/subscribed cache"
+    );
+}
+
+/// 3) Timeout / disconnect → draft kept, retryable; not confirmed.
+#[tokio::test]
+async fn acceptance_suback_timeout_disconnect_keeps_draft_retryable() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let adapter = register_confirm_adapter(&state, "test").await;
+    // Short timeout; never settle → SUBACK timeout.
+    adapter
+        .enable_test_suback_wait("test", Duration::from_millis(80))
+        .await;
+
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    let first = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("B".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(first.is_err(), "timeout must be BindIncomplete");
+    assert!(manager.get_draft(&pending).await.is_some());
+    assert!(state.devices.service.get_device("B").is_some());
+    assert!(
+        !adapter
+            .test_topic_confirmed("test", "device/gw/A/uplink")
+            .await
+    );
+
+    // Disconnect-style: enable wait again, fail pending mid-flight, still retryable.
+    adapter
+        .enable_test_suback_wait("test", Duration::from_secs(2))
+        .await;
+    let failer = adapter.clone();
+    tokio::spawn(async move {
+        for _ in 0..100 {
+            failer
+                .fail_test_pending_subscribes("test", "simulated disconnect")
+                .await;
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
+    let second = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("B".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(second.is_err(), "disconnect must keep incomplete");
+    assert!(
+        manager.get_draft(&pending).await.is_some(),
+        "draft still retryable after disconnect"
+    );
+}
+
+/// 4) After ACL fix (reject → success), retry completes without double-register.
+#[tokio::test]
+async fn acceptance_retry_after_acl_fix_no_double_register() {
+    let state = state_with_listener().await;
+    let pending = seed_conflict_pending(&state).await;
+    let adapter = register_confirm_adapter(&state, "test").await;
+    adapter
+        .enable_test_suback_wait("test", Duration::from_secs(3))
+        .await;
+
+    let rejector = adapter.clone();
+    let reject_task =
+        tokio::spawn(async move { settle_pending_loop(rejector, "test", false).await });
+    let first = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("B-first".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await;
+    assert!(first.is_err());
+    reject_task.abort();
+
+    let manager = state.auto_onboard_manager.read().await.clone().unwrap();
+    assert!(manager.get_draft(&pending).await.is_some());
+
+    let settler = adapter.clone();
+    tokio::spawn(async move { settle_pending_loop(settler, "test", true).await });
+    let second = confirm_association_draft(
+        State(state.clone()),
+        Path(pending.clone()),
+        Json(ConfirmAssociationRequest {
+            device_id: "B".to_string(),
+            identity_field: "sn".to_string(),
+            identity_source: Some("auto_payload".to_string()),
+            existing_type: Some("gw".to_string()),
+            new_type: None,
+            device_name: Some("B-retry".to_string()),
+            overwrite_blocked: None,
+        }),
+    )
+    .await
+    .expect("retry after ACL fix must succeed");
+    assert!(second.0.data.expect("r").subscription_ready);
+    assert!(manager.get_draft(&pending).await.is_none());
+
+    // Same device id — update in place, not a second registration.
+    let devices = state.devices.registry.list_devices();
+    let b_count = devices.iter().filter(|d| d.device_id == "B").count();
+    assert_eq!(b_count, 1, "retry must not double-register B");
+    let b = state.devices.service.get_device("B").expect("B");
+    assert_eq!(b.name, "B-retry");
+}
+
+/// 5) Confirmed wildcard cover reuses without resubscribe (no pending / no confirm wait).
+#[tokio::test]
+async fn acceptance_confirmed_wildcard_cover_reuses_without_resubscribe() {
+    let adapter = Arc::new(MqttAdapter::new(MqttAdapterConfig::new(
+        "wc",
+        "localhost:1883",
+    )));
+    adapter.install_test_broker_slot("wc").await;
+    adapter
+        .enable_test_suback_wait("wc", Duration::from_millis(200))
+        .await;
+    // Seed confirmed "#" as if SubAck already succeeded.
+    adapter.seed_test_confirmed_topic("wc", "#").await;
+    // Must return Ok immediately via cover — would timeout if it queued Subscribe.
+    adapter
+        .subscribe_topic("device/gw/B/uplink")
+        .await
+        .expect("confirmed wildcard must cover without resubscribe");
+    assert!(
+        !adapter
+            .test_topic_confirmed("wc", "device/gw/B/uplink")
+            .await,
+        "cover reuse must not insert the concrete topic"
+    );
+    assert_eq!(
+        adapter.test_pending_subscribe_count("wc").await,
+        0,
+        "cover reuse must not leave pending Subscribe"
+    );
+}

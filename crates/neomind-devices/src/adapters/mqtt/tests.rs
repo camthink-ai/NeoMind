@@ -2416,11 +2416,25 @@ mod handling_path {
         )));
         adapter.set_shared_device_registry(registry.clone()).await;
         adapter.install_test_broker_slot("disc-mqtt").await;
-        assert!(adapter.mqtt_clients.read().await.values().next().unwrap().is_session_ready());
+        assert!(adapter
+            .mqtt_clients
+            .read()
+            .await
+            .values()
+            .next()
+            .unwrap()
+            .is_session_ready());
 
         // Simulate reconnect window: client retained, session not ready.
         adapter.set_test_session_ready("disc-mqtt", false).await;
-        assert!(!adapter.mqtt_clients.read().await.values().next().unwrap().is_session_ready());
+        assert!(!adapter
+            .mqtt_clients
+            .read()
+            .await
+            .values()
+            .next()
+            .unwrap()
+            .is_session_ready());
         assert!(!adapter.list_brokers().await.is_empty());
 
         let service = DeviceService::new(registry.clone(), EventBus::new());
