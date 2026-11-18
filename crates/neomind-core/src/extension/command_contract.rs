@@ -1134,9 +1134,10 @@ fn publish_prepareable_snapshot(snapshot: &ExtensionCommandSnapshot) {
 /// Short AI extension catalog for capability context (NM-247).
 ///
 /// Same AI visibility as `extension commands` / invoke: `ai_enabled`,
-/// `disabled_commands`, and descriptor `ai_exposed`. Byte budget counts
-/// complete entries only (no truncated mid-line). Full schemas stay
-/// on-demand via `neomind extension commands <id>`.
+/// `disabled_commands`, and descriptor `ai_exposed`. Instances without a
+/// published AI policy snapshot are omitted (fail closed — not default-visible).
+/// Byte budget counts complete entries only. Full schemas stay on-demand via
+/// `neomind extension commands <id>`.
 pub fn format_ai_extension_catalog(max_lines: usize, max_bytes: usize) -> String {
     let entries: Vec<(String, String)> = {
         let Ok(guard) = cap_cache().lock() else {
@@ -1144,11 +1145,10 @@ pub fn format_ai_extension_catalog(max_lines: usize, max_bytes: usize) -> String
         };
         let mut out = Vec::new();
         for (id, snap) in guard.prepareable.iter() {
-            let vis = guard
-                .ai_visibility
-                .get(id)
-                .cloned()
-                .unwrap_or_default();
+            // Fail closed: no AI policy snapshot yet → omit (do not default-visible).
+            let Some(vis) = guard.ai_visibility.get(id).cloned() else {
+                continue;
+            };
             let ai_cmds: Vec<_> = snap
                 .commands
                 .iter()
@@ -3145,6 +3145,29 @@ mod tests {
             "ai_exposed=false only → omit: {author_hide}"
         );
 
+        invalidate_instance_capability(id);
+    }
+
+    #[test]
+    fn nm247_catalog_skips_without_ai_visibility_policy() {
+        let id = "weather-nm247-no-policy";
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![weather_get_undeclared()], gen)
+            .publish_capabilities()
+            .unwrap();
+        // Register / prepareable published, but AI policy not synced yet.
+        let before = format_ai_extension_catalog(12, 2000);
+        assert!(
+            !before.contains(id),
+            "register before policy publish must not list: {before}"
+        );
+        set_instance_ai_visibility(id, true, vec![]);
+        let after = format_ai_extension_catalog(12, 2000);
+        assert!(
+            after.contains(id),
+            "after policy publish must list: {after}"
+        );
         invalidate_instance_capability(id);
     }
 

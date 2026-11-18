@@ -4484,6 +4484,11 @@ pub fn apply_progress_stop(state: &mut TaskState, decision: &ProgressDecision) -
 }
 
 /// True when a tool outcome is timeout / indeterminate (→ Operation Unknown).
+///
+/// Aligned with shell transport staging (NM-247): `http_timeout` /
+/// ambiguous `http_transport` / "result unknown" → Unknown even when the
+/// text has no "timeout" substring. Connection refuse / `http_connect` /
+/// "not submitted" stays Failed (known not executed).
 pub fn outcome_is_unknown(
     result: &Result<crate::toolkit::tool::ToolOutput, crate::toolkit::error::ToolError>,
 ) -> bool {
@@ -4497,29 +4502,42 @@ pub fn outcome_is_unknown(
             {
                 return true;
             }
-            out.error
-                .as_deref()
-                .map(|e| {
-                    let l = e.to_lowercase();
-                    l.contains("timed out")
-                        || l.contains("timeout")
-                        || l.contains("outcome unknown")
-                })
-                .unwrap_or(false)
+            // Shell put transport text in data.stderr (success envelope with
+            // exit_code != 0); also scan out.error for guidance markers.
+            let mut blob = String::new();
+            if let Some(e) = out.error.as_deref() {
+                blob.push_str(e);
+                blob.push('\n');
+            }
+            if let Some(s) = out.data.get("stderr").and_then(|v| v.as_str()) {
+                blob.push_str(s);
+            }
+            text_indicates_outcome_unknown(&blob)
         }
         Err(e) => {
-            let l = e.to_string().to_lowercase();
             matches!(e, crate::toolkit::error::ToolError::Timeout)
-                || l.contains("timed out")
-                || l.contains("timeout")
-                // Replay-unsafe cancels / transient errors return
-                // Err(Execution(err + outcome_unknown_guidance())) — the
-                // guidance marker is appended ONLY when the effect may have
-                // already landed, so matching it here classifies exactly the
-                // must-inquire cases. Clean failures (no marker) stay Failed.
-                || l.contains("outcome unknown")
+                || text_indicates_outcome_unknown(&e.to_string())
         }
     }
+}
+
+/// Shared markers for ledger Unknown vs Failed (shell + Err paths).
+fn text_indicates_outcome_unknown(text: &str) -> bool {
+    let l = text.to_lowercase();
+    // Known-not-submitted transport → Failed (do not inquire / auto-treat as
+    // maybe-landed). Prefer explicit connect tags / "not submitted".
+    if l.contains("http_connect:")
+        || l.contains("not submitted")
+        || (l.contains("connection refused") && l.contains("not reached"))
+    {
+        return false;
+    }
+    l.contains("result unknown")
+        || l.contains("outcome unknown")
+        || l.contains("http_timeout:")
+        || l.contains("http_transport:")
+        || l.contains("timed out")
+        || l.contains("timeout")
 }
 
 // ─── G3: loop classification / halt honesty ───────────────────────────────
@@ -6231,6 +6249,44 @@ mod tests {
         assert!(
             !outcome_is_unknown(&Err(plain)),
             "clean failure without the marker must stay Failed"
+        );
+    }
+
+    /// NM-247: ambiguous `http_transport` (no "timeout" substring) must still
+    /// land as ledger Unknown — same as shell "result unknown" staging.
+    /// Connection refuse / not-submitted stays Failed.
+    #[test]
+    fn outcome_is_unknown_http_transport_without_timeout_wording() {
+        use crate::toolkit::tool::ToolOutput;
+        let ambiguous = ToolOutput::success(serde_json::json!({
+            "exit_code": 1,
+            "timed_out": false,
+            "stdout": "",
+            "stderr": "http_transport: error sending request for url (http://localhost:9375/api/extensions/weather/invoke)"
+        }));
+        assert!(
+            outcome_is_unknown(&Ok(ambiguous)),
+            "http_transport without timeout wording → Unknown"
+        );
+
+        let classified = ToolOutput::success(serde_json::json!({
+            "exit_code": 1,
+            "timed_out": false,
+            "stderr": "transport error (localhost API): http_transport: connection reset. \
+                       Stage=transport — result unknown (request may already have been submitted)"
+        }));
+        assert!(outcome_is_unknown(&Ok(classified)));
+
+        let connect = ToolOutput::success(serde_json::json!({
+            "exit_code": 1,
+            "timed_out": false,
+            "stderr": "transport error (localhost API): http_connect: connection refused. \
+                       Stage=transport — connection failed before submit; extension \
+                       business body was not reached (not submitted)."
+        }));
+        assert!(
+            !outcome_is_unknown(&Ok(connect)),
+            "connect refuse / not submitted must stay Failed"
         );
     }
 
