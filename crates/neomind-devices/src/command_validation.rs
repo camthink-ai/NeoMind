@@ -108,8 +108,9 @@ pub fn invoke_projection(cmd: &CommandSpec) -> Value {
 
 /// Generate a `--params` example object from param defs and validate it.
 ///
-/// Returns `None` when generation is unreliable (preflight rejects the
-/// candidate) so callers can show defs only.
+/// Returns `None` when generation is unreliable (core checks reject the
+/// candidate) so callers can show defs only. Discovery and error feedback
+/// both go through this — never surface an example that would fail invoke.
 pub fn validated_params_example(cmd: &CommandSpec) -> Option<Value> {
     let example = params_example_from_spec(cmd);
     let map = match &example {
@@ -119,10 +120,7 @@ pub fn validated_params_example(cmd: &CommandSpec) -> Option<Value> {
             .collect::<HashMap<_, _>>(),
         _ => return None,
     };
-    // Self-check against the same preflight invoke uses.
-    preflight(std::slice::from_ref(cmd), &cmd.name, &map)
-        .ok()
-        .map(|_| example)
+    check_command_params(cmd, &map).ok().map(|_| example)
 }
 
 /// Best-effort example object for `--params` (unvalidated).
@@ -230,17 +228,41 @@ fn param_from_template(p: &ParameterDefinition) -> ParamSpec {
 
 /// Schema JSON for one command — the corrective payload on param errors.
 ///
-/// Uses the unvalidated generator for `params_example` so error-path schema
-/// building cannot recurse through [`validated_params_example`]'s preflight.
+/// Attaches `params_example` only when [`validated_params_example`] succeeds
+/// (same gate as CLI discovery). When generation is unreliable, callers get
+/// parameter defs + constraints only — never an example that would fail
+/// invoke.
 pub fn command_schema_json(cmd: &CommandSpec) -> Value {
-    json!({
+    let mut schema = json!({
         "command": cmd.name,
         "display_name": cmd.display_name,
         "description": cmd.description,
         "parameters": cmd.parameters.iter().map(param_schema_json).collect::<Vec<_>>(),
         "input_contract": "--params takes this command's param object (host wraps the protocol envelope)",
-        "params_example": params_example_from_spec(cmd),
-    })
+    });
+    if let Some(example) = validated_params_example(cmd) {
+        if let Some(map) = schema.as_object_mut() {
+            map.insert("params_example".into(), example);
+        }
+    }
+    schema
+}
+
+/// Format the optional example clause for error messages.
+///
+/// When no validated example exists, point at the hint's parameter
+/// constraints instead of inventing a failing sample.
+fn example_clause(cmd: &CommandSpec) -> String {
+    match validated_params_example(cmd) {
+        Some(ex) => format!(
+            " Example: {}.",
+            serde_json::to_string(&ex).unwrap_or_else(|_| "{}".into())
+        ),
+        None => {
+            " See parameter definitions and constraints in the hint (no reliable params_example)."
+                .to_string()
+        }
+    }
 }
 
 fn param_schema_json(p: &ParamSpec) -> Value {
@@ -279,6 +301,9 @@ fn param_schema_json(p: &ParamSpec) -> Value {
 /// name, missing required params, unknown keys, type mismatches, enum and
 /// range violations. Template constraints only — no extra rules invented
 /// here; `DeviceService::validate_command_params` remains the authority.
+///
+/// Param checks share [`check_command_params`] with example validation so
+/// discovery and error feedback never disagree about a sample's legality.
 pub fn preflight(
     commands: &[CommandSpec],
     command: &str,
@@ -305,11 +330,38 @@ pub fn preflight(
 
     let known: std::collections::HashSet<&str> =
         spec.parameters.iter().map(|p| p.name.as_str()).collect();
-    // Unvalidated generator only — never call validated_params_example here
-    // (that self-checks via preflight and would recurse).
-    let example =
-        serde_json::to_string(&params_example_from_spec(spec)).unwrap_or_else(|_| "{}".into());
     let envelope = looks_like_protocol_envelope(params, &known);
+
+    match check_command_params(spec, params) {
+        Ok(()) => Ok(()),
+        Err(reason) => {
+            let mut message = format!(
+                "Command '{}' was NOT sent: {}. --params takes the command param object \
+                 (host wraps the protocol).{}",
+                command,
+                reason,
+                example_clause(spec)
+            );
+            if envelope {
+                message.push_str(
+                    " Input looks like a protocol envelope {\"cmd\":...,\"params\":{...}} — \
+                     pass the inner command params at the top level instead. Do not auto-unwrap.",
+                );
+            }
+            Err(PreflightError::with_schema(
+                message,
+                &command_schema_json(spec),
+            ))
+        }
+    }
+}
+
+/// Core param checks for one known command — shared by invoke preflight and
+/// example self-check. Returns a short reason string on failure (no schema /
+/// example enrichment — callers attach that after).
+fn check_command_params(spec: &CommandSpec, params: &HashMap<String, Value>) -> Result<(), String> {
+    let known: std::collections::HashSet<&str> =
+        spec.parameters.iter().map(|p| p.name.as_str()).collect();
 
     let missing: Vec<&str> = spec
         .parameters
@@ -318,22 +370,9 @@ pub fn preflight(
         .map(|p| p.name.as_str())
         .collect();
     if !missing.is_empty() {
-        let mut message = format!(
-            "Command '{}' was NOT sent: missing required top-level params: {}. \
-             --params takes the command param object (host wraps the protocol). Example: {}.",
-            command,
-            missing.join(", "),
-            example
-        );
-        if envelope {
-            message.push_str(
-                " Input looks like a protocol envelope {\"cmd\":...,\"params\":{...}} — \
-                 pass the inner command params at the top level instead. Do not auto-unwrap.",
-            );
-        }
-        return Err(PreflightError::with_schema(
-            message,
-            &command_schema_json(spec),
+        return Err(format!(
+            "missing required top-level params: {}",
+            missing.join(", ")
         ));
     }
 
@@ -343,29 +382,16 @@ pub fn preflight(
         .map(|k| k.as_str())
         .collect();
     if !unknown.is_empty() {
-        let mut message = format!(
-            "Command '{}' was NOT sent: unknown param(s): {}. Allowed: {}. \
-             --params takes the command param object. Example: {}.",
-            command,
+        let mut names: Vec<&str> = known.iter().copied().collect();
+        names.sort_unstable();
+        return Err(format!(
+            "unknown param(s): {}. Allowed: {}",
             unknown.join(", "),
-            if known.is_empty() {
+            if names.is_empty() {
                 "(none)".to_string()
             } else {
-                let mut names: Vec<&str> = known.iter().copied().collect();
-                names.sort_unstable();
                 names.join(", ")
-            },
-            example
-        );
-        if envelope {
-            message.push_str(
-                " Input looks like a protocol envelope {\"cmd\":...,\"params\":{...}} — \
-                 pass the inner command params at the top level instead. Do not auto-unwrap.",
-            );
-        }
-        return Err(PreflightError::with_schema(
-            message,
-            &command_schema_json(spec),
+            }
         ));
     }
 
@@ -377,19 +403,13 @@ pub fn preflight(
             continue;
         }
         if let Some(msg) = type_mismatch_message(p, raw) {
-            return Err(PreflightError::with_schema(
-                format!("Command '{}' was NOT sent: {msg}", command),
-                &command_schema_json(spec),
-            ));
+            return Err(msg);
         }
         if let Some(allowed) = &p.allowed_values {
             if !allowed.is_empty() && !allowed.iter().any(|a| json_values_loosely_equal(a, raw)) {
-                return Err(PreflightError::with_schema(
-                    format!(
-                        "Command '{}' was NOT sent: param '{}' value {} is not in allowed_values {:?}.",
-                        command, p.name, raw, allowed
-                    ),
-                    &command_schema_json(spec),
+                return Err(format!(
+                    "param '{}' value {} is not in allowed_values {:?}",
+                    p.name, raw, allowed
                 ));
             }
         }
@@ -398,31 +418,23 @@ pub fn preflight(
             if let Some(n) = num {
                 if let Some(min) = p.min {
                     if n < min {
-                        return Err(PreflightError::with_schema(
-                            format!(
-                                "Command '{}' was NOT sent: param '{}' value {} is below minimum {}{}.",
-                                command,
-                                p.name,
-                                n,
-                                min,
-                                p.unit.as_deref().unwrap_or("")
-                            ),
-                            &command_schema_json(spec),
+                        return Err(format!(
+                            "param '{}' value {} is below minimum {}{}",
+                            p.name,
+                            n,
+                            min,
+                            p.unit.as_deref().unwrap_or("")
                         ));
                     }
                 }
                 if let Some(max) = p.max {
                     if n > max {
-                        return Err(PreflightError::with_schema(
-                            format!(
-                                "Command '{}' was NOT sent: param '{}' value {} is above maximum {}{}.",
-                                command,
-                                p.name,
-                                n,
-                                max,
-                                p.unit.as_deref().unwrap_or("")
-                            ),
-                            &command_schema_json(spec),
+                        return Err(format!(
+                            "param '{}' value {} is above maximum {}{}",
+                            p.name,
+                            n,
+                            max,
+                            p.unit.as_deref().unwrap_or("")
                         ));
                     }
                 }
@@ -767,5 +779,91 @@ mod tests {
             &params(json!({ "text": text }))
         )
         .is_ok());
+    }
+
+    /// When the heuristic sample fails the same core checks invoke uses
+    /// (e.g. integer generator truncates min=0.5 → 0, which violates the
+    /// floor), discovery and error feedback both omit params_example.
+    #[test]
+    fn unreliable_example_omitted_from_discovery_and_error_feedback() {
+        let cmd = CommandSpec {
+            name: "set_gain".into(),
+            display_name: "Set Gain".into(),
+            description: "Gain".into(),
+            parameters: vec![ParamSpec {
+                name: "gain".into(),
+                display_name: "Gain".into(),
+                data_type: "integer".into(),
+                required: true,
+                description: String::new(),
+                allowed_values: None,
+                min: Some(0.5),
+                max: Some(2.0),
+                default: None,
+                unit: None,
+            }],
+        };
+        // Generator would emit 0 (min as i64) — that fails check_command_params.
+        let raw = params_example_from_spec(&cmd);
+        assert_eq!(raw["gain"], 0);
+        assert!(
+            check_command_params(&cmd, &params(raw.clone())).is_err(),
+            "raw generator sample must fail core checks"
+        );
+        assert!(
+            validated_params_example(&cmd).is_none(),
+            "validated gate must drop the illegal sample"
+        );
+
+        let proj = invoke_projection(&cmd);
+        assert!(
+            proj.get("params_example").is_none(),
+            "discovery omits example: {proj}"
+        );
+        assert!(proj["parameters"][0]["min"].as_f64() == Some(0.5));
+        assert!(proj["parameters"][0]["max"].as_f64() == Some(2.0));
+
+        let err = preflight(std::slice::from_ref(&cmd), "set_gain", &HashMap::new()).unwrap_err();
+        assert!(err.message.contains("NOT sent"));
+        assert!(
+            !err.message.contains("Example:"),
+            "error body must not advertise a failing sample: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("no reliable params_example")
+                || err.message.contains("parameter definitions"),
+            "{}",
+            err.message
+        );
+        let hint: Value = serde_json::from_str(err.hint.as_deref().unwrap()).unwrap();
+        assert!(
+            hint.get("params_example").is_none(),
+            "error hint omits example: {hint}"
+        );
+        assert_eq!(hint["parameters"][0]["min"], 0.5);
+        assert_eq!(hint["parameters"][0]["max"], 2.0);
+
+        // Negative-only max also yields illegal 0 from the integer default.
+        let neg = CommandSpec {
+            name: "set_delta".into(),
+            display_name: "Set Delta".into(),
+            description: "Delta".into(),
+            parameters: vec![ParamSpec {
+                name: "delta".into(),
+                display_name: "Delta".into(),
+                data_type: "integer".into(),
+                required: true,
+                description: String::new(),
+                allowed_values: None,
+                min: None,
+                max: Some(-1.0),
+                default: None,
+                unit: None,
+            }],
+        };
+        assert!(validated_params_example(&neg).is_none());
+        let hint2 = command_schema_json(&neg);
+        assert!(hint2.get("params_example").is_none(), "{hint2}");
     }
 }

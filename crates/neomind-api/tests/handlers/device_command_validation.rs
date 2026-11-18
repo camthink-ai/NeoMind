@@ -7,10 +7,16 @@
 //! via shell) gets the same loop. These tests pin that contract.
 
 use axum::extract::{Path, State};
+use futures::Stream;
 use neomind_api::handlers::devices::models::SendCommandRequest;
 use neomind_api::handlers::send_command_handler;
 use neomind_api::handlers::ServerState;
+use neomind_devices::adapter::{ConnectionStatus, DeviceAdapter, DeviceEvent};
+use neomind_devices::AdapterResult;
 use serde_json::{json, Value};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 async fn setup() -> ServerState {
     let state = crate::common::create_test_server_state().await;
@@ -113,6 +119,62 @@ fn hint_json(err: &neomind_api::models::ErrorResponse) -> Value {
     serde_json::from_str(err.hint.as_deref().expect("hint present")).expect("hint is json")
 }
 
+/// Counts `send_command` invocations so preflight rejects can assert
+/// adapter call count stays zero.
+struct CountingMqttAdapter {
+    sends: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl DeviceAdapter for CountingMqttAdapter {
+    fn name(&self) -> &str {
+        "counting-mqtt"
+    }
+    fn adapter_type(&self) -> &'static str {
+        "mqtt"
+    }
+    fn is_running(&self) -> bool {
+        true
+    }
+    async fn start(&self) -> AdapterResult<()> {
+        Ok(())
+    }
+    async fn stop(&self) -> AdapterResult<()> {
+        Ok(())
+    }
+    fn subscribe(&self) -> Pin<Box<dyn Stream<Item = DeviceEvent> + Send + '_>> {
+        Box::pin(futures::stream::empty())
+    }
+    fn device_count(&self) -> usize {
+        0
+    }
+    fn list_devices(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    async fn send_command(
+        &self,
+        _device_id: &str,
+        _command_name: &str,
+        _payload: String,
+        _topic: Option<String>,
+    ) -> AdapterResult<()> {
+        self.sends.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn connection_status(&self) -> ConnectionStatus {
+        ConnectionStatus::Connected
+    }
+    async fn subscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+        Ok(())
+    }
+    async fn unsubscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn unknown_command_lists_available_commands() {
     let state = setup().await;
@@ -157,6 +219,18 @@ async fn missing_required_param_returns_command_schema() {
 #[tokio::test]
 async fn protocol_envelope_params_are_rejected_without_adapter_send() {
     let state = setup().await;
+    let sends = Arc::new(AtomicUsize::new(0));
+    state
+        .devices
+        .service
+        .register_adapter(
+            "counting-mqtt".into(),
+            Arc::new(CountingMqttAdapter {
+                sends: Arc::clone(&sends),
+            }),
+        )
+        .await;
+
     let err = send(
         &state,
         "render_text",
@@ -166,8 +240,19 @@ async fn protocol_envelope_params_are_rejected_without_adapter_send() {
     .unwrap_err();
     assert!(err.message.contains("NOT sent"), "{}", err.message);
     assert!(err.message.contains("protocol envelope"), "{}", err.message);
-    // Preflight fails before DeviceService.send — no delivery payload.
     assert!(err.hint.as_deref().unwrap_or("").contains("params_example"));
+    assert_eq!(
+        sends.load(Ordering::SeqCst),
+        0,
+        "preflight must reject before any adapter send"
+    );
+
+    // Sanity: a valid call reaches the counting adapter (proves the counter works).
+    let _ = send(&state, "render_text", json!({"text": "hi"})).await;
+    assert!(
+        sends.load(Ordering::SeqCst) >= 1,
+        "valid call must exercise the counting adapter"
+    );
 }
 
 #[tokio::test]
