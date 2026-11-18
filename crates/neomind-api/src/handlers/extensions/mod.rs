@@ -102,10 +102,16 @@ pub struct ExtensionDto {
     /// Configuration parameters for this extension
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config_parameters: Option<Vec<ConfigParamDto>>,
-    /// Master tool-toggle: when false, none of this extension's tools are
-    /// exposed to the LLM. Persisted in ExtensionRecord.enabled.
+    /// Run / load switch. When false, the extension is skipped by
+    /// `load_auto_start()` after restart. Persisted in
+    /// `ExtensionRecord.enabled`.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// AI master switch: when false, none of this extension's tools are
+    /// exposed to Chat/Agent. Persisted in `ExtensionRecord.ai_enabled`.
+    /// Independent of run/load `enabled`.
+    #[serde(default = "default_enabled")]
+    pub ai_enabled: bool,
     /// Per-command disable list (command names without extension-id prefix).
     /// Source of truth for per-command toggles; UI flips membership.
     #[serde(default)]
@@ -211,14 +217,14 @@ pub(crate) fn extension_info_to_dto(
 ) -> ExtensionDto {
     use neomind_core::extension::system::ParamMetricValue;
 
-    // Load persisted record (if any) to get enabled flag + disabled_commands.
-    // Defaults: enabled=true, no disabled commands. Same lookup is reused for
-    // health_status below, so we cache it once.
+    // Load persisted record (if any) for run/AI flags + disabled_commands.
+    // Defaults: enabled=true, ai_enabled=true, no disabled commands. Same
+    // lookup is reused for health_status below, so we cache it once.
     let record_opt: Option<ExtensionRecord> = store.load(&info.metadata.id).ok().flatten();
-    let (enabled, disabled_commands): (bool, Vec<String>) = record_opt
+    let (enabled, ai_enabled, disabled_commands): (bool, bool, Vec<String>) = record_opt
         .as_ref()
-        .map(|r| (r.enabled, r.disabled_commands.clone()))
-        .unwrap_or((true, Vec::new()));
+        .map(|r| (r.enabled, r.ai_enabled, r.disabled_commands.clone()))
+        .unwrap_or((true, true, Vec::new()));
     let disabled_set: std::collections::HashSet<String> =
         disabled_commands.iter().cloned().collect();
 
@@ -249,7 +255,7 @@ pub(crate) fn extension_info_to_dto(
                     is_stream: false,
                     expected_duration_ms: None,
                 },
-                disabled: !enabled || !cmd.ai_exposed || disabled_set.contains(&cmd.name),
+                disabled: !ai_enabled || !cmd.ai_exposed || disabled_set.contains(&cmd.name),
                 ai_exposed: cmd.ai_exposed,
                 effect: def.effect,
                 replay_safety: def.replay_safety,
@@ -347,6 +353,7 @@ pub(crate) fn extension_info_to_dto(
         metrics,
         config_parameters,
         enabled,
+        ai_enabled,
         disabled_commands,
     }
 }

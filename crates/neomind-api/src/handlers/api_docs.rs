@@ -1670,6 +1670,11 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "PATCH",
+        path: "/api/extensions/:id/ai-enabled",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "POST",
         path: "/api/extensions/market/install",
         auth: "jwt-or-api-key",

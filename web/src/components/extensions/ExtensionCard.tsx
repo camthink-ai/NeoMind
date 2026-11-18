@@ -82,7 +82,7 @@ export function ExtensionCard({
   // toolsEnabled = master toggle for exposing commands to the agent.
   // The card only shows state; toggling lives in the details dialog to keep
   // the card height stable across on/off (no extra line, no alignment drift).
-  const toolsEnabled = extension.enabled !== false
+  const toolsEnabled = extension.ai_enabled !== false
 
   const hasError = extension.state === "Error"
   // Crashed = stopped by crash-loop, not on purpose — error-tinted, with the

@@ -132,9 +132,9 @@ export const extensionsApi = {
     }),
 
   /**
-   * Toggle an extension's master tool-enable flag.
+   * Toggle an extension's run / load flag.
    * PATCH /api/extensions/:id/enabled
-   * `enabled=false` hides ALL of this extension's tools from the LLM.
+   * `enabled=false` skips auto-start after restart (not the AI switch).
    */
   setExtensionEnabled: (id: string, enabled: boolean) =>
     fetchAPI<{ id: string; enabled: boolean }>(`/extensions/${id}/enabled`, {
@@ -143,9 +143,20 @@ export const extensionsApi = {
     }),
 
   /**
+   * Toggle an extension's AI master switch.
+   * PATCH /api/extensions/:id/ai-enabled
+   * `ai_enabled=false` hides ALL of this extension's tools from Chat/Agent.
+   */
+  setExtensionAiEnabled: (id: string, aiEnabled: boolean) =>
+    fetchAPI<{ id: string; ai_enabled: boolean }>(`/extensions/${id}/ai-enabled`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ai_enabled: aiEnabled }),
+    }),
+
+  /**
    * Toggle a single extension command's tool-enable flag.
    * PATCH /api/extensions/:id/commands/:cmd/enabled
-   * Independent of the master `enabled` flag.
+   * Independent of the master `ai_enabled` flag.
    */
   setExtensionCommandEnabled: (id: string, cmd: string, enabled: boolean) =>
     fetchAPI<{ id: string; command: string; enabled: boolean }>(

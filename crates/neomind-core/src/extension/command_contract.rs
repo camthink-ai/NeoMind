@@ -28,7 +28,8 @@ pub const CONTRACT_VERSION: &str = "1";
 ///
 /// Covers the three persisted/author controls (must agree across direct tools,
 /// Chat shell → CLI, and HTTP invoke/execute):
-/// - extension master `enabled` (AI off for the whole extension)
+/// - extension master `ai_enabled` (AI off for the whole extension; distinct
+///   from run/load `enabled`)
 /// - `disabled_commands` (per-command AI off)
 /// - descriptor `ai_exposed=false` (author hides from AI)
 ///
@@ -42,7 +43,7 @@ pub fn ai_command_access_denied(
 ) -> Option<String> {
     if !extension_ai_enabled {
         return Some(format!(
-            "extension AI is disabled (master enabled=false); cannot AI-invoke '{command_name}'"
+            "extension AI is disabled (ai_enabled=false); cannot AI-invoke '{command_name}'"
         ));
     }
     if !ai_exposed {
@@ -1715,7 +1716,7 @@ mod tests {
     #[test]
     fn ai_access_denies_master_off() {
         let r = ai_command_access_denied(false, &[], "get_weather", true).unwrap();
-        assert!(r.contains("master enabled=false"), "{r}");
+        assert!(r.contains("ai_enabled=false"), "{r}");
     }
 
     #[test]

@@ -28,6 +28,7 @@ mod tests {
             metrics: vec![],
             config_parameters: None,
             enabled: true,
+            ai_enabled: true,
             disabled_commands: vec![],
         }
     }
@@ -64,6 +65,7 @@ mod tests {
             metrics: vec![],
             config_parameters: None,
             enabled: true,
+            ai_enabled: true,
             disabled_commands: vec![],
         };
 
@@ -231,6 +233,7 @@ mod tests {
                 last_crash_reason: None,
                 config_parameters: None,
                 enabled: true,
+                ai_enabled: true,
                 disabled_commands: vec![],
             };
             assert_eq!(dto.state, state);
@@ -286,6 +289,7 @@ mod tests {
             }],
             config_parameters: None,
             enabled: true,
+            ai_enabled: true,
             disabled_commands: vec![],
         };
 
@@ -344,6 +348,7 @@ mod tests {
             }],
             config_parameters: None,
             enabled: true,
+            ai_enabled: true,
             disabled_commands: vec![],
         };
 
@@ -410,6 +415,7 @@ mod tests {
                 last_crash_reason: None,
                 config_parameters: None,
                 enabled: true,
+                ai_enabled: true,
                 disabled_commands: vec![],
             };
             assert_eq!(dto.version, version);

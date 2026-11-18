@@ -308,7 +308,7 @@ export function ExtensionDetailsDialog({
   const runMasterToggle = async (checked: boolean) => {
     if (!extension) return
     try {
-      await api.setExtensionEnabled(extension.id, checked)
+      await api.setExtensionAiEnabled(extension.id, checked)
       toast({
         title: checked
           ? t("extensions:tools.enableMasterDone", { defaultValue: "AI tools enabled" })
@@ -687,7 +687,7 @@ export function ExtensionDetailsDialog({
       )
     }
 
-    const masterEnabled = extension.enabled !== false
+    const masterEnabled = extension.ai_enabled !== false
 
     // Turning OFF asks for confirmation; ON is immediate.
     const handleMasterToggle = (checked: boolean) => {

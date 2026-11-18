@@ -3532,11 +3532,12 @@ impl ServerState {
 
 /// Rebuild the ToolRegistry disabled set from the persisted ExtensionRecord
 /// state and push it live. Built-in tools are never disabled; only extension
-/// tools whose parent extension is `enabled=false` (master off) or whose
+/// tools whose parent extension is `ai_enabled=false` (AI master off) or whose
 /// command name appears in `disabled_commands` (per-command off) are hidden.
+/// Run/load `enabled` is not consulted here.
 ///
 /// Called at startup (after extensions load + tool registry finalized) and
-/// after every toggle API call. Cheap: O(n_extensions × n_commands).
+/// after every AI / per-command toggle API call. Cheap: O(n_extensions × n_commands).
 async fn apply_persisted_tool_disabled_state(
     runtime: &neomind_core::extension::ExtensionRuntime,
     tool_registry: &std::sync::Arc<neomind_agent::toolkit::ToolRegistry>,
@@ -3560,8 +3561,8 @@ async fn apply_persisted_tool_disabled_state(
         if r.uninstalled {
             continue;
         }
-        if !r.enabled {
-            // Master off: enumerate live commands to materialize tool names.
+        if !r.ai_enabled {
+            // AI master off: enumerate live commands to materialize tool names.
             if let Some(info) = runtime.get(&r.id).await {
                 for cmd in &info.commands {
                     disabled.insert(format!("{}:{}", r.id, cmd.name));
@@ -3772,6 +3773,7 @@ mod boot_resilience_tests {
             author: None,
             auto_start: false,
             enabled: true,
+            ai_enabled: true,
             uninstalled: false,
             disabled_commands: vec![],
             config: None,
@@ -3824,6 +3826,7 @@ mod boot_resilience_tests {
             author: None,
             auto_start: false,
             enabled: true,
+            ai_enabled: true,
             uninstalled: false,
             disabled_commands: vec![],
             config: None,

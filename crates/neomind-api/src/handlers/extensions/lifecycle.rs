@@ -107,6 +107,7 @@ pub async fn list_extensions_handler(
             metrics: Vec::new(),
             config_parameters: None,
             enabled: record.enabled,
+            ai_enabled: record.ai_enabled,
             disabled_commands: record.disabled_commands,
         });
     }

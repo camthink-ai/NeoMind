@@ -253,13 +253,13 @@ fn ai_policy_from_loaded_record(
         Some(r) if r.uninstalled => Err(ErrorResponse::forbidden(format!(
             "extension '{instance_id}' is marked uninstalled; refuse invoke"
         ))),
-        Some(r) => Ok((r.enabled, r.disabled_commands)),
+        Some(r) => Ok((r.ai_enabled, r.disabled_commands)),
     }
 }
 
 /// Shared prepare for HTTP execute + invoke (same path as CLI / tools).
 ///
-/// Enforces AI access policy (`enabled` / `disabled_commands` / `ai_exposed`)
+/// Enforces AI access policy (`ai_enabled` / `disabled_commands` / `ai_exposed`)
 /// at this boundary so Chat shell → `extension invoke` cannot bypass the
 /// toggles that already hide direct tools from the LLM.
 ///
@@ -380,7 +380,7 @@ pub struct CommandDescriptorDto {
     pub config: CommandConfigDto,
     /// True when this command is excluded from the LLM tool registry — either
     /// named in the parent extension's `disabled_commands` list, the parent
-    /// extension's master `enabled` flag is off, or the extension declared
+    /// extension's master `ai_enabled` flag is off, or the extension declared
     /// `ai_exposed=false` for it.
     #[serde(default)]
     pub disabled: bool,
@@ -504,16 +504,22 @@ pub async fn list_extension_commands_handler(
     ok(result)
 }
 
-/// Request body for tool-enable toggles.
+/// Request body for run/load and per-command tool-enable toggles.
 #[derive(utoipa::ToSchema, Debug, Deserialize)]
 pub struct SetToolEnabledRequest {
     pub enabled: bool,
 }
 
+/// Request body for the AI master switch.
+#[derive(utoipa::ToSchema, Debug, Deserialize)]
+pub struct SetAiEnabledRequest {
+    pub ai_enabled: bool,
+}
+
 /// Rebuild the ToolRegistry disabled set from the on-disk state of all
-/// extensions and push it live. Called from both PATCH handlers below so the
-/// LLM picks up the change on the next tool-calling round without a server
-/// restart. Cheap: O(n_extensions × n_commands) string formatting.
+/// extensions and push it live. Called from AI / per-command PATCH handlers
+/// so the LLM picks up the change on the next tool-calling round without a
+/// server restart. Cheap: O(n_extensions × n_commands) string formatting.
 pub(crate) async fn refresh_tool_registry_disabled(state: &ServerState) {
     let Some(registry) = state.agents.session_manager.get_tool_registry().await else {
         return;
@@ -524,13 +530,10 @@ pub(crate) async fn refresh_tool_registry_disabled(state: &ServerState) {
     {
         if let Ok(records) = store.load_all() {
             for r in records {
-                if !r.enabled {
-                    // Master off: every command of this extension is hidden.
-                    // We don't know all command names here cheaply, so we mark
-                    // by prefix-lookup at the registry level using the disabled
-                    // set as exact names; the registry's `definitions_for_llm`
-                    // also needs a prefix mode. Simpler: walk the loaded
-                    // extension runtime to enumerate command names.
+                if !r.ai_enabled {
+                    // AI master off: every command of this extension is hidden
+                    // from the LLM. Run/load `enabled` is intentionally ignored
+                    // here — AI-off must not be conflated with unload.
                     if let Some(info) = state.extensions.runtime.get(&r.id).await {
                         for cmd in &info.commands {
                             disabled.insert(format!("{}:{}", r.id, cmd.name));
@@ -559,8 +562,8 @@ pub(crate) async fn refresh_tool_registry_disabled(state: &ServerState) {
 /// PATCH /api/extensions/:id/commands/:cmd/enabled
 ///
 /// Per-command tool-toggle. `enabled=false` adds the command to
-/// `disabled_commands`; `enabled=true` removes it. Master `enabled` flag is
-/// untouched. Storage is the source of truth; the live ToolRegistry is
+/// `disabled_commands`; `enabled=true` removes it. Master `ai_enabled` flag
+/// is untouched. Storage is the source of truth; the live ToolRegistry is
 /// refreshed from storage after the write.
 #[utoipa::path(
     patch,
@@ -850,6 +853,81 @@ mod ai_policy_fail_closed_tests {
             calls.load(Ordering::SeqCst),
             0,
             "store read failure must not reach extension execute"
+        );
+    }
+
+    #[tokio::test]
+    async fn ai_enabled_false_blocks_prepare_while_run_enabled() {
+        let state = ServerState::new_for_testing().await;
+        let id = "ai-policy-ai-off";
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        struct CountingExtAiOff {
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Extension for CountingExtAiOff {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("ai-policy-ai-off", "AI Off", "1.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ping_cmd()]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> neomind_core::extension::system::Result<serde_json::Value> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({"ok": true}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let ext: DynExtension = Arc::new(tokio::sync::RwLock::new(Box::new(CountingExtAiOff {
+            calls: calls.clone(),
+        })));
+        state
+            .extensions
+            .registry
+            .register(id.into(), ext)
+            .await
+            .unwrap();
+
+        let mut rec = base_record(id);
+        rec.enabled = true;
+        rec.ai_enabled = false;
+        state.extensions.store.save(&rec).unwrap();
+
+        let err = prepare_then_registry_execute(&state, id, "ping", calls.as_ref())
+            .await
+            .unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN, "msg={}", err.message);
+        assert!(
+            err.message.contains("ai_enabled=false") || err.message.contains("AI is disabled"),
+            "got: {}",
+            err.message
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        // Run-state remains loadable independently of the AI gate.
+        let loaded = state.extensions.store.load(id).unwrap().unwrap();
+        assert!(loaded.enabled);
+        assert!(!loaded.ai_enabled);
+        // auto_start defaults false on base_record — flip and confirm filter.
+        let mut rec2 = loaded;
+        rec2.auto_start = true;
+        state.extensions.store.save(&rec2).unwrap();
+        let auto = state.extensions.store.load_auto_start().unwrap();
+        assert!(
+            auto.iter().any(|r| r.id == id),
+            "enabled=true + ai_enabled=false must still auto-start"
         );
     }
 

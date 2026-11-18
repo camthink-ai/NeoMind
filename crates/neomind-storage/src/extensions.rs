@@ -47,15 +47,22 @@ pub struct ExtensionRecord {
     /// Whether to auto-start the extension on server startup
     pub auto_start: bool,
 
-    /// Whether the extension is enabled
+    /// Run / load switch. When false, `load_auto_start()` skips this
+    /// extension after restart. Independent of AI access (`ai_enabled`).
     pub enabled: bool,
+
+    /// Whether Chat / Agent may call this extension's tools.
+    /// Missing in historical DB rows → defaults to `true` (AI allowed;
+    /// upgrade must not reinterpret old `enabled` as AI-off unload).
+    #[serde(default = "default_true")]
+    pub ai_enabled: bool,
 
     /// Whether the extension has been uninstalled by the user
     /// This prevents auto-discovery from re-registering it
     #[serde(default)]
     pub uninstalled: bool,
 
-    /// Per-command disable list (master off is `enabled: false`).
+    /// Per-command AI disable list (master AI off is `ai_enabled: false`).
     /// Entries are command names WITHOUT the extension-id prefix —
     /// e.g. `["get_alerts"]` for tool `weather-forecast:get_alerts`.
     /// Agent tool-loop filters these out at lookup time.
@@ -90,6 +97,10 @@ fn default_health_status() -> String {
     "unknown".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl ExtensionRecord {
     /// Create a new extension record
     pub fn new(
@@ -110,6 +121,7 @@ impl ExtensionRecord {
             author: None,
             auto_start: false,
             enabled: true,
+            ai_enabled: true,
             uninstalled: false,
             disabled_commands: Vec::new(),
             config: None,
@@ -343,7 +355,11 @@ impl ExtensionStore {
         Ok(records)
     }
 
-    /// Load all auto-start extensions
+    /// Load all auto-start extensions eligible to run after restart.
+    ///
+    /// Uses only run-state gates (`auto_start`, `enabled`, `uninstalled`).
+    /// `ai_enabled` is intentionally ignored — AI-off must not unload the
+    /// process used by Dashboard / Transform / Rule / human API.
     pub fn load_auto_start(&self) -> Result<Vec<ExtensionRecord>, Error> {
         let all = self.load_all()?;
         Ok(all
@@ -578,6 +594,8 @@ mod tests {
 
         assert_eq!(record.id, "test.extension");
         assert_eq!(record.name, "Test Extension");
+        assert!(record.enabled);
+        assert!(record.ai_enabled);
         assert!(record.validate().is_ok());
     }
 
@@ -597,5 +615,67 @@ mod tests {
         // Empty ID
         record.id = "".to_string();
         assert!(record.validate().is_err());
+    }
+
+    /// Pre-split DB rows omit `ai_enabled`; Serde must default it to true so
+    /// upgrades keep AI allowed and do not reinterpret historical `enabled`.
+    #[test]
+    fn legacy_json_without_ai_enabled_defaults_ai_on() {
+        let raw = serde_json::json!({
+            "id": "weather",
+            "name": "Weather",
+            "file_path": "/tmp/weather.so",
+            "extension_type": "tool",
+            "version": "1.0.0",
+            "auto_start": true,
+            "enabled": true,
+            "updated_at": 1,
+            "registered_at": 1
+        });
+        let record: ExtensionRecord = serde_json::from_value(raw).unwrap();
+        assert!(record.enabled);
+        assert!(
+            record.ai_enabled,
+            "missing ai_enabled must default true (AI allowed on upgrade)"
+        );
+    }
+
+    #[test]
+    fn load_auto_start_ignores_ai_enabled_false() {
+        // :memory: avoids the path singleton shared across process tests.
+        let store = ExtensionStore::open(":memory:").unwrap();
+
+        let mut keep_running = ExtensionRecord::new(
+            "keep".into(),
+            "Keep".into(),
+            "/tmp/keep.so".into(),
+            "tool".into(),
+            "1.0.0".into(),
+        );
+        keep_running.auto_start = true;
+        keep_running.enabled = true;
+        keep_running.ai_enabled = false;
+        store.save(&keep_running).unwrap();
+
+        let mut run_off = ExtensionRecord::new(
+            "off".into(),
+            "Off".into(),
+            "/tmp/off.so".into(),
+            "tool".into(),
+            "1.0.0".into(),
+        );
+        run_off.auto_start = true;
+        run_off.enabled = false;
+        run_off.ai_enabled = true;
+        store.save(&run_off).unwrap();
+
+        let loaded = store.load_auto_start().unwrap();
+        let ids: Vec<_> = loaded.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["keep"],
+            "ai_enabled=false must still auto-start; enabled=false must not"
+        );
+        assert!(!loaded[0].ai_enabled);
     }
 }

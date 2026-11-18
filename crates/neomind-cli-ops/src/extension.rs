@@ -5,9 +5,9 @@ use serde_json::json;
 
 /// List all extensions with compact summary.
 ///
-/// Returns id, name, version, runtime status, AI-enabled flag, and the
-/// next discovery step (`extension commands <id>`). `enabled` is the AI
-/// master switch — it is NOT the same as running.
+/// Returns id, name, version, runtime status, run `enabled`, AI
+/// `ai_enabled`, and the next discovery step (`extension commands <id>`).
+/// `ai_enabled` is the Chat/Agent master switch; `enabled` is run/load.
 pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/extensions").await?;
 
@@ -40,7 +40,12 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
                 .and_then(|v| v.as_str())
                 .or_else(|| e.get("state").and_then(|v| v.as_str()))
                 .unwrap_or("unknown");
-            let ai_enabled = e.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            let enabled = e.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            let ai_enabled = e
+                .get("ai_enabled")
+                .and_then(|v| v.as_bool())
+                // Pre-split APIs only exposed `enabled` as the AI switch.
+                .unwrap_or(enabled);
             let status_l = status.to_ascii_lowercase();
             let running = e
                 .get("running")
@@ -59,9 +64,8 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
                 "version": e.get("version").and_then(|v| v.as_str()).unwrap_or("?"),
                 "status": status,
                 "running": running,
+                "enabled": enabled,
                 "ai_enabled": ai_enabled,
-                // Keep legacy key; document that it is the AI master switch.
-                "enabled": ai_enabled,
                 "description": e.get("description").and_then(|v| v.as_str()).unwrap_or(""),
                 "next": format!("neomind extension commands {id}"),
             })

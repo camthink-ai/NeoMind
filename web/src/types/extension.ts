@@ -234,8 +234,10 @@ export interface Extension {
   last_error?: string
   last_error_at?: number
   config_parameters?: ExtensionConfigParam[]
-  /** Master tool-toggle. When false, none of this extension's tools reach the LLM. */
+  /** Run / load switch. When false, the extension is skipped after restart. */
   enabled?: boolean
+  /** AI master switch. When false, none of this extension's tools reach Chat/Agent. */
+  ai_enabled?: boolean
   /** Per-command disable list (command ids without extension-id prefix). */
   disabled_commands?: string[]
 }

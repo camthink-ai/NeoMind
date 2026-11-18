@@ -18,10 +18,9 @@ use super::*;
 
 /// PATCH /api/extensions/:id/enabled
 ///
-/// Master tool-toggle for an extension. `enabled=false` removes ALL of this
-/// extension's tools from the LLM-facing list; `enabled=true` restores them
-/// (subject to per-command disables). Storage is the source of truth; the
-/// live ToolRegistry is refreshed from storage after the write.
+/// Run / load switch. `enabled=false` excludes the extension from
+/// `load_auto_start()` after restart. This is **not** the AI master switch
+/// (see `PATCH .../ai-enabled`). Does not rewrite the LLM tool registry.
 #[utoipa::path(
     patch,
     path = "/api/extensions/{id}/enabled",
@@ -31,7 +30,7 @@ use super::*;
     ),
     request_body = SetToolEnabledRequest,
     responses(
-        (status = 200, description = "Master enable flag updated"),
+        (status = 200, description = "Run/load enable flag updated"),
         (status = 404, description = "Not found"),
     )
 )]
@@ -56,14 +55,60 @@ pub async fn set_extension_enabled_handler(
         .save(&record)
         .map_err(|e| ErrorResponse::internal(format!("Save extension: {e}")))?;
 
+    tracing::info!(
+        extension = %id,
+        enabled = req.enabled,
+        "extension run/load toggle updated"
+    );
+    ok(json!({ "id": id, "enabled": req.enabled }))
+}
+
+/// PATCH /api/extensions/:id/ai-enabled
+///
+/// AI master switch. `ai_enabled=false` hides ALL of this extension's tools
+/// from Chat/Agent (subject to per-command disables); the process still
+/// loads when `enabled=true`. Storage is the source of truth; the live
+/// ToolRegistry is refreshed from storage after the write.
+#[utoipa::path(
+    patch,
+    path = "/api/extensions/{id}/ai-enabled",
+    tag = "extensions",
+    params(
+        ("id" = String, Path, description = "Extension id"),
+    ),
+    request_body = SetAiEnabledRequest,
+    responses(
+        (status = 200, description = "AI enable flag updated"),
+        (status = 404, description = "Not found"),
+    )
+)]
+pub async fn set_extension_ai_enabled_handler(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+    Json(req): Json<SetAiEnabledRequest>,
+) -> HandlerResult<serde_json::Value> {
+    validate_extension_id(&id)?;
+
+    let store = state.extensions.store.clone();
+    let mut record = store
+        .load(&id)
+        .map_err(|e| ErrorResponse::internal(format!("Load extension: {e}")))?
+        .ok_or_else(|| ErrorResponse::not_found(format!("Extension {id}")))?;
+
+    record.ai_enabled = req.ai_enabled;
+    record.touch();
+    store
+        .save(&record)
+        .map_err(|e| ErrorResponse::internal(format!("Save extension: {e}")))?;
+
     refresh_tool_registry_disabled(&state).await;
 
     tracing::info!(
         extension = %id,
-        enabled = req.enabled,
-        "extension tool-toggle updated"
+        ai_enabled = req.ai_enabled,
+        "extension AI toggle updated"
     );
-    ok(json!({ "id": id, "enabled": req.enabled }))
+    ok(json!({ "id": id, "ai_enabled": req.ai_enabled }))
 }
 
 /// GET /api/extensions/:id/config
