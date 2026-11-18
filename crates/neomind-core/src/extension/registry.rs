@@ -26,8 +26,9 @@ use crate::extension::types::Result;
 
 /// Information about a registered extension (load snapshot).
 ///
-/// `commands` and `capability_generation` are captured together at register
-/// time — an old `ExtensionInfo` after reload still carries the old token.
+/// `commands`, `capability_generation`, and `effective_capabilities` are
+/// captured together at register time — an old `ExtensionInfo` after reload
+/// still carries the old token and the old resolved caps.
 #[derive(Clone)]
 pub struct ExtensionInfo {
     /// Extension metadata
@@ -44,6 +45,11 @@ pub struct ExtensionInfo {
     pub commands: Vec<super::system::ExtensionCommand>,
     /// Capability-cache generation minted for this load.
     pub capability_generation: crate::extension::CapabilityGeneration,
+    /// Effective capabilities resolved at this load (trusted snapshot).
+    /// Published into the process classify cache at register so CLI-only
+    /// cold start does not depend on prepare / direct ExtensionTool warm-up.
+    pub effective_capabilities:
+        std::collections::HashMap<String, crate::extension::EffectiveCommandCapability>,
     /// The instance handle FROM THIS LOAD. The entry (descriptor + token +
     /// handle) is the atomic execution snapshot: reading it once guarantees
     /// the three belong to the same load — a reload between separate reads
@@ -144,8 +150,25 @@ impl ExtensionRegistry {
             .write()
             .insert(id.clone(), extension.clone());
 
-        // Mint a new capability-cache generation for this load (sole mint site).
+        // Mint a new capability-cache generation for this load (sole mint site),
+        // resolve effective caps into the load snapshot, and publish them so
+        // write-gate / CLI classify can read RO without a prior prepare or
+        // direct ExtensionTool registration (CLI-only cold start).
         let capability_generation = crate::extension::begin_instance_generation(&id);
+        let command_snapshot = crate::extension::ExtensionCommandSnapshot::build(
+            id.clone(),
+            metadata.version.clone(),
+            None,
+            commands.clone(),
+            capability_generation.clone(),
+        );
+        if let Err(e) = command_snapshot.publish_capabilities() {
+            tracing::warn!(
+                extension_id = %id,
+                error = %e,
+                "failed to publish load-snapshot command capabilities; classify will fail closed to Mutating until repaired"
+            );
+        }
 
         // Register with safety manager for circuit breaking and panic tracking
         self.safety_manager.register_extension(id.clone()).await;
@@ -166,6 +189,7 @@ impl ExtensionRegistry {
                 metrics,
                 commands,
                 capability_generation,
+                effective_capabilities: command_snapshot.effective_capabilities,
                 instance: extension.clone(),
             },
         );
@@ -1172,5 +1196,47 @@ mod tests {
             0,
             "new instance must not run when execute already bound to prior snapshot"
         );
+    }
+
+    /// NM-235: register publishes effective caps — first classify is RO without
+    /// prepare / ExtensionTool; reload republishes for the new generation.
+    #[tokio::test]
+    async fn register_publishes_snapshot_caps_for_cli_only_cold_start() {
+        let id = "cli-cold-ro";
+        crate::extension::invalidate_instance_capability(id);
+        let registry = ExtensionRegistry::new();
+        registry
+            .register(id.into(), fake_ext("1.0.0", &["get_weather"]))
+            .await
+            .unwrap();
+        let info = registry.get_info(id).await.unwrap();
+        assert_eq!(
+            info.effective_capabilities
+                .get("get_weather")
+                .map(|c| c.effect),
+            Some(crate::extension::system::CommandEffect::ReadOnly)
+        );
+        assert_eq!(
+            crate::extension::sync_effect_for_invoke(id, "get_weather"),
+            crate::extension::system::CommandEffect::ReadOnly,
+            "cold classify after register must be RO without prepare/tool warm-up"
+        );
+
+        registry.unregister(id).await.unwrap();
+        assert_eq!(
+            crate::extension::sync_effect_for_invoke(id, "get_weather"),
+            crate::extension::system::CommandEffect::Mutating
+        );
+
+        registry
+            .register(id.into(), fake_ext("2.0.0", &["get_weather"]))
+            .await
+            .unwrap();
+        assert_eq!(
+            crate::extension::sync_effect_for_invoke(id, "get_weather"),
+            crate::extension::system::CommandEffect::ReadOnly,
+            "first classify after reload must still be RO"
+        );
+        crate::extension::invalidate_instance_capability(id);
     }
 }

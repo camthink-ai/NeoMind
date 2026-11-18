@@ -264,7 +264,8 @@ mod tests {
     #[test]
     fn extension_invoke_classify_is_conservative_without_cache() {
         // Unique instance so other tests' remember_capability cannot leak.
-        // Without a warmed cache, invoke is Mutating — name-only grants forbidden.
+        // Never registered → no published snapshot → Mutating (name-only
+        // grants forbidden). Distinct from CLI-only cold start after register.
         assert_eq!(
             classify_line(
                 "extension invoke never-cached-ext-xyz get_weather --params {\"city\":\"Xiamen\"}"
@@ -301,5 +302,61 @@ mod tests {
             ),
             CliSideEffect::ProvenReadOnly
         );
+    }
+
+    /// NM-235: CLI classify after load-snapshot publish (no prepare / tool).
+    #[test]
+    fn extension_invoke_respects_published_snapshot_without_prepare() {
+        use neomind_core::extension::{
+            begin_instance_generation, invalidate_instance_capability, CommandEffect,
+            ExtensionCommand, ExtensionCommandSnapshot, MetricDataType, ParameterDefinition,
+        };
+        let id = "snapshot-weather-ext";
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        let get = ExtensionCommand {
+            name: "get_weather".into(),
+            display_name: "Get Weather".into(),
+            description: "Query weather".into(),
+            parameters: vec![ParameterDefinition {
+                name: "city".into(),
+                display_name: "City".into(),
+                description: "City name".into(),
+                param_type: MetricDataType::String,
+                required: true,
+                default_value: None,
+                min: None,
+                max: None,
+                options: vec![],
+            }],
+            effect: Some(CommandEffect::ReadOnly),
+            replay_safety: None,
+            execution: None,
+            ..Default::default()
+        };
+        let set = ExtensionCommand {
+            name: "set_default_city".into(),
+            effect: None,
+            replay_safety: None,
+            execution: None,
+            ..Default::default()
+        };
+        ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![get, set], gen)
+            .publish_capabilities()
+            .unwrap();
+
+        assert_eq!(
+            classify_line(&format!(
+                "extension invoke {id} get_weather --params {{\"city\":\"Xiamen\"}}"
+            )),
+            CliSideEffect::ProvenReadOnly
+        );
+        assert_eq!(
+            classify_line(&format!(
+                "extension invoke {id} set_default_city --params {{\"city\":\"Xiamen\"}}"
+            )),
+            CliSideEffect::Mutating
+        );
+        invalidate_instance_capability(id);
     }
 }

@@ -157,8 +157,21 @@ impl CapabilityGeneration {
     }
 }
 
-/// Load-time snapshot: commands + generation share one identity.
-/// Holding an old snapshot after reload keeps the old token (prepare refuses).
+/// Effective capability resolved for one command at load time.
+///
+/// This is the host's decision after declared effect / version-bound compat /
+/// conservative default — not the raw `Option` on the descriptor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EffectiveCommandCapability {
+    pub effect: CommandEffect,
+    pub replay_safety: CommandReplaySafety,
+    pub execution: CommandExecutionKind,
+}
+
+/// Load-time snapshot: commands + generation + **effective** capabilities
+/// share one identity. Holding an old snapshot after reload keeps the old
+/// token (prepare refuses). Write-gate / CLI classify must read the current
+/// generation's published snapshot — not a "ran prepare once" warm-up.
 #[derive(Debug, Clone)]
 pub struct ExtensionCommandSnapshot {
     pub instance_id: String,
@@ -166,11 +179,81 @@ pub struct ExtensionCommandSnapshot {
     pub package_digest: Option<String>,
     pub commands: Vec<ExtensionCommand>,
     pub capability_generation: CapabilityGeneration,
+    /// Per-command effective capability resolved at this load.
+    pub effective_capabilities: HashMap<String, EffectiveCommandCapability>,
 }
 
 impl ExtensionCommandSnapshot {
+    /// Build a load snapshot and resolve effective capabilities for every
+    /// command. Does **not** publish into the process classify cache — call
+    /// [`Self::publish_capabilities`] from register.
+    pub fn build(
+        instance_id: impl Into<String>,
+        extension_version: impl Into<String>,
+        package_digest: Option<String>,
+        commands: Vec<ExtensionCommand>,
+        capability_generation: CapabilityGeneration,
+    ) -> Self {
+        let instance_id = instance_id.into();
+        let extension_version = extension_version.into();
+        let mut effective_capabilities = HashMap::with_capacity(commands.len());
+        for cmd in &commands {
+            let def = from_extension_command(
+                &instance_id,
+                cmd,
+                Some(extension_version.as_str()),
+                package_digest.as_deref(),
+            );
+            effective_capabilities.insert(
+                cmd.name.clone(),
+                EffectiveCommandCapability {
+                    effect: def.effect,
+                    replay_safety: def.replay_safety,
+                    execution: def.execution,
+                },
+            );
+        }
+        Self {
+            instance_id,
+            extension_version,
+            package_digest,
+            commands,
+            capability_generation,
+            effective_capabilities,
+        }
+    }
+
     pub fn find_command(&self, name: &str) -> Option<&ExtensionCommand> {
         self.commands.iter().find(|c| c.name == name)
+    }
+
+    /// Effective effect for `command` from this snapshot (unknown → Mutating).
+    pub fn effect_for(&self, command: &str) -> CommandEffect {
+        self.effective_capabilities
+            .get(command)
+            .map(|c| c.effect)
+            .unwrap_or(CommandEffect::Mutating)
+    }
+
+    /// Install this load's effective capabilities into the process-local
+    /// classify cache under `capability_generation`.
+    ///
+    /// Sole production publisher is extension **register** (not prepare, not
+    /// direct ExtensionTool). Classify (`sync_effect_for_invoke`) then reads
+    /// the current generation's published snapshot without needing a prior
+    /// invoke / tool registration.
+    pub fn publish_capabilities(&self) -> Result<(), String> {
+        for (name, cap) in &self.effective_capabilities {
+            remember_capability(
+                &self.instance_id,
+                name,
+                cap.effect,
+                cap.replay_safety,
+                cap.execution,
+                &self.capability_generation,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -1018,8 +1101,12 @@ pub fn invalidate_instance_capability(instance_id: &str) {
     }
 }
 
-/// Sync effect for classify: only returns a cached grant when the instance's
-/// **current** generation matches the cache entry. No generation → Mutating.
+/// Sync effect for classify: returns the **current generation's** published
+/// snapshot capability (installed at register via
+/// [`ExtensionCommandSnapshot::publish_capabilities`]).
+///
+/// Miss / no generation / unknown command → Mutating (fail closed). Does not
+/// require a prior `prepare_invoke` or direct ExtensionTool registration.
 pub fn sync_effect_for_invoke(instance_id: &str, command: &str) -> CommandEffect {
     if let Ok(guard) = cap_cache().lock() {
         if let Some(gen) = guard.generation.get(instance_id) {
@@ -1638,5 +1725,174 @@ mod tests {
     fn ai_access_denies_author_hidden() {
         let r = ai_command_access_denied(true, &[], "secret", false).unwrap();
         assert!(r.contains("ai_exposed=false"), "{r}");
+    }
+
+    /// NM-235: CLI-only cold start — first RO classify after register publish
+    /// (no prepare_invoke, no ExtensionTool remember).
+    #[test]
+    fn snapshot_publish_cold_start_ro_without_prepare_or_tool() {
+        let id = "weather-forecast-v835";
+        invalidate_instance_capability(id);
+        // Generation alone (no publish) stays Mutating — proves classify does
+        // not invent RO from the name.
+        let gen = begin_instance_generation(id);
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::Mutating
+        );
+
+        let snap = ExtensionCommandSnapshot::build(
+            id,
+            "2.14.0",
+            None,
+            vec![weather_get_undeclared()],
+            gen,
+        );
+        assert_eq!(snap.effect_for("get_weather"), CommandEffect::ReadOnly);
+        snap.publish_capabilities().unwrap();
+
+        // First classify after publish — no prepare / tool warm-up.
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::ReadOnly
+        );
+        // Unknown command on a published instance stays fail-closed.
+        assert_eq!(
+            sync_effect_for_invoke(id, "totally_unknown_cmd"),
+            CommandEffect::Mutating
+        );
+        invalidate_instance_capability(id);
+    }
+
+    /// NM-235: after reload + new snapshot publish, first RO classify is RO
+    /// again without depending on prior invoke/browse.
+    #[test]
+    fn snapshot_publish_survives_reload_without_prior_invoke() {
+        let id = "weather-forecast-v836";
+        invalidate_instance_capability(id);
+
+        let gen1 = begin_instance_generation(id);
+        ExtensionCommandSnapshot::build(id, "2.14.0", None, vec![weather_get_undeclared()], gen1)
+            .publish_capabilities()
+            .unwrap();
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::ReadOnly
+        );
+
+        // Reload: new generation clears prior caps.
+        let gen2 = begin_instance_generation(id);
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::Mutating,
+            "reload must clear old snapshot grants"
+        );
+
+        // Fresh publish of the new load snapshot — still no prepare.
+        ExtensionCommandSnapshot::build(id, "2.14.0", None, vec![weather_get_undeclared()], gen2)
+            .publish_capabilities()
+            .unwrap();
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::ReadOnly
+        );
+        invalidate_instance_capability(id);
+    }
+
+    /// NM-235: write / undeclared-unknown stay Mutating after snapshot publish.
+    #[test]
+    fn snapshot_publish_keeps_write_and_unknown_mutating() {
+        let id = "weather-forecast-v837";
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        let set = ExtensionCommand {
+            name: "set_default_city".into(),
+            parameters: vec![ParameterDefinition {
+                name: "city".into(),
+                display_name: "City".into(),
+                description: "".into(),
+                param_type: MetricDataType::String,
+                required: true,
+                default_value: None,
+                min: None,
+                max: None,
+                options: vec![],
+            }],
+            effect: None,
+            replay_safety: None,
+            execution: None,
+            ..Default::default()
+        };
+        let mystery = ExtensionCommand {
+            name: "do_thing".into(),
+            effect: None,
+            replay_safety: None,
+            execution: None,
+            ..Default::default()
+        };
+        let snap = ExtensionCommandSnapshot::build(
+            id,
+            "2.14.0",
+            None,
+            vec![weather_get_undeclared(), set, mystery],
+            gen,
+        );
+        assert_eq!(snap.effect_for("get_weather"), CommandEffect::ReadOnly);
+        assert_eq!(snap.effect_for("set_default_city"), CommandEffect::Mutating);
+        assert_eq!(snap.effect_for("do_thing"), CommandEffect::Mutating);
+        snap.publish_capabilities().unwrap();
+
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::ReadOnly
+        );
+        assert_eq!(
+            sync_effect_for_invoke(id, "set_default_city"),
+            CommandEffect::Mutating
+        );
+        assert_eq!(
+            sync_effect_for_invoke(id, "do_thing"),
+            CommandEffect::Mutating
+        );
+        invalidate_instance_capability(id);
+    }
+
+    /// NM-235: classification must not depend on prior browse/list/execute.
+    #[test]
+    fn snapshot_classify_independent_of_prepare_history() {
+        let id = "weather-forecast-v838";
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        ExtensionCommandSnapshot::build(
+            id,
+            "2.14.0",
+            None,
+            vec![weather_get_undeclared()],
+            gen.clone(),
+        )
+        .publish_capabilities()
+        .unwrap();
+
+        // Classify BEFORE any prepare_invoke — still RO.
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::ReadOnly
+        );
+
+        // A prepare afterward must not be required for the grant; re-check.
+        prepare_invoke(PrepareInvokeRequest {
+            instance_id: id,
+            command: &weather_get_undeclared(),
+            raw_params: &json!({"city": "Xiamen"}),
+            extension_version: Some("2.14.0"),
+            package_digest: None,
+            capability_generation: &gen,
+        })
+        .unwrap();
+        assert_eq!(
+            sync_effect_for_invoke(id, "get_weather"),
+            CommandEffect::ReadOnly
+        );
+        invalidate_instance_capability(id);
     }
 }

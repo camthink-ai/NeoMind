@@ -38,8 +38,8 @@ pub use command_contract::{
     invalidate_instance_capability, parse_extension_tool_name, prepare_invoke, remember_capability,
     resolve_capability, sync_effect_for_invoke, sync_replay_for_invoke, type_base_of,
     validate_and_normalize, validate_params, BusinessCommandDef, CapabilityGeneration,
-    CapabilitySource, ExtensionCommandSnapshot, InvokeTarget, PrepareInvokeRequest, PreparedInvoke,
-    CONTRACT_VERSION,
+    CapabilitySource, EffectiveCommandCapability, ExtensionCommandSnapshot, InvokeTarget,
+    PrepareInvokeRequest, PreparedInvoke, CONTRACT_VERSION,
 };
 pub use context::{
     AvailableCapabilities, CapabilityError, CapabilityManifest, ExtensionCapability,
