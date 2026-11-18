@@ -170,8 +170,10 @@ pub struct EffectiveCommandCapability {
 
 /// Load-time snapshot: commands + generation + **effective** capabilities
 /// share one identity. Holding an old snapshot after reload keeps the old
-/// token (prepare refuses). Write-gate / CLI classify must read the current
-/// generation's published snapshot — not a "ran prepare once" warm-up.
+/// token (prepare refuses). Write-gate / CLI classify must be able to read
+/// the current generation from this published snapshot — cold start must
+/// not *depend* on a prior `prepare_invoke` / ExtensionTool warm-up
+/// (`remember_capability` may still run on those paths for compat).
 #[derive(Debug, Clone)]
 pub struct ExtensionCommandSnapshot {
     pub instance_id: String,
@@ -238,10 +240,11 @@ impl ExtensionCommandSnapshot {
     /// Install this load's effective capabilities into the process-local
     /// classify cache under `capability_generation`.
     ///
-    /// Sole production publisher is extension **register** (not prepare, not
-    /// direct ExtensionTool). Classify (`sync_effect_for_invoke`) then reads
-    /// the current generation's published snapshot without needing a prior
-    /// invoke / tool registration.
+    /// Called from extension **register** so CLI-only cold start can classify
+    /// without a prior invoke. This is the primary publisher for load-time
+    /// caps — not the exclusive writer: `prepare_invoke` and direct-tool
+    /// compat may still call [`remember_capability`]; classify must not
+    /// *depend* on those warm-ups.
     pub fn publish_capabilities(&self) -> Result<(), String> {
         for (name, cap) in &self.effective_capabilities {
             remember_capability(
@@ -1101,12 +1104,14 @@ pub fn invalidate_instance_capability(instance_id: &str) {
     }
 }
 
-/// Sync effect for classify: returns the **current generation's** published
-/// snapshot capability (installed at register via
-/// [`ExtensionCommandSnapshot::publish_capabilities`]).
+/// Sync effect for classify: returns the **current generation's** capability
+/// (normally installed at register via
+/// [`ExtensionCommandSnapshot::publish_capabilities`]; `prepare_invoke` /
+/// direct-tool compat may also [`remember_capability`] the same generation).
 ///
-/// Miss / no generation / unknown command → Mutating (fail closed). Does not
-/// require a prior `prepare_invoke` or direct ExtensionTool registration.
+/// Miss / no generation / unknown command → Mutating (fail closed). Cold
+/// start must not depend on a prior `prepare_invoke` or ExtensionTool
+/// registration to have already warmed the cache.
 pub fn sync_effect_for_invoke(instance_id: &str, command: &str) -> CommandEffect {
     if let Ok(guard) = cap_cache().lock() {
         if let Some(gen) = guard.generation.get(instance_id) {

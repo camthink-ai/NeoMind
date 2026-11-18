@@ -47,7 +47,8 @@ pub struct ExtensionInfo {
     pub capability_generation: crate::extension::CapabilityGeneration,
     /// Effective capabilities resolved at this load (trusted snapshot).
     /// Published into the process classify cache at register so CLI-only
-    /// cold start does not depend on prepare / direct ExtensionTool warm-up.
+    /// cold start does not *depend* on prepare / direct ExtensionTool
+    /// warm-up (those paths may still call `remember_capability`).
     pub effective_capabilities:
         std::collections::HashMap<String, crate::extension::EffectiveCommandCapability>,
     /// The instance handle FROM THIS LOAD. The entry (descriptor + token +
@@ -152,8 +153,9 @@ impl ExtensionRegistry {
 
         // Mint a new capability-cache generation for this load (sole mint site),
         // resolve effective caps into the load snapshot, and publish them so
-        // write-gate / CLI classify can read RO without a prior prepare or
-        // direct ExtensionTool registration (CLI-only cold start).
+        // write-gate / CLI classify can read RO without *depending* on a prior
+        // prepare or ExtensionTool warm-up (CLI-only cold start). Those paths
+        // may still remember_capability; do not remove them.
         let capability_generation = crate::extension::begin_instance_generation(&id);
         let command_snapshot = crate::extension::ExtensionCommandSnapshot::build(
             id.clone(),
