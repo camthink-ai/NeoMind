@@ -1449,10 +1449,7 @@ fn search_params_with_placeholders(cmd: &ExtensionCommand) -> Value {
                 .cloned()
                 .unwrap_or_else(|| json!(format!("<{key}>")))
         } else if let Some(hints) = option_hints_for_param(key, &cmd.parameters) {
-            json!(hints
-                .first()
-                .cloned()
-                .unwrap_or_else(|| format!("<{key}>")))
+            json!(hints.first().cloned().unwrap_or_else(|| format!("<{key}>")))
         } else {
             match prop.get("type").and_then(|t| t.as_str()) {
                 Some("string") => json!(format!("<{key}>")),
@@ -3658,8 +3655,24 @@ mod tests {
         }
     }
 
+    /// CapCache is process-global; NM-252 search fixtures must not run in
+    /// parallel or leave fat/weather siblings that steal the char budget.
+    fn clear_nm252_search_fixtures() {
+        invalidate_instance_capability("weather-nm252-search");
+        invalidate_instance_capability("fat-nm252-schema");
+        invalidate_instance_capability("wx-nm252-placeholder");
+        invalidate_instance_capability("wx-nm252-zh-weather");
+        invalidate_instance_capability("ocr-nm252-zh");
+        invalidate_instance_capability("weather-nm252-exposed");
+        for i in 0..40 {
+            invalidate_instance_capability(&format!("noise-nm252-{i}"));
+        }
+    }
+
     #[test]
+    #[serial_test::serial]
     fn nm252_search_ranks_weather_in_top3_among_many() {
+        clear_nm252_search_fixtures();
         let weather = "weather-nm252-search";
         invalidate_instance_capability(weather);
         let gen = begin_instance_generation(weather);
@@ -3793,7 +3806,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn nm252_search_honors_ai_exposed_false() {
+        clear_nm252_search_fixtures();
         let id = "weather-nm252-exposed";
         invalidate_instance_capability(id);
         let gen = begin_instance_generation(id);
@@ -3812,7 +3827,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn nm252_shell_example_uses_placeholders_for_freeform() {
+        clear_nm252_search_fixtures();
         let id = "wx-nm252-placeholder";
         invalidate_instance_capability(id);
         let gen = begin_instance_generation(id);
@@ -3825,7 +3842,7 @@ mod tests {
             .unwrap();
         set_instance_ai_visibility(id, true, vec![]);
 
-        let r = search_ai_extension_commands("weather", None, 3, 2000);
+        let r = search_ai_extension_commands("weather", Some(id), 3, 2000);
         let hit = r.hits.iter().find(|h| h.extension_id == id).expect("{r:?}");
         let ex = hit.shell_example.as_ref().expect("shell_example");
         assert_eq!(
@@ -3842,7 +3859,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn nm252_chinese_natural_query_fragment_match() {
+        clear_nm252_search_fixtures();
         let weather = "wx-nm252-zh-weather";
         let ocr = "ocr-nm252-zh";
         for id in [weather, ocr] {
@@ -3908,7 +3927,9 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn nm252_oversized_hit_requires_schema_lookup() {
+        clear_nm252_search_fixtures();
         let id = "fat-nm252-schema";
         invalidate_instance_capability(id);
         let gen = begin_instance_generation(id);
@@ -3934,9 +3955,10 @@ mod tests {
             .unwrap();
         set_instance_ai_visibility(id, true, vec![]);
 
+        // Scope to this fixture — other nm252 weather hits share CapCache.
         // Budget fits a compacted purpose+ids hit, not the full required_params blob.
         let max_chars = 480usize;
-        let full = search_ai_extension_commands("weather", None, 3, 8000);
+        let full = search_ai_extension_commands("weather", Some(id), 3, 8000);
         assert_eq!(full.hits.len(), 1, "control: {full:?}");
         assert!(
             !full.hits[0].required_params.is_empty() && !full.hits[0].requires_schema_lookup,
@@ -3948,7 +3970,7 @@ mod tests {
             serialized_hit_chars(&full.hits[0])
         );
 
-        let r = search_ai_extension_commands("weather", None, 3, max_chars);
+        let r = search_ai_extension_commands("weather", Some(id), 3, max_chars);
         assert_eq!(r.hits.len(), 1, "{r:?}");
         let hit = &r.hits[0];
         assert!(
