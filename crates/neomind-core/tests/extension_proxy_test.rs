@@ -440,6 +440,7 @@ impl Extension for MockProxyExtension {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_mock_extension_via_trait() {
     let ext = MockProxyExtension::new();
 
@@ -458,6 +459,7 @@ async fn test_mock_extension_via_trait() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_mock_extension_command_not_found() {
     let ext = MockProxyExtension::new();
 

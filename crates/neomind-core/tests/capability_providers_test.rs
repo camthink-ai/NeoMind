@@ -263,6 +263,7 @@ impl ExtensionCapabilityProvider for MockExtensionCallCapabilityProvider {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_device_provider_manifest() {
     let provider = MockDeviceCapabilityProvider;
     let manifest = provider.capability_manifest();
@@ -277,6 +278,7 @@ async fn test_device_provider_manifest() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_device_metrics_read() {
     let provider = MockDeviceCapabilityProvider;
 
@@ -294,6 +296,7 @@ async fn test_device_metrics_read() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_device_control() {
     let provider = MockDeviceCapabilityProvider;
 
@@ -311,6 +314,7 @@ async fn test_device_control() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_device_control_missing_action() {
     let provider = MockDeviceCapabilityProvider;
 
@@ -326,6 +330,7 @@ async fn test_device_control_missing_action() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_provider_manifest() {
     let event_bus = Arc::new(EventBus::new());
     let provider = MockEventCapabilityProvider::new(event_bus);
@@ -341,6 +346,7 @@ async fn test_event_provider_manifest() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_publish() {
     let event_bus = Arc::new(EventBus::new());
     let provider = MockEventCapabilityProvider::new(event_bus);
@@ -359,6 +365,7 @@ async fn test_event_publish() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_subscribe() {
     let event_bus = Arc::new(EventBus::new());
     let provider = MockEventCapabilityProvider::new(event_bus);
@@ -380,6 +387,7 @@ async fn test_event_subscribe() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_telemetry_provider_manifest() {
     let provider = MockTelemetryCapabilityProvider;
     let manifest = provider.capability_manifest();
@@ -394,6 +402,7 @@ async fn test_telemetry_provider_manifest() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_telemetry_history() {
     let provider = MockTelemetryCapabilityProvider;
 
@@ -411,6 +420,7 @@ async fn test_telemetry_history() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_storage_query() {
     let provider = MockTelemetryCapabilityProvider;
 
@@ -431,6 +441,7 @@ async fn test_storage_query() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_agent_provider_manifest() {
     let provider = MockAgentCapabilityProvider;
     let manifest = provider.capability_manifest();
@@ -442,6 +453,7 @@ async fn test_agent_provider_manifest() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_agent_trigger() {
     let provider = MockAgentCapabilityProvider;
 
@@ -466,6 +478,7 @@ async fn test_agent_trigger() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_rule_provider_manifest() {
     let provider = MockRuleCapabilityProvider;
     let manifest = provider.capability_manifest();
@@ -477,6 +490,7 @@ async fn test_rule_provider_manifest() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_rule_trigger() {
     let provider = MockRuleCapabilityProvider;
 
@@ -497,6 +511,7 @@ async fn test_rule_trigger() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_rule_trigger_missing_rule_id() {
     let provider = MockRuleCapabilityProvider;
 
@@ -511,6 +526,7 @@ async fn test_rule_trigger_missing_rule_id() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_rule_list() {
     let provider = MockRuleCapabilityProvider;
 
@@ -528,6 +544,7 @@ async fn test_rule_list() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_call_provider_manifest() {
     let provider = MockExtensionCallCapabilityProvider;
     let manifest = provider.capability_manifest();
@@ -539,6 +556,7 @@ async fn test_extension_call_provider_manifest() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_call() {
     let provider = MockExtensionCallCapabilityProvider;
 
@@ -561,6 +579,7 @@ async fn test_extension_call() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_call_missing_params() {
     let provider = MockExtensionCallCapabilityProvider;
 
@@ -588,6 +607,7 @@ async fn test_extension_call_missing_params() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_not_available() {
     let provider = MockDeviceCapabilityProvider;
 

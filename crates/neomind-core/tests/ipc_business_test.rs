@@ -230,6 +230,7 @@ mod tests {
 
     /// 测试 1: Session 完整生命周期
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_session_lifecycle() {
         println!("\n=== 测试: Session 完整生命周期 ===");
 
@@ -335,6 +336,7 @@ mod tests {
 
     /// 测试 2: 扩展进程重启后的行为
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_process_restart() {
         println!("\n=== 测试: 扩展进程重启 ===");
 
@@ -405,6 +407,7 @@ mod tests {
 
     /// 测试 3: 并发请求处理
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_concurrent_requests() {
         println!("\n=== 测试: 并发请求处理 ===");
 
@@ -470,6 +473,7 @@ mod tests {
 
     /// 测试 4: 错误处理
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_error_handling() {
         println!("\n=== 测试: 错误处理 ===");
 
@@ -533,6 +537,7 @@ mod tests {
 
     /// 测试 5: 性能基准
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_performance_benchmark() {
         println!("\n=== 性能基准测试 ===");
 
@@ -643,6 +648,7 @@ mod tests {
 
     /// 测试 6: 内存稳定性
     #[tokio::test]
+    #[serial_test::serial]
     async fn test_memory_stability() {
         println!("\n=== 内存稳定性测试 ===");
 

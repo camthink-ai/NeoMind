@@ -34,6 +34,7 @@ fn test_too_many_requests_error() {
 
 /// Test concurrent request counter logic
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_counter() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -83,6 +84,7 @@ async fn test_concurrent_counter() {
 
 /// Test scopeguard cleanup
 #[tokio::test]
+#[serial_test::serial]
 async fn test_scopeguard_cleanup() {
     use scopeguard::guard;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -110,6 +112,7 @@ async fn test_scopeguard_cleanup() {
 
 /// Test sequential batch operations
 #[tokio::test]
+#[serial_test::serial]
 async fn test_sequential_batch_operations() {
     use neomind_core::extension::isolated::BatchCommand;
 
@@ -148,6 +151,7 @@ async fn test_sequential_batch_operations() {
 
 /// Test concurrent batch operations
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_batch_operations() {
     use neomind_core::extension::isolated::BatchCommand;
     use tokio::sync::Semaphore;

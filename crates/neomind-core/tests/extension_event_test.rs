@@ -147,6 +147,7 @@ fn test_dispatcher_creation() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_dispatcher_register_in_process() {
     let dispatcher = EventDispatcher::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -175,6 +176,7 @@ fn test_dispatcher_register_isolated() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_dispatcher_unregister() {
     let dispatcher = EventDispatcher::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -195,6 +197,7 @@ async fn test_dispatcher_unregister() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_dispatch_exact_match() {
     let dispatcher = EventDispatcher::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -213,6 +216,7 @@ async fn test_dispatch_exact_match() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_dispatch_no_match() {
     let dispatcher = EventDispatcher::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -232,6 +236,7 @@ async fn test_dispatch_no_match() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_dispatch_wildcard() {
     let dispatcher = EventDispatcher::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -258,6 +263,7 @@ async fn test_dispatch_wildcard() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_multiple_extensions_same_event() {
     let dispatcher = EventDispatcher::new();
 
@@ -283,6 +289,7 @@ async fn test_multiple_extensions_same_event() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_multiple_extensions_different_events() {
     let dispatcher = EventDispatcher::new();
 
@@ -326,6 +333,7 @@ fn test_event_bus_creation() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_publish() {
     let bus = Arc::new(EventBus::new());
 
@@ -348,6 +356,7 @@ async fn test_event_bus_publish() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_isolated_event_channel() {
     let dispatcher = EventDispatcher::new();
     let (tx, mut rx) = tokio::sync::mpsc::channel(100);
@@ -373,6 +382,7 @@ async fn test_isolated_event_channel() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_isolated_event_channel_no_match() {
     let dispatcher = EventDispatcher::new();
     let (tx, mut rx) = tokio::sync::mpsc::channel(100);
@@ -406,6 +416,7 @@ fn test_extension_event_subscription_service_creation() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_high_volume_events() {
     let dispatcher = EventDispatcher::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -431,6 +442,7 @@ async fn test_high_volume_events() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_empty_subscription_list() {
     let dispatcher = EventDispatcher::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -447,6 +459,7 @@ async fn test_empty_subscription_list() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_dispatch_after_unregister() {
     let dispatcher = EventDispatcher::new();
     let ext = Arc::new(tokio::sync::RwLock::new(

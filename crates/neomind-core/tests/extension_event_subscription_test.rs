@@ -289,6 +289,7 @@ impl Extension for NoEventsExtension {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_service_start_stop() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -302,6 +303,7 @@ async fn test_extension_event_subscription_service_start_stop() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_exact_match() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -355,6 +357,7 @@ async fn test_extension_event_subscription_exact_match() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_wildcard() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -420,6 +423,7 @@ async fn test_extension_event_subscription_wildcard() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_prefix_match() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -504,6 +508,7 @@ async fn test_extension_event_subscription_prefix_match() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_no_events() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -536,6 +541,7 @@ async fn test_extension_event_subscription_no_events() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_multiple_extensions() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -606,6 +612,7 @@ async fn test_extension_event_subscription_multiple_extensions() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_isolated_extension() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -655,6 +662,7 @@ async fn test_extension_event_subscription_isolated_extension() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_automatic_conversion() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -765,6 +773,7 @@ async fn test_extension_event_subscription_automatic_conversion() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_event_format() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -828,6 +837,7 @@ async fn test_extension_event_subscription_event_format() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_unregister() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -898,6 +908,7 @@ async fn test_extension_event_subscription_unregister() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_get_subscriptions() {
     let event_dispatcher = Arc::new(EventDispatcher::new());
 
@@ -935,6 +946,7 @@ async fn test_extension_event_subscription_get_subscriptions() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_error_handling() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());
@@ -1015,6 +1027,7 @@ async fn test_extension_event_subscription_error_handling() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_event_subscription_custom_event() {
     let event_bus = Arc::new(EventBus::new());
     let event_dispatcher = Arc::new(EventDispatcher::new());

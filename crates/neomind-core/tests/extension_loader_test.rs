@@ -21,6 +21,7 @@ fn test_loader_create() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_load_nonexistent_file() {
     let loader = NativeExtensionMetadataLoader::new();
     let path = PathBuf::from("/nonexistent/path/to/extension.so");
@@ -38,6 +39,7 @@ async fn test_load_nonexistent_file() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_load_invalid_extension_format() {
     let loader = NativeExtensionMetadataLoader::new();
 

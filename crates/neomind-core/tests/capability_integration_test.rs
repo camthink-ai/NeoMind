@@ -242,6 +242,7 @@ impl ExtensionCapabilityProvider for MockEventProvider {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_provider_registration() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -273,6 +274,7 @@ async fn test_provider_registration() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_invocation() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -302,6 +304,7 @@ async fn test_capability_invocation() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_check() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig::default();
@@ -329,6 +332,7 @@ async fn test_capability_check() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_multiple_providers() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig::default();
@@ -354,6 +358,7 @@ async fn test_multiple_providers() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_write() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -398,6 +403,7 @@ async fn test_capability_write() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_control() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -428,6 +434,7 @@ async fn test_capability_control() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_publish() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -465,6 +472,7 @@ async fn test_event_publish() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_error_handling() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -529,6 +537,7 @@ async fn test_capability_error_handling() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_metadata() {
     let cap = ExtensionCapability::DeviceMetricsRead;
 
@@ -545,6 +554,7 @@ async fn test_capability_metadata() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_all_capabilities() {
     let all_caps = ExtensionCapability::all_capabilities();
 
@@ -572,6 +582,7 @@ async fn test_all_capabilities() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_from_name() {
     // Test parsing standard capabilities
     let cap = ExtensionCapability::from_name("device_metrics_read");
@@ -588,6 +599,7 @@ async fn test_capability_from_name() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_categories() {
     // Test device capabilities
     assert_eq!(ExtensionCapability::DeviceMetricsRead.category(), "device");
@@ -612,6 +624,7 @@ async fn test_capability_categories() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_available_capabilities_registry() {
     let mut registry = AvailableCapabilities::new();
 
@@ -636,6 +649,7 @@ async fn test_available_capabilities_registry() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_manifest() {
     let manifest = CapabilityManifest {
         capabilities: vec![
@@ -654,6 +668,7 @@ async fn test_capability_manifest() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_context_config_default() {
     let config = ExtensionContextConfig::default();
 

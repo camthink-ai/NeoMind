@@ -51,12 +51,14 @@ fn test_isolated_manager_config_custom() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_manager_creation() {
     let manager = IsolatedExtensionManager::with_defaults();
     assert_eq!(manager.count().await, 0);
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_manager_with_custom_config() {
     let config = IsolatedManagerConfig {
         extension_config: IsolatedExtensionConfig::default(),
@@ -73,6 +75,7 @@ async fn test_manager_with_custom_config() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_manager_empty_list() {
     let manager = IsolatedExtensionManager::with_defaults();
     let list = manager.list().await;
@@ -80,12 +83,14 @@ async fn test_manager_empty_list() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_manager_contains_nonexistent() {
     let manager = IsolatedExtensionManager::with_defaults();
     assert!(!manager.contains("nonexistent").await);
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_manager_get_nonexistent() {
     let manager = IsolatedExtensionManager::with_defaults();
     let result = manager.get("nonexistent").await;
@@ -93,6 +98,7 @@ async fn test_manager_get_nonexistent() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_manager_get_info_nonexistent() {
     let manager = IsolatedExtensionManager::with_defaults();
     let info = manager.get_info("nonexistent");
@@ -159,6 +165,7 @@ fn test_event_dispatcher_exists() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_stop_all_empty() {
     let manager = IsolatedExtensionManager::with_defaults();
 
@@ -294,6 +301,7 @@ fn test_isolated_extension_error_display() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_contains_check() {
     let manager = std::sync::Arc::new(IsolatedExtensionManager::with_defaults());
     let mut handles = vec![];
@@ -311,6 +319,7 @@ async fn test_concurrent_contains_check() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_list() {
     let manager = std::sync::Arc::new(IsolatedExtensionManager::with_defaults());
     let mut handles = vec![];

@@ -16,6 +16,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_basic_publish_subscribe() {
     let bus = EventBus::new();
     let mut rx = bus.subscribe();
@@ -32,6 +33,7 @@ async fn test_event_bus_basic_publish_subscribe() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_multiple_subscribers() {
     let bus = EventBus::new();
     let mut rx1 = bus.subscribe();
@@ -56,6 +58,7 @@ async fn test_event_bus_multiple_subscribers() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_filtered_device_events() {
     let bus = EventBus::new();
     let mut rx = bus.filter().device_events();
@@ -84,6 +87,7 @@ async fn test_event_bus_filtered_device_events() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_filtered_rule_events() {
     let bus = EventBus::new();
     let mut rx = bus.filter().rule_events();
@@ -102,6 +106,7 @@ async fn test_event_bus_filtered_rule_events() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_filtered_llm_events() {
     let bus = EventBus::new();
     let mut rx = bus.filter().llm_events();
@@ -126,6 +131,7 @@ async fn test_event_bus_filtered_llm_events() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_filtered_alert_events() {
     let bus = EventBus::new();
     let mut rx = bus.filter().alert_events();
@@ -144,6 +150,7 @@ async fn test_event_bus_filtered_alert_events() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_custom_filter() {
     let bus = EventBus::new();
     let mut rx = bus
@@ -176,6 +183,7 @@ async fn test_event_bus_custom_filter() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_publish_with_source() {
     let bus = EventBus::new();
     let mut rx = bus.subscribe();
@@ -195,6 +203,7 @@ async fn test_event_bus_publish_with_source() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_subscriber_count() {
     let bus = EventBus::new();
 
@@ -210,6 +219,7 @@ async fn test_event_bus_subscriber_count() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_shared() {
     let bus: SharedEventBus = Arc::new(EventBus::new());
     let bus_clone = Arc::clone(&bus);
@@ -234,6 +244,7 @@ async fn test_event_bus_shared() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_concurrent_publish() {
     let bus = EventBus::new();
     let mut rx = bus.subscribe();
@@ -272,6 +283,7 @@ async fn test_event_bus_concurrent_publish() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_device_metric_event() {
     let bus = EventBus::new();
     let mut rx = bus.subscribe();
@@ -309,6 +321,7 @@ async fn test_event_bus_device_metric_event() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_try_recv() {
     let bus = EventBus::new();
     let mut rx = bus.subscribe();
@@ -333,6 +346,7 @@ async fn test_event_bus_try_recv() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_with_capacity() {
     let bus = EventBus::with_capacity(100);
     let mut rx = bus.subscribe();
@@ -351,6 +365,7 @@ async fn test_event_bus_with_capacity() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_with_name() {
     let bus = EventBus::with_name("test_bus".to_string());
     assert_eq!(bus.name(), "test_bus");
@@ -360,6 +375,7 @@ async fn test_event_bus_with_name() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_multiple_filter_types() {
     let bus = EventBus::new();
 
@@ -445,6 +461,7 @@ async fn test_event_bus_multiple_filter_types() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_metadata_builder() {
     let metadata = EventMetadata::new("test_source");
 
@@ -452,6 +469,7 @@ async fn test_event_metadata_builder() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_metric_value_variants() {
     let float_val = MetricValue::Float(25.5);
     let int_val = MetricValue::Integer(100);
@@ -480,6 +498,7 @@ async fn test_metric_value_variants() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_event_bus_clone() {
     let bus = EventBus::new();
     let bus_clone = bus.clone();

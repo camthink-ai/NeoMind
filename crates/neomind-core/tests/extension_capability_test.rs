@@ -119,6 +119,7 @@ impl ExtensionCapabilityProvider for MockCapabilityProvider {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_register_single_provider() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig::default();
@@ -138,6 +139,7 @@ async fn test_register_single_provider() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_register_multiple_providers() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig::default();
@@ -164,6 +166,7 @@ async fn test_register_multiple_providers() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_register_provider_multiple_capabilities() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig::default();
@@ -191,6 +194,7 @@ async fn test_register_provider_multiple_capabilities() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_invoke_capability_success() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -221,6 +225,7 @@ async fn test_invoke_capability_success() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_invoke_capability_multiple_times() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -257,6 +262,7 @@ async fn test_invoke_capability_multiple_times() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_allowed_when_required() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -284,6 +290,7 @@ async fn test_capability_allowed_when_required() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_all_registered_capabilities_accessible() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -323,6 +330,7 @@ async fn test_all_registered_capabilities_accessible() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_denied_when_no_provider() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -346,6 +354,7 @@ async fn test_capability_denied_when_no_provider() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_invalid_parameters_error() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -377,6 +386,7 @@ async fn test_invalid_parameters_error() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_not_available_error() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -460,6 +470,7 @@ fn test_available_capabilities_get_provider() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_manual_provider_registration() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig::default();
@@ -576,6 +587,7 @@ fn test_all_capabilities() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_capability_invocation() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig {
@@ -617,6 +629,7 @@ async fn test_concurrent_capability_invocation() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_capability_check() {
     let providers = Arc::new(RwLock::new(HashMap::new()));
     let config = ExtensionContextConfig::default();

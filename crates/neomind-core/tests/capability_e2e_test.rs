@@ -128,6 +128,7 @@ impl ExtensionCapabilityProvider for TestCapabilityProvider {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_invocation_through_context() {
     // Create provider
     let provider = Arc::new(TestCapabilityProvider::new("test-provider"));
@@ -188,6 +189,7 @@ async fn test_capability_invocation_through_context() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_permission_check() {
     // Create provider
     let provider = Arc::new(TestCapabilityProvider::new("test-provider"));
@@ -232,6 +234,7 @@ async fn test_capability_permission_check() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_multiple_providers_routing() {
     // Create multiple providers with different capabilities
     let device_provider = Arc::new(TestCapabilityProvider::new("device-provider"));
@@ -274,6 +277,7 @@ async fn test_multiple_providers_routing() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_not_available() {
     // Create provider with limited capabilities
     let provider = Arc::new(TestCapabilityProvider::new("limited-provider"));
@@ -311,6 +315,7 @@ async fn test_capability_not_available() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_capability_error_handling() {
     let provider = Arc::new(TestCapabilityProvider::new("test-provider"));
 
@@ -346,6 +351,7 @@ async fn test_capability_error_handling() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 #[ignore = "Requires extension-runner binary to be built"]
 async fn test_ipc_capability_invocation() {
     // This test verifies capability invocation through IPC
@@ -441,6 +447,7 @@ fn smoke_extension_path() -> PathBuf {
 }
 #[serial_test::serial]
 #[tokio::test]
+#[serial_test::serial]
 #[ignore = "Requires compiled runner binary and native smoke extension"]
 async fn test_native_isolated_capability_ipc() {
     build_test_binaries();
@@ -523,6 +530,7 @@ async fn test_native_isolated_capability_ipc() {
 }
 #[serial_test::serial]
 #[tokio::test]
+#[serial_test::serial]
 #[ignore = "Requires compiled runner binary and native smoke extension"]
 async fn test_native_isolated_event_capability_ipc() {
     build_test_binaries();

@@ -380,6 +380,7 @@ fn test_isolated_manager_config() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 #[ignore = "Requires extension-runner binary to be built"]
 async fn test_full_ipc_flow() {
     // This test requires:

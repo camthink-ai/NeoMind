@@ -226,6 +226,7 @@ fn test_config_env_var_parsing_overflow() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_state_access() {
     // Test that concurrent reads don't cause issues
     let state = Arc::new(RwLock::new(vec![1, 2, 3]));
@@ -250,6 +251,7 @@ async fn test_concurrent_state_access() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_write_conflict() {
     // Test that concurrent writes are serialized correctly
     let state = Arc::new(RwLock::new(0));
