@@ -1137,6 +1137,10 @@ pub const AI_COMMAND_SEARCH_MAX_HITS: usize = 3;
 pub const AI_COMMAND_SEARCH_MAX_CHARS: usize = 2000;
 /// Below this score the host returns zero hits (relevance too low).
 const AI_COMMAND_SEARCH_MIN_SCORE: u32 = 15;
+/// Weak-only (CJK short-fragment) matches need a higher bar than one stray bigram.
+const AI_COMMAND_SEARCH_WEAK_ONLY_MIN_SCORE: u32 = 18;
+/// CJK character n-gram length for natural-language fragment matching.
+const CJK_FRAGMENT_LEN: usize = 2;
 
 /// One ranked AI-visible command hit from the current registry snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1147,6 +1151,10 @@ pub struct AiCommandSearchHit {
     /// Required param name + short description (schema stays on `commands <id>`).
     pub required_params: Vec<AiCommandSearchParam>,
     pub score: u32,
+    /// True when this hit omitted/compacted required params under budget —
+    /// caller must run `neomind extension commands <id>` for the full schema.
+    #[serde(default)]
+    pub requires_schema_lookup: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1161,7 +1169,7 @@ pub struct AiCommandSearchResult {
     pub query: String,
     pub scope_extension_id: Option<String>,
     pub hits: Vec<AiCommandSearchHit>,
-    /// AI-visible commands considered before rank/truncate.
+    /// AI-visible commands after visibility filter, before score threshold.
     pub candidates_scanned: usize,
     pub truncated: bool,
 }
@@ -1208,10 +1216,12 @@ pub fn search_ai_extension_commands(
     }
 
     let tokens = search_query_tokens(query_trim);
-    if tokens.is_empty() {
+    let fragments = cjk_fragments(query_trim, CJK_FRAGMENT_LEN);
+    if tokens.is_empty() && fragments.is_empty() {
         return empty;
     }
 
+    let mut candidates_scanned = 0usize;
     let mut scored: Vec<AiCommandSearchHit> = {
         let Ok(guard) = cap_cache().lock() else {
             return empty;
@@ -1231,10 +1241,13 @@ pub fn search_ai_extension_commands(
                 .iter()
                 .filter(|c| command_visible_to_ai(c, vis))
             {
-                let score = score_command_against_query(id, cmd, query_trim, &tokens);
-                if score < AI_COMMAND_SEARCH_MIN_SCORE {
+                // Visibility-filtered count — before score threshold.
+                candidates_scanned += 1;
+                let Some(score) =
+                    score_command_against_query(id, cmd, query_trim, &tokens, &fragments)
+                else {
                     continue;
-                }
+                };
                 let purpose = {
                     let d = cmd.description.trim();
                     if d.is_empty() {
@@ -1258,13 +1271,13 @@ pub fn search_ai_extension_commands(
                     purpose,
                     required_params,
                     score,
+                    requires_schema_lookup: false,
                 });
             }
         }
         out
     };
 
-    let candidates_scanned = scored.len();
     scored.sort_by(|a, b| {
         b.score
             .cmp(&a.score)
@@ -1279,7 +1292,7 @@ pub fn search_ai_extension_commands(
     let mut used = 0usize;
     let mut truncated = false;
     // Envelope reserved so a later consumer can wrap JSON without blowing budget.
-    let envelope = 120usize;
+    let envelope = (max_chars / 8).clamp(32, 120);
     let budget = max_chars.saturating_sub(envelope);
 
     for hit in scored.into_iter() {
@@ -1287,22 +1300,26 @@ pub fn search_ai_extension_commands(
             truncated = true;
             break;
         }
-        let approx = estimate_hit_chars(&hit);
-        if used + approx > budget && !hits.is_empty() {
+        let size = serialized_hit_chars(&hit);
+        if used + size <= budget {
+            used += size;
+            hits.push(hit);
+            continue;
+        }
+        if !hits.is_empty() {
+            // Prefer complete earlier hits over a compacted overflow entry.
             truncated = true;
             break;
         }
-        if used + approx > budget && hits.is_empty() {
-            // First hit alone exceeds budget — still emit one truncated purpose.
-            let mut slim = hit;
-            slim.purpose = slim.purpose.chars().take(80).collect();
-            slim.required_params.truncate(4);
-            hits.push(slim);
-            truncated = candidates_scanned > 1;
+        // First hit alone exceeds budget — compact and mark schema lookup.
+        let Some(slim) = compact_hit_to_budget(hit, budget) else {
+            truncated = true;
             break;
-        }
-        used += approx;
-        hits.push(hit);
+        };
+        // Incomplete required_params ⇒ never claim a complete, non-truncated result.
+        truncated = true;
+        hits.push(slim);
+        break;
     }
 
     AiCommandSearchResult {
@@ -1314,22 +1331,65 @@ pub fn search_ai_extension_commands(
     }
 }
 
+fn serialized_hit_chars(hit: &AiCommandSearchHit) -> usize {
+    serde_json::to_string(hit)
+        .map(|s| s.len())
+        .unwrap_or_else(|_| estimate_hit_chars(hit))
+}
+
 fn estimate_hit_chars(hit: &AiCommandSearchHit) -> usize {
-    let mut n = hit.extension_id.len() + hit.command.len() + hit.purpose.len() + 48;
+    let mut n = hit.extension_id.len() + hit.command.len() + hit.purpose.len() + 64;
     for p in &hit.required_params {
         n += p.name.len() + p.description.len() + 8;
     }
+    if hit.requires_schema_lookup {
+        n += 32;
+    }
     n
+}
+
+/// Shrink purpose / drop required_params so the serialized hit fits `budget`.
+/// Always sets `requires_schema_lookup` when params are incomplete.
+fn compact_hit_to_budget(mut hit: AiCommandSearchHit, budget: usize) -> Option<AiCommandSearchHit> {
+    // Drop params first — full schema lives on `commands <id>`.
+    if !hit.required_params.is_empty() {
+        hit.required_params.clear();
+        hit.requires_schema_lookup = true;
+    }
+    if serialized_hit_chars(&hit) <= budget {
+        return Some(hit);
+    }
+    for max_purpose in [80usize, 40, 16] {
+        hit.purpose = hit.purpose.chars().take(max_purpose).collect();
+        hit.requires_schema_lookup = true;
+        if serialized_hit_chars(&hit) <= budget {
+            return Some(hit);
+        }
+    }
+    // Still too large (extreme id/command) — refuse rather than emit oversized.
+    None
 }
 
 fn search_query_tokens(query: &str) -> Vec<String> {
     let lower = query.to_lowercase();
     let mut tokens: Vec<String> = lower
         .split(|c: char| !(c.is_alphanumeric() || c == '_' || is_cjk(c)))
-        .filter(|t| !t.is_empty() && (t.len() >= 2 || t.chars().any(is_cjk)))
+        .filter(|t| {
+            if t.is_empty() {
+                return false;
+            }
+            // Space-separated CJK runs stay as strong tokens when short;
+            // long unsegmented CJK runs are handled via fragments instead.
+            let cjk_chars = t.chars().filter(|c| is_cjk(*c)).count();
+            if cjk_chars > 0 {
+                cjk_chars <= 4
+            } else {
+                t.len() >= 2
+            }
+        })
         .map(|t| t.to_string())
         .collect();
-    // Keep the full normalized query as a phrase when multi-token / CJK.
+    // Keep the full normalized ASCII/latin phrase when multi-token.
     let phrase: String = lower
         .chars()
         .map(|c| {
@@ -1343,12 +1403,31 @@ fn search_query_tokens(query: &str) -> Vec<String> {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    if !phrase.is_empty() && !tokens.iter().any(|t| t == &phrase) {
+    if !phrase.is_empty()
+        && phrase.split_whitespace().count() > 1
+        && !phrase.chars().any(is_cjk)
+        && !tokens.iter().any(|t| t == &phrase)
+    {
         tokens.push(phrase);
     }
     tokens.sort();
     tokens.dedup();
     tokens
+}
+
+/// Sliding CJK character n-grams from the query (domain-agnostic fragments).
+fn cjk_fragments(query: &str, n: usize) -> Vec<String> {
+    let chars: Vec<char> = query.chars().filter(|c| is_cjk(*c)).collect();
+    if chars.len() < n {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(chars.len().saturating_sub(n - 1));
+    for i in 0..=chars.len() - n {
+        out.push(chars[i..i + n].iter().collect());
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 fn is_cjk(c: char) -> bool {
@@ -1362,12 +1441,14 @@ fn is_cjk(c: char) -> bool {
     )
 }
 
+/// Score a command; `None` means below the relevance threshold (zero-hit path).
 fn score_command_against_query(
     extension_id: &str,
     cmd: &ExtensionCommand,
     query: &str,
     tokens: &[String],
-) -> u32 {
+    fragments: &[String],
+) -> Option<u32> {
     let q = query.to_lowercase();
     let name = cmd.name.to_lowercase();
     let display = cmd.display_name.to_lowercase();
@@ -1377,26 +1458,46 @@ fn score_command_against_query(
     let q_norm = q.replace(['-', ' '], "_");
 
     let mut score = 0u32;
+    let mut strong_hits = 0u32;
+    let mut weak_hits = 0u32;
+
     if name == q || name_norm == q_norm {
         score += 100;
-    } else if name.contains(&q) || name_norm.contains(&q_norm) {
+        strong_hits += 1;
+    } else if !q.is_empty() && (name.contains(&q) || name_norm.contains(&q_norm)) {
         score += 60;
+        strong_hits += 1;
     }
     if display == q {
         score += 40;
+        strong_hits += 1;
     } else if !q.is_empty() && display.contains(&q) {
         score += 25;
+        strong_hits += 1;
     }
     if !q.is_empty() && desc.contains(&q) {
         score += 35;
+        strong_hits += 1;
     }
     if !q.is_empty() && ext.contains(&q) {
         score += 30;
+        strong_hits += 1;
     }
 
-    let mut matched = 0u32;
+    // Reverse containment: short CJK purpose/name inside a longer natural query.
+    for field in [&desc, &display, &name] {
+        let field_cjk: String = field.chars().filter(|c| is_cjk(*c)).collect();
+        if (2..=4).contains(&field_cjk.chars().count()) && q.contains(&field_cjk) {
+            score += 40;
+            strong_hits += 1;
+            break;
+        }
+    }
+
+    let mut matched_strong_tokens = 0u32;
     for tok in tokens {
-        if tok.len() < 2 && !tok.chars().any(is_cjk) {
+        let tok_is_cjk = tok.chars().any(is_cjk);
+        if !tok_is_cjk && tok.len() < 2 {
             continue;
         }
         let mut hit = false;
@@ -1425,13 +1526,53 @@ fn score_command_against_query(
             }
         }
         if hit {
-            matched += 1;
+            matched_strong_tokens += 1;
+            strong_hits += 1;
         }
     }
-    if !tokens.is_empty() && matched as usize == tokens.len() {
+    if !tokens.is_empty() && matched_strong_tokens as usize == tokens.len() {
         score += 20;
     }
-    score
+
+    // Domain-agnostic CJK short-fragment (bigram) matches — weak signal.
+    let mut matched_fragments = std::collections::HashSet::new();
+    for frag in fragments {
+        let matched = if name.contains(frag.as_str())
+            || display.contains(frag.as_str())
+            || desc.contains(frag.as_str())
+        {
+            score += 18;
+            true
+        } else if ext.contains(frag.as_str()) {
+            score += 8;
+            true
+        } else {
+            let mut param_hit = false;
+            for p in &cmd.parameters {
+                let pn = p.name.to_lowercase();
+                let pd = p.description.to_lowercase();
+                if pn.contains(frag.as_str()) || pd.contains(frag.as_str()) {
+                    score += if p.required { 10 } else { 5 };
+                    param_hit = true;
+                    break;
+                }
+            }
+            param_hit
+        };
+        if matched && matched_fragments.insert(frag.clone()) {
+            weak_hits += 1;
+        }
+    }
+
+    let accept = if strong_hits > 0 {
+        score >= AI_COMMAND_SEARCH_MIN_SCORE
+    } else if weak_hits >= 1 {
+        // One purpose/name fragment can pass; stray ext-only bigrams need more.
+        score >= AI_COMMAND_SEARCH_WEAK_ONLY_MIN_SCORE
+    } else {
+        false
+    };
+    accept.then_some(score)
 }
 
 /// Short AI extension catalog for capability context (NM-247).
@@ -3466,10 +3607,18 @@ mod tests {
                 .any(|h| h.required_params.iter().any(|p| p.name == "city")),
             "required params must surface: {few:?}"
         );
-        let approx: usize = few.hits.iter().map(estimate_hit_chars).sum();
+        assert!(
+            few.candidates_scanned >= 41,
+            "candidates_scanned counts visibility-filtered before score cut: {few:?}"
+        );
+        let approx: usize = few.hits.iter().map(serialized_hit_chars).sum();
         assert!(
             approx <= AI_COMMAND_SEARCH_MAX_CHARS,
             "budget ~500tok: {approx} chars for {few:?}"
+        );
+        assert!(
+            few.hits.iter().all(|h| !h.requires_schema_lookup),
+            "complete budget hits must not require schema lookup: {few:?}"
         );
 
         // Disable / unload reflections.
@@ -3544,6 +3693,137 @@ mod tests {
             !r.hits.iter().any(|h| h.extension_id == id),
             "ai_exposed=false omitted: {r:?}"
         );
+        invalidate_instance_capability(id);
+    }
+
+    #[test]
+    fn nm252_chinese_natural_query_fragment_match() {
+        let weather = "wx-nm252-zh-weather";
+        let ocr = "ocr-nm252-zh";
+        for id in [weather, ocr] {
+            invalidate_instance_capability(id);
+        }
+
+        let mut wx = weather_get_undeclared();
+        // Purpose carries the CJK fragment; no host weather keyword map.
+        wx.description = "查询天气".into();
+        wx.display_name = "查天气".into();
+        let gen_w = begin_instance_generation(weather);
+        ExtensionCommandSnapshot::build(weather, "1.0.0", None, vec![wx], gen_w)
+            .publish_capabilities()
+            .unwrap();
+        set_instance_ai_visibility(weather, true, vec![]);
+
+        let mut ocr_cmd = weather_get_undeclared();
+        ocr_cmd.name = "recognize_text".into();
+        ocr_cmd.display_name = "文字识别".into();
+        ocr_cmd.description = "识别图片文字".into();
+        ocr_cmd.parameters.clear();
+        let gen_o = begin_instance_generation(ocr);
+        ExtensionCommandSnapshot::build(ocr, "1.0.0", None, vec![ocr_cmd], gen_o)
+            .publish_capabilities()
+            .unwrap();
+        set_instance_ai_visibility(ocr, true, vec![]);
+
+        let wx_q = search_ai_extension_commands("今天天气怎么样", None, 3, 2000);
+        assert!(
+            wx_q.hits
+                .iter()
+                .any(|h| h.extension_id == weather && h.command == "get_weather"),
+            "natural weather ask must fragment-match purpose: {wx_q:?}"
+        );
+        assert!(
+            !wx_q.hits.iter().any(|h| h.extension_id == ocr),
+            "weather ask must not prefer OCR: {wx_q:?}"
+        );
+
+        let ocr_q = search_ai_extension_commands("帮我识别一下这张图的文字", None, 3, 2000);
+        assert!(
+            ocr_q
+                .hits
+                .iter()
+                .any(|h| h.extension_id == ocr && h.command == "recognize_text"),
+            "natural OCR ask must fragment-match: {ocr_q:?}"
+        );
+
+        let none = search_ai_extension_commands("量子隐形传态协议演示", None, 3, 2000);
+        assert!(
+            none.hits.is_empty(),
+            "unrelated natural ask → zero hits: {none:?}"
+        );
+        // Still scanned the AI-visible cmds (threshold rejected them).
+        assert!(
+            none.candidates_scanned >= 2,
+            "candidates_scanned before score cut: {none:?}"
+        );
+
+        for id in [weather, ocr] {
+            invalidate_instance_capability(id);
+        }
+    }
+
+    #[test]
+    fn nm252_oversized_hit_requires_schema_lookup() {
+        let id = "fat-nm252-schema";
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        let mut cmd = weather_get_undeclared();
+        cmd.description = "Query weather with a moderately long purpose string for ranking".into();
+        cmd.parameters = (0..12)
+            .map(|i| ParameterDefinition {
+                name: format!("field_{i}"),
+                display_name: format!("Field {i}"),
+                description: format!(
+                    "Required parameter number {i} with enough text to blow a tiny search budget"
+                ),
+                param_type: MetricDataType::String,
+                required: true,
+                default_value: None,
+                min: None,
+                max: None,
+                options: vec![],
+            })
+            .collect();
+        ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![cmd], gen)
+            .publish_capabilities()
+            .unwrap();
+        set_instance_ai_visibility(id, true, vec![]);
+
+        // Budget fits a compacted purpose+ids hit, not the full required_params blob.
+        let max_chars = 480usize;
+        let full = search_ai_extension_commands("weather", None, 3, 8000);
+        assert_eq!(full.hits.len(), 1, "control: {full:?}");
+        assert!(
+            !full.hits[0].required_params.is_empty() && !full.hits[0].requires_schema_lookup,
+            "wide budget keeps full params: {full:?}"
+        );
+        assert!(
+            serialized_hit_chars(&full.hits[0]) > max_chars,
+            "fixture must exceed compact budget: {}",
+            serialized_hit_chars(&full.hits[0])
+        );
+
+        let r = search_ai_extension_commands("weather", None, 3, max_chars);
+        assert_eq!(r.hits.len(), 1, "{r:?}");
+        let hit = &r.hits[0];
+        assert!(
+            hit.requires_schema_lookup,
+            "oversized compact must mark schema lookup: {r:?}"
+        );
+        assert!(
+            hit.required_params.is_empty(),
+            "incomplete params must be cleared, not partially claimed: {r:?}"
+        );
+        assert!(
+            r.truncated,
+            "must not claim truncated=false with incomplete params: {r:?}"
+        );
+        assert!(
+            serialized_hit_chars(hit) <= max_chars,
+            "serialized size after compact must fit budget: {} vs {r:?}",
+            serialized_hit_chars(hit)
+        );
+
         invalidate_instance_capability(id);
     }
 

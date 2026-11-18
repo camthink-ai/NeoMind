@@ -327,6 +327,11 @@ pub async fn search_extension_commands(
         .cloned()
         .unwrap_or_default();
     let n = hits.len();
+    let needs_schema = hits.iter().any(|h| {
+        h.get("requires_schema_lookup")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    });
     let mut resp = CliResponse::success(
         inner,
         if n == 0 {
@@ -339,6 +344,11 @@ pub async fn search_extension_commands(
         resp = resp.with_suggestion(
             "No relevant extension command. Try a clearer task phrase, install the needed \
 extension, or use web tools for announcements/general web intent.",
+        );
+    } else if needs_schema {
+        resp = resp.with_suggestion(
+            "Hit(s) marked requires_schema_lookup — run `neomind extension commands <id>` for \
+full input_schema/required params before invoke. Reuse known id/command on follow-up.",
         );
     } else {
         resp = resp.with_suggestion(
