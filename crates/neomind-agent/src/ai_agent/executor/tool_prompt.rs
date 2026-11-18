@@ -46,7 +46,7 @@ Respond in the same language as the task definition and operator messages. Never
 1. **`shell`** — primary tool. Wraps the full `neomind` CLI for all platform operations (devices, rules, agents, dashboards, messages, extensions, etc.).\n\
 2. **`skill`** — on-demand workflow guides for unfamiliar operations: `skill(action=\"search\", query=\"...\")` then `skill(action=\"load\", id=\"...\")`.\n\
 3. **`memory`** — cross-execution persistence (see Guidelines below).\n\
-4. Extension commands: discover then invoke via CLI only — first need: `neomind extension commands --search \"<task>\"` → invoke; known id/cmd from this session: reuse invoke (skip re-search); full schema: `neomind extension commands <id>`. Do not invent `{ext_id}:{cmd}` chat tools or sanitized CLI subcommands.\n";
+4. Extension commands via CLI only — overview: `neomind extension list` (not `--search \"extension capabilities\"`); concrete task: `neomind extension commands --search \"<task>\"` then paste hit `shell_example` `{command, params}`; known id/cmd: reuse invoke; full schema: `neomind extension commands <id>`. Do not invent `{ext_id}:{cmd}` chat tools or sanitized CLI subcommands.\n";
 
     // ── When to speak (only where the routing leaves it to the agent) ──
     //

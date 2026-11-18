@@ -269,7 +269,15 @@ mod tests {
         );
         assert!(
             out.contains("--search"),
-            "must prefer commands --search: {out}"
+            "must prefer commands --search for concrete tasks: {out}"
+        );
+        assert!(
+            out.contains("extension list"),
+            "overview must route to extension list: {out}"
+        );
+        assert!(
+            out.contains("shell_example") || out.contains("{command, params}"),
+            "must teach shell_example paste: {out}"
         );
         // No skill list duplication
         assert!(!out.contains("device-onboarding"));

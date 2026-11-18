@@ -1142,6 +1142,18 @@ const AI_COMMAND_SEARCH_WEAK_ONLY_MIN_SCORE: u32 = 18;
 /// CJK character n-gram length for natural-language fragment matching.
 const CJK_FRAGMENT_LEN: usize = 2;
 
+/// Copyable shell-tool invoke shape for one search hit (NM-252 polish).
+///
+/// Same helpful `{command, params}` form Chat should paste into the shell
+/// tool — placeholders like `"<city>"` when a reliable sample is unavailable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiCommandShellExample {
+    /// e.g. `neomind extension invoke weather-forecast-v2 get_weather`
+    pub command: String,
+    /// Param object for the shell tool `params` field (not CLI `--params` text).
+    pub params: Value,
+}
+
 /// One ranked AI-visible command hit from the current registry snapshot.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AiCommandSearchHit {
@@ -1155,6 +1167,9 @@ pub struct AiCommandSearchHit {
     /// caller must run `neomind extension commands <id>` for the full schema.
     #[serde(default)]
     pub requires_schema_lookup: bool,
+    /// Preferred next step: paste into shell tool as `{command, params}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_example: Option<AiCommandShellExample>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1180,11 +1195,13 @@ pub struct AiCommandSearchResult {
 /// catalog growth. Prefer `--search` then invoke; reuse known on follow-up.
 pub fn format_extension_discovery_rules() -> String {
     "\n### Extension capability discovery\n\
-     - First need / unknown capability: `neomind extension commands --search \"<task>\"` \
-(host ranks ≤3 AI-visible cmds with purpose + required params; zero hits allowed).\n\
-     - Known id+command from this session: reuse → `neomind extension invoke <id> <command>` \
-with shell `params` (skip re-search).\n\
-     - Full schema when id known: `neomind extension commands <id>`.\n\
+     - \"What extensions / what can you do\": `neomind extension list` \
+(compact AI-visible overview). Do NOT `--search` for \"extension capabilities\".\n\
+     - Concrete task: `neomind extension commands --search \"<task>\"` \
+(host ranks ≤3; each hit has `shell_example` `{command, params}` — paste into shell; \
+zero hits allowed).\n\
+     - Known id+command from this session: reuse → shell invoke with `params` (skip re-search).\n\
+     - Full schema when id known / `requires_schema_lookup`: `neomind extension commands <id>`.\n\
      - @ one extension: `neomind extension commands --search \"<task>\" <id>` (scoped).\n\
      - Web/announcement intent: use web tools; skip extension search.\n\
      - Uninstall/disable/reload may reject invoke — search again.\n"
@@ -1265,6 +1282,7 @@ pub fn search_ai_extension_commands(
                         description: p.description.chars().take(80).collect(),
                     })
                     .collect();
+                let shell_example = Some(shell_example_for_command(id, cmd));
                 out.push(AiCommandSearchHit {
                     extension_id: id.clone(),
                     command: cmd.name.clone(),
@@ -1272,6 +1290,7 @@ pub fn search_ai_extension_commands(
                     required_params,
                     score,
                     requires_schema_lookup: false,
+                    shell_example,
                 });
             }
         }
@@ -1345,13 +1364,21 @@ fn estimate_hit_chars(hit: &AiCommandSearchHit) -> usize {
     if hit.requires_schema_lookup {
         n += 32;
     }
+    if let Some(ex) = &hit.shell_example {
+        n += ex.command.len()
+            + serde_json::to_string(&ex.params)
+                .map(|s| s.len())
+                .unwrap_or(16);
+    }
     n
 }
 
 /// Shrink purpose / drop required_params so the serialized hit fits `budget`.
 /// Always sets `requires_schema_lookup` when params are incomplete.
+/// Keeps `shell_example` when possible — that is the preferred next step.
 fn compact_hit_to_budget(mut hit: AiCommandSearchHit, budget: usize) -> Option<AiCommandSearchHit> {
-    // Drop params first — full schema lives on `commands <id>`.
+    // Drop verbose required_params first — full schema lives on `commands <id>`.
+    // Keep shell_example (command + compact params / placeholders).
     if !hit.required_params.is_empty() {
         hit.required_params.clear();
         hit.requires_schema_lookup = true;
@@ -1366,8 +1393,82 @@ fn compact_hit_to_budget(mut hit: AiCommandSearchHit, budget: usize) -> Option<A
             return Some(hit);
         }
     }
+    // Last resort: drop shell params object but keep the invoke command line.
+    if let Some(ex) = hit.shell_example.as_mut() {
+        ex.params = json!({});
+        hit.requires_schema_lookup = true;
+        if serialized_hit_chars(&hit) <= budget {
+            return Some(hit);
+        }
+    }
+    hit.shell_example = None;
+    hit.requires_schema_lookup = true;
+    if serialized_hit_chars(&hit) <= budget {
+        return Some(hit);
+    }
     // Still too large (extreme id/command) — refuse rather than emit oversized.
     None
+}
+
+/// Build a copyable shell-tool example; free-form strings become `<name>` placeholders.
+fn shell_example_for_command(extension_id: &str, cmd: &ExtensionCommand) -> AiCommandShellExample {
+    AiCommandShellExample {
+        command: format!("neomind extension invoke {extension_id} {}", cmd.name),
+        params: search_params_with_placeholders(cmd),
+    }
+}
+
+/// Prefer a validated sample; otherwise emit required keys with `<name>` placeholders
+/// (never invent city names / free text that would fail invoke).
+fn search_params_with_placeholders(cmd: &ExtensionCommand) -> Value {
+    if let Some(ex) = validated_params_example_for_command(cmd) {
+        return ex;
+    }
+    let schema = build_input_schema(&cmd.parameters);
+    let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+        return json!({});
+    };
+    let required: std::collections::HashSet<&str> = schema
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
+    let mut obj = Map::new();
+    for (key, prop) in props {
+        if !required.is_empty() && !required.contains(key.as_str()) {
+            continue;
+        }
+        let sample = if let Some(d) = prop.get("default") {
+            d.clone()
+        } else if let Some(en) = prop.get("enum").and_then(|e| e.as_array()) {
+            en.first()
+                .cloned()
+                .unwrap_or_else(|| json!(format!("<{key}>")))
+        } else if let Some(hints) = option_hints_for_param(key, &cmd.parameters) {
+            json!(hints
+                .first()
+                .cloned()
+                .unwrap_or_else(|| format!("<{key}>")))
+        } else {
+            match prop.get("type").and_then(|t| t.as_str()) {
+                Some("string") => json!(format!("<{key}>")),
+                Some("number") | Some("integer") => json!(0),
+                Some("boolean") => json!(false),
+                Some("array") => json!([]),
+                Some("object") => json!({}),
+                _ => json!(format!("<{key}>")),
+            }
+        };
+        obj.insert(key.clone(), sample);
+        if obj.len() >= 6 {
+            break;
+        }
+    }
+    Value::Object(obj)
 }
 
 fn search_query_tokens(query: &str) -> Vec<String> {
@@ -3620,6 +3721,20 @@ mod tests {
             few.hits.iter().all(|h| !h.requires_schema_lookup),
             "complete budget hits must not require schema lookup: {few:?}"
         );
+        let wx_hit = few
+            .hits
+            .iter()
+            .find(|h| h.extension_id == weather)
+            .expect("weather hit");
+        let ex = wx_hit.shell_example.as_ref().expect("shell_example");
+        assert!(
+            ex.command.contains("extension invoke") && ex.command.contains("get_weather"),
+            "shell_example command must be copyable invoke: {ex:?}"
+        );
+        assert!(
+            ex.params.get("city").is_some(),
+            "shell_example params must include city: {ex:?}"
+        );
 
         // Disable / unload reflections.
         set_instance_ai_visibility(weather, false, vec![]);
@@ -3693,6 +3808,36 @@ mod tests {
             !r.hits.iter().any(|h| h.extension_id == id),
             "ai_exposed=false omitted: {r:?}"
         );
+        invalidate_instance_capability(id);
+    }
+
+    #[test]
+    fn nm252_shell_example_uses_placeholders_for_freeform() {
+        let id = "wx-nm252-placeholder";
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        let mut cmd = weather_get_undeclared();
+        // No enum/default/options → placeholder `<city>`, not an invented city.
+        cmd.parameters[0].options.clear();
+        cmd.samples.clear();
+        ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![cmd], gen)
+            .publish_capabilities()
+            .unwrap();
+        set_instance_ai_visibility(id, true, vec![]);
+
+        let r = search_ai_extension_commands("weather", None, 3, 2000);
+        let hit = r.hits.iter().find(|h| h.extension_id == id).expect("{r:?}");
+        let ex = hit.shell_example.as_ref().expect("shell_example");
+        assert_eq!(
+            ex.params.get("city").and_then(|v| v.as_str()),
+            Some("<city>"),
+            "free-form required string must be placeholder: {ex:?}"
+        );
+        assert_eq!(
+            ex.command,
+            format!("neomind extension invoke {id} get_weather")
+        );
+
         invalidate_instance_capability(id);
     }
 

@@ -291,13 +291,14 @@ fn sanitize_device_current(data: &serde_json::Value, device_id: &str) -> serde_j
     // CLI discovery must match the `--params` input contract. Raw API
     // `/devices/:id/current` still returns full protocol defs (samples /
     // payload_template) for the web UI; this projection keeps name /
-    // description / param defs + params_example only.
-    project_commands_for_cli(&mut result);
+    // description / param defs + params_example, plus a copyable shell_example
+    // `{command, params}` (same shape as extension search hits).
+    project_commands_for_cli(&mut result, device_id);
     result
 }
 
 /// Project `data.commands` to the invoke input contract for CLI/agent use.
-fn project_commands_for_cli(data: &mut serde_json::Value) {
+fn project_commands_for_cli(data: &mut serde_json::Value, device_id: &str) {
     let Some(commands) = data
         .pointer_mut("/data/commands")
         .and_then(|v| v.as_array_mut())
@@ -305,25 +306,53 @@ fn project_commands_for_cli(data: &mut serde_json::Value) {
         return;
     };
     for cmd in commands.iter_mut() {
-        *cmd = project_one_command_for_cli(cmd);
+        *cmd = project_one_command_for_cli(cmd, device_id);
     }
 }
 
-fn project_one_command_for_cli(cmd: &serde_json::Value) -> serde_json::Value {
+fn project_one_command_for_cli(cmd: &serde_json::Value, device_id: &str) -> serde_json::Value {
     match serde_json::from_value::<neomind_devices::CommandDefinition>(cmd.clone()) {
         Ok(def) => {
             let spec = neomind_devices::command_validation::command_spec_from_definition(&def);
-            neomind_devices::command_validation::invoke_projection(&spec)
+            let mut proj = neomind_devices::command_validation::invoke_projection(&spec);
+            attach_device_shell_example(&mut proj, device_id, &spec.name);
+            proj
         }
         Err(_) => {
             // Fall back to a minimal name/description/parameters slice when the
             // payload is not a full CommandDefinition — never invent samples.
-            json!({
-                "name": cmd.get("name").cloned().unwrap_or(json!("")),
+            let name = cmd
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let mut proj = json!({
+                "name": name,
                 "description": cmd.get("description").cloned().unwrap_or(json!("")),
                 "parameters": cmd.get("parameters").cloned().unwrap_or(json!([])),
-            })
+            });
+            if !name.is_empty() {
+                attach_device_shell_example(&mut proj, device_id, &name);
+            }
+            proj
         }
+    }
+}
+
+/// Copyable shell-tool form aligned with extension search hits (NM-252 polish).
+fn attach_device_shell_example(proj: &mut serde_json::Value, device_id: &str, cmd_name: &str) {
+    let params = proj
+        .get("params_example")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let Some(map) = proj.as_object_mut() {
+        map.insert(
+            "shell_example".into(),
+            json!({
+                "command": format!("neomind device control {device_id} {cmd_name}"),
+                "params": params,
+            }),
+        );
     }
 }
 
@@ -1156,6 +1185,11 @@ mod tests {
         assert_eq!(cmd["name"], "render_text");
         assert_eq!(cmd["description"], "Display text");
         assert_eq!(cmd["params_example"]["text"], "Hello");
+        assert_eq!(
+            cmd["shell_example"]["command"],
+            "neomind device control eink-1 render_text"
+        );
+        assert_eq!(cmd["shell_example"]["params"]["text"], "Hello");
         assert!(cmd.get("samples").is_none(), "samples omitted: {cmd}");
         assert!(
             cmd.get("payload_template").is_none(),

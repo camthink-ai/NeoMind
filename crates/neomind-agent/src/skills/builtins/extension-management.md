@@ -22,7 +22,7 @@ anti_triggers:
 
 Cover the full lifecycle: install (market or local `.nep`), configure, diagnose (status/logs), and operate (list/commands/invoke) — not marketplace-only.
 Inspect installed extensions and available packages. For install/update, use the intended package and verify compatibility, enablement and exposed commands/metrics.
-Selection for invoke: first need → `neomind extension commands --search "<task>"`; known id+command from this session → reuse invoke (skip re-search); full schema → `neomind extension commands <id>`; then `neomind extension invoke <id> <command>` with params from discovery. Do not invent sanitized chat-tool names as CLI subcommands.
+Selection for invoke: "what extensions / what can you do" → `neomind extension list` (do not `--search` for "extension capabilities"); concrete task → `neomind extension commands --search "<task>"` then paste hit `shell_example` `{command, params}`; known id+command → reuse invoke; full schema / `requires_schema_lookup` → `neomind extension commands <id>`. Do not invent sanitized chat-tool names as CLI subcommands.
 Do not confuse extension installation with skill loading or widget installation. Preserve configuration during upgrades and report restart/enable requirements.
 Verify extension status and actual command/metric results. Load installation, configuration, or diagnosis reference sections as needed.
 

@@ -68,7 +68,7 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
                 "enabled": enabled,
                 "ai_enabled": ai_enabled,
                 "description": e.get("description").and_then(|v| v.as_str()).unwrap_or(""),
-                "next": format!("neomind extension commands --search \"…\"  OR  neomind extension commands {id}"),
+                "next": format!("concrete task → neomind extension commands --search \"…\""),
             })
         })
         .collect();
@@ -88,11 +88,13 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
         );
     } else if truncated {
         resp = resp.with_suggestion(format!(
-            "Showing first {LIST_CAP} of {total}. Prefer: neomind extension commands --search \"<task>\"; or commands <id>"
+            "Showing first {LIST_CAP} of {total} (AI-visible overview). Concrete task → \
+neomind extension commands --search \"<task>\". Do not search for \"extension capabilities\"."
         ));
     } else {
         resp = resp.with_suggestion(
-            "Next: neomind extension commands --search \"<task>\"  (or commands <id>, then invoke)",
+            "Compact AI-visible overview. Concrete task → neomind extension commands --search \"<task>\" \
+(use hit shell_example). Do not search for \"extension capabilities\".",
         );
     }
     Ok(resp)
@@ -347,13 +349,14 @@ extension, or use web tools for announcements/general web intent.",
         );
     } else if needs_schema {
         resp = resp.with_suggestion(
-            "Hit(s) marked requires_schema_lookup — run `neomind extension commands <id>` for \
-full input_schema/required params before invoke. Reuse known id/command on follow-up.",
+            "Prefer hits[].shell_example `{command, params}` (replace <placeholders>). \
+requires_schema_lookup → `neomind extension commands <id>` for full schema first. \
+Reuse known id/command on follow-up.",
         );
     } else {
         resp = resp.with_suggestion(
-            "Next: neomind extension invoke <id> <command> with shell params from required_params. \
-Full schema: neomind extension commands <id>. Reuse known id/command on follow-up.",
+            "Prefer hits[].shell_example `{command, params}` — paste into the shell tool \
+(replace <placeholders>). Reuse known on follow-up; full schema via commands <id> only if needed.",
         );
     }
     Ok(resp)
