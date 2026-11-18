@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.0] - 2026-11-14 — CamThink CT-Prov BLE provision, MQTT attach honesty, chat @-references, evidence surfaces
 
-Edge-AI capability iteration on branch `1.3.0`: CamThink CT-Prov/1 BLE onboarding, honest MQTT attach/identity, inline @ mentions through contentNodes, honest automation/device/agent status surfaces, and offline eval freezes (Plan E/F). Product version is now **1.3.0** across Cargo/Web/Tauri/locks. Live Plan E 9/10, tip 138, Appliance, and 5-person usability remain open — see `docs/development/1.3.0-release-prep-2026-11-14.md`.
+Edge-AI capability iteration on branch `1.3.0`: CamThink CT-Prov/1 BLE onboarding, honest MQTT attach/identity, inline @ mentions through contentNodes, honest automation/device/agent status surfaces, and offline eval freezes (Plan E/F). Product version is now **1.3.0** across Cargo/Web/Tauri/locks. Live Plan E 9/10, tip 138, Appliance, and 5-person usability remain open.
 
 ### Upgrade notes
 - **CamThink CT-Prov hard cut:** add-device BLE provisioning now speaks CT-Prov/1 only (GATT service `7B1E0001-…`). Old JSON-on-GATT / ESP protobuf (`0xFFFE` / `0xFF53`) firmwares can no longer be provisioned — flash CT-Prov/1 first. SoftAP HTTP transport (`POST /api/v1/ctprov`) remains in-tree, but the SoftAP **AP** tab is deferred/hidden (`CT_PROV_SOFTAP_UI_ENABLED=false`); shipping add-device paths are BLE + Manual/Auto. MQTT draft **auto** discovery is unchanged and is not SoftAP.

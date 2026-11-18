@@ -263,7 +263,7 @@
     "protoLegacy": "旧芯片投影",
     "protoHistory": "发送后历史预览（行内标签）",
     "protoHistoryEmpty": "输入并插入引用后在此预览",
-    "protoTradeoffLink": "依赖取舍见 docs/development/inline-at-editor-tradeoff-2026-11-14.md",
+    "protoTradeoffLink": "原型取舍文档已归档；生产聊天使用 TipTap Mention。",
     "protoViewportAuto": "跟随窗口",
     "protoViewportDesktop": "桌面浮层",
     "protoViewportMobile": "移动面板"

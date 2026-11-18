@@ -268,7 +268,7 @@
     "protoLegacy": "Legacy chip projection",
     "protoHistory": "Post-send history preview (inline tags)",
     "protoHistoryEmpty": "Type and insert references to preview here",
-    "protoTradeoffLink": "Trade-off notes: docs/development/inline-at-editor-tradeoff-2026-11-14.md",
+    "protoTradeoffLink": "Prototype trade-offs archived; production chat uses TipTap Mention.",
     "protoViewportAuto": "Follow viewport",
     "protoViewportDesktop": "Desktop popover",
     "protoViewportMobile": "Mobile sheet"

@@ -131,7 +131,7 @@ export function InlineAtPrototypePage() {
         <p className="text-xs text-muted-foreground">
           {t(
             "chat:mention.protoTradeoffLink",
-            "依赖取舍见 docs/development/inline-at-editor-tradeoff-2026-11-14.md",
+            "原型取舍文档已归档；生产聊天使用 TipTap Mention。",
           )}
         </p>
       </div>
