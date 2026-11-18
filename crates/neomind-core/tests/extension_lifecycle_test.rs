@@ -194,6 +194,7 @@ impl Extension for LifecycleTrackingExtension {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_registration_lifecycle() {
     let registry = ExtensionRegistry::new();
 
@@ -228,6 +229,7 @@ async fn test_extension_registration_lifecycle() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_multiple_extensions_lifecycle() {
     let registry = ExtensionRegistry::new();
 
@@ -264,6 +266,7 @@ async fn test_multiple_extensions_lifecycle() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_state_after_registration() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -284,6 +287,7 @@ async fn test_extension_state_after_registration() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_state_after_unregister() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -310,6 +314,7 @@ async fn test_extension_state_after_unregister() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_health_check_healthy() {
     let registry = ExtensionRegistry::new();
     let mock = LifecycleTrackingExtension::new("health.test", "Health Test", "1.0.0");
@@ -329,6 +334,7 @@ async fn test_health_check_healthy() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_health_check_unhealthy() {
     let registry = ExtensionRegistry::new();
     let mock = LifecycleTrackingExtension::new("health.test", "Health Test", "1.0.0");
@@ -351,6 +357,7 @@ async fn test_health_check_unhealthy() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_command_execution_updates_stats() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -380,6 +387,7 @@ async fn test_command_execution_updates_stats() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_command_execution_after_unregister_fails() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -409,6 +417,7 @@ async fn test_command_execution_after_unregister_fails() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_metrics_collection_lifecycle() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -448,6 +457,7 @@ async fn test_metrics_collection_lifecycle() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_re_registration_after_unregister() {
     let registry = ExtensionRegistry::new();
 
@@ -480,6 +490,7 @@ async fn test_re_registration_after_unregister() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_duplicate_registration_fails() {
     let registry = ExtensionRegistry::new();
 
@@ -507,6 +518,7 @@ async fn test_duplicate_registration_fails() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_registration_and_unregistration() {
     let registry = Arc::new(ExtensionRegistry::new());
     let mut handles = vec![];
@@ -554,6 +566,7 @@ async fn test_concurrent_registration_and_unregistration() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_info_contains_metadata() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -589,6 +602,7 @@ async fn test_extension_info_contains_metadata() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_safety_manager_tracks_extension() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -610,6 +624,7 @@ async fn test_safety_manager_tracks_extension() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_safety_manager_untracks_on_unregister() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
