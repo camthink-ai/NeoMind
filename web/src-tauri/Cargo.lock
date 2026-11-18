@@ -4208,6 +4208,7 @@ dependencies = [
  "dirs 5.0.1",
  "hex",
  "neomind-core",
+ "neomind-devices",
  "redb",
  "reqwest 0.12.28",
  "serde",
