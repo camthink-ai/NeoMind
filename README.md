@@ -20,7 +20,7 @@
     <img src="https://img.shields.io/discord/0.svg?logo=discord&logoColor=ffffff&label=Discord&color=5865F2&link=https://discord.gg/gkM7cc8gKb" alt="Discord Community">
   </a>
   <img src="https://img.shields.io/github/last-commit/camthink-ai/NeoMind?label=last%20commit&color=success" alt="Last Commit">
-  <img src="https://img.shields.io/badge/Rust-1.85+-orange.svg" alt="Rust">
+  <img src="https://img.shields.io/badge/Rust-1.92+-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Server-informational.svg" alt="Platform">
 </p>
 
@@ -84,18 +84,19 @@ NeoMind is an **edge-deployed AI platform** that brings intelligence to IoT. It 
 ## Features
 
 ### AI Intelligence
-- **Natural-language control** — chat with devices, upload images for visual analysis
-- **Autonomous agents** — scheduled/event-driven, multi-step tool calling with memory & skills
+- **Natural-language control** — chat with devices, upload images for visual analysis, and attach typed `@` mentions (devices / agents / rules / …) inline
+- **Autonomous agents** — scheduled/event-driven, multi-step tool calling with memory & skills; execution detail shows evidence, not guessed success
 - **Built-in LLM + any backend** — bundled local model works out of the box; bring Ollama, llama.cpp, or any cloud vendor (OpenAI, Anthropic, Qwen, DeepSeek, GLM, xAI…)
 
 ### Devices
-- **MQTT (embedded broker, mTLS) · BLE provisioning · HTTP/Webhook** — three ways in, zero external services
-- **Auto-discovery & AI-assisted onboarding** — unknown devices detected, typed, and set up automatically
+- **MQTT (embedded broker, mTLS) · CamThink CT-Prov BLE · HTTP/Webhook** — three ways in, zero external services
+- **Auto-discovery & AI-assisted onboarding** — unknown devices detected, typed, and set up automatically; MQTT attach identity stays honest (no silent drops)
+- **Honest command delivery** — UI shows the evidence ladder (adapter → extension → device ACK → physical effect)
 - **Custom device types** — metrics and commands via JSON, no code
 
 ### Automation
-- **Rule engine** — recursive JSON conditions, notify/execute/trigger-agent actions, cooldown & debouncing
-- **JS data transforms** — compute virtual metrics from live streams
+- **Rule engine** — recursive JSON conditions, notify/execute/trigger-agent actions, cooldown & debouncing, plus a read-only **why not triggered** explain panel
+- **JS data transforms** — compute virtual metrics from live streams; Test distinguishes failure / no-output / partial / unverified (never a fake green)
 - **Event bus** — every component decoupled via pub/sub
 
 ### Dashboards
@@ -119,13 +120,13 @@ NeoMind is a modular ecosystem with specialized repositories for each concern:
 | Repository | Purpose |
 |------------|---------|
 | **[NeoMind](https://github.com/camthink-ai/NeoMind)** | Core platform (this repo) — backend, frontend, desktop app |
-| **[NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions)** | Official extension marketplace — 22 extensions: vision (YOLO/face/OCR), voice (TTS/ASR), IoT bridges (HA/Modbus/BACnet/ONVIF/OPC-UA/LoRaWAN), and more |
+| **[NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions)** | Official extension marketplace — ~29 extensions: vision (YOLO/face/OCR/VLM), voice (TTS/ASR), IoT bridges (HA/Modbus/BACnet/ONVIF/OPC-UA/LoRaWAN), weather, and more |
 | **[NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)** | Device type definitions — standardized metrics and commands for IoT hardware |
 | **[NeoMind-Dashboard-Components](https://github.com/camthink-ai/NeoMind-Dashboard-Components)** | Dashboard widget marketplace — community-contributed React components |
 
 ### Supported Devices
 
-NE301 (Edge AI Camera) and NE101 (Sensing Camera). See [NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes) for full device type definitions.
+CamThink NE301 / NE302 (Edge AI Camera), NE101 (Sensing Camera), EK410 (e-ink), and more. CT-Prov/1 BLE provisioning covers the CamThink line; see [NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes) for full definitions.
 
 ### Contribute to the Ecosystem
 
@@ -202,14 +203,14 @@ Scores below are from the **2026-10-29 official-params gate**: 138 bilingual cas
 
 - **Enable thinking** for Spark / Qwen 3.5 / MiniCPM5 — worth **+9 to +20pp**. It is near-neutral for LFM 2.5 / Gemma. LFM 3's thinking emits 1,500–5,400 tokens *per ReAct round* — impractical on slow hardware.
 - **Sampler overrides ship with the model download**: Qwen off-mode wants 1.0/0.95 (its chat default loses ~10pp here); the LFM family is strict 0.1 / top_k 50 / repetition_penalty 1.1 (wrong params cost up to 23pp); Spark 1.0/0.95; Gemma 1.0/0.95/top_k 64.
-- **llama-server floor**: LFM 3 models need ≥ b11946 — v0.8.0 (2026-10-28, official LFM3-family support) is the recommended target.
+- **llama-server floor**: LFM 3 models need ≥ b11946 — v0.8.0 (2026-10-28, official LFM3-family support) is the recommended target. NeoMind 1.3.0's official-asset builtin runtime pin is **b12359** (= llama.cpp **v1.0.0**); Jetson / Linux-CUDA self-hosted pins may lag until matching `NeoMind-Runtimes` assets land.
 - Machine-to-machine variance measured ≈ ±1.4pp (Mac M-series vs T4) — scores are hardware-portable within noise.
 
 Historical scoring (2026-09 12-scenario suite, 2026-10 33/40-case gates with MiniCPM-V and deepseek-flash) lives in [docs/edge-models.md](docs/edge-models.md). Catalog & downloads: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
 
 ### Development
 
-**Prerequisites:** Rust 1.85+, Node.js 20+ (an LLM backend is optional — the server self-bootstraps a built-in model)
+**Prerequisites:** Rust 1.92+ (see `rust-toolchain.toml`), Node.js 20+ (an LLM backend is optional — the server self-bootstraps a built-in model)
 
 ```bash
 # Clone
