@@ -228,6 +228,7 @@ impl Extension for ConfigurableExtension {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_command_execution_success() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -249,6 +250,7 @@ async fn test_command_execution_success() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_command_execution_with_default_params() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -270,6 +272,7 @@ async fn test_command_execution_with_default_params() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_command_execution_multiple_times() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -297,6 +300,7 @@ async fn test_command_execution_multiple_times() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_command_not_found_error() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -314,14 +318,22 @@ async fn test_command_not_found_error() {
 
     assert!(result.is_err());
     match result {
-        Err(ExtensionError::CommandNotFound(cmd)) => {
-            assert_eq!(cmd, "nonexistent_command");
+        Err(ExtensionError::CommandNotFound(msg)) => {
+            assert!(
+                msg.contains("nonexistent_command") && msg.contains("cmd.test"),
+                "CommandNotFound must name the miss and extension: {msg}"
+            );
+            assert!(
+                msg.contains("neomind extension commands"),
+                "CommandNotFound must point at discovery: {msg}"
+            );
         }
-        _ => panic!("Expected CommandNotFound error"),
+        other => panic!("Expected CommandNotFound error, got {other:?}"),
     }
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_extension_not_found_error() {
     let registry = ExtensionRegistry::new();
 
@@ -339,6 +351,7 @@ async fn test_extension_not_found_error() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_invalid_arguments_error() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -365,6 +378,7 @@ async fn test_invalid_arguments_error() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_execution_failed_error() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(Box::new(
@@ -394,6 +408,7 @@ async fn test_execution_failed_error() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_command_timeout() {
     let registry = ExtensionRegistry::new().with_command_timeout_secs(5);
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -422,6 +437,7 @@ async fn test_command_timeout() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_safety_manager_blocks_after_failures() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(Box::new(
@@ -455,6 +471,7 @@ async fn test_safety_manager_blocks_after_failures() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_command_execution() {
     let registry = Arc::new(ExtensionRegistry::new());
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -488,6 +505,7 @@ async fn test_concurrent_command_execution() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_concurrent_mixed_success_failure() {
     let registry = Arc::new(ExtensionRegistry::new());
 
@@ -549,6 +567,7 @@ async fn test_concurrent_mixed_success_failure() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_execution_updates_statistics() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -575,6 +594,7 @@ async fn test_execution_updates_statistics() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_error_updates_error_statistics() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(Box::new(
@@ -604,6 +624,7 @@ async fn test_error_updates_error_statistics() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_error_message_propagation() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(Box::new(
@@ -630,6 +651,7 @@ async fn test_error_message_propagation() {
 // ============================================================================
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_empty_command_name() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -647,6 +669,7 @@ async fn test_empty_command_name() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_null_arguments() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
@@ -667,6 +690,7 @@ async fn test_null_arguments() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn test_large_arguments() {
     let registry = ExtensionRegistry::new();
     let ext = Arc::new(tokio::sync::RwLock::new(
