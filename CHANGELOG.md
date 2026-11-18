@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.1] - 2026-11-18 — BLE broker credentials + external bind, EK410 wrap copy
+
+Post-`v1.3.0` CT-Prov BLE fixes: auth-enabled embedded broker credentials reach `config.set`, NeoMind-subscribed external brokers bind to the matching adapter, and EK410 `render_text` help matches width-based wrap. Product version is **1.3.1** across Cargo/Web/Tauri/locks. `v1.3.0` stays at `8579edbb`.
+
+### Upgrade notes
+- BLE provision against NeoMind’s auth-enabled embedded broker now mints a device-scoped MQTT username/password into `config.set` (empty creds still omitted when auth is off).
+- Choosing a NeoMind-subscribed external broker in BLE provision binds the device to `external-{id}` / `internal-mqtt` with matching host/creds/`mqtt_broker_id` so topic maps match the bridge NeoMind already owns.
+
+### Fixed — CT-Prov / BLE provision
+- Auth-enabled embedded broker resolve no longer leaves username/password empty — mint on `resolve_only` and write them in `config.set` (empty-omit for auth-off / blank external fields).
+- NeoMind-broker selection copies host/creds into the device write, registers on `external-{id}` / `internal-mqtt`, and records `mqtt_broker_id`; disabled brokers stay out of the dropdown.
+
+### Fixed — devices
+- EK410 `render_text` description/help documents width-based auto-wrap + scale shrink instead of a hard 10-line cap.
+
+### Test
+- BLE provision credential minting / empty-omit + adapter-id mapping handler tests; SoftAP transport tests covering the credential path.
+
+---
+
 ## [1.3.0] - 2026-11-18 — CamThink CT-Prov BLE provision, MQTT attach honesty, chat @-references, evidence surfaces
 
 Edge-AI capability iteration merged to `main`: CamThink CT-Prov/1 BLE onboarding, honest MQTT attach/identity, inline @ mentions through contentNodes, honest automation/device/agent status surfaces, and offline eval freezes (Plan E/F). Product version is **1.3.0** across Cargo/Web/Tauri/locks. Live Plan E 9/10, tip 138, Appliance, and 5-person usability remain open.
@@ -43,8 +63,6 @@ Edge-AI capability iteration merged to `main`: CamThink CT-Prov/1 BLE onboarding
 - Eval foundation: fixture `case_precheck`, `seed-main-objective`, Plan E detection-chain preregister (5×zh+5×en, ≥9/10 gate), Plan F 48-scenario catalog + 24/12/12 splits + pairing gates (`test_business_capability_48`).
 
 ### Fixed — CT-Prov / BLE provision
-- BLE provision to an auth-enabled embedded broker now mints a device-scoped MQTT username/password on resolve and writes them in `config.set` (empty creds still omitted; external/custom brokers already passed theirs through).
-- BLE NeoMind-broker selection binds the device to `external-{id}` / `internal-mqtt` and records `mqtt_broker_id` so subscribed external brokers (with their username/password) match the CT write and NeoMind topic maps; disabled brokers stay out of the dropdown.
 - SoftAP **AP** tab stays hidden until SoftAP Wi‑Fi scan iteration; BLE wizard ships with Manual/Auto parity heroes and calm copy (no invented SoftAP scan UX).
 - Web Bluetooth UUID lowercased; discovery uses `namePrefix` **OR** `services` filter so Chrome lists CamThink devices again (Service Data ADV).
 - BLE scan window ~30s with progressive multi-device list; BLE session released on navigation; discovery drafts cleared on BLE register (NM-225).

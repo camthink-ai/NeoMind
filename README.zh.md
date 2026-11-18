@@ -186,7 +186,7 @@ docker run -d --name neomind \
 
 - **Spark / Qwen 3.5 / MiniCPM5 请开启思考模式**——增益 **+9~20pp**;LFM 2.5 / Gemma 开与不开基本无差;LFM 3 的思考每轮 ReAct 输出 1,500–5,400 token,慢速硬件上不可用。
 - **采样参数随模型下载一起下发**:Qwen 关思考模式用 1.0/0.95(其对话默认参数在本场景损失约 10pp);LFM 系列严格 0.1 / top_k 50 / repetition_penalty 1.1(错参最高损失 23pp);Spark 1.0/0.95;Gemma 1.0/0.95/top_k 64。
-- **llama-server 版本下限**:LFM 3 系列需 ≥ b11946——推荐 v0.8.0(2026-10-28 发布,官方 LFM3 全家族支持)。NeoMind 1.3.0 将内置 runtime 固定为 **b12359**(= llama.cpp **v1.0.0**),覆盖官方资源平台与 Jetson / Linux-CUDA 自托管构建。
+- **llama-server 版本下限**:LFM 3 系列需 ≥ b11946——推荐 v0.8.0(2026-10-28 发布,官方 LFM3 全家族支持)。NeoMind 1.3.1 将内置 runtime 固定为 **b12359**(= llama.cpp **v1.0.0**),覆盖官方资源平台与 Jetson / Linux-CUDA 自托管构建。
 - 跨机器方差实测 ≈ ±1.4pp(Mac M 系 vs T4)——成绩跨硬件可迁移。
 
 历史评分(2026-09 12 场景套件、2026-10 33/40 例门禁,含 MiniCPM-V 与 deepseek-flash)见 [docs/edge-models.md](docs/edge-models.md)。模型目录与下载:[NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes)。

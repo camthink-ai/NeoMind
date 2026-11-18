@@ -203,7 +203,7 @@ Scores below are from the **2026-10-29 official-params gate**: 138 bilingual cas
 
 - **Enable thinking** for Spark / Qwen 3.5 / MiniCPM5 — worth **+9 to +20pp**. It is near-neutral for LFM 2.5 / Gemma. LFM 3's thinking emits 1,500–5,400 tokens *per ReAct round* — impractical on slow hardware.
 - **Sampler overrides ship with the model download**: Qwen off-mode wants 1.0/0.95 (its chat default loses ~10pp here); the LFM family is strict 0.1 / top_k 50 / repetition_penalty 1.1 (wrong params cost up to 23pp); Spark 1.0/0.95; Gemma 1.0/0.95/top_k 64.
-- **llama-server floor**: LFM 3 models need ≥ b11946 — v0.8.0 (2026-10-28, official LFM3-family support) is the recommended target. NeoMind 1.3.0 pins the builtin runtime to **b12359** (= llama.cpp **v1.0.0**) across official-asset platforms and Jetson / Linux-CUDA self-hosted builds.
+- **llama-server floor**: LFM 3 models need ≥ b11946 — v0.8.0 (2026-10-28, official LFM3-family support) is the recommended target. NeoMind 1.3.1 pins the builtin runtime to **b12359** (= llama.cpp **v1.0.0**) across official-asset platforms and Jetson / Linux-CUDA self-hosted builds.
 - Machine-to-machine variance measured ≈ ±1.4pp (Mac M-series vs T4) — scores are hardware-portable within noise.
 
 Historical scoring (2026-09 12-scenario suite, 2026-10 33/40-case gates with MiniCPM-V and deepseek-flash) lives in [docs/edge-models.md](docs/edge-models.md). Catalog & downloads: [NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes).
