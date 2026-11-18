@@ -1278,19 +1278,28 @@ pub(crate) fn not_in_process_uses_parsed_argv() -> bool {
     true
 }
 
-/// NM-240: for `extension invoke`, authorize the Chat PreparedInvoke (Mutating
-/// tickets are authorized here after write-gate Proceed; RO was authorized at
-/// classify) and inject `--prepared-operation-id` so HTTP consumes the same
-/// token. Non-invoke argv is returned unchanged. Missing/stale ticket after a
-/// Chat classify that expected one → Err (do not fall through to unbound prepare).
-fn bind_extension_invoke_prepared_token(
+/// NM-240: for `extension invoke`, claim the **classify-time** PreparedInvoke
+/// (never re-prepare) and inject `--prepared-operation-id`. Missing/stale
+/// after reload or param drift → Err so execution cannot mint a fresh ticket
+/// that bypasses the write-gate.
+pub(crate) fn bind_extension_invoke_prepared_token(
     mut argv: Vec<String>,
 ) -> std::result::Result<Vec<String>, String> {
     use clap::Parser;
     use neomind_cli_ops::dispatch::commands::{Args, Command, ExtensionCommand};
 
-    // Already injected (e.g. compound re-entry) — leave alone.
-    if argv.iter().any(|a| a == "--prepared-operation-id") {
+    // Already carries an explicit token — claim that id only (no re-prepare).
+    if let Some(idx) = argv.iter().position(|a| a == "--prepared-operation-id") {
+        let op_id = argv
+            .get(idx + 1)
+            .cloned()
+            .ok_or_else(|| "missing value for --prepared-operation-id".to_string())?;
+        neomind_core::extension::claim_prepared_by_id(&op_id).map_err(|e| {
+            format!(
+                "stale or unbound PreparedInvoke '{op_id}': {e}; \
+                 re-classify and invoke again (Chat write-gate must bind a fresh token)"
+            )
+        })?;
         return Ok(argv);
     }
 
@@ -1330,15 +1339,16 @@ fn bind_extension_invoke_prepared_token(
         }
     };
 
-    // Authorize (idempotent if RO already authorized at classify). Reloads
-    // that cleared the prepareable snapshot / generation fail here.
-    let prepared = neomind_core::extension::authorize_chat_invoke(&extension_id, &command, &raw)
-        .map_err(|e| {
-            format!(
-                "stale or unbound PreparedInvoke for '{extension_id}/{command}': {e}; \
-             re-discover and invoke again (Chat write-gate must bind a fresh token)"
-            )
-        })?;
+    // Claim classify-time ticket only — never prepare_and_issue here.
+    let prepared =
+        neomind_core::extension::claim_classified_prepared(&extension_id, &command, &raw).map_err(
+            |e| {
+                format!(
+                    "stale or unbound PreparedInvoke for '{extension_id}/{command}': {e}; \
+                 re-classify and invoke again (Chat write-gate must bind a fresh token)"
+                )
+            },
+        )?;
 
     argv.push("--prepared-operation-id".into());
     argv.push(prepared.operation_id);
@@ -2867,6 +2877,82 @@ mod dispatch_edge_tests {
         );
     }
 }
+/// NM-240 P1 follow-up: shell bind must not re-prepare after RO→Mutating reload.
+#[cfg(test)]
+mod prepared_invoke_bind_tests {
+    use super::bind_extension_invoke_prepared_token;
+    use neomind_core::extension::{
+        begin_instance_generation, classify_and_bind_chat_invoke, invalidate_instance_capability,
+        CommandEffect, ExtensionCommand, ExtensionCommandSnapshot, MetricDataType,
+        ParameterDefinition,
+    };
+    use serde_json::json;
+
+    fn publish(id: &str, effect: CommandEffect) {
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        let get = ExtensionCommand {
+            name: "get_weather".into(),
+            display_name: "Get Weather".into(),
+            description: "Query weather".into(),
+            parameters: vec![ParameterDefinition {
+                name: "city".into(),
+                display_name: "City".into(),
+                description: "City name".into(),
+                param_type: MetricDataType::String,
+                required: true,
+                default_value: None,
+                min: None,
+                max: None,
+                options: vec![],
+            }],
+            effect: Some(effect),
+            replay_safety: None,
+            execution: None,
+            ..Default::default()
+        };
+        ExtensionCommandSnapshot::build(id, "2.14.0", None, vec![get], gen)
+            .publish_capabilities()
+            .unwrap();
+    }
+
+    #[test]
+    fn shell_bind_after_ro_classify_reload_mutating_is_stale() {
+        let id = "weather-forecast-shell-bind-v1";
+        publish(id, CommandEffect::ReadOnly);
+        let params = json!({"city": "Xiamen"});
+        assert_eq!(
+            classify_and_bind_chat_invoke(id, "get_weather", &params),
+            CommandEffect::ReadOnly
+        );
+
+        // Reload: same command name now Mutating.
+        publish(id, CommandEffect::Mutating);
+
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "invoke".into(),
+            id.into(),
+            "get_weather".into(),
+            "--params".into(),
+            r#"{"city":"Xiamen"}"#.into(),
+        ];
+        let err = bind_extension_invoke_prepared_token(argv).unwrap_err();
+        assert!(
+            err.contains("stale") || err.contains("unbound") || err.contains("reload"),
+            "shell bind must fail stale without re-preparing, got: {err}"
+        );
+        // Re-classify is Mutating — write-gate required; shell must not have
+        // authorized a fresh Mutating ticket on the failed bind.
+        assert_eq!(
+            classify_and_bind_chat_invoke(id, "get_weather", &params),
+            CommandEffect::Mutating
+        );
+        invalidate_instance_capability(id);
+    }
+}
+
 #[cfg(test)]
 mod fabrication_guard_tests {
     use super::fabricated_tool_output;

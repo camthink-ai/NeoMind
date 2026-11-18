@@ -174,7 +174,8 @@ impl ExtensionTool {
             .collect()
     }
 
-    /// Test helper: mint a generation then build tools (not for production).
+    /// Test helper: mint a generation, publish a prepareable snapshot, then
+    /// build tools (NM-240 execute requires classify-time tickets).
     #[cfg(test)]
     pub async fn from_extension(extension: DynExtension) -> Vec<ExtensionTool> {
         let ext = extension.read().await;
@@ -183,7 +184,17 @@ impl ExtensionTool {
         let extension_version = ext.metadata().version.to_string();
         let commands = ext.commands().to_vec();
         drop(ext);
+        neomind_core::extension::invalidate_instance_capability(&extension_id);
         let generation = neomind_core::extension::begin_instance_generation(&extension_id);
+        neomind_core::extension::ExtensionCommandSnapshot::build(
+            &extension_id,
+            &extension_version,
+            None,
+            commands.clone(),
+            generation.clone(),
+        )
+        .publish_capabilities()
+        .expect("test fixture must publish prepareable snapshot");
         commands
             .into_iter()
             .map(|cmd| {
@@ -445,32 +456,28 @@ impl Tool for ExtensionTool {
         let data_dir = neomind_core::paths::data_dir();
         let image_normalized = Self::normalize_image_args(&args, &data_dir)?;
 
-        // NM-240: prefer Chat-authorized PreparedInvoke (prepare→authorize→
-        // consume). Fall back to load-generation prepare for hand-built
-        // ExtensionTool tests without a published prepareable snapshot.
-        let prepared = match neomind_core::extension::authorize_chat_invoke(
+        // NM-240: claim the classify-time PreparedInvoke only — never mint a
+        // fresh prepare on the execute path (that reopened the RO→Mutating
+        // reload window). Tests must publish a prepareable snapshot and
+        // classify/bind before execute.
+        let claimed = neomind_core::extension::claim_classified_prepared(
             &self.extension_id,
             &self.command.name,
             &image_normalized,
-        ) {
-            Ok(p) => neomind_core::extension::consume_authorized_prepared(
-                &p.operation_id,
-                &p.capability_generation,
-                &p.param_fingerprint,
-            )
-            .map_err(super::error::ToolError::InvalidArguments)?,
-            Err(_) => neomind_core::extension::prepare_invoke(
-                neomind_core::extension::PrepareInvokeRequest {
-                    instance_id: &self.extension_id,
-                    command: &self.command,
-                    raw_params: &image_normalized,
-                    extension_version: Some(self.extension_version.as_str()),
-                    package_digest: None,
-                    capability_generation: &self.capability_generation,
-                },
-            )
-            .map_err(super::error::ToolError::InvalidArguments)?,
-        };
+        )
+        .map_err(super::error::ToolError::InvalidArguments)?;
+        if claimed.capability_generation != self.capability_generation.as_str() {
+            return Err(super::error::ToolError::InvalidArguments(format!(
+                "stale prepared invoke '{}': tool load generation expired after reload",
+                claimed.operation_id
+            )));
+        }
+        let prepared = neomind_core::extension::consume_authorized_prepared(
+            &claimed.operation_id,
+            &claimed.capability_generation,
+            &claimed.param_fingerprint,
+        )
+        .map_err(super::error::ToolError::InvalidArguments)?;
 
         // Execute with the centralized SLOW tier timeout (300s) for extensions that
         // need longer inference. Routed through `timeouts` so the ceiling is tunable
@@ -696,6 +703,12 @@ mod tests {
 
         let tool = &tools[0];
         let args = json!({"input": "hello"});
+        // NM-240: classify/bind before execute (production Chat path).
+        let _ = neomind_core::extension::classify_and_bind_chat_invoke(
+            &tool.extension_id,
+            &tool.command.name,
+            &args,
+        );
 
         let result = tool.execute(args).await.unwrap();
         assert!(result.success);
