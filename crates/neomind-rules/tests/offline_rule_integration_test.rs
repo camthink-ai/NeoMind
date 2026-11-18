@@ -57,7 +57,8 @@ fn make_device_config(device_id: &str) -> DeviceConfig {
         device_id: device_id.to_string(),
         name: format!("Test device {}", device_id),
         device_type: "generic".to_string(),
-        adapter_type: "mqtt".to_string(),
+        // Non-mqtt: MQTT register requires a live adapter (BindIncomplete).
+        adapter_type: "test".to_string(),
         connection_config: ConnectionConfig::default(),
         adapter_id: None,
         last_seen: 0,
