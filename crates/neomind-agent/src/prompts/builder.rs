@@ -223,12 +223,16 @@ mod tests {
     }
 
     /// NM-249: do not treat every `accepted` as pending; distinguish async agent
-    /// poll-by-ref from device adapter_accepted (dispatched; poll only on request).
+    /// poll-by-ref from device adapter_accepted (report dispatched; verify only on ask).
     #[test]
     fn nm249_accepted_copy_distinguishes_agent_vs_device() {
         let prompt = PromptBuilder::new().build_system_prompt();
         assert!(prompt.contains("adapter_accepted"));
-        assert!(prompt.contains("dispatched to the broker"));
+        assert!(prompt.contains("report as dispatched"));
+        assert!(prompt.contains("device acknowledgment none"));
+        assert!(prompt.contains("physical effect unverified"));
+        assert!(prompt.contains("Check device feedback only if the user asked"));
+        assert!(!prompt.contains("dispatched to the broker"));
         assert!(prompt.contains("poll by the returned execution reference"));
         assert!(!prompt.contains("Executing/accepted means still pending"));
         assert!(!prompt.contains("weather-forecast-v2_get_weather"));

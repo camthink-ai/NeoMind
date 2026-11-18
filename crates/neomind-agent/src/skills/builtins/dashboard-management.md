@@ -55,9 +55,9 @@ Use skill(action="load", id="dashboard-management", section="<exact returned tit
 
 # Dashboard Management & Component Creation
 
-## Command Cheat-Sheet (run these via `shell`)
+## Command Cheat-Sheet (via `shell` when mutating or inspecting live state)
 
-Always RUN the command yourself and report the real output.
+Ask → answer from this guide with examples (**zero shell writes**). Inspect → read (`list`/`get`, widget/device discovery). Mutate → write only on an explicit create/update/add/remove request; then report the real output. Always `dashboard get <ID>` before adding components.
 
 | Command | Purpose |
 |---|---|

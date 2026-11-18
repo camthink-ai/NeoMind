@@ -51,9 +51,9 @@ Use skill(action="load", id="rule-management", section="<exact returned title>")
 
 # Rule Management
 
-## Command Cheat-Sheet (run these via `shell`)
+## Command Cheat-Sheet (via `shell` when mutating or inspecting live state)
 
-Always RUN the command yourself and report the real output.
+Ask → answer from this guide with examples (**zero shell writes**). Inspect → read (`list`/`get`/`explain`/`history`/`test`). Mutate → write only on an explicit create/update/enable/disable/delete request; then report the real output.
 
 | Command | Purpose |
 |---|---|
@@ -73,12 +73,12 @@ Create, update, diagnose, or delete event-driven rules over device / extension /
 
 | User intent | Section to follow |
 |---|---|
-| "how do I set frequency / cooldown / rename / change notify?" (ask only) | Answer from this guide — **zero writes** until they ask to apply |
+| "how do I set frequency / cooldown / rename / change notify?" (ask only) | Answer from this guide with examples — **zero writes** until they ask to apply |
 | "create / set up / add a rule" | Phase 1 → 2 → 3 → 4 below |
 | "why didn't rule X fire / 排查 / 没触发" | Jump to **Diagnosis Flow** (inspect only; mutate only if asked) |
-| "change freq / rename / notify text on rule X" | Inspect with `rule get`, then targeted `rule update` |
+| "change freq / rename / notify text on rule X" | Inspect with `rule get`, then targeted `rule update` (see `rule update --help`) |
 | "delete / disable / enable rule X" | **Quick Command Reference** |
-| "rewrite / re-target an existing rule" | Run diagnosis first, then **Phase 2** with new JSON |
+| "rewrite / re-target an existing rule" | `rule get` current definition → confirm target/fields → apply with `rule update` options from `--help` (full **Diagnosis Flow** only for "why didn't fire") |
 
 ## Deployments involving rules, channels, and device control
 
