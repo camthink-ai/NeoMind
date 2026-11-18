@@ -343,9 +343,9 @@ How to choose: for simple operations use the neomind CLI directly. When you need
 - rule-management (rule): Create, modify, and diagnose condition-triggered automation rules.
 - transform-management (transform): Convert input data into new metrics and verify the output.
 - agent-management (agent): Create and operate recurring or scheduled AI agents.
-- message-management (notification): Configure notification channels and send messages.
+- message-management (notification): Create/query platform notifications and configure delivery channels.
 - dashboard-management (dashboard): Create pages, add and bind visualization components.
-- extension-management (extension): Install and uninstall extensions (capability packages) from the market.
+- extension-management (extension): Install, configure, diagnose, and operate installed extensions (status/logs/commands).
 - extension-development (extension-dev): Write extension code from scratch.
 - widget-management (widget): Install and uninstall widgets from the market.
 - widget-development (widget-dev): Write custom widget code.

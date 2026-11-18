@@ -250,9 +250,7 @@ impl ToolRegistry {
         }
 
         let tool = self.get(name).ok_or_else(|| {
-            if let Some(hint) =
-                super::extension_tools::historical_extension_tool_cli_hint(name)
-            {
+            if let Some(hint) = super::extension_tools::historical_extension_tool_cli_hint(name) {
                 // Historical name resolve for compat: recognize legacy
                 // ext:cmd / sanitized names and redirect to CLI — do not
                 // execute the extension here (would bypass CLI-only + confuse

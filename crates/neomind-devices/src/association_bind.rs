@@ -502,11 +502,16 @@ mod merge_tests {
 
     #[test]
     fn merge_preserves_command_topic_and_non_identity_extra() {
-        let mut base = ConnectionConfig::default();
-        base.command_topic = Some("device/gw/B/downlink".into());
-        base.extra.insert("ssid".into(), json!("plant-wifi"));
-        base.extra
-            .insert(MQTT_IDENTITY_SOURCE_KEY.into(), json!("topic_strong"));
+        let base = ConnectionConfig {
+            command_topic: Some("device/gw/B/downlink".into()),
+            extra: [
+                ("ssid".into(), json!("plant-wifi")),
+                (MQTT_IDENTITY_SOURCE_KEY.into(), json!("topic_strong")),
+            ]
+            .into_iter()
+            .collect(),
+            ..ConnectionConfig::default()
+        };
 
         // Mirror apply_association_bind's preserve rules.
         let mut cfg = base.clone();

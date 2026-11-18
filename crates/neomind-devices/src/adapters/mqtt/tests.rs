@@ -2637,13 +2637,12 @@ mod handling_path {
             .await
             .expect("retry after dual-fail recovery");
         assert!(ok.subscribe_ok && ok.old_source_cleanup_ok);
-        assert!(registry
+        assert!(!registry
             .get_device("B")
             .unwrap()
             .connection_config
             .extra
-            .get("mqtt_pending_unsub_adapters")
-            .is_none());
+            .contains_key("mqtt_pending_unsub_adapters"));
     }
 
     /// NM-196: pending-unsub persist failure propagates (not ignored).

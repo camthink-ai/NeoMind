@@ -731,14 +731,18 @@ fn extension_invoke_fingerprint_parts(
             return None;
         }
     };
-    Some((base, if params.is_null() { serde_json::json!({}) } else { params }))
+    Some((
+        base,
+        if params.is_null() {
+            serde_json::json!({})
+        } else {
+            params
+        },
+    ))
 }
 
 fn argv_is_extension_invoke(argv: &[String]) -> bool {
-    argv.len() >= 3
-        && argv[0] == "neomind"
-        && argv[1] == "extension"
-        && argv[2] == "invoke"
+    argv.len() >= 3 && argv[0] == "neomind" && argv[1] == "extension" && argv[2] == "invoke"
 }
 
 /// Remove the Chat-only `--prepared-operation-id` option by parsed position.
@@ -1503,7 +1507,13 @@ mod tests {
         assert!(fp_dc.starts_with("device_command|"));
         assert!(fp_dc.contains("cam-1"));
 
-        assert!(mutating_write_fingerprint("skill", &serde_json::json!({"name": "x"})).is_none());
+        // Missing/unknown skill action fails closed into the write gate; RO
+        // search/load must stay fingerprint-free.
+        assert!(mutating_write_fingerprint(
+            "skill",
+            &serde_json::json!({"action": "load", "name": "x"})
+        )
+        .is_none());
     }
 
     /// Quoted `--param` value that embeds another `--param …` must not collide
@@ -1545,7 +1555,10 @@ mod tests {
             "command": "neomind extension invoke weather-forecast-v2 get_weather --params '{\"city\":\"Beijing\"}' --prepared-operation-id aaa-111"
         });
         let fp_c = mutating_write_fingerprint("shell", &c).expect("ext invoke c");
-        assert_ne!(fp_a, fp_c, "different params must keep distinct fingerprints");
+        assert_ne!(
+            fp_a, fp_c,
+            "different params must keep distinct fingerprints"
+        );
     }
 
     /// NM-247: shell `params` object and `--params` JSON share one write key.

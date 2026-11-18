@@ -2977,6 +2977,61 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_device_registration() {
+        use crate::adapter::{ConnectionStatus, DeviceAdapter, DeviceEvent};
+        use crate::AdapterResult;
+        use futures::Stream;
+        use std::pin::Pin;
+
+        struct MqttStub;
+        #[async_trait::async_trait]
+        impl DeviceAdapter for MqttStub {
+            fn name(&self) -> &str {
+                "mqtt-stub"
+            }
+            fn adapter_type(&self) -> &'static str {
+                "mqtt"
+            }
+            fn is_running(&self) -> bool {
+                true
+            }
+            async fn start(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn stop(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            fn subscribe(&self) -> Pin<Box<dyn Stream<Item = DeviceEvent> + Send + '_>> {
+                Box::pin(futures::stream::empty())
+            }
+            fn device_count(&self) -> usize {
+                0
+            }
+            fn list_devices(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            async fn send_command(
+                &self,
+                _device_id: &str,
+                _command_name: &str,
+                _payload: String,
+                _topic: Option<String>,
+            ) -> AdapterResult<()> {
+                Ok(())
+            }
+            fn connection_status(&self) -> ConnectionStatus {
+                ConnectionStatus::Connected
+            }
+            async fn subscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn unsubscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                Ok(())
+            }
+        }
+
         let event_bus = EventBus::new();
         let registry = Arc::new(DeviceRegistry::new());
         let service = DeviceService::new(registry.clone(), event_bus);
@@ -2984,6 +3039,12 @@ mod tests {
         // Register template first
         let template = DeviceTypeTemplate::new("test_sensor", "Test Sensor");
         service.register_template(template).await.unwrap();
+
+        // MQTT register requires a live adapter for subscribe honesty
+        // (BindIncomplete when none — config may still be applied).
+        service
+            .register_adapter("mqtt-stub".into(), Arc::new(MqttStub))
+            .await;
 
         // Register device
         let config = DeviceConfig {

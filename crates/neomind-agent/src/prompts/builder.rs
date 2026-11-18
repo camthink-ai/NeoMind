@@ -236,8 +236,9 @@ mod tests {
         assert!(prompt.contains("poll by the returned execution reference"));
         assert!(!prompt.contains("Executing/accepted means still pending"));
         assert!(!prompt.contains("weather-forecast-v2_get_weather"));
-        assert!(prompt.contains("if the extension id is unknown"));
-        assert!(prompt.contains("if command/schema is unknown"));
+        // NM-252: capability discovery is task-search first, then schema by id.
+        assert!(prompt.contains("extension commands --search"));
+        assert!(prompt.contains("extension commands <id>"));
     }
 
     #[test]

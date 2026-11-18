@@ -504,7 +504,13 @@ async fn repeated_poll_executes_again_and_observes_new_state() {
 
 #[tokio::test]
 async fn summary_is_retained_in_forced_final_response() {
-    let call = MockResponse::tool_call("skill", serde_json::json!({"action":"list"}));
+    // Use a valid read-only skill action. Unknown actions (e.g. legacy "list")
+    // fail closed into the write gate and no longer trip the identical-round
+    // progress halt that this test relies on.
+    let call = MockResponse::tool_call(
+        "skill",
+        serde_json::json!({"action":"search","query":"index"}),
+    );
     let (iface, requests) = harness(vec![
         call.clone(),
         call.clone(),

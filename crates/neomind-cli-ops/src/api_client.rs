@@ -70,7 +70,6 @@ impl ApiClient {
         }
     }
 
-
     /// Tag reqwest failures with a stable kind prefix so callers can tell
     /// connect-refuse (not submitted) from timeout (result unknown).
     fn map_reqwest_error(err: reqwest::Error) -> anyhow::Error {
@@ -119,7 +118,11 @@ impl ApiClient {
     pub async fn get(&self, path: &str) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
             let url = self.url_for(path);
-            let resp = self.add_auth(self.client.get(&url)).send().await.map_err(Self::map_reqwest_error)?;
+            let resp = self
+                .add_auth(self.client.get(&url))
+                .send()
+                .await
+                .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
                 self.refresh_api_key();
@@ -154,7 +157,8 @@ impl ApiClient {
             let resp = self
                 .add_auth(self.client.post(&url).json(body))
                 .send()
-                .await.map_err(Self::map_reqwest_error)?;
+                .await
+                .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
                 self.refresh_api_key();
@@ -205,7 +209,8 @@ impl ApiClient {
                         .json(body),
                 )
                 .send()
-                .await.map_err(Self::map_reqwest_error)?;
+                .await
+                .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
                 self.refresh_api_key();
@@ -234,7 +239,11 @@ impl ApiClient {
     pub async fn post_raw(&self, path: &str) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
             let url = self.url_for(path);
-            let resp = self.add_auth(self.client.post(&url)).send().await.map_err(Self::map_reqwest_error)?;
+            let resp = self
+                .add_auth(self.client.post(&url))
+                .send()
+                .await
+                .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
                 self.refresh_api_key();
@@ -269,7 +278,8 @@ impl ApiClient {
             let resp = self
                 .add_auth(self.client.put(&url).json(body))
                 .send()
-                .await.map_err(Self::map_reqwest_error)?;
+                .await
+                .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
                 self.refresh_api_key();
@@ -304,7 +314,8 @@ impl ApiClient {
             let resp = self
                 .add_auth(self.client.patch(&url).json(body))
                 .send()
-                .await.map_err(Self::map_reqwest_error)?;
+                .await
+                .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
                 self.refresh_api_key();
@@ -336,7 +347,11 @@ impl ApiClient {
     pub async fn delete(&self, path: &str) -> Result<serde_json::Value> {
         for attempt in 0..=MAX_RETRIES {
             let url = self.url_for(path);
-            let resp = self.add_auth(self.client.delete(&url)).send().await.map_err(Self::map_reqwest_error)?;
+            let resp = self
+                .add_auth(self.client.delete(&url))
+                .send()
+                .await
+                .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
                 self.refresh_api_key();
@@ -375,7 +390,8 @@ impl ApiClient {
             let resp = self
                 .add_auth(self.client.delete(&url).json(body))
                 .send()
-                .await.map_err(Self::map_reqwest_error)?;
+                .await
+                .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
                 self.refresh_api_key();
@@ -434,7 +450,8 @@ impl ApiClient {
             let resp = self
                 .add_auth(self.client.post(&url).multipart(form))
                 .send()
-                .await.map_err(Self::map_reqwest_error)?;
+                .await
+                .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
                 self.refresh_api_key();
@@ -487,7 +504,11 @@ impl ApiClient {
                 form = form.part(field_name.clone(), part);
             }
             let req = self.client.post(&url).multipart(form);
-            let resp = self.add_auth(req).send().await.map_err(Self::map_reqwest_error)?;
+            let resp = self
+                .add_auth(req)
+                .send()
+                .await
+                .map_err(Self::map_reqwest_error)?;
             let status = resp.status();
             if status.as_u16() == 401 && attempt < MAX_RETRIES {
                 self.refresh_api_key();

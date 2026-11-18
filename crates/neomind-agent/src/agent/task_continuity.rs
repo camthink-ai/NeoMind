@@ -3713,8 +3713,10 @@ pub fn derive_tool_capability_resolved(
                     canonical_arguments,
                 );
                 return match bind.effect {
-                    neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
-                        .with_prepared_operation_id(bind.prepared_operation_id),
+                    neomind_core::extension::CommandEffect::ReadOnly => {
+                        ToolCapability::read_query()
+                            .with_prepared_operation_id(bind.prepared_operation_id)
+                    }
                     neomind_core::extension::CommandEffect::Mutating => {
                         ToolCapability::mutating_write()
                             .with_prepared_operation_id(bind.prepared_operation_id)
@@ -3772,10 +3774,12 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
     {
         if let Some(prep) = neomind_core::extension::peek_prepared_invoke(&op_id) {
             return match prep.contract.effect {
-                neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
-                    .with_prepared_operation_id(Some(op_id)),
-                neomind_core::extension::CommandEffect::Mutating => ToolCapability::mutating_write()
-                    .with_prepared_operation_id(Some(op_id)),
+                neomind_core::extension::CommandEffect::ReadOnly => {
+                    ToolCapability::read_query().with_prepared_operation_id(Some(op_id))
+                }
+                neomind_core::extension::CommandEffect::Mutating => {
+                    ToolCapability::mutating_write().with_prepared_operation_id(Some(op_id))
+                }
             };
         }
         // Stale host ticket — fall through to re-classify from business call.
@@ -3833,10 +3837,12 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
         );
     }
     match bind.effect {
-        neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
-            .with_prepared_operation_id(bind.prepared_operation_id),
-        neomind_core::extension::CommandEffect::Mutating => ToolCapability::mutating_write()
-            .with_prepared_operation_id(bind.prepared_operation_id),
+        neomind_core::extension::CommandEffect::ReadOnly => {
+            ToolCapability::read_query().with_prepared_operation_id(bind.prepared_operation_id)
+        }
+        neomind_core::extension::CommandEffect::Mutating => {
+            ToolCapability::mutating_write().with_prepared_operation_id(bind.prepared_operation_id)
+        }
     }
 }
 
@@ -3871,10 +3877,13 @@ fn attach_extension_tool_prepared_invoke(
     {
         if let Some(prep) = neomind_core::extension::peek_prepared_invoke(op_id) {
             return match prep.contract.effect {
-                neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
-                    .with_prepared_operation_id(Some(op_id.to_string())),
-                neomind_core::extension::CommandEffect::Mutating => ToolCapability::mutating_write()
-                    .with_prepared_operation_id(Some(op_id.to_string())),
+                neomind_core::extension::CommandEffect::ReadOnly => {
+                    ToolCapability::read_query().with_prepared_operation_id(Some(op_id.to_string()))
+                }
+                neomind_core::extension::CommandEffect::Mutating => {
+                    ToolCapability::mutating_write()
+                        .with_prepared_operation_id(Some(op_id.to_string()))
+                }
             };
         }
         return ToolCapability::mutating_write();
@@ -3889,10 +3898,12 @@ fn attach_extension_tool_prepared_invoke(
         }
     }
     match bind.effect {
-        neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
-            .with_prepared_operation_id(bind.prepared_operation_id),
-        neomind_core::extension::CommandEffect::Mutating => ToolCapability::mutating_write()
-            .with_prepared_operation_id(bind.prepared_operation_id),
+        neomind_core::extension::CommandEffect::ReadOnly => {
+            ToolCapability::read_query().with_prepared_operation_id(bind.prepared_operation_id)
+        }
+        neomind_core::extension::CommandEffect::Mutating => {
+            ToolCapability::mutating_write().with_prepared_operation_id(bind.prepared_operation_id)
+        }
     }
 }
 

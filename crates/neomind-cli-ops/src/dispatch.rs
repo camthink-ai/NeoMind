@@ -459,18 +459,21 @@ mod tests {
             .await
             .expect("bare --help must succeed");
         assert!(resp.success);
-        let help = resp.data.as_ref().and_then(|d| d.get("help")).and_then(|v| v.as_str());
+        let help = resp
+            .data
+            .as_ref()
+            .and_then(|d| d.get("help"))
+            .and_then(|v| v.as_str());
         assert!(
             help.is_some_and(|h| h.contains("Usage")),
             "expected Usage help, got {:?}",
             resp.data
         );
-        assert!(
-            resp.data
-                .as_ref()
-                .and_then(|d| d.get("_help_redirect"))
-                .is_none()
-        );
+        assert!(resp
+            .data
+            .as_ref()
+            .and_then(|d| d.get("_help_redirect"))
+            .is_none());
     }
 
     /// `extension commands <id> --help` must NOT return clap meta-help as if

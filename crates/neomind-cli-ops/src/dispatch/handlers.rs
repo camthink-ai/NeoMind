@@ -91,12 +91,8 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
             // NM-247: host context wins for structured params + ticket
             // (no re-stringify; model never needs to echo the token).
             let host = super::host_context::peek_extension_invoke_host_context();
-            let host_ticket = host
-                .as_ref()
-                .and_then(|h| h.prepared_operation_id.clone());
-            let ticket = host_ticket
-                .as_deref()
-                .or(prepared_operation_id.as_deref());
+            let host_ticket = host.as_ref().and_then(|h| h.prepared_operation_id.clone());
+            let ticket = host_ticket.as_deref().or(prepared_operation_id.as_deref());
             let host_params = host.and_then(|h| h.structured_params);
             crate::extension::invoke_extension_command(
                 &client,

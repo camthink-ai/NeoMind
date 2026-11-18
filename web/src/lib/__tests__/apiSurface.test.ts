@@ -76,8 +76,10 @@ describe('api surface (post-split composition)', () => {
   // (GET /api/rules/:id/explain, why-not-triggered UI).
   // 284 -> 285 when MQTT association-exception confirm landed
   // (`confirmAssociationDraft`, POST .../confirm-association).
-  it('member count grows only by deliberate additions (285)', () => {
+  // 285 -> 286 when AI enable split from run enable
+  // (`setExtensionAiEnabled`, PATCH /extensions/:id/ai-enabled).
+  it('member count grows only by deliberate additions (286)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(285)
+    expect(keys.length).toBe(286)
   })
 })

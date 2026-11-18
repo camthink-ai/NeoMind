@@ -1289,9 +1289,7 @@ pub(crate) fn bind_extension_invoke_prepared_token(
     use neomind_cli_ops::dispatch::commands::{Args, Command, ExtensionCommand};
 
     let host = neomind_cli_ops::dispatch::peek_extension_invoke_host_context();
-    let host_op = host
-        .as_ref()
-        .and_then(|h| h.prepared_operation_id.clone());
+    let host_op = host.as_ref().and_then(|h| h.prepared_operation_id.clone());
     let host_params = host.and_then(|h| h.structured_params);
 
     let argv_op = argv
@@ -1310,7 +1308,12 @@ pub(crate) fn bind_extension_invoke_prepared_token(
             };
             return match parsed.command {
                 Command::Extension {
-                    extension_cmd: ExtensionCommand::Invoke { extension_id, command, .. },
+                    extension_cmd:
+                        ExtensionCommand::Invoke {
+                            extension_id,
+                            command,
+                            ..
+                        },
                 } => {
                     tracing::warn!(
                         extension_id = %extension_id,
@@ -1373,12 +1376,12 @@ pub(crate) fn bind_extension_invoke_prepared_token(
         Some((ext_id, command, raw)) => {
             neomind_core::extension::claim_prepared_for_dispatch(&op_id, &ext_id, &command, &raw)
                 .map_err(|e| {
-                    format!(
-                        "PreparedInvoke stale or unbound ('{op_id}'): {e} — not executed; \
+                format!(
+                    "PreparedInvoke stale or unbound ('{op_id}'): {e} — not executed; \
                          resubmit the business call (command + params). Do not invent \
                          or reuse prepared-operation tickets."
-                    )
-                })?;
+                )
+            })?;
         }
         None => {
             neomind_core::extension::claim_prepared_by_id(&op_id).map_err(|e| {
@@ -1403,9 +1406,7 @@ pub fn validate_extension_params_sources(args: &Value) -> std::result::Result<()
         return Ok(());
     }
     if !params_val.is_object() {
-        return Err(
-            "shell params must be a JSON object (for extension invoke only)".into(),
-        );
+        return Err("shell params must be a JSON object (for extension invoke only)".into());
     }
     let cmd = args
         .get("command")
@@ -3104,9 +3105,7 @@ mod dispatch_edge_tests {
 }
 #[cfg(test)]
 mod nm247_structured_params_tests {
-    use super::{
-        bind_extension_invoke_prepared_token, validate_extension_params_sources,
-    };
+    use super::{bind_extension_invoke_prepared_token, validate_extension_params_sources};
     use neomind_core::extension::{
         begin_instance_generation, classify_and_bind_chat_invoke, invalidate_instance_capability,
         CommandEffect, ExtensionCommand, ExtensionCommandSnapshot, MetricDataType,
@@ -3220,8 +3219,7 @@ mod nm247_structured_params_tests {
                 structured_params: Some(params),
             },
             async {
-                bind_extension_invoke_prepared_token(argv)
-                    .expect("host wins over invented token");
+                bind_extension_invoke_prepared_token(argv).expect("host wins over invented token");
             },
         )
         .await;
@@ -3244,8 +3242,7 @@ mod nm247_structured_params_tests {
             crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG: op.clone(),
         });
         // Simulate execute_with_retry_impl canonicalize + restore.
-        let mut canon =
-            crate::agent::task_continuity::canonicalize_tool_arguments("shell", &args);
+        let mut canon = crate::agent::task_continuity::canonicalize_tool_arguments("shell", &args);
         crate::agent::task_continuity::restore_host_prepared_carriage(&args, &mut canon);
         args = canon;
         let argv = vec![
@@ -3365,7 +3362,10 @@ mod prepared_invoke_bind_tests {
         ];
         let err = bind_extension_invoke_prepared_token(argv).unwrap_err();
         assert!(
-            err.contains("stale") || err.contains("unbound") || err.contains("reload") || err.contains("missing"),
+            err.contains("stale")
+                || err.contains("unbound")
+                || err.contains("reload")
+                || err.contains("missing"),
             "shell bind must fail stale without re-preparing, got: {err}"
         );
         let bind2 = classify_and_bind_chat_invoke(id, "get_weather", &params);

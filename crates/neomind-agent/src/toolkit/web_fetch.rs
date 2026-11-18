@@ -457,8 +457,7 @@ Timeout: 15 seconds. Download cap: 1MB (prefix kept)."#
 
         // Cap the download at MAX_RESPONSE_BODY — keep the prefix, do not fail.
         let final_url = response.url().to_string();
-        let (body, download_truncated) =
-            read_body_capped(response, MAX_RESPONSE_BODY).await?;
+        let (body, download_truncated) = read_body_capped(response, MAX_RESPONSE_BODY).await?;
         let body_text = String::from_utf8_lossy(&body);
 
         // Format output
@@ -554,8 +553,8 @@ async fn read_body_capped(
     let mut truncated = false;
 
     while let Some(chunk) = stream.next().await {
-        let chunk =
-            chunk.map_err(|e| ToolError::Execution(format!("Failed to read response body: {e}")))?;
+        let chunk = chunk
+            .map_err(|e| ToolError::Execution(format!("Failed to read response body: {e}")))?;
         if append_capped(&mut buf, &chunk, max_bytes) {
             truncated = true;
             break;

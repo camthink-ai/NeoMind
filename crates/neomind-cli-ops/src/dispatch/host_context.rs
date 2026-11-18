@@ -24,10 +24,7 @@ tokio::task_local! {
 }
 
 /// Run `fut` with host context installed for this async task only.
-pub async fn with_extension_invoke_host_context<F, T>(
-    ctx: ExtensionInvokeHostContext,
-    fut: F,
-) -> T
+pub async fn with_extension_invoke_host_context<F, T>(ctx: ExtensionInvokeHostContext, fut: F) -> T
 where
     F: std::future::Future<Output = T>,
 {
@@ -36,10 +33,7 @@ where
 
 /// Peek the current task's host context (does not clear).
 pub fn peek_extension_invoke_host_context() -> Option<ExtensionInvokeHostContext> {
-    HOST_CTX
-        .try_with(|c| c.borrow().clone())
-        .ok()
-        .flatten()
+    HOST_CTX.try_with(|c| c.borrow().clone()).ok().flatten()
 }
 
 /// Compatibility no-op clear (task-local drops with the scope).
@@ -47,10 +41,7 @@ pub fn set_extension_invoke_host_context(_ctx: Option<ExtensionInvokeHostContext
 
 /// Compatibility take — clears the task-local slot if present.
 pub fn take_extension_invoke_host_context() -> Option<ExtensionInvokeHostContext> {
-    HOST_CTX
-        .try_with(|c| c.borrow_mut().take())
-        .ok()
-        .flatten()
+    HOST_CTX.try_with(|c| c.borrow_mut().take()).ok().flatten()
 }
 
 #[cfg(test)]
