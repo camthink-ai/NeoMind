@@ -44,10 +44,9 @@ pub use command_contract::{
     sync_effect_for_invoke, sync_replay_for_invoke, type_base_of, validate_and_normalize,
     validate_params, validated_params_example_for_command, AiCommandSearchHit,
     AiCommandSearchParam, AiCommandSearchResult, AiCommandShellExample, BusinessCommandDef,
-    CapabilityGeneration,
-    CapabilitySource, ChatInvokeBind, EffectiveCommandCapability, ExtensionCallerKind,
-    ExtensionCommandSnapshot, InvokeTarget, PrepareInvokeRequest, PreparedInvoke,
-    AI_COMMAND_SEARCH_MAX_CHARS, AI_COMMAND_SEARCH_MAX_HITS, CONTRACT_VERSION,
+    CapabilityGeneration, CapabilitySource, ChatInvokeBind, EffectiveCommandCapability,
+    ExtensionCallerKind, ExtensionCommandSnapshot, InvokeTarget, PrepareInvokeRequest,
+    PreparedInvoke, AI_COMMAND_SEARCH_MAX_CHARS, AI_COMMAND_SEARCH_MAX_HITS, CONTRACT_VERSION,
 };
 pub use context::{
     AvailableCapabilities, CapabilityError, CapabilityManifest, ExtensionCapability,
