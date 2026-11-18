@@ -24,17 +24,49 @@ use super::system::{
 /// Contract schema version stamped on every prepared invoke.
 pub const CONTRACT_VERSION: &str = "1";
 
+/// Server-derived caller of an extension invoke/execute (NM-241).
+///
+/// Must never be taken from a request body `caller=` field — clients must not
+/// self-claim admin. HTTP derives this from authenticated session + whether a
+/// Chat-issued `prepared_operation_id` is present; Transform/registry in-process
+/// paths use [`ExtensionCallerKind::InternalAutomation`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtensionCallerKind {
+    /// Chat write-gate path (shell → CLI → HTTP with Chat-issued prepare token).
+    AiChat,
+    /// Agent / API-key / CLI automation without a Chat prepare token.
+    AgentRuntime,
+    /// Authenticated human operator (JWT user session, not an API-key service
+    /// account). Subject to normal RBAC; not the AI toggles.
+    HumanAdmin,
+    /// Host automation (Transform `extensions.invoke`, rules, …) that never
+    /// enters the HTTP AI-policy prepare path.
+    InternalAutomation,
+}
+
+impl ExtensionCallerKind {
+    /// Whether `ai_enabled` / `disabled_commands` / `ai_exposed` apply.
+    ///
+    /// Only AI-facing kinds are bound. HumanAdmin uses RBAC; InternalAutomation
+    /// is host-owned. `ai_exposed=false` still blocks AI kinds only.
+    pub fn ai_policy_applies(self) -> bool {
+        matches!(self, Self::AiChat | Self::AgentRuntime)
+    }
+}
+
 /// AI-facing access check for an extension command.
 ///
 /// Covers the three persisted/author controls (must agree across direct tools,
-/// Chat shell → CLI, and HTTP invoke/execute):
+/// Chat shell → CLI, and HTTP invoke/execute for AI callers):
 /// - extension master `ai_enabled` (AI off for the whole extension; distinct
 ///   from run/load `enabled`)
 /// - `disabled_commands` (per-command AI off)
 /// - descriptor `ai_exposed=false` (author hides from AI)
 ///
 /// Returns `None` when AI may invoke; `Some(reason)` when it must refuse.
-/// Automation / Transform paths that are not AI-facing should not call this.
+/// Call only when [`ExtensionCallerKind::ai_policy_applies`] is true —
+/// HumanAdmin / InternalAutomation must not be routed through this gate.
 pub fn ai_command_access_denied(
     extension_ai_enabled: bool,
     disabled_commands: &[String],
@@ -2124,6 +2156,14 @@ mod tests {
     fn ai_access_denies_author_hidden() {
         let r = ai_command_access_denied(true, &[], "secret", false).unwrap();
         assert!(r.contains("ai_exposed=false"), "{r}");
+    }
+
+    #[test]
+    fn caller_kind_ai_policy_binds_only_ai_surfaces() {
+        assert!(ExtensionCallerKind::AiChat.ai_policy_applies());
+        assert!(ExtensionCallerKind::AgentRuntime.ai_policy_applies());
+        assert!(!ExtensionCallerKind::HumanAdmin.ai_policy_applies());
+        assert!(!ExtensionCallerKind::InternalAutomation.ai_policy_applies());
     }
 
     /// NM-235: CLI-only cold start — first RO classify after register publish

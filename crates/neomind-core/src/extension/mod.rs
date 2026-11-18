@@ -41,8 +41,8 @@ pub use command_contract::{
     prepare_and_issue_for_chat, prepare_invoke, remember_capability, resolve_capability,
     sync_effect_for_invoke, sync_replay_for_invoke, type_base_of, validate_and_normalize,
     validate_params, BusinessCommandDef, CapabilityGeneration, CapabilitySource,
-    EffectiveCommandCapability, ExtensionCommandSnapshot, InvokeTarget, PrepareInvokeRequest,
-    PreparedInvoke, CONTRACT_VERSION,
+    EffectiveCommandCapability, ExtensionCallerKind, ExtensionCommandSnapshot, InvokeTarget,
+    PrepareInvokeRequest, PreparedInvoke, CONTRACT_VERSION,
 };
 pub use context::{
     AvailableCapabilities, CapabilityError, CapabilityManifest, ExtensionCapability,

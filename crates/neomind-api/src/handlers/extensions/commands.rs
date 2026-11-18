@@ -1,18 +1,48 @@
 //! `commands` handlers — split from the former extensions.rs monolith.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     Json,
 };
 use serde::{Deserialize, Serialize};
 
 use serde_json::json;
 
+use crate::auth_users::SessionInfo;
 use crate::handlers::common::{ok, HandlerResult};
 use crate::models::error::ErrorResponse;
 use crate::server::ServerState;
+use neomind_core::extension::ExtensionCallerKind;
 
 use super::*;
+
+/// Derive trusted extension caller identity (NM-241).
+///
+/// Server-side only — never from a request body `caller=` field.
+/// - Chat-issued `prepared_operation_id` → [`ExtensionCallerKind::AiChat`]
+/// - Real JWT user session (not `apikey:` / share-proxy) → [`HumanAdmin`]
+/// - Otherwise (API-key service account, missing session) → [`AgentRuntime`]
+///
+/// [`InternalAutomation`] is reserved for in-process Transform/rule paths that
+/// do not enter this HTTP prepare boundary.
+pub(crate) fn derive_extension_caller_kind(
+    session: Option<&SessionInfo>,
+    prepared_operation_id: Option<&str>,
+) -> ExtensionCallerKind {
+    if prepared_operation_id.is_some() {
+        return ExtensionCallerKind::AiChat;
+    }
+    match session {
+        Some(s)
+            if !s.user_id.starts_with("apikey:")
+                && s.user_id != "share-proxy"
+                && s.role == crate::auth_users::UserRole::Admin =>
+        {
+            ExtensionCallerKind::HumanAdmin
+        }
+        _ => ExtensionCallerKind::AgentRuntime,
+    }
+}
 
 /// Request to execute an extension command.
 #[derive(utoipa::ToSchema, Debug, Deserialize)]
@@ -47,6 +77,7 @@ pub struct ExecuteCommandRequest {
 pub async fn execute_extension_command_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    session: Option<Extension<SessionInfo>>,
     Json(req): Json<ExecuteCommandRequest>,
 ) -> HandlerResult<serde_json::Value> {
     let runtime = &state.extensions.runtime;
@@ -80,12 +111,17 @@ pub async fn execute_extension_command_handler(
         }
     }
 
+    let caller = derive_extension_caller_kind(
+        session.as_ref().map(|e| &e.0),
+        req.prepared_operation_id.as_deref(),
+    );
     let prepared = prepare_or_consume_extension_invoke(
         &state,
         &id,
         &req.command,
         &req.args,
         req.prepared_operation_id.as_deref(),
+        caller,
     )
     .await?;
 
@@ -163,6 +199,7 @@ pub struct InvokeExtensionRequest {
 pub async fn invoke_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
+    session: Option<Extension<SessionInfo>>,
     Json(req): Json<InvokeExtensionRequest>,
 ) -> HandlerResult<serde_json::Value> {
     let runtime = &state.extensions.runtime;
@@ -193,12 +230,17 @@ pub async fn invoke_extension_handler(
         }
     }
 
+    let caller = derive_extension_caller_kind(
+        session.as_ref().map(|e| &e.0),
+        req.prepared_operation_id.as_deref(),
+    );
     let prepared = prepare_or_consume_extension_invoke(
         &state,
         &id,
         &req.command,
         &req.params,
         req.prepared_operation_id.as_deref(),
+        caller,
     )
     .await?;
 
@@ -245,11 +287,8 @@ pub async fn invoke_extension_handler(
 /// - missing record → forbidden (never default to allow)
 /// - `uninstalled` → forbidden (never default to allow)
 ///
-/// Scope note: HTTP `execute` / `invoke` both call this via
-/// [`prepare_or_consume_extension_invoke`], so the gate applies to **all**
-/// HTTP callers including the human admin UI (intentional bypass prevention
-/// until a trusted server-side caller identity exists — clients must not
-/// self-claim "admin").
+/// Only consulted when [`ExtensionCallerKind::ai_policy_applies`] is true
+/// (AiChat / AgentRuntime). HumanAdmin skips this gate (NM-241).
 fn ai_policy_from_store(
     store: &neomind_storage::ExtensionStore,
     instance_id: &str,
@@ -281,14 +320,15 @@ fn ai_policy_from_loaded_record(
 /// Shared prepare for HTTP execute + invoke (same path as CLI / tools).
 ///
 /// Enforces AI access policy (`ai_enabled` / `disabled_commands` / `ai_exposed`)
-/// at this boundary so Chat shell → `extension invoke` cannot bypass the
-/// toggles that already hide direct tools from the LLM.
+/// when [`ExtensionCallerKind::ai_policy_applies`] (AiChat / AgentRuntime) so
+/// Chat shell → `extension invoke` cannot bypass the toggles that already hide
+/// direct tools from the LLM. HumanAdmin (JWT admin) skips the AI gate and
+/// relies on normal RBAC; `ai_exposed=false` still blocks AI kinds only.
 ///
-/// **Applies to every HTTP execute/invoke caller** (including human admin UI)
-/// because there is no trusted server-side caller identity yet. Softening to
-/// AI-only requires a non-client-claimable context, not a request flag.
+/// Caller kind is **server-derived** ([`derive_extension_caller_kind`]) — never
+/// a request-body claim.
 ///
-/// When `prepared_operation_id` is set (Chat path), consumes that exact
+/// When `prepared_operation_id` is set (Chat path / AiChat), consumes that exact
 /// Chat-authorized [`PreparedInvoke`] (NM-240). Otherwise mints a fresh
 /// prepare for same-request human/direct execute.
 async fn prepare_or_consume_extension_invoke(
@@ -297,6 +337,7 @@ async fn prepare_or_consume_extension_invoke(
     command_name: &str,
     raw_params: &serde_json::Value,
     prepared_operation_id: Option<&str>,
+    caller: ExtensionCallerKind,
 ) -> Result<neomind_core::extension::PreparedInvoke, ErrorResponse> {
     // Descriptor + generation from the proxy registry load snapshot (same
     // entry execute binds). Do not require isolated liveness here — the
@@ -322,17 +363,19 @@ async fn prepare_or_consume_extension_invoke(
             ))
         })?;
 
-    // Shared pre-opened store — never reopen via global path (and never
-    // default-allow on open/load failure).
-    let (ext_ai_enabled, disabled_cmds) =
-        ai_policy_from_store(state.extensions.store.as_ref(), instance_id)?;
-    if let Some(reason) = neomind_core::extension::ai_command_access_denied(
-        ext_ai_enabled,
-        &disabled_cmds,
-        command_name,
-        cmd.ai_exposed,
-    ) {
-        return Err(ErrorResponse::forbidden(reason));
+    if caller.ai_policy_applies() {
+        // Shared pre-opened store — never reopen via global path (and never
+        // default-allow on open/load failure).
+        let (ext_ai_enabled, disabled_cmds) =
+            ai_policy_from_store(state.extensions.store.as_ref(), instance_id)?;
+        if let Some(reason) = neomind_core::extension::ai_command_access_denied(
+            ext_ai_enabled,
+            &disabled_cmds,
+            command_name,
+            cmd.ai_exposed,
+        ) {
+            return Err(ErrorResponse::forbidden(reason));
+        }
     }
 
     if let Some(op_id) = prepared_operation_id {
@@ -358,8 +401,7 @@ async fn prepare_or_consume_extension_invoke(
     .map_err(ErrorResponse::bad_request)
 }
 
-/// Test/compat alias — same as [`prepare_or_consume_extension_invoke`] with
-/// no Chat token (fresh prepare).
+/// Test/compat alias — AgentRuntime fresh prepare (AI policy applies).
 #[cfg(test)]
 async fn prepare_extension_invoke(
     state: &ServerState,
@@ -367,7 +409,15 @@ async fn prepare_extension_invoke(
     command_name: &str,
     raw_params: &serde_json::Value,
 ) -> Result<neomind_core::extension::PreparedInvoke, ErrorResponse> {
-    prepare_or_consume_extension_invoke(state, instance_id, command_name, raw_params, None).await
+    prepare_or_consume_extension_invoke(
+        state,
+        instance_id,
+        command_name,
+        raw_params,
+        None,
+        ExtensionCallerKind::AgentRuntime,
+    )
+    .await
 }
 
 /// GET /api/extensions/:id/stream
@@ -1028,5 +1078,393 @@ mod ai_policy_fail_closed_tests {
             .await
             .expect("enabled policy must allow");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    fn admin_session() -> SessionInfo {
+        SessionInfo {
+            user_id: "user-admin-1".into(),
+            username: "admin".into(),
+            role: crate::auth_users::UserRole::Admin,
+            created_at: 0,
+            expires_at: i64::MAX,
+        }
+    }
+
+    fn apikey_session() -> SessionInfo {
+        SessionInfo {
+            user_id: "apikey:key-1".into(),
+            username: "cli".into(),
+            role: crate::auth_users::UserRole::Admin,
+            created_at: 0,
+            expires_at: i64::MAX,
+        }
+    }
+
+    #[test]
+    fn derive_caller_kind_is_server_side_not_body_claim() {
+        // Chat prepare token wins over any session → AiChat.
+        assert_eq!(
+            derive_extension_caller_kind(Some(&admin_session()), Some("op-1")),
+            ExtensionCallerKind::AiChat
+        );
+        // JWT admin, no Chat token → HumanAdmin.
+        assert_eq!(
+            derive_extension_caller_kind(Some(&admin_session()), None),
+            ExtensionCallerKind::HumanAdmin
+        );
+        // API-key service account stays AgentRuntime even with Admin role.
+        assert_eq!(
+            derive_extension_caller_kind(Some(&apikey_session()), None),
+            ExtensionCallerKind::AgentRuntime
+        );
+        // Missing session → AgentRuntime (fail closed to AI policy).
+        assert_eq!(
+            derive_extension_caller_kind(None, None),
+            ExtensionCallerKind::AgentRuntime
+        );
+        // Non-admin JWT is not HumanAdmin (RBAC, not AI bypass).
+        let user = SessionInfo {
+            user_id: "user-2".into(),
+            username: "alice".into(),
+            role: crate::auth_users::UserRole::User,
+            created_at: 0,
+            expires_at: i64::MAX,
+        };
+        assert_eq!(
+            derive_extension_caller_kind(Some(&user), None),
+            ExtensionCallerKind::AgentRuntime
+        );
+        // share-proxy must not become HumanAdmin.
+        let proxy = SessionInfo {
+            user_id: "share-proxy".into(),
+            username: "share-proxy".into(),
+            role: crate::auth_users::UserRole::User,
+            created_at: 0,
+            expires_at: i64::MAX,
+        };
+        assert_eq!(
+            derive_extension_caller_kind(Some(&proxy), None),
+            ExtensionCallerKind::AgentRuntime
+        );
+    }
+
+    #[tokio::test]
+    async fn human_admin_bypasses_ai_enabled_false() {
+        let state = ServerState::new_for_testing().await;
+        let id = "nm241-human-bypass";
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        struct Ext {
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Extension for Ext {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("nm241-human-bypass", "HB", "1.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ping_cmd()]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> neomind_core::extension::system::Result<serde_json::Value> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({"ok": true}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let ext: DynExtension = Arc::new(tokio::sync::RwLock::new(Box::new(Ext {
+            calls: calls.clone(),
+        })));
+        state
+            .extensions
+            .registry
+            .register(id.into(), ext)
+            .await
+            .unwrap();
+        let mut rec = base_record(id);
+        rec.enabled = true;
+        rec.ai_enabled = false;
+        state.extensions.store.save(&rec).unwrap();
+
+        // AgentRuntime still blocked.
+        let err = prepare_or_consume_extension_invoke(
+            &state,
+            id,
+            "ping",
+            &json!({}),
+            None,
+            ExtensionCallerKind::AgentRuntime,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        // HumanAdmin prepares + executes despite ai_enabled=false.
+        let prepared = prepare_or_consume_extension_invoke(
+            &state,
+            id,
+            "ping",
+            &json!({}),
+            None,
+            ExtensionCallerKind::HumanAdmin,
+        )
+        .await
+        .expect("HumanAdmin must bypass AI gate");
+        state
+            .extensions
+            .registry
+            .execute_prepared(&prepared)
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn human_admin_can_run_ai_exposed_false_command() {
+        let state = ServerState::new_for_testing().await;
+        let id = "nm241-hidden-cmd";
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        fn hidden_cmd() -> ExtensionCommand {
+            let mut c = ping_cmd();
+            c.name = "secret".into();
+            c.ai_exposed = false;
+            c
+        }
+
+        struct Ext {
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Extension for Ext {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("nm241-hidden-cmd", "H", "1.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![hidden_cmd()]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> neomind_core::extension::system::Result<serde_json::Value> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({"ok": true}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let ext: DynExtension = Arc::new(tokio::sync::RwLock::new(Box::new(Ext {
+            calls: calls.clone(),
+        })));
+        state
+            .extensions
+            .registry
+            .register(id.into(), ext)
+            .await
+            .unwrap();
+        state.extensions.store.save(&base_record(id)).unwrap();
+
+        let err = prepare_or_consume_extension_invoke(
+            &state,
+            id,
+            "secret",
+            &json!({}),
+            None,
+            ExtensionCallerKind::AiChat,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.message.contains("ai_exposed=false"), "{}", err.message);
+
+        let prepared = prepare_or_consume_extension_invoke(
+            &state,
+            id,
+            "secret",
+            &json!({}),
+            None,
+            ExtensionCallerKind::HumanAdmin,
+        )
+        .await
+        .expect("HumanAdmin may run author-hidden commands");
+        state
+            .extensions
+            .registry
+            .execute_prepared(&prepared)
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn aichat_prepared_token_still_ai_gated_before_consume() {
+        // NM-241 must not regress NM-240: AiChat still hits AI policy before
+        // consume_chat_prepared_for_execute. With ai_enabled=false the call
+        // refuses without attempting consume (so a missing token is fine).
+        let state = ServerState::new_for_testing().await;
+        let id = "nm241-aichat-gate";
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        struct Ext {
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Extension for Ext {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("nm241-aichat-gate", "A", "1.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ping_cmd()]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> neomind_core::extension::system::Result<serde_json::Value> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({"ok": true}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let ext: DynExtension = Arc::new(tokio::sync::RwLock::new(Box::new(Ext {
+            calls: calls.clone(),
+        })));
+        state
+            .extensions
+            .registry
+            .register(id.into(), ext)
+            .await
+            .unwrap();
+        let mut rec = base_record(id);
+        rec.ai_enabled = false;
+        state.extensions.store.save(&rec).unwrap();
+
+        // prepared_operation_id present → derive AiChat; policy still forbids
+        // before NM-240 consume (token never looked up).
+        let err = prepare_or_consume_extension_invoke(
+            &state,
+            id,
+            "ping",
+            &json!({}),
+            Some("would-be-chat-token"),
+            ExtensionCallerKind::AiChat,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        assert!(
+            err.message.contains("ai_enabled=false") || err.message.contains("AI is disabled"),
+            "got: {}",
+            err.message
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    /// NM-240 path: when AI policy allows, prepared_operation_id still
+    /// consumes the Chat-authorized prepare (not a fresh mint).
+    #[tokio::test]
+    async fn nm240_prepared_consume_still_used_for_aichat_when_ai_allows() {
+        let state = ServerState::new_for_testing().await;
+        let id = "nm241-nm240-consume";
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        struct Ext {
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl Extension for Ext {
+            fn metadata(&self) -> &ExtensionMetadata {
+                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
+                M.get_or_init(|| ExtensionMetadata::new("nm241-nm240-consume", "C", "1.0.0"))
+            }
+            fn metrics(&self) -> Vec<MetricDefinition> {
+                Vec::new()
+            }
+            fn commands(&self) -> Vec<ExtensionCommand> {
+                vec![ping_cmd()]
+            }
+            async fn execute_command(
+                &self,
+                _command: &str,
+                _args: &serde_json::Value,
+            ) -> neomind_core::extension::system::Result<serde_json::Value> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({"ok": true}))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        let ext: DynExtension = Arc::new(tokio::sync::RwLock::new(Box::new(Ext {
+            calls: calls.clone(),
+        })));
+        state
+            .extensions
+            .registry
+            .register(id.into(), ext)
+            .await
+            .unwrap();
+        state.extensions.store.save(&base_record(id)).unwrap();
+
+        let params = json!({});
+        let issued =
+            neomind_core::extension::prepare_and_issue_for_chat(id, "ping", &params).unwrap();
+        neomind_core::extension::authorize_prepared_for_chat(
+            &issued.operation_id,
+            &issued.capability_generation,
+            &issued.param_fingerprint,
+        )
+        .unwrap();
+
+        let prepared = prepare_or_consume_extension_invoke(
+            &state,
+            id,
+            "ping",
+            &params,
+            Some(&issued.operation_id),
+            ExtensionCallerKind::AiChat,
+        )
+        .await
+        .expect("AiChat with valid token must consume");
+        assert_eq!(prepared.operation_id, issued.operation_id);
+
+        // Single-consume: second attempt fails at consume (token gone).
+        let err = prepare_or_consume_extension_invoke(
+            &state,
+            id,
+            "ping",
+            &params,
+            Some(&issued.operation_id),
+            ExtensionCallerKind::AiChat,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 }
