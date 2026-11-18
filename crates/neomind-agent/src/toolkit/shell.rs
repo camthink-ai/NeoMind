@@ -1288,7 +1288,7 @@ pub(crate) fn bind_extension_invoke_prepared_token(
     use clap::Parser;
     use neomind_cli_ops::dispatch::commands::{Args, Command, ExtensionCommand};
 
-    let host = neomind_cli_ops::dispatch::peek_extension_invoke_host_context_or_test();
+    let host = neomind_cli_ops::dispatch::peek_extension_invoke_host_context();
     let host_op = host
         .as_ref()
         .and_then(|h| h.prepared_operation_id.clone());
@@ -1448,26 +1448,61 @@ fn extension_invoke_host_context_from_args(
 
 /// Annotate localhost API transport failures so PreferKnown / recovery can
 /// distinguish transport from extension business errors (NM-247 / 10:50 weather).
+///
+/// Kind comes from [`neomind_cli_ops::ApiClient`] prefixes (`http_timeout:` /
+/// `http_connect:` / `http_transport:`) when available:
+/// - **connect refuse** → not submitted (body not reached)
+/// - **timeout / ambiguous send** → result unknown (request may have been
+///   accepted; do not claim "not executed" or auto-resend)
 fn classify_extension_transport_error(msg: &str) -> String {
     let lower = msg.to_lowercase();
-    let looks_transport = (lower.contains("error sending request")
+    let local = lower.contains("9375")
+        || lower.contains("localhost")
+        || lower.contains("127.0.0.1")
+        || lower.contains("/api/extensions/")
+        || lower.starts_with("http_timeout:")
+        || lower.starts_with("http_connect:")
+        || lower.starts_with("http_transport:");
+    if !local {
+        return msg.to_string();
+    }
+
+    let is_timeout = lower.starts_with("http_timeout:")
+        || lower.contains("http_timeout:")
+        || ((lower.contains("timed out") || lower.contains("timeout"))
+            && !lower.contains("http_connect:"));
+    let is_connect = lower.starts_with("http_connect:")
+        || lower.contains("http_connect:")
         || lower.contains("connection refused")
         || lower.contains("connect error")
-        || lower.contains("timed out")
-        || lower.contains("timeout"))
-        && (lower.contains("9375")
-            || lower.contains("localhost")
-            || lower.contains("127.0.0.1")
-            || lower.contains("/api/extensions/"));
-    if looks_transport {
+        || lower.contains("failed to connect")
+        || lower.contains("dns error");
+    let looks_transport = is_timeout
+        || is_connect
+        || lower.starts_with("http_transport:")
+        || lower.contains("error sending request");
+
+    if !looks_transport {
+        return msg.to_string();
+    }
+
+    if is_connect && !is_timeout {
         format!(
             "transport error (localhost API): {msg}. \
-             Stage=transport — extension business body was not reached. \
-             PreferKnown of this failure is not a new execution; retry the \
-             business call with `_new_operation: true` after the API is reachable."
+             Stage=transport — connection failed before submit; extension \
+             business body was not reached (not submitted). PreferKnown of \
+             this failure is not a new execution; retry the business call \
+             after the API is reachable."
         )
     } else {
-        msg.to_string()
+        // Timeout or ambiguous send: request may already have hit the server.
+        format!(
+            "transport error (localhost API): {msg}. \
+             Stage=transport — result unknown (request may already have been \
+             submitted; do not assume 'not executed'). PreferKnown of a prior \
+             failure is not a new execution. Before `_new_operation`, check \
+             ledger / inquire status / re-auth; do not auto-resend on timeout alone."
+        )
     }
 }
 
@@ -3177,6 +3212,26 @@ mod nm247_structured_params_tests {
         )
         .await;
         invalidate_instance_capability(id);
+    }
+
+    #[test]
+    fn transport_connect_refuse_is_not_submitted() {
+        let msg = "http_connect: error sending request for url (http://localhost:9375/api/extensions/weather/invoke): connection refused";
+        let out = super::classify_extension_transport_error(msg);
+        assert!(out.contains("not submitted"), "{out}");
+        assert!(out.contains("not reached"), "{out}");
+        assert!(!out.contains("result unknown"), "{out}");
+    }
+
+    #[test]
+    fn transport_timeout_is_result_unknown_no_auto_resend() {
+        let msg = "http_timeout: error sending request for url (http://localhost:9375/api/extensions/weather/invoke): operation timed out";
+        let out = super::classify_extension_transport_error(msg);
+        assert!(out.contains("result unknown"), "{out}");
+        assert!(!out.contains("not reached"), "{out}");
+        assert!(!out.contains("not submitted"), "{out}");
+        assert!(out.contains("do not auto-resend"), "{out}");
+        assert!(out.contains("ledger"), "{out}");
     }
 }
 

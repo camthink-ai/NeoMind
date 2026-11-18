@@ -632,6 +632,13 @@ pub(crate) async fn refresh_tool_registry_disabled(state: &ServerState) {
     {
         if let Ok(records) = store.load_all() {
             for r in records {
+                // Keep AI catalog visibility in sync with the same policy
+                // `extension commands` / invoke enforce (NM-247).
+                neomind_core::extension::set_instance_ai_visibility(
+                    &r.id,
+                    r.ai_enabled,
+                    r.disabled_commands.clone(),
+                );
                 if !r.ai_enabled {
                     // AI master off: every command of this extension is hidden
                     // from the LLM. Run/load `enabled` is intentionally ignored

@@ -420,11 +420,11 @@ pub fn build_input_schema(parameters: &[ParameterDefinition]) -> Value {
             "description": param.description,
         });
 
+        // Only MetricDataType::Enum is a closed set. Plain `options` are
+        // author suggestions / hints (weather city list) — validation still
+        // accepts values outside the list (compat with free-text + hints).
         if let MetricDataType::Enum { options } = &param.param_type {
             param_schema["enum"] = json!(options);
-        } else if !param.options.is_empty() {
-            // String params with author options (e.g. weather city list).
-            param_schema["enum"] = json!(param.options);
         }
 
         if let Some(default_val) = &param.default_value {
@@ -1039,6 +1039,22 @@ struct PrepareableSnapshot {
     capability_generation: CapabilityGeneration,
 }
 
+/// Host AI visibility for one instance (mirrors ExtensionRecord toggles).
+#[derive(Clone, Debug)]
+struct InstanceAiVisibility {
+    ai_enabled: bool,
+    disabled_commands: Vec<String>,
+}
+
+impl Default for InstanceAiVisibility {
+    fn default() -> Self {
+        Self {
+            ai_enabled: true,
+            disabled_commands: Vec::new(),
+        }
+    }
+}
+
 struct CapCache {
     /// instance_id → current load-lifecycle generation token.
     generation: HashMap<String, CapabilityGeneration>,
@@ -1046,6 +1062,8 @@ struct CapCache {
     caps: HashMap<String, CachedCap>,
     /// instance_id → prepareable catalog for the current generation.
     prepareable: HashMap<String, PrepareableSnapshot>,
+    /// instance_id → Chat/Agent AI visibility (ai_enabled / disabled_commands).
+    ai_visibility: HashMap<String, InstanceAiVisibility>,
 }
 
 fn cap_cache() -> &'static Mutex<CapCache> {
@@ -1055,8 +1073,38 @@ fn cap_cache() -> &'static Mutex<CapCache> {
             generation: HashMap::new(),
             caps: HashMap::new(),
             prepareable: HashMap::new(),
+            ai_visibility: HashMap::new(),
         })
     })
+}
+
+/// Publish Chat/Agent AI visibility for an instance (same policy as
+/// `extension commands` / invoke: `ai_enabled`, `disabled_commands`).
+/// Call from AI toggle handlers and tool-disable bootstrap.
+pub fn set_instance_ai_visibility(
+    instance_id: &str,
+    ai_enabled: bool,
+    disabled_commands: Vec<String>,
+) {
+    if let Ok(mut guard) = cap_cache().lock() {
+        guard.ai_visibility.insert(
+            instance_id.to_string(),
+            InstanceAiVisibility {
+                ai_enabled,
+                disabled_commands,
+            },
+        );
+    }
+}
+
+fn command_visible_to_ai(cmd: &ExtensionCommand, vis: &InstanceAiVisibility) -> bool {
+    if !vis.ai_enabled {
+        return false;
+    }
+    if !cmd.ai_exposed {
+        return false;
+    }
+    !vis.disabled_commands.iter().any(|c| c == &cmd.name)
 }
 
 fn versioned_key(instance_id: &str, command: &str, generation: &str) -> String {
@@ -1085,9 +1133,10 @@ fn publish_prepareable_snapshot(snapshot: &ExtensionCommandSnapshot) {
 
 /// Short AI extension catalog for capability context (NM-247).
 ///
-/// Lines: `id — one-line` from the published prepareable snapshot (AI-exposed
-/// commands only). Budget-capped. Full schemas stay on-demand via
-/// `neomind extension commands <id>`.
+/// Same AI visibility as `extension commands` / invoke: `ai_enabled`,
+/// `disabled_commands`, and descriptor `ai_exposed`. Byte budget counts
+/// complete entries only (no truncated mid-line). Full schemas stay
+/// on-demand via `neomind extension commands <id>`.
 pub fn format_ai_extension_catalog(max_lines: usize, max_bytes: usize) -> String {
     let entries: Vec<(String, String)> = {
         let Ok(guard) = cap_cache().lock() else {
@@ -1095,10 +1144,15 @@ pub fn format_ai_extension_catalog(max_lines: usize, max_bytes: usize) -> String
         };
         let mut out = Vec::new();
         for (id, snap) in guard.prepareable.iter() {
+            let vis = guard
+                .ai_visibility
+                .get(id)
+                .cloned()
+                .unwrap_or_default();
             let ai_cmds: Vec<_> = snap
                 .commands
                 .iter()
-                .filter(|c| c.ai_exposed)
+                .filter(|c| command_visible_to_ai(c, &vis))
                 .collect();
             if ai_cmds.is_empty() {
                 continue;
@@ -1110,7 +1164,6 @@ pub fn format_ai_extension_catalog(max_lines: usize, max_bytes: usize) -> String
                     if d.is_empty() {
                         format!("{} command(s)", ai_cmds.len())
                     } else {
-                        // Keep one short sentence.
                         d.chars().take(80).collect::<String>()
                     }
                 })
@@ -1123,23 +1176,44 @@ pub fn format_ai_extension_catalog(max_lines: usize, max_bytes: usize) -> String
     if entries.is_empty() {
         return String::new();
     }
-    let mut s = String::from("\n### AI Extensions\n");
-    for (n, (id, line)) in entries.into_iter().enumerate() {
-        if n >= max_lines || s.len() >= max_bytes {
-            s.push_str("- … (truncated; run `neomind extension list`)\n");
+    let header = "\n### AI Extensions\n";
+    let footer =
+        "Discover: `neomind extension commands <id>` then invoke with shell `params`.\n";
+    let trunc = "- … (truncated; run `neomind extension list`)\n";
+    let mut s = String::from(header);
+    let mut n = 0usize;
+    let mut omitted = false;
+    for (id, line) in &entries {
+        let entry = format!("- {id} — {line}\n");
+        let next_len = s.len() + entry.len() + footer.len();
+        if n >= max_lines || next_len > max_bytes {
+            omitted = true;
             break;
         }
-        s.push_str(&format!("- {id} — {line}\n"));
+        s.push_str(&entry);
+        n += 1;
     }
-    s.push_str("Discover: `neomind extension commands <id>` then invoke with shell `params`.\n");
+    if n == 0 {
+        // First complete entry did not fit the budget — omit catalog rather
+        // than emit a partial line.
+        return String::new();
+    }
+    if omitted {
+        if s.len() + trunc.len() + footer.len() <= max_bytes {
+            s.push_str(trunc);
+        }
+    }
+    s.push_str(footer);
     s
 }
 
 /// Build a params example that passes [`validate_and_normalize`].
 ///
-/// Prefer author `samples`, then schema enum/default. Empty string only when
-/// the schema allows it (not invented). Returns `None` when no reliable
-/// example exists — callers should point at param docs instead.
+/// Prefer author `samples`, then closed schema `enum` / default, then
+/// non-Enum `options` as **hints** (sampled then validated against the
+/// original schema — never hardened into enum). Empty string only when the
+/// schema allows it (not invented). Returns `None` when no reliable example
+/// exists — callers should point at param docs instead.
 pub fn validated_params_example_for_command(cmd: &ExtensionCommand) -> Option<Value> {
     let schema = build_input_schema(&cmd.parameters);
     for sample in &cmd.samples {
@@ -1147,14 +1221,38 @@ pub fn validated_params_example_for_command(cmd: &ExtensionCommand) -> Option<Va
             return Some(sample.clone());
         }
     }
-    let generated = params_example_from_schema_value(&schema);
+    let generated = params_example_from_schema_and_hints(&schema, &cmd.parameters);
     match generated {
         Some(ex) if validate_and_normalize(&schema, &ex).is_ok() => Some(ex),
         _ => None,
     }
 }
 
-fn params_example_from_schema_value(schema: &Value) -> Option<Value> {
+fn option_hints_for_param<'a>(
+    name: &str,
+    parameters: &'a [ParameterDefinition],
+) -> Option<&'a [String]> {
+    parameters.iter().find_map(|p| {
+        if p.name != name {
+            return None;
+        }
+        // Closed Enum already lands in schema.enum; hints are for non-Enum
+        // ParameterDefinition.options only.
+        if matches!(p.param_type, MetricDataType::Enum { .. }) {
+            return None;
+        }
+        if p.options.is_empty() {
+            None
+        } else {
+            Some(p.options.as_slice())
+        }
+    })
+}
+
+fn params_example_from_schema_and_hints(
+    schema: &Value,
+    parameters: &[ParameterDefinition],
+) -> Option<Value> {
     let props = schema.get("properties")?.as_object()?;
     let required: std::collections::HashSet<&str> = schema
         .get("required")
@@ -1174,22 +1272,14 @@ fn params_example_from_schema_value(schema: &Value) -> Option<Value> {
             d.clone()
         } else if let Some(en) = prop.get("enum").and_then(|e| e.as_array()) {
             en.first()?.clone()
+        } else if let Some(hints) = option_hints_for_param(key, parameters) {
+            json!(hints.first()?.clone())
         } else {
             match prop.get("type").and_then(|t| t.as_str()) {
                 Some("string") => {
-                    // Empty string only when explicitly allowed (minLength 0 or absent
-                    // with no other constraint). Prefer omitting unreliable strings.
-                    let min_len = prop
-                        .get("minLength")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    if min_len == 0 && prop.get("pattern").is_none() && prop.get("enum").is_none()
-                    {
-                        // Required free-form string without docs → unreliable.
-                        // Omit from example rather than inventing a non-empty value.
-                        continue;
-                    }
-                    return None;
+                    // Required free-form string without enum/default/hints →
+                    // unreliable. Omit rather than invent "" or a city name.
+                    continue;
                 }
                 Some("number") | Some("integer") => json!(0),
                 Some("boolean") => json!(false),
@@ -1203,7 +1293,6 @@ fn params_example_from_schema_value(schema: &Value) -> Option<Value> {
             break;
         }
     }
-    // If required keys are missing from the example, it is incomplete.
     for req in &required {
         if !obj.contains_key(*req) {
             return None;
@@ -2921,16 +3010,53 @@ mod tests {
     }
 
     #[test]
-    fn nm247_params_example_uses_options_not_empty_string() {
+    fn nm247_params_example_uses_options_as_hints_not_enum() {
         let cmd = weather_get_undeclared();
-        let ex = validated_params_example_for_command(&cmd).expect("reliable example");
+        let schema = build_input_schema(&cmd.parameters);
+        assert!(
+            schema["properties"]["city"].get("enum").is_none(),
+            "non-Enum options must not become schema enum"
+        );
+        // Valid but not in options — free-text + hints still accepts.
+        assert!(validate_and_normalize(&schema, &json!({"city": "Xiamen"})).is_ok());
+        let ex = validated_params_example_for_command(&cmd).expect("hint sample");
         assert_eq!(ex.get("city").and_then(|c| c.as_str()), Some("Beijing"));
-        // Schema now carries enum from options.
+        assert!(validate_and_normalize(&schema, &ex).is_ok());
+    }
+
+    #[test]
+    fn nm247_enum_param_stays_closed() {
+        let cmd = ExtensionCommand {
+            name: "pick".into(),
+            display_name: "Pick".into(),
+            description: "Closed enum".into(),
+            parameters: vec![ParameterDefinition {
+                name: "mode".into(),
+                display_name: "Mode".into(),
+                description: "Mode".into(),
+                param_type: MetricDataType::Enum {
+                    options: vec!["safe".into(), "fast".into()],
+                },
+                required: true,
+                default_value: None,
+                min: None,
+                max: None,
+                options: vec![],
+            }],
+            ..Default::default()
+        };
         let schema = build_input_schema(&cmd.parameters);
         assert_eq!(
-            schema["properties"]["city"]["enum"],
-            json!(["Beijing"])
+            schema["properties"]["mode"]["enum"],
+            json!(["safe", "fast"])
         );
+        let err = validate_and_normalize(&schema, &json!({"mode": "other"})).unwrap_err();
+        assert!(
+            err.contains("enum") || err.contains("one of") || err.contains("allowed"),
+            "closed enum must reject outside value: {err}"
+        );
+        let ex = validated_params_example_for_command(&cmd).unwrap();
+        assert_eq!(ex.get("mode").and_then(|v| v.as_str()), Some("safe"));
     }
 
     #[test]
@@ -2951,6 +3077,7 @@ mod tests {
             ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![weather_get_undeclared()], gen)
                 .publish_capabilities()
                 .unwrap();
+            set_instance_ai_visibility(id, true, vec![]);
         }
         let catalog = format_ai_extension_catalog(12, 2000);
         assert!(catalog.contains("weather-nm247-cat"), "{catalog}");
@@ -2961,6 +3088,90 @@ mod tests {
             "must teach commands discovery: {catalog}"
         );
         for id in ["weather-nm247-cat", "ocr-nm247-cat", "yolo-nm247-cat"] {
+            invalidate_instance_capability(id);
+        }
+    }
+
+    #[test]
+    fn nm247_catalog_honors_ai_enabled_and_disabled_commands() {
+        let id = "weather-nm247-ai-vis";
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        let mut get = weather_get_undeclared();
+        let mut hidden = weather_get_undeclared();
+        hidden.name = "hidden_cmd".into();
+        hidden.ai_exposed = false;
+        let mut other = weather_get_undeclared();
+        other.name = "forecast".into();
+        ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![get.clone(), hidden, other], gen)
+            .publish_capabilities()
+            .unwrap();
+
+        set_instance_ai_visibility(id, true, vec![]);
+        let on = format_ai_extension_catalog(12, 2000);
+        assert!(on.contains(id), "AI on must list: {on}");
+
+        set_instance_ai_visibility(id, false, vec![]);
+        let off = format_ai_extension_catalog(12, 2000);
+        assert!(
+            !off.contains(id),
+            "ai_enabled=false must hide whole extension: {off}"
+        );
+
+        set_instance_ai_visibility(id, true, vec!["get_weather".into(), "forecast".into()]);
+        let one_off = format_ai_extension_catalog(12, 2000);
+        assert!(
+            !one_off.contains(id),
+            "all AI-visible cmds disabled → omit extension: {one_off}"
+        );
+
+        set_instance_ai_visibility(id, true, vec!["get_weather".into()]);
+        let partial = format_ai_extension_catalog(12, 2000);
+        assert!(
+            partial.contains(id),
+            "re-enable via remaining cmd must list: {partial}"
+        );
+
+        // ai_exposed=false alone never lists that command; with only that left, omit.
+        get.ai_exposed = false;
+        let gen2 = begin_instance_generation(id);
+        ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![get], gen2)
+            .publish_capabilities()
+            .unwrap();
+        set_instance_ai_visibility(id, true, vec![]);
+        let author_hide = format_ai_extension_catalog(12, 2000);
+        assert!(
+            !author_hide.contains(id),
+            "ai_exposed=false only → omit: {author_hide}"
+        );
+
+        invalidate_instance_capability(id);
+    }
+
+    #[test]
+    fn nm247_catalog_byte_budget_keeps_complete_entries() {
+        for id in ["a-nm247-budget", "b-nm247-budget", "c-nm247-budget"] {
+            invalidate_instance_capability(id);
+            let gen = begin_instance_generation(id);
+            ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![weather_get_undeclared()], gen)
+                .publish_capabilities()
+                .unwrap();
+            set_instance_ai_visibility(id, true, vec![]);
+        }
+        // Tiny budget: only complete lines fit; never a mid-line cut of an id.
+        let catalog = format_ai_extension_catalog(12, 120);
+        if !catalog.is_empty() {
+            for line in catalog.lines() {
+                if let Some(rest) = line.strip_prefix("- ") {
+                    let id = rest.split(" — ").next().unwrap_or("");
+                    assert!(
+                        !id.is_empty() && !id.ends_with('…'),
+                        "must not emit truncated entry id: {line}"
+                    );
+                }
+            }
+        }
+        for id in ["a-nm247-budget", "b-nm247-budget", "c-nm247-budget"] {
             invalidate_instance_capability(id);
         }
     }

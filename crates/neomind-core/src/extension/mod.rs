@@ -40,8 +40,9 @@ pub use command_contract::{
     find_authorized_prepared, format_ai_extension_catalog, from_extension_command,
     invalidate_instance_capability, parse_extension_tool_name, peek_prepared_invoke,
     prepare_and_issue_for_chat, prepare_invoke, remember_capability, resolve_capability,
-    sync_effect_for_invoke, sync_replay_for_invoke, type_base_of, validate_and_normalize,
-    validate_params, validated_params_example_for_command, BusinessCommandDef, CapabilityGeneration,
+    set_instance_ai_visibility, sync_effect_for_invoke, sync_replay_for_invoke, type_base_of,
+    validate_and_normalize, validate_params, validated_params_example_for_command,
+    BusinessCommandDef, CapabilityGeneration,
     CapabilitySource, ChatInvokeBind, EffectiveCommandCapability, ExtensionCallerKind,
     ExtensionCommandSnapshot, InvokeTarget, PrepareInvokeRequest, PreparedInvoke, CONTRACT_VERSION,
 };

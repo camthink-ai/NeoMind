@@ -3561,6 +3561,12 @@ async fn apply_persisted_tool_disabled_state(
         if r.uninstalled {
             continue;
         }
+        // Same AI visibility the capability catalog uses (NM-247).
+        neomind_core::extension::set_instance_ai_visibility(
+            &r.id,
+            r.ai_enabled,
+            r.disabled_commands.clone(),
+        );
         if !r.ai_enabled {
             // AI master off: enumerate live commands to materialize tool names.
             if let Some(info) = runtime.get(&r.id).await {

@@ -17,10 +17,9 @@ pub mod host_context;
 
 pub use capability::{classify_argv, classify_parsed_command, CliSideEffect};
 pub use host_context::{
-    peek_extension_invoke_host_context, peek_extension_invoke_host_context_or_test,
-    set_extension_invoke_host_context, take_extension_invoke_host_context,
-    with_extension_invoke_host_context, ExtensionInvokeHostContext,
-    ExtensionInvokeHostContextGuard,
+    peek_extension_invoke_host_context, set_extension_invoke_host_context,
+    take_extension_invoke_host_context, with_extension_invoke_host_context,
+    ExtensionInvokeHostContext,
 };
 
 use crate::types::CliResponse;

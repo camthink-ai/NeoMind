@@ -75,7 +75,7 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
                 prepared_operation_id,
             } => {
                 // Host ticket (NM-247) or legacy argv token: peek only (no remint).
-                let host = super::host_context::peek_extension_invoke_host_context_or_test();
+                let host = super::host_context::peek_extension_invoke_host_context();
                 let host_op = host.as_ref().and_then(|h| h.prepared_operation_id.clone());
                 let op_peek = host_op.as_deref().or(prepared_operation_id.as_deref());
                 if let Some(op_id) = op_peek {
