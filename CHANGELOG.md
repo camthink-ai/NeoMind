@@ -69,6 +69,9 @@ Edge-AI capability iteration merged to `main`: CamThink CT-Prov/1 BLE onboarding
 - Legacy Extension ops gated behind dry-run Pure policy (no silent Production side effects from Test).
 - NM-160–170 / residual surfaces: Unicode safety, WS reject terminal, shell argv, test-code dry-run, FE races, placeholder 0.0, persist ref cap, tool compress, transform blocked marker / fail warnings / preprocess gate, inline-at DEV gate, extract_object ASCII, Reference no-zero, explain/confirm/budget/draft/ref cleanups.
 
+### Fixed — Docker / llama-server appliance build
+- Dockerfile llama.cpp pin was still **b10545** while the product pin is **b12359**; cmake failed building `llama-server` because the HF prebuilt llama-ui archive lacks `workbox[hash].js` (gmake only showed the final `llama-server` rule). Appliance stage now builds **b12359** with `-DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF`, matches `build-llama-server.sh` AMX/armv8.2 flags, and `check_llama_pin_sync.py` covers the Dockerfile tarball tag.
+
 ### Test
 - Mentions search/resolve + ChatComposer/IME/InlineAt vitest; Transform test-status; Rule explain; command delivery ladder; Agent evidence derive; Plan E acceptance units; Plan F `test_business_capability_48` 7/7.
 - contentNodes persistence + chip→nodes vitest; SessionMessage camelCase round-trip; pending-node attach; mutating write fingerprint + task_continuity 10/10.

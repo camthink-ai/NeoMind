@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """llama.cpp version-pin sync checker.
 
-The llama.cpp runtime tag is pinned in four places that must move together
+The llama.cpp runtime tag is pinned in five places that must move together
 (see the bump-policy comment atop crates/neomind-core/src/builtin_llm/
 runtime.rs):
 
@@ -11,7 +11,9 @@ runtime.rs):
                               (what the bundled desktop/Tauri binary builds)
   3. LLAMA_VERSION default  — scripts/install.sh
                               (what a fresh server install downloads)
-  4. self-hosted asset names — llama-server-b<tag>-… constants/constructors in
+  4. Dockerfile tarball tag — Dockerfile llamaserver stage
+                              (appliance image builds llama-server from source)
+  5. self-hosted asset names — llama-server-b<tag>-… constants/constructors in
                               the same core file (embedded tag must match)
 
 A drift here ships mixed runtimes: e.g. install.sh pulls an older llama.cpp
@@ -35,8 +37,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CORE_RUNTIME = REPO_ROOT / "crates" / "neomind-core" / "src" / "builtin_llm" / "runtime.rs"
 BUILD_SCRIPT = REPO_ROOT / "scripts" / "build-llama-server.sh"
 INSTALL_SCRIPT = REPO_ROOT / "scripts" / "install.sh"
+DOCKERFILE = REPO_ROOT / "Dockerfile"
 
 TAG_RE = re.compile(r"^b\d{4,7}$")
+DOCKER_TAG_RE = re.compile(
+    r"https://github\.com/ggml-org/llama\.cpp/archive/refs/tags/(b\d{4,7})\.tar\.gz"
+)
 
 
 def core_pin() -> str:
@@ -54,6 +60,16 @@ def script_default(path: Path, var: str) -> str:
     if not m:
         sys.exit(f"FATAL: {var} default not found in {path.name}")
     return m.group(1)
+
+
+def dockerfile_pin() -> str:
+    src = DOCKERFILE.read_text(encoding="utf-8")
+    tags = DOCKER_TAG_RE.findall(src)
+    if not tags:
+        sys.exit("FATAL: llama.cpp tarball tag not found in Dockerfile")
+    if len(set(tags)) != 1:
+        sys.exit(f"FATAL: Dockerfile has multiple llama.cpp tags: {tags}")
+    return tags[0]
 
 
 def asset_name_tags() -> list[str]:
@@ -75,12 +91,14 @@ def main() -> int:
     pin = core_pin()
     build_tag = script_default(BUILD_SCRIPT, "LLAMA_CPP_TAG")
     install_tag = script_default(INSTALL_SCRIPT, "LLAMA_VERSION")
+    docker_tag = dockerfile_pin()
     asset_tags = asset_name_tags()
 
     sites = {
         "core LLAMA_CPP_VERSION": pin,
         "build-llama-server.sh LLAMA_CPP_TAG": build_tag,
         "install.sh LLAMA_VERSION": install_tag,
+        "Dockerfile llama.cpp tarball": docker_tag,
         **{f"asset name #{i + 1}": t for i, t in enumerate(asset_tags)},
     }
 
@@ -98,7 +116,8 @@ def main() -> int:
         print(
             "Bump all sites together (see the bump-policy comment atop\n"
             "crates/neomind-core/src/builtin_llm/runtime.rs): core pin, both\n"
-            "scripts' defaults, and the self-hosted asset names/SHAs."
+            "scripts' defaults, Dockerfile tarball tag, and the self-hosted\n"
+            "asset names/SHAs."
         )
 
     return 0 if ok else 1

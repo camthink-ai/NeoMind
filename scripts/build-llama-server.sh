@@ -64,7 +64,10 @@ echo "📥 cloning llama.cpp @ $LLAMA_CPP_TAG ..."
 git clone --depth 1 --branch "$LLAMA_CPP_TAG" \
   https://github.com/ggml-org/llama.cpp.git "$WORK/llama.cpp" -q
 
-CMAKE_FLAGS=(-DLLAMA_CURL=OFF -DGGML_LLAMAFILE=OFF)
+# LLAMA_BUILD_UI + LLAMA_USE_PREBUILT_UI both OFF: NeoMind only needs the
+# OpenAI-compatible API. HF prebuilt llama-ui currently lacks workbox and
+# fails cmake (Docker v1.3.0 / local builds with defaults).
+CMAKE_FLAGS=(-DLLAMA_CURL=OFF -DGGML_LLAMAFILE=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF)
 case "$TARGET" in
   aarch64-apple-darwin|x86_64-apple-darwin)  CMAKE_FLAGS+=(-DGGML_METAL=ON) ;;
   x86_64-unknown-linux-gnu)                  CMAKE_FLAGS+=(-DGGML_AMX_INT8=OFF) ;;

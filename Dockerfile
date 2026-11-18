@@ -35,7 +35,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 2: Build backend (ubuntu:22.04 = glibc 2.35, matches bare-metal)
 # ---------------------------------------------------------------------------
-FROM --platform=$TARGETPLATFORM ubuntu:22.04 AS backend
+FROM ubuntu:22.04 AS backend
 
 ARG TARGETARCH
 ENV DEBIAN_FRONTEND=noninteractive
@@ -111,32 +111,39 @@ RUN find crates/ -name "*.rs" -exec touch {} + && \
     cargo build --release -p neomind-cli -p neomind-extension-runner
 
 # ---------------------------------------------------------------------------
-# Stage 3: Runtime (ubuntu:22.04 = glibc 2.35, same as build)
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # Stage 3: Bundled llama-server (llama.cpp) for the builtin LFM model.
+#   Pin MUST match LLAMA_CPP_VERSION (scripts/check_llama_pin_sync.py).
 #   amd64 → GGML_AMX_INT8=OFF (llama.cpp #19184: AMX breaks LFM shortconv)
-#   arm64 → default (NEON)
+#   arm64 → GGML_NATIVE=OFF + armv8.2-a (no SVE; Neoverse hosts SIGILL on Orin)
+#   UI off → NeoMind only needs the OpenAI-compatible API; HF prebuilt UI
+#            currently ships without workbox and fails cmake (v1.3.0 docker).
 # ---------------------------------------------------------------------------
-FROM --platform=$TARGETPLATFORM ubuntu:22.04 AS llamaserver
+FROM ubuntu:22.04 AS llamaserver
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates cmake build-essential \
     && rm -rf /var/lib/apt/lists/*
 # curl+tarball (not git clone) — Docker build networks often block git; the
 # tarball is a plain HTTPS GET and is uniformly reliable.
 RUN curl -fsSL -o /tmp/llama.cpp.tar.gz \
-      https://github.com/ggml-org/llama.cpp/archive/refs/tags/b10545.tar.gz \
+      https://github.com/ggml-org/llama.cpp/archive/refs/tags/b12359.tar.gz \
     && mkdir -p /build/llama.cpp \
     && tar -xzf /tmp/llama.cpp.tar.gz -C /build/llama.cpp --strip-components=1 \
     && rm /tmp/llama.cpp.tar.gz
 WORKDIR /build/llama.cpp
-RUN if [ "$TARGETARCH" = "amd64" ]; then \
-      cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_AMX_INT8=OFF; \
-    else \
-      cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF; \
-    fi \
+RUN set -eu; \
+    flags="-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_CURL=OFF -DGGML_LLAMAFILE=OFF -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF"; \
+    if [ "$TARGETARCH" = "amd64" ]; then \
+      flags="$flags -DGGML_AMX_INT8=OFF"; \
+    elif [ "$TARGETARCH" = "arm64" ] || [ "$TARGETARCH" = "aarch64" ]; then \
+      flags="$flags -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.2-a"; \
+    fi; \
+    # shellcheck disable=SC2086 — intentional word-split of cmake flags
+    cmake -B build $flags \
     && cmake --build build --target llama-server -j"$(nproc)"
 
+# ---------------------------------------------------------------------------
+# Stage 4: Runtime (ubuntu:22.04 = glibc 2.35, same as build)
+# ---------------------------------------------------------------------------
 FROM ubuntu:22.04 AS runtime
 
 # Which builtin model to pre-bundle into the image (out-of-box agent use).
