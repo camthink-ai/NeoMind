@@ -208,13 +208,17 @@ async fn default_chat_ends_repeated_guide_loads_but_allows_new_guides() {
         .contains("Verified execution state"));
 }
 
-/// Text chat DEFAULT POLICY: a promise-shaped reply ends the turn with a
-/// LABEL — no behavioural retry (the 2026-10-21 A/B showed no lift and false
-/// labels were the observable cost). One LLM call, one SystemNote.
+/// Text chat DEFAULT POLICY (NM-250): foreshadow-only + no tool this turn
+/// gets exactly ONE bounded continue — without flipping `behavioral_guards`
+/// on. A second foreshadow ends with 「本次未取得结果」, not "Send continue".
 #[tokio::test]
-async fn text_path_chat_policy_labels_promise_without_extra_round() {
+async fn text_path_foreshadow_continue_once_then_no_result_note() {
     let narration = "好的，我现在使用 echo 工具来处理。";
-    let rt = MockLlmRuntime::new(vec![MockResponse::text(narration)]);
+    let still_foreshadow = "I'll try fetching the result next.";
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::text(narration),
+        MockResponse::text(still_foreshadow),
+    ]);
     let (iface, state, registry) = harness(&rt);
 
     let stream = crate::agent::streaming::process_stream_events_with_safeguards(
@@ -233,25 +237,107 @@ async fn text_path_chat_policy_labels_promise_without_extra_round() {
 
     assert_eq!(
         rt.call_count(),
-        1,
-        "chat policy must not launch a behavioural retry round"
+        2,
+        "default chat must bounded-continue once on foreshadow-only"
     );
-    assert!(!has_tool_call_start(&events, "echo"));
+    assert!(
+        !has_tool_call_start(&events, "echo"),
+        "second foreshadow must not invent a tool call"
+    );
     assert!(
         joined_content(&events).contains("我现在使用 echo"),
-        "the narration itself must reach the user"
+        "the foreshadow itself must reach the user"
     );
     let guard = state.read().await;
     let last = guard.memory.last().expect("final message persisted");
-    assert_eq!(&*last.content, narration);
-    assert_eq!(
-        last.system_notes.as_ref().map(|n| n.len()).unwrap_or(0),
-        1,
-        "a promise-shaped chat reply carries the progress-report label"
+    assert_eq!(&*last.content, still_foreshadow);
+    let notes = last.system_notes.as_ref().expect("no-result note");
+    assert_eq!(notes.len(), 1);
+    assert!(
+        notes[0].contains("本次未取得结果"),
+        "second foreshadow must not ask the user to type 继续, got: {}",
+        notes[0]
     );
     assert!(events
         .iter()
         .any(|e| matches!(e, AgentEvent::SystemNote { .. })));
+}
+
+/// NM-250 recovery under default chat: foreshadow → continue → tool → result.
+#[tokio::test]
+async fn text_path_foreshadow_continue_recovers_tool_call_without_behavioral_guards() {
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::text("I'll try fetching the weather for you."),
+        MockResponse::tool_call("echo", serde_json::json!({ "msg": "sunny" })),
+        MockResponse::text("今天晴，25°C。"),
+    ]);
+    let (iface, state, registry) = harness(&rt);
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        registry,
+        "今天天气怎么样",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+
+    assert!(
+        has_tool_call_start(&events, "echo"),
+        "foreshadow continue must recover a tool call under default chat"
+    );
+    let content = joined_content(&events);
+    assert!(
+        content.contains("今天晴"),
+        "final answer must be the recovered result, got: {content}"
+    );
+    let guard = state.read().await;
+    let last = guard.memory.last().expect("final message");
+    assert!(
+        last.system_notes.is_none(),
+        "a completed result must not carry the no-result note"
+    );
+}
+
+/// Accept anti: plan-only / "先别执行" must not tool and must not continue.
+#[tokio::test]
+async fn foreshadow_continue_suppressed_when_user_says_do_not_execute() {
+    let plan = "I'll fetch the weather via the weather-forecast extension.";
+    let rt = MockLlmRuntime::new(vec![MockResponse::text(plan)]);
+    let (iface, state, registry) = harness(&rt);
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        registry,
+        "告诉我你会怎么查，先别执行",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+
+    assert_eq!(
+        rt.call_count(),
+        1,
+        "plan-only must not launch foreshadow continue"
+    );
+    assert!(!has_tool_call_start(&events, "echo"));
+    let guard = state.read().await;
+    let last = guard.memory.last().expect("final message");
+    assert_eq!(&*last.content, plan);
+    assert!(
+        last.system_notes.is_none(),
+        "a requested explanation is not a failed turn"
+    );
 }
 
 /// The latent behavioural path stays tested (and re-enableable): with the

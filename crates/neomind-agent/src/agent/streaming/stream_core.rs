@@ -75,14 +75,17 @@ pub struct StreamSafeguards {
 
     /// Whether the BEHAVIOURAL guards (narration nudge, list-only coercion,
     /// explore recovery) may run on this path. Default **false**: interactive
-    /// chat keeps only zero-cost labels (promise backstop, completeness note).
+    /// chat keeps only zero-cost labels (promise backstop, completeness note)
+    /// **plus** NM-250's one foreshadow bounded continue (foreshadow-only +
+    /// no tool this turn) — that recovery is independent of this flag.
     ///
     /// Evidence (2026-10-21 A/B, 10 cases x 2 rounds, guards on vs off): no
     /// measurable lift, a weak harm signal (the one coercion-fired case timed
     /// out in both rounds while the off arm produced a verdict), and false
-    /// labels were the observable cost. Interactive users can say "continue";
-    /// the scheduled-agent executor (tool_loop) keeps its own nudge because
-    /// nobody is there to. Re-enable only with new evidence.
+    /// labels were the observable cost. Do **not** flip this whole suite on
+    /// for foreshadow stalls; use the narrow foreshadow continue instead.
+    /// The scheduled-agent executor (tool_loop) keeps its own nudge because
+    /// nobody is there to. Re-enable the full suite only with new evidence.
     pub behavioral_guards: bool,
 }
 
@@ -574,6 +577,11 @@ pub async fn process_stream_events_with_safeguards(
             const NARRATION_NUDGE_MAX: usize = 1;
             let mut narration_nudges = 0usize;
             let mut narration_nudge_pending: Option<String> = None;
+            // NM-250: one foreshadow continue under default chat policy
+            // (`behavioral_guards` off). Independent of narration_nudges so
+            // opt-in behavioural path accounting stays unchanged.
+            let mut foreshadow_continues = 0usize;
+            const FORESHADOW_CONTINUE_MAX: usize = 1;
             // Cleaned narration from the round that triggered the nudge —
             // the restore source when the nudged round degenerates (see the
             // post-nudge degenerate guard near the final save). Always the
@@ -2686,56 +2694,127 @@ pub async fn process_stream_events_with_safeguards(
                     }
                     let mut raw_response = buffer.clone();
 
-                    // === NARRATION-COLLAPSE GUARD ===
+                    // === NARRATION-COLLAPSE / FORESHADOW CONTINUE ===
                     // The model promised an action in words but emitted no tool
                     // call. Intercept BEFORE the final-save path: record what it
-                    // said, nudge once, and run another round. Fires only with
-                    // round + wall-clock budget left; a second narration falls
-                    // through and is accepted as the final answer.
+                    // said, continue once, and run another round.
+                    //
+                    // Two gates share the same recovery round:
+                    //   1. opt-in `behavioral_guards` narration nudge (full suite)
+                    //   2. NM-250 foreshadow continue — default chat policy
+                    //      (`behavioral_guards` off): foreshadow-only + no tool
+                    //      this turn → exactly one bounded continue. Does NOT
+                    //      enable list-only coercion / explore recovery.
                     let is_narration_reply =
                         crate::agent::is_narration_without_action(&raw_response);
-                    let nudge_allowed = behavioral_guards
+                    let no_tools_this_turn = recently_executed_tools.is_empty()
+                        && recently_executed_commands.is_empty();
+                    let iteration_budget_left =
+                        tool_iteration_count < MAX_TOOL_ITERATIONS - 1;
+                    let wall_clock_left =
+                        turn_started_at.elapsed() < turn_wall_clock_budget;
+                    let behavioral_nudge_allowed = behavioral_guards
                         && !guards_disabled
                         && super::guard::should_nudge_narration(
-                        is_narration_reply,
-                        narration_nudges,
-                        NARRATION_NUDGE_MAX,
-                        no_execution_requested,
-                            tool_iteration_count < MAX_TOOL_ITERATIONS - 1,
-                            turn_started_at.elapsed() < turn_wall_clock_budget,
+                            is_narration_reply,
+                            narration_nudges,
+                            NARRATION_NUDGE_MAX,
+                            no_execution_requested,
+                            iteration_budget_left,
+                            wall_clock_left,
                         );
+                    let foreshadow_continue_allowed = !behavioral_guards
+                        && !guards_disabled
+                        && super::guard::should_foreshadow_continue(
+                            is_narration_reply,
+                            foreshadow_continues < FORESHADOW_CONTINUE_MAX,
+                            no_tools_this_turn,
+                            no_execution_requested,
+                            greeting_input,
+                            iteration_budget_left,
+                            wall_clock_left,
+                        );
+                    let nudge_allowed =
+                        behavioral_nudge_allowed || foreshadow_continue_allowed;
                     if !nudge_allowed && is_narration_reply {
-                        let (outcome, reason) = if guards_disabled {
-                            (super::guard::GuardOutcome::Suppressed, "guard_mode_off")
+                        let (kind, outcome, reason) = if guards_disabled {
+                            (
+                                super::guard::GuardKind::NarrationNudge,
+                                super::guard::GuardOutcome::Suppressed,
+                                "guard_mode_off",
+                            )
                         } else if no_execution_requested {
-                            (super::guard::GuardOutcome::Suppressed, "plan_only")
+                            (
+                                super::guard::GuardKind::NarrationNudge,
+                                super::guard::GuardOutcome::Suppressed,
+                                "plan_only",
+                            )
+                        } else if !behavioral_guards {
+                            let reason = if foreshadow_continues >= FORESHADOW_CONTINUE_MAX {
+                                "budget_exhausted"
+                            } else if !no_tools_this_turn {
+                                "tools_already_ran"
+                            } else if greeting_input {
+                                "greeting_input"
+                            } else if !iteration_budget_left {
+                                "iteration_cap"
+                            } else {
+                                "wall_clock"
+                            };
+                            (
+                                super::guard::GuardKind::ForeshadowContinue,
+                                super::guard::GuardOutcome::Skipped,
+                                reason,
+                            )
                         } else if narration_nudges >= NARRATION_NUDGE_MAX {
-                            (super::guard::GuardOutcome::Skipped, "budget_exhausted")
-                        } else if tool_iteration_count >= MAX_TOOL_ITERATIONS - 1 {
-                            (super::guard::GuardOutcome::Skipped, "iteration_cap")
+                            (
+                                super::guard::GuardKind::NarrationNudge,
+                                super::guard::GuardOutcome::Skipped,
+                                "budget_exhausted",
+                            )
+                        } else if !iteration_budget_left {
+                            (
+                                super::guard::GuardKind::NarrationNudge,
+                                super::guard::GuardOutcome::Skipped,
+                                "iteration_cap",
+                            )
                         } else {
-                            (super::guard::GuardOutcome::Skipped, "wall_clock")
+                            (
+                                super::guard::GuardKind::NarrationNudge,
+                                super::guard::GuardOutcome::Skipped,
+                                "wall_clock",
+                            )
                         };
-                        guard_ledger.record(
-                            super::guard::GuardKind::NarrationNudge,
-                            outcome,
-                            tool_iteration_count + 1,
-                            reason,
-                        );
+                        guard_ledger.record(kind, outcome, tool_iteration_count + 1, reason);
                     }
                     if nudge_allowed {
-                        guard_ledger.record(
-                            super::guard::GuardKind::NarrationNudge,
-                            super::guard::GuardOutcome::Fired,
-                            tool_iteration_count + 1,
-                            "promise_without_action",
-                        );
-                        narration_nudges += 1;
-                        tracing::info!(
-                            round = tool_iteration_count + 1,
-                            chars = raw_response.chars().count(),
-                            "Narration without tool call — nudging once"
-                        );
+                        if foreshadow_continue_allowed {
+                            guard_ledger.record(
+                                super::guard::GuardKind::ForeshadowContinue,
+                                super::guard::GuardOutcome::Fired,
+                                tool_iteration_count + 1,
+                                "foreshadow_without_tool",
+                            );
+                            foreshadow_continues += 1;
+                            tracing::info!(
+                                round = tool_iteration_count + 1,
+                                chars = raw_response.chars().count(),
+                                "Foreshadow without tool — bounded continue once"
+                            );
+                        } else {
+                            guard_ledger.record(
+                                super::guard::GuardKind::NarrationNudge,
+                                super::guard::GuardOutcome::Fired,
+                                tool_iteration_count + 1,
+                                "promise_without_action",
+                            );
+                            narration_nudges += 1;
+                            tracing::info!(
+                                round = tool_iteration_count + 1,
+                                chars = raw_response.chars().count(),
+                                "Narration without tool call — nudging once"
+                            );
+                        }
                         yield AgentEvent::progress(
                             "Retrying — promised action was not executed...".to_string(),
                             "executing",
@@ -2845,14 +2924,32 @@ pub async fn process_stream_events_with_safeguards(
                         );
                     }
                     if label_allowed {
-                        tracing::warn!(
-                            round = tool_iteration_count + 1,
-                            nudges = narration_nudges,
-                            "Turn ending on an action promise with guard budget spent — appending progress note"
-                        );
-                        // English only (decision 2026-10-10) — one fixed
-                        // language, locale-independent.
-                        let note = "The turn ended here (guard budget spent): the reply above is a progress report, not a completed result — the promised next step did NOT run. Send \"continue\" to resume from this point.".to_string();
+                        // NM-250: after the foreshadow continue already spent
+                        // its one shot (or default chat ends foreshadow-only
+                        // without asking the user to type 继续), prefer an
+                        // honest "no result" note. Opt-in behavioural path
+                        // keeps the legacy "Send continue" progress report.
+                        let used_foreshadow_continue = foreshadow_continues > 0;
+                        let default_chat_foreshadow_end =
+                            !behavioral_guards && is_narration_reply;
+                        let note = if used_foreshadow_continue || default_chat_foreshadow_end
+                        {
+                            tracing::warn!(
+                                round = tool_iteration_count + 1,
+                                foreshadow_continues,
+                                "Turn ending on foreshadow without a result — appending no-result note"
+                            );
+                            super::guard::foreshadow_no_result_note(&user_message)
+                        } else {
+                            tracing::warn!(
+                                round = tool_iteration_count + 1,
+                                nudges = narration_nudges,
+                                "Turn ending on an action promise with guard budget spent — appending progress note"
+                            );
+                            // English only (decision 2026-10-10) — one fixed
+                            // language, locale-independent.
+                            "The turn ended here (guard budget spent): the reply above is a progress report, not a completed result — the promised next step did NOT run. Send \"continue\" to resume from this point.".to_string()
+                        };
                         yield AgentEvent::system_note(note.clone());
                         turn_system_notes.push(note);
                     } else if let Some(note) = {

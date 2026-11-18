@@ -276,6 +276,25 @@ const ACTION_PROMISE_PATTERNS: &[&str] = &[
     "我来确认",
     "让我了解",
     "首先让我",
+    // 2026-11-18 NM-250: foreshadow-only weather turns used 「我来获取 /
+    // 我将查询 / 我会尝试…」shapes the older table missed — auto-continue
+    // and the incomplete-end label share this detector, so both missed.
+    "我将尝试",
+    "我会尝试",
+    "我来尝试",
+    "让我尝试",
+    "我将获取",
+    "我会获取",
+    "我来获取",
+    "让我获取",
+    "我将查询",
+    "我会查询",
+    "我来查询",
+    "让我查询",
+    "我将拉取",
+    "我会拉取",
+    "我来拉取",
+    "让我拉取",
     // English
     "i will use",
     "i'll use",
@@ -293,9 +312,23 @@ const ACTION_PROMISE_PATTERNS: &[&str] = &[
     "let me inspect",
     "i will check",
     "i'll check",
+    // 2026-11-18 NM-250 desktop: "I'll try fetching…" / "I'll fetch…" ended
+    // the turn with tools still available — table had use/run/check only.
+    "i will try",
+    "i'll try",
+    "i will fetch",
+    "i'll fetch",
+    "i will get",
+    "i'll get",
+    "let me try",
+    "let me fetch",
+    "let me get",
     "i'm going to use",
     "i'm going to call",
     "i'm going to run",
+    "i'm going to try",
+    "i'm going to fetch",
+    "i'm going to get",
 ];
 
 /// Max narration length eligible for the nudge — a long, complete analysis
@@ -1034,6 +1067,33 @@ mod narration_tests {
         assert!(is_narration_without_action(
             "I'm going to run the command now."
         ));
+    }
+
+    /// 2026-11-18 NM-250 desktop: weather turns ended on these foreshadow
+    /// shapes while tools were still available. Detector shared by
+    /// auto-continue and incomplete-end — both missed.
+    #[test]
+    fn detects_try_fetch_foreshadow_variants() {
+        assert!(is_narration_without_action(
+            "I'll try fetching the weather for you."
+        ));
+        assert!(is_narration_without_action(
+            "I'll fetch the current weather now."
+        ));
+        assert!(is_narration_without_action(
+            "I will try to get today's forecast."
+        ));
+        assert!(is_narration_without_action(
+            "Let me try fetching that for you."
+        ));
+        assert!(is_narration_without_action(
+            "I'm going to fetch the weather data."
+        ));
+        assert!(is_narration_without_action(
+            "好的，我来获取今天的天气信息。"
+        ));
+        assert!(is_narration_without_action("我会查询一下当前天气。"));
+        assert!(is_narration_without_action("我将尝试拉取天气预报。"));
     }
 
     /// The exact promise-only replies from the 2026-10-19 incident session

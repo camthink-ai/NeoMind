@@ -53,6 +53,10 @@ pub enum GuardKind {
     /// Behavioural guards (nudge / coercion / explore recovery) disabled by
     /// the chat policy; labels still run.
     BehavioralGuardsOff,
+    /// NM-250: one bounded continue when the turn ends on action foreshadow
+    /// with no tool this turn — independent of `behavioral_guards` so the
+    /// default chat policy can recover without flipping the full suite on.
+    ForeshadowContinue,
 }
 
 impl GuardKind {
@@ -73,6 +77,7 @@ impl GuardKind {
             GuardKind::PlanOnlySuppression => "plan_only_suppression",
             GuardKind::GuardsDisabled => "guards_disabled",
             GuardKind::BehavioralGuardsOff => "behavioral_guards_off",
+            GuardKind::ForeshadowContinue => "foreshadow_continue",
         }
     }
 }
@@ -218,6 +223,39 @@ pub fn should_label_narration(
     // small-model chatter, not a stalled turn. Same suppression rationale
     // as plan-only.
     is_narration && !no_execution_requested && !greeting_input
+}
+
+/// NM-250 foreshadow bounded continue: default chat keeps `behavioral_guards`
+/// off, but a foreshadow-only end with **no tool this turn** still deserves
+/// exactly one recovery round. Does NOT enable list-only coercion / explore
+/// recovery. Plan-only and greetings stay suppressed.
+pub fn should_foreshadow_continue(
+    is_foreshadow: bool,
+    continue_budget_left: bool,
+    no_tools_this_turn: bool,
+    no_execution_requested: bool,
+    greeting_input: bool,
+    iteration_budget_left: bool,
+    wall_clock_left: bool,
+) -> bool {
+    is_foreshadow
+        && no_tools_this_turn
+        && !no_execution_requested
+        && !greeting_input
+        && continue_budget_left
+        && iteration_budget_left
+        && wall_clock_left
+}
+
+/// End-note after a foreshadow continue already spent its budget and the
+/// reply is STILL foreshadow-only. Prefer an honest "no result" over asking
+/// the user to type 继续.
+pub fn foreshadow_no_result_note(language_hint: &str) -> String {
+    if crate::agent::text_prefers_chinese(language_hint) {
+        "本次未取得结果。".to_string()
+    } else {
+        "No result obtained this turn.".to_string()
+    }
 }
 
 /// Stated-intent directive: the same concrete command was promised on two
@@ -494,5 +532,39 @@ mod tests {
         assert!(should_inject_promise_directive(2, false));
         assert!(!should_inject_promise_directive(2, true));
         assert!(!should_inject_promise_directive(5, true));
+    }
+
+    #[test]
+    fn foreshadow_continue_requires_no_tools_and_budget() {
+        assert!(should_foreshadow_continue(
+            true, true, true, false, false, true, true
+        ));
+        // Already continued once.
+        assert!(!should_foreshadow_continue(
+            true, false, true, false, false, true, true
+        ));
+        // Tools already ran this turn — not foreshadow-only recovery.
+        assert!(!should_foreshadow_continue(
+            true, true, false, false, false, true, true
+        ));
+        // Plan-only / greeting.
+        assert!(!should_foreshadow_continue(
+            true, true, true, true, false, true, true
+        ));
+        assert!(!should_foreshadow_continue(
+            true, true, true, false, true, true, true
+        ));
+    }
+
+    #[test]
+    fn foreshadow_no_result_note_follows_language() {
+        assert_eq!(
+            foreshadow_no_result_note("今天天气怎么样"),
+            "本次未取得结果。"
+        );
+        assert_eq!(
+            foreshadow_no_result_note("What's the weather today?"),
+            "No result obtained this turn."
+        );
     }
 }
