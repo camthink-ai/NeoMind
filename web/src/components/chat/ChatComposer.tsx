@@ -17,14 +17,12 @@ import {
   Bot,
   Check,
   Cpu,
-  Eye,
   GitBranch,
   Image as ImageIcon,
   Loader2,
   Plus,
   Sparkles,
   Trash2,
-  Wrench,
   X,
   Zap,
 } from "lucide-react"
@@ -63,6 +61,65 @@ const MENTION_TYPE_META: Record<
   rule: { icon: Zap, badge: "bg-accent-orange-light text-accent-orange" },
   transform: { icon: GitBranch, badge: "bg-accent-purple-light text-accent-purple" },
   agent: { icon: Bot, badge: "bg-accent-emerald-light text-accent-emerald" },
+}
+
+/** One model row inside the selector menu. Two lines only: the name, then
+ *  provider, model id, and capabilities on a single meta line. */
+function ModelOptionBody({
+  backend,
+  active,
+}: {
+  backend: LlmBackendInstance
+  active: boolean
+}) {
+  const { t } = useTranslation()
+  const provider = t(`common:llm.providers.${backend.backend_type}`, {
+    defaultValue: backend.backend_type,
+  })
+  const capabilities = [
+    backend.capabilities?.supports_multimodal
+      ? t("chat:capability.vision", { defaultValue: "Vision" })
+      : null,
+    backend.capabilities?.supports_tools
+      ? t("chat:capability.tools", { defaultValue: "Tools" })
+      : null,
+    backend.capabilities?.supports_thinking
+      ? t("chat:capability.thinking", { defaultValue: "Thinking" })
+      : null,
+  ].filter((label): label is string => Boolean(label))
+  const meta = [provider, backend.model, ...capabilities].filter(Boolean).join(" · ")
+
+  return (
+    <>
+      <span className="mt-1.5 flex h-1.5 w-1.5 shrink-0" aria-hidden="true">
+        {backend.healthy != null && (
+          <span
+            title={backend.healthy ? t("common:online") : t("common:offline")}
+            className={cn(
+              "h-1.5 w-1.5 rounded-full",
+              backend.healthy ? "bg-success" : "bg-error",
+            )}
+          />
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2">
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate text-sm leading-5 text-foreground",
+              active && "font-medium",
+            )}
+          >
+            {backend.name || backend.model}
+          </span>
+          {active && (
+            <Check className="h-4 w-4 shrink-0 text-foreground" aria-hidden="true" />
+          )}
+        </span>
+        <span className="mt-0.5 block truncate text-mini text-muted-foreground">{meta}</span>
+      </span>
+    </>
+  )
 }
 
 interface ChatComposerProps {
@@ -1177,14 +1234,9 @@ export function ChatComposer({
                       {t("chat:model.forConversation", "本次对话使用的模型")}
                     </SheetDescription>
                   </div>
-                  <div className="overflow-y-auto px-5">
+                  <div className="space-y-1 overflow-y-auto px-3 pb-1">
                     {backends.map((backend) => {
                       const active = backend.id === activeBackendId
-                      const capability = [
-                        backend.backend_type,
-                        backend.capabilities?.supports_tools ? t("chat:capability.tools", "工具调用") : null,
-                        backend.capabilities?.supports_multimodal ? t("chat:capability.vision", "视觉") : null,
-                      ].filter(Boolean).join(" · ")
                       return (
                         <button
                           key={backend.id}
@@ -1193,15 +1245,12 @@ export function ChatComposer({
                             onActivateBackend?.(backend.id)
                             setModelSheetOpen(false)
                           }}
-                          className="flex min-h-16 w-full items-center gap-3 border-b border-border py-3 text-left last:border-b-0"
+                          className={cn(
+                            "flex w-full items-start gap-2.5 rounded-xl px-3 py-2 text-left transition-colors",
+                            active ? "bg-muted" : "active:bg-muted-30",
+                          )}
                         >
-                          <span className="min-w-0 flex-1">
-                            <span className={cn("block truncate text-base", active && "font-semibold")}>
-                              {backend.name || backend.model}
-                            </span>
-                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">{capability}</span>
-                          </span>
-                          {active && <Check className="h-5 w-5 shrink-0" aria-hidden="true" />}
+                          <ModelOptionBody backend={backend} active={active} />
                         </button>
                       )
                     })}
@@ -1224,46 +1273,25 @@ export function ChatComposer({
                   </span>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-[min(21rem,calc(100vw-2rem))] max-h-[min(24rem,60vh)] overflow-y-auto scrollbar-none rounded-xl p-1.5 shadow-md">
-                <div className="sticky top-0 z-10 rounded-t-lg bg-popover px-2.5 py-2">
-                  <span className="text-xs font-medium text-muted-foreground">{t("chat:input.selectLLMModel")}</span>
-                </div>
-                <div className="p-1">
-                  {backends.map((backend) => {
-                    const isActive = backend.id === activeBackendId
-                    return (
-                      <DropdownMenuItem
-                        key={backend.id}
-                        onClick={() => onActivateBackend?.(backend.id)}
-                        className={cn("flex items-center gap-2.5 rounded-lg px-2.5 py-2", isActive && "bg-muted")}
-                      >
-                        <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                          {isActive ? <Check className="h-4 w-4 text-foreground" aria-hidden="true" /> :
-                            <span className={cn("h-1.5 w-1.5 rounded-full", backend.healthy ? "bg-success" : "bg-muted-foreground/50")} />}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex min-w-0 items-center gap-1.5">
-                            <span className={cn("truncate text-sm text-foreground", isActive && "font-medium")}>{backend.name || backend.model}</span>
-                            {/* Capability hints sit top-right, on the name line — bottom-right crowded the model/protocol line. */}
-                            <span className="ml-auto flex shrink-0 items-center gap-1.5 text-muted-foreground" aria-label={[
-                              backend.capabilities?.supports_multimodal && t("chat:capability.vision", { defaultValue: "Vision" }),
-                              backend.capabilities?.supports_tools && t("chat:capability.tools", { defaultValue: "Tools" }),
-                              backend.capabilities?.supports_thinking && t("chat:capability.thinking", { defaultValue: "Thinking" }),
-                            ].filter(Boolean).join(', ')}>
-                              {backend.capabilities?.supports_multimodal && <span title={t("chat:model.supportsVision")}><Eye className="h-3.5 w-3.5" aria-hidden="true" /></span>}
-                              {backend.capabilities?.supports_tools && <span title={t("chat:model.supportsTools")}><Wrench className="h-3.5 w-3.5" aria-hidden="true" /></span>}
-                              {backend.capabilities?.supports_thinking && <span title={t("chat:model.supportsThinking")}><Sparkles className="h-3.5 w-3.5" aria-hidden="true" /></span>}
-                            </span>
-                          </div>
-                          <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
-                            <span className="shrink-0 rounded bg-muted px-1 py-px text-nano leading-4 text-muted-foreground">{backend.backend_type}</span>
-                            <span className="min-w-0 flex-1 truncate text-mini text-muted-foreground">{backend.model}</span>
-                          </div>
-                        </div>
-                      </DropdownMenuItem>
-                    )
-                  })}
-                </div>
+              <DropdownMenuContent
+                align="start"
+                className="w-[min(22rem,calc(100vw-2rem))] max-h-[min(18rem,50vh)] overflow-y-auto p-1 scrollbar-none"
+              >
+                {backends.map((backend) => {
+                  const isActive = backend.id === activeBackendId
+                  return (
+                    <DropdownMenuItem
+                      key={backend.id}
+                      onClick={() => onActivateBackend?.(backend.id)}
+                      className={cn(
+                        "my-0 min-h-0 items-start gap-2.5 rounded-lg px-2.5 py-1.5 focus:bg-muted focus:text-foreground sm:min-h-0 sm:py-1.5",
+                        isActive && "bg-muted",
+                      )}
+                    >
+                      <ModelOptionBody backend={backend} active={isActive} />
+                    </DropdownMenuItem>
+                  )
+                })}
               </DropdownMenuContent>
             </DropdownMenu>
           ))}
