@@ -65,16 +65,17 @@ pub const LLAMA_CPP_VERSION: &str = "b12359";
 /// Fallback pin for OUR Jetson runtime (the only Jetson build that exists —
 /// armv8.2-a + sm_87; see JETSON_RUNTIME_SHA256 for the build recipe).
 /// Decoupled from LLAMA_CPP_VERSION so the official-platform pin can move
-/// while the Jetson asset catches up at its own cadence. Held at b12024 —
-/// no `runtime-b12359` Jetson asset in NeoMind-Runtimes yet.
-pub const JETSON_RUNTIME_VERSION: &str = "b12024";
+/// while the Jetson asset catches up at its own cadence. b12359 aligned
+/// with LLAMA_CPP_VERSION (asset smoke-tested on an NG4520/Orin 2026-11-18).
+pub const JETSON_RUNTIME_VERSION: &str = "b12359";
 
 /// Fallback pin for OUR Linux x64 CUDA runtime. Official ubuntu-cuda assets
 /// exist but require glibc 2.38; ours keeps the 22.04 floor (T4-class
 /// fleet), so it moves only when we rebuild it. Other CUDA platforms
-/// (Windows) use the official assets under LLAMA_CPP_VERSION. Held at
-/// b12024 — no `runtime-b12359` linux-cuda asset in NeoMind-Runtimes yet.
-pub const LINUX_CUDA_RUNTIME_VERSION: &str = "b12024";
+/// (Windows) use the official assets under LLAMA_CPP_VERSION. b12359
+/// aligned with LLAMA_CPP_VERSION (asset smoke-tested on a Tesla T4
+/// 2026-11-18).
+pub const LINUX_CUDA_RUNTIME_VERSION: &str = "b12359";
 
 /// The compiled fallback pin for a platform/variant. The RUNTIME effective
 /// pin additionally consults the channel first (see runtime_manager's
@@ -321,7 +322,7 @@ pub fn jetson_runtime_asset(tag: &str) -> String {
 /// Future CI bumps must keep -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.2-a
 /// (fixed in NeoMind-Runtimes 26c9b92).
 pub const JETSON_RUNTIME_SHA256: &str =
-    "bc7c089182c4edf1c36a7ff43c64386ba6e8dc60cd4c10098117a8da2c81c618";
+    "8dfc22cdb2defe94928567cd09442580ce5a9442782c42d603501cb66d5fe4dd";
 
 /// Our Linux x64 CUDA runtime asset (not an official llama.cpp release —
 /// they ship CPU/Vulkan-only tarballs for linux-x64). Same hosting model as
@@ -354,7 +355,7 @@ pub fn linux_cuda_runtime_asset(tag: &str) -> String {
 /// the 22.04 floor while tracking the current `LLAMA_CPP_VERSION`. SHA for
 /// any OTHER tag comes from the runtime channel (runtimes.json), not here.
 pub const LINUX_CUDA_RUNTIME_SHA256: &str =
-    "e93a154585077e27e7a54e130e24147315a04bef020f89f03dd523c238c5c0b4";
+    "f5a7b8b5e5d31664cbc799b2ffbfcddc7bf1ef2a4f142da192da7fb6a2c7d7d5";
 
 /// Official release asset name for an OS/arch/variant, if one ships. Windows
 /// ships `win-cpu-*` / `win-cuda-*` archives (zip); macos/linux ship `-bin-*`
