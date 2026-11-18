@@ -22,6 +22,9 @@ pub struct ExecuteCommandRequest {
     /// Command arguments
     #[serde(default)]
     pub args: serde_json::Value,
+    /// Chat write-gate bound PreparedInvoke token (NM-240).
+    #[serde(default)]
+    pub prepared_operation_id: Option<String>,
 }
 
 /// POST /api/extensions/:id/command
@@ -77,7 +80,14 @@ pub async fn execute_extension_command_handler(
         }
     }
 
-    let prepared = prepare_extension_invoke(&state, &id, &req.command, &req.args).await?;
+    let prepared = prepare_or_consume_extension_invoke(
+        &state,
+        &id,
+        &req.command,
+        &req.args,
+        req.prepared_operation_id.as_deref(),
+    )
+    .await?;
 
     // Consume the bound prepared invoke (generation + canonical params).
     // Do not re-resolve by id alone — a reload must refuse, not swap instances.
@@ -126,6 +136,10 @@ pub struct InvokeExtensionRequest {
     /// Input parameters
     #[serde(default)]
     pub params: serde_json::Value,
+    /// Chat write-gate bound PreparedInvoke token (NM-240). When set, HTTP
+    /// consumes that exact authorized prepare instead of minting a new one.
+    #[serde(default)]
+    pub prepared_operation_id: Option<String>,
 }
 
 /// POST /api/extensions/:id/invoke
@@ -179,7 +193,14 @@ pub async fn invoke_extension_handler(
         }
     }
 
-    let prepared = prepare_extension_invoke(&state, &id, &req.command, &req.params).await?;
+    let prepared = prepare_or_consume_extension_invoke(
+        &state,
+        &id,
+        &req.command,
+        &req.params,
+        req.prepared_operation_id.as_deref(),
+    )
+    .await?;
 
     let result = match runtime.execute_prepared(&prepared).await {
         Ok(r) => r,
@@ -225,10 +246,10 @@ pub async fn invoke_extension_handler(
 /// - `uninstalled` → forbidden (never default to allow)
 ///
 /// Scope note: HTTP `execute` / `invoke` both call this via
-/// [`prepare_extension_invoke`], so the gate applies to **all** HTTP callers
-/// including the human admin UI (intentional bypass prevention until a
-/// trusted server-side caller identity exists — clients must not self-claim
-/// "admin").
+/// [`prepare_or_consume_extension_invoke`], so the gate applies to **all**
+/// HTTP callers including the human admin UI (intentional bypass prevention
+/// until a trusted server-side caller identity exists — clients must not
+/// self-claim "admin").
 fn ai_policy_from_store(
     store: &neomind_storage::ExtensionStore,
     instance_id: &str,
@@ -266,11 +287,16 @@ fn ai_policy_from_loaded_record(
 /// **Applies to every HTTP execute/invoke caller** (including human admin UI)
 /// because there is no trusted server-side caller identity yet. Softening to
 /// AI-only requires a non-client-claimable context, not a request flag.
-async fn prepare_extension_invoke(
+///
+/// When `prepared_operation_id` is set (Chat path), consumes that exact
+/// Chat-authorized [`PreparedInvoke`] (NM-240). Otherwise mints a fresh
+/// prepare for same-request human/direct execute.
+async fn prepare_or_consume_extension_invoke(
     state: &ServerState,
     instance_id: &str,
     command_name: &str,
     raw_params: &serde_json::Value,
+    prepared_operation_id: Option<&str>,
 ) -> Result<neomind_core::extension::PreparedInvoke, ErrorResponse> {
     // Descriptor + generation from the proxy registry load snapshot (same
     // entry execute binds). Do not require isolated liveness here — the
@@ -309,6 +335,16 @@ async fn prepare_extension_invoke(
         return Err(ErrorResponse::forbidden(reason));
     }
 
+    if let Some(op_id) = prepared_operation_id {
+        return neomind_core::extension::consume_chat_prepared_for_execute(
+            op_id,
+            instance_id,
+            command_name,
+            raw_params,
+        )
+        .map_err(ErrorResponse::bad_request);
+    }
+
     let version = Some(info.metadata.version.as_str());
     // Token comes from the same load snapshot as `cmd` / `info` — never "current".
     neomind_core::extension::prepare_invoke(neomind_core::extension::PrepareInvokeRequest {
@@ -320,6 +356,18 @@ async fn prepare_extension_invoke(
         capability_generation: &info.capability_generation,
     })
     .map_err(ErrorResponse::bad_request)
+}
+
+/// Test/compat alias — same as [`prepare_or_consume_extension_invoke`] with
+/// no Chat token (fresh prepare).
+#[cfg(test)]
+async fn prepare_extension_invoke(
+    state: &ServerState,
+    instance_id: &str,
+    command_name: &str,
+    raw_params: &serde_json::Value,
+) -> Result<neomind_core::extension::PreparedInvoke, ErrorResponse> {
+    prepare_or_consume_extension_invoke(state, instance_id, command_name, raw_params, None).await
 }
 
 /// GET /api/extensions/:id/stream

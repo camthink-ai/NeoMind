@@ -3587,11 +3587,15 @@ pub fn derive_tool_capability_resolved(
             ToolCapability::mutating_write()
         }
         other => {
-            // Extension tools (`ext:cmd` / sanitized `ext_cmd`): capability
-            // from the unified command contract (host override / declared),
-            // not from name heuristics alone.
+            // Extension tools (`ext:cmd` / sanitized `ext_cmd`): NM-240 binds
+            // Chat write-gate to a real PreparedInvoke (prepare→authorize for
+            // RO). Cache-only RO without a prepareable snapshot cannot skip.
             if let Some((ext_id, cmd)) = neomind_core::extension::parse_extension_tool_name(other) {
-                match neomind_core::extension::sync_effect_for_invoke(&ext_id, &cmd) {
+                match neomind_core::extension::classify_and_bind_chat_invoke(
+                    &ext_id,
+                    &cmd,
+                    canonical_arguments,
+                ) {
                     neomind_core::extension::CommandEffect::ReadOnly => {
                         return ToolCapability::read_query();
                     }

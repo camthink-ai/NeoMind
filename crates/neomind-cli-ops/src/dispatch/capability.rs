@@ -12,6 +12,8 @@ use super::commands::{
     UserCommand, WidgetCommand,
 };
 use clap::Parser;
+use serde_json::json;
+use std::path::Path;
 
 /// Side-effect class of a successfully parsed platform CLI command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,17 +63,30 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
             | ExtensionCommand::Status { .. }
             | ExtensionCommand::MarketList { .. }
             | ExtensionCommand::Commands { .. } => ProvenReadOnly,
-            // Invoke capability comes from the unified command contract
-            // (host override / declared effect) — not from command-name
-            // heuristics. Unknown commands stay Mutating.
+            // NM-240: classify by preparing a real PreparedInvoke and binding
+            // Chat write-gate to that token. RO skip authorizes the ticket;
+            // Mutating leaves it issued for authorize-on-Proceed. Cache-only
+            // RO without a prepareable snapshot cannot skip the gate.
             ExtensionCommand::Invoke {
                 extension_id,
                 command,
-                ..
-            } => match neomind_core::extension::sync_effect_for_invoke(extension_id, command) {
-                neomind_core::extension::CommandEffect::ReadOnly => ProvenReadOnly,
-                neomind_core::extension::CommandEffect::Mutating => Mutating,
-            },
+                params,
+                params_file,
+                prepared_operation_id: _,
+            } => {
+                let raw = match load_classify_params(params.as_deref(), params_file.as_deref()) {
+                    Ok(v) => v,
+                    Err(_) => return Mutating,
+                };
+                match neomind_core::extension::classify_and_bind_chat_invoke(
+                    extension_id,
+                    command,
+                    &raw,
+                ) {
+                    neomind_core::extension::CommandEffect::ReadOnly => ProvenReadOnly,
+                    neomind_core::extension::CommandEffect::Mutating => Mutating,
+                }
+            }
             _ => Mutating,
         },
         Command::Device { device_cmd } => classify_device(device_cmd),
@@ -162,6 +177,32 @@ fn classify_device(device_cmd: &DeviceCommand) -> CliSideEffect {
             draft_cmd: DraftCommand::List { .. } | DraftCommand::Get { .. },
         } => ProvenReadOnly,
         _ => Mutating,
+    }
+}
+
+/// Best-effort params load for Chat classify (no HTTP). Invalid JSON → Err
+/// so invoke fails closed to Mutating.
+fn load_classify_params(
+    params_json: Option<&str>,
+    params_file: Option<&Path>,
+) -> Result<serde_json::Value, String> {
+    if let Some(path) = params_file {
+        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let v: serde_json::Value = serde_json::from_str(text.trim()).map_err(|e| e.to_string())?;
+        if !v.is_object() && !v.is_null() {
+            return Err("params file must be a JSON object".into());
+        }
+        return Ok(if v.is_null() { json!({}) } else { v });
+    }
+    match params_json {
+        None => Ok(json!({})),
+        Some(s) => {
+            let v: serde_json::Value = serde_json::from_str(s).map_err(|e| e.to_string())?;
+            if !v.is_object() && !v.is_null() {
+                return Err("params must be a JSON object".into());
+            }
+            Ok(if v.is_null() { json!({}) } else { v })
+        }
     }
 }
 
@@ -328,26 +369,46 @@ mod tests {
 
     #[test]
     fn extension_invoke_respects_remembered_capability() {
+        // NM-240: RO skip requires a prepareable snapshot (not cache-only
+        // remember_capability). Publish a load snapshot so classify can
+        // prepare+authorize a real PreparedInvoke.
         use neomind_core::extension::{
-            begin_instance_generation, remember_capability, CommandEffect, CommandExecutionKind,
-            CommandReplaySafety,
+            begin_instance_generation, invalidate_instance_capability, CommandEffect,
+            ExtensionCommand, ExtensionCommandSnapshot, MetricDataType, ParameterDefinition,
         };
-        let gen = begin_instance_generation("cached-weather-ext");
-        remember_capability(
-            "cached-weather-ext",
-            "get_weather",
-            CommandEffect::ReadOnly,
-            CommandReplaySafety::Safe,
-            CommandExecutionKind::Immediate,
-            &gen,
-        )
-        .unwrap();
+        let id = "cached-weather-ext";
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        let get = ExtensionCommand {
+            name: "get_weather".into(),
+            display_name: "Get Weather".into(),
+            description: "Query weather".into(),
+            parameters: vec![ParameterDefinition {
+                name: "city".into(),
+                display_name: "City".into(),
+                description: "City name".into(),
+                param_type: MetricDataType::String,
+                required: true,
+                default_value: None,
+                min: None,
+                max: None,
+                options: vec![],
+            }],
+            effect: Some(CommandEffect::ReadOnly),
+            replay_safety: None,
+            execution: None,
+            ..Default::default()
+        };
+        ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![get], gen)
+            .publish_capabilities()
+            .unwrap();
         assert_eq!(
-            classify_line(
-                "extension invoke cached-weather-ext get_weather --params {\"city\":\"Xiamen\"}"
-            ),
+            classify_line(&format!(
+                "extension invoke {id} get_weather --params {{\"city\":\"Xiamen\"}}"
+            )),
             CliSideEffect::ProvenReadOnly
         );
+        invalidate_instance_capability(id);
     }
 
     /// NM-235: CLI classify after load-snapshot publish (no prepare / tool).

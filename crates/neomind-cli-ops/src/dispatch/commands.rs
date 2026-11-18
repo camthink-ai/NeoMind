@@ -673,6 +673,11 @@ pub enum ExtensionCommand {
         /// Path to a JSON file of parameters (avoids shell quoting).
         #[arg(long, conflicts_with = "params")]
         params_file: Option<std::path::PathBuf>,
+        /// Chat write-gate bound PreparedInvoke token (server-issued).
+        /// Injected by the agent shell after prepare→authorize; human CLI
+        /// omits this and HTTP prepares in the same request.
+        #[arg(long, hide = true)]
+        prepared_operation_id: Option<String>,
     },
 }
 

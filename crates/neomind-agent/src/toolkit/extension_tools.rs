@@ -445,18 +445,32 @@ impl Tool for ExtensionTool {
         let data_dir = neomind_core::paths::data_dir();
         let image_normalized = Self::normalize_image_args(&args, &data_dir)?;
 
-        // Shared prepare: validate+defaults → canonical params + capability.
-        let prepared = neomind_core::extension::prepare_invoke(
-            neomind_core::extension::PrepareInvokeRequest {
-                instance_id: &self.extension_id,
-                command: &self.command,
-                raw_params: &image_normalized,
-                extension_version: Some(self.extension_version.as_str()),
-                package_digest: None,
-                capability_generation: &self.capability_generation,
-            },
-        )
-        .map_err(|e| super::error::ToolError::InvalidArguments(e))?;
+        // NM-240: prefer Chat-authorized PreparedInvoke (prepare→authorize→
+        // consume). Fall back to load-generation prepare for hand-built
+        // ExtensionTool tests without a published prepareable snapshot.
+        let prepared = match neomind_core::extension::authorize_chat_invoke(
+            &self.extension_id,
+            &self.command.name,
+            &image_normalized,
+        ) {
+            Ok(p) => neomind_core::extension::consume_authorized_prepared(
+                &p.operation_id,
+                &p.capability_generation,
+                &p.param_fingerprint,
+            )
+            .map_err(super::error::ToolError::InvalidArguments)?,
+            Err(_) => neomind_core::extension::prepare_invoke(
+                neomind_core::extension::PrepareInvokeRequest {
+                    instance_id: &self.extension_id,
+                    command: &self.command,
+                    raw_params: &image_normalized,
+                    extension_version: Some(self.extension_version.as_str()),
+                    package_digest: None,
+                    capability_generation: &self.capability_generation,
+                },
+            )
+            .map_err(super::error::ToolError::InvalidArguments)?,
+        };
 
         // Execute with the centralized SLOW tier timeout (300s) for extensions that
         // need longer inference. Routed through `timeouts` so the ceiling is tunable

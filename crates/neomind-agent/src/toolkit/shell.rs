@@ -582,6 +582,21 @@ impl ShellTool {
             return None;
         }
 
+        // NM-240: bind Chat write-gate to the same PreparedInvoke HTTP will
+        // consume. Authorize Mutating tickets on the execute path (RO was
+        // authorized at classify); inject --prepared-operation-id.
+        let argv = match bind_extension_invoke_prepared_token(argv) {
+            Ok(a) => a,
+            Err(msg) => {
+                return Some(CommandOutput {
+                    exit_code: Some(1),
+                    stdout: String::new(),
+                    stderr: msg,
+                    timed_out: false,
+                });
+            }
+        };
+
         // Make auth + JSON-output env visible to the in-process handler.
         // `dispatch`'s `ApiClient` reads `NEOMIND_API_KEY` (via auto_auth)
         // and the handlers read `NEOMIND_JSON` to pick the output format.
@@ -1261,6 +1276,73 @@ fn split_shell_sequence(trimmed: &str) -> Option<Vec<String>> {
 /// that argv — never `/bin/sh -c` of the raw line (quoted `$()` expands).
 pub(crate) fn not_in_process_uses_parsed_argv() -> bool {
     true
+}
+
+/// NM-240: for `extension invoke`, authorize the Chat PreparedInvoke (Mutating
+/// tickets are authorized here after write-gate Proceed; RO was authorized at
+/// classify) and inject `--prepared-operation-id` so HTTP consumes the same
+/// token. Non-invoke argv is returned unchanged. Missing/stale ticket after a
+/// Chat classify that expected one → Err (do not fall through to unbound prepare).
+fn bind_extension_invoke_prepared_token(
+    mut argv: Vec<String>,
+) -> std::result::Result<Vec<String>, String> {
+    use clap::Parser;
+    use neomind_cli_ops::dispatch::commands::{Args, Command, ExtensionCommand};
+
+    // Already injected (e.g. compound re-entry) — leave alone.
+    if argv.iter().any(|a| a == "--prepared-operation-id") {
+        return Ok(argv);
+    }
+
+    let parsed = match Args::try_parse_from(argv.iter()) {
+        Ok(a) => a,
+        Err(_) => return Ok(argv),
+    };
+    let Command::Extension {
+        extension_cmd:
+            ExtensionCommand::Invoke {
+                extension_id,
+                command,
+                params,
+                params_file,
+                ..
+            },
+    } = parsed.command
+    else {
+        return Ok(argv);
+    };
+
+    let raw = {
+        if let Some(path) = params_file.as_ref() {
+            let text = std::fs::read_to_string(path).map_err(|e| {
+                format!("failed to read --params-file for prepared invoke bind: {e}")
+            })?;
+            serde_json::from_str(text.trim()).map_err(|e| {
+                format!("--params-file must contain a JSON object for prepared invoke bind: {e}")
+            })?
+        } else {
+            match params.as_deref() {
+                None => serde_json::json!({}),
+                Some(s) => serde_json::from_str(s).map_err(|e| {
+                    format!("--params must be a JSON object for prepared invoke bind: {e}")
+                })?,
+            }
+        }
+    };
+
+    // Authorize (idempotent if RO already authorized at classify). Reloads
+    // that cleared the prepareable snapshot / generation fail here.
+    let prepared = neomind_core::extension::authorize_chat_invoke(&extension_id, &command, &raw)
+        .map_err(|e| {
+            format!(
+                "stale or unbound PreparedInvoke for '{extension_id}/{command}': {e}; \
+             re-discover and invoke again (Chat write-gate must bind a fresh token)"
+            )
+        })?;
+
+    argv.push("--prepared-operation-id".into());
+    argv.push(prepared.operation_id);
+    Ok(argv)
 }
 
 /// Tokenize a pure `neomind …` line for clap / capability classification.

@@ -81,6 +81,7 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
             command,
             params,
             params_file,
+            prepared_operation_id,
         } => {
             crate::extension::invoke_extension_command(
                 &client,
@@ -88,6 +89,7 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
                 &command,
                 params.as_deref(),
                 params_file.as_deref(),
+                prepared_operation_id.as_deref(),
             )
             .await?
         }

@@ -440,6 +440,7 @@ pub async fn invoke_extension_command(
     command: &str,
     params_json: Option<&str>,
     params_file: Option<&std::path::Path>,
+    prepared_operation_id: Option<&str>,
 ) -> Result<CliResponse> {
     let params = load_invoke_params(params_json, params_file)?;
 
@@ -464,7 +465,8 @@ pub async fn invoke_extension_command(
         {
             if let Some(schema) = cmd.get("input_schema") {
                 // Same validate+normalize as the server; discard canonical
-                // here — server re-prepares as source of truth.
+                // here — server re-prepares as source of truth (or consumes
+                // the Chat-authorized PreparedInvoke when provided).
                 if let Err(msg) = neomind_core::extension::validate_and_normalize(schema, &params) {
                     anyhow::bail!("{msg}");
                 }
@@ -481,10 +483,18 @@ pub async fn invoke_extension_command(
         }
     }
 
-    let body = json!({
+    let mut body = json!({
         "command": command,
         "params": params,
     });
+    if let Some(op) = prepared_operation_id {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "prepared_operation_id".into(),
+                serde_json::Value::String(op.to_string()),
+            );
+        }
+    }
     let data = client
         .post(
             &format!("/extensions/{}/invoke", encode_segment(extension_id)),
