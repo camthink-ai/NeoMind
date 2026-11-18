@@ -607,12 +607,17 @@ pub(crate) fn mutating_write_fingerprint(
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            // Business fingerprint excludes the Chat PreparedInvoke token so
-            // classify-time ids do not splinter same-args write-gate keys.
-            let cmd = strip_prepared_operation_id_flag(cmd);
+            // Only Chat-injected extension-invoke tokens are stripped; other
+            // commands keep the original string so quoted arg boundaries stay
+            // in the write-gate key.
+            let body = shell_command_fingerprint_body(cmd);
             Some(super::super::task_continuity::write_fingerprint(
                 "shell",
-                if cmd.is_empty() { "<empty>" } else { cmd.as_str() },
+                if body.is_empty() {
+                    "<empty>"
+                } else {
+                    body.as_str()
+                },
             ))
         }
         other => {
@@ -630,26 +635,74 @@ pub(crate) fn mutating_write_fingerprint(
     }
 }
 
-/// Drop `--prepared-operation-id <uuid>` from a shell command for fingerprinting.
-fn strip_prepared_operation_id_flag(cmd: &str) -> String {
-    let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(cmd.trim()) else {
-        return cmd.to_string();
-    };
-    let mut out = Vec::with_capacity(argv.len());
-    let mut i = 0;
-    while i < argv.len() {
-        if argv[i] == "--prepared-operation-id" {
-            i += 2; // skip flag + value
-            continue;
-        }
-        out.push(argv[i].clone());
-        i += 1;
-    }
-    if out.is_empty() {
+/// Shell write-fingerprint body.
+///
+/// - Default: the original command string (preserves quotes / arg boundaries).
+/// - Only when this is `neomind extension invoke …` **and** carries the
+///   internal `--prepared-operation-id` option: drop that option by argv
+///   position, then fingerprint the remaining argv as stable JSON so Chat
+///   tokens do not splinter the business key and quoted values stay distinct.
+fn shell_command_fingerprint_body(cmd: &str) -> String {
+    let trimmed = cmd.trim();
+    if trimmed.is_empty() {
         return String::new();
     }
-    // Rejoin with spaces — good enough for fingerprint stability.
-    out.join(" ")
+    let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(trimmed) else {
+        return cmd.to_string();
+    };
+    if !argv_is_extension_invoke(&argv) {
+        return cmd.to_string();
+    }
+    let Some(stripped) = strip_prepared_operation_id_option(&argv) else {
+        // Extension invoke without a Chat token — keep original string.
+        return cmd.to_string();
+    };
+    // Argv JSON preserves each token boundary (unlike `join(" ")`).
+    serde_json::Value::Array(
+        stripped
+            .into_iter()
+            .map(serde_json::Value::String)
+            .collect(),
+    )
+    .to_string()
+}
+
+fn argv_is_extension_invoke(argv: &[String]) -> bool {
+    argv.len() >= 3
+        && argv[0] == "neomind"
+        && argv[1] == "extension"
+        && argv[2] == "invoke"
+}
+
+/// Remove the Chat-only `--prepared-operation-id` option by parsed position.
+///
+/// Returns `None` when the option is absent (caller keeps the original
+/// command string). Only exact flag tokens are removed — a parameter *value*
+/// equal to the flag name is never treated as the option.
+fn strip_prepared_operation_id_option(argv: &[String]) -> Option<Vec<String>> {
+    let mut out = Vec::with_capacity(argv.len());
+    let mut i = 0;
+    let mut removed = false;
+    while i < argv.len() {
+        let tok = &argv[i];
+        if tok.as_str() == "--prepared-operation-id" {
+            // Flag + following value (injection always uses two argv slots).
+            i += 1;
+            if i < argv.len() {
+                i += 1;
+            }
+            removed = true;
+            continue;
+        }
+        if let Some(_val) = tok.strip_prefix("--prepared-operation-id=") {
+            i += 1;
+            removed = true;
+            continue;
+        }
+        out.push(tok.clone());
+        i += 1;
+    }
+    removed.then_some(out)
 }
 
 /// Mutation-pattern → action class (the same vocabulary ACTION_CLASSES
@@ -1384,6 +1437,48 @@ mod tests {
         assert!(fp_dc.contains("cam-1"));
 
         assert!(mutating_write_fingerprint("skill", &serde_json::json!({"name": "x"})).is_none());
+    }
+
+    /// Quoted `--param` value that embeds another `--param …` must not collide
+    /// with the two-flag form after any PreparedInvoke token stripping.
+    #[test]
+    fn shell_write_fingerprint_preserves_quoted_param_boundaries() {
+        let quoted = serde_json::json!({
+            "command": "neomind device control D render_text --param 'text=a --param color=black'"
+        });
+        let split = serde_json::json!({
+            "command": "neomind device control D render_text --param text=a --param color=black"
+        });
+        let fp_quoted = mutating_write_fingerprint("shell", &quoted).expect("quoted write");
+        let fp_split = mutating_write_fingerprint("shell", &split).expect("split write");
+        assert_ne!(
+            fp_quoted, fp_split,
+            "quoted single --param value must not share a write fingerprint with two --param flags"
+        );
+    }
+
+    /// Chat `--prepared-operation-id` must not enter the business fingerprint:
+    /// same extension invoke with different tokens → identical write key.
+    #[test]
+    fn shell_extension_invoke_fingerprint_ignores_prepared_operation_id() {
+        let a = serde_json::json!({
+            "command": "neomind extension invoke weather-forecast-v2 get_weather --params '{\"city\":\"Xiamen\"}' --prepared-operation-id aaa-111"
+        });
+        let b = serde_json::json!({
+            "command": "neomind extension invoke weather-forecast-v2 get_weather --params '{\"city\":\"Xiamen\"}' --prepared-operation-id bbb-222"
+        });
+        let fp_a = mutating_write_fingerprint("shell", &a).expect("ext invoke a");
+        let fp_b = mutating_write_fingerprint("shell", &b).expect("ext invoke b");
+        assert_eq!(
+            fp_a, fp_b,
+            "PreparedInvoke id must not splinter the business write fingerprint"
+        );
+        // Sanity: a different business arg still diverges.
+        let c = serde_json::json!({
+            "command": "neomind extension invoke weather-forecast-v2 get_weather --params '{\"city\":\"Beijing\"}' --prepared-operation-id aaa-111"
+        });
+        let fp_c = mutating_write_fingerprint("shell", &c).expect("ext invoke c");
+        assert_ne!(fp_a, fp_c, "different params must keep distinct fingerprints");
     }
 
     #[test]
