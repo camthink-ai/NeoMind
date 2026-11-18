@@ -66,6 +66,16 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
             // binary.
             use clap::error::ErrorKind;
             if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+                // P0-A: `extension commands <id> --help` is a common small-model
+                // discovery form. Clap meta-help for the verb is false progress
+                // (exit 0, no command list). Redirect to the real commands
+                // payload when an id is present. Bare `extension commands --help`
+                // stays Usage text.
+                if e.kind() == ErrorKind::DisplayHelp {
+                    if let Some(id) = extension_commands_id_from_help_argv(argv) {
+                        return redirect_extension_commands_help(&id).await;
+                    }
+                }
                 return Ok(CliResponse::success(
                     serde_json::json!({ "help": e.to_string() }),
                     "help requested (exit 0 — this is rendered output, not an error)",
@@ -235,6 +245,89 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
     }
 }
 
+/// Extract `<id>` from `neomind extension commands <id> … --help|-h …`.
+///
+/// Returns `None` for bare `extension commands --help` (no id) so callers keep
+/// clap Usage. Ignores known global flags (`-v`, `--verbose`, `--format`).
+fn extension_commands_id_from_help_argv(argv: &[String]) -> Option<String> {
+    let mut iter = argv.iter().map(String::as_str);
+    // Program name.
+    iter.next()?;
+    if iter.next()? != "extension" {
+        return None;
+    }
+    if iter.next()? != "commands" {
+        return None;
+    }
+    let mut id: Option<String> = None;
+    let mut saw_help = false;
+    while let Some(tok) = iter.next() {
+        match tok {
+            "--help" | "-h" => saw_help = true,
+            "-v" | "--verbose" => {}
+            "--format" => {
+                // Consume value when present.
+                let _ = iter.next();
+            }
+            flag if flag.starts_with("--format=") => {}
+            flag if flag.starts_with('-') => {
+                // Unknown flag — do not treat a following token as id.
+            }
+            positional if id.is_none() => id = Some(positional.to_string()),
+            _ => {}
+        }
+    }
+    if saw_help {
+        id
+    } else {
+        None
+    }
+}
+
+const EXTENSION_COMMANDS_HELP_REDIRECT_NOTE: &str = "\
+`--help` on `extension commands <id>` is CLI-verb Usage, not the command list. \
+Returning the machine-readable command list instead. Discovery API: \
+`neomind extension commands <id>` (no --help), then \
+`neomind extension invoke <id> <command> --params '{...}'`.";
+
+/// Run `extension commands <id>` and annotate that `--help` was redirected.
+async fn redirect_extension_commands_help(id: &str) -> Result<CliResponse, DispatchError> {
+    use commands::ExtensionCommand;
+    let (mut resp, _) = handlers::run_extension_cmd(ExtensionCommand::Commands {
+        id: id.to_string(),
+    })
+    .await
+    .map_err(|e| DispatchError::Api(e.to_string()))?;
+
+    match &mut resp.data {
+        Some(serde_json::Value::Object(map)) => {
+            map.insert("_help_redirect".into(), serde_json::json!(true));
+            map.insert(
+                "note".into(),
+                serde_json::json!(EXTENSION_COMMANDS_HELP_REDIRECT_NOTE),
+            );
+        }
+        Some(other) => {
+            resp.data = Some(serde_json::json!({
+                "_help_redirect": true,
+                "note": EXTENSION_COMMANDS_HELP_REDIRECT_NOTE,
+                "data": other,
+            }));
+        }
+        None => {
+            resp.data = Some(serde_json::json!({
+                "_help_redirect": true,
+                "note": EXTENSION_COMMANDS_HELP_REDIRECT_NOTE,
+            }));
+        }
+    }
+    let suggestion = match resp.suggestion.take() {
+        Some(s) => format!("{EXTENSION_COMMANDS_HELP_REDIRECT_NOTE} {s}"),
+        None => EXTENSION_COMMANDS_HELP_REDIRECT_NOTE.to_string(),
+    };
+    Ok(resp.with_suggestion(suggestion))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,6 +337,38 @@ mod tests {
             .chain(parts.iter().copied())
             .map(str::to_string)
             .collect()
+    }
+
+    #[test]
+    fn extension_commands_help_extracts_id() {
+        assert_eq!(
+            extension_commands_id_from_help_argv(&argv(&[
+                "extension",
+                "commands",
+                "weather-forecast-v2",
+                "--help"
+            ])),
+            Some("weather-forecast-v2".into())
+        );
+        assert_eq!(
+            extension_commands_id_from_help_argv(&argv(&[
+                "extension",
+                "commands",
+                "-v",
+                "weather-forecast-v2",
+                "-h"
+            ])),
+            Some("weather-forecast-v2".into())
+        );
+        assert_eq!(
+            extension_commands_id_from_help_argv(&argv(&["extension", "commands", "--help"])),
+            None,
+            "bare verb help has no id"
+        );
+        assert_eq!(
+            extension_commands_id_from_help_argv(&argv(&["dashboard", "list", "--help"])),
+            None
+        );
     }
 
     /// Side-effecting / interactive commands must return NotInProcess so the
@@ -311,6 +436,67 @@ mod tests {
         assert!(
             !text.starts_with("error:"),
             "no error prefix on help: {text}"
+        );
+    }
+
+    /// Bare `extension commands --help` (no id) stays clap Usage — not a
+    /// discovery redirect.
+    #[tokio::test]
+    async fn extension_commands_bare_help_stays_usage() {
+        let resp = dispatch(&argv(&["extension", "commands", "--help"]))
+            .await
+            .expect("bare --help must succeed");
+        assert!(resp.success);
+        let help = resp.data.as_ref().and_then(|d| d.get("help")).and_then(|v| v.as_str());
+        assert!(
+            help.is_some_and(|h| h.contains("Usage")),
+            "expected Usage help, got {:?}",
+            resp.data
+        );
+        assert!(
+            resp.data
+                .as_ref()
+                .and_then(|d| d.get("_help_redirect"))
+                .is_none()
+        );
+    }
+
+    /// `extension commands <id> --help` must NOT return clap meta-help as if
+    /// discovery completed (P0-A). Without a server the commands path may
+    /// error — still must be the commands path, not Usage-only.
+    #[serial_test::serial]
+    #[tokio::test]
+    async fn extension_commands_id_help_redirects_away_from_meta_help() {
+        std::env::set_var("NEOMIND_API_BASE", "http://127.0.0.1:9/test-api");
+        let result = dispatch(&argv(&[
+            "extension",
+            "commands",
+            "weather-forecast-v2",
+            "--help",
+        ]))
+        .await;
+        std::env::remove_var("NEOMIND_API_BASE");
+
+        let resp = match result {
+            Ok(r) => r,
+            Err(DispatchError::Api(_)) => return, // redirected into handler; API down is fine
+            Err(other) => panic!("expected redirect into commands path, got {other:?}"),
+        };
+        let data = resp.data.as_ref().expect("redirect payload");
+        assert!(
+            data.get("help").is_none(),
+            "must not return clap Usage as discovery: {data}"
+        );
+        assert_eq!(
+            data.get("_help_redirect").and_then(|v| v.as_bool()),
+            Some(true),
+            "expected _help_redirect marker: {data}"
+        );
+        assert!(
+            data.get("note")
+                .and_then(|v| v.as_str())
+                .is_some_and(|n| n.contains("no --help")),
+            "expected redirect note: {data}"
         );
     }
 

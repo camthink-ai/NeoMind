@@ -169,9 +169,22 @@ fn classify_device(device_cmd: &DeviceCommand) -> CliSideEffect {
 ///
 /// `Err` means clap could not parse — caller must treat as unknown side-effects
 /// (not proven read-only).
+///
+/// `--help` / `-V` are clap DisplayHelp/DisplayVersion "errors". They are
+/// **documentation only** — always [`CliSideEffect::ProvenReadOnly`], never
+/// unknown→mutating. Treating help as parse failure previously sent
+/// `extension commands <id> --help` through the write gate / PreferKnown.
 pub fn classify_argv(argv: &[String]) -> Result<CliSideEffect, String> {
-    let args = Args::try_parse_from(argv.iter()).map_err(|e| e.to_string())?;
-    Ok(classify_parsed_command(&args.command))
+    match Args::try_parse_from(argv.iter()) {
+        Ok(args) => Ok(classify_parsed_command(&args.command)),
+        Err(e) => {
+            use clap::error::ErrorKind;
+            if matches!(e.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) {
+                return Ok(CliSideEffect::ProvenReadOnly);
+            }
+            Err(e.to_string())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -258,6 +271,39 @@ mod tests {
         assert_eq!(
             classify_line("extension commands weather-forecast-v2"),
             CliSideEffect::ProvenReadOnly
+        );
+    }
+
+    /// P1: `--help` on a proven query must not fail classify (unknown→mutating).
+    #[test]
+    fn extension_commands_help_is_read_only() {
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "commands".into(),
+            "weather-forecast-v2".into(),
+            "--help".into(),
+        ];
+        assert_eq!(
+            classify_argv(&argv).expect("help must classify"),
+            CliSideEffect::ProvenReadOnly
+        );
+    }
+
+    /// Help on a mutating verb is still documentation — not a write.
+    #[test]
+    fn mutating_verb_help_is_documentation_read_only() {
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "reload".into(),
+            "weather-forecast-v2".into(),
+            "--help".into(),
+        ];
+        assert_eq!(
+            classify_argv(&argv).expect("help must classify"),
+            CliSideEffect::ProvenReadOnly,
+            "documentation must not enter the write gate"
         );
     }
 
