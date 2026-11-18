@@ -104,7 +104,7 @@ Deliberately not available here (do not try them): serve prompt chat logs health
 check-update upgrade uninstall login logout whoami user config data — the first group only runs as a
 separate process, the rest are operator commands with their own session or irreversible effects.
 
-Anything not listed above does not exist as a subcommand — do not invent near-misses; use the exact name or `neomind <domain> --help`."#;
+This is a common cheat sheet of domain verbs; full flags and aliases come from `neomind <domain> --help` (or `neomind <domain> <command> --help`). Do not invent near-miss subcommands — use an exact listed name or discover via `--help`."#;
 
 pub struct ShellTool {
     config: ShellConfig,
@@ -1898,7 +1898,7 @@ Quick reference (run `neomind <domain> --help` or load the `skill` guide for ful
 - Read: `<domain> get <ID>` (one) / `<domain> list` (all). ID is positional, never `--id`.
 - Write: `<domain> create/update/delete` take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
 - Control / enable / activate are explicit writes: `device control <ID> <CMD> --param key=value` (repeat for each device-defined parameter; these are NOT standalone `--key` flags), `rule enable <ID>`, `llm activate <ID>`, `connector enable <ID>`, `push enable <ID>`.
-- Extensions: `extension list` → `extension commands <ID>` → `extension invoke <ID> <command> --params '{...}'`. Never use sanitized names like `weather-forecast-v2_get_weather` as CLI subcommands.
+- Extensions: list if id unknown; `extension commands <ID>` if schema unknown; otherwise `extension invoke <ID> <command>` (params via discovery/`--help`). Do not invent sanitized chat-tool names as CLI subcommands.
 - History & conversation: `agent executions <ID>`, `agent conversation <ID>`, `agent send-message <ID>`.
 - Notification channels are a sub-family: `message channel-list` / `channel-create` / `channel-test`, NOT `message list`.
 
@@ -2943,6 +2943,27 @@ mod dispatch_edge_tests {
             !message_line.to_ascii_lowercase().contains("eink"),
             "device routing must stay device-generic, not e-ink-specific"
         );
+    }
+
+    /// NM-249: domain index footer is a cheat sheet, not a completeness claim.
+    #[test]
+    fn nm249_domain_index_footer_is_cheat_sheet() {
+        assert!(DOMAIN_INDEX.contains("common cheat sheet"));
+        assert!(DOMAIN_INDEX.contains("full flags and aliases"));
+        assert!(!DOMAIN_INDEX.contains("Anything not listed above does not exist"));
+    }
+
+    /// NM-249: extension selection rules in the slim shell description; no
+    /// residual sanitized-name example; params live in discovery/`--help`.
+    #[test]
+    fn nm249_extension_selection_rules_in_description() {
+        let tool = ShellTool::new(ShellConfig::default());
+        let d = tool.description();
+        assert!(d.contains("list if id unknown"));
+        assert!(d.contains("extension commands <ID>` if schema unknown"));
+        assert!(d.contains("extension invoke <ID> <command>"));
+        assert!(!d.contains("weather-forecast-v2_get_weather"));
+        assert!(!d.contains("--params '{...}'"));
     }
 
     /// Every `neomind ...` command the builtin skills show the model must parse.

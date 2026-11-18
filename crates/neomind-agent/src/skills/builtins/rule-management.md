@@ -20,6 +20,8 @@ anti_triggers:
 
 # rule-management
 
+Ask vs inspect vs mutate: how-to / "how would I…" questions → answer with zero writes; inspect with `get`/`list`/`explain`/`history`/`test`; mutate only on an explicit create/update/enable/disable/delete request.
+Split intents: rename / notify text / frequency (`cooldown`/`for_duration`) are targeted updates; "why didn't it fire" is diagnosis (enabled → data → condition → cooldown/duration → channels) — do not rewrite the rule while diagnosing unless asked.
 Use actual source IDs and metric names from current references or device/extension/transform inspection. Preserve the user's threshold and units; a current reading is not permission to choose a different threshold.
 For a simple numeric threshold, use rule create flags; for logical/range/multi-action rules use --body JSON. Load the condition/action reference section before constructing an unfamiliar shape.
 Source IDs use device:<id>:<field>, extension:<id>:<field>, or transform:<transform-id>:<field>. Transform ID is not output_prefix.
@@ -71,10 +73,12 @@ Create, update, diagnose, or delete event-driven rules over device / extension /
 
 | User intent | Section to follow |
 |---|---|
+| "how do I set frequency / cooldown / rename / change notify?" (ask only) | Answer from this guide — **zero writes** until they ask to apply |
 | "create / set up / add a rule" | Phase 1 → 2 → 3 → 4 below |
-| "why didn't rule X fire / 排查 / 没触发" | Jump to **Diagnosis Flow** |
+| "why didn't rule X fire / 排查 / 没触发" | Jump to **Diagnosis Flow** (inspect only; mutate only if asked) |
+| "change freq / rename / notify text on rule X" | Inspect with `rule get`, then targeted `rule update` |
 | "delete / disable / enable rule X" | **Quick Command Reference** |
-| "update an existing rule" | Run diagnosis first, then **Phase 2** with new JSON |
+| "rewrite / re-target an existing rule" | Run diagnosis first, then **Phase 2** with new JSON |
 
 ## Deployments involving rules, channels, and device control
 

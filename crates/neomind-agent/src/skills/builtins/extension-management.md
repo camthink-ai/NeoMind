@@ -1,10 +1,10 @@
 ---
 id: extension-management
-summary: Install and uninstall extensions (capability packages) from the market.
+summary: Install, configure, diagnose, and operate installed extensions (status/logs/commands).
 not_for: [writing extension code (extension-development)]
-name: Extension Management (Install/Market/Status)
+name: Extension Management (Install/Config/Diagnose)
 aliases: [extension, extensions]
-description: Use when the user wants to INSTALL or MANAGE existing extensions — installing/uninstalling from the marketplace, listing, status, logs, config, reload. NOT for writing extension source code (that's extension-development). Covers install/market requests even without the word 'extension' (e.g. 'install the weather extension', '装个天气扩展'). FIRST check whether it's already installed — installed extensions may simply need configuration.
+description: Use when the user wants to INSTALL, CONFIGURE, or DIAGNOSE extensions — marketplace/local install, config, status, logs, reload, list/commands/invoke. NOT for writing extension source code (that's extension-development). Covers install/market/status/logs requests even without the word 'extension' (e.g. 'install the weather extension', '装个天气扩展', '扩展怎么了'). FIRST check whether it's already installed — installed extensions may simply need configuration or diagnosis.
 category: extension
 origin: builtin
 priority: 90
@@ -20,8 +20,9 @@ anti_triggers:
 
 # extension-management
 
+Cover the full lifecycle: install (market or local `.nep`), configure, diagnose (status/logs), and operate (list/commands/invoke) — not marketplace-only.
 Inspect installed extensions and available packages. For install/update, use the intended package and verify compatibility, enablement and exposed commands/metrics.
-Discover command schemas before invocation via CLI only: `neomind extension list` → `neomind extension commands <id>` → `neomind extension invoke <id> <command> --params '{...}'`. Do not invent chat tools named `{id}:{command}` or sanitized CLI subcommands.
+Selection for invoke: list if id unknown; `neomind extension commands <id>` if schema unknown; otherwise `neomind extension invoke <id> <command>` with params from discovery/`--help`. Do not invent sanitized chat-tool names as CLI subcommands.
 Do not confuse extension installation with skill loading or widget installation. Preserve configuration during upgrades and report restart/enable requirements.
 Verify extension status and actual command/metric results. Load installation, configuration, or diagnosis reference sections as needed.
 
@@ -50,9 +51,9 @@ Use skill(action="load", id="extension-management", section="<exact returned tit
 <!-- SKILL_REFERENCE -->
 
 
-# Extension Management (Install / Market / Status)
+# Extension Management (Install / Config / Diagnose)
 
-Manage installed extensions and the marketplace. (For *developing/building* an extension from source, see the `extension-development` skill.)
+Install, configure, diagnose (status/logs), and invoke installed extensions — marketplace is one install path, not the whole skill. (For *developing/building* an extension from source, see the `extension-development` skill.)
 
 ## CRITICAL Rules
 

@@ -26,6 +26,8 @@ anti_triggers:
 
 # dashboard-management
 
+Ask vs inspect vs mutate: how-to / layout questions → answer with zero writes; inspect with `dashboard list`/`get` and widget/device discovery; mutate only on an explicit create/update/add/remove request.
+Always `dashboard get <ID>` before adding components — read occupied rows / next free row / existing ids, then `add-components` (append). Never guess layout.
 Inspect available dashboards and data sources. Discover component types/schema before adding unfamiliar widgets. Bind actual device, extension, transform or AI output fields.
 Create or update the requested dashboard and widgets, then read them back. A saved dashboard does not prove every data binding has live values.
 Preserve existing layout and unrelated widgets during edits. Use resource IDs, not display labels or guessed metric paths.

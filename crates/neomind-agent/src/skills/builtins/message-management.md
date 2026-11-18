@@ -1,10 +1,10 @@
 ---
 id: message-management
-summary: Configure notification channels and send messages.
-not_for: [threshold/condition logic (rule-management)]
+summary: Create/query platform notifications and configure delivery channels.
+not_for: [threshold/condition logic (rule-management), device display/control (device get/control)]
 name: Message Management & Channel Configuration
 aliases: [notification, notify]
-description: Use when the user wants to manage messages and notification channels — sending messages, configuring channels (webhook/email/Telegram/DingTalk/Feishu/Slack), alerts, acknowledge, severity. Covers message send/channel-create/channel-get/channel-update/channel-test/channel-delete/channel-type-schema even without saying 'message' (e.g. '发个通知到飞书', '告警发我邮箱'). Includes 消息/通知/通道/告警. NOT external MQTT brokers — use connector-management for those.
+description: Use when the user wants platform message-center notifications and channels — create/list/get/ack messages, configure channels (webhook/email/Telegram/DingTalk/Feishu/Slack), alerts, severity. Covers message send/channel-create/channel-get/channel-update/channel-test/channel-delete/channel-type-schema even without saying 'message' (e.g. '发个通知到飞书', '告警发我邮箱', '给消息中心发一条'). Includes 消息/通知/通道/告警. NOT device text/control (use device get → device control). NOT external MQTT brokers — use connector-management for those.
 category: message
 origin: builtin
 priority: 80
@@ -20,26 +20,27 @@ anti_triggers:
 
 # message-management
 
-Separate messages from delivery channels. Discover channel types and configuration schema before creating an unfamiliar channel; use --param key=value or --config JSON.
-A rule notify action creates a message. Channels receive messages according to their filters; an empty filter accepts all. Do not invent channel IDs inside rule actions.
+Platform notification center (create / query / ack) plus delivery channels — not device text or device control.
+Separate messages from channels. Discover channel types and configuration schema before creating an unfamiliar channel; use --param key=value or --config JSON.
+A rule notify action creates a platform message. Channels receive messages according to their filters; an empty filter accepts all. Do not invent channel IDs inside rule actions.
 Test delivery when requested, then inspect the result. Message stored, delivery queued and recipient received are distinct outcomes. Avoid repeated sends after an unknown result.
 Read/update/delete only the intended message or channel. Preserve credentials and filters unless the user requested changes. Load type-specific examples and routing sections as needed.
 
 ## Commands
 | Command | Purpose |
 |---|---|
-| `neomind message list` | List messages |
-| `neomind message get <id>` | Message details |
-| `neomind message send` | Send a new message |
-| `neomind message read <id>` | Acknowledge/read a message (alias: `ack`) |
-| `neomind message channel-list` | List message channels |
+| `neomind message list` | List platform notifications |
+| `neomind message get <id>` | Platform notification details |
+| `neomind message send` | Create a platform notification (message center — not device delivery) |
+| `neomind message read <id>` | Acknowledge/read a platform notification (alias: `ack`) |
+| `neomind message channel-list` | List notification channels |
 | `neomind message channel-get <id>` | Channel details |
 | `neomind message channel-types` | List available channel types |
 | `neomind message channel-type-schema <TYPE>` | Config schema + examples for a channel type |
-| `neomind message channel-create` | Create a message channel |
+| `neomind message channel-create` | Create a notification channel |
 | `neomind message channel-update --name <NAME> --config '<JSON>'` | Update channel configuration (⚠️ flags, no positional id) |
 | `neomind message channel-delete <id>` | Delete a channel |
-| `neomind message channel-test <id>` | Test a message channel |
+| `neomind message channel-test <id>` | Test a notification channel |
 
 ## Detailed reference
 Use skill(action="load", id="message-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
@@ -57,18 +58,18 @@ Always RUN the command yourself and report the real output.
 
 | Command | Purpose |
 |---|---|
-| `neomind message list` | List messages |
-| `neomind message get <id>` | Message details |
-| `neomind message send` | Send a new message |
-| `neomind message read <id>` | Acknowledge/read a message (alias: `ack`) |
-| `neomind message channel-list` | List message channels |
+| `neomind message list` | List platform notifications |
+| `neomind message get <id>` | Platform notification details |
+| `neomind message send` | Create a platform notification (message center — not device delivery) |
+| `neomind message read <id>` | Acknowledge/read a platform notification (alias: `ack`) |
+| `neomind message channel-list` | List notification channels |
 | `neomind message channel-get <id>` | Channel details |
 | `neomind message channel-types` | List available channel types |
 | `neomind message channel-type-schema <TYPE>` | Config schema + examples for a channel type |
-| `neomind message channel-create` | Create a message channel |
+| `neomind message channel-create` | Create a notification channel |
 | `neomind message channel-update --name <NAME> --config '<JSON>'` | Update channel configuration (⚠️ flags, no positional id) |
 | `neomind message channel-delete <id>` | Delete a channel |
-| `neomind message channel-test <id>` | Test a message channel |
+| `neomind message channel-test <id>` | Test a notification channel |
 
 ## CRITICAL Rules
 

@@ -222,6 +222,20 @@ mod tests {
         assert!(prompt.contains("Platform data comes from the CLI"));
     }
 
+    /// NM-249: do not treat every `accepted` as pending; distinguish async agent
+    /// poll-by-ref from device adapter_accepted (dispatched; poll only on request).
+    #[test]
+    fn nm249_accepted_copy_distinguishes_agent_vs_device() {
+        let prompt = PromptBuilder::new().build_system_prompt();
+        assert!(prompt.contains("adapter_accepted"));
+        assert!(prompt.contains("dispatched to the broker"));
+        assert!(prompt.contains("poll by the returned execution reference"));
+        assert!(!prompt.contains("Executing/accepted means still pending"));
+        assert!(!prompt.contains("weather-forecast-v2_get_weather"));
+        assert!(prompt.contains("if the extension id is unknown"));
+        assert!(prompt.contains("if command/schema is unknown"));
+    }
+
     #[test]
     fn test_conditional_blocks_stripped_when_disabled() {
         let with_all = PromptBuilder::new()
