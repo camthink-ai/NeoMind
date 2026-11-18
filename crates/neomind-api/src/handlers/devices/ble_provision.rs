@@ -113,7 +113,24 @@ pub struct MqttConfigResponse {
 // Helper: resolve broker configuration
 // ---------------------------------------------------------------------------
 
+/// Map an external broker's optional auth fields into CT mqtt username/password.
+/// Empty / missing credentials stay empty so the write path can omit them.
+fn external_broker_credentials(
+    username: Option<String>,
+    password: Option<String>,
+) -> (String, String) {
+    (
+        username.unwrap_or_default(),
+        password.unwrap_or_default(),
+    )
+}
+
 /// Resolve broker configuration from broker_id (NeoMind managed / subscribed).
+///
+/// Embedded host/port/TLS come from the live broker config. Username/password
+/// for embedded stay empty here — when auth is enabled, phase-1 resolve mints
+/// a device-scoped credential via [`attach_embedded_auth_credentials`] so the
+/// CT write receives plaintext the bcrypt store cannot echo.
 fn resolve_broker_config(
     broker_id: &str,
 ) -> Result<(String, u16, String, String, bool), ErrorResponse> {
@@ -139,14 +156,111 @@ fn resolve_broker_config(
             .load_external_broker(broker_id)
             .map_err(|e| ErrorResponse::internal(format!("Failed to load broker: {}", e)))?
             .ok_or_else(|| ErrorResponse::not_found(format!("Broker not found: {}", broker_id)))?;
-        Ok((
-            broker.broker,
-            broker.port,
-            broker.username.unwrap_or_default(),
-            broker.password.unwrap_or_default(),
-            broker.tls,
-        ))
+        let (username, password) =
+            external_broker_credentials(broker.username.clone(), broker.password.clone());
+        Ok((broker.broker, broker.port, username, password, broker.tls))
     }
+}
+
+/// Mint (or rotate) a device-scoped MQTT user for the embedded broker.
+///
+/// Embedded user passwords are bcrypt-only at rest, so BLE provision cannot
+/// echo an operator-created credential. Each resolve_only phase gets a fresh
+/// plaintext pair keyed by `device_id`; the hash is upserted for the broker.
+fn mint_device_mqtt_credential(
+    store: &neomind_storage::SettingsStore,
+    device_id: &str,
+) -> Result<(String, String), ErrorResponse> {
+    let username = device_id.trim().to_string();
+    if username.is_empty() || username.len() > 64 {
+        return Err(ErrorResponse::bad_request(
+            "device id is not a valid MQTT username (1-64 chars)",
+        ));
+    }
+    if username.starts_with("__neomind") {
+        return Err(ErrorResponse::bad_request(
+            "device id collides with reserved MQTT system username prefix",
+        ));
+    }
+
+    let password = generate_provision_password(16);
+    let password_hash = bcrypt::hash(&password, 12)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to hash MQTT password: {e}")))?;
+    store
+        .add_mqtt_credential(&username, &password_hash)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to store MQTT credential: {e}")))?;
+    Ok((username, password))
+}
+
+fn generate_provision_password(length: usize) -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let mut rng = rand::thread_rng();
+    (0..length)
+        .map(|_| CHARSET[rng.gen_range(0..CHARSET.len())] as char)
+        .collect()
+}
+
+fn refresh_credential_cache(state: &ServerState) {
+    #[cfg(feature = "embedded-broker")]
+    {
+        if let Ok(store) = config::open_settings_store() {
+            match crate::server::types::CredentialCache::load_from_store(&store) {
+                Ok(cache) => {
+                    *state
+                        .credential_cache
+                        .write()
+                        .unwrap_or_else(|e| e.into_inner()) = cache;
+                }
+                Err(e) => tracing::error!(
+                    category = "ble",
+                    error = %e,
+                    "Failed to refresh MQTT credential cache after BLE provision mint"
+                ),
+            }
+        }
+    }
+    #[cfg(not(feature = "embedded-broker"))]
+    {
+        let _ = state;
+    }
+}
+
+/// When the embedded broker requires auth, attach a device credential on the
+/// resolve_only (BLE write) phase so config.set includes username/password.
+///
+/// Phase 2 register must not rotate — the device already holds the phase-1
+/// plaintext. External / custom brokers already carry their own credentials.
+fn attach_embedded_auth_credentials(
+    state: &ServerState,
+    req: &BleProvisionRequest,
+    device_id: &str,
+    cfg: &mut MqttConfigResponse,
+) -> Result<(), ErrorResponse> {
+    if req.broker_id != "embedded" || !req.resolve_only {
+        return Ok(());
+    }
+    if !config::get_embedded_broker_config().auth_enabled {
+        return Ok(());
+    }
+    // Defensive: if somehow already populated, keep.
+    if !cfg.username.is_empty() || !cfg.password.is_empty() {
+        return Ok(());
+    }
+
+    let store = config::open_settings_store()
+        .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {e}")))?;
+    let (username, password) = mint_device_mqtt_credential(store.as_ref(), device_id)?;
+    cfg.username = username;
+    cfg.password = password;
+    refresh_credential_cache(state);
+
+    tracing::info!(
+        category = "ble",
+        device_id = %device_id,
+        "BLE provision minted embedded-broker MQTT credential for device"
+    );
+    Ok(())
 }
 
 /// Build the MQTT config written to the device (managed broker or custom).
@@ -219,6 +333,18 @@ fn resolve_mqtt_config(
     })
 }
 
+/// Resolve MQTT config and, when needed, attach embedded-broker device creds.
+fn resolve_mqtt_config_for_provision(
+    state: &ServerState,
+    req: &BleProvisionRequest,
+    device_type: &str,
+    device_id: &str,
+) -> Result<MqttConfigResponse, ErrorResponse> {
+    let mut cfg = resolve_mqtt_config(req, device_type, device_id)?;
+    attach_embedded_auth_credentials(state, req, device_id, &mut cfg)?;
+    Ok(cfg)
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -270,7 +396,8 @@ pub async fn ble_provision_handler(
             "BLE provision: device already exists"
         );
 
-        let mqtt_config = resolve_mqtt_config(&req, &existing.device_type, &device_id)?;
+        let mqtt_config =
+            resolve_mqtt_config_for_provision(&state, &req, &existing.device_type, &device_id)?;
         let topic_prefix = mqtt_config.topic_prefix.trim_end_matches('/').to_string();
         let topic_prefix = topic_prefix
             .strip_suffix("/uplink")
@@ -338,7 +465,8 @@ pub async fn ble_provision_handler(
     }
 
     // 4. Resolve broker config (NeoMind subscribed or device-custom)
-    let mqtt_config = resolve_mqtt_config(&req, &req.device_type, &device_id)?;
+    let mqtt_config =
+        resolve_mqtt_config_for_provision(&state, &req, &req.device_type, &device_id)?;
     let topic_prefix = mqtt_config.topic_prefix.trim_end_matches('/').to_string();
     let topic_prefix = topic_prefix
         .strip_suffix("/uplink")
@@ -551,5 +679,64 @@ mod tests {
             client_id: None,
         }));
         assert!(resolve_mqtt_config(&req, "ne101_camera", "id").is_err());
+    }
+
+    #[test]
+    fn external_broker_credentials_include_when_present() {
+        let (u, p) = external_broker_credentials(Some("device".into()), Some("s3cret".into()));
+        assert_eq!(u, "device");
+        assert_eq!(p, "s3cret");
+    }
+
+    #[test]
+    fn external_broker_credentials_empty_when_absent() {
+        let (u, p) = external_broker_credentials(None, None);
+        assert!(u.is_empty());
+        assert!(p.is_empty());
+        // Partial: username only still surfaces (password omitted on CT write).
+        let (u2, p2) = external_broker_credentials(Some("only-user".into()), None);
+        assert_eq!(u2, "only-user");
+        assert!(p2.is_empty());
+    }
+
+    #[test]
+    fn mint_device_mqtt_credential_stores_hash_and_returns_plaintext() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store =
+            neomind_storage::SettingsStore::open(tmp.path().join("settings.redb")).unwrap();
+        let device_id = "ne101_a2f003";
+        let (username, password) = mint_device_mqtt_credential(store.as_ref(), device_id).unwrap();
+        assert_eq!(username, device_id);
+        assert_eq!(password.len(), 16);
+        let creds = store.list_mqtt_credentials().unwrap();
+        let row = creds.iter().find(|c| c.username == device_id).unwrap();
+        assert!(bcrypt::verify(&password, &row.password_hash).unwrap());
+
+        // Rotate on re-provision: new plaintext, updated hash.
+        let (u2, p2) = mint_device_mqtt_credential(store.as_ref(), device_id).unwrap();
+        assert_eq!(u2, device_id);
+        assert_ne!(p2, password);
+        let creds2 = store.list_mqtt_credentials().unwrap();
+        let row2 = creds2.iter().find(|c| c.username == device_id).unwrap();
+        assert!(bcrypt::verify(&p2, &row2.password_hash).unwrap());
+        assert!(!bcrypt::verify(&password, &row2.password_hash).unwrap());
+    }
+
+    #[test]
+    fn custom_mqtt_preserves_username_and_password() {
+        let req = base_req(Some(CustomMqttRequest {
+            host: "broker.lan".into(),
+            port: 1883,
+            username: "cam".into(),
+            password: "p@ss".into(),
+            tls: false,
+            enable: true,
+            qos: 1,
+            topic_prefix: None,
+            client_id: None,
+        }));
+        let cfg = resolve_mqtt_config(&req, "ne101_camera", "ne101_a2f003").unwrap();
+        assert_eq!(cfg.username, "cam");
+        assert_eq!(cfg.password, "p@ss");
     }
 }

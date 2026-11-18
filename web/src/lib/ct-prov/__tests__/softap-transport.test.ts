@@ -173,6 +173,36 @@ describe('ct-prov model stubs', () => {
     })
   })
 
+  it('JSON wire keeps non-empty broker creds and omits empty ones', () => {
+    const withCreds = JSON.stringify(
+      mqttSectionFromResolve({
+        host: 'broker.lan',
+        port: 1883,
+        username: 'device',
+        password: 's3cret',
+        topic_prefix: 'device/t/id',
+        client_id: 'id',
+        tls: false,
+      }),
+    )
+    expect(withCreds).toContain('"username":"device"')
+    expect(withCreds).toContain('"password":"s3cret"')
+
+    const emptyCreds = JSON.stringify(
+      mqttSectionFromResolve({
+        host: 'broker.lan',
+        port: 1883,
+        username: '',
+        password: '',
+        topic_prefix: 'device/t/id',
+        client_id: 'id',
+        tls: false,
+      }),
+    )
+    expect(emptyCreds).not.toContain('"username"')
+    expect(emptyCreds).not.toContain('"password"')
+  })
+
   it('honors explicit tls for custom brokers (not only port 8883)', () => {
     expect(
       mqttSectionFromResolve({

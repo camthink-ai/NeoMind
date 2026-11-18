@@ -43,6 +43,7 @@ Edge-AI capability iteration merged to `main`: CamThink CT-Prov/1 BLE onboarding
 - Eval foundation: fixture `case_precheck`, `seed-main-objective`, Plan E detection-chain preregister (5×zh+5×en, ≥9/10 gate), Plan F 48-scenario catalog + 24/12/12 splits + pairing gates (`test_business_capability_48`).
 
 ### Fixed — CT-Prov / BLE provision
+- BLE provision to an auth-enabled embedded broker now mints a device-scoped MQTT username/password on resolve and writes them in `config.set` (empty creds still omitted; external/custom brokers already passed theirs through).
 - SoftAP **AP** tab stays hidden until SoftAP Wi‑Fi scan iteration; BLE wizard ships with Manual/Auto parity heroes and calm copy (no invented SoftAP scan UX).
 - Web Bluetooth UUID lowercased; discovery uses `namePrefix` **OR** `services` filter so Chrome lists CamThink devices again (Service Data ADV).
 - BLE scan window ~30s with progressive multi-device list; BLE session released on navigation; discovery drafts cleared on BLE register (NM-225).
