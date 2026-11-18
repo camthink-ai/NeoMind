@@ -113,6 +113,11 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/extensions/capabilities",
             get(extensions::list_extension_capabilities_handler),
         )
+        // Must precede `/api/extensions/:id` so `commands` is not an id.
+        .route(
+            "/api/extensions/commands/search",
+            get(extensions::search_extension_commands_handler),
+        )
         // Capability API (public - static metadata)
         .route(
             "/api/capabilities",

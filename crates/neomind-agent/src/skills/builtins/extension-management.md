@@ -22,7 +22,7 @@ anti_triggers:
 
 Cover the full lifecycle: install (market or local `.nep`), configure, diagnose (status/logs), and operate (list/commands/invoke) — not marketplace-only.
 Inspect installed extensions and available packages. For install/update, use the intended package and verify compatibility, enablement and exposed commands/metrics.
-Selection for invoke: list if id unknown; `neomind extension commands <id>` if schema unknown; otherwise `neomind extension invoke <id> <command>` with params from discovery/`--help`. Do not invent sanitized chat-tool names as CLI subcommands.
+Selection for invoke: first need → `neomind extension commands --search "<task>"`; known id+command from this session → reuse invoke (skip re-search); full schema → `neomind extension commands <id>`; then `neomind extension invoke <id> <command>` with params from discovery. Do not invent sanitized chat-tool names as CLI subcommands.
 Do not confuse extension installation with skill loading or widget installation. Preserve configuration during upgrades and report restart/enable requirements.
 Verify extension status and actual command/metric results. Load installation, configuration, or diagnosis reference sections as needed.
 
@@ -31,6 +31,7 @@ Verify extension status and actual command/metric results. Load installation, co
 |---|---|
 | `neomind extension list` | List installed extensions |
 | `neomind extension get <id>` | Show one extension's info (alias: `info`) |
+| `neomind extension commands --search "<task>"` | Rank AI-visible commands for a task (≤3; purpose + required params) |
 | `neomind extension commands <id>` | Machine-readable command schemas + invoke examples |
 | `neomind extension invoke <id> <command> --params '{...}'` | Run a command (honors AI enable / disabled_commands / ai_exposed) |
 | `neomind extension status <id>` | Extension health/status |
@@ -74,6 +75,7 @@ Install, configure, diagnose (status/logs), and invoke installed extensions — 
 |---|---|
 | `neomind extension list` | List installed extensions |
 | `neomind extension get <id>` | Show one extension's info (alias: `info`) |
+| `neomind extension commands --search "<task>"` | Rank AI-visible commands for a task |
 | `neomind extension commands <id>` | Command schemas + invoke examples |
 | `neomind extension invoke <id> <command> --params '{...}'` | Run a command |
 | `neomind extension status <id>` | Extension health/status |
@@ -92,6 +94,7 @@ Install, configure, diagnose (status/logs), and invoke installed extensions — 
 
 ```bash
 neomind extension list
+neomind extension commands --search "weather in Xiamen"
 neomind extension commands weather-forecast-v2
 neomind extension invoke weather-forecast-v2 get_weather --params '{"city":"Xiamen"}'
 neomind extension market-list weather     # compact, filtered

@@ -35,12 +35,10 @@ impl CapabilityIndex {
         let mut out = String::from("## System Capability Index\n");
         out.push_str(&Self::build_cli_tree());
         out.push_str(&Self::build_data_conventions());
-        // NM-247: short AI extension catalog from the published prepareable
-        // snapshot (refreshes on install/unload/reload with that catalog).
-        let ext_catalog = neomind_core::extension::format_ai_extension_catalog(12, 1200);
-        if !ext_catalog.is_empty() {
-            out.push_str(&ext_catalog);
-        }
+        // NM-252: fixed discovery rules (same length for 5 or 500 installs).
+        // Prefer --search then invoke; reuse known on follow-up. Transitional
+        // NM-247 catalog remains available but is not injected here.
+        out.push_str(&neomind_core::extension::format_extension_discovery_rules());
         let state = self.build_system_state_snapshot().await;
         if !state.is_empty() {
             out.push_str(&state);
@@ -265,8 +263,21 @@ mod tests {
         assert!(out.starts_with("## System Capability Index"));
         assert!(out.contains("### CLI Commands"));
         assert!(out.contains("### Data Conventions"));
+        assert!(
+            out.contains("### Extension capability discovery"),
+            "NM-252 discovery rules must be resident: {out}"
+        );
+        assert!(
+            out.contains("--search"),
+            "must prefer commands --search: {out}"
+        );
         // No skill list duplication
         assert!(!out.contains("device-onboarding"));
+        // Fixed discovery rules — must not grow with installs (no per-ext catalog).
+        assert!(
+            !out.contains("### AI Extensions"),
+            "transitional NM-247 catalog must not be injected: {out}"
+        );
         // ~1.2K token target ≈ well under 6KB chars
         assert!(
             out.len() <= 6000,

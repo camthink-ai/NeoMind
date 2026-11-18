@@ -166,6 +166,11 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "GET",
+        path: "/api/extensions/commands/search",
+        auth: "public",
+    },
+    RouteDoc {
+        method: "GET",
         path: "/api/capabilities",
         auth: "public",
     },

@@ -271,6 +271,11 @@ fn extension_commands_id_from_help_argv(argv: &[String]) -> Option<String> {
         match tok {
             "--help" | "-h" => saw_help = true,
             "-v" | "--verbose" => {}
+            "--search" => {
+                // Consume search query; do not treat it as id.
+                let _ = iter.next();
+            }
+            flag if flag.starts_with("--search=") => {}
             "--format" => {
                 // Consume value when present.
                 let _ = iter.next();
@@ -300,7 +305,8 @@ Returning the machine-readable command list instead. Discovery API: \
 async fn redirect_extension_commands_help(id: &str) -> Result<CliResponse, DispatchError> {
     use commands::ExtensionCommand;
     let (mut resp, _) = handlers::run_extension_cmd(ExtensionCommand::Commands {
-        id: id.to_string(),
+        id: Some(id.to_string()),
+        search: None,
     })
     .await
     .map_err(|e| DispatchError::Api(e.to_string()))?;

@@ -50,7 +50,7 @@ pub fn historical_extension_tool_cli_hint(tool_name: &str) -> Option<String> {
     Some(format!(
         "Tool '{tool_name}' is not registered for chat. Use CLI discovery then invoke \
          (AI disable / ai_exposed still apply on invoke):\n\
-         neomind extension list\n\
+         neomind extension commands --search \"<task>\"\n\
          neomind extension commands {ext}\n\
          neomind extension invoke {ext} {cmd} --params '{{...}}'"
     ))

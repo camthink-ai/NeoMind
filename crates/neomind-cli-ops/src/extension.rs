@@ -6,7 +6,8 @@ use serde_json::{json, Value};
 /// List all extensions with compact summary.
 ///
 /// Returns id, name, version, runtime status, run `enabled`, AI
-/// `ai_enabled`, and the next discovery step (`extension commands <id>`).
+/// `ai_enabled`, and the next discovery step (`extension commands --search`
+/// or `extension commands <id>`).
 /// `ai_enabled` is the Chat/Agent master switch; `enabled` is run/load.
 pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/extensions").await?;
@@ -67,7 +68,7 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
                 "enabled": enabled,
                 "ai_enabled": ai_enabled,
                 "description": e.get("description").and_then(|v| v.as_str()).unwrap_or(""),
-                "next": format!("neomind extension commands {id}"),
+                "next": format!("neomind extension commands --search \"…\"  OR  neomind extension commands {id}"),
             })
         })
         .collect();
@@ -87,11 +88,11 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
         );
     } else if truncated {
         resp = resp.with_suggestion(format!(
-            "Showing first {LIST_CAP} of {total}. Pick an id and run: neomind extension commands <id>"
+            "Showing first {LIST_CAP} of {total}. Prefer: neomind extension commands --search \"<task>\"; or commands <id>"
         ));
     } else {
         resp = resp.with_suggestion(
-            "Next: neomind extension commands <id>  (then neomind extension invoke <id> <command> --params '{...}')",
+            "Next: neomind extension commands --search \"<task>\"  (or commands <id>, then invoke)",
         );
     }
     Ok(resp)
@@ -298,6 +299,69 @@ pub fn compact_market_list(raw: &serde_json::Value, filter: Option<&str>) -> ser
         "matched": out.len(),
         "extensions": out,
     })
+}
+
+/// Search AI-visible extension commands by task text (NM-252).
+///
+/// Hits the host registry snapshot via
+/// `GET /extensions/commands/search` — same visibility as invoke
+/// (`ai_enabled` / `disabled_commands` / `ai_exposed`). Host ranks and
+/// truncates; zero hits are a valid outcome.
+pub async fn search_extension_commands(
+    client: &ApiClient,
+    query: &str,
+    scope_extension_id: Option<&str>,
+) -> Result<CliResponse> {
+    let mut path = format!(
+        "/extensions/commands/search?q={}",
+        urlencoding_encode(query)
+    );
+    if let Some(id) = scope_extension_id {
+        path.push_str(&format!("&extension={}", urlencoding_encode(id)));
+    }
+    let data = client.get(&path).await?;
+    let inner = data.get("data").cloned().unwrap_or(data);
+    let hits = inner
+        .get("hits")
+        .and_then(|h| h.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let n = hits.len();
+    let mut resp = CliResponse::success(
+        inner,
+        if n == 0 {
+            "No matching AI-visible extension commands".into()
+        } else {
+            format!("{n} matching command(s)")
+        },
+    );
+    if n == 0 {
+        resp = resp.with_suggestion(
+            "No relevant extension command. Try a clearer task phrase, install the needed \
+extension, or use web tools for announcements/general web intent.",
+        );
+    } else {
+        resp = resp.with_suggestion(
+            "Next: neomind extension invoke <id> <command> with shell params from required_params. \
+Full schema: neomind extension commands <id>. Reuse known id/command on follow-up.",
+        );
+    }
+    Ok(resp)
+}
+
+/// Minimal query-string encoder (enough for search text / extension ids).
+fn urlencoding_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// List unified business command defs for an installed extension.

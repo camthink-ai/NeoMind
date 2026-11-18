@@ -327,6 +327,7 @@ route index (including not-yet-schematized endpoints): /api/docs/routes.json."
         crate::handlers::extensions::list_extension_capabilities_handler,
         crate::handlers::extensions::get_extension_handler,
         crate::handlers::extensions::extension_health_handler,
+        crate::handlers::extensions::search_extension_commands_handler,
         crate::handlers::extensions::list_extension_commands_handler,
         crate::handlers::extensions::get_extension_components_handler,
         crate::handlers::extensions::get_event_subscriptions_handler,

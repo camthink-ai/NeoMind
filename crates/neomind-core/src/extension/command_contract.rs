@@ -1131,6 +1131,309 @@ fn publish_prepareable_snapshot(snapshot: &ExtensionCommandSnapshot) {
     }
 }
 
+/// Default host rank budget for [`search_ai_extension_commands`] (NM-252).
+pub const AI_COMMAND_SEARCH_MAX_HITS: usize = 3;
+/// ~500 tokens × ~4 chars/token — purpose + required params only.
+pub const AI_COMMAND_SEARCH_MAX_CHARS: usize = 2000;
+/// Below this score the host returns zero hits (relevance too low).
+const AI_COMMAND_SEARCH_MIN_SCORE: u32 = 15;
+
+/// One ranked AI-visible command hit from the current registry snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiCommandSearchHit {
+    pub extension_id: String,
+    pub command: String,
+    pub purpose: String,
+    /// Required param name + short description (schema stays on `commands <id>`).
+    pub required_params: Vec<AiCommandSearchParam>,
+    pub score: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiCommandSearchParam {
+    pub name: String,
+    pub description: String,
+}
+
+/// Ranked search result over installed AI-visible commands (NM-252).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AiCommandSearchResult {
+    pub query: String,
+    pub scope_extension_id: Option<String>,
+    pub hits: Vec<AiCommandSearchHit>,
+    /// AI-visible commands considered before rank/truncate.
+    pub candidates_scanned: usize,
+    pub truncated: bool,
+}
+
+/// Fixed-length discovery rules for the resident capability prompt (NM-252).
+///
+/// Same text whether 5 or 500 extensions are installed — no per-extension
+/// catalog growth. Prefer `--search` then invoke; reuse known on follow-up.
+pub fn format_extension_discovery_rules() -> String {
+    "\n### Extension capability discovery\n\
+     - First need / unknown capability: `neomind extension commands --search \"<task>\"` \
+(host ranks ≤3 AI-visible cmds with purpose + required params; zero hits allowed).\n\
+     - Known id+command from this session: reuse → `neomind extension invoke <id> <command>` \
+with shell `params` (skip re-search).\n\
+     - Full schema when id known: `neomind extension commands <id>`.\n\
+     - @ one extension: `neomind extension commands --search \"<task>\" <id>` (scoped).\n\
+     - Web/announcement intent: use web tools; skip extension search.\n\
+     - Uninstall/disable/reload may reject invoke — search again.\n"
+        .to_string()
+}
+
+/// Search installed AI-visible commands from the current prepareable snapshot.
+///
+/// Filters with the same policy as catalog/invoke (`ai_enabled` /
+/// `disabled_commands` / `ai_exposed`; missing AI policy → omit). Host-side
+/// lexical rank only — no second index or vector DB. Returns at most
+/// `max_hits` complete entries within `max_chars`; may return zero hits.
+pub fn search_ai_extension_commands(
+    query: &str,
+    scope_extension_id: Option<&str>,
+    max_hits: usize,
+    max_chars: usize,
+) -> AiCommandSearchResult {
+    let query_trim = query.trim();
+    let empty = AiCommandSearchResult {
+        query: query_trim.to_string(),
+        scope_extension_id: scope_extension_id.map(str::to_string),
+        hits: Vec::new(),
+        candidates_scanned: 0,
+        truncated: false,
+    };
+    if query_trim.is_empty() || max_hits == 0 || max_chars == 0 {
+        return empty;
+    }
+
+    let tokens = search_query_tokens(query_trim);
+    if tokens.is_empty() {
+        return empty;
+    }
+
+    let mut scored: Vec<AiCommandSearchHit> = {
+        let Ok(guard) = cap_cache().lock() else {
+            return empty;
+        };
+        let mut out = Vec::new();
+        for (id, snap) in guard.prepareable.iter() {
+            if let Some(scope) = scope_extension_id {
+                if id != scope {
+                    continue;
+                }
+            }
+            let Some(vis) = guard.ai_visibility.get(id) else {
+                continue;
+            };
+            for cmd in snap
+                .commands
+                .iter()
+                .filter(|c| command_visible_to_ai(c, vis))
+            {
+                let score = score_command_against_query(id, cmd, query_trim, &tokens);
+                if score < AI_COMMAND_SEARCH_MIN_SCORE {
+                    continue;
+                }
+                let purpose = {
+                    let d = cmd.description.trim();
+                    if d.is_empty() {
+                        cmd.display_name.trim().to_string()
+                    } else {
+                        d.chars().take(160).collect()
+                    }
+                };
+                let required_params: Vec<AiCommandSearchParam> = cmd
+                    .parameters
+                    .iter()
+                    .filter(|p| p.required)
+                    .map(|p| AiCommandSearchParam {
+                        name: p.name.clone(),
+                        description: p.description.chars().take(80).collect(),
+                    })
+                    .collect();
+                out.push(AiCommandSearchHit {
+                    extension_id: id.clone(),
+                    command: cmd.name.clone(),
+                    purpose,
+                    required_params,
+                    score,
+                });
+            }
+        }
+        out
+    };
+
+    let candidates_scanned = scored.len();
+    scored.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| a.extension_id.cmp(&b.extension_id))
+            .then_with(|| a.command.cmp(&b.command))
+    });
+
+    // Deduplicate identical (extension, command) keeping best score.
+    scored.dedup_by(|a, b| a.extension_id == b.extension_id && a.command == b.command);
+
+    let mut hits = Vec::new();
+    let mut used = 0usize;
+    let mut truncated = false;
+    // Envelope reserved so a later consumer can wrap JSON without blowing budget.
+    let envelope = 120usize;
+    let budget = max_chars.saturating_sub(envelope);
+
+    for hit in scored.into_iter() {
+        if hits.len() >= max_hits {
+            truncated = true;
+            break;
+        }
+        let approx = estimate_hit_chars(&hit);
+        if used + approx > budget && !hits.is_empty() {
+            truncated = true;
+            break;
+        }
+        if used + approx > budget && hits.is_empty() {
+            // First hit alone exceeds budget — still emit one truncated purpose.
+            let mut slim = hit;
+            slim.purpose = slim.purpose.chars().take(80).collect();
+            slim.required_params.truncate(4);
+            hits.push(slim);
+            truncated = candidates_scanned > 1;
+            break;
+        }
+        used += approx;
+        hits.push(hit);
+    }
+
+    AiCommandSearchResult {
+        query: query_trim.to_string(),
+        scope_extension_id: scope_extension_id.map(str::to_string),
+        hits,
+        candidates_scanned,
+        truncated,
+    }
+}
+
+fn estimate_hit_chars(hit: &AiCommandSearchHit) -> usize {
+    let mut n = hit.extension_id.len() + hit.command.len() + hit.purpose.len() + 48;
+    for p in &hit.required_params {
+        n += p.name.len() + p.description.len() + 8;
+    }
+    n
+}
+
+fn search_query_tokens(query: &str) -> Vec<String> {
+    let lower = query.to_lowercase();
+    let mut tokens: Vec<String> = lower
+        .split(|c: char| !(c.is_alphanumeric() || c == '_' || is_cjk(c)))
+        .filter(|t| !t.is_empty() && (t.len() >= 2 || t.chars().any(is_cjk)))
+        .map(|t| t.to_string())
+        .collect();
+    // Keep the full normalized query as a phrase when multi-token / CJK.
+    let phrase: String = lower
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || is_cjk(c) {
+                c
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !phrase.is_empty() && !tokens.iter().any(|t| t == &phrase) {
+        tokens.push(phrase);
+    }
+    tokens.sort();
+    tokens.dedup();
+    tokens
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(
+        c,
+        '\u{4E00}'..='\u{9FFF}'
+            | '\u{3400}'..='\u{4DBF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{3040}'..='\u{30FF}'
+            | '\u{AC00}'..='\u{D7AF}'
+    )
+}
+
+fn score_command_against_query(
+    extension_id: &str,
+    cmd: &ExtensionCommand,
+    query: &str,
+    tokens: &[String],
+) -> u32 {
+    let q = query.to_lowercase();
+    let name = cmd.name.to_lowercase();
+    let display = cmd.display_name.to_lowercase();
+    let desc = cmd.description.to_lowercase();
+    let ext = extension_id.to_lowercase();
+    let name_norm = name.replace(['-', ' '], "_");
+    let q_norm = q.replace(['-', ' '], "_");
+
+    let mut score = 0u32;
+    if name == q || name_norm == q_norm {
+        score += 100;
+    } else if name.contains(&q) || name_norm.contains(&q_norm) {
+        score += 60;
+    }
+    if display == q {
+        score += 40;
+    } else if !q.is_empty() && display.contains(&q) {
+        score += 25;
+    }
+    if !q.is_empty() && desc.contains(&q) {
+        score += 35;
+    }
+    if !q.is_empty() && ext.contains(&q) {
+        score += 30;
+    }
+
+    let mut matched = 0u32;
+    for tok in tokens {
+        if tok.len() < 2 && !tok.chars().any(is_cjk) {
+            continue;
+        }
+        let mut hit = false;
+        if name.contains(tok.as_str()) || name_norm.contains(&tok.replace('-', "_")) {
+            score += 25;
+            hit = true;
+        }
+        if display.contains(tok.as_str()) {
+            score += 12;
+            hit = true;
+        }
+        if desc.contains(tok.as_str()) {
+            score += 15;
+            hit = true;
+        }
+        if ext.contains(tok.as_str()) {
+            score += 10;
+            hit = true;
+        }
+        for p in &cmd.parameters {
+            let pn = p.name.to_lowercase();
+            let pd = p.description.to_lowercase();
+            if pn.contains(tok.as_str()) || pd.contains(tok.as_str()) {
+                score += if p.required { 10 } else { 5 };
+                hit = true;
+            }
+        }
+        if hit {
+            matched += 1;
+        }
+    }
+    if !tokens.is_empty() && matched as usize == tokens.len() {
+        score += 20;
+    }
+    score
+}
+
 /// Short AI extension catalog for capability context (NM-247).
 ///
 /// Same AI visibility as `extension commands` / invoke: `ai_enabled`,
@@ -1138,6 +1441,9 @@ fn publish_prepareable_snapshot(snapshot: &ExtensionCommandSnapshot) {
 /// published AI policy snapshot are omitted (fail closed — not default-visible).
 /// Byte budget counts complete entries only. Full schemas stay on-demand via
 /// `neomind extension commands <id>`.
+///
+/// NM-252: transitional — resident prompts prefer
+/// [`format_extension_discovery_rules`] + `--search` over this catalog.
 pub fn format_ai_extension_catalog(max_lines: usize, max_bytes: usize) -> String {
     let entries: Vec<(String, String)> = {
         let Ok(guard) = cap_cache().lock() else {
@@ -1177,9 +1483,9 @@ pub fn format_ai_extension_catalog(max_lines: usize, max_bytes: usize) -> String
         return String::new();
     }
     let header = "\n### AI Extensions\n";
-    let footer =
-        "Discover: `neomind extension commands <id>` then invoke with shell `params`.\n";
-    let trunc = "- … (truncated; run `neomind extension list`)\n";
+    let footer = "Prefer: `neomind extension commands --search \"<task>\"` then invoke; \
+known id: `commands <id>`; reuse known on follow-up.\n";
+    let trunc = "- … (truncated; run `neomind extension commands --search \"…\"`)\n";
     let mut s = String::from(header);
     let mut n = 0usize;
     let mut omitted = false;
@@ -1466,7 +1772,11 @@ struct PreparedTicketStore {
 
 fn prepared_ticket_store() -> &'static Mutex<PreparedTicketStore> {
     static STORE: OnceLock<Mutex<PreparedTicketStore>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(PreparedTicketStore { by_id: HashMap::new() }))
+    STORE.get_or_init(|| {
+        Mutex::new(PreparedTicketStore {
+            by_id: HashMap::new(),
+        })
+    })
 }
 
 fn clear_prepared_tickets_for_instance(instance_id: &str) {
@@ -2666,7 +2976,9 @@ mod tests {
 
         let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
         assert_eq!(bind.effect, CommandEffect::ReadOnly);
-        let op = bind.prepared_operation_id.expect("RO classify must issue id");
+        let op = bind
+            .prepared_operation_id
+            .expect("RO classify must issue id");
         let prep = claim_prepared_by_id(&op).unwrap();
         assert_eq!(prep.contract.effect, CommandEffect::ReadOnly);
         assert_eq!(prep.operation_id, op);
@@ -2965,13 +3277,17 @@ mod tests {
 
         let a_bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
         assert_eq!(a_bind.effect, CommandEffect::ReadOnly);
-        let a_id = a_bind.prepared_operation_id.expect("A must carry its ticket id");
+        let a_id = a_bind
+            .prepared_operation_id
+            .expect("A must carry its ticket id");
 
         publish_mutating_weather(id);
 
         let b_bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
         assert_eq!(b_bind.effect, CommandEffect::Mutating);
-        let b_id = b_bind.prepared_operation_id.expect("B must issue a new ticket");
+        let b_id = b_bind
+            .prepared_operation_id
+            .expect("B must issue a new ticket");
         assert_ne!(a_id, b_id);
 
         // A resumes with A's classify-time id — stale, not B's ticket.
@@ -3071,8 +3387,7 @@ mod tests {
     #[test]
     fn nm247_params_example_prefers_author_samples() {
         let mut cmd = weather_get_undeclared();
-        cmd.parameters[0].options =
-            vec!["Beijing".into(), "Shanghai".into(), "New York".into()];
+        cmd.parameters[0].options = vec!["Beijing".into(), "Shanghai".into(), "New York".into()];
         cmd.samples = vec![json!({"city": "Shanghai"}), json!({"city": "Beijing"})];
         let ex = validated_params_example_for_command(&cmd).unwrap();
         assert_eq!(ex.get("city").and_then(|c| c.as_str()), Some("Shanghai"));
@@ -3093,12 +3408,143 @@ mod tests {
         assert!(catalog.contains("ocr-nm247-cat"), "{catalog}");
         assert!(catalog.contains("yolo-nm247-cat"), "{catalog}");
         assert!(
-            catalog.contains("Discover:"),
-            "must teach commands discovery: {catalog}"
+            catalog.contains("--search"),
+            "must teach search discovery: {catalog}"
         );
         for id in ["weather-nm247-cat", "ocr-nm247-cat", "yolo-nm247-cat"] {
             invalidate_instance_capability(id);
         }
+    }
+
+    #[test]
+    fn nm252_search_ranks_weather_in_top3_among_many() {
+        let weather = "weather-nm252-search";
+        invalidate_instance_capability(weather);
+        let gen = begin_instance_generation(weather);
+        ExtensionCommandSnapshot::build(
+            weather,
+            "1.0.0",
+            None,
+            vec![weather_get_undeclared()],
+            gen,
+        )
+        .publish_capabilities()
+        .unwrap();
+        set_instance_ai_visibility(weather, true, vec![]);
+
+        // Many unrelated AI-visible commands.
+        for i in 0..40 {
+            let id = format!("noise-nm252-{i}");
+            invalidate_instance_capability(&id);
+            let gen = begin_instance_generation(&id);
+            let mut cmd = weather_get_undeclared();
+            cmd.name = format!("do_thing_{i}");
+            cmd.description = format!("Unrelated operation number {i}");
+            cmd.parameters.clear();
+            ExtensionCommandSnapshot::build(&id, "1.0.0", None, vec![cmd], gen)
+                .publish_capabilities()
+                .unwrap();
+            set_instance_ai_visibility(&id, true, vec![]);
+        }
+
+        let few = search_ai_extension_commands(
+            "weather in Xiamen",
+            None,
+            AI_COMMAND_SEARCH_MAX_HITS,
+            AI_COMMAND_SEARCH_MAX_CHARS,
+        );
+        assert!(
+            few.hits
+                .iter()
+                .any(|h| h.extension_id == weather && h.command == "get_weather"),
+            "weather must rank in top hits with few+noise: {few:?}"
+        );
+        assert!(few.hits.len() <= AI_COMMAND_SEARCH_MAX_HITS, "{few:?}");
+        assert!(
+            few.hits
+                .iter()
+                .any(|h| h.required_params.iter().any(|p| p.name == "city")),
+            "required params must surface: {few:?}"
+        );
+        let approx: usize = few.hits.iter().map(estimate_hit_chars).sum();
+        assert!(
+            approx <= AI_COMMAND_SEARCH_MAX_CHARS,
+            "budget ~500tok: {approx} chars for {few:?}"
+        );
+
+        // Disable / unload reflections.
+        set_instance_ai_visibility(weather, false, vec![]);
+        let off = search_ai_extension_commands("weather", None, 3, 2000);
+        assert!(
+            !off.hits.iter().any(|h| h.extension_id == weather),
+            "ai_enabled=false must hide: {off:?}"
+        );
+
+        set_instance_ai_visibility(weather, true, vec!["get_weather".into()]);
+        let cmd_off = search_ai_extension_commands("weather", None, 3, 2000);
+        assert!(
+            !cmd_off.hits.iter().any(|h| h.extension_id == weather),
+            "disabled_commands must hide: {cmd_off:?}"
+        );
+
+        set_instance_ai_visibility(weather, true, vec![]);
+        invalidate_instance_capability(weather);
+        let unloaded = search_ai_extension_commands("weather", None, 3, 2000);
+        assert!(
+            !unloaded.hits.iter().any(|h| h.extension_id == weather),
+            "unload must drop from next search: {unloaded:?}"
+        );
+
+        let no_match =
+            search_ai_extension_commands("quantum teleportation protocol zzz", None, 3, 2000);
+        assert!(
+            no_match.hits.is_empty(),
+            "low relevance must allow zero hits: {no_match:?}"
+        );
+
+        // Scoped @-style search still works after re-publish.
+        let gen2 = begin_instance_generation(weather);
+        ExtensionCommandSnapshot::build(
+            weather,
+            "1.0.0",
+            None,
+            vec![weather_get_undeclared()],
+            gen2,
+        )
+        .publish_capabilities()
+        .unwrap();
+        set_instance_ai_visibility(weather, true, vec![]);
+        let scoped = search_ai_extension_commands("weather", Some(weather), 3, 2000);
+        assert_eq!(scoped.hits.len(), 1, "{scoped:?}");
+        assert_eq!(scoped.hits[0].extension_id, weather);
+
+        let rules = format_extension_discovery_rules();
+        assert!(rules.contains("--search"), "{rules}");
+        assert!(rules.contains("reuse"), "{rules}");
+
+        invalidate_instance_capability(weather);
+        for i in 0..40 {
+            invalidate_instance_capability(&format!("noise-nm252-{i}"));
+        }
+    }
+
+    #[test]
+    fn nm252_search_honors_ai_exposed_false() {
+        let id = "weather-nm252-exposed";
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        let mut hidden = weather_get_undeclared();
+        hidden.ai_exposed = false;
+        ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![hidden], gen)
+            .publish_capabilities()
+            .unwrap();
+        set_instance_ai_visibility(id, true, vec![]);
+        let r = search_ai_extension_commands("weather", None, 3, 2000);
+        assert!(
+            !r.hits.iter().any(|h| h.extension_id == id),
+            "ai_exposed=false omitted: {r:?}"
+        );
+        invalidate_instance_capability(id);
     }
 
     #[test]

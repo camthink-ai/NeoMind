@@ -541,6 +541,45 @@ pub struct DataSourceInfoDto {
     pub default_agg_func: String,
 }
 
+/// Query params for AI-visible command search (NM-252).
+#[derive(Debug, Deserialize)]
+pub struct SearchExtensionCommandsQuery {
+    /// Task / capability phrase to match against installed commands.
+    pub q: String,
+    /// Optional: scope search to one extension id (@-mention).
+    #[serde(default)]
+    pub extension: Option<String>,
+}
+
+/// GET /api/extensions/commands/search
+///
+/// Host-rank AI-visible commands from the current registry snapshot
+/// (`ai_enabled` / `disabled_commands` / `ai_exposed`). Caps ≤3 hits /
+/// ~500 tokens (purpose + required params). Zero hits are valid.
+#[utoipa::path(
+    get,
+    path = "/api/extensions/commands/search",
+    tag = "extensions",
+    params(
+        ("q" = String, Query, description = "Task phrase to search"),
+        ("extension" = Option<String>, Query, description = "Optional extension id scope"),
+    ),
+    responses(
+        (status = 200, description = "Ranked AI-visible command hits (may be empty)"),
+    )
+)]
+pub async fn search_extension_commands_handler(
+    axum::extract::Query(query): axum::extract::Query<SearchExtensionCommandsQuery>,
+) -> HandlerResult<neomind_core::extension::AiCommandSearchResult> {
+    let result = neomind_core::extension::search_ai_extension_commands(
+        &query.q,
+        query.extension.as_deref(),
+        neomind_core::extension::AI_COMMAND_SEARCH_MAX_HITS,
+        neomind_core::extension::AI_COMMAND_SEARCH_MAX_CHARS,
+    );
+    ok(result)
+}
+
 /// GET /api/extensions/:id/commands
 ///
 /// List all commands for an extension (V2 format)

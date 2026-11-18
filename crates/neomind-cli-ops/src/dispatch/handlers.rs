@@ -73,8 +73,13 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
             }
             None => crate::extension::get_extension_config(&client, &id).await?,
         },
-        ExtensionCommand::Commands { id } => {
-            crate::extension::list_extension_commands(&client, &id).await?
+        ExtensionCommand::Commands { id, search } => {
+            if let Some(q) = search {
+                crate::extension::search_extension_commands(&client, &q, id.as_deref()).await?
+            } else {
+                let id = id.expect("clap requires id without --search");
+                crate::extension::list_extension_commands(&client, &id).await?
+            }
         }
         ExtensionCommand::Invoke {
             extension_id,

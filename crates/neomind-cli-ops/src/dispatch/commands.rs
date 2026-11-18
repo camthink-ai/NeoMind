@@ -642,16 +642,25 @@ pub enum ExtensionCommand {
         #[arg(long)]
         set: Option<String>,
     },
-    /// List machine-readable commands for an installed extension.
+    /// List or search machine-readable extension commands.
     ///
-    /// Returns the unified business command contract for each command:
-    /// id, description, input_schema, effect, replay_safety, execution.
-    /// Discover before `extension invoke`.
-    /// Example: `neomind extension commands weather-forecast-v2`
+    /// Without `--search`: list the unified business command contract for one
+    /// installed extension (`id`, description, input_schema, effect, …).
+    /// With `--search "<task>"`: host-rank AI-visible commands from the current
+    /// registry snapshot (≤3 / ~500 tokens; purpose + required params; zero
+    /// hits allowed). Optional positional `<id>` scopes the search (e.g. @).
+    /// Examples:
+    ///   `neomind extension commands weather-forecast-v2`
+    ///   `neomind extension commands --search "weather in Xiamen"`
+    ///   `neomind extension commands --search "forecast" weather-forecast-v2`
     Commands {
-        /// Extension ID.
-        #[arg(required = true)]
-        id: String,
+        /// Task-oriented search across AI-visible installed commands (NM-252).
+        #[arg(long)]
+        search: Option<String>,
+        /// Extension ID. Required without `--search`; with `--search` scopes
+        /// the search to that extension.
+        #[arg(required_unless_present = "search")]
+        id: Option<String>,
     },
     /// Invoke an extension command with JSON params.
     ///
@@ -2825,6 +2834,46 @@ mod unify_enable_disable_tests {
                 assert_eq!(compress, Some(false));
             }
             other => panic!("expected Device::History, got {other:?}"),
+        }
+    }
+
+    /// NM-252: `commands --search` and scoped `commands --search <id>`.
+    #[test]
+    fn extension_commands_search_parses() {
+        let cmd = parse("extension commands --search weather");
+        let Command::Extension { extension_cmd } = cmd else {
+            panic!("expected Extension, got {cmd:?}");
+        };
+        match extension_cmd {
+            super::ExtensionCommand::Commands { search, id } => {
+                assert_eq!(search.as_deref(), Some("weather"));
+                assert!(id.is_none());
+            }
+            other => panic!("expected Commands, got {other:?}"),
+        }
+
+        let cmd = parse("extension commands --search forecast weather-forecast-v2");
+        let Command::Extension { extension_cmd } = cmd else {
+            panic!("expected Extension, got {cmd:?}");
+        };
+        match extension_cmd {
+            super::ExtensionCommand::Commands { search, id } => {
+                assert_eq!(search.as_deref(), Some("forecast"));
+                assert_eq!(id.as_deref(), Some("weather-forecast-v2"));
+            }
+            other => panic!("expected Commands, got {other:?}"),
+        }
+
+        let cmd = parse("extension commands weather-forecast-v2");
+        let Command::Extension { extension_cmd } = cmd else {
+            panic!("expected Extension, got {cmd:?}");
+        };
+        match extension_cmd {
+            super::ExtensionCommand::Commands { search, id } => {
+                assert!(search.is_none());
+                assert_eq!(id.as_deref(), Some("weather-forecast-v2"));
+            }
+            other => panic!("expected Commands, got {other:?}"),
         }
     }
 

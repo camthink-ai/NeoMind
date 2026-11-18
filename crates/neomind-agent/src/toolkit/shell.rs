@@ -1823,13 +1823,13 @@ impl ShellTool {
             }
             "extension" => {
                 if is_not_found {
-                    Some("Run 'neomind extension list' to see installed extensions. Then 'neomind extension commands <ID>' and 'neomind extension invoke <ID> <command> --params '{...}'.".to_string())
+                    Some("Search: 'neomind extension commands --search \"<task>\"'. Known id: 'neomind extension commands <ID>'. Then 'neomind extension invoke <ID> <command>' with shell params.".to_string())
                 } else if action == "install" && is_validation {
                     Some("Provide the extension zip file path. Use 'neomind extension market-list' to browse marketplace.".to_string())
                 } else if action == "config" {
                     Some("Usage: neomind extension config <ID> to view, or neomind extension config <ID> --set '{\"key\":\"value\"}' to update.".to_string())
                 } else if action == "commands" || action == "invoke" {
-                    Some("Discover: neomind extension commands <ID>. Invoke: neomind extension invoke <ID> <command> --params '{\"key\":\"value\"}' (or --params-file). Do not invent sanitized tool names as CLI subcommands.".to_string())
+                    Some("Discover: neomind extension commands --search \"<task>\" (or commands <ID>). Invoke: neomind extension invoke <ID> <command> with shell params. Reuse known on follow-up. Do not invent sanitized tool names as CLI subcommands.".to_string())
                 } else {
                     Some("Available actions: list, get, commands, invoke, status, logs, config, install, uninstall, reload, create, build, market-list, market-install, validate".to_string())
                 }
@@ -1947,7 +1947,7 @@ Quick reference (run `neomind <domain> --help` or load the `skill` guide for ful
 - Read: `<domain> get <ID>` (one) / `<domain> list` (all). ID is positional, never `--id`.
 - Write: `<domain> create/update/delete` take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
 - Control / enable / activate are explicit writes: `device control <ID> <CMD> --param key=value` (repeat for each device-defined parameter; these are NOT standalone `--key` flags), `rule enable <ID>`, `llm activate <ID>`, `connector enable <ID>`, `push enable <ID>`.
-- Extensions: list if id unknown; `extension commands <ID>` if schema unknown; otherwise `extension invoke <ID> <command>` (params via discovery/`--help`). Do not invent sanitized chat-tool names as CLI subcommands.
+- Extensions: first need → `extension commands --search "<task>"`; known id/cmd → reuse `extension invoke`; full schema → `extension commands <ID>`. Do not invent sanitized chat-tool names as CLI subcommands.
 - History & conversation: `agent executions <ID>`, `agent conversation <ID>`, `agent send-message <ID>`.
 - Notification channels are a sub-family: `message channel-list` / `channel-create` / `channel-test`, NOT `message list`.
 
@@ -3002,15 +3002,15 @@ mod dispatch_edge_tests {
         assert!(!DOMAIN_INDEX.contains("Anything not listed above does not exist"));
     }
 
-    /// NM-249: extension selection rules in the slim shell description; no
-    /// residual sanitized-name example; params live in discovery/`--help`.
+    /// NM-252: extension selection prefers `--search`; reuse known invoke;
+    /// no residual sanitized-name example.
     #[test]
     fn nm249_extension_selection_rules_in_description() {
         let tool = ShellTool::new(ShellConfig::default());
         let d = tool.description();
-        assert!(d.contains("list if id unknown"));
-        assert!(d.contains("extension commands <ID>` if schema unknown"));
-        assert!(d.contains("extension invoke <ID> <command>"));
+        assert!(d.contains("extension commands --search"));
+        assert!(d.contains("reuse `extension invoke`") || d.contains("extension invoke"));
+        assert!(d.contains("extension commands <ID>"));
         assert!(!d.contains("weather-forecast-v2_get_weather"));
         assert!(!d.contains("--params '{...}'"));
     }
