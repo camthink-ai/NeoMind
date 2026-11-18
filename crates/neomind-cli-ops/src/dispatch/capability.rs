@@ -72,17 +72,29 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
                 command,
                 params,
                 params_file,
-                prepared_operation_id: _,
+                prepared_operation_id,
             } => {
+                // Already carrying a classify-time token: peek only (no remint).
+                if let Some(op_id) = prepared_operation_id.as_deref() {
+                    return match neomind_core::extension::peek_prepared_invoke(op_id)
+                        .map(|p| p.contract.effect)
+                    {
+                        Some(neomind_core::extension::CommandEffect::ReadOnly) => ProvenReadOnly,
+                        Some(neomind_core::extension::CommandEffect::Mutating) | None => Mutating,
+                    };
+                }
                 let raw = match load_classify_params(params.as_deref(), params_file.as_deref()) {
                     Ok(v) => v,
                     Err(_) => return Mutating,
                 };
+                // Effect only for bare CLI classify; Chat attach path injects the id.
                 match neomind_core::extension::classify_and_bind_chat_invoke(
                     extension_id,
                     command,
                     &raw,
-                ) {
+                )
+                .effect
+                {
                     neomind_core::extension::CommandEffect::ReadOnly => ProvenReadOnly,
                     neomind_core::extension::CommandEffect::Mutating => Mutating,
                 }

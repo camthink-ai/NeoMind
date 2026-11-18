@@ -456,14 +456,28 @@ impl Tool for ExtensionTool {
         let data_dir = neomind_core::paths::data_dir();
         let image_normalized = Self::normalize_image_args(&args, &data_dir)?;
 
-        // NM-240: claim the classify-time PreparedInvoke only — never mint a
-        // fresh prepare on the execute path (that reopened the RO→Mutating
-        // reload window). Tests must publish a prepareable snapshot and
-        // classify/bind before execute.
-        let claimed = neomind_core::extension::claim_classified_prepared(
+        // NM-240: claim the classify-time PreparedInvoke id carried on this
+        // dispatch only — never mint or FIFO-claim by params.
+        let op_id = image_normalized
+            .get(crate::agent::task_continuity::PREPARED_OPERATION_ARG)
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                super::error::ToolError::InvalidArguments(
+                    "unbound PreparedInvoke: extension tool call is missing \
+                     _prepared_operation_id; re-classify and invoke again"
+                        .into(),
+                )
+            })?;
+        // Strip host-only token before extension process sees params.
+        let mut for_dispatch = image_normalized.clone();
+        if let Some(obj) = for_dispatch.as_object_mut() {
+            obj.remove(crate::agent::task_continuity::PREPARED_OPERATION_ARG);
+        }
+        let claimed = neomind_core::extension::claim_prepared_for_dispatch(
+            op_id,
             &self.extension_id,
             &self.command.name,
-            &image_normalized,
+            &for_dispatch,
         )
         .map_err(super::error::ToolError::InvalidArguments)?;
         if claimed.capability_generation != self.capability_generation.as_str() {
@@ -702,12 +716,16 @@ mod tests {
         let tools = ExtensionTool::from_extension(extension).await;
 
         let tool = &tools[0];
-        let args = json!({"input": "hello"});
-        // NM-240: classify/bind before execute (production Chat path).
-        let _ = neomind_core::extension::classify_and_bind_chat_invoke(
+        let mut args = json!({"input": "hello"});
+        // NM-240: classify/bind and carry prepared_operation_id on this dispatch.
+        let bind = neomind_core::extension::classify_and_bind_chat_invoke(
             &tool.extension_id,
             &tool.command.name,
             &args,
+        );
+        args.as_object_mut().unwrap().insert(
+            crate::agent::task_continuity::PREPARED_OPERATION_ARG.into(),
+            json!(bind.prepared_operation_id.expect("classify must issue id")),
         );
 
         let result = tool.execute(args).await.unwrap();

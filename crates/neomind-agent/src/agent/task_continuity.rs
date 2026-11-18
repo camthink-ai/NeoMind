@@ -165,6 +165,9 @@ pub struct ToolCapability {
     pub read_only: bool,
     pub idempotent: bool,
     pub retry_policy: RetryPolicy,
+    /// NM-240: classify-time PreparedInvoke id for this dispatch (if any).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared_operation_id: Option<String>,
 }
 
 impl ToolCapability {
@@ -173,6 +176,7 @@ impl ToolCapability {
             read_only: true,
             idempotent: true,
             retry_policy: RetryPolicy::AlwaysSafe,
+            prepared_operation_id: None,
         }
     }
 
@@ -182,6 +186,7 @@ impl ToolCapability {
             idempotent: false,
             // One automatic retry after a clear failure (not after Unknown).
             retry_policy: RetryPolicy::OnFailure { max_attempts: 2 },
+            prepared_operation_id: None,
         }
     }
 
@@ -190,7 +195,13 @@ impl ToolCapability {
             read_only: false,
             idempotent: false,
             retry_policy: RetryPolicy::Never,
+            prepared_operation_id: None,
         }
+    }
+
+    pub fn with_prepared_operation_id(mut self, operation_id: Option<String>) -> Self {
+        self.prepared_operation_id = operation_id;
+        self
     }
 }
 
@@ -295,6 +306,10 @@ pub enum WriteDispatch {
 /// (host button by `request_id`, or unique-pending phrase via
 /// [`TaskState::consume_unique_pending_confirm`]).
 pub const NEW_OPERATION_ARG: &str = "_new_operation";
+
+/// Chat-bound PreparedInvoke id injected into extension-tool args (NM-240).
+/// Stripped before the extension process sees parameters.
+pub const PREPARED_OPERATION_ARG: &str = "_prepared_operation_id";
 
 /// One-shot user grant to begin a new same-args Operation after Unknown.
 ///
@@ -3591,23 +3606,202 @@ pub fn derive_tool_capability_resolved(
             // Chat write-gate to a real PreparedInvoke (prepare→authorize for
             // RO). Cache-only RO without a prepareable snapshot cannot skip.
             if let Some((ext_id, cmd)) = neomind_core::extension::parse_extension_tool_name(other) {
-                match neomind_core::extension::classify_and_bind_chat_invoke(
+                // Prefer an already-attached classify-time token (no remint).
+                if let Some(op_id) = canonical_arguments
+                    .get(PREPARED_OPERATION_ARG)
+                    .and_then(|v| v.as_str())
+                {
+                    if let Some(prep) = neomind_core::extension::peek_prepared_invoke(op_id) {
+                        return match prep.contract.effect {
+                            neomind_core::extension::CommandEffect::ReadOnly => {
+                                ToolCapability::read_query()
+                                    .with_prepared_operation_id(Some(op_id.to_string()))
+                            }
+                            neomind_core::extension::CommandEffect::Mutating => {
+                                ToolCapability::mutating_write()
+                                    .with_prepared_operation_id(Some(op_id.to_string()))
+                            }
+                        };
+                    }
+                    // Stale/missing token → fail closed into the write gate.
+                    return ToolCapability::mutating_write();
+                }
+                let bind = neomind_core::extension::classify_and_bind_chat_invoke(
                     &ext_id,
                     &cmd,
                     canonical_arguments,
-                ) {
-                    neomind_core::extension::CommandEffect::ReadOnly => {
-                        return ToolCapability::read_query();
-                    }
+                );
+                return match bind.effect {
+                    neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
+                        .with_prepared_operation_id(bind.prepared_operation_id),
                     neomind_core::extension::CommandEffect::Mutating => {
-                        return ToolCapability::mutating_write();
+                        ToolCapability::mutating_write()
+                            .with_prepared_operation_id(bind.prepared_operation_id)
                     }
-                }
+                };
             }
             // Conservative default: unknown tools enter the write gate.
             ToolCapability::mutating_unknown_sensitive()
         }
     }
+}
+
+/// NM-240: classify once and attach `prepared_operation_id` to **this** call's
+/// arguments so execute claims that exact ticket (no global FIFO by params).
+///
+/// - `shell` + `extension invoke`: appends `--prepared-operation-id <id>` to
+///   the command string when missing.
+/// - Extension tools (`ext:cmd`): sets [`PREPARED_OPERATION_ARG`] when missing.
+/// - Already attached: peeks the ticket (no remint).
+///
+/// Returns the capability for write-gate decisions. Call before fingerprint /
+/// gate / execute on the stream path.
+pub fn attach_chat_prepared_invoke(
+    tool_name: &str,
+    arguments: &mut serde_json::Value,
+) -> ToolCapability {
+    let real = crate::tools::resolve_tool_name(tool_name);
+    match real.as_str() {
+        "shell" => attach_shell_prepared_invoke(arguments),
+        other => {
+            if let Some((ext_id, cmd)) = neomind_core::extension::parse_extension_tool_name(other) {
+                attach_extension_tool_prepared_invoke(&ext_id, &cmd, arguments)
+            } else {
+                derive_tool_capability_resolved(other, arguments)
+            }
+        }
+    }
+}
+
+fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapability {
+    let cmd = arguments
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if cmd.trim().is_empty() {
+        return ToolCapability::mutating_unknown_sensitive();
+    }
+    // Already carries a token — peek only (no remint).
+    if let Some(op_id) = extract_prepared_operation_id_from_shell_cmd(&cmd) {
+        if let Some(prep) = neomind_core::extension::peek_prepared_invoke(&op_id) {
+            return match prep.contract.effect {
+                neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
+                    .with_prepared_operation_id(Some(op_id)),
+                neomind_core::extension::CommandEffect::Mutating => ToolCapability::mutating_write()
+                    .with_prepared_operation_id(Some(op_id)),
+            };
+        }
+        return ToolCapability::mutating_write();
+    }
+
+    // Non-extension shell: ordinary CLI classify (no PreparedInvoke token).
+    if !shell_cmd_is_extension_invoke(&cmd) {
+        return crate::toolkit::shell::classify_shell_capability(&cmd);
+    }
+
+    // Extension invoke: classify once, carry the returned id on this command.
+    let argv = match crate::toolkit::shell::tokenize_neomind_command(cmd.trim()) {
+        Ok(a) => a,
+        Err(_) => return ToolCapability::mutating_unknown_sensitive(),
+    };
+    let (ext_id, command, raw) = match parse_extension_invoke_argv(&argv) {
+        Some(v) => v,
+        None => return crate::toolkit::shell::classify_shell_capability(&cmd),
+    };
+    let bind = neomind_core::extension::classify_and_bind_chat_invoke(&ext_id, &command, &raw);
+    if let Some(op_id) = bind.prepared_operation_id.clone() {
+        let mut new_cmd = cmd;
+        if !new_cmd.contains("--prepared-operation-id") {
+            new_cmd.push_str(" --prepared-operation-id ");
+            new_cmd.push_str(&op_id);
+        }
+        if let Some(obj) = arguments.as_object_mut() {
+            obj.insert("command".into(), serde_json::Value::String(new_cmd));
+        }
+    }
+    match bind.effect {
+        neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
+            .with_prepared_operation_id(bind.prepared_operation_id),
+        neomind_core::extension::CommandEffect::Mutating => ToolCapability::mutating_write()
+            .with_prepared_operation_id(bind.prepared_operation_id),
+    }
+}
+
+fn attach_extension_tool_prepared_invoke(
+    ext_id: &str,
+    cmd: &str,
+    arguments: &mut serde_json::Value,
+) -> ToolCapability {
+    if let Some(op_id) = arguments
+        .get(PREPARED_OPERATION_ARG)
+        .and_then(|v| v.as_str())
+    {
+        if let Some(prep) = neomind_core::extension::peek_prepared_invoke(op_id) {
+            return match prep.contract.effect {
+                neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
+                    .with_prepared_operation_id(Some(op_id.to_string())),
+                neomind_core::extension::CommandEffect::Mutating => ToolCapability::mutating_write()
+                    .with_prepared_operation_id(Some(op_id.to_string())),
+            };
+        }
+        return ToolCapability::mutating_write();
+    }
+    let bind = neomind_core::extension::classify_and_bind_chat_invoke(ext_id, cmd, arguments);
+    if let Some(op_id) = &bind.prepared_operation_id {
+        if let Some(obj) = arguments.as_object_mut() {
+            obj.insert(
+                PREPARED_OPERATION_ARG.into(),
+                serde_json::Value::String(op_id.clone()),
+            );
+        }
+    }
+    match bind.effect {
+        neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
+            .with_prepared_operation_id(bind.prepared_operation_id),
+        neomind_core::extension::CommandEffect::Mutating => ToolCapability::mutating_write()
+            .with_prepared_operation_id(bind.prepared_operation_id),
+    }
+}
+
+fn shell_cmd_is_extension_invoke(cmd: &str) -> bool {
+    let t = cmd.trim();
+    t.contains("extension invoke") || t.contains("extension  invoke")
+}
+
+fn extract_prepared_operation_id_from_shell_cmd(cmd: &str) -> Option<String> {
+    let argv = crate::toolkit::shell::tokenize_neomind_command(cmd.trim()).ok()?;
+    let idx = argv.iter().position(|a| a == "--prepared-operation-id")?;
+    argv.get(idx + 1).cloned()
+}
+
+fn parse_extension_invoke_argv(argv: &[String]) -> Option<(String, String, serde_json::Value)> {
+    use clap::Parser;
+    use neomind_cli_ops::dispatch::commands::{Args, Command, ExtensionCommand};
+    let parsed = Args::try_parse_from(argv.iter()).ok()?;
+    let Command::Extension {
+        extension_cmd:
+            ExtensionCommand::Invoke {
+                extension_id,
+                command,
+                params,
+                params_file,
+                ..
+            },
+    } = parsed.command
+    else {
+        return None;
+    };
+    let raw = if let Some(path) = params_file.as_ref() {
+        let text = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(text.trim()).ok()?
+    } else {
+        match params.as_deref() {
+            None => serde_json::json!({}),
+            Some(s) => serde_json::from_str(s).ok()?,
+        }
+    };
+    Some((extension_id, command, raw))
 }
 
 /// Derive [`ToolCapability`] from tool name + args (CLI mutation when shell).

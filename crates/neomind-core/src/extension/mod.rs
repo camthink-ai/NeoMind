@@ -35,13 +35,13 @@ pub use capability_services::{keys, CapabilityServices};
 pub use command_contract::{
     ai_command_access_denied, assert_supported_schema, authorize_existing_prepared,
     authorize_prepared_for_chat, begin_instance_generation, build_input_schema,
-    claim_classified_prepared, claim_prepared_by_id, classify_and_bind_chat_invoke,
+    claim_prepared_by_id, claim_prepared_for_dispatch, classify_and_bind_chat_invoke,
     consume_authorized_prepared, consume_chat_prepared_for_execute, current_instance_generation,
     find_authorized_prepared, from_extension_command, invalidate_instance_capability,
     parse_extension_tool_name, peek_prepared_invoke, prepare_and_issue_for_chat, prepare_invoke,
     remember_capability, resolve_capability, sync_effect_for_invoke, sync_replay_for_invoke,
-    type_base_of, validate_and_normalize, validate_params, BusinessCommandDef,
-    CapabilityGeneration, CapabilitySource, EffectiveCommandCapability, ExtensionCallerKind,
+    type_base_of, validate_and_normalize, validate_params, BusinessCommandDef, CapabilityGeneration,
+    CapabilitySource, ChatInvokeBind, EffectiveCommandCapability, ExtensionCallerKind,
     ExtensionCommandSnapshot, InvokeTarget, PrepareInvokeRequest, PreparedInvoke, CONTRACT_VERSION,
 };
 pub use context::{

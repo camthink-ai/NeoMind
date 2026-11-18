@@ -1654,6 +1654,13 @@ pub async fn process_stream_events_with_safeguards(
                             // begin_new_operation via evaluate_mutating_gate.
                             // Durable write-intent is committed before Proceed
                             // returns — fail closed if the commit sink errors.
+                            // NM-240: bind PreparedInvoke id to this dispatch
+                            // before write-gate / execute (no global FIFO claim).
+                            let mut arguments = arguments;
+                            let _cap = super::super::task_continuity::attach_chat_prepared_invoke(
+                                &name,
+                                &mut arguments,
+                            );
                             let mut tracked_operation_id: Option<String> = None;
                             if let Some(fp) =
                                 super::intent::mutating_write_fingerprint(&name, &arguments)

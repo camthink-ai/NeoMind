@@ -419,6 +419,11 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                         return (name.clone(), blocked);
                     }
                     let mut tracked_operation_id: Option<String> = None;
+                    let mut arguments = arguments;
+                    let _cap = super::super::task_continuity::attach_chat_prepared_invoke(
+                        &name,
+                        &mut arguments,
+                    );
                     let result = match cached_read {
                         Some(output) => Ok(output),
                         None => {
@@ -862,6 +867,11 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                     return (name.clone(), blocked);
                                 }
                                 let mut tracked_operation_id: Option<String> = None;
+                                let mut arguments = arguments;
+                                let _cap = super::super::task_continuity::attach_chat_prepared_invoke(
+                                    &name,
+                                    &mut arguments,
+                                );
                                 let result = match cached_read {
                                     Some(output) => Ok(output),
                                     None => {
@@ -1265,6 +1275,11 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                     return (name.clone(), blocked);
                                 }
                                 let mut tracked_operation_id: Option<String> = None;
+                                let mut arguments = arguments;
+                                let _cap = super::super::task_continuity::attach_chat_prepared_invoke(
+                                    &name,
+                                    &mut arguments,
+                                );
                                 let result = match cached_read {
                                     Some(output) => Ok(output),
                                     None => {

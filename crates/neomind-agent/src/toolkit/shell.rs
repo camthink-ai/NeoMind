@@ -1283,75 +1283,81 @@ pub(crate) fn not_in_process_uses_parsed_argv() -> bool {
 /// after reload or param drift → Err so execution cannot mint a fresh ticket
 /// that bypasses the write-gate.
 pub(crate) fn bind_extension_invoke_prepared_token(
-    mut argv: Vec<String>,
+    argv: Vec<String>,
 ) -> std::result::Result<Vec<String>, String> {
     use clap::Parser;
     use neomind_cli_ops::dispatch::commands::{Args, Command, ExtensionCommand};
 
-    // Already carries an explicit token — claim that id only (no re-prepare).
-    if let Some(idx) = argv.iter().position(|a| a == "--prepared-operation-id") {
-        let op_id = argv
-            .get(idx + 1)
-            .cloned()
-            .ok_or_else(|| "missing value for --prepared-operation-id".to_string())?;
-        neomind_core::extension::claim_prepared_by_id(&op_id).map_err(|e| {
-            format!(
-                "stale or unbound PreparedInvoke '{op_id}': {e}; \
-                 re-classify and invoke again (Chat write-gate must bind a fresh token)"
-            )
-        })?;
-        return Ok(argv);
-    }
-
-    let parsed = match Args::try_parse_from(argv.iter()) {
-        Ok(a) => a,
-        Err(_) => return Ok(argv),
-    };
-    let Command::Extension {
-        extension_cmd:
-            ExtensionCommand::Invoke {
-                extension_id,
-                command,
-                params,
-                params_file,
-                ..
-            },
-    } = parsed.command
-    else {
-        return Ok(argv);
+    // Must carry classify-time id on this dispatch — never claim by params/FIFO.
+    let Some(idx) = argv.iter().position(|a| a == "--prepared-operation-id") else {
+        let parsed = match Args::try_parse_from(argv.iter()) {
+            Ok(a) => a,
+            Err(_) => return Ok(argv),
+        };
+        return match parsed.command {
+            Command::Extension {
+                extension_cmd: ExtensionCommand::Invoke { extension_id, command, .. },
+            } => Err(format!(
+                "unbound PreparedInvoke for '{extension_id}/{command}': missing \
+                 --prepared-operation-id; re-classify and invoke again (Chat write-gate \
+                 must carry the classify-time token on this dispatch)"
+            )),
+            _ => Ok(argv),
+        };
     };
 
-    let raw = {
-        if let Some(path) = params_file.as_ref() {
-            let text = std::fs::read_to_string(path).map_err(|e| {
-                format!("failed to read --params-file for prepared invoke bind: {e}")
-            })?;
-            serde_json::from_str(text.trim()).map_err(|e| {
-                format!("--params-file must contain a JSON object for prepared invoke bind: {e}")
-            })?
+    let op_id = argv
+        .get(idx + 1)
+        .cloned()
+        .ok_or_else(|| "missing value for --prepared-operation-id".to_string())?;
+
+    // Ownership check against this argv when it parses as extension invoke.
+    let ownership = (|| {
+        let parsed = Args::try_parse_from(argv.iter()).ok()?;
+        let Command::Extension {
+            extension_cmd:
+                ExtensionCommand::Invoke {
+                    extension_id,
+                    command,
+                    params,
+                    params_file,
+                    ..
+                },
+        } = parsed.command
+        else {
+            return None;
+        };
+        let raw = if let Some(path) = params_file.as_ref() {
+            let text = std::fs::read_to_string(path).ok()?;
+            serde_json::from_str(text.trim()).ok()?
         } else {
             match params.as_deref() {
                 None => serde_json::json!({}),
-                Some(s) => serde_json::from_str(s).map_err(|e| {
-                    format!("--params must be a JSON object for prepared invoke bind: {e}")
-                })?,
+                Some(s) => serde_json::from_str(s).ok()?,
             }
+        };
+        Some((extension_id, command, raw))
+    })();
+
+    match ownership {
+        Some((ext_id, command, raw)) => {
+            neomind_core::extension::claim_prepared_for_dispatch(&op_id, &ext_id, &command, &raw)
+                .map_err(|e| {
+                    format!(
+                        "stale or unbound PreparedInvoke '{op_id}': {e}; \
+                         re-classify and invoke again (Chat write-gate must bind a fresh token)"
+                    )
+                })?;
         }
-    };
-
-    // Claim classify-time ticket only — never prepare_and_issue here.
-    let prepared =
-        neomind_core::extension::claim_classified_prepared(&extension_id, &command, &raw).map_err(
-            |e| {
+        None => {
+            neomind_core::extension::claim_prepared_by_id(&op_id).map_err(|e| {
                 format!(
-                    "stale or unbound PreparedInvoke for '{extension_id}/{command}': {e}; \
-                 re-classify and invoke again (Chat write-gate must bind a fresh token)"
+                    "stale or unbound PreparedInvoke '{op_id}': {e}; \
+                     re-classify and invoke again (Chat write-gate must bind a fresh token)"
                 )
-            },
-        )?;
-
-    argv.push("--prepared-operation-id".into());
-    argv.push(prepared.operation_id);
+            })?;
+        }
+    }
     Ok(argv)
 }
 
@@ -2877,16 +2883,17 @@ mod dispatch_edge_tests {
         );
     }
 }
-/// NM-240 P1 follow-up: shell bind must not re-prepare after RO→Mutating reload.
+/// NM-240: shell bind carries classify-time id; no params FIFO claim.
 #[cfg(test)]
 mod prepared_invoke_bind_tests {
     use super::bind_extension_invoke_prepared_token;
     use neomind_core::extension::{
         begin_instance_generation, classify_and_bind_chat_invoke, invalidate_instance_capability,
-        CommandEffect, ExtensionCommand, ExtensionCommandSnapshot, MetricDataType,
-        ParameterDefinition,
+        peek_prepared_invoke, CommandEffect, ExtensionCommand, ExtensionCommandSnapshot,
+        MetricDataType, ParameterDefinition,
     };
     use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn publish(id: &str, effect: CommandEffect) {
         invalidate_instance_capability(id);
@@ -2921,13 +2928,39 @@ mod prepared_invoke_bind_tests {
         let id = "weather-forecast-shell-bind-v1";
         publish(id, CommandEffect::ReadOnly);
         let params = json!({"city": "Xiamen"});
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::ReadOnly
-        );
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind.effect, CommandEffect::ReadOnly);
+        let op = bind.prepared_operation_id.unwrap();
 
-        // Reload: same command name now Mutating.
         publish(id, CommandEffect::Mutating);
+
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "invoke".into(),
+            id.into(),
+            "get_weather".into(),
+            "--params".into(),
+            r#"{"city":"Xiamen"}"#.into(),
+            "--prepared-operation-id".into(),
+            op,
+        ];
+        let err = bind_extension_invoke_prepared_token(argv).unwrap_err();
+        assert!(
+            err.contains("stale") || err.contains("unbound") || err.contains("reload") || err.contains("missing"),
+            "shell bind must fail stale without re-preparing, got: {err}"
+        );
+        let bind2 = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind2.effect, CommandEffect::Mutating);
+        invalidate_instance_capability(id);
+    }
+
+    #[test]
+    fn shell_bind_without_token_fails_closed_not_fifo() {
+        let id = "weather-forecast-shell-bind-v2";
+        publish(id, CommandEffect::ReadOnly);
+        let params = json!({"city": "Xiamen"});
+        let _ = classify_and_bind_chat_invoke(id, "get_weather", &params);
 
         let argv = vec![
             "neomind".into(),
@@ -2940,15 +2973,55 @@ mod prepared_invoke_bind_tests {
         ];
         let err = bind_extension_invoke_prepared_token(argv).unwrap_err();
         assert!(
-            err.contains("stale") || err.contains("unbound") || err.contains("reload"),
-            "shell bind must fail stale without re-preparing, got: {err}"
+            err.contains("missing") || err.contains("unbound"),
+            "must not FIFO-claim without token: {err}"
         );
-        // Re-classify is Mutating — write-gate required; shell must not have
-        // authorized a fresh Mutating ticket on the failed bind.
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::Mutating
+        invalidate_instance_capability(id);
+    }
+
+    /// A RO classify → reload → B Mutating classify → A bind with A's id →
+    /// stale. B's ticket stays unclaimed; "execute count" stays zero because
+    /// bind fails before HTTP/extension dispatch.
+    #[test]
+    fn shell_interleave_a_ro_reload_b_write_a_bind_stale_zero_exec() {
+        static EXEC_COUNT: AtomicUsize = AtomicUsize::new(0);
+        EXEC_COUNT.store(0, Ordering::SeqCst);
+
+        let id = "weather-forecast-shell-bind-v3";
+        publish(id, CommandEffect::ReadOnly);
+        let params = json!({"city": "Xiamen"});
+        let a = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(a.effect, CommandEffect::ReadOnly);
+        let a_id = a.prepared_operation_id.unwrap();
+
+        publish(id, CommandEffect::Mutating);
+        let b = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(b.effect, CommandEffect::Mutating);
+        let b_id = b.prepared_operation_id.unwrap();
+        assert_ne!(a_id, b_id);
+
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "invoke".into(),
+            id.into(),
+            "get_weather".into(),
+            "--params".into(),
+            r#"{"city":"Xiamen"}"#.into(),
+            "--prepared-operation-id".into(),
+            a_id.clone(),
+        ];
+        let err = bind_extension_invoke_prepared_token(argv).unwrap_err();
+        assert!(
+            err.contains("stale") || err.contains("missing") || err.contains("unbound"),
+            "A must get stale, got: {err}"
         );
+        // Bind failure means we never reached execute — count stays 0.
+        assert_eq!(EXEC_COUNT.load(Ordering::SeqCst), 0);
+        // B's ticket was not claimed/authorized by A's attempt.
+        let b_peek = peek_prepared_invoke(&b_id).expect("B ticket intact");
+        assert_eq!(b_peek.operation_id, b_id);
+        assert_eq!(b_peek.contract.effect, CommandEffect::Mutating);
         invalidate_instance_capability(id);
     }
 }

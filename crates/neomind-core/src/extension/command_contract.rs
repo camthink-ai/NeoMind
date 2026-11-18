@@ -1238,31 +1238,14 @@ struct PreparedTicket {
 }
 
 struct PreparedTicketStore {
-    /// operation_id → ticket
+    /// operation_id → ticket. Tickets are bound to the classify-time dispatch
+    /// that carries this id — never claimed by (instance, command, params).
     by_id: HashMap<String, PreparedTicket>,
-    /// FIFO of issued operation_ids per dispatch key so concurrent same-params
-    /// calls each claim their own classify-time ticket (no cross-session reuse).
-    /// Key: `{instance}\0{command}\0{fingerprint}\0{generation}`
-    pending: HashMap<String, std::collections::VecDeque<String>>,
 }
 
 fn prepared_ticket_store() -> &'static Mutex<PreparedTicketStore> {
     static STORE: OnceLock<Mutex<PreparedTicketStore>> = OnceLock::new();
-    STORE.get_or_init(|| {
-        Mutex::new(PreparedTicketStore {
-            by_id: HashMap::new(),
-            pending: HashMap::new(),
-        })
-    })
-}
-
-fn dispatch_key(
-    instance_id: &str,
-    command: &str,
-    param_fingerprint: &str,
-    generation: &str,
-) -> String {
-    format!("{instance_id}\0{command}\0{param_fingerprint}\0{generation}")
+    STORE.get_or_init(|| Mutex::new(PreparedTicketStore { by_id: HashMap::new() }))
 }
 
 fn clear_prepared_tickets_for_instance(instance_id: &str) {
@@ -1270,8 +1253,6 @@ fn clear_prepared_tickets_for_instance(instance_id: &str) {
         guard
             .by_id
             .retain(|_, t| t.prepared.target.instance_id != instance_id);
-        let prefix = format!("{instance_id}\0");
-        guard.pending.retain(|k, _| !k.starts_with(&prefix));
     }
 }
 
@@ -1283,10 +1264,9 @@ fn ticket_generation_current(prepared: &PreparedInvoke) -> bool {
 
 /// Issue a **new** Chat-bound PreparedInvoke from the published catalog.
 ///
-/// Always mints a fresh `operation_id` and enqueues it for this dispatch key.
-/// Does **not** reuse another call's ticket by params (concurrent same-params
-/// must not share authorization). Classify/fingerprint for one call should
-/// carry the returned id; shell claims via [`claim_classified_prepared`].
+/// Always mints a fresh `operation_id`. The caller **must** carry that id on
+/// the same dispatch through write-gate → execute ([`claim_prepared_by_id`]).
+/// Tickets are never claimed by (instance, command, params) from a global FIFO.
 pub fn prepare_and_issue_for_chat(
     instance_id: &str,
     command: &str,
@@ -1332,12 +1312,6 @@ pub fn prepare_and_issue_for_chat(
         capability_generation: &snap.capability_generation,
     })?;
 
-    let key = dispatch_key(
-        instance_id,
-        command,
-        &prepared.param_fingerprint,
-        prepared.capability_generation.as_str(),
-    );
     if let Ok(mut guard) = prepared_ticket_store().lock() {
         guard.by_id.insert(
             prepared.operation_id.clone(),
@@ -1348,11 +1322,6 @@ pub fn prepare_and_issue_for_chat(
                 claimed: false,
             },
         );
-        guard
-            .pending
-            .entry(key)
-            .or_default()
-            .push_back(prepared.operation_id.clone());
     }
     Ok(prepared)
 }
@@ -1414,125 +1383,71 @@ pub fn authorize_existing_prepared(operation_id: &str) -> Result<PreparedInvoke,
         .ok_or_else(|| format!("prepared operation '{operation_id}' disappeared during authorize"))
 }
 
-/// Shell / ExtensionTool execute entry: claim the classify-time ticket for
-/// this dispatch — **never** mints a new PreparedInvoke.
+/// Claim + authorize an **already-issued** PreparedInvoke by the id this
+/// dispatch carried from classify — never looks up by params / FIFO.
 ///
-/// Pops the FIFO pending ticket for `(instance, command, params)` under the
-/// **current** generation, verifies it, authorizes if not yet (Mutating after
-/// write-gate), and marks it claimed. Reload / param drift / empty pending →
-/// Err (caller must re-classify + re-gate; do not prepare here).
-pub fn claim_classified_prepared(
+/// Same-lock checks: missing → stale; consumed → Err; **already claimed** →
+/// Err; generation expired → stale. Marks `claimed` and sets Chat-authorized
+/// (RO was authorized at classify; Mutating authorizes here after write-gate).
+pub fn claim_prepared_by_id(operation_id: &str) -> Result<PreparedInvoke, String> {
+    let mut guard = prepared_ticket_store()
+        .lock()
+        .map_err(|_| "prepared ticket store poisoned".to_string())?;
+    let ticket = guard.by_id.get_mut(operation_id).ok_or_else(|| {
+        format!(
+            "stale prepared invoke '{operation_id}': missing ticket (reload or never issued);              re-classify and invoke again"
+        )
+    })?;
+    if ticket.consumed {
+        return Err(format!(
+            "prepared operation '{operation_id}' already consumed"
+        ));
+    }
+    if ticket.claimed {
+        return Err(format!(
+            "prepared operation '{operation_id}' already claimed by another dispatch"
+        ));
+    }
+    if !ticket_generation_current(&ticket.prepared) {
+        return Err(format!(
+            "stale prepared invoke '{operation_id}': capability generation expired after reload"
+        ));
+    }
+    ticket.claimed = true;
+    ticket.chat_authorized = true;
+    Ok(ticket.prepared.clone())
+}
+
+/// Claim by id and verify the ticket still matches this dispatch's
+/// `(instance, command, params)`. Ownership checks run **before** marking
+/// claimed so a fingerprint mismatch does not burn the ticket.
+pub fn claim_prepared_for_dispatch(
+    operation_id: &str,
     instance_id: &str,
     command: &str,
     raw_params: &Value,
 ) -> Result<PreparedInvoke, String> {
-    let gen = current_instance_generation(instance_id).ok_or_else(|| {
+    // Peek first for ownership (no claim yet).
+    let prepared = peek_prepared_invoke(operation_id).ok_or_else(|| {
         format!(
-            "stale prepared invoke for '{instance_id}/{command}': no active generation \
-             (reload or unloaded); re-classify and invoke again"
+            "stale prepared invoke '{operation_id}': missing ticket (reload or never issued); \
+             re-classify and invoke again"
         )
     })?;
-
-    // Fingerprint against the **current** prepareable catalog — param drift
-    // relative to the classify-time ticket fails the pending key match.
-    let snap = {
-        let guard = cap_cache()
-            .lock()
-            .map_err(|_| "capability cache poisoned".to_string())?;
-        let snap = guard.prepareable.get(instance_id).cloned().ok_or_else(|| {
-            format!("stale prepared invoke for '{instance_id}/{command}': no prepareable snapshot")
-        })?;
-        if snap.capability_generation != gen {
-            return Err(format!(
-                "stale prepared invoke for '{instance_id}/{command}': generation expired after reload"
-            ));
-        }
-        snap
-    };
-    let cmd = snap
-        .commands
-        .iter()
-        .find(|c| c.name == command)
-        .ok_or_else(|| {
-            format!(
-                "stale prepared invoke for '{instance_id}/{command}': command missing after reload"
-            )
-        })?;
-    let contract = from_extension_command(
-        instance_id,
-        cmd,
-        Some(snap.extension_version.as_str()),
-        snap.package_digest.as_deref(),
-    );
-    // If effect flipped RO→Mutating on the new generation, the pending key
-    // from the old RO classify is gone — we must not authorize a fresh ticket.
-    let canonical = validate_and_normalize(&contract.input_schema, raw_params)?;
-    let fp = fingerprint_params(&canonical);
-    let key = dispatch_key(instance_id, command, &fp, gen.as_str());
-
-    let operation_id = {
-        let mut guard = prepared_ticket_store()
-            .lock()
-            .map_err(|_| "prepared ticket store poisoned".to_string())?;
-        let queue = guard.pending.get_mut(&key);
-        let Some(q) = queue else {
-            return Err(format!(
-                "stale prepared invoke for '{instance_id}/{command}': no classify-time ticket \
-                 (reload or never classified); re-classify and invoke again"
-            ));
-        };
-        let Some(op_id) = q.pop_front() else {
-            return Err(format!(
-                "stale prepared invoke for '{instance_id}/{command}': classify-time ticket \
-                 already claimed; re-classify and invoke again"
-            ));
-        };
-        if q.is_empty() {
-            guard.pending.remove(&key);
-        }
-        op_id
-    };
-
-    // Authorize existing only — never prepare_and_issue here.
-    let prepared = authorize_existing_prepared(&operation_id)?;
     if prepared.target.instance_id != instance_id || prepared.command != command {
         return Err(format!(
             "prepared operation '{operation_id}' does not match '{instance_id}/{command}'"
         ));
     }
+    let canonical = validate_and_normalize(&prepared.contract.input_schema, raw_params)?;
+    let fp = fingerprint_params(&canonical);
     if prepared.param_fingerprint != fp {
         return Err(format!(
             "prepared operation '{operation_id}' fingerprint mismatch (params changed)"
         ));
     }
-    if let Ok(mut guard) = prepared_ticket_store().lock() {
-        if let Some(t) = guard.by_id.get_mut(&operation_id) {
-            t.claimed = true;
-        }
-    }
-    Ok(prepared)
-}
-
-/// Claim by explicit operation id (when the call already carries the token).
-/// Still never re-prepares; missing/stale → Err.
-pub fn claim_prepared_by_id(operation_id: &str) -> Result<PreparedInvoke, String> {
-    let prepared = authorize_existing_prepared(operation_id)?;
-    if let Ok(mut guard) = prepared_ticket_store().lock() {
-        // Drop from any pending queues so a parallel claim cannot take it.
-        for q in guard.pending.values_mut() {
-            q.retain(|id| id != operation_id);
-        }
-        guard.pending.retain(|_, q| !q.is_empty());
-        if let Some(t) = guard.by_id.get_mut(operation_id) {
-            if t.consumed {
-                return Err(format!(
-                    "prepared operation '{operation_id}' already consumed"
-                ));
-            }
-            t.claimed = true;
-        }
-    }
-    Ok(prepared)
+    // Same-lock claim after ownership checks pass.
+    claim_prepared_by_id(operation_id)
 }
 
 /// Consume a Chat-authorized PreparedInvoke **once** for execution.
@@ -1655,20 +1570,34 @@ pub fn consume_chat_prepared_for_execute(
     )
 }
 
+/// Result of classify + prepare for one Chat dispatch (NM-240).
+///
+/// `prepared_operation_id` must travel with **this** tool call through
+/// write-gate → execute. Never reclaim a ticket by params from a global queue.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatInvokeBind {
+    pub effect: CommandEffect,
+    /// Issued ticket id for this classify. `None` when prepare failed
+    /// (effect is fail-closed [`CommandEffect::Mutating`]).
+    pub prepared_operation_id: Option<String>,
+}
+
 /// Classify + bind Chat write-gate for an extension invoke.
 ///
-/// - Success with [`CommandEffect::ReadOnly`]: prepares, **authorizes**, returns RO.
-/// - Success with Mutating: prepares (issued, not yet authorized), returns Mutating.
-/// - Prepare failure: Mutating (fail closed — cannot skip gate without a token).
+/// - Success with [`CommandEffect::ReadOnly`]: prepares, **authorizes**, returns RO + id.
+/// - Success with Mutating: prepares (issued, not yet authorized), returns Mutating + id.
+/// - Prepare failure: Mutating with `prepared_operation_id = None`.
 ///
-/// RO skip without a live authorized PreparedInvoke is impossible by construction.
+/// Callers must carry `prepared_operation_id` on the same dispatch; execute
+/// claims that id only ([`claim_prepared_by_id`]).
 pub fn classify_and_bind_chat_invoke(
     instance_id: &str,
     command: &str,
     raw_params: &Value,
-) -> CommandEffect {
+) -> ChatInvokeBind {
     match prepare_and_issue_for_chat(instance_id, command, raw_params) {
         Ok(prepared) => {
+            let id = prepared.operation_id.clone();
             if prepared.contract.effect == CommandEffect::ReadOnly {
                 if authorize_prepared_for_chat(
                     &prepared.operation_id,
@@ -1677,16 +1606,28 @@ pub fn classify_and_bind_chat_invoke(
                 )
                 .is_ok()
                 {
-                    CommandEffect::ReadOnly
+                    ChatInvokeBind {
+                        effect: CommandEffect::ReadOnly,
+                        prepared_operation_id: Some(id),
+                    }
                 } else {
-                    // Authorization failed (reload race) — fail closed.
-                    CommandEffect::Mutating
+                    // Authorization failed (reload race) — fail closed; drop id.
+                    ChatInvokeBind {
+                        effect: CommandEffect::Mutating,
+                        prepared_operation_id: None,
+                    }
                 }
             } else {
-                CommandEffect::Mutating
+                ChatInvokeBind {
+                    effect: CommandEffect::Mutating,
+                    prepared_operation_id: Some(id),
+                }
             }
         }
-        Err(_) => CommandEffect::Mutating,
+        Err(_) => ChatInvokeBind {
+            effect: CommandEffect::Mutating,
+            prepared_operation_id: None,
+        },
     }
 }
 
@@ -2493,13 +2434,12 @@ mod tests {
         publish_ro_weather(id);
         let params = json!({"city": "Xiamen"});
 
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::ReadOnly
-        );
-        // Claim the classify-time ticket (no re-prepare).
-        let prep = claim_classified_prepared(id, "get_weather", &params).unwrap();
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind.effect, CommandEffect::ReadOnly);
+        let op = bind.prepared_operation_id.expect("RO classify must issue id");
+        let prep = claim_prepared_by_id(&op).unwrap();
         assert_eq!(prep.contract.effect, CommandEffect::ReadOnly);
+        assert_eq!(prep.operation_id, op);
 
         let consumed =
             consume_chat_prepared_for_execute(&prep.operation_id, id, "get_weather", &params)
@@ -2520,16 +2460,13 @@ mod tests {
         let id = "weather-forecast-v841";
         publish_ro_weather(id);
         let params = json!({"city": "Xiamen"});
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::ReadOnly
-        );
-        let prep = claim_classified_prepared(id, "get_weather", &params).unwrap();
-        let op = prep.operation_id.clone();
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind.effect, CommandEffect::ReadOnly);
+        let op = bind.prepared_operation_id.unwrap();
+        let prep = claim_prepared_by_id(&op).unwrap();
         let gen = prep.capability_generation.clone();
         let fp = prep.param_fingerprint.clone();
 
-        // Reload clears tickets + generation.
         begin_instance_generation(id);
 
         let err = consume_authorized_prepared(&op, &gen, &fp).unwrap_err();
@@ -2546,18 +2483,14 @@ mod tests {
         publish_ro_weather(id);
         let params = json!({"city": "Xiamen"});
 
-        // Chat saw RO and authorized a ticket (gate skipped).
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::ReadOnly
-        );
-        let old = claim_classified_prepared(id, "get_weather", &params).unwrap();
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind.effect, CommandEffect::ReadOnly);
+        let old_id = bind.prepared_operation_id.unwrap();
+        let old = claim_prepared_by_id(&old_id).unwrap();
         assert_eq!(old.contract.effect, CommandEffect::ReadOnly);
 
-        // Reload publishes Mutating for the same command name.
         publish_mutating_weather(id);
 
-        // Old authorized token is gone — cannot execute under the RO skip.
         let err = consume_chat_prepared_for_execute(&old.operation_id, id, "get_weather", &params)
             .unwrap_err();
         assert!(
@@ -2565,10 +2498,10 @@ mod tests {
             "RO→Mutating must not reuse old auth: {err}"
         );
 
-        // Claim without re-classify must fail (no re-prepare on execute path).
-        let err = claim_classified_prepared(id, "get_weather", &params).unwrap_err();
+        // Claiming the classify-time id after reload must fail (no re-prepare).
+        let err = claim_prepared_by_id(&old_id).unwrap_err();
         assert!(
-            err.contains("stale") || err.contains("no classify-time"),
+            err.contains("stale") || err.contains("missing"),
             "execute claim must not mint after reload: {err}"
         );
         assert!(
@@ -2576,13 +2509,8 @@ mod tests {
             "claim must not leave an authorized Mutating ticket"
         );
 
-        // Fresh classify is Mutating — write-gate required before claim/authorize.
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::Mutating
-        );
-        // Unauthorized until claim (gate Proceed). Probe via a second issue that
-        // we deliberately do not authorize — consume must refuse.
+        let bind2 = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind2.effect, CommandEffect::Mutating);
         let probe = prepare_and_issue_for_chat(id, "get_weather", &params).unwrap();
         assert_eq!(probe.contract.effect, CommandEffect::Mutating);
         let err = consume_authorized_prepared(
@@ -2604,21 +2532,17 @@ mod tests {
         publish_mutating_weather(id);
         let params = json!({"city": "Xiamen"});
 
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::Mutating
-        );
-        // Gate Proceed → claim/authorize existing classify ticket (no re-prepare).
-        let mut_prep = claim_classified_prepared(id, "get_weather", &params).unwrap();
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind.effect, CommandEffect::Mutating);
+        let mut_id = bind.prepared_operation_id.unwrap();
+        let mut_prep = claim_prepared_by_id(&mut_id).unwrap();
         assert_eq!(mut_prep.contract.effect, CommandEffect::Mutating);
 
-        // Reload as RO — new generation / new tickets.
         publish_ro_weather(id);
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::ReadOnly
-        );
-        let ro_prep = claim_classified_prepared(id, "get_weather", &params).unwrap();
+        let bind_ro = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind_ro.effect, CommandEffect::ReadOnly);
+        let ro_id = bind_ro.prepared_operation_id.unwrap();
+        let ro_prep = claim_prepared_by_id(&ro_id).unwrap();
         assert_eq!(ro_prep.contract.effect, CommandEffect::ReadOnly);
         assert_ne!(mut_prep.operation_id, ro_prep.operation_id);
         assert_ne!(
@@ -2626,7 +2550,6 @@ mod tests {
             ro_prep.capability_generation
         );
 
-        // Old Mutating authorization cannot consume the new RO prepare.
         let err = consume_authorized_prepared(
             &mut_prep.operation_id,
             &mut_prep.capability_generation,
@@ -2638,7 +2561,6 @@ mod tests {
             "Mutating→RO old auth must not transfer: {err}"
         );
 
-        // Nor can old ids authorize the new ticket.
         let err = authorize_prepared_for_chat(
             &mut_prep.operation_id,
             &ro_prep.capability_generation,
@@ -2659,11 +2581,10 @@ mod tests {
         let params_a = json!({"city": "Xiamen"});
         let params_b = json!({"city": "Beijing"});
 
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params_a),
-            CommandEffect::ReadOnly
-        );
-        let prep = claim_classified_prepared(id, "get_weather", &params_a).unwrap();
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params_a);
+        assert_eq!(bind.effect, CommandEffect::ReadOnly);
+        let op = bind.prepared_operation_id.unwrap();
+        let prep = claim_prepared_by_id(&op).unwrap();
 
         let err =
             consume_chat_prepared_for_execute(&prep.operation_id, id, "get_weather", &params_b)
@@ -2672,10 +2593,13 @@ mod tests {
             err.contains("fingerprint mismatch"),
             "param change must invalidate: {err}"
         );
-        // Claim with drifted params must not re-prepare under the old auth.
-        let err = claim_classified_prepared(id, "get_weather", &params_b).unwrap_err();
+        // Re-claim same id is already claimed; dispatch check with drifted
+        // params must fail closed without minting.
+        let err = claim_prepared_for_dispatch(&op, id, "get_weather", &params_b).unwrap_err();
         assert!(
-            err.contains("stale") || err.contains("no classify-time"),
+            err.contains("already claimed")
+                || err.contains("fingerprint mismatch")
+                || err.contains("stale"),
             "param drift claim must fail closed: {err}"
         );
         invalidate_instance_capability(id);
@@ -2686,13 +2610,11 @@ mod tests {
         let id = "weather-forecast-v845";
         publish_ro_weather(id);
         let params = json!({"city": "Xiamen"});
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::ReadOnly
-        );
-        let prep = claim_classified_prepared(id, "get_weather", &params).unwrap();
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind.effect, CommandEffect::ReadOnly);
+        let op = bind.prepared_operation_id.unwrap();
+        let prep = claim_prepared_by_id(&op).unwrap();
 
-        // Wrong generation
         let err = consume_authorized_prepared(
             &prep.operation_id,
             "gen_not_real",
@@ -2704,7 +2626,6 @@ mod tests {
             "{err}"
         );
 
-        // Wrong fingerprint
         let err = consume_authorized_prepared(
             &prep.operation_id,
             &prep.capability_generation,
@@ -2713,7 +2634,6 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("fingerprint mismatch"), "{err}");
 
-        // Correct triple works once
         consume_authorized_prepared(
             &prep.operation_id,
             &prep.capability_generation,
@@ -2725,22 +2645,17 @@ mod tests {
 
     #[test]
     fn nm240_timeout_query_same_op_no_reexec_via_single_consume() {
-        // Same operation_id cannot be consumed twice — status/query of a
-        // timed-out op must not re-enter execute through the prepared token.
         let id = "weather-forecast-v846";
         publish_ro_weather(id);
         let params = json!({"city": "Xiamen"});
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::ReadOnly
-        );
-        let prep = claim_classified_prepared(id, "get_weather", &params).unwrap();
-        let op = prep.operation_id.clone();
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind.effect, CommandEffect::ReadOnly);
+        let op = bind.prepared_operation_id.unwrap();
+        let prep = claim_prepared_by_id(&op).unwrap();
 
         consume_authorized_prepared(&op, &prep.capability_generation, &prep.param_fingerprint)
             .unwrap();
 
-        // "Timeout query" / retry with the same prepared op id refuses.
         let err =
             consume_authorized_prepared(&op, &prep.capability_generation, &prep.param_fingerprint)
                 .unwrap_err();
@@ -2753,58 +2668,122 @@ mod tests {
 
     #[test]
     fn nm240_concurrent_same_params_get_distinct_tickets() {
-        // No cross-session reuse: each classify mints its own operation_id;
-        // FIFO claim gives each dispatch its own authorization.
+        // Each classify mints its own id; each dispatch claims **its** id —
+        // not "two ids from FIFO prove ownership".
         let id = "weather-forecast-v847";
         publish_ro_weather(id);
         let params = json!({"city": "Xiamen"});
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::ReadOnly
-        );
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::ReadOnly
-        );
-        let a = claim_classified_prepared(id, "get_weather", &params).unwrap();
-        let b = claim_classified_prepared(id, "get_weather", &params).unwrap();
-        assert_ne!(
-            a.operation_id, b.operation_id,
-            "concurrent same-params must not share one PreparedInvoke"
+        let a_bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        let b_bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(a_bind.effect, CommandEffect::ReadOnly);
+        assert_eq!(b_bind.effect, CommandEffect::ReadOnly);
+        let a_id = a_bind.prepared_operation_id.unwrap();
+        let b_id = b_bind.prepared_operation_id.unwrap();
+        assert_ne!(a_id, b_id, "concurrent same-params must mint distinct ids");
+
+        let a = claim_prepared_by_id(&a_id).unwrap();
+        let b = claim_prepared_by_id(&b_id).unwrap();
+        assert_eq!(a.operation_id, a_id);
+        assert_eq!(b.operation_id, b_id);
+
+        // Double-claim of A's id is rejected under the same lock.
+        let err = claim_prepared_by_id(&a_id).unwrap_err();
+        assert!(
+            err.contains("already claimed"),
+            "second claim of same id must fail: {err}"
         );
         invalidate_instance_capability(id);
     }
 
-    /// Production-path regression: RO classify → reload to Mutating → claim/
-    /// shell-bind must fail stale and must **not** mint+authorize a new ticket.
+    /// Production-path regression: RO classify → reload to Mutating → claim
+    /// by the **old** id must fail stale and must **not** mint+authorize.
     #[test]
     fn nm240_claim_after_ro_reload_to_mutating_does_not_reprepare() {
         let id = "weather-forecast-v848";
         publish_ro_weather(id);
         let params = json!({"city": "Xiamen"});
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::ReadOnly
-        );
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind.effect, CommandEffect::ReadOnly);
+        let old_id = bind.prepared_operation_id.unwrap();
 
         publish_mutating_weather(id);
 
-        let err = claim_classified_prepared(id, "get_weather", &params).unwrap_err();
+        let err = claim_prepared_by_id(&old_id).unwrap_err();
         assert!(
-            err.contains("stale") || err.contains("no classify-time") || err.contains("reload"),
+            err.contains("stale") || err.contains("missing") || err.contains("reload"),
             "RO→reload→Mutating claim must be stale, got: {err}"
         );
-        // Claim must not have authorized anything on the new generation.
         let probe = prepare_and_issue_for_chat(id, "get_weather", &params).unwrap();
         assert_eq!(probe.contract.effect, CommandEffect::Mutating);
         assert!(
             find_authorized_prepared(id, "get_weather", &probe.param_fingerprint).is_none(),
             "execute path must not authorize a fresh Mutating prepare"
         );
-        // Re-prepare for real use requires a new classify → Mutating → write-gate.
-        assert_eq!(
-            classify_and_bind_chat_invoke(id, "get_weather", &params),
-            CommandEffect::Mutating
+        let bind2 = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(bind2.effect, CommandEffect::Mutating);
+        invalidate_instance_capability(id);
+    }
+
+    /// Interleave: A RO classify → reload → B Mutating classify → A executes
+    /// with A's id → stale. B's ticket must not be claimed/authorized by A;
+    /// no cross-dispatch FIFO handoff.
+    #[test]
+    fn nm240_interleave_a_ro_reload_b_mutating_a_cannot_claim_b() {
+        let id = "weather-forecast-v849";
+        publish_ro_weather(id);
+        let params = json!({"city": "Xiamen"});
+
+        let a_bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(a_bind.effect, CommandEffect::ReadOnly);
+        let a_id = a_bind.prepared_operation_id.expect("A must carry its ticket id");
+
+        publish_mutating_weather(id);
+
+        let b_bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        assert_eq!(b_bind.effect, CommandEffect::Mutating);
+        let b_id = b_bind.prepared_operation_id.expect("B must issue a new ticket");
+        assert_ne!(a_id, b_id);
+
+        // A resumes with A's classify-time id — stale, not B's ticket.
+        let err = claim_prepared_by_id(&a_id).unwrap_err();
+        assert!(
+            err.contains("stale") || err.contains("missing"),
+            "A must not execute after reload via own id: {err}"
+        );
+        // A also must not be able to "discover" B by params — that API is gone;
+        // claiming B requires B's id, which A does not carry.
+        let b_peek = peek_prepared_invoke(&b_id).expect("B ticket still present");
+        assert_eq!(b_peek.contract.effect, CommandEffect::Mutating);
+        assert_eq!(b_peek.operation_id, b_id);
+        // B remains unclaimed / unauthorized until B's own dispatch claims it.
+        let err = consume_authorized_prepared(
+            &b_id,
+            &b_peek.capability_generation,
+            &b_peek.param_fingerprint,
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("not Chat-authorized"),
+            "A's failed claim must not authorize B: {err}"
+        );
+        // Double-check: claiming B with B's id still works for B's dispatch.
+        let b_claimed = claim_prepared_by_id(&b_id).unwrap();
+        assert_eq!(b_claimed.operation_id, b_id);
+        invalidate_instance_capability(id);
+    }
+
+    #[test]
+    fn nm240_claim_prepared_by_id_rejects_already_claimed_same_lock() {
+        let id = "weather-forecast-v850";
+        publish_ro_weather(id);
+        let params = json!({"city": "Xiamen"});
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        let op = bind.prepared_operation_id.unwrap();
+        claim_prepared_by_id(&op).unwrap();
+        let err = claim_prepared_by_id(&op).unwrap_err();
+        assert!(
+            err.contains("already claimed"),
+            "must reject already-claimed under same lock: {err}"
         );
         invalidate_instance_capability(id);
     }

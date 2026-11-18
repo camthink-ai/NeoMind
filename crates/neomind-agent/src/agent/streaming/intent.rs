@@ -607,21 +607,49 @@ pub(crate) fn mutating_write_fingerprint(
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            // Empty / unknown still gates (fingerprint the canonical call).
+            // Business fingerprint excludes the Chat PreparedInvoke token so
+            // classify-time ids do not splinter same-args write-gate keys.
+            let cmd = strip_prepared_operation_id_flag(cmd);
             Some(super::super::task_continuity::write_fingerprint(
                 "shell",
-                if cmd.is_empty() { "<empty>" } else { cmd },
+                if cmd.is_empty() { "<empty>" } else { cmd.as_str() },
             ))
         }
         other => {
             // Sorted-key JSON — preserve_order must not let key insertion
             // order mint divergent fingerprints for the same write.
-            let args = super::super::task_continuity::stable_json_string(&canonical);
+            let mut for_fp = canonical.clone();
+            if let Some(obj) = for_fp.as_object_mut() {
+                obj.remove(crate::agent::task_continuity::PREPARED_OPERATION_ARG);
+            }
+            let args = super::super::task_continuity::stable_json_string(&for_fp);
             Some(super::super::task_continuity::write_fingerprint(
                 other, &args,
             ))
         }
     }
+}
+
+/// Drop `--prepared-operation-id <uuid>` from a shell command for fingerprinting.
+fn strip_prepared_operation_id_flag(cmd: &str) -> String {
+    let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(cmd.trim()) else {
+        return cmd.to_string();
+    };
+    let mut out = Vec::with_capacity(argv.len());
+    let mut i = 0;
+    while i < argv.len() {
+        if argv[i] == "--prepared-operation-id" {
+            i += 2; // skip flag + value
+            continue;
+        }
+        out.push(argv[i].clone());
+        i += 1;
+    }
+    if out.is_empty() {
+        return String::new();
+    }
+    // Rejoin with spaces — good enough for fingerprint stability.
+    out.join(" ")
 }
 
 /// Mutation-pattern → action class (the same vocabulary ACTION_CLASSES
