@@ -2775,10 +2775,11 @@ mod dispatch_edge_tests {
                 payload: String,
                 _topic: Option<String>,
             ) -> AdapterResult<()> {
-                self.sent
-                    .lock()
-                    .await
-                    .push((device_id.to_string(), command_name.to_string(), payload));
+                self.sent.lock().await.push((
+                    device_id.to_string(),
+                    command_name.to_string(),
+                    payload,
+                ));
                 Ok(())
             }
             fn connection_status(&self) -> ConnectionStatus {
@@ -2794,8 +2795,8 @@ mod dispatch_edge_tests {
 
         let registry = Arc::new(DeviceRegistry::new());
         let service = Arc::new(DeviceService::new(registry, EventBus::new()));
-        let template = DeviceTypeTemplate::new("nm254_eink", "NM254 Eink")
-            .with_command(CommandDefinition {
+        let template =
+            DeviceTypeTemplate::new("nm254_eink", "NM254 Eink").with_command(CommandDefinition {
                 name: "render_text".into(),
                 display_name: "Render Text".into(),
                 payload_template: r#"{"text":"${text}"}"#.into(),
@@ -2837,7 +2838,10 @@ mod dispatch_edge_tests {
             sent: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         });
         service
-            .register_adapter("nm254-rec".into(), adapter.clone() as Arc<dyn DeviceAdapter>)
+            .register_adapter(
+                "nm254-rec".into(),
+                adapter.clone() as Arc<dyn DeviceAdapter>,
+            )
             .await;
 
         let mut send_params = std::collections::HashMap::new();
@@ -2853,8 +2857,7 @@ mod dispatch_edge_tests {
         assert_eq!(sent.len(), 1, "adapter must receive exactly once: {sent:?}");
         assert_eq!(sent[0].0, id);
         assert_eq!(sent[0].1, "render_text");
-        let payload: serde_json::Value =
-            serde_json::from_str(&sent[0].2).expect("payload is JSON");
+        let payload: serde_json::Value = serde_json::from_str(&sent[0].2).expect("payload is JSON");
         assert_eq!(
             payload["text"].as_str(),
             Some(text),

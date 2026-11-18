@@ -16,8 +16,8 @@
   <a href="https://github.com/camthink-ai/NeoMind/releases/latest">
     <img src="https://img.shields.io/github/v/release/camthink-ai/NeoMind?color=informational&label=版本" alt="版本">
   </a>
-  <img src="https://img.shields.io/badge/Rust-1.85+-orange.svg" alt="Rust">
-  <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey.svg" alt="平台支持">
+  <img src="https://img.shields.io/badge/Rust-1.92+-orange.svg" alt="Rust">
+  <img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Server-informational.svg" alt="平台支持">
 </p>
 
 <br/>
@@ -73,18 +73,19 @@ NeoMind 是一个**边缘部署的 AI 平台**,为物联网注入智能:LLM 智�
 ## 功能特性
 
 ### AI 智能
-- **自然语言控制** — 与设备对话,上传图像进行视觉分析
-- **自主智能体** — 定时/事件驱动,带记忆与技能的多步工具调用
+- **自然语言控制** — 与设备对话、上传图像做视觉分析,并在句内挂载类型化 `@` 引用(设备 / 智能体 / 规则 …)
+- **自主智能体** — 定时/事件驱动,带记忆与技能的多步工具调用;执行详情展示证据,不做臆测成功
 - **内置 LLM + 任意后端** — 自带本地模型开箱即用;支持 Ollama、llama.cpp 及任意云厂商(OpenAI、Anthropic、Qwen、DeepSeek、GLM、xAI…)
 
 ### 设备接入
-- **MQTT(内嵌 broker、mTLS)· BLE 配网 · HTTP/Webhook** — 三条接入路径,零外部依赖
-- **自动发现 + AI 辅助纳管** — 未知设备自动识别、定型、引导接入
+- **MQTT(内嵌 broker、mTLS)· CamThink CT-Prov BLE · HTTP/Webhook** — 三条接入路径,零外部依赖
+- **自动发现 + AI 辅助纳管** — 未知设备自动识别、定型、引导接入;MQTT 挂载身份保持诚实(不静默丢弃)
+- **诚实的命令投递** — UI 展示证据阶梯(适配器 → 扩展 → 设备 ACK → 物理效果)
 - **自定义设备类型** — JSON 定义指标与命令,无需写代码
 
 ### 自动化
-- **规则引擎** — 递归 JSON 条件、通知/执行/触发智能体动作、冷却与持续时间去抖
-- **JS 数据变换** — 从实时数据流计算虚拟指标
+- **规则引擎** — 递归 JSON 条件、通知/执行/触发智能体动作、冷却与持续时间去抖,另有只读 **为何未触发** 解释面板
+- **JS 数据变换** — 从实时数据流计算虚拟指标;Test 区分失败 / 无输出 / 部分 / 未验证(绝不假绿)
 - **事件总线** — 所有组件经发布/订阅解耦
 
 ### 仪表板
@@ -106,13 +107,13 @@ NeoMind 是一个**边缘部署的 AI 平台**,为物联网注入智能:LLM 智�
 | 仓库 | 定位 |
 |------|------|
 | **[NeoMind](https://github.com/camthink-ai/NeoMind)**(本仓库) | 核心平台 — 后端、前端、桌面应用 |
-| **[NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions)** | 官方扩展市场 — 22 个扩展:视觉(YOLO/人脸/OCR)、语音(TTS/ASR)、IoT 桥接(HA/Modbus/BACnet/ONVIF/OPC-UA/LoRaWAN)等 |
+| **[NeoMind-Extensions](https://github.com/camthink-ai/NeoMind-Extensions)** | 官方扩展市场 — 约 29 个扩展:视觉(YOLO/人脸/OCR/VLM)、语音(TTS/ASR)、IoT 桥接(HA/Modbus/BACnet/ONVIF/OPC-UA/LoRaWAN)、天气等 |
 | **[NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)** | 设备类型定义 — 物联网硬件的标准指标与命令 |
 | **[NeoMind-Dashboard-Components](https://github.com/camthink-ai/NeoMind-Dashboard-Components)** | 仪表板组件市场 — 社区贡献的 React 组件 |
 
 ### 支持设备
 
-NE301(边缘 AI 相机)与 NE101(感知相机)。完整设备类型见 [NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)。
+CamThink NE301 / NE302(边缘 AI 相机)、NE101(感知相机)、EK410(电子墨水屏)等。CamThink 产线由 CT-Prov/1 BLE 配网覆盖;完整定义见 [NeoMind-DeviceTypes](https://github.com/camthink-ai/NeoMind-DeviceTypes)。
 
 ### 参与生态建设
 
@@ -185,14 +186,14 @@ docker run -d --name neomind \
 
 - **Spark / Qwen 3.5 / MiniCPM5 请开启思考模式**——增益 **+9~20pp**;LFM 2.5 / Gemma 开与不开基本无差;LFM 3 的思考每轮 ReAct 输出 1,500–5,400 token,慢速硬件上不可用。
 - **采样参数随模型下载一起下发**:Qwen 关思考模式用 1.0/0.95(其对话默认参数在本场景损失约 10pp);LFM 系列严格 0.1 / top_k 50 / repetition_penalty 1.1(错参最高损失 23pp);Spark 1.0/0.95;Gemma 1.0/0.95/top_k 64。
-- **llama-server 版本下限**:LFM 3 系列需 ≥ b11946——推荐 v0.8.0(2026-10-28 发布,官方 LFM3 全家族支持)。
+- **llama-server 版本下限**:LFM 3 系列需 ≥ b11946——推荐 v0.8.0(2026-10-28 发布,官方 LFM3 全家族支持)。NeoMind 1.3.0 将内置 runtime 固定为 **b12359**(= llama.cpp **v1.0.0**),覆盖官方资源平台与 Jetson / Linux-CUDA 自托管构建。
 - 跨机器方差实测 ≈ ±1.4pp(Mac M 系 vs T4)——成绩跨硬件可迁移。
 
 历史评分(2026-09 12 场景套件、2026-10 33/40 例门禁,含 MiniCPM-V 与 deepseek-flash)见 [docs/edge-models.md](docs/edge-models.md)。模型目录与下载:[NeoMind-Runtimes](https://github.com/camthink-ai/NeoMind-Runtimes)。
 
 ### 开发
 
-**前置条件:** Rust 1.85+、Node.js 20+(LLM 后端可选 — 服务器会自动引导内置模型)
+**前置条件:** Rust 1.92+(见 `rust-toolchain.toml`)、Node.js 20+(LLM 后端可选 — 服务器会自动引导内置模型)
 
 ```bash
 git clone https://github.com/camthink-ai/NeoMind.git

@@ -1261,15 +1261,9 @@ mod tests {
         assert_eq!(shell_single_quote("a"), "'a'");
         assert_eq!(shell_single_quote("it's"), "'it'\\''s'");
         assert_eq!(
-            device_control_shell_example(
-                "d1",
-                "render_text",
-                &json!({"text": "你好 it's ok"})
-            )
-            .as_deref(),
-            Some(
-                r#"neomind device control d1 render_text --params '{"text":"你好 it'\''s ok"}'"#
-            )
+            device_control_shell_example("d1", "render_text", &json!({"text": "你好 it's ok"}))
+                .as_deref(),
+            Some(r#"neomind device control d1 render_text --params '{"text":"你好 it'\''s ok"}'"#)
         );
         assert!(device_control_shell_example("d1", "x", &json!([])).is_none());
     }

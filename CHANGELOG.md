@@ -7,15 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.3.0] - 2026-11-14 — CamThink CT-Prov BLE provision, MQTT attach honesty, chat @-references, evidence surfaces
+## [1.3.0] - 2026-11-18 — CamThink CT-Prov BLE provision, MQTT attach honesty, chat @-references, evidence surfaces
 
-Edge-AI capability iteration on branch `1.3.0`: CamThink CT-Prov/1 BLE onboarding, honest MQTT attach/identity, inline @ mentions through contentNodes, honest automation/device/agent status surfaces, and offline eval freezes (Plan E/F). Product version is now **1.3.0** across Cargo/Web/Tauri/locks. Live Plan E 9/10, tip 138, Appliance, and 5-person usability remain open.
+Edge-AI capability iteration merged to `main`: CamThink CT-Prov/1 BLE onboarding, honest MQTT attach/identity, inline @ mentions through contentNodes, honest automation/device/agent status surfaces, and offline eval freezes (Plan E/F). Product version is **1.3.0** across Cargo/Web/Tauri/locks. Live Plan E 9/10, tip 138, Appliance, and 5-person usability remain open.
 
 ### Upgrade notes
 - **CamThink CT-Prov hard cut:** add-device BLE provisioning now speaks CT-Prov/1 only (GATT service `7B1E0001-…`). Old JSON-on-GATT / ESP protobuf (`0xFFFE` / `0xFF53`) firmwares can no longer be provisioned — flash CT-Prov/1 first. SoftAP HTTP transport (`POST /api/v1/ctprov`) remains in-tree, but the SoftAP **AP** tab is deferred/hidden (`CT_PROV_SOFTAP_UI_ENABLED=false`); shipping add-device paths are BLE + Manual/Auto. MQTT draft **auto** discovery is unchanged and is not SoftAP.
 - CT-Prov MQTT provision accepts a **custom** broker (`broker_id: custom`) and writes the full mqtt section (host/port/TLS/creds/topics); incomplete optional cellular/webhook sections are pruned before `config.set` instead of sending stub payloads.
 - Chat tools converge on CLI: dedicated `query_conclusion` / `run_now` / `device_command` model entries are removed; those capabilities stay available via `neomind …` shell/CLI (old sessions still rehydrate the three names).
-- Builtin llama.cpp runtime pin (official-asset platforms) moves **b12024 → b12359** (= llama.cpp **v1.0.0**, 2026-11-13). Semver tag `v1.0.0` ships binaries under nightly build `b12359`; NeoMind keeps the `bNNNN` cache/URL shape. Jetson and Linux-x64-CUDA self-hosted pins stay at **b12024** until matching `NeoMind-Runtimes` assets exist. `--defrag-thold` was never used by NeoMind; spawn sampling flags (`--temp`/`--top-p`/`--top-k`/`--min-p`/`--repeat-penalty`) unchanged.
+- Builtin llama.cpp runtime pin moves **b12024 → b12359** (= llama.cpp **v1.0.0**, 2026-11-13) for official-asset platforms **and** Jetson / Linux-x64-CUDA self-hosted pins (Orin sm_87 + Tesla T4 smoke passed; SHA-verified). Semver tag `v1.0.0` ships binaries under nightly build `b12359`; NeoMind keeps the `bNNNN` cache/URL shape. `--defrag-thold` was never used by NeoMind; spawn sampling flags (`--temp`/`--top-p`/`--top-k`/`--min-p`/`--repeat-penalty`) unchanged.
 - Chat composer can attach typed `@` mentions via server search (`GET /api/mentions/search`) and send-time resolve (`POST /api/mentions/resolve`); invalid refs stay in the draft marked invalid instead of silently dropping.
 - Messages may carry ordered `contentNodes` (v1); old `references` preamble path still works for prior clients/sessions.
 - Transform **Test** is honest: failure / no-output / partial / unverified are distinct; a non-empty unverified set is never a plain green success.
