@@ -291,8 +291,9 @@ fn sanitize_device_current(data: &serde_json::Value, device_id: &str) -> serde_j
     // CLI discovery must match the `--params` input contract. Raw API
     // `/devices/:id/current` still returns full protocol defs (samples /
     // payload_template) for the web UI; this projection keeps name /
-    // description / param defs + params_example, plus a copyable shell_example
-    // `{command, params}` (same shape as extension search hits).
+    // description / param defs + params_example, plus a copyable
+    // `shell_example` string using `device control … --params '<JSON>'`
+    // (shell structured `params` applies to extension invoke only).
     project_commands_for_cli(&mut result, device_id);
     result
 }
@@ -339,20 +340,55 @@ fn project_one_command_for_cli(cmd: &serde_json::Value, device_id: &str) -> serd
     }
 }
 
-/// Copyable shell-tool form aligned with extension search hits (NM-252 polish).
+/// POSIX single-quote an argument for the shell tokenizer / `/bin/sh`.
+///
+/// Embedded `'` become `'\''` so a verbatim paste through the agent shell
+/// tokenizer (and real shells) yields `s` byte-identical.
+pub fn shell_single_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if c == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Copyable `neomind device control <id> <cmd> --params '<JSON>'` line.
+///
+/// Returns `None` when `params` is not a JSON object or cannot be serialized
+/// — callers must omit `shell_example` rather than invent a broken one.
+/// Extension invoke keeps top-level `{command, params}`; device control does
+/// not (shell structured `params` is ignored for non-extension commands).
+pub fn device_control_shell_example(
+    device_id: &str,
+    cmd_name: &str,
+    params: &serde_json::Value,
+) -> Option<String> {
+    if !params.is_object() {
+        return None;
+    }
+    let json = serde_json::to_string(params).ok()?;
+    Some(format!(
+        "neomind device control {device_id} {cmd_name} --params {}",
+        shell_single_quote(&json)
+    ))
+}
+
+/// Attach `shell_example` only when a validated `params_example` is present.
 fn attach_device_shell_example(proj: &mut serde_json::Value, device_id: &str, cmd_name: &str) {
-    let params = proj
-        .get("params_example")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let Some(params) = proj.get("params_example").cloned() else {
+        return;
+    };
+    let Some(example) = device_control_shell_example(device_id, cmd_name, &params) else {
+        return;
+    };
     if let Some(map) = proj.as_object_mut() {
-        map.insert(
-            "shell_example".into(),
-            json!({
-                "command": format!("neomind device control {device_id} {cmd_name}"),
-                "params": params,
-            }),
-        );
+        map.insert("shell_example".into(), json!(example));
     }
 }
 
@@ -1186,10 +1222,13 @@ mod tests {
         assert_eq!(cmd["description"], "Display text");
         assert_eq!(cmd["params_example"]["text"], "Hello");
         assert_eq!(
-            cmd["shell_example"]["command"],
-            "neomind device control eink-1 render_text"
+            cmd["shell_example"].as_str(),
+            Some(r#"neomind device control eink-1 render_text --params '{"text":"Hello"}'"#)
         );
-        assert_eq!(cmd["shell_example"]["params"]["text"], "Hello");
+        assert!(
+            cmd["shell_example"].as_object().is_none(),
+            "device shell_example must be a --params string, not {{command,params}}: {cmd}"
+        );
         assert!(cmd.get("samples").is_none(), "samples omitted: {cmd}");
         assert!(
             cmd.get("payload_template").is_none(),
@@ -1200,6 +1239,39 @@ mod tests {
             .unwrap()
             .iter()
             .any(|p| p["name"] == "text" && p["required"] == true));
+    }
+
+    /// No validated params_example → omit shell_example (do not invent one).
+    #[test]
+    fn shell_example_omitted_without_params_example() {
+        let mut proj = json!({
+            "name": "render_text",
+            "description": "Display text",
+            "parameters": [{"name": "text", "required": true}],
+        });
+        attach_device_shell_example(&mut proj, "eink-1", "render_text");
+        assert!(
+            proj.get("shell_example").is_none(),
+            "must omit broken executable example: {proj}"
+        );
+    }
+
+    #[test]
+    fn shell_single_quote_escapes_embedded_apostrophe() {
+        assert_eq!(shell_single_quote("a"), "'a'");
+        assert_eq!(shell_single_quote("it's"), "'it'\\''s'");
+        assert_eq!(
+            device_control_shell_example(
+                "d1",
+                "render_text",
+                &json!({"text": "你好 it's ok"})
+            )
+            .as_deref(),
+            Some(
+                r#"neomind device control d1 render_text --params '{"text":"你好 it'\''s ok"}'"#
+            )
+        );
+        assert!(device_control_shell_example("d1", "x", &json!([])).is_none());
     }
 
     /// `--metric` keeps only the requested field; metric keys with dots

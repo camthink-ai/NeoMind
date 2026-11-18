@@ -2679,6 +2679,189 @@ mod dispatch_edge_tests {
         assert_eq!(toks, ["rule", "create", "--name", "温湿度告警"]);
     }
 
+    /// NM-254: `device get` shell_example must be a `--params '<JSON>'` string
+    /// that survives the shell invoke tokenizer and delivers byte-identical
+    /// text (CJK + spaces + `'`) to the device adapter exactly once.
+    #[tokio::test]
+    async fn nm254_device_shell_example_cjk_space_quote_roundtrips_to_adapter() {
+        use clap::Parser;
+        use futures::Stream;
+        use neomind_cli_ops::device::device_control_shell_example;
+        use neomind_cli_ops::dispatch::commands::{Args, Command, DeviceCommand};
+        use neomind_core::EventBus;
+        use neomind_devices::mdl::MetricDataType;
+        use neomind_devices::mdl_format::{CommandDefinition, ParameterDefinition};
+        use neomind_devices::{
+            AdapterResult, ConnectionConfig, ConnectionStatus, DeviceAdapter, DeviceConfig,
+            DeviceEvent, DeviceRegistry, DeviceService, DeviceTypeTemplate,
+        };
+        use std::pin::Pin;
+        use std::sync::Arc;
+
+        let text = "你好 it's a test";
+        let params = serde_json::json!({"text": text});
+        let example = device_control_shell_example("eink-nm254", "render_text", &params)
+            .expect("reliable object params must yield a shell_example");
+
+        // Verbatim through the shell invoke path (same tokenizer as in-process dispatch).
+        let argv = tokenize_neomind_command(&example).expect("example must tokenize");
+        let parsed = Args::try_parse_from(argv.iter()).expect("example must clap-parse");
+        let Command::Device { device_cmd } = parsed.command else {
+            panic!("expected device command from shell_example");
+        };
+        let DeviceCommand::Control {
+            id,
+            command,
+            params: params_flag,
+            param,
+        } = device_cmd
+        else {
+            panic!("expected device control from shell_example");
+        };
+        assert!(
+            param.is_empty(),
+            "shell_example uses --params, not repeated --param"
+        );
+        let params_json: serde_json::Value = serde_json::from_str(
+            params_flag
+                .as_deref()
+                .expect("--params must be present on shell_example"),
+        )
+        .expect("--params JSON");
+        assert_eq!(
+            params_json["text"].as_str(),
+            Some(text),
+            "tokenizer+clap must preserve text byte/char-identical"
+        );
+        assert_eq!(id, "eink-nm254");
+        assert_eq!(command, "render_text");
+
+        struct RecordingAdapter {
+            sent: Arc<tokio::sync::Mutex<Vec<(String, String, String)>>>,
+        }
+        #[async_trait::async_trait]
+        impl DeviceAdapter for RecordingAdapter {
+            fn name(&self) -> &str {
+                "nm254-rec"
+            }
+            fn adapter_type(&self) -> &'static str {
+                "test"
+            }
+            fn is_running(&self) -> bool {
+                true
+            }
+            async fn start(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn stop(&self) -> AdapterResult<()> {
+                Ok(())
+            }
+            fn subscribe(&self) -> Pin<Box<dyn Stream<Item = DeviceEvent> + Send + '_>> {
+                Box::pin(futures::stream::empty())
+            }
+            fn device_count(&self) -> usize {
+                0
+            }
+            fn list_devices(&self) -> Vec<String> {
+                Vec::new()
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            async fn send_command(
+                &self,
+                device_id: &str,
+                command_name: &str,
+                payload: String,
+                _topic: Option<String>,
+            ) -> AdapterResult<()> {
+                self.sent
+                    .lock()
+                    .await
+                    .push((device_id.to_string(), command_name.to_string(), payload));
+                Ok(())
+            }
+            fn connection_status(&self) -> ConnectionStatus {
+                ConnectionStatus::Connected
+            }
+            async fn subscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                Ok(())
+            }
+            async fn unsubscribe_device(&self, _device_id: &str) -> AdapterResult<()> {
+                Ok(())
+            }
+        }
+
+        let registry = Arc::new(DeviceRegistry::new());
+        let service = Arc::new(DeviceService::new(registry, EventBus::new()));
+        let template = DeviceTypeTemplate::new("nm254_eink", "NM254 Eink")
+            .with_command(CommandDefinition {
+                name: "render_text".into(),
+                display_name: "Render Text".into(),
+                payload_template: r#"{"text":"${text}"}"#.into(),
+                parameters: vec![ParameterDefinition {
+                    name: "text".into(),
+                    display_name: "Text".into(),
+                    data_type: MetricDataType::String,
+                    unit: String::new(),
+                    min: None,
+                    max: None,
+                    default_value: None,
+                    allowed_values: vec![],
+                    required: true,
+                    visible_when: None,
+                    group: None,
+                    help_text: String::new(),
+                    validation: vec![],
+                }],
+                fixed_values: Default::default(),
+                samples: vec![],
+                description: String::new(),
+                parameter_groups: vec![],
+            });
+        service.register_template(template).await.unwrap();
+        service
+            .register_device(DeviceConfig {
+                device_id: id.clone(),
+                name: "NM254".into(),
+                device_type: "nm254_eink".into(),
+                adapter_type: "test".into(),
+                connection_config: ConnectionConfig::new(),
+                adapter_id: Some("nm254-rec".into()),
+                last_seen: 0,
+                offline_timeout_secs: None,
+            })
+            .await
+            .unwrap();
+        let adapter = Arc::new(RecordingAdapter {
+            sent: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        });
+        service
+            .register_adapter("nm254-rec".into(), adapter.clone() as Arc<dyn DeviceAdapter>)
+            .await;
+
+        let mut send_params = std::collections::HashMap::new();
+        for (k, v) in params_json.as_object().unwrap() {
+            send_params.insert(k.clone(), v.clone());
+        }
+        service
+            .send_command(&id, &command, send_params)
+            .await
+            .expect("valid params from shell_example must reach the adapter");
+
+        let sent = adapter.sent.lock().await.clone();
+        assert_eq!(sent.len(), 1, "adapter must receive exactly once: {sent:?}");
+        assert_eq!(sent[0].0, id);
+        assert_eq!(sent[0].1, "render_text");
+        let payload: serde_json::Value =
+            serde_json::from_str(&sent[0].2).expect("payload is JSON");
+        assert_eq!(
+            payload["text"].as_str(),
+            Some(text),
+            "adapter payload text must match shell_example params byte/char-identical"
+        );
+    }
+
     #[test]
     fn split_path_hint_targets_the_offending_argument() {
         let case = |msg: &str, command: &str| {
