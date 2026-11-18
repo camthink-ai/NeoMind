@@ -21,7 +21,8 @@ fn config(id: &str, last_seen: i64, offline_timeout_secs: Option<u64>) -> Device
         device_id: id.to_string(),
         name: id.to_string(),
         device_type: "state_sensor".to_string(),
-        adapter_type: "mqtt".to_string(),
+        // Non-mqtt: MQTT register requires a live adapter (BindIncomplete).
+        adapter_type: "test".to_string(),
         connection_config: ConnectionConfig::new(),
         adapter_id: None,
         last_seen,

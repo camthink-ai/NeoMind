@@ -344,12 +344,13 @@ async fn test_e2e_device_with_template() {
 
     service.register_template(template).await.unwrap();
 
-    // Register device
+    // Register device (non-mqtt: MQTT register requires a live adapter for
+    // subscribe honesty / BindIncomplete). This case only checks template join.
     let device_config = DeviceConfig {
         device_id: "sensor_v2_001".to_string(),
         name: "Sensor V2 001".to_string(),
         device_type: "sensor_v2".to_string(),
-        adapter_type: "mqtt".to_string(),
+        adapter_type: "test".to_string(),
         connection_config: ConnectionConfig::mqtt(
             "device/sensor_v2/sensor_v2_001/telemetry",
             None::<String>,

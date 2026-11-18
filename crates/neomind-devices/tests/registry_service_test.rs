@@ -188,7 +188,8 @@ async fn test_service_device_operations() {
         device_id: "test_device_1".to_string(),
         name: "Test Device 1".to_string(),
         device_type: "test_device".to_string(),
-        adapter_type: "mqtt".to_string(),
+        // Non-mqtt: MQTT register requires a live adapter (BindIncomplete).
+        adapter_type: "test".to_string(),
         connection_config,
         adapter_id: None,
         last_seen: 0,
@@ -255,7 +256,8 @@ async fn test_service_command_validation() {
         device_id: "controller1".to_string(),
         name: "Controller 1".to_string(),
         device_type: "test_controller".to_string(),
-        adapter_type: "mqtt".to_string(),
+        // Non-mqtt: MQTT register requires a live adapter (BindIncomplete).
+        adapter_type: "test".to_string(),
         connection_config: ConnectionConfig::new(),
         adapter_id: None,
         last_seen: 0,
