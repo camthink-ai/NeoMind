@@ -311,6 +311,10 @@ pub const NEW_OPERATION_ARG: &str = "_new_operation";
 /// Stripped before the extension process sees parameters.
 pub const PREPARED_OPERATION_ARG: &str = "_prepared_operation_id";
 
+/// Host-managed PreparedInvoke id on shell args (NM-247).
+/// Not model-visible: stripped before history / prompt persistence.
+pub const HOST_PREPARED_OPERATION_ARG: &str = "_host_prepared_operation_id";
+
 /// One-shot user grant to begin a new same-args Operation after Unknown.
 ///
 /// Bound to the **confirmed** prior Unknown Operation, its business write
@@ -3526,8 +3530,16 @@ fn already_canonical_shell_args(arguments: &serde_json::Value) -> bool {
         return false;
     }
     // Allow only shell-shaped keys (+ lifecycle flag if a caller forgot to strip).
-    obj.keys()
-        .all(|k| k == "command" || k == "timeout" || k == NEW_OPERATION_ARG)
+    obj.keys().all(|k| {
+        k == "command"
+            || k == "timeout"
+            || k == "description"
+            || k == "working_dir"
+            || k == "params"
+            || k == NEW_OPERATION_ARG
+            || k == HOST_PREPARED_OPERATION_ARG
+            || k == PREPARED_OPERATION_ARG
+    })
 }
 
 /// Canonicalize tool args before capability / fingerprint classification.
@@ -3543,6 +3555,11 @@ pub fn canonicalize_tool_arguments(
 ) -> serde_json::Value {
     let mut cleaned = arguments.clone();
     strip_new_operation_flag(&mut cleaned);
+    // Host ticket is dispatch-internal — never part of business fingerprint.
+    if let Some(obj) = cleaned.as_object_mut() {
+        obj.remove(HOST_PREPARED_OPERATION_ARG);
+        obj.remove(PREPARED_OPERATION_ARG);
+    }
     let real = crate::tools::resolve_tool_name(tool_name);
     if real == "shell" && tool_name != "shell" {
         if already_canonical_shell_args(&cleaned) {
@@ -3552,6 +3569,40 @@ pub fn canonicalize_tool_arguments(
     } else {
         cleaned
     }
+}
+
+/// Strip host-only PreparedInvoke carriage from args before model-visible
+/// history / tool-call persistence (NM-247).
+pub fn strip_host_prepared_from_arguments(arguments: &mut serde_json::Value) {
+    if let Some(obj) = arguments.as_object_mut() {
+        obj.remove(HOST_PREPARED_OPERATION_ARG);
+        obj.remove(PREPARED_OPERATION_ARG);
+        if let Some(cmd) = obj.get("command").and_then(|v| v.as_str()) {
+            if let Some(stripped) = strip_prepared_id_from_shell_command(cmd) {
+                obj.insert("command".into(), serde_json::Value::String(stripped));
+            }
+        }
+    }
+}
+
+fn strip_prepared_id_from_shell_command(cmd: &str) -> Option<String> {
+    let argv = crate::toolkit::shell::tokenize_neomind_command(cmd.trim()).ok()?;
+    let mut out = Vec::with_capacity(argv.len());
+    let mut i = 0;
+    let mut changed = false;
+    while i < argv.len() {
+        if argv[i] == "--prepared-operation-id" {
+            changed = true;
+            i += 2; // skip flag + value
+            continue;
+        }
+        out.push(argv[i].clone());
+        i += 1;
+    }
+    if !changed {
+        return None;
+    }
+    Some(out.join(" "))
 }
 
 /// Classify capability from a **resolved** tool name + already-canonical args.
@@ -3682,8 +3733,13 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
     if cmd.trim().is_empty() {
         return ToolCapability::mutating_unknown_sensitive();
     }
-    // Already carries a token — peek only (no remint).
-    if let Some(op_id) = extract_prepared_operation_id_from_shell_cmd(&cmd) {
+
+    // NM-247: host ticket already on this dispatch — peek only (no remint).
+    if let Some(op_id) = arguments
+        .get(HOST_PREPARED_OPERATION_ARG)
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+    {
         if let Some(prep) = neomind_core::extension::peek_prepared_invoke(&op_id) {
             return match prep.contract.effect {
                 neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
@@ -3692,7 +3748,7 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
                     .with_prepared_operation_id(Some(op_id)),
             };
         }
-        return ToolCapability::mutating_write();
+        // Stale host ticket — fall through to re-classify from business call.
     }
 
     // Non-extension shell: ordinary CLI classify (no PreparedInvoke token).
@@ -3700,24 +3756,36 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
         return crate::toolkit::shell::classify_shell_capability(&cmd);
     }
 
-    // Extension invoke: classify once, carry the returned id on this command.
+    // Structured params vs --params/--params-file conflict → param error later;
+    // fail closed here (no ticket) so execute reports the conflict.
+    if let Err(msg) = crate::toolkit::shell::validate_extension_params_sources(arguments) {
+        tracing::warn!(error = %msg, "extension invoke params conflict at attach");
+        return ToolCapability::mutating_unknown_sensitive();
+    }
+
+    // Extension invoke: classify once from business command+params. Host ticket
+    // stays in `_host_prepared_operation_id` — never append to model-visible
+    // command. Legacy `--prepared-operation-id` in the command string is ignored
+    // for remint (compat execute path may still claim it if host field absent).
     let argv = match crate::toolkit::shell::tokenize_neomind_command(cmd.trim()) {
         Ok(a) => a,
         Err(_) => return ToolCapability::mutating_unknown_sensitive(),
     };
-    let (ext_id, command, raw) = match parse_extension_invoke_argv(&argv) {
+    let (ext_id, command, raw) = match resolve_extension_invoke_business(arguments, &argv) {
         Some(v) => v,
         None => return crate::toolkit::shell::classify_shell_capability(&cmd),
     };
     let bind = neomind_core::extension::classify_and_bind_chat_invoke(&ext_id, &command, &raw);
     if let Some(op_id) = bind.prepared_operation_id.clone() {
-        let mut new_cmd = cmd;
-        if !new_cmd.contains("--prepared-operation-id") {
-            new_cmd.push_str(" --prepared-operation-id ");
-            new_cmd.push_str(&op_id);
-        }
         if let Some(obj) = arguments.as_object_mut() {
-            obj.insert("command".into(), serde_json::Value::String(new_cmd));
+            obj.insert(
+                HOST_PREPARED_OPERATION_ARG.into(),
+                serde_json::Value::String(op_id),
+            );
+            // Keep command free of tickets for history / PreferKnown clarity.
+            if let Some(stripped) = strip_prepared_id_from_shell_command(&cmd) {
+                obj.insert("command".into(), serde_json::Value::String(stripped));
+            }
         }
     }
     match bind.effect {
@@ -3726,6 +3794,26 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
         neomind_core::extension::CommandEffect::Mutating => ToolCapability::mutating_write()
             .with_prepared_operation_id(bind.prepared_operation_id),
     }
+}
+
+/// Business (ext, command, params) for classify — prefers shell `params` object.
+fn resolve_extension_invoke_business(
+    arguments: &serde_json::Value,
+    argv: &[String],
+) -> Option<(String, String, serde_json::Value)> {
+    if let Some(p) = arguments.get("params") {
+        if !p.is_object() && !p.is_null() {
+            return None;
+        }
+        let (ext_id, command, _) = parse_extension_invoke_argv(argv)?;
+        let raw = if p.is_null() {
+            serde_json::json!({})
+        } else {
+            p.clone()
+        };
+        return Some((ext_id, command, raw));
+    }
+    parse_extension_invoke_argv(argv)
 }
 
 fn attach_extension_tool_prepared_invoke(
@@ -3767,12 +3855,6 @@ fn attach_extension_tool_prepared_invoke(
 fn shell_cmd_is_extension_invoke(cmd: &str) -> bool {
     let t = cmd.trim();
     t.contains("extension invoke") || t.contains("extension  invoke")
-}
-
-fn extract_prepared_operation_id_from_shell_cmd(cmd: &str) -> Option<String> {
-    let argv = crate::toolkit::shell::tokenize_neomind_command(cmd.trim()).ok()?;
-    let idx = argv.iter().position(|a| a == "--prepared-operation-id")?;
-    argv.get(idx + 1).cloned()
 }
 
 fn parse_extension_invoke_argv(argv: &[String]) -> Option<(String, String, serde_json::Value)> {
@@ -4142,11 +4224,27 @@ pub fn evaluate_mutating_gate(
         }) => {
             let body = serde_json::from_str::<serde_json::Value>(&result.body)
                 .unwrap_or_else(|_| serde_json::json!({ "body": result.body }));
+            // NM-247: PreferKnown means the prior result is reused — not a new
+            // execution. Spell that out so models do not invent prepared ids or
+            // treat the resume as a fresh attempt.
+            let not_reexecuted = !result.success;
+            let summary = if not_reexecuted {
+                format!(
+                    "PreferKnown: prior failure reused — not re-executed. \
+                     Last error: {}. To retry the same business call set \
+                     `{NEW_OPERATION_ARG}: true` (see tool schema); do not invent \
+                     prepared-operation tickets.",
+                    result.summary
+                )
+            } else {
+                result.summary.clone()
+            };
             let mut data = serde_json::json!({
                 "_operation_resume": true,
+                "_not_reexecuted": not_reexecuted,
                 "operation_id": operation_id,
                 "success": result.success,
-                "summary": result.summary,
+                "summary": summary,
                 "data": body,
             });
             if let Some(r) = &result.details_ref {
@@ -4155,7 +4253,7 @@ pub fn evaluate_mutating_gate(
             // Outer success must match the Operation outcome — never mark
             // pending/failed resumes as ToolOutput.success (effective_success
             // and confirm_step_from_tool key on the outer flag).
-            let output = operation_envelope_tool_output(result.success, data, &result.summary);
+            let output = operation_envelope_tool_output(result.success, data, &summary);
             MutatingGateOutcome::ResumeKnown {
                 operation_id: operation_id.clone(),
                 output,

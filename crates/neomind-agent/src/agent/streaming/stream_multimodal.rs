@@ -548,7 +548,10 @@ pub async fn process_multimodal_stream_events_with_safeguards(
 
             for (name, execution) in tool_results_executed {
                 // Use arguments from the execution result (preserves per-call arguments for same-name tools)
-                let exec_arguments = execution.arguments.clone();
+                let mut exec_arguments = execution.arguments.clone();
+                super::super::task_continuity::strip_host_prepared_from_arguments(
+                    &mut exec_arguments,
+                );
                 // Round-stamped like stream_core: the pending-stream snapshot
                 // stores whatever round the event carries — unstamped events
                 // all collapsed to round 1, mismatching the persisted turn.

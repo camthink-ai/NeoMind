@@ -719,7 +719,7 @@ impl ShellTool {
             Ok(Err(neomind_cli_ops::dispatch::DispatchError::Api(msg))) => Some(CommandOutput {
                 exit_code: Some(1),
                 stdout: String::new(),
-                stderr: msg,
+                stderr: classify_extension_transport_error(&msg),
                 timed_out: false,
             }),
             // Timeout (outer Err = elapsed) — mirror the subprocess timeout behavior.
@@ -1278,40 +1278,50 @@ pub(crate) fn not_in_process_uses_parsed_argv() -> bool {
     true
 }
 
-/// NM-240: for `extension invoke`, claim the **classify-time** PreparedInvoke
-/// (never re-prepare) and inject `--prepared-operation-id`. Missing/stale
-/// after reload or param drift → Err so execution cannot mint a fresh ticket
-/// that bypasses the write-gate.
+/// NM-240/247: for `extension invoke`, claim the **classify-time** PreparedInvoke
+/// (never re-prepare). Prefer host-managed ticket from dispatch context; legacy
+/// `--prepared-operation-id` on argv remains compat-only. Missing/stale →
+/// "not executed; resubmit business call".
 pub(crate) fn bind_extension_invoke_prepared_token(
     argv: Vec<String>,
 ) -> std::result::Result<Vec<String>, String> {
     use clap::Parser;
     use neomind_cli_ops::dispatch::commands::{Args, Command, ExtensionCommand};
 
-    // Must carry classify-time id on this dispatch — never claim by params/FIFO.
-    let Some(idx) = argv.iter().position(|a| a == "--prepared-operation-id") else {
-        let parsed = match Args::try_parse_from(argv.iter()) {
-            Ok(a) => a,
-            Err(_) => return Ok(argv),
-        };
-        return match parsed.command {
-            Command::Extension {
-                extension_cmd: ExtensionCommand::Invoke { extension_id, command, .. },
-            } => Err(format!(
-                "unbound PreparedInvoke for '{extension_id}/{command}': missing \
-                 --prepared-operation-id; re-classify and invoke again (Chat write-gate \
-                 must carry the classify-time token on this dispatch)"
-            )),
-            _ => Ok(argv),
-        };
+    let host = neomind_cli_ops::dispatch::peek_extension_invoke_host_context_or_test();
+    let host_op = host
+        .as_ref()
+        .and_then(|h| h.prepared_operation_id.clone());
+    let host_params = host.and_then(|h| h.structured_params);
+
+    let argv_op = argv
+        .iter()
+        .position(|a| a == "--prepared-operation-id")
+        .and_then(|idx| argv.get(idx + 1).cloned());
+
+    // Host ticket wins; legacy argv token is compat only.
+    let op_id = match (host_op, argv_op) {
+        (Some(h), _) => h,
+        (None, Some(a)) => a,
+        (None, None) => {
+            let parsed = match Args::try_parse_from(argv.iter()) {
+                Ok(a) => a,
+                Err(_) => return Ok(argv),
+            };
+            return match parsed.command {
+                Command::Extension {
+                    extension_cmd: ExtensionCommand::Invoke { extension_id, command, .. },
+                } => Err(format!(
+                    "PreparedInvoke missing for '{extension_id}/{command}' — not executed; \
+                     resubmit the business call (command + params). Do not invent \
+                     prepared-operation tickets."
+                )),
+                _ => Ok(argv),
+            };
+        }
     };
 
-    let op_id = argv
-        .get(idx + 1)
-        .cloned()
-        .ok_or_else(|| "missing value for --prepared-operation-id".to_string())?;
-
-    // Ownership check against this argv when it parses as extension invoke.
+    // Ownership check: prefer host structured params, else argv --params.
     let ownership = (|| {
         let parsed = Args::try_parse_from(argv.iter()).ok()?;
         let Command::Extension {
@@ -1327,7 +1337,13 @@ pub(crate) fn bind_extension_invoke_prepared_token(
         else {
             return None;
         };
-        let raw = if let Some(path) = params_file.as_ref() {
+        let raw = if let Some(v) = host_params.clone() {
+            if v.is_null() {
+                serde_json::json!({})
+            } else {
+                v
+            }
+        } else if let Some(path) = params_file.as_ref() {
             let text = std::fs::read_to_string(path).ok()?;
             serde_json::from_str(text.trim()).ok()?
         } else {
@@ -1344,21 +1360,115 @@ pub(crate) fn bind_extension_invoke_prepared_token(
             neomind_core::extension::claim_prepared_for_dispatch(&op_id, &ext_id, &command, &raw)
                 .map_err(|e| {
                     format!(
-                        "stale or unbound PreparedInvoke '{op_id}': {e}; \
-                         re-classify and invoke again (Chat write-gate must bind a fresh token)"
+                        "PreparedInvoke stale or unbound ('{op_id}'): {e} — not executed; \
+                         resubmit the business call (command + params). Do not invent \
+                         or reuse prepared-operation tickets."
                     )
                 })?;
         }
         None => {
             neomind_core::extension::claim_prepared_by_id(&op_id).map_err(|e| {
                 format!(
-                    "stale or unbound PreparedInvoke '{op_id}': {e}; \
-                     re-classify and invoke again (Chat write-gate must bind a fresh token)"
+                    "PreparedInvoke stale or unbound ('{op_id}'): {e} — not executed; \
+                     resubmit the business call (command + params). Do not invent \
+                     or reuse prepared-operation tickets."
                 )
             })?;
         }
     }
     Ok(argv)
+}
+
+/// Reject when shell `params` object conflicts with `--params`/`--params-file`,
+/// or when `params` is present but not an object. Non-extension shell is OK.
+pub fn validate_extension_params_sources(args: &Value) -> std::result::Result<(), String> {
+    let Some(params_val) = args.get("params") else {
+        return Ok(());
+    };
+    if params_val.is_null() {
+        return Ok(());
+    }
+    if !params_val.is_object() {
+        return Err(
+            "shell params must be a JSON object (for extension invoke only)".into(),
+        );
+    }
+    let cmd = args
+        .get("command")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if cmd.is_empty() {
+        return Ok(());
+    }
+    // params only applies to extension invoke; ignore otherwise.
+    let is_invoke = cmd.contains("extension invoke") || cmd.contains("extension  invoke");
+    if !is_invoke {
+        return Ok(());
+    }
+    let argv = tokenize_neomind_command(cmd).map_err(|e| e.to_string())?;
+    if argv.iter().any(|a| a == "--params" || a == "--params-file") {
+        return Err(
+            "conflict: pass extension invoke params via shell `params` object OR \
+             `--params`/`--params-file` in command — not both"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+fn extension_invoke_host_context_from_args(
+    args: &Value,
+) -> Option<neomind_cli_ops::dispatch::ExtensionInvokeHostContext> {
+    let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+    if !(cmd.contains("extension invoke") || cmd.contains("extension  invoke")) {
+        return None;
+    }
+    let ticket = args
+        .get(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG)
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let structured = args.get("params").and_then(|v| {
+        if v.is_object() {
+            Some(v.clone())
+        } else if v.is_null() {
+            Some(serde_json::json!({}))
+        } else {
+            None
+        }
+    });
+    if ticket.is_none() && structured.is_none() {
+        return None;
+    }
+    Some(neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
+        prepared_operation_id: ticket,
+        structured_params: structured,
+    })
+}
+
+/// Annotate localhost API transport failures so PreferKnown / recovery can
+/// distinguish transport from extension business errors (NM-247 / 10:50 weather).
+fn classify_extension_transport_error(msg: &str) -> String {
+    let lower = msg.to_lowercase();
+    let looks_transport = (lower.contains("error sending request")
+        || lower.contains("connection refused")
+        || lower.contains("connect error")
+        || lower.contains("timed out")
+        || lower.contains("timeout"))
+        && (lower.contains("9375")
+            || lower.contains("localhost")
+            || lower.contains("127.0.0.1")
+            || lower.contains("/api/extensions/"));
+    if looks_transport {
+        format!(
+            "transport error (localhost API): {msg}. \
+             Stage=transport — extension business body was not reached. \
+             PreferKnown of this failure is not a new execution; retry the \
+             business call with `_new_operation: true` after the API is reachable."
+        )
+    } else {
+        msg.to_string()
+    }
 }
 
 /// Tokenize a pure `neomind …` line for clap / capability classification.
@@ -1807,7 +1917,11 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
             serde_json::json!({
                 "command": {
                     "type": "string",
-                    "description": "The shell command to execute. Supports pipes, redirections, and other shell features."
+                    "description": "The shell command to execute. Supports pipes, redirections, and other shell features. For `neomind extension invoke`, prefer the structured `params` object instead of embedding `--params` JSON in this string."
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Optional structured parameters for `neomind extension invoke` only. Pass the command's param object here (e.g. {\"city\":\"Beijing\"}). Do not also pass `--params` / `--params-file` in `command`. Other shell commands ignore this field."
                 },
                 "timeout": {
                     "type": "number",
@@ -1846,6 +1960,11 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
             ));
         }
 
+        // NM-247: structured params adapter — object XOR --params/--params-file.
+        if let Err(msg) = validate_extension_params_sources(&args) {
+            return Err(ToolError::InvalidArguments(msg));
+        }
+
         let timeout = self.command_timeout(&args)?;
 
         let working_dir = args.get("working_dir").and_then(|v| v.as_str());
@@ -1857,7 +1976,16 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
             "Executing shell command"
         );
 
-        let output = self.execute_command(command, working_dir, timeout).await?;
+        // Host ticket + structured params scoped to this async task only.
+        let host_ctx = extension_invoke_host_context_from_args(&args);
+        let output = if let Some(ctx) = host_ctx {
+            neomind_cli_ops::dispatch::with_extension_invoke_host_context(ctx, async {
+                self.execute_command(command, working_dir, timeout).await
+            })
+            .await?
+        } else {
+            self.execute_command(command, working_dir, timeout).await?
+        };
 
         // execute_command already truncated subprocess output; in-process
         // `neomind` output is left intact so the streaming slim layer can
@@ -2904,6 +3032,133 @@ mod dispatch_edge_tests {
         );
     }
 }
+#[cfg(test)]
+mod nm247_structured_params_tests {
+    use super::{
+        bind_extension_invoke_prepared_token, validate_extension_params_sources,
+    };
+    use neomind_core::extension::{
+        begin_instance_generation, classify_and_bind_chat_invoke, invalidate_instance_capability,
+        CommandEffect, ExtensionCommand, ExtensionCommandSnapshot, MetricDataType,
+        ParameterDefinition,
+    };
+    use serde_json::json;
+
+    fn publish(id: &str) {
+        invalidate_instance_capability(id);
+        let gen = begin_instance_generation(id);
+        let get = ExtensionCommand {
+            name: "get_weather".into(),
+            display_name: "Get Weather".into(),
+            description: "Query weather".into(),
+            parameters: vec![ParameterDefinition {
+                name: "city".into(),
+                display_name: "City".into(),
+                description: "City name".into(),
+                param_type: MetricDataType::String,
+                required: true,
+                default_value: None,
+                min: None,
+                max: None,
+                options: vec![],
+            }],
+            effect: Some(CommandEffect::ReadOnly),
+            replay_safety: None,
+            execution: None,
+            ..Default::default()
+        };
+        ExtensionCommandSnapshot::build(id, "2.14.0", None, vec![get], gen)
+            .publish_capabilities()
+            .unwrap();
+    }
+
+    #[test]
+    fn conflict_params_object_and_cli_flag_rejected() {
+        let args = json!({
+            "command": "neomind extension invoke weather-forecast-v2 get_weather --params {\"city\":\"Xiamen\"}",
+            "params": {"city": "Xiamen"}
+        });
+        let err = validate_extension_params_sources(&args).unwrap_err();
+        assert!(err.contains("conflict"), "{err}");
+    }
+
+    #[test]
+    fn non_object_params_rejected() {
+        let args = json!({
+            "command": "neomind extension invoke weather-forecast-v2 get_weather",
+            "params": "Xiamen"
+        });
+        let err = validate_extension_params_sources(&args).unwrap_err();
+        assert!(err.contains("object"), "{err}");
+    }
+
+    #[test]
+    fn non_extension_shell_ignores_params_field() {
+        let args = json!({
+            "command": "neomind device list",
+            "params": {"city": "Xiamen"}
+        });
+        assert!(validate_extension_params_sources(&args).is_ok());
+    }
+
+    #[tokio::test]
+    async fn host_ticket_bind_without_argv_token() {
+        let id = "weather-nm247-host-ticket";
+        publish(id);
+        let params = json!({"city": "Xiamen"});
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        let op = bind.prepared_operation_id.expect("ticket");
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "invoke".into(),
+            id.into(),
+            "get_weather".into(),
+        ];
+        neomind_cli_ops::dispatch::with_extension_invoke_host_context(
+            neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
+                prepared_operation_id: Some(op),
+                structured_params: Some(params),
+            },
+            async {
+                bind_extension_invoke_prepared_token(argv).expect("host ticket must bind");
+            },
+        )
+        .await;
+        invalidate_instance_capability(id);
+    }
+
+    #[tokio::test]
+    async fn invented_argv_token_ignored_when_host_ticket_present() {
+        let id = "weather-nm247-host-wins";
+        publish(id);
+        let params = json!({"city": "Beijing"});
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        let op = bind.prepared_operation_id.expect("ticket");
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "invoke".into(),
+            id.into(),
+            "get_weather".into(),
+            "--prepared-operation-id".into(),
+            "op_fresh_weather_2026".into(),
+        ];
+        neomind_cli_ops::dispatch::with_extension_invoke_host_context(
+            neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
+                prepared_operation_id: Some(op),
+                structured_params: Some(params),
+            },
+            async {
+                bind_extension_invoke_prepared_token(argv)
+                    .expect("host wins over invented token");
+            },
+        )
+        .await;
+        invalidate_instance_capability(id);
+    }
+}
+
 /// NM-240: shell bind carries classify-time id; no params FIFO claim.
 #[cfg(test)]
 mod prepared_invoke_bind_tests {

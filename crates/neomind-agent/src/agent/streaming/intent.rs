@@ -609,8 +609,9 @@ pub(crate) fn mutating_write_fingerprint(
                 .unwrap_or("");
             // Only Chat-injected extension-invoke tokens are stripped; other
             // commands keep the original string so quoted arg boundaries stay
-            // in the write-gate key.
-            let body = shell_command_fingerprint_body(cmd);
+            // in the write-gate key. Structured `params` (NM-247) folds into
+            // the same business key as `--params` JSON.
+            let body = shell_command_fingerprint_body(cmd, &canonical);
             Some(super::super::task_continuity::write_fingerprint(
                 "shell",
                 if body.is_empty() {
@@ -642,7 +643,7 @@ pub(crate) fn mutating_write_fingerprint(
 ///   internal `--prepared-operation-id` option: drop that option by argv
 ///   position, then fingerprint the remaining argv as stable JSON so Chat
 ///   tokens do not splinter the business key and quoted values stay distinct.
-fn shell_command_fingerprint_body(cmd: &str) -> String {
+fn shell_command_fingerprint_body(cmd: &str, args: &serde_json::Value) -> String {
     let trimmed = cmd.trim();
     if trimmed.is_empty() {
         return String::new();
@@ -652,6 +653,14 @@ fn shell_command_fingerprint_body(cmd: &str) -> String {
     };
     if !argv_is_extension_invoke(&argv) {
         return cmd.to_string();
+    }
+    // NM-247: normalize structured `params` and `--params` to one business key.
+    if let Some((base_argv, params)) = extension_invoke_fingerprint_parts(&argv, args) {
+        return serde_json::json!({
+            "argv": base_argv,
+            "params": params,
+        })
+        .to_string();
     }
     let Some(stripped) = strip_prepared_operation_id_option(&argv) else {
         // Extension invoke without a Chat token — keep original string.
@@ -665,6 +674,64 @@ fn shell_command_fingerprint_body(cmd: &str) -> String {
             .collect(),
     )
     .to_string()
+}
+
+/// Split extension-invoke argv into business argv + params Value.
+///
+/// Structured shell `params` and `--params` JSON canonicalize to the same
+/// pair so write-gate PreferKnown treats them as one operation.
+fn extension_invoke_fingerprint_parts(
+    argv: &[String],
+    args: &serde_json::Value,
+) -> Option<(Vec<String>, serde_json::Value)> {
+    let structured = args.get("params").and_then(|p| {
+        if p.is_object() {
+            Some(p.clone())
+        } else if p.is_null() {
+            Some(serde_json::json!({}))
+        } else {
+            None
+        }
+    });
+
+    let mut base = Vec::new();
+    let mut cli_params: Option<serde_json::Value> = None;
+    let mut i = 0;
+    while i < argv.len() {
+        let a = &argv[i];
+        if a == "--prepared-operation-id" {
+            i += 2;
+            continue;
+        }
+        if a == "--params" {
+            if let Some(raw) = argv.get(i + 1) {
+                cli_params = serde_json::from_str(raw).ok();
+            }
+            i += 2;
+            continue;
+        }
+        if a == "--params-file" {
+            if let Some(path) = argv.get(i + 1) {
+                if let Ok(text) = std::fs::read_to_string(path) {
+                    cli_params = serde_json::from_str(text.trim()).ok();
+                }
+            }
+            i += 2;
+            continue;
+        }
+        base.push(a.clone());
+        i += 1;
+    }
+
+    let params = match (structured, cli_params) {
+        (Some(s), _) => s,
+        (None, Some(c)) => c,
+        (None, None) => {
+            // No params source — keep legacy argv-JSON fingerprint path.
+            return None;
+        }
+    };
+    Some((base, if params.is_null() { serde_json::json!({}) } else { params }))
 }
 
 fn argv_is_extension_invoke(argv: &[String]) -> bool {
@@ -1479,6 +1546,37 @@ mod tests {
         });
         let fp_c = mutating_write_fingerprint("shell", &c).expect("ext invoke c");
         assert_ne!(fp_a, fp_c, "different params must keep distinct fingerprints");
+    }
+
+    /// NM-247: shell `params` object and `--params` JSON share one write key.
+    #[test]
+    fn shell_structured_params_fingerprint_equals_cli_params() {
+        // Quote the JSON so tokenize keeps one --params value (same as live CLI).
+        let via_flag = serde_json::json!({
+            "command": "neomind extension invoke weather-forecast-v2 get_weather --params '{\"city\":\"Xiamen\"}'"
+        });
+        let via_object = serde_json::json!({
+            "command": "neomind extension invoke weather-forecast-v2 get_weather",
+            "params": {"city": "Xiamen"}
+        });
+        let fp_a = mutating_write_fingerprint("shell", &via_flag).expect("flag form");
+        let fp_b = mutating_write_fingerprint("shell", &via_object).expect("object form");
+        assert_eq!(
+            fp_a, fp_b,
+            "structured params must canonicalize to the same write fingerprint as --params"
+        );
+        // CJK / nested / bool shapes stay equal across forms.
+        let nested_flag = serde_json::json!({
+            "command": "neomind extension invoke ext-x cmd --params '{\"q\":\"厦门\",\"n\":2,\"ok\":true,\"tags\":[\"a\"],\"meta\":{\"k\":1}}'"
+        });
+        let nested_obj = serde_json::json!({
+            "command": "neomind extension invoke ext-x cmd",
+            "params": {"q":"厦门","n":2,"ok":true,"tags":["a"],"meta":{"k":1}}
+        });
+        assert_eq!(
+            mutating_write_fingerprint("shell", &nested_flag).unwrap(),
+            mutating_write_fingerprint("shell", &nested_obj).unwrap()
+        );
     }
 
     #[test]

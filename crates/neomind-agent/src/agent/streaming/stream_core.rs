@@ -1899,7 +1899,12 @@ pub async fn process_stream_events_with_safeguards(
                         std::collections::HashSet::new();
                     for (_, name, execution) in tool_results_executed {
                         // Use arguments from the execution result (preserves per-call arguments for same-name tools)
-                        let exec_arguments = execution.arguments.clone();
+                        // NM-247: strip host PreparedInvoke carriage before
+                        // model-visible tool-call persistence / history.
+                        let mut exec_arguments = execution.arguments.clone();
+                        super::super::task_continuity::strip_host_prepared_from_arguments(
+                            &mut exec_arguments,
+                        );
                         // Novel (tool + arguments) → this round is gaining
                         // information even if the model stays quiet.
                         let call_sig = format!(

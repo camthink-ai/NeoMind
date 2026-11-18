@@ -13,8 +13,15 @@
 pub mod capability;
 pub mod commands;
 pub mod handlers;
+pub mod host_context;
 
 pub use capability::{classify_argv, classify_parsed_command, CliSideEffect};
+pub use host_context::{
+    peek_extension_invoke_host_context, peek_extension_invoke_host_context_or_test,
+    set_extension_invoke_host_context, take_extension_invoke_host_context,
+    with_extension_invoke_host_context, ExtensionInvokeHostContext,
+    ExtensionInvokeHostContextGuard,
+};
 
 use crate::types::CliResponse;
 use clap::Parser;

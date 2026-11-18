@@ -74,8 +74,11 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
                 params_file,
                 prepared_operation_id,
             } => {
-                // Already carrying a classify-time token: peek only (no remint).
-                if let Some(op_id) = prepared_operation_id.as_deref() {
+                // Host ticket (NM-247) or legacy argv token: peek only (no remint).
+                let host = super::host_context::peek_extension_invoke_host_context_or_test();
+                let host_op = host.as_ref().and_then(|h| h.prepared_operation_id.clone());
+                let op_peek = host_op.as_deref().or(prepared_operation_id.as_deref());
+                if let Some(op_id) = op_peek {
                     return match neomind_core::extension::peek_prepared_invoke(op_id)
                         .map(|p| p.contract.effect)
                     {
@@ -83,9 +86,20 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
                         Some(neomind_core::extension::CommandEffect::Mutating) | None => Mutating,
                     };
                 }
-                let raw = match load_classify_params(params.as_deref(), params_file.as_deref()) {
-                    Ok(v) => v,
-                    Err(_) => return Mutating,
+                let host_params = host.and_then(|h| h.structured_params);
+                let raw = if let Some(v) = host_params {
+                    if v.is_null() {
+                        serde_json::json!({})
+                    } else if v.is_object() {
+                        v
+                    } else {
+                        return Mutating;
+                    }
+                } else {
+                    match load_classify_params(params.as_deref(), params_file.as_deref()) {
+                        Ok(v) => v,
+                        Err(_) => return Mutating,
+                    }
                 };
                 // Effect only for bare CLI classify; Chat attach path injects the id.
                 match neomind_core::extension::classify_and_bind_chat_invoke(

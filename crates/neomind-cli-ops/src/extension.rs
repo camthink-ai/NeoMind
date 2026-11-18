@@ -1,7 +1,7 @@
 use crate::types::CliResponse;
 use crate::ApiClient;
 use anyhow::Result;
-use serde_json::json;
+use serde_json::{json, Value};
 
 /// List all extensions with compact summary.
 ///
@@ -330,8 +330,28 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
             let schema = c.get("input_schema").cloned().unwrap_or(json!({}));
-            let example_params = example_params_from_schema(&schema);
-            json!({
+            // Prefer server-validated params_example; fall back to schema-derived.
+            let example_val = c
+                .get("params_example")
+                .cloned()
+                .filter(|v| v.is_object())
+                .or_else(|| example_params_value_from_schema(&schema));
+            let example_params = example_val
+                .as_ref()
+                .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".into()))
+                .unwrap_or_else(|| "{}".into());
+            // Model-facing: prefer structured shell params form (NM-247).
+            let invoke_example = if example_val.is_some() {
+                format!(
+                    "shell: command=\"neomind extension invoke {id} {name}\" params={example_params}"
+                )
+            } else {
+                format!(
+                    "shell: command=\"neomind extension invoke {id} {name}\" params={{}} \
+                     (see input_schema — no reliable params_example)"
+                )
+            };
+            let mut entry = json!({
                 "id": c.get("command_id").cloned().unwrap_or_else(|| {
                     json!(format!(
                         "extension.type/{}/{name}",
@@ -351,11 +371,17 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
                 "ai_exposed": ai_exposed,
                 "disabled": disabled,
                 "ai_invokable": ai_exposed && !disabled,
-                "invoke_example": format!(
-                    "neomind extension invoke {id} {name} --params '{}'",
-                    example_params
+                "invoke_example": invoke_example,
+                "cli_invoke_example": format!(
+                    "neomind extension invoke {id} {name} --params '{example_params}'"
                 ),
-            })
+            });
+            if let Some(ex) = example_val {
+                if let Some(obj) = entry.as_object_mut() {
+                    obj.insert("params_example".into(), ex);
+                }
+            }
+            entry
         })
         .collect();
 
@@ -392,41 +418,58 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
 }
 
 /// Build a minimal example JSON object from a JSON Schema for invoke hints.
-fn example_params_from_schema(schema: &serde_json::Value) -> String {
+///
+/// Empty string is never invented for required free-form strings (NM-247).
+/// Prefer enum/default; omit unreliable keys (returns None when incomplete).
+fn example_params_value_from_schema(schema: &serde_json::Value) -> Option<serde_json::Value> {
+    let props = schema.get("properties")?.as_object()?;
+    let required: std::collections::HashSet<&str> = schema
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
     let mut obj = serde_json::Map::new();
-    if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
-        let required: std::collections::HashSet<&str> = schema
-            .get("required")
-            .and_then(|r| r.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str())
-                    .collect::<std::collections::HashSet<_>>()
-            })
-            .unwrap_or_default();
-        for (key, prop) in props {
-            if !required.is_empty() && !required.contains(key.as_str()) {
-                continue;
-            }
-            let sample = if let Some(d) = prop.get("default") {
-                d.clone()
-            } else {
-                match prop.get("type").and_then(|t| t.as_str()) {
-                    Some("string") => json!(""),
-                    Some("number") | Some("integer") => json!(0),
-                    Some("boolean") => json!(false),
-                    Some("array") => json!([]),
-                    Some("object") => json!({}),
-                    _ => json!(""),
+    for (key, prop) in props {
+        if !required.is_empty() && !required.contains(key.as_str()) {
+            continue;
+        }
+        let sample = if let Some(d) = prop.get("default") {
+            d.clone()
+        } else if let Some(en) = prop.get("enum").and_then(|e| e.as_array()) {
+            en.first()?.clone()
+        } else {
+            match prop.get("type").and_then(|t| t.as_str()) {
+                Some("string") => {
+                    // Do not invent "" or non-empty literals.
+                    continue;
                 }
-            };
-            obj.insert(key.clone(), sample);
-            if obj.len() >= 6 {
-                break;
+                Some("number") | Some("integer") => json!(0),
+                Some("boolean") => json!(false),
+                Some("array") => json!([]),
+                Some("object") => json!({}),
+                _ => continue,
             }
+        };
+        obj.insert(key.clone(), sample);
+        if obj.len() >= 6 {
+            break;
         }
     }
-    serde_json::to_string(&serde_json::Value::Object(obj)).unwrap_or_else(|_| "{}".into())
+    for req in &required {
+        if !obj.contains_key(*req) {
+            return None;
+        }
+    }
+    // Validate against the same schema the server uses.
+    if neomind_core::extension::validate_and_normalize(schema, &Value::Object(obj.clone())).is_err()
+    {
+        return None;
+    }
+    Some(Value::Object(obj))
 }
 
 /// Invoke an extension command via the shared HTTP execute path.
@@ -441,8 +484,21 @@ pub async fn invoke_extension_command(
     params_json: Option<&str>,
     params_file: Option<&std::path::Path>,
     prepared_operation_id: Option<&str>,
+    structured_params: Option<serde_json::Value>,
 ) -> Result<CliResponse> {
-    let params = load_invoke_params(params_json, params_file)?;
+    // Prefer host-managed object (NM-247) — never re-stringify through --params.
+    let params = if let Some(v) = structured_params {
+        if !v.is_object() && !v.is_null() {
+            anyhow::bail!("shell params must be a JSON object");
+        }
+        if v.is_null() {
+            json!({})
+        } else {
+            v
+        }
+    } else {
+        load_invoke_params(params_json, params_file)?
+    };
 
     // Client-side required-field check against the live command schema when
     // reachable — fail fast before the round-trip when possible. Server still
@@ -557,12 +613,12 @@ pub async fn update_extension_config(
 
 #[cfg(test)]
 mod invoke_params_tests {
-    use super::{example_params_from_schema, load_invoke_params};
+    use super::{example_params_value_from_schema, load_invoke_params};
     use serde_json::json;
     use std::io::Write;
 
     #[test]
-    fn example_params_prefer_required_and_defaults() {
+    fn example_params_omit_unreliable_freeform_string() {
         let schema = json!({
             "type": "object",
             "required": ["city"],
@@ -572,10 +628,23 @@ mod invoke_params_tests {
                 "units": {"type": "string"}
             }
         });
-        let s = example_params_from_schema(&schema);
-        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-        assert!(v.get("city").is_some(), "{v}");
-        // Optional without default omitted when required set is non-empty.
+        // Required free-form string without enum/default → no invented "".
+        assert!(example_params_value_from_schema(&schema).is_none());
+    }
+
+    #[test]
+    fn example_params_prefer_enum_and_defaults() {
+        let schema = json!({
+            "type": "object",
+            "required": ["city"],
+            "properties": {
+                "city": {"type": "string", "enum": ["Beijing", "Shanghai"]},
+                "lang": {"type": "string", "default": "en"},
+                "units": {"type": "string"}
+            }
+        });
+        let v = example_params_value_from_schema(&schema).expect("reliable example");
+        assert_eq!(v.get("city").and_then(|c| c.as_str()), Some("Beijing"));
         assert!(v.get("units").is_none(), "{v}");
     }
 
