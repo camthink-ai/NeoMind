@@ -119,10 +119,56 @@ fn external_broker_credentials(
     username: Option<String>,
     password: Option<String>,
 ) -> (String, String) {
-    (
-        username.unwrap_or_default(),
-        password.unwrap_or_default(),
-    )
+    (username.unwrap_or_default(), password.unwrap_or_default())
+}
+
+/// Runtime adapter id NeoMind should bind the provisioned device to.
+///
+/// Embedded → `internal-mqtt`. Subscribed external → `external-{broker_id}` so
+/// topic maps / presence track the same broker the device was written for.
+/// Custom (device-only broker) → `None` (broadcast subscribe; NeoMind may not
+/// own that broker).
+fn adapter_id_for_broker(broker_id: &str) -> Option<String> {
+    if broker_id == "embedded" {
+        Some("internal-mqtt".to_string())
+    } else if broker_id == "custom" || broker_id.is_empty() {
+        None
+    } else {
+        Some(format!("external-{broker_id}"))
+    }
+}
+
+/// Persist which NeoMind broker the BLE write targeted (for later matching).
+fn record_broker_source(extra: &mut HashMap<String, serde_json::Value>, req: &BleProvisionRequest) {
+    let source = if req.custom_mqtt.is_some() || req.broker_id == "custom" {
+        "custom"
+    } else {
+        req.broker_id.as_str()
+    };
+    extra.insert(
+        "mqtt_broker_source".to_string(),
+        serde_json::Value::String(source.to_string()),
+    );
+    extra.insert(
+        "mqtt_broker_id".to_string(),
+        serde_json::Value::String(req.broker_id.clone()),
+    );
+}
+
+/// Load a subscribed external broker and return host/port/creds/tls for the
+/// device CT write — same fields NeoMind's `external-{id}` adapter uses to
+/// connect, so device auth matches the bridge.
+fn resolve_external_broker(
+    store: &neomind_storage::SettingsStore,
+    broker_id: &str,
+) -> Result<(String, u16, String, String, bool), ErrorResponse> {
+    let broker = store
+        .load_external_broker(broker_id)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to load broker: {}", e)))?
+        .ok_or_else(|| ErrorResponse::not_found(format!("Broker not found: {}", broker_id)))?;
+    let (username, password) =
+        external_broker_credentials(broker.username.clone(), broker.password.clone());
+    Ok((broker.broker, broker.port, username, password, broker.tls))
 }
 
 /// Resolve broker configuration from broker_id (NeoMind managed / subscribed).
@@ -131,6 +177,9 @@ fn external_broker_credentials(
 /// for embedded stay empty here — when auth is enabled, phase-1 resolve mints
 /// a device-scoped credential via [`attach_embedded_auth_credentials`] so the
 /// CT write receives plaintext the bcrypt store cannot echo.
+///
+/// External brokers copy stored username/password verbatim into mqtt_config
+/// so the device authenticates the same way NeoMind's subscribed adapter does.
 fn resolve_broker_config(
     broker_id: &str,
 ) -> Result<(String, u16, String, String, bool), ErrorResponse> {
@@ -152,13 +201,7 @@ fn resolve_broker_config(
         let store = config::open_settings_store().map_err(|e| {
             ErrorResponse::internal(format!("Failed to open settings store: {}", e))
         })?;
-        let broker = store
-            .load_external_broker(broker_id)
-            .map_err(|e| ErrorResponse::internal(format!("Failed to load broker: {}", e)))?
-            .ok_or_else(|| ErrorResponse::not_found(format!("Broker not found: {}", broker_id)))?;
-        let (username, password) =
-            external_broker_credentials(broker.username.clone(), broker.password.clone());
-        Ok((broker.broker, broker.port, username, password, broker.tls))
+        resolve_external_broker(store.as_ref(), broker_id)
     }
 }
 
@@ -415,12 +458,7 @@ pub async fn ble_provision_handler(
                 "provisioned_at".to_string(),
                 serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
             );
-            if req.custom_mqtt.is_some() {
-                extra.insert(
-                    "mqtt_broker_source".to_string(),
-                    serde_json::Value::String("custom".to_string()),
-                );
-            }
+            record_broker_source(&mut extra, &req);
 
             let updated = neomind_devices::DeviceConfig {
                 device_id: device_id.clone(),
@@ -434,7 +472,8 @@ pub async fn ble_provision_handler(
                     entity_id: existing.connection_config.entity_id.clone(),
                     extra,
                 },
-                adapter_id: existing.adapter_id.clone(),
+                // Re-bind to the broker selected for this write (may change).
+                adapter_id: adapter_id_for_broker(&req.broker_id),
                 last_seen: existing.last_seen,
                 offline_timeout_secs: existing.offline_timeout_secs,
             };
@@ -481,19 +520,15 @@ pub async fn ble_provision_handler(
         }));
     }
 
-    // Phase 2: register the device
+    // Phase 2: register the device on the same NeoMind adapter that owns
+    // the selected broker (external-{id} / internal-mqtt) so topic maps match.
     let mut extra = HashMap::new();
     extra.insert("ble_provisioned".to_string(), serde_json::Value::Bool(true));
     extra.insert(
         "provisioned_at".to_string(),
         serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
     );
-    if req.custom_mqtt.is_some() {
-        extra.insert(
-            "mqtt_broker_source".to_string(),
-            serde_json::Value::String("custom".to_string()),
-        );
-    }
+    record_broker_source(&mut extra, &req);
 
     let config = neomind_devices::DeviceConfig {
         device_id: device_id.clone(),
@@ -507,7 +542,7 @@ pub async fn ble_provision_handler(
             entity_id: None,
             extra,
         },
-        adapter_id: None,
+        adapter_id: adapter_id_for_broker(&req.broker_id),
         last_seen: 0,
         offline_timeout_secs: None,
     };
@@ -702,8 +737,7 @@ mod tests {
     #[test]
     fn mint_device_mqtt_credential_stores_hash_and_returns_plaintext() {
         let tmp = tempfile::tempdir().unwrap();
-        let store =
-            neomind_storage::SettingsStore::open(tmp.path().join("settings.redb")).unwrap();
+        let store = neomind_storage::SettingsStore::open(tmp.path().join("settings.redb")).unwrap();
         let device_id = "ne101_a2f003";
         let (username, password) = mint_device_mqtt_credential(store.as_ref(), device_id).unwrap();
         assert_eq!(username, device_id);
@@ -738,5 +772,47 @@ mod tests {
         let cfg = resolve_mqtt_config(&req, "ne101_camera", "ne101_a2f003").unwrap();
         assert_eq!(cfg.username, "cam");
         assert_eq!(cfg.password, "p@ss");
+    }
+
+    #[test]
+    fn adapter_id_matches_neomind_broker_selection() {
+        assert_eq!(
+            adapter_id_for_broker("embedded").as_deref(),
+            Some("internal-mqtt")
+        );
+        assert_eq!(
+            adapter_id_for_broker("abc-uuid").as_deref(),
+            Some("external-abc-uuid")
+        );
+        assert_eq!(adapter_id_for_broker("custom"), None);
+    }
+
+    #[test]
+    fn subscribed_external_broker_creds_reach_device_resolve() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = neomind_storage::SettingsStore::open(tmp.path().join("settings.redb")).unwrap();
+        let mut broker = neomind_storage::ExternalBroker::new(
+            "broker-1".into(),
+            "Cloud MQTT".into(),
+            "mqtt.example.com".into(),
+            8883,
+        );
+        broker.tls = true;
+        broker.username = Some("device-user".into());
+        broker.password = Some("device-pass".into());
+        store.save_external_broker(&broker).unwrap();
+
+        let (host, port, username, password, tls) =
+            resolve_external_broker(store.as_ref(), "broker-1").unwrap();
+        assert_eq!(host, "mqtt.example.com");
+        assert_eq!(port, 8883);
+        assert!(tls);
+        assert_eq!(username, "device-user");
+        assert_eq!(password, "device-pass");
+        // Adapter binding for this broker_id matches NeoMind's external adapter name.
+        assert_eq!(
+            adapter_id_for_broker("broker-1").as_deref(),
+            Some("external-broker-1")
+        );
     }
 }

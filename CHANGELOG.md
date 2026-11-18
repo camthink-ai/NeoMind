@@ -44,6 +44,7 @@ Edge-AI capability iteration merged to `main`: CamThink CT-Prov/1 BLE onboarding
 
 ### Fixed — CT-Prov / BLE provision
 - BLE provision to an auth-enabled embedded broker now mints a device-scoped MQTT username/password on resolve and writes them in `config.set` (empty creds still omitted; external/custom brokers already passed theirs through).
+- BLE NeoMind-broker selection binds the device to `external-{id}` / `internal-mqtt` and records `mqtt_broker_id` so subscribed external brokers (with their username/password) match the CT write and NeoMind topic maps; disabled brokers stay out of the dropdown.
 - SoftAP **AP** tab stays hidden until SoftAP Wi‑Fi scan iteration; BLE wizard ships with Manual/Auto parity heroes and calm copy (no invented SoftAP scan UX).
 - Web Bluetooth UUID lowercased; discovery uses `namePrefix` **OR** `services` filter so Chrome lists CamThink devices again (Service Data ADV).
 - BLE scan window ~30s with progressive multi-device list; BLE session released on navigation; discovery drafts cleared on BLE register (NM-225).

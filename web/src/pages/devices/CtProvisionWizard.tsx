@@ -303,11 +303,22 @@ export function CtProvisionWizard({
   }, [ct.deviceInfo, deviceName])
 
   useEffect(() => {
+    // NeoMind-subscribed external brokers (enabled) appear next to embedded so
+    // BLE write can target the same broker NeoMind bridges — host/creds/topics match.
     api
-      .get<{ brokers: Array<{ id: string; name: string; broker: string }> }>('/brokers')
+      .get<{
+        brokers: Array<{
+          id: string
+          name: string
+          broker: string
+          enabled?: boolean
+          username?: string
+        }>
+      }>('/brokers')
       .then((data) => {
         const list: BrokerOption[] = [{ id: 'embedded', label: t('devices:ble.embeddedBroker') }]
         for (const b of data.brokers) {
+          if (b.enabled === false) continue
           list.push({ id: b.id, label: b.name || b.broker })
         }
         setBrokers(list)
