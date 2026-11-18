@@ -320,7 +320,7 @@
     {
       "name": "render_text",
       "display_name": "Render Text",
-      "description": "Centered multi-line UTF-8 text (newline-separated, max 10 lines). ASCII 8×16 + GB2312 16×16 CJK (emoji/rare chars degrade). scale 1–13, default 3.",
+      "description": "UTF-8 text on 1600×1200. Auto-wraps by width; shrinks scale (down to 1) so long text fits. Short copy is centered; dense/long paragraphs use top-left fill. Explicit \\n still honored. ASCII 8×16 + GB2312 16×16 CJK (emoji/rare chars degrade). scale 1–13 request, default 3.",
       "payload_template": "{\"cmd\": \"render_text\", \"params\": {\"text\": ${text}, \"color\": ${color}, \"bg\": ${bg}, \"scale\": ${scale}}}",
       "parameters": [
         {
@@ -328,7 +328,7 @@
           "display_name": "Text",
           "data_type": "String",
           "required": true,
-          "help_text": "Lines separated by \\n (max 10)"
+          "help_text": "Plain paragraph or \\n-separated lines; long text auto-wraps"
         },
         {
           "name": "color",
