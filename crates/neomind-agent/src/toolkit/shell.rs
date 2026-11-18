@@ -94,7 +94,7 @@ const DOMAIN_INDEX: &str = r#"
 - extension: list get install uninstall status logs config reload create build market-list market-install validate commands invoke
 - transform: list get create update delete enable disable metrics test-code data-sources executions (executions = recent run records; check it when a transform outputs nothing or fails)
 - widget: list get create install uninstall bundle market-list market-install
-- message: list get send read delete channel-list channel-get channel-types channel-type-schema channel-create channel-update channel-delete channel-test (platform alerts — NOT for talking to agents)
+- message: list get send read delete channel-list channel-get channel-types channel-type-schema channel-create channel-update channel-delete channel-test (`message send` creates a platform message — NOT for talking to agents; to act on any device use `device get <id>` then `device control <id> <command>`)
 - push: list get create update delete enable disable start stop test logs stats
 - llm: list get models create update delete activate test
 - settings: timezone set-timezone timezones retention set-retention cleanup
@@ -2793,6 +2793,27 @@ mod dispatch_edge_tests {
             problems.is_empty(),
             "domain index drift:\n  {}",
             problems.join("\n  ")
+        );
+    }
+
+    /// Platform message center vs device control must stay distinct in the index.
+    ///
+    /// Models otherwise treat `message send` as "put text on this device" (e.g.
+    /// `@INK 发送一段文本`). The aside must steer them to `device get` →
+    /// `device control` for any device, and keep the agents note.
+    #[test]
+    fn message_index_steers_device_actions_to_device_control() {
+        let message_line = DOMAIN_INDEX
+            .lines()
+            .find(|l| l.starts_with("- message:"))
+            .expect("message domain line");
+        assert!(message_line.contains("`message send` creates a platform message"));
+        assert!(message_line.contains("NOT for talking to agents"));
+        assert!(message_line.contains("device get <id>"));
+        assert!(message_line.contains("device control <id> <command>"));
+        assert!(
+            !message_line.to_ascii_lowercase().contains("eink"),
+            "device routing must stay device-generic, not e-ink-specific"
         );
     }
 

@@ -54,6 +54,9 @@ pub async fn get_message(client: &ApiClient, id: &str) -> Result<CliResponse> {
     ))
 }
 
+/// Success copy for `message send` — platform message center, not device delivery.
+const SEND_SUCCESS_MESSAGE: &str = "Platform message created";
+
 /// Send/create a new message
 pub async fn send_message(
     client: &ApiClient,
@@ -75,7 +78,7 @@ pub async fn send_message(
     let data = client.post("/messages", &body).await?;
     let data = extract_inner_data(data);
 
-    Ok(CliResponse::success(data, "Message sent"))
+    Ok(CliResponse::success(data, SEND_SUCCESS_MESSAGE))
 }
 
 /// Acknowledge/read a message
@@ -308,7 +311,19 @@ pub async fn test_channel(client: &ApiClient, name: &str) -> Result<CliResponse>
 
 #[cfg(test)]
 mod tests {
-    use super::merge_channel_config;
+    use super::{merge_channel_config, SEND_SUCCESS_MESSAGE};
+    use crate::types::CliResponse;
+    use serde_json::json;
+
+    #[test]
+    fn send_success_copy_names_platform_message() {
+        let response = CliResponse::success(json!({ "id": "msg-1" }), SEND_SUCCESS_MESSAGE);
+        assert_eq!(
+            response.message.as_deref(),
+            Some("Platform message created")
+        );
+        assert_eq!(response.data.unwrap()["id"], "msg-1");
+    }
 
     #[test]
     fn param_only_builds_config() {
