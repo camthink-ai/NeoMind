@@ -76,8 +76,9 @@ pub struct StreamSafeguards {
     /// Whether the BEHAVIOURAL guards (narration nudge, list-only coercion,
     /// explore recovery) may run on this path. Default **false**: interactive
     /// chat keeps only zero-cost labels (promise backstop, completeness note)
-    /// **plus** NM-250's one foreshadow bounded continue (foreshadow-only +
-    /// no tool this turn) — that recovery is independent of this flag.
+    /// **plus** NM-250's one foreshadow bounded continue (this round ended
+    /// foreshadow-only) — that recovery is independent of this flag and does
+    /// **not** require that earlier rounds issued no tools.
     ///
     /// Evidence (2026-10-21 A/B, 10 cases x 2 rounds, guards on vs off): no
     /// measurable lift, a weak harm signal (the one coercion-fired case timed
@@ -2702,13 +2703,12 @@ pub async fn process_stream_events_with_safeguards(
                     // Two gates share the same recovery round:
                     //   1. opt-in `behavioral_guards` narration nudge (full suite)
                     //   2. NM-250 foreshadow continue — default chat policy
-                    //      (`behavioral_guards` off): foreshadow-only + no tool
-                    //      this turn → exactly one bounded continue. Does NOT
-                    //      enable list-only coercion / explore recovery.
+                    //      (`behavioral_guards` off): this round ended
+                    //      foreshadow-only → exactly one bounded continue,
+                    //      even if earlier rounds already searched/listed.
+                    //      Does NOT enable list-only coercion / explore recovery.
                     let is_narration_reply =
                         crate::agent::is_narration_without_action(&raw_response);
-                    let no_tools_this_turn = recently_executed_tools.is_empty()
-                        && recently_executed_commands.is_empty();
                     let iteration_budget_left =
                         tool_iteration_count < MAX_TOOL_ITERATIONS - 1;
                     let wall_clock_left =
@@ -2728,7 +2728,6 @@ pub async fn process_stream_events_with_safeguards(
                         && super::guard::should_foreshadow_continue(
                             is_narration_reply,
                             foreshadow_continues < FORESHADOW_CONTINUE_MAX,
-                            no_tools_this_turn,
                             no_execution_requested,
                             greeting_input,
                             iteration_budget_left,
@@ -2752,8 +2751,6 @@ pub async fn process_stream_events_with_safeguards(
                         } else if !behavioral_guards {
                             let reason = if foreshadow_continues >= FORESHADOW_CONTINUE_MAX {
                                 "budget_exhausted"
-                            } else if !no_tools_this_turn {
-                                "tools_already_ran"
                             } else if greeting_input {
                                 "greeting_input"
                             } else if !iteration_budget_left {

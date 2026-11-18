@@ -53,9 +53,10 @@ pub enum GuardKind {
     /// Behavioural guards (nudge / coercion / explore recovery) disabled by
     /// the chat policy; labels still run.
     BehavioralGuardsOff,
-    /// NM-250: one bounded continue when the turn ends on action foreshadow
-    /// with no tool this turn — independent of `behavioral_guards` so the
-    /// default chat policy can recover without flipping the full suite on.
+    /// NM-250: one bounded continue when this round ends on action foreshadow
+    /// (no tool call in the round) — independent of `behavioral_guards` so
+    /// the default chat policy can recover without flipping the full suite on.
+    /// Prior rounds in the same turn may already have used tools.
     ForeshadowContinue,
 }
 
@@ -226,20 +227,20 @@ pub fn should_label_narration(
 }
 
 /// NM-250 foreshadow bounded continue: default chat keeps `behavioral_guards`
-/// off, but a foreshadow-only end with **no tool this turn** still deserves
-/// exactly one recovery round. Does NOT enable list-only coercion / explore
-/// recovery. Plan-only and greetings stay suppressed.
+/// off, but a foreshadow-only end (this round emitted no tool call) still
+/// deserves exactly one recovery round — even if earlier rounds already
+/// searched / listed and returned irrelevant results. Does NOT enable
+/// list-only coercion / explore recovery. Plan-only and greetings stay
+/// suppressed. Write-gate / mutation protections are unchanged elsewhere.
 pub fn should_foreshadow_continue(
     is_foreshadow: bool,
     continue_budget_left: bool,
-    no_tools_this_turn: bool,
     no_execution_requested: bool,
     greeting_input: bool,
     iteration_budget_left: bool,
     wall_clock_left: bool,
 ) -> bool {
     is_foreshadow
-        && no_tools_this_turn
         && !no_execution_requested
         && !greeting_input
         && continue_budget_left
@@ -535,24 +536,27 @@ mod tests {
     }
 
     #[test]
-    fn foreshadow_continue_requires_no_tools_and_budget() {
+    fn foreshadow_continue_requires_budget_not_prior_tools() {
         assert!(should_foreshadow_continue(
-            true, true, true, false, false, true, true
+            true, true, false, false, true, true
         ));
         // Already continued once.
         assert!(!should_foreshadow_continue(
-            true, false, true, false, false, true, true
-        ));
-        // Tools already ran this turn — not foreshadow-only recovery.
-        assert!(!should_foreshadow_continue(
-            true, true, false, false, false, true, true
+            true, false, false, false, true, true
         ));
         // Plan-only / greeting.
         assert!(!should_foreshadow_continue(
-            true, true, true, true, false, true, true
+            true, true, true, false, true, true
         ));
         assert!(!should_foreshadow_continue(
-            true, true, true, false, true, true, true
+            true, true, false, true, true, true
+        ));
+        // Iteration / wall clock.
+        assert!(!should_foreshadow_continue(
+            true, true, false, false, false, true
+        ));
+        assert!(!should_foreshadow_continue(
+            true, true, false, false, true, false
         ));
     }
 

@@ -208,9 +208,9 @@ async fn default_chat_ends_repeated_guide_loads_but_allows_new_guides() {
         .contains("Verified execution state"));
 }
 
-/// Text chat DEFAULT POLICY (NM-250): foreshadow-only + no tool this turn
-/// gets exactly ONE bounded continue — without flipping `behavioral_guards`
-/// on. A second foreshadow ends with 「本次未取得结果」, not "Send continue".
+/// Text chat DEFAULT POLICY (NM-250): this-round foreshadow-only gets exactly
+/// ONE bounded continue — without flipping `behavioral_guards` on. A second
+/// foreshadow ends with 「本次未取得结果」, not "Send continue".
 #[tokio::test]
 async fn text_path_foreshadow_continue_once_then_no_result_note() {
     let narration = "好的，我现在使用 echo 工具来处理。";
@@ -337,6 +337,103 @@ async fn foreshadow_continue_suppressed_when_user_says_do_not_execute() {
     assert!(
         last.system_notes.is_none(),
         "a requested explanation is not a failed turn"
+    );
+}
+
+/// 2026-11-18 ~12:56 desktop shape: tools already ran (search/list →
+/// irrelevant), then the model ended on foreshadow-only. The dropped
+/// "no tools since last user msg" gate must NOT block the one bounded
+/// continue — otherwise the turn dies asking the user to type 继续.
+#[tokio::test]
+async fn tools_then_foreshadow_still_gets_one_bounded_continue() {
+    let rt = MockLlmRuntime::new(vec![
+        // Round 1: already searched / listed (irrelevant payload).
+        MockResponse::tool_call(
+            "echo",
+            serde_json::json!({ "msg": "extension list — no weather payload" }),
+        ),
+        // Round 2: foreshadow after tools — the 12:56 stall shape.
+        MockResponse::text("I'll try fetching the weather for you."),
+        // Bounded continue recovers the real call.
+        MockResponse::tool_call("echo", serde_json::json!({ "msg": "sunny 25C" })),
+        MockResponse::text("今天晴，25°C。"),
+    ]);
+    let (iface, state, registry) = harness(&rt);
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        registry,
+        "今天天气怎么样",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+
+    assert!(
+        rt.call_count() >= 3,
+        "prior tools must not block foreshadow continue; got {} calls",
+        rt.call_count()
+    );
+    let content = joined_content(&events);
+    assert!(
+        content.contains("今天晴"),
+        "continue after tools+foreshadow must reach a result, got: {content}"
+    );
+    let guard = state.read().await;
+    let last = guard.memory.last().expect("final message");
+    assert!(
+        last.system_notes.is_none(),
+        "a completed result must not carry the no-result note"
+    );
+}
+
+/// Same 12:56 prefix, but the continue also foreshadows → honest no-result
+/// note (still one-shot; never asks the user to type 继续).
+#[tokio::test]
+async fn tools_then_foreshadow_twice_ends_with_no_result_note() {
+    let second = "I'll fetch it in just a moment.";
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "echo",
+            serde_json::json!({ "msg": "irrelevant search hit" }),
+        ),
+        MockResponse::text("I'll try fetching the weather for you."),
+        MockResponse::text(second),
+    ]);
+    let (iface, state, registry) = harness(&rt);
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        registry,
+        "今天天气怎么样",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .expect("stream");
+    let _events = collect(stream).await;
+
+    assert_eq!(
+        rt.call_count(),
+        3,
+        "tool + foreshadow + one continue only; got {}",
+        rt.call_count()
+    );
+    let guard = state.read().await;
+    let last = guard.memory.last().expect("final message");
+    assert_eq!(&*last.content, second);
+    let notes = last.system_notes.as_ref().expect("no-result note");
+    assert!(
+        notes.iter().any(|n| n.contains("本次未取得结果")),
+        "second foreshadow after tools must end with 本次未取得结果, got: {notes:?}"
     );
 }
 
