@@ -1505,6 +1505,23 @@ impl ShellTool {
                     Some("Required flags: --name, --device-type, --adapter-type (mqtt|webhook). Use 'neomind device types list' to see built-in types.".to_string())
                 } else if action == "control" && is_not_found {
                     Some("Device not found. Run 'neomind device list' first, then 'neomind device control <ID> <COMMAND> --params {json}' (COMMAND is positional, not a flag).".to_string())
+                } else if action == "control" && is_validation {
+                    // Server already returns schema + params_example + "NOT sent".
+                    // Do NOT overwrite that with the generic device subcommand list.
+                    if combined.contains("hint:")
+                        || combined.contains("params_example")
+                        || combined.contains("not sent")
+                        || combined.contains("protocol envelope")
+                    {
+                        None
+                    } else {
+                        Some(
+                            "device control --params takes the command's own param object from `device get` (see params_example). \
+                             Do not wrap as protocol {\"cmd\":...,\"params\":{...}}; the host builds that envelope. \
+                             Validation failure means the command was NOT sent."
+                                .to_string(),
+                        )
+                    }
                 } else if (action == "history" || action == "latest") && combined.contains("metric")
                 {
                     Some("Don't guess metric names. 'neomind device list' shows devices only — it carries no field names. Use 'neomind device get <ID>' for one device's actual metric fields, or 'neomind device types list' for a type's metric_fields.".to_string())
@@ -1877,11 +1894,25 @@ mod tests {
             "Command not found"
         )
         .contains("--param"));
-        assert!(!hint(
-            "neomind device control eink-test render_text --param unknown=1",
-            "Invalid parameter: unknown"
+        // Server schema / NOT-sent feedback must not be replaced by the
+        // generic "Available actions" device subcommand list.
+        assert!(ShellTool::recovery_hint(
+            "neomind device control eink-test render_text --params '{\"cmd\":\"render_text\",\"params\":{\"text\":\"hi\"}}'",
+            "",
+            "Failed to send command: Command 'render_text' was NOT sent: missing required top-level params: text. Example: {\"text\":\"Hello\"}.\nHint: {\"params_example\":{\"text\":\"Hello\"}}",
         )
-        .contains("--param"));
+        .is_none());
+        let control_validation = hint(
+            "neomind device control eink-test render_text --params '{}'",
+            "Failed to send command: missing required params: text",
+        );
+        assert!(
+            control_validation.contains("params_example")
+                || control_validation.contains("NOT sent")
+                || control_validation.contains("param object"),
+            "{control_validation}"
+        );
+        assert!(!control_validation.contains("Available actions"));
         assert!(ShellTool::recovery_hint("echo test", "", error).is_none());
     }
 

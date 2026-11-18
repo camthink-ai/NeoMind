@@ -5611,6 +5611,128 @@ mod tests {
         assert_eq!(json["task_complete_ok"], false);
     }
 
+    /// NM-245: validation / send failures must not raise delivery evidence or
+    /// flip structured goal status to complete. PreferKnown resume of a failed
+    /// device-control op stays `success: false` (product wiring already correct;
+    /// unevidenced "成功" claims are model wording only).
+    #[test]
+    fn nm245_device_control_failures_keep_incomplete_without_delivery_evidence() {
+        let mut s = TaskState::default();
+        s.apply_directive(TaskDirective::SetGoal {
+            goal: "show text on EK410".into(),
+            object: Some("EK410".into()),
+            content: Some("你好".into()),
+        });
+        s.method = Some(ExecutionMethod::DeviceNativeCommand);
+
+        let args = serde_json::json!({
+            "command": "neomind device control EK410 render_text --params '{\"cmd\":\"render_text\",\"params\":{\"text\":\"你好\"}}'"
+        });
+        let fp = write_fingerprint("shell", &serde_json::to_string(&args).unwrap());
+        let call_site_turn = s.turn_count;
+        let MutatingGateOutcome::Proceed { operation_id } =
+            evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, call_site_turn)
+        else {
+            panic!("first control attempt must Proceed");
+        };
+        s.mark_operation_running(&operation_id);
+        s.complete_operation_failed(
+            &operation_id,
+            StructuredResult::with_body(
+                false,
+                "NOT sent: missing required top-level params: text",
+                r#"{"success":false,"summary":"Command 'render_text' was NOT sent"}"#,
+                None,
+            ),
+        );
+        // Validation failure tool result: exit 1, no delivery → no CommandDispatched.
+        s.observe_tool_result_for_goal(
+            "shell",
+            &args,
+            &serde_json::json!({
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "Failed to send command: Command 'render_text' was NOT sent: missing required top-level params: text. Example: {\"text\":\"Hello\"}."
+            }),
+            Some(&operation_id),
+        );
+        assert!(
+            s.goal_evidences
+                .iter()
+                .all(|e| e.level < GoalEvidenceLevel::CommandDispatched),
+            "validation fail must not raise delivery evidence: {:?}",
+            s.goal_evidences
+        );
+        assert!(!s.structured_completion_allowed());
+        match s.system_goal_status() {
+            SystemGoalStatus::Incomplete {
+                task_complete_ok: false,
+                ..
+            } => {}
+            other => panic!("expected Incomplete after validation fail, got {other:?}"),
+        }
+
+        // PreferKnown resume of the failed op must stay non-success.
+        match evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, call_site_turn) {
+            MutatingGateOutcome::ResumeKnown { output, .. } => {
+                assert!(
+                    !output.success,
+                    "failed PreferKnown resume must not look successful"
+                );
+                assert!(!crate::toolkit::tool::effective_success("shell", &output));
+            }
+            other => panic!("failed control must PreferKnown/ResumeKnown, got {other:?}"),
+        }
+
+        // Honest adapter-less send failure on a distinct op also stays Incomplete.
+        let send_args = serde_json::json!({
+            "command": "neomind device control EK410 render_text --params '{\"text\":\"你好\"}'",
+            "_new_operation": true
+        });
+        let send_fp = write_fingerprint("shell", &serde_json::to_string(&send_args).unwrap());
+        let MutatingGateOutcome::Proceed {
+            operation_id: op_send,
+        } = evaluate_mutating_gate(
+            &mut s,
+            "shell",
+            &send_args,
+            &send_fp,
+            None,
+            call_site_turn + 1,
+        )
+        else {
+            panic!("send-fail attempt must Proceed under _new_operation");
+        };
+        s.observe_tool_result_for_goal(
+            "shell",
+            &send_args,
+            &serde_json::json!({
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "Failed to send command: no adapter connected"
+            }),
+            Some(&op_send),
+        );
+        match s.system_goal_status() {
+            SystemGoalStatus::Incomplete {
+                task_complete_ok: false,
+                ..
+            } => {}
+            other => panic!("all-send-fail must stay Incomplete, got {other:?}"),
+        }
+        let _ = send_args;
+        assert!(
+            matches!(
+                s.system_goal_status(),
+                SystemGoalStatus::Incomplete {
+                    task_complete_ok: false,
+                    ..
+                }
+            ),
+            "final structured status must stay incomplete for the model"
+        );
+    }
+
     #[test]
     fn delivery_without_bound_device_or_command_is_ignored() {
         let ev = classify_goal_evidence(

@@ -3115,6 +3115,7 @@ dependencies = [
  "hex",
  "neomind-core",
  "neomind-data-push",
+ "neomind-devices",
  "neomind-storage",
  "redb",
  "reqwest",

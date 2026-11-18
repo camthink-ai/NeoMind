@@ -137,19 +137,37 @@ async fn unknown_command_lists_available_commands() {
 async fn missing_required_param_returns_command_schema() {
     let state = setup().await;
     let err = send(&state, "render_text", json!({})).await.unwrap_err();
+    assert!(err.message.contains("NOT sent"), "{}", err.message);
     assert!(
-        err.message.contains("missing required params"),
+        err.message.contains("missing required top-level params"),
         "{}",
         err.message
     );
     assert!(err.message.contains("text"));
     let hint = hint_json(&err);
     assert_eq!(hint["command"], "render_text");
+    assert_eq!(hint["params_example"]["text"], "Hello");
     assert!(hint["parameters"]
         .as_array()
         .unwrap()
         .iter()
         .any(|p| p["name"] == "text" && p["required"] == true));
+}
+
+#[tokio::test]
+async fn protocol_envelope_params_are_rejected_without_adapter_send() {
+    let state = setup().await;
+    let err = send(
+        &state,
+        "render_text",
+        json!({"cmd": "render_text", "params": {"text": "hi"}}),
+    )
+    .await
+    .unwrap_err();
+    assert!(err.message.contains("NOT sent"), "{}", err.message);
+    assert!(err.message.contains("protocol envelope"), "{}", err.message);
+    // Preflight fails before DeviceService.send — no delivery payload.
+    assert!(err.hint.as_deref().unwrap_or("").contains("params_example"));
 }
 
 #[tokio::test]
@@ -186,7 +204,8 @@ async fn unknown_param_names_surface_allowed_list() {
     let err = send(&state, "render_text", json!({"text": "hi", "extra": 1}))
         .await
         .unwrap_err();
-    assert!(err.message.contains("Unknown param"), "{}", err.message);
+    assert!(err.message.contains("NOT sent"), "{}", err.message);
+    assert!(err.message.contains("unknown param"), "{}", err.message);
     assert!(err.message.contains("extra"));
 }
 

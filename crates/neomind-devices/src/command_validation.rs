@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 
 use crate::mdl::MetricDataType;
-use crate::mdl_format::ParameterDefinition;
+use crate::mdl_format::{CommandDefinition, ParameterDefinition};
 use crate::registry::DeviceTypeTemplate;
 
 /// One command from a device type template, in caller-facing form.
@@ -71,13 +71,116 @@ pub fn catalog_from_template(template: &DeviceTypeTemplate) -> Vec<CommandSpec> 
     template
         .commands
         .iter()
-        .map(|cmd| CommandSpec {
-            name: cmd.name.clone(),
-            display_name: cmd.display_name.clone(),
-            description: cmd.description.clone(),
-            parameters: cmd.parameters.iter().map(param_from_template).collect(),
-        })
+        .map(command_spec_from_definition)
         .collect()
+}
+
+/// Build a [`CommandSpec`] from one template command definition.
+pub fn command_spec_from_definition(cmd: &CommandDefinition) -> CommandSpec {
+    CommandSpec {
+        name: cmd.name.clone(),
+        display_name: cmd.display_name.clone(),
+        description: cmd.description.clone(),
+        parameters: cmd.parameters.iter().map(param_from_template).collect(),
+    }
+}
+
+/// CLI / agent discovery projection for one command.
+///
+/// Keeps name, description, param defs, and a `--params`-ready
+/// `params_example`. Omits protocol envelopes (`samples`,
+/// `payload_template`, `fixed_values`) — those stay on the raw API /
+/// protocol views. If an example cannot be validated against the same
+/// preflight used at invoke time, `params_example` is omitted (defs only).
+pub fn invoke_projection(cmd: &CommandSpec) -> Value {
+    let mut out = json!({
+        "name": cmd.name,
+        "description": cmd.description,
+        "parameters": cmd.parameters.iter().map(param_schema_json).collect::<Vec<_>>(),
+    });
+    if let Some(example) = validated_params_example(cmd) {
+        if let Some(map) = out.as_object_mut() {
+            map.insert("params_example".into(), example);
+        }
+    }
+    out
+}
+
+/// Generate a `--params` example object from param defs and validate it.
+///
+/// Returns `None` when generation is unreliable (preflight rejects the
+/// candidate) so callers can show defs only.
+pub fn validated_params_example(cmd: &CommandSpec) -> Option<Value> {
+    let example = params_example_from_spec(cmd);
+    let map = match &example {
+        Value::Object(m) => m
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<HashMap<_, _>>(),
+        _ => return None,
+    };
+    // Self-check against the same preflight invoke uses.
+    preflight(std::slice::from_ref(cmd), &cmd.name, &map)
+        .ok()
+        .map(|_| example)
+}
+
+/// Best-effort example object for `--params` (unvalidated).
+fn params_example_from_spec(cmd: &CommandSpec) -> Value {
+    let mut obj = serde_json::Map::new();
+    for p in &cmd.parameters {
+        // Required always; optional only when a concrete default exists so
+        // the example stays minimal and still validates.
+        if !p.required && p.default.is_none() {
+            continue;
+        }
+        let sample = if let Some(default) = &p.default {
+            default.clone()
+        } else if let Some(vals) = &p.allowed_values {
+            vals.first().cloned().unwrap_or_else(|| sample_for_type(p))
+        } else {
+            sample_for_type(p)
+        };
+        obj.insert(p.name.clone(), sample);
+    }
+    Value::Object(obj)
+}
+
+fn sample_for_type(p: &ParamSpec) -> Value {
+    match p.data_type.as_str() {
+        "integer" => json!(p.min.map(|m| m as i64).unwrap_or(0)),
+        "float" => json!(p.min.unwrap_or(0.0)),
+        "boolean" => json!(false),
+        "array" => json!([]),
+        "binary" => json!(""),
+        // Prefer a readable non-empty string for text-like params so models
+        // copy a usable `--params` object; other strings stay empty.
+        "string" | "enum" => {
+            if p.name.eq_ignore_ascii_case("text")
+                || p.name.eq_ignore_ascii_case("message")
+                || p.name.eq_ignore_ascii_case("content")
+            {
+                json!("Hello")
+            } else {
+                json!("")
+            }
+        }
+        _ => json!(""),
+    }
+}
+
+/// True when the caller's object looks like a device protocol envelope
+/// (`{"cmd":...,"params":{...}}`) rather than the command's own params —
+/// but only when those keys are NOT declared parameters of the command.
+/// Declared `cmd` / `params` param names remain valid inputs.
+fn looks_like_protocol_envelope(
+    params: &HashMap<String, Value>,
+    known: &std::collections::HashSet<&str>,
+) -> bool {
+    let undeclared_cmd = params.contains_key("cmd") && !known.contains("cmd");
+    let undeclared_params_obj =
+        params.get("params").is_some_and(|v| v.is_object()) && !known.contains("params");
+    undeclared_cmd || undeclared_params_obj
 }
 
 fn param_from_template(p: &ParameterDefinition) -> ParamSpec {
@@ -126,12 +229,17 @@ fn param_from_template(p: &ParameterDefinition) -> ParamSpec {
 }
 
 /// Schema JSON for one command — the corrective payload on param errors.
+///
+/// Uses the unvalidated generator for `params_example` so error-path schema
+/// building cannot recurse through [`validated_params_example`]'s preflight.
 pub fn command_schema_json(cmd: &CommandSpec) -> Value {
     json!({
         "command": cmd.name,
         "display_name": cmd.display_name,
         "description": cmd.description,
         "parameters": cmd.parameters.iter().map(param_schema_json).collect::<Vec<_>>(),
+        "input_contract": "--params takes this command's param object (host wraps the protocol envelope)",
+        "params_example": params_example_from_spec(cmd),
     })
 }
 
@@ -180,7 +288,7 @@ pub fn preflight(
         let available: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
         return Err(PreflightError {
             message: format!(
-                "Command '{}' is not in this device type's template. Available commands: {}.",
+                "Command '{}' was NOT sent: it is not in this device type's template. Available commands: {}.",
                 command,
                 if available.is_empty() {
                     "(none)".to_string()
@@ -195,6 +303,14 @@ pub fn preflight(
         });
     };
 
+    let known: std::collections::HashSet<&str> =
+        spec.parameters.iter().map(|p| p.name.as_str()).collect();
+    // Unvalidated generator only — never call validated_params_example here
+    // (that self-checks via preflight and would recurse).
+    let example =
+        serde_json::to_string(&params_example_from_spec(spec)).unwrap_or_else(|_| "{}".into());
+    let envelope = looks_like_protocol_envelope(params, &known);
+
     let missing: Vec<&str> = spec
         .parameters
         .iter()
@@ -202,35 +318,53 @@ pub fn preflight(
         .map(|p| p.name.as_str())
         .collect();
     if !missing.is_empty() {
+        let mut message = format!(
+            "Command '{}' was NOT sent: missing required top-level params: {}. \
+             --params takes the command param object (host wraps the protocol). Example: {}.",
+            command,
+            missing.join(", "),
+            example
+        );
+        if envelope {
+            message.push_str(
+                " Input looks like a protocol envelope {\"cmd\":...,\"params\":{...}} — \
+                 pass the inner command params at the top level instead. Do not auto-unwrap.",
+            );
+        }
         return Err(PreflightError::with_schema(
-            format!(
-                "Command '{}' is missing required params: {}.",
-                command,
-                missing.join(", ")
-            ),
+            message,
             &command_schema_json(spec),
         ));
     }
 
-    let known: std::collections::HashSet<&str> =
-        spec.parameters.iter().map(|p| p.name.as_str()).collect();
     let unknown: Vec<&str> = params
         .keys()
         .filter(|k| !known.contains(k.as_str()))
         .map(|k| k.as_str())
         .collect();
     if !unknown.is_empty() {
+        let mut message = format!(
+            "Command '{}' was NOT sent: unknown param(s): {}. Allowed: {}. \
+             --params takes the command param object. Example: {}.",
+            command,
+            unknown.join(", "),
+            if known.is_empty() {
+                "(none)".to_string()
+            } else {
+                let mut names: Vec<&str> = known.iter().copied().collect();
+                names.sort_unstable();
+                names.join(", ")
+            },
+            example
+        );
+        if envelope {
+            message.push_str(
+                " Input looks like a protocol envelope {\"cmd\":...,\"params\":{...}} — \
+                 pass the inner command params at the top level instead. Do not auto-unwrap.",
+            );
+        }
         return Err(PreflightError::with_schema(
-            format!(
-                "Unknown param(s) for command '{}': {}. Allowed: {}.",
-                command,
-                unknown.join(", "),
-                if known.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    known.into_iter().collect::<Vec<_>>().join(", ")
-                }
-            ),
+            message,
             &command_schema_json(spec),
         ));
     }
@@ -244,7 +378,7 @@ pub fn preflight(
         }
         if let Some(msg) = type_mismatch_message(p, raw) {
             return Err(PreflightError::with_schema(
-                format!("Command '{}': {msg}", command),
+                format!("Command '{}' was NOT sent: {msg}", command),
                 &command_schema_json(spec),
             ));
         }
@@ -252,7 +386,7 @@ pub fn preflight(
             if !allowed.is_empty() && !allowed.iter().any(|a| json_values_loosely_equal(a, raw)) {
                 return Err(PreflightError::with_schema(
                     format!(
-                        "Command '{}': param '{}' value {} is not in allowed_values {:?}.",
+                        "Command '{}' was NOT sent: param '{}' value {} is not in allowed_values {:?}.",
                         command, p.name, raw, allowed
                     ),
                     &command_schema_json(spec),
@@ -266,7 +400,7 @@ pub fn preflight(
                     if n < min {
                         return Err(PreflightError::with_schema(
                             format!(
-                                "Command '{}': param '{}' value {} is below minimum {}{}.",
+                                "Command '{}' was NOT sent: param '{}' value {} is below minimum {}{}.",
                                 command,
                                 p.name,
                                 n,
@@ -281,7 +415,7 @@ pub fn preflight(
                     if n > max {
                         return Err(PreflightError::with_schema(
                             format!(
-                                "Command '{}': param '{}' value {} is above maximum {}{}.",
+                                "Command '{}' was NOT sent: param '{}' value {} is above maximum {}{}.",
                                 command,
                                 p.name,
                                 n,
@@ -440,6 +574,7 @@ mod tests {
     #[test]
     fn unknown_command_lists_available() {
         let err = preflight(&spec_catalog(), "nope", &HashMap::new()).unwrap_err();
+        assert!(err.message.contains("NOT sent"));
         assert!(err.message.contains("Available commands"));
         assert!(err.message.contains("render_text"));
         assert!(err
@@ -452,14 +587,82 @@ mod tests {
     #[test]
     fn missing_required_returns_schema() {
         let err = preflight(&spec_catalog(), "render_text", &params(json!({}))).unwrap_err();
-        assert!(err.message.contains("missing required params"));
+        assert!(err.message.contains("NOT sent"));
+        assert!(err.message.contains("missing required top-level params"));
+        assert!(err.message.contains(r#"{"text":"Hello"}"#) || err.message.contains("Hello"));
         let hint: Value = serde_json::from_str(err.hint.as_deref().unwrap()).expect("hint is json");
         assert_eq!(hint["command"], "render_text");
+        assert_eq!(hint["params_example"]["text"], "Hello");
         assert!(hint["parameters"]
             .as_array()
             .unwrap()
             .iter()
             .any(|p| p["name"] == "text" && p["required"] == true));
+    }
+
+    #[test]
+    fn protocol_envelope_is_corrected_not_auto_unwrapped() {
+        let err = preflight(
+            &spec_catalog(),
+            "render_text",
+            &params(json!({"cmd":"render_text","params":{"text":"hi"}})),
+        )
+        .unwrap_err();
+        assert!(err.message.contains("NOT sent"));
+        assert!(err.message.contains("protocol envelope"));
+        assert!(err.message.contains("Do not auto-unwrap"));
+        // Must not invent a successful unwrap — still a hard fail.
+        assert!(preflight(
+            &spec_catalog(),
+            "render_text",
+            &params(json!({"text": "hi"}))
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn legal_cmd_params_param_names_still_work() {
+        let catalog = vec![CommandSpec {
+            name: "raw_frame".into(),
+            display_name: "Raw".into(),
+            description: "Pass-through".into(),
+            parameters: vec![
+                ParamSpec {
+                    name: "cmd".into(),
+                    display_name: "Cmd".into(),
+                    data_type: "string".into(),
+                    required: true,
+                    description: String::new(),
+                    allowed_values: None,
+                    min: None,
+                    max: None,
+                    default: None,
+                    unit: None,
+                },
+                ParamSpec {
+                    name: "params".into(),
+                    display_name: "Params".into(),
+                    data_type: "string".into(),
+                    required: true,
+                    description: String::new(),
+                    allowed_values: None,
+                    min: None,
+                    max: None,
+                    default: None,
+                    unit: None,
+                },
+            ],
+        }];
+        assert!(preflight(
+            &catalog,
+            "raw_frame",
+            &params(json!({"cmd": "x", "params": "{}"}))
+        )
+        .is_ok());
+        let proj = invoke_projection(&catalog[0]);
+        assert_eq!(proj["params_example"]["cmd"], "");
+        assert!(proj.get("samples").is_none());
+        assert!(proj.get("payload_template").is_none());
     }
 
     #[test]
@@ -470,8 +673,40 @@ mod tests {
             &params(json!({"text": "hi", "extra": 1})),
         )
         .unwrap_err();
-        assert!(err.message.contains("Unknown param"));
+        assert!(err.message.contains("NOT sent"));
+        assert!(err.message.contains("unknown param"));
         assert!(err.message.contains("extra"));
+    }
+
+    #[test]
+    fn params_example_validates_for_common_shapes() {
+        for cmd in spec_catalog() {
+            let proj = invoke_projection(&cmd);
+            if let Some(ex) = proj.get("params_example") {
+                let map = ex
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                assert!(
+                    preflight(std::slice::from_ref(&cmd), &cmd.name, &map).is_ok(),
+                    "example for {} must validate: {ex}",
+                    cmd.name
+                );
+            } else {
+                // no-params commands still project without an example object
+                // only when there is nothing useful to show — reboot has {}.
+                assert!(
+                    cmd.parameters.is_empty() || validated_params_example(&cmd).is_none(),
+                    "{}",
+                    cmd.name
+                );
+            }
+        }
+        let reboot = &spec_catalog()[0];
+        let proj = invoke_projection(reboot);
+        assert_eq!(proj["params_example"], json!({}));
     }
 
     #[test]
@@ -519,6 +754,17 @@ mod tests {
             &spec_catalog(),
             "set_brightness",
             &params(json!({"level": "80"}))
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn cjk_spaces_quotes_newlines_are_valid_text_params() {
+        let text = "你好 world\nline2 \"quoted\"";
+        assert!(preflight(
+            &spec_catalog(),
+            "render_text",
+            &params(json!({ "text": text }))
         )
         .is_ok());
     }

@@ -288,7 +288,43 @@ fn sanitize_device_current(data: &serde_json::Value, device_id: &str) -> serde_j
             }
         }
     }
+    // CLI discovery must match the `--params` input contract. Raw API
+    // `/devices/:id/current` still returns full protocol defs (samples /
+    // payload_template) for the web UI; this projection keeps name /
+    // description / param defs + params_example only.
+    project_commands_for_cli(&mut result);
     result
+}
+
+/// Project `data.commands` to the invoke input contract for CLI/agent use.
+fn project_commands_for_cli(data: &mut serde_json::Value) {
+    let Some(commands) = data
+        .pointer_mut("/data/commands")
+        .and_then(|v| v.as_array_mut())
+    else {
+        return;
+    };
+    for cmd in commands.iter_mut() {
+        *cmd = project_one_command_for_cli(cmd);
+    }
+}
+
+fn project_one_command_for_cli(cmd: &serde_json::Value) -> serde_json::Value {
+    match serde_json::from_value::<neomind_devices::CommandDefinition>(cmd.clone()) {
+        Ok(def) => {
+            let spec = neomind_devices::command_validation::command_spec_from_definition(&def);
+            neomind_devices::command_validation::invoke_projection(&spec)
+        }
+        Err(_) => {
+            // Fall back to a minimal name/description/parameters slice when the
+            // payload is not a full CommandDefinition — never invent samples.
+            json!({
+                "name": cmd.get("name").cloned().unwrap_or(json!("")),
+                "description": cmd.get("description").cloned().unwrap_or(json!("")),
+                "parameters": cmd.get("parameters").cloned().unwrap_or(json!([])),
+            })
+        }
+    }
 }
 
 /// If `s` is a `data:image/...;base64,...` data URL, save the decoded bytes
@@ -1090,6 +1126,46 @@ mod tests {
                 "end": 0
             }
         })
+    }
+
+    /// CLI `device get` projects commands to the `--params` input contract:
+    /// name / description / parameters / params_example, and omits protocol
+    /// samples / payload_template that confuse models into wrapping envelopes.
+    #[test]
+    fn sanitize_projects_commands_to_params_example_contract() {
+        let raw = json!({
+            "data": {
+                "device": {"id": "eink-1"},
+                "metrics": {},
+                "commands": [{
+                    "name": "render_text",
+                    "display_name": "Render Text",
+                    "description": "Display text",
+                    "payload_template": "{\"cmd\":\"render_text\",\"params\":{\"text\":\"${text}\"}}",
+                    "samples": [{"cmd":"render_text","params":{"text":"weather"}}],
+                    "parameters": [{
+                        "name": "text",
+                        "data_type": "String",
+                        "required": true
+                    }]
+                }]
+            }
+        });
+        let out = sanitize_device_current(&raw, "eink-1");
+        let cmd = &out["data"]["commands"][0];
+        assert_eq!(cmd["name"], "render_text");
+        assert_eq!(cmd["description"], "Display text");
+        assert_eq!(cmd["params_example"]["text"], "Hello");
+        assert!(cmd.get("samples").is_none(), "samples omitted: {cmd}");
+        assert!(
+            cmd.get("payload_template").is_none(),
+            "payload_template omitted: {cmd}"
+        );
+        assert!(cmd["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "text" && p["required"] == true));
     }
 
     /// `--metric` keeps only the requested field; metric keys with dots
