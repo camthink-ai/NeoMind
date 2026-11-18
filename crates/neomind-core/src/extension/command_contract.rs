@@ -1845,10 +1845,19 @@ pub fn classify_and_bind_chat_invoke(
                 }
             }
         }
-        Err(_) => ChatInvokeBind {
-            effect: CommandEffect::Mutating,
-            prepared_operation_id: None,
-        },
+        Err(e) => {
+            tracing::warn!(
+                instance_id = %instance_id,
+                command = %command,
+                error = %e,
+                stage = "classify_prepare",
+                "prepare_and_issue_for_chat failed — no PreparedInvoke ticket for this dispatch"
+            );
+            ChatInvokeBind {
+                effect: CommandEffect::Mutating,
+                prepared_operation_id: None,
+            }
+        }
     }
 }
 

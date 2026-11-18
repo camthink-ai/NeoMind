@@ -85,7 +85,37 @@ pub(crate) async fn execute_with_retry_impl(
 
     // Strip lifecycle flag then canonicalize once — same contract as the
     // write fingerprint path (flag must never become `--_new_operation`).
-    let exec_args = crate::agent::task_continuity::canonicalize_tool_arguments(name, &arguments);
+    // NM-247: canonicalize strips host PreparedInvoke carriage for fingerprint
+    // equality — restore it so Shell → claim → HTTP consume still sees the
+    // classify-time ticket (case-c: PreparedInvoke missing with id/cmd/params
+    // present was this drop).
+    let mut exec_args =
+        crate::agent::task_continuity::canonicalize_tool_arguments(name, &arguments);
+    let had_host = arguments
+        .get(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG)
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    crate::agent::task_continuity::restore_host_prepared_carriage(&arguments, &mut exec_args);
+    if let Some(op) = had_host.as_deref() {
+        let restored = exec_args
+            .get(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG)
+            .and_then(|v| v.as_str());
+        if restored != Some(op) {
+            tracing::error!(
+                tool = %name,
+                prepared_operation_id = %op,
+                stage = "execute_canonicalize",
+                "host PreparedInvoke ticket dropped after canonicalize — not restored"
+            );
+        } else {
+            tracing::debug!(
+                tool = %name,
+                prepared_operation_id = %op,
+                stage = "execute_canonicalize",
+                "host PreparedInvoke ticket restored for Shell dispatch"
+            );
+        }
+    }
 
     // Retry policy follows registry ReplaySafety only. Capability inference
     // (`derive_tool_capability_resolved`) still drives write-gate /

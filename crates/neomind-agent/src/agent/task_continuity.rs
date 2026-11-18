@@ -3546,9 +3546,15 @@ fn already_canonical_shell_args(arguments: &serde_json::Value) -> bool {
 ///
 /// - Strips lifecycle-only [`NEW_OPERATION_ARG`] **before** CLI serialization
 ///   so the flag never becomes `--_new_operation` inside the command string.
+/// - Strips host PreparedInvoke carriage ([`HOST_PREPARED_OPERATION_ARG`] /
+///   [`PREPARED_OPERATION_ARG`]) so fingerprints stay business-only.
 /// - CLI-domain structured calls (`device` / …) map to `neomind …` once.
 /// - Idempotent: already-canonical `{command:"neomind …"}` is returned as-is
 ///   (does not re-enter mapper action inference).
+///
+/// **Execute path must call [`restore_host_prepared_carriage`] after this** —
+/// otherwise Shell loses the classify-time ticket and fails with
+/// `PreparedInvoke missing` (NM-247 case-c / 10:50 weather follow-up).
 pub fn canonicalize_tool_arguments(
     tool_name: &str,
     arguments: &serde_json::Value,
@@ -3568,6 +3574,30 @@ pub fn canonicalize_tool_arguments(
         crate::tools::mapper::build_cli_command(tool_name, &cleaned).unwrap_or(cleaned)
     } else {
         cleaned
+    }
+}
+
+/// Re-attach dispatch-internal PreparedInvoke carriage after
+/// [`canonicalize_tool_arguments`] (fingerprint-safe strip).
+///
+/// Stages: attach mints `_host_prepared_operation_id` → write-gate fingerprints
+/// without it → execute restores it → Shell host context → claim → HTTP consume.
+pub fn restore_host_prepared_carriage(
+    original: &serde_json::Value,
+    canonicalized: &mut serde_json::Value,
+) {
+    let Some(src) = original.as_object() else {
+        return;
+    };
+    let Some(dst) = canonicalized.as_object_mut() else {
+        return;
+    };
+    for key in [HOST_PREPARED_OPERATION_ARG, PREPARED_OPERATION_ARG] {
+        if let Some(v) = src.get(key) {
+            if !v.is_null() {
+                dst.insert(key.to_string(), v.clone());
+            }
+        }
     }
 }
 
@@ -3777,6 +3807,13 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
     };
     let bind = neomind_core::extension::classify_and_bind_chat_invoke(&ext_id, &command, &raw);
     if let Some(op_id) = bind.prepared_operation_id.clone() {
+        tracing::debug!(
+            extension_id = %ext_id,
+            command = %command,
+            prepared_operation_id = %op_id,
+            stage = "attach_classify",
+            "minted host PreparedInvoke ticket for shell invoke"
+        );
         if let Some(obj) = arguments.as_object_mut() {
             obj.insert(
                 HOST_PREPARED_OPERATION_ARG.into(),
@@ -3787,6 +3824,13 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
                 obj.insert("command".into(), serde_json::Value::String(stripped));
             }
         }
+    } else {
+        tracing::warn!(
+            extension_id = %ext_id,
+            command = %command,
+            stage = "attach_classify",
+            "extension invoke classify produced no PreparedInvoke ticket"
+        );
     }
     match bind.effect {
         neomind_core::extension::CommandEffect::ReadOnly => ToolCapability::read_query()
@@ -6287,6 +6331,39 @@ mod tests {
         assert!(
             !outcome_is_unknown(&Ok(connect)),
             "connect refuse / not submitted must stay Failed"
+        );
+    }
+
+    /// Case-c / NM-247: execute canonicalize must not drop the host ticket
+    /// forever — restore keeps Shell claim → HTTP consume on the same id.
+    #[test]
+    fn execute_canonicalize_restores_host_prepared_ticket() {
+        let original = serde_json::json!({
+            "command": "neomind extension invoke weather-forecast-v2 get_weather --params '{\"city\":\"上海\"}'",
+            "description": "follow-up",
+            HOST_PREPARED_OPERATION_ARG: "op_case_c_corr",
+        });
+        let mut canon = canonicalize_tool_arguments("shell", &original);
+        assert!(
+            canon.get(HOST_PREPARED_OPERATION_ARG).is_none(),
+            "fingerprint canonicalize must strip host ticket"
+        );
+        restore_host_prepared_carriage(&original, &mut canon);
+        assert_eq!(
+            canon
+                .get(HOST_PREPARED_OPERATION_ARG)
+                .and_then(|v| v.as_str()),
+            Some("op_case_c_corr"),
+            "execute path must restore host ticket for Shell dispatch"
+        );
+        // Re-canonicalizing the restored args must still strip the ticket
+        // (fingerprint / PreferKnown stay business-only).
+        let again = canonicalize_tool_arguments("shell", &canon);
+        assert!(again.get(HOST_PREPARED_OPERATION_ARG).is_none());
+        assert_eq!(
+            again.get("command"),
+            original.get("command"),
+            "business command must be unchanged"
         );
     }
 

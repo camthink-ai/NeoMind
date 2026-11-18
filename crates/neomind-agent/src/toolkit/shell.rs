@@ -1311,15 +1311,29 @@ pub(crate) fn bind_extension_invoke_prepared_token(
             return match parsed.command {
                 Command::Extension {
                     extension_cmd: ExtensionCommand::Invoke { extension_id, command, .. },
-                } => Err(format!(
-                    "PreparedInvoke missing for '{extension_id}/{command}' — not executed; \
-                     resubmit the business call (command + params). Do not invent \
-                     prepared-operation tickets."
-                )),
+                } => {
+                    tracing::warn!(
+                        extension_id = %extension_id,
+                        command = %command,
+                        stage = "shell_bind",
+                        "PreparedInvoke missing at Shell bind — host context had no ticket \
+                         (likely stripped at execute canonicalize without restore)"
+                    );
+                    Err(format!(
+                        "PreparedInvoke missing for '{extension_id}/{command}' — not executed; \
+                         resubmit the business call (command + params). Do not invent \
+                         prepared-operation tickets."
+                    ))
+                }
                 _ => Ok(argv),
             };
         }
     };
+    tracing::debug!(
+        prepared_operation_id = %op_id,
+        stage = "shell_bind",
+        "claiming PreparedInvoke for Shell → HTTP consume"
+    );
 
     // Ownership check: prefer host structured params, else argv --params.
     let ownership = (|| {
@@ -3211,6 +3225,58 @@ mod nm247_structured_params_tests {
             },
         )
         .await;
+        invalidate_instance_capability(id);
+    }
+
+    /// Case-c: attach mints ticket → canonicalize strips for fp → restore →
+    /// host context → bind claims (no PreparedInvoke missing).
+    #[tokio::test]
+    async fn case_c_followup_ticket_survives_execute_canonicalize() {
+        let id = "weather-nm247-case-c";
+        publish(id);
+        let params = json!({"city": "上海"});
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        let op = bind.prepared_operation_id.expect("classify must mint");
+        let mut args = json!({
+            "command": format!(
+                "neomind extension invoke {id} get_weather --params '{{\"city\":\"上海\"}}'"
+            ),
+            crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG: op.clone(),
+        });
+        // Simulate execute_with_retry_impl canonicalize + restore.
+        let mut canon =
+            crate::agent::task_continuity::canonicalize_tool_arguments("shell", &args);
+        crate::agent::task_continuity::restore_host_prepared_carriage(&args, &mut canon);
+        args = canon;
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "invoke".into(),
+            id.into(),
+            "get_weather".into(),
+            "--params".into(),
+            r#"{"city":"上海"}"#.into(),
+        ];
+        neomind_cli_ops::dispatch::with_extension_invoke_host_context(
+            neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
+                prepared_operation_id: args
+                    .get(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG)
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                structured_params: Some(params),
+            },
+            async {
+                bind_extension_invoke_prepared_token(argv)
+                    .expect("restored host ticket must claim once");
+            },
+        )
+        .await;
+        // Second claim of same id must fail (single-claim).
+        let err = neomind_core::extension::claim_prepared_by_id(&op).unwrap_err();
+        assert!(
+            err.contains("already claimed") || err.contains("consumed"),
+            "ticket must be claimed exactly once: {err}"
+        );
         invalidate_instance_capability(id);
     }
 
