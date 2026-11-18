@@ -35,6 +35,12 @@ impl CapabilityIndex {
         let mut out = String::from("## System Capability Index\n");
         out.push_str(&Self::build_cli_tree());
         out.push_str(&Self::build_data_conventions());
+        // NM-247: short AI extension catalog from the published prepareable
+        // snapshot (refreshes on install/unload/reload with that catalog).
+        let ext_catalog = neomind_core::extension::format_ai_extension_catalog(12, 1200);
+        if !ext_catalog.is_empty() {
+            out.push_str(&ext_catalog);
+        }
         let state = self.build_system_state_snapshot().await;
         if !state.is_empty() {
             out.push_str(&state);

@@ -495,6 +495,9 @@ pub struct CommandDescriptorDto {
     /// Immediate vs async track (`immediate` | `async`).
     #[serde(default)]
     pub execution: neomind_core::extension::CommandExecutionKind,
+    /// Validated params example for invoke (NM-247). Omitted when unreliable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params_example: Option<serde_json::Value>,
 }
 
 fn default_true() -> bool {
@@ -595,6 +598,7 @@ pub async fn list_extension_commands_handler(
                 effect: def.effect,
                 replay_safety: def.replay_safety,
                 execution: def.execution,
+                params_example: neomind_core::extension::validated_params_example_for_command(cmd),
             }
         })
         .collect();

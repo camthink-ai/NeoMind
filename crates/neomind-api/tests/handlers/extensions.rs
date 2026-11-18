@@ -146,6 +146,7 @@ mod tests {
             command_id: None,
             contract_version: None,
             capability_source: None,
+            params_example: None,
         };
 
         assert_eq!(command.id, "turn_on");
@@ -276,6 +277,7 @@ mod tests {
                 command_id: None,
                 contract_version: None,
                 capability_source: None,
+                params_example: None,
             }],
             metrics: vec![MetricDescriptorDto {
                 name: "temperature".to_string(),
@@ -335,6 +337,7 @@ mod tests {
                 command_id: None,
                 contract_version: None,
                 capability_source: None,
+                params_example: None,
             }],
             metrics: vec![MetricDescriptorDto {
                 name: "metric1".to_string(),

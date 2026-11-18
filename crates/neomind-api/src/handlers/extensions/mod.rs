@@ -260,6 +260,7 @@ pub(crate) fn extension_info_to_dto(
                 effect: def.effect,
                 replay_safety: def.replay_safety,
                 execution: def.execution,
+                params_example: neomind_core::extension::validated_params_example_for_command(cmd),
             }
         })
         .collect();

@@ -422,6 +422,9 @@ pub fn build_input_schema(parameters: &[ParameterDefinition]) -> Value {
 
         if let MetricDataType::Enum { options } = &param.param_type {
             param_schema["enum"] = json!(options);
+        } else if !param.options.is_empty() {
+            // String params with author options (e.g. weather city list).
+            param_schema["enum"] = json!(param.options);
         }
 
         if let Some(default_val) = &param.default_value {
@@ -1078,6 +1081,135 @@ fn publish_prepareable_snapshot(snapshot: &ExtensionCommandSnapshot) {
             },
         );
     }
+}
+
+/// Short AI extension catalog for capability context (NM-247).
+///
+/// Lines: `id — one-line` from the published prepareable snapshot (AI-exposed
+/// commands only). Budget-capped. Full schemas stay on-demand via
+/// `neomind extension commands <id>`.
+pub fn format_ai_extension_catalog(max_lines: usize, max_bytes: usize) -> String {
+    let entries: Vec<(String, String)> = {
+        let Ok(guard) = cap_cache().lock() else {
+            return String::new();
+        };
+        let mut out = Vec::new();
+        for (id, snap) in guard.prepareable.iter() {
+            let ai_cmds: Vec<_> = snap
+                .commands
+                .iter()
+                .filter(|c| c.ai_exposed)
+                .collect();
+            if ai_cmds.is_empty() {
+                continue;
+            }
+            let one_line = ai_cmds
+                .first()
+                .map(|c| {
+                    let d = c.description.trim();
+                    if d.is_empty() {
+                        format!("{} command(s)", ai_cmds.len())
+                    } else {
+                        // Keep one short sentence.
+                        d.chars().take(80).collect::<String>()
+                    }
+                })
+                .unwrap_or_else(|| "installed extension".into());
+            out.push((id.clone(), one_line));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    };
+    if entries.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from("\n### AI Extensions\n");
+    for (n, (id, line)) in entries.into_iter().enumerate() {
+        if n >= max_lines || s.len() >= max_bytes {
+            s.push_str("- … (truncated; run `neomind extension list`)\n");
+            break;
+        }
+        s.push_str(&format!("- {id} — {line}\n"));
+    }
+    s.push_str("Discover: `neomind extension commands <id>` then invoke with shell `params`.\n");
+    s
+}
+
+/// Build a params example that passes [`validate_and_normalize`].
+///
+/// Prefer author `samples`, then schema enum/default. Empty string only when
+/// the schema allows it (not invented). Returns `None` when no reliable
+/// example exists — callers should point at param docs instead.
+pub fn validated_params_example_for_command(cmd: &ExtensionCommand) -> Option<Value> {
+    let schema = build_input_schema(&cmd.parameters);
+    for sample in &cmd.samples {
+        if validate_and_normalize(&schema, sample).is_ok() {
+            return Some(sample.clone());
+        }
+    }
+    let generated = params_example_from_schema_value(&schema);
+    match generated {
+        Some(ex) if validate_and_normalize(&schema, &ex).is_ok() => Some(ex),
+        _ => None,
+    }
+}
+
+fn params_example_from_schema_value(schema: &Value) -> Option<Value> {
+    let props = schema.get("properties")?.as_object()?;
+    let required: std::collections::HashSet<&str> = schema
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str())
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
+    let mut obj = Map::new();
+    for (key, prop) in props {
+        if !required.is_empty() && !required.contains(key.as_str()) {
+            continue;
+        }
+        let sample = if let Some(d) = prop.get("default") {
+            d.clone()
+        } else if let Some(en) = prop.get("enum").and_then(|e| e.as_array()) {
+            en.first()?.clone()
+        } else {
+            match prop.get("type").and_then(|t| t.as_str()) {
+                Some("string") => {
+                    // Empty string only when explicitly allowed (minLength 0 or absent
+                    // with no other constraint). Prefer omitting unreliable strings.
+                    let min_len = prop
+                        .get("minLength")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    if min_len == 0 && prop.get("pattern").is_none() && prop.get("enum").is_none()
+                    {
+                        // Required free-form string without docs → unreliable.
+                        // Omit from example rather than inventing a non-empty value.
+                        continue;
+                    }
+                    return None;
+                }
+                Some("number") | Some("integer") => json!(0),
+                Some("boolean") => json!(false),
+                Some("array") => json!([]),
+                Some("object") => json!({}),
+                _ => continue,
+            }
+        };
+        obj.insert(key.clone(), sample);
+        if obj.len() >= 6 {
+            break;
+        }
+    }
+    // If required keys are missing from the example, it is incomplete.
+    for req in &required {
+        if !obj.contains_key(*req) {
+            return None;
+        }
+    }
+    Some(Value::Object(obj))
 }
 
 /// Mint and install a **new** generation for `instance_id` (load / reload).
@@ -2786,5 +2918,50 @@ mod tests {
             "must reject already-claimed under same lock: {err}"
         );
         invalidate_instance_capability(id);
+    }
+
+    #[test]
+    fn nm247_params_example_uses_options_not_empty_string() {
+        let cmd = weather_get_undeclared();
+        let ex = validated_params_example_for_command(&cmd).expect("reliable example");
+        assert_eq!(ex.get("city").and_then(|c| c.as_str()), Some("Beijing"));
+        // Schema now carries enum from options.
+        let schema = build_input_schema(&cmd.parameters);
+        assert_eq!(
+            schema["properties"]["city"]["enum"],
+            json!(["Beijing"])
+        );
+    }
+
+    #[test]
+    fn nm247_params_example_prefers_author_samples() {
+        let mut cmd = weather_get_undeclared();
+        cmd.parameters[0].options =
+            vec!["Beijing".into(), "Shanghai".into(), "New York".into()];
+        cmd.samples = vec![json!({"city": "Shanghai"}), json!({"city": "Beijing"})];
+        let ex = validated_params_example_for_command(&cmd).unwrap();
+        assert_eq!(ex.get("city").and_then(|c| c.as_str()), Some("Shanghai"));
+    }
+
+    #[test]
+    fn nm247_ai_extension_catalog_lists_published_pair() {
+        for id in ["weather-nm247-cat", "ocr-nm247-cat", "yolo-nm247-cat"] {
+            invalidate_instance_capability(id);
+            let gen = begin_instance_generation(id);
+            ExtensionCommandSnapshot::build(id, "1.0.0", None, vec![weather_get_undeclared()], gen)
+                .publish_capabilities()
+                .unwrap();
+        }
+        let catalog = format_ai_extension_catalog(12, 2000);
+        assert!(catalog.contains("weather-nm247-cat"), "{catalog}");
+        assert!(catalog.contains("ocr-nm247-cat"), "{catalog}");
+        assert!(catalog.contains("yolo-nm247-cat"), "{catalog}");
+        assert!(
+            catalog.contains("Discover:"),
+            "must teach commands discovery: {catalog}"
+        );
+        for id in ["weather-nm247-cat", "ocr-nm247-cat", "yolo-nm247-cat"] {
+            invalidate_instance_capability(id);
+        }
     }
 }
