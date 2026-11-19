@@ -941,6 +941,7 @@
     "stepCapsDesc": "This checklist is what the device said it can accept. Continue to fill these in and apply.",
     "stepEditTitle": "Configure & register",
     "stepEditDesc": "Set name and network, then apply.",
+    "deviceNameHint": "Shown in the device list after registration. Leave blank to use the model name.",
     "continue": "Continue",
     "serialNumber": "Serial number",
     "model": "Model",

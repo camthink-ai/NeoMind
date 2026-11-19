@@ -22,7 +22,7 @@ import {
 
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
-import { Field, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/ui/password-input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -31,9 +31,11 @@ import type { UseCtProvisionReturn } from '@/hooks/useCtProvision'
 import {
   cellularSectionFromFields,
   formatProvUserMessage,
+  isFriendlyFirmwareName,
   modelToDeviceType,
   normalizeCellularAuth,
   normalizeMqttQos,
+  resolveProvisionDisplayName,
   webhookSectionFromFields,
   type CellularAuth,
   type CtMqttConfig,
@@ -296,9 +298,14 @@ export function CtProvisionWizard({
     if (source === 'custom') setAdvancedOpen(true)
   }, [])
 
+  // Seed only when firmware already has a friendly label (not SN-as-name).
+  // Leaving SN out of the input nudges operators to set a list-visible title.
   useEffect(() => {
-    if (ct.deviceInfo?.deviceName && !deviceName) {
-      setDeviceName(ct.deviceInfo.deviceName)
+    if (deviceName) return
+    const fw = ct.deviceInfo?.deviceName
+    const sn = ct.deviceInfo?.serialNumber
+    if (isFriendlyFirmwareName(fw, sn) && fw) {
+      setDeviceName(fw)
     }
   }, [ct.deviceInfo, deviceName])
 
@@ -456,7 +463,12 @@ export function CtProvisionWizard({
       return
     }
     const sn = ct.deviceInfo.serialNumber
-    const name = deviceName || ct.deviceInfo.deviceName || modelName
+    const name = resolveProvisionDisplayName({
+      userName: deviceName,
+      firmwareName: ct.deviceInfo.deviceName,
+      serialNumber: sn,
+      modelName,
+    })
 
     let customMqtt: CustomMqttFields | undefined
     if (brokerSource === 'custom') {
@@ -826,9 +838,11 @@ export function CtProvisionWizard({
                 id="ct-device-name"
                 value={deviceName}
                 onChange={(e) => setDeviceName(e.target.value)}
-                placeholder={ct.deviceInfo?.model || 'Camera'}
+                placeholder={t('devices:deviceNamePlaceholder')}
                 className="text-base"
+                autoComplete="off"
               />
+              <FieldDescription>{t('devices:ctProv.deviceNameHint')}</FieldDescription>
             </Field>
 
             {needsWifi && (

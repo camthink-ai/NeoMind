@@ -941,6 +941,7 @@
     "stepCapsDesc": "以下清单来自设备上报的能力。确认后进入填写并下发。",
     "stepEditTitle": "配置并注册",
     "stepEditDesc": "设置名称与网络后应用。",
+    "deviceNameHint": "注册后显示在设备列表中。留空则使用型号名。",
     "continue": "继续",
     "serialNumber": "序列号",
     "model": "型号",

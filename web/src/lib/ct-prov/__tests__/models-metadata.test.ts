@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest'
 import {
   cellularSectionFromFields,
   findCtProvType,
+  isFriendlyFirmwareName,
   listApProvisionModels,
   modelNameFromCode,
   modelToDeviceType,
   pruneIncompleteConfigSections,
+  resolveProvisionDisplayName,
   softapHostForModel,
   webhookSectionFromFields,
   type CtProvDeviceTypeRef,
@@ -238,5 +240,34 @@ describe('cellular / webhook section builders', () => {
       cellular: { apn: 'cmiot.iot', auth: 'none' },
       webhook: { enable: true, url: 'https://example.com/h' },
     })
+  })
+
+  it('resolveProvisionDisplayName prefers operator name over SN-like firmware', () => {
+    expect(
+      resolveProvisionDisplayName({
+        userName: ' 门口摄像头 ',
+        firmwareName: 'NE101-A1B2C3',
+        serialNumber: 'NE101-A1B2C3',
+        modelName: 'NE101',
+      }),
+    ).toBe('门口摄像头')
+    expect(
+      resolveProvisionDisplayName({
+        userName: '',
+        firmwareName: 'NE101-A1B2C3',
+        serialNumber: 'NE101-A1B2C3',
+        modelName: 'NE101',
+      }),
+    ).toBe('NE101')
+    expect(
+      resolveProvisionDisplayName({
+        userName: '  ',
+        firmwareName: 'Lobby Cam',
+        serialNumber: 'NE101-A1B2C3',
+        modelName: 'NE101',
+      }),
+    ).toBe('NE101')
+    expect(isFriendlyFirmwareName('Lobby Cam', 'NE101-A1B2C3')).toBe(true)
+    expect(isFriendlyFirmwareName('NE101-A1B2C3', 'NE101-A1B2C3')).toBe(false)
   })
 })

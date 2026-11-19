@@ -392,6 +392,42 @@ export function modelNameFromCode(
 }
 
 /**
+ * NeoMind list display name for BLE/SoftAP register (`device_name` on
+ * POST /devices/ble-provision → DeviceConfig.name).
+ *
+ * Prefer the operator-typed label. Firmware `device_name` is often the SN —
+ * do not treat that as a friendly list title when the user left the field empty.
+ */
+export function resolveProvisionDisplayName(opts: {
+  userName: string
+  firmwareName?: string | null
+  serialNumber?: string | null
+  modelName: string
+}): string {
+  const user = opts.userName.trim()
+  if (user) return user
+
+  const model = opts.modelName.trim()
+  if (model) return model
+
+  const fw = opts.firmwareName?.trim() ?? ''
+  const sn = opts.serialNumber?.trim() ?? ''
+  if (fw && fw !== sn) return fw
+  return sn || 'Device'
+}
+
+/** True when firmware device_name is worth seeding into the editable field. */
+export function isFriendlyFirmwareName(
+  firmwareName?: string | null,
+  serialNumber?: string | null,
+): boolean {
+  const fw = firmwareName?.trim() ?? ''
+  if (!fw) return false
+  const sn = serialNumber?.trim() ?? ''
+  return fw !== sn
+}
+
+/**
  * Build CT `mqtt` section from NeoMind resolve response.
  *
  * Firmware treats `topic` as the **exact publish topic** (not a prefix).
