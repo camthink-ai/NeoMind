@@ -66,8 +66,8 @@ pub async fn get_transform_executions(
         .get(&format!("/automations/{}/executions?limit={}", id, lim))
         .await?;
     let count = data
-        .get("data")
-        .and_then(|d| d.get("count"))
+        .get("count")
+        .or_else(|| data.get("data").and_then(|d| d.get("count")))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     Ok(CliResponse::success(
@@ -116,8 +116,8 @@ pub async fn create_transform(
     });
     let data = client.post("/automations", &body).await?;
     let transform_id = data
-        .get("data")
-        .and_then(|d| d.get("automation"))
+        .get("automation")
+        .or_else(|| data.get("data").and_then(|d| d.get("automation")))
         // The create response carries the id directly under `automation`
         // ({"automation":{"id":...}}); the metadata path was legacy. Prefer
         // both before giving up — "unknown" in the success hint sent users

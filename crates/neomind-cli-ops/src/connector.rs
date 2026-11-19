@@ -387,16 +387,12 @@ pub async fn test_connector(client: &ApiClient, id: &str) -> Result<CliResponse>
     let data = client
         .post(&format!("/brokers/{}/test", id), &json!({}))
         .await?;
-    let success = data
-        .get("success")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let msg = if success {
-        "Connector connection successful"
-    } else {
-        "Connector connection failed"
-    };
-    Ok(CliResponse::success(data, msg))
+    // ApiClient::unwrap_api_envelope already turned HTTP 200 `"success": false`
+    // into Err, so reaching here means the handshake succeeded.
+    Ok(CliResponse::success(
+        data,
+        "Connector connection successful",
+    ))
 }
 
 /// List MQTT subscriptions

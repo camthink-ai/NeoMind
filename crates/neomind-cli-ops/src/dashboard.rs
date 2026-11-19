@@ -57,15 +57,16 @@ fn grid_summary(components: &[serde_json::Value]) -> (String, u64) {
     )
 }
 
-/// Extract the components array from a GET / add-components API response
-/// (handles the double-nested `data.data` the API wraps).
+/// Extract the components array from a GET / add-components API response.
+/// Handles unwrapped payloads directly and falls back to legacy nested `data`.
 fn response_components(data: &serde_json::Value) -> Vec<serde_json::Value> {
-    data.get("data")
-        .and_then(|d| {
-            d.get("components")
-                .or_else(|| d.get("data").and_then(|dd| dd.get("components")))
+    data.get("components")
+        .or_else(|| {
+            data.get("data").and_then(|d| {
+                d.get("components")
+                    .or_else(|| d.get("data").and_then(|dd| dd.get("components")))
+            })
         })
-        .or_else(|| data.get("components"))
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default()
@@ -235,8 +236,8 @@ pub async fn update_component(
         )
         .await?;
     let updated_id = data
-        .get("data")
-        .and_then(|d| d.get("component_id"))
+        .get("component_id")
+        .or_else(|| data.get("data").and_then(|d| d.get("component_id")))
         .and_then(|v| v.as_str())
         .unwrap_or(component_id)
         .to_string();
@@ -287,7 +288,11 @@ pub async fn remove_components(
     let data = client
         .delete_with_body(&format!("/dashboards/{}/components", id), &body)
         .await?;
-    let inner = data.get("data").unwrap_or(&data);
+    let inner = if data.get("removed").is_some() || data.get("remaining").is_some() {
+        &data
+    } else {
+        data.get("data").unwrap_or(&data)
+    };
     let removed = inner["removed"].as_u64().unwrap_or(0);
     let remaining = inner["remaining"].as_u64().unwrap_or(0);
     Ok(CliResponse::success(

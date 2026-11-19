@@ -5,9 +5,9 @@ use serde_json::{json, Value};
 
 /// List all extensions with compact summary.
 ///
-/// Returns id, name, version, runtime status, run `enabled`, AI
-/// `ai_enabled`, and the next discovery step (`extension commands --search`
-/// or `extension commands <id>`).
+/// Returns id, name, version, runtime status, run `enabled`, and AI
+/// `ai_enabled`; next-step discovery guidance is emitted once at the top-level
+/// `CliResponse.suggestion`.
 /// `ai_enabled` is the Chat/Agent master switch; `enabled` is run/load.
 pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/extensions").await?;
@@ -68,7 +68,6 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
                 "enabled": enabled,
                 "ai_enabled": ai_enabled,
                 "description": e.get("description").and_then(|v| v.as_str()).unwrap_or(""),
-                "next": format!("concrete task → neomind extension commands --search \"…\""),
             })
         })
         .collect();
@@ -127,11 +126,9 @@ pub async fn get_extension(client: &ApiClient, id: &str) -> Result<CliResponse> 
 
 /// Get extension health status
 pub async fn get_extension_status(client: &ApiClient, id: &str) -> Result<CliResponse> {
-    let resp = client
+    let data = client
         .get(&format!("/extensions/{}/health", encode_segment(id)))
         .await?;
-    // Extract inner data to avoid double-wrapping (API already has success/data structure)
-    let data = resp.get("data").cloned().unwrap_or(resp);
     Ok(CliResponse::success(data, "Extension status retrieved"))
 }
 
@@ -190,25 +187,10 @@ pub async fn install_extension_market(
         body["version"] = json!(v);
     }
 
+    // ApiClient::unwrap_api_envelope already intercepts HTTP 200 responses
+    // whose inner payload carries `"success": false` (the 17 marketplace
+    // failure paths) and surfaces the real error message.
     let data = client.post("/extensions/market/install", &body).await?;
-
-    // The handler reports EVERY failure (unknown id, network, sha mismatch,
-    // no build for the platform — 17 paths) as HTTP 200 whose INNER payload
-    // carries success:false. The outer ApiResponse envelope says success:true
-    // (the request was served), so the verdict must be read from the inner
-    // body: `{"success":true,"data":{"success":false,"error":"…"}}`. Trusting
-    // the status code wrapped those failures in a success envelope:
-    // `market-install <bogus>` printed "✅ Extension installed" with exit 0
-    // while nothing ran (2026-10-15 audit). Fall back to the flat shape for
-    // unwrapped/older servers.
-    let inner = data.get("data").unwrap_or(&data);
-    if inner.get("success").and_then(|v| v.as_bool()) == Some(false) {
-        let err = inner
-            .get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown marketplace failure");
-        anyhow::bail!("marketplace install failed: {err}");
-    }
 
     Ok(CliResponse::success(
         data,
@@ -322,8 +304,7 @@ pub async fn search_extension_commands(
         path.push_str(&format!("&extension={}", urlencoding_encode(id)));
     }
     let data = client.get(&path).await?;
-    let inner = data.get("data").cloned().unwrap_or(data);
-    let hits = inner
+    let hits = data
         .get("hits")
         .and_then(|h| h.as_array())
         .cloned()
@@ -335,7 +316,7 @@ pub async fn search_extension_commands(
             .unwrap_or(false)
     });
     let mut resp = CliResponse::success(
-        inner,
+        data,
         if n == 0 {
             "No matching AI-visible extension commands".into()
         } else {
@@ -629,10 +610,8 @@ pub async fn invoke_extension_command(
         )
         .await?;
 
-    // Prefer the server's prepared envelope (operation_id, contract, …).
-    let inner = data.get("data").cloned().unwrap_or(data);
     Ok(CliResponse::success(
-        inner,
+        data,
         format!("Invoked {extension_id}/{command}"),
     ))
 }
@@ -807,11 +786,9 @@ mod market_install_verdict_tests {
 
     #[test]
     fn failure_envelope_is_recognized() {
-        // The handler's failure shape: HTTP 200, success:false, error msg.
-        // The verdict check mirrors the CLI fix — kept here as the shape's
-        // executable documentation.
-        // Real wire shape: ApiResponse envelope (success:true) around the
-        // handler's own verdict (success:false).
+        // The handler's failure shape: HTTP 200, outer success:true, inner
+        // verdict success:false — ApiClient::unwrap_api_envelope intercepts it
+        // uniformly.
         let body = json!({
             "success": true,
             "data": {
@@ -822,12 +799,96 @@ mod market_install_verdict_tests {
                 "error": "Extension not found: 404 Not Found"
             }
         });
-        let inner = body.get("data").unwrap_or(&body);
-        assert_eq!(
-            inner["success"].as_bool(),
-            Some(false),
-            "inner verdict is the failure"
+        let err = crate::api_client::unwrap_api_envelope(body)
+            .expect_err("inner success:false must be intercepted")
+            .to_string();
+        assert!(err.contains("not found"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn list_extensions_omits_per_item_next_and_keeps_top_level_suggestion() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = socket.read(&mut buf).await;
+            let body = json!({
+                "success": true,
+                "data": [
+                    {"id": "weather", "name": "Weather", "version": "1.0.0", "status": "Running", "enabled": true, "ai_enabled": true, "description": "Forecast"},
+                    {"id": "yolo", "name": "YOLO", "version": "2.0.0", "status": "Running", "enabled": true, "ai_enabled": true, "description": "Detection"},
+                ],
+                "meta": {"timestamp": 1}
+            })
+            .to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(resp.as_bytes()).await.unwrap();
+        });
+
+        let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
+        let out = super::list_extensions(&client).await.unwrap();
+        assert!(out.success);
+        let data = out.data.expect("list data");
+        let items = data["extensions"].as_array().expect("extensions array");
+        assert_eq!(items.len(), 2);
+        for item in items {
+            assert!(
+                item.get("next").is_none(),
+                "per-item `next` must be removed to avoid repeated noise: {item}"
+            );
+        }
+        assert!(
+            out.suggestion
+                .as_deref()
+                .is_some_and(|s| s.contains("extension commands --search")),
+            "single top-level suggestion must remain: {:?}",
+            out.suggestion
         );
-        assert!(inner["error"].as_str().unwrap().contains("not found"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn install_extension_market_rejects_http_200_embedded_failure() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 2048];
+            let _ = socket.read(&mut buf).await;
+            let body = json!({
+                "success": true,
+                "data": {
+                    "success": false,
+                    "extension_id": "bogus",
+                    "downloaded": false,
+                    "installed": false,
+                    "error": "Extension not found: 404 Not Found"
+                }
+            })
+            .to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(resp.as_bytes()).await.unwrap();
+        });
+
+        let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
+        let err = super::install_extension_market(&client, "bogus", None)
+            .await
+            .expect_err("HTTP 200 marketplace failure must return Err")
+            .to_string();
+        assert!(err.contains("Extension not found"), "got: {err}");
+        server.await.unwrap();
     }
 }

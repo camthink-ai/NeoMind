@@ -3,12 +3,6 @@ use crate::ApiClient;
 use anyhow::Result;
 use serde_json::json;
 
-/// Extract the inner `data` field from an API response.
-/// API returns `{"success":true,"data":{...},"meta":{...}}` — this returns the inner data.
-fn extract_inner_data(resp: serde_json::Value) -> serde_json::Value {
-    resp.get("data").cloned().unwrap_or(resp)
-}
-
 /// List messages with optional filters
 pub async fn list_messages(
     client: &ApiClient,
@@ -39,19 +33,13 @@ pub async fn list_messages(
     }
 
     let data = client.get(&path).await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Messages listed",
-    ))
+    Ok(CliResponse::success(data, "Messages listed"))
 }
 
 /// Get message by ID
 pub async fn get_message(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client.get(&format!("/messages/{}", id)).await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Message retrieved",
-    ))
+    Ok(CliResponse::success(data, "Message retrieved"))
 }
 
 /// Success copy for `message send` — platform message center, not device delivery.
@@ -76,7 +64,6 @@ pub async fn send_message(
     }
 
     let data = client.post("/messages", &body).await?;
-    let data = extract_inner_data(data);
 
     Ok(CliResponse::success(data, SEND_SUCCESS_MESSAGE))
 }
@@ -103,25 +90,18 @@ pub async fn delete_message(client: &ApiClient, id: &str) -> Result<CliResponse>
 /// List all message channels
 pub async fn list_channels(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/messages/channels").await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Channels listed",
-    ))
+    Ok(CliResponse::success(data, "Channels listed"))
 }
 
 /// Get channel by name
 pub async fn get_channel(client: &ApiClient, name: &str) -> Result<CliResponse> {
     let data = client.get(&format!("/messages/channels/{}", name)).await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Channel retrieved",
-    ))
+    Ok(CliResponse::success(data, "Channel retrieved"))
 }
 
 /// List available channel types
 pub async fn list_channel_types(client: &ApiClient) -> Result<CliResponse> {
-    let resp = client.get("/messages/channels/types").await?;
-    let data = extract_inner_data(resp);
+    let data = client.get("/messages/channels/types").await?;
     Ok(CliResponse::success(data, "Channel types listed"))
 }
 
@@ -130,10 +110,9 @@ pub async fn get_channel_type_schema(
     client: &ApiClient,
     channel_type: &str,
 ) -> Result<CliResponse> {
-    let resp = client
+    let data = client
         .get(&format!("/messages/channels/types/{}/schema", channel_type))
         .await?;
-    let data = extract_inner_data(resp);
     Ok(CliResponse::success(data, "Channel type schema retrieved"))
 }
 
@@ -200,11 +179,10 @@ pub async fn create_channel(
     // 4. Validate channel type exists (call channel-types API)
     match client.get("/messages/channels/types").await {
         Ok(types_data) => {
-            // API returns {"success":true,"data":{"types":[...]},...}
+            // ApiClient already unwraps ApiResponse → {"types":[...]}
             let types_list = types_data
-                .get("data")
-                .and_then(|d| d.get("types"))
-                .or_else(|| types_data.get("types"));
+                .get("types")
+                .or_else(|| types_data.get("data").and_then(|d| d.get("types")));
             let valid_types: Vec<&str> = types_list
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.iter().filter_map(|t| t["id"].as_str()).collect())
@@ -230,7 +208,9 @@ pub async fn create_channel(
         .get(&format!("/messages/channels/types/{}/schema", channel_type))
         .await
     {
-        let schema_data = schema_resp.get("data").and_then(|d| d.get("config_schema"));
+        let schema_data = schema_resp
+            .get("config_schema")
+            .or_else(|| schema_resp.get("data").and_then(|d| d.get("config_schema")));
         if let Some(required_fields) = schema_data
             .and_then(|s| s.get("required"))
             .and_then(|r| r.as_array())
@@ -270,7 +250,6 @@ pub async fn create_channel(
         .unwrap()
         .insert("enabled".to_string(), json!(enabled));
     let data = client.post("/messages/channels", &body).await?;
-    let data = extract_inner_data(data);
     Ok(CliResponse::success(data, "Channel created"))
 }
 
@@ -281,10 +260,7 @@ pub async fn update_channel(client: &ApiClient, name: &str, config: &str) -> Res
     let data = client
         .put(&format!("/messages/channels/{}", name), &body)
         .await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Channel updated",
-    ))
+    Ok(CliResponse::success(data, "Channel updated"))
 }
 
 /// Delete a message channel
@@ -292,10 +268,7 @@ pub async fn delete_channel(client: &ApiClient, name: &str) -> Result<CliRespons
     let data = client
         .delete(&format!("/messages/channels/{}", name))
         .await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Channel deleted",
-    ))
+    Ok(CliResponse::success(data, "Channel deleted"))
 }
 
 /// Test a channel
@@ -303,10 +276,7 @@ pub async fn test_channel(client: &ApiClient, name: &str) -> Result<CliResponse>
     let data = client
         .post(&format!("/messages/channels/{}/test", name), &json!({}))
         .await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Channel test completed",
-    ))
+    Ok(CliResponse::success(data, "Channel test completed"))
 }
 
 #[cfg(test)]

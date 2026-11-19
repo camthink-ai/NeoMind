@@ -520,6 +520,10 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
         self
     }
 
+    fn clone_for_chat_session(&self, session_id: &str) -> Option<super::tool::DynTool> {
+        Some(Arc::new(self.for_chat_session(session_id)))
+    }
+
     fn swap_agent_context(
         &self,
         agent_id: String,

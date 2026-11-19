@@ -377,11 +377,13 @@ pub async fn update_rule_fast(
     patch: &RuleFastPatchArgs<'_>,
 ) -> Result<CliResponse> {
     let resp = client.get(&format!("/rules/{}", id)).await?;
-    // GET returns {success,data:{rule,history},meta} — compose against the
-    // RULE object itself (live-verified 2026-11-17: envelope and detail
-    // wrappers both leaked into the PUT body and the API rejected the
-    // unknown fields).
-    let data = resp.get("data").unwrap_or(&resp);
+    // GET returns unwrapped `{rule, history}` (or legacy `{success, data: {rule, history}}`)
+    // — compose against the RULE object itself so wrapper fields never leak into PUT.
+    let data = if resp.get("rule").is_some() || resp.get("condition").is_some() {
+        &resp
+    } else {
+        resp.get("data").unwrap_or(&resp)
+    };
     let existing = data.get("rule").unwrap_or(data);
     let body = compose_rule_update_body(existing, patch)?;
     let body_str = serde_json::to_string(&body)?;

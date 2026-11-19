@@ -408,16 +408,18 @@ pub async fn list_widgets(client: &ApiClient) -> Result<CliResponse> {
     // `neomind_core::dashboard::BUILTIN_WIDGET_TYPES` on the server) — the
     // CLI never hardcodes widget type names itself.
     let builtin_raw = data
-        .get("data")
-        .and_then(|d| d.get("builtin_types"))
-        .or_else(|| data.get("builtin_types"))
+        .get("builtin_types")
+        .or_else(|| data.get("data").and_then(|d| d.get("builtin_types")))
         .cloned()
         .unwrap_or_else(|| json!([]));
     let builtin_count = data
-        .get("data")
-        .and_then(|d| d.get("builtin_count"))
+        .get("builtin_count")
         .and_then(|v| v.as_u64())
-        .or_else(|| data.get("builtin_count").and_then(|v| v.as_u64()))
+        .or_else(|| {
+            data.get("data")
+                .and_then(|d| d.get("builtin_count"))
+                .and_then(|v| v.as_u64())
+        })
         .unwrap_or(0);
 
     Ok(CliResponse::success(

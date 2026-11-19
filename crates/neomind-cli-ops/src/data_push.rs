@@ -3,7 +3,6 @@
 use anyhow::Result;
 use serde_json::json;
 
-use crate::api_client::extract_inner_data;
 use crate::types::CliResponse;
 use crate::ApiClient;
 
@@ -38,15 +37,14 @@ fn lift_top_level_fields(config: &mut serde_json::Value, body: &mut serde_json::
 /// Full config is available via `neomind push-target get <id>`.
 pub async fn list_targets(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/data-push").await?;
-    let inner = extract_inner_data(data);
 
-    let targets: Option<&Vec<serde_json::Value>> = inner
+    let targets: Option<&Vec<serde_json::Value>> = data
         .as_array()
-        .or_else(|| inner.get("targets").and_then(|v| v.as_array()))
-        .or_else(|| inner.get("data").and_then(|d| d.as_array()));
+        .or_else(|| data.get("targets").and_then(|v| v.as_array()))
+        .or_else(|| data.get("data").and_then(|d| d.as_array()));
 
     let Some(targets) = targets else {
-        return Ok(CliResponse::success(inner, "Push targets listed"));
+        return Ok(CliResponse::success(data, "Push targets listed"));
     };
 
     let total = targets.len();
@@ -71,10 +69,7 @@ pub async fn list_targets(client: &ApiClient) -> Result<CliResponse> {
 /// Get a push target by ID.
 pub async fn get_target(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client.get(&format!("/data-push/{}", id)).await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Push target retrieved",
-    ))
+    Ok(CliResponse::success(data, "Push target retrieved"))
 }
 
 /// Create a push target.
@@ -157,7 +152,6 @@ pub async fn create_target(
     body["config"] = config_val;
 
     let data = client.post("/data-push", &body).await?;
-    let data = extract_inner_data(data);
 
     Ok(CliResponse::success(data, "Push target created"))
 }
@@ -214,19 +208,13 @@ pub async fn update_target(
     }
 
     let data = client.put(&format!("/data-push/{}", id), &body).await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Push target updated",
-    ))
+    Ok(CliResponse::success(data, "Push target updated"))
 }
 
 /// Delete a push target.
 pub async fn delete_target(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client.delete(&format!("/data-push/{}", id)).await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Push target deleted",
-    ))
+    Ok(CliResponse::success(data, "Push target deleted"))
 }
 
 /// Start a push target.
@@ -234,10 +222,7 @@ pub async fn start_target(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client
         .post(&format!("/data-push/{}/start", id), &json!({}))
         .await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Push target started",
-    ))
+    Ok(CliResponse::success(data, "Push target started"))
 }
 
 /// Stop a push target.
@@ -245,10 +230,7 @@ pub async fn stop_target(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client
         .post(&format!("/data-push/{}/stop", id), &json!({}))
         .await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Push target stopped",
-    ))
+    Ok(CliResponse::success(data, "Push target stopped"))
 }
 
 /// Test a push target.
@@ -256,10 +238,7 @@ pub async fn test_target(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client
         .post(&format!("/data-push/{}/test", id), &json!({}))
         .await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Push target test completed",
-    ))
+    Ok(CliResponse::success(data, "Push target test completed"))
 }
 
 /// List delivery logs for a push target.
@@ -270,19 +249,13 @@ pub async fn list_logs(client: &ApiClient, id: &str, limit: Option<usize>) -> Re
         format!("/data-push/{}/logs", id)
     };
     let data = client.get(&path).await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Delivery logs listed",
-    ))
+    Ok(CliResponse::success(data, "Delivery logs listed"))
 }
 
 /// Get push statistics.
 pub async fn get_stats(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/data-push/stats").await?;
-    Ok(CliResponse::success(
-        extract_inner_data(data),
-        "Push stats retrieved",
-    ))
+    Ok(CliResponse::success(data, "Push stats retrieved"))
 }
 
 #[cfg(test)]

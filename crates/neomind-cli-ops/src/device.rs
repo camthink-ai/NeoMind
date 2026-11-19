@@ -263,15 +263,29 @@ fn looks_like_base64_blob(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
 }
 
+/// Resolve the payload root for a `/devices/{id}/current` JSON value — supports
+/// both unwrapped payloads (`{device, metrics, commands}`) and legacy wrapped
+/// envelopes (`{data: {device, metrics, commands}}`).
+fn device_current_root_mut(val: &mut serde_json::Value) -> Option<&mut serde_json::Value> {
+    if val.get("metrics").is_some() || val.get("commands").is_some() || val.get("device").is_some()
+    {
+        Some(val)
+    } else {
+        val.get_mut("data")
+    }
+}
+
 /// Sanitize the full /devices/{id}/current response to truncate binary metric values.
 /// Converts inline `data:image/...;base64,...` data URLs to `/api/images/` file URLs
 /// so the agent can pass them directly to `vision(image="/api/images/...")` without
 /// needing $cached or python extraction.
 fn sanitize_device_current(data: &serde_json::Value, device_id: &str) -> serde_json::Value {
     let mut result = data.clone();
-    // Navigate to data.metrics and sanitize each metric's value
-    let metrics = result.pointer_mut("/data/metrics");
-    if let Some(m) = metrics.and_then(|v| v.as_object_mut()) {
+    // Navigate to metrics and sanitize each metric's value
+    if let Some(m) = device_current_root_mut(&mut result)
+        .and_then(|root| root.get_mut("metrics"))
+        .and_then(|v| v.as_object_mut())
+    {
         for (name, info) in m.iter_mut() {
             if let Some(obj) = info.as_object_mut() {
                 if let Some(val) = obj.get_mut("value") {
@@ -297,10 +311,10 @@ fn sanitize_device_current(data: &serde_json::Value, device_id: &str) -> serde_j
     result
 }
 
-/// Project `data.commands` to the invoke input contract for CLI/agent use.
+/// Project `commands` to the invoke input contract for CLI/agent use.
 fn project_commands_for_cli(data: &mut serde_json::Value, device_id: &str) {
-    let Some(commands) = data
-        .pointer_mut("/data/commands")
+    let Some(commands) = device_current_root_mut(data)
+        .and_then(|root| root.get_mut("commands"))
         .and_then(|v| v.as_array_mut())
     else {
         return;
@@ -487,11 +501,12 @@ fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<S
     Some(url)
 }
 
-/// Extract device array from API response (handles multiple response shapes).
+/// Extract device array from API response (handles unwrapped and legacy shapes).
 fn extract_device_array(data: &serde_json::Value) -> Vec<serde_json::Value> {
-    data.get("data")
-        .and_then(|d| d.get("devices"))
+    data.get("devices")
+        .or_else(|| data.get("data").and_then(|d| d.get("devices")))
         .and_then(|v| v.as_array())
+        .or_else(|| data.as_array())
         .map(|arr| arr.to_vec())
         .unwrap_or_default()
 }
@@ -512,7 +527,12 @@ fn extract_device_id(device: &serde_json::Value) -> Option<String> {
 /// like `virtual.*` ran to thousands of chars each). The agent fetches real
 /// values on demand via `device get <id>` instead of reading a stale sample.
 fn build_example(current_data: &serde_json::Value) -> (serde_json::Value, serde_json::Value) {
-    let response_data = current_data.get("data").unwrap_or(current_data);
+    let response_data =
+        if current_data.get("metrics").is_some() || current_data.get("commands").is_some() {
+            current_data
+        } else {
+            current_data.get("data").unwrap_or(current_data)
+        };
     let metrics = response_data.get("metrics");
     let commands = response_data.get("commands");
 
@@ -583,25 +603,30 @@ pub async fn get_device(client: &ApiClient, id: &str, metric: Option<&str>) -> R
 /// Reduce a /devices/{id}/current response to a single metric field.
 ///
 /// Metric keys may contain dots (e.g. `values.battery`), so this is a flat
-/// key lookup on `data.metrics`, NOT a JSON-pointer path. If the field is
+/// key lookup on `metrics`, NOT a JSON-pointer path. If the field is
 /// absent, all metrics are returned with a `_note` explaining the miss.
 fn filter_single_metric(data: &mut serde_json::Value, field: &str) {
-    let Some(metrics) = data
-        .pointer_mut("/data/metrics")
-        .and_then(|v| v.as_object_mut())
-    else {
+    let Some(root) = device_current_root_mut(data) else {
         return;
     };
-    if metrics.contains_key(field) {
-        metrics.retain(|k, _| k == field);
-    } else if let Some(d) = data.pointer_mut("/data").and_then(|v| v.as_object_mut()) {
-        d.insert(
-            "_note".into(),
-            serde_json::json!(format!(
-                "metric '{}' not found; showing all current metrics",
-                field
-            )),
-        );
+    let found = match root.get_mut("metrics").and_then(|v| v.as_object_mut()) {
+        Some(metrics) if metrics.contains_key(field) => {
+            metrics.retain(|k, _| k == field);
+            true
+        }
+        Some(_) => false,
+        None => return,
+    };
+    if !found {
+        if let Some(d) = root.as_object_mut() {
+            d.insert(
+                "_note".into(),
+                serde_json::json!(format!(
+                    "metric '{}' not found; showing all current metrics",
+                    field
+                )),
+            );
+        }
     }
 }
 
@@ -749,7 +774,20 @@ pub async fn get_telemetry_history(
 fn summarize_image_history(data: &serde_json::Value, device_id: &str) -> serde_json::Value {
     let mut result = data.clone();
 
-    // Pagination context from the outer API wrapper: `/data/pagination`.
+    // Support both unwrapped payloads (`{device_id, data: {...}, pagination}`)
+    // returned by ApiClient and legacy wrapped envelopes (`{success, data: {...}}`).
+    let wrapped = data.get("success").is_some()
+        || data
+            .pointer("/data/data")
+            .and_then(|v| v.as_object())
+            .is_some();
+    let root = if wrapped {
+        data.get("data").unwrap_or(data)
+    } else {
+        data
+    };
+
+    // Pagination context from the telemetry payload: `/pagination`.
     // Two response generations, both supported:
     // - single-metric (and legacy servers): top-level {total, next_cursor}
     //   describe THE queried metric;
@@ -758,18 +796,14 @@ fn summarize_image_history(data: &serde_json::Value, device_id: &str) -> serde_j
     //   paging) and `per_metric: {<name>: {total, next_cursor}}` carries
     //   the truth. Resolve per-metric stats so the summary stops reporting
     //   "truncation unknown" when the real totals are one field away.
-    let page_limit = data
-        .pointer("/data/pagination/limit")
-        .and_then(|v| v.as_u64());
-    let top_total = data
-        .pointer("/data/pagination/total")
-        .and_then(|v| v.as_u64());
-    let top_cursor = data
-        .pointer("/data/pagination/next_cursor")
+    let page_limit = root.pointer("/pagination/limit").and_then(|v| v.as_u64());
+    let top_total = root.pointer("/pagination/total").and_then(|v| v.as_u64());
+    let top_cursor = root
+        .pointer("/pagination/next_cursor")
         .map(|v| !v.is_null())
         .unwrap_or(false);
-    let single_metric_query = data
-        .pointer("/data/metrics")
+    let single_metric_query = root
+        .get("metrics")
         .and_then(|v| v.as_array())
         .map(|m| m.len() == 1)
         .unwrap_or(false);
@@ -781,7 +815,7 @@ fn summarize_image_history(data: &serde_json::Value, device_id: &str) -> serde_j
     };
     // Per-metric stats from the multi-metric contract (absent on legacy /
     // single-metric responses).
-    let per_metric_pagination = data.pointer("/data/pagination/per_metric");
+    let per_metric_pagination = root.pointer("/pagination/per_metric");
     let metric_stats = |name: &str| -> Option<(u64, bool)> {
         if single_metric_query {
             // Backward-compatible path: top-level fields ARE this metric's.
@@ -796,11 +830,13 @@ fn summarize_image_history(data: &serde_json::Value, device_id: &str) -> serde_j
         Some((total, has_cursor))
     };
 
-    // Navigate to result.data.data (outer API wrapper → inner telemetry
-    // payload whose `data` field maps metric names to data-point arrays).
-    let data_obj = match result
-        .pointer_mut("/data/data")
-        .and_then(|v| v.as_object_mut())
+    // Navigate to the telemetry payload's `data` map (metric name -> data points).
+    let data_obj = match (if wrapped {
+        result.pointer_mut("/data/data")
+    } else {
+        result.get_mut("data")
+    })
+    .and_then(|v| v.as_object_mut())
     {
         Some(obj) => obj,
         None => return result, // unexpected shape — pass through untouched
@@ -1882,5 +1918,70 @@ mod tests {
         // (08:19:30 Asia/Shanghai).
         let s = format_ts(1_794_183_570_i64);
         assert!(s.starts_with("2026-11-09T00:19:30"), "got {}", s);
+    }
+
+    /// After ApiClient unwraps ApiResponse, `/devices/{id}/current` arrives
+    /// flat (`{device, metrics, commands}`): sanitization, command projection,
+    /// and `--metric` filtering must work directly on the unwrapped shape.
+    #[test]
+    fn sanitize_and_filter_work_on_unwrapped_device_current() {
+        let raw = json!({
+            "device": {"id": "eink-1"},
+            "metrics": {
+                "values.battery": {"value": 88, "unit": "%", "timestamp": 1000},
+                "temperature": {"value": 24.5, "unit": "C", "timestamp": 1000}
+            },
+            "commands": [{
+                "name": "render_text",
+                "display_name": "Render Text",
+                "description": "Display text",
+                "payload_template": "{\"cmd\":\"render_text\"}",
+                "samples": [{"cmd": "render_text"}],
+                "parameters": [{
+                    "name": "text",
+                    "data_type": "String",
+                    "required": true
+                }]
+            }]
+        });
+        let mut out = sanitize_device_current(&raw, "eink-1");
+        assert!(out.get("data").is_none(), "must remain single-layer: {out}");
+        assert_eq!(
+            out["commands"][0]["shell_example"]["command"],
+            "neomind device control eink-1 render_text"
+        );
+        assert!(out["commands"][0].get("payload_template").is_none());
+
+        filter_single_metric(&mut out, "values.battery");
+        let metrics = out["metrics"].as_object().unwrap();
+        assert_eq!(metrics.len(), 1);
+        assert!(metrics.contains_key("values.battery"));
+    }
+
+    /// After ApiClient unwraps ApiResponse, `/devices/{id}/telemetry` arrives
+    /// with `device_id`, `data`, `pagination`, and `metrics` at top level.
+    #[test]
+    fn summarize_image_history_works_on_unwrapped_telemetry() {
+        let device_id = "dev-001";
+        let metric = "values.image";
+        let url = fake_data_url(40_000, "image/jpeg");
+        let unwrapped = json!({
+            "device_id": device_id,
+            "metrics": [metric],
+            "pagination": { "limit": 50, "total": 2, "next_cursor": null },
+            "data": {
+                metric: [
+                    {"timestamp": 2000, "value": url.clone()},
+                    {"timestamp": 1000, "value": fake_data_url(40_000, "image/jpeg")}
+                ]
+            }
+        });
+        let out = summarize_image_history(&unwrapped, device_id);
+        let summary = &out["data"][metric];
+        assert_eq!(summary["_image_history_summary"], true);
+        assert_eq!(summary["page_count"], 2);
+        assert_eq!(summary["telemetry_point_total"], 2);
+        assert_eq!(summary["truncated"], false);
+        assert_eq!(summary["latest_value"], url);
     }
 }

@@ -446,6 +446,18 @@ pub trait Tool: Send + Sync {
         unimplemented!("as_any not implemented for {}", self.name())
     }
 
+    /// Return a fresh per-chat-session instance if this tool carries
+    /// session-scoped mutable state (e.g. `MemoryTool` session handle or
+    /// `ShellTool` domain-index injection state). Stateless tools return `None`
+    /// and are shared across sessions as-is.
+    fn clone_for_chat_session(&self, _session_id: &str) -> Option<DynTool> {
+        None
+    }
+
+    /// Reset any transient per-session state (e.g. when conversation history
+    /// is cleared for a chat session).
+    fn reset_session_state(&self) {}
+
     /// Swap agent context for per-execution isolation (MemoryTool only).
     /// Returns per-execution handles if the tool supports it, else None.
     fn swap_agent_context(

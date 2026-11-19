@@ -48,18 +48,13 @@ impl ToolRegistry {
         }
     }
 
-    /// Share ordinary tools and global policy, but bind memory to one chat.
+    /// Share stateless tools and global policy, but isolate tools with
+    /// session-scoped state (such as `memory` and `shell`) per chat session.
     pub(crate) fn for_chat_session(&self, session_id: &str) -> Self {
         let mut tools = self.tools.clone();
-        if let Some(tool) = self.tools.get("memory") {
-            if let Some(memory) = tool
-                .as_any()
-                .downcast_ref::<super::memory_tool::MemoryTool>()
-            {
-                tools.insert(
-                    "memory".into(),
-                    Arc::new(memory.for_chat_session(session_id)),
-                );
+        for (name, tool) in &self.tools {
+            if let Some(scoped) = tool.clone_for_chat_session(session_id) {
+                tools.insert(name.clone(), scoped);
             }
         }
         Self {
@@ -68,6 +63,14 @@ impl ToolRegistry {
             cached_definitions: RwLock::new(None),
             cancellation_token: self.cancellation_token.clone(),
             disabled: self.disabled.clone(),
+        }
+    }
+
+    /// Reset transient per-session state across all registered tools (e.g.
+    /// after clearing a chat session's conversation history).
+    pub(crate) fn reset_session_state(&self) {
+        for tool in self.tools.values() {
+            tool.reset_session_state();
         }
     }
 

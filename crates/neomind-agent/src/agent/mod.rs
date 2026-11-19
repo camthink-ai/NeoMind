@@ -1046,6 +1046,7 @@ impl Agent {
     /// Clear conversation history.
     pub async fn clear_history(&self) {
         self.internal_state.write().await.clear_memory();
+        self.tools.reset_session_state();
     }
 }
 impl Agent {

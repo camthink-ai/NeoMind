@@ -57,32 +57,38 @@ struct CommandOutput {
     stdout: String,
     stderr: String,
     timed_out: bool,
+    /// Cross-domain CLI index card emitted once per session as a separate JSON
+    /// field (never concatenated onto `stdout`).
+    domain_index: Option<String>,
+    /// In-process clap `--help` reference emitted ONLY on clap parse failure /
+    /// unknown subcommand as a separate JSON field (never concatenated onto
+    /// `stdout` or `stderr`).
+    usage_hint: Option<String>,
 }
 
-/// Shell tool — executes system commands.
-/// [context-injection] Domains whose `--help` reference has been injected
-/// once already this process (first-use injection, channel C). See
-/// `ShellTool::domain_help` for the rationale.
-static INJECTED_DOMAINS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
-    std::sync::OnceLock::new();
+impl CommandOutput {
+    fn plain(exit_code: Option<i32>, stdout: String, stderr: String, timed_out: bool) -> Self {
+        Self {
+            exit_code,
+            stdout,
+            stderr,
+            timed_out,
+            domain_index: None,
+            usage_hint: None,
+        }
+    }
+}
 
-/// [context-injection] Set once the cross-domain index card has been
-/// injected into a shell tool result (channel D — first shell call of the
-/// process). See `DOMAIN_INDEX` for why the index is injected rather than
-/// living in the static tool description.
-static INDEX_INJECTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Cross-domain subcommand index (channel D). Delivered ONCE, appended to
-/// the FIRST shell tool result, so the model sees the full CLI surface
-/// right after it has already chosen `shell` — recall without any static
-/// description-length cost.
+/// Cross-domain subcommand index (channel D). Delivered ONCE per session in
+/// the separate `domain_index` field of the first in-process `neomind` shell
+/// tool result (never appended to `stdout`, so `stdout` stays 100% valid JSON).
 ///
 /// History: first shipped inside the static description (2026-08-17); the
 /// 2026-08-18 full eval showed the 2600-char description re-triggered the
 /// ≤3B tool-selection suppression (wrong-tool grabs like file_write), so it
 /// moved here. The 27 "detoured via a wrong-but-succeeding command" failures
 /// it fixes need the map BEFORE detouring, which channel D satisfies for
-/// every case that touches shell at least once.
+/// every session that touches shell at least once.
 const DOMAIN_INDEX: &str = r#"
 
 [neomind CLI domain index — the exact subcommands that exist (one line per domain; `neomind <domain> --help` for flags)]
@@ -108,6 +114,11 @@ This is a common cheat sheet of domain verbs; full flags and aliases come from `
 
 pub struct ShellTool {
     config: ShellConfig,
+    /// Session-scoped flag: set to `true` once `DOMAIN_INDEX` has been emitted
+    /// for this chat session / tool instance. Replaces the former process-global
+    /// `INDEX_INJECTED` static so Session A and Session B in a long-running
+    /// server receive identical domain-index injection.
+    index_injected: std::sync::atomic::AtomicBool,
 }
 
 impl ShellTool {
@@ -134,7 +145,28 @@ impl ShellTool {
     }
 
     pub fn new(config: ShellConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            index_injected: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Create an isolated `ShellTool` for a single chat session with fresh
+    /// per-session injection state.
+    pub(crate) fn for_chat_session(&self, _session_id: &str) -> Self {
+        Self::new(self.config.clone())
+    }
+
+    /// Emit the cross-domain index card once per session.
+    fn take_domain_index_once(&self) -> Option<String> {
+        if !self
+            .index_injected
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            Some(DOMAIN_INDEX.trim().to_string())
+        } else {
+            None
+        }
     }
 
     /// Build a platform-appropriate shell command.
@@ -251,86 +283,67 @@ impl ShellTool {
         })
     }
 
-    /// [context-injection] Domains whose `--help` reference has been injected
-    /// once already (first-use injection). Process-local: the eval spawns a
-    /// fresh server per case (each case gets one injection per domain); a
-    /// long-running server injects each domain on first use only — later
-    /// turns find it in the conversation history.
-    fn domain_injected(domain: &str) -> bool {
-        INJECTED_DOMAINS
-            .get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
-            .lock()
-            .map(|s| s.contains(domain))
-            .unwrap_or(false)
-    }
+    /// Render compact in-process `--help` directly from clap's
+    /// `Args::command()` tree (zero subprocess spawn, no `current_exe()`
+    /// hazard in desktop/Tauri binaries).
+    ///
+    /// Attached ONLY to the separate `usage_hint` JSON field on clap parse
+    /// failure / unknown subcommand — never appended to `stdout` and never
+    /// emitted on successful commands.
+    fn in_process_domain_help(
+        domain: &str,
+        subcommand: Option<&str>,
+        note: &str,
+    ) -> Option<String> {
+        use clap::CommandFactory;
 
-    fn mark_domain_injected(domain: &str) {
-        if let Some(m) = INJECTED_DOMAINS.get() {
-            if let Ok(mut s) = m.lock() {
-                s.insert(domain.to_string());
-            }
-        }
-    }
-
-    /// [context-injection] Fetch a domain's `--help` (compact subcommand
-    /// reference) so the model sees exact syntax. Two channels:
-    /// (B) on a FAILED `neomind <domain> ...` call → "retry with the exact one"
-    /// (C) on the FIRST successful call in a domain → reference for the
-    ///     upcoming steps of a multi-step flow (create→test→enable...).
-    /// Both keep the static tool description short so ≤3B models still
-    /// SELECT `shell`; channel C is deterministic (fires only after the
-    /// model already chose shell), so there is no intent-detection
-    /// overtrigger risk.
-    async fn domain_help(domain: &str, subcommand: Option<&str>, note: &str) -> Option<String> {
         if domain.is_empty() {
             return None;
         }
-        let exe = std::env::current_exe().ok()?;
-        // Prefer the SUBCOMMAND's help — it lists the actual flags/args the
+        let mut root = neomind_cli_ops::dispatch::commands::Args::command();
+        root.build();
+
+        let domain_cmd = root
+            .get_subcommands_mut()
+            .find(|c| c.get_name() == domain || c.get_all_aliases().any(|a| a == domain))?;
+
+        // Prefer the SUBCOMMAND's help — it lists the exact flags/args the
         // model guessed wrong (`device list --all`, `rule create --id=...`,
-        // `device types create ...`). A bare domain help only lists
-        // subcommands, which is why failed calls kept retrying bad flags.
-        let deeper = match subcommand {
-            Some(sub) if !sub.starts_with('-') => {
-                let out = tokio::process::Command::new(&exe)
-                    .arg(domain)
-                    .arg(sub)
-                    .arg("--help")
-                    .output()
-                    .await
-                    .ok()?;
-                let body: String = String::from_utf8_lossy(&out.stdout)
+        // `dashboard update-component --bad-flag`).
+        if let Some(sub) = subcommand.filter(|s| !s.starts_with('-')) {
+            if let Some(sub_cmd) = domain_cmd
+                .get_subcommands_mut()
+                .find(|c| c.get_name() == sub || c.get_all_aliases().any(|a| a == sub))
+            {
+                let body: String = sub_cmd
+                    .render_help()
+                    .to_string()
                     .lines()
                     .take(28)
                     .collect::<Vec<_>>()
                     .join("\n");
-                (body, format!("`neomind {} {}`", domain, sub))
+                if !body.trim().is_empty() {
+                    return Some(format!(
+                        "[Reference — `neomind {} {}` — {}]:\n{}",
+                        domain, sub, note, body
+                    ));
+                }
             }
-            _ => (String::new(), format!("`neomind {}`", domain)),
-        };
-        if !deeper.0.trim().is_empty() {
-            return Some(format!(
-                "\n\n[Reference — {} — {}]:\n{}",
-                deeper.1, note, deeper.0
-            ));
         }
-        // Fallback: bare domain help.
-        let out = tokio::process::Command::new(&exe)
-            .arg(domain)
-            .arg("--help")
-            .output()
-            .await
-            .ok()?;
-        if !out.status.success() {
-            return None;
-        }
-        let body: String = String::from_utf8_lossy(&out.stdout)
+
+        // Fallback: bare domain help (lists available subcommands).
+        let body: String = domain_cmd
+            .render_help()
+            .to_string()
             .lines()
             .take(28)
             .collect::<Vec<_>>()
             .join("\n");
+        if body.trim().is_empty() {
+            return None;
+        }
         Some(format!(
-            "\n\n[Reference — `neomind {}` subcommands — {}]:\n{}",
+            "[Reference — `neomind {}` subcommands — {}]:\n{}",
             domain, note, body
         ))
     }
@@ -388,12 +401,12 @@ impl ShellTool {
         let mut child = match tokio::process::Command::from(cmd).spawn() {
             Ok(c) => c,
             Err(e) => {
-                return CommandOutput {
-                    exit_code: Some(1),
-                    stdout: String::new(),
-                    stderr: format!("Failed to spawn neomind argv: {e}"),
-                    timed_out: false,
-                };
+                return CommandOutput::plain(
+                    Some(1),
+                    String::new(),
+                    format!("Failed to spawn neomind argv: {e}"),
+                    false,
+                );
             }
         };
         let stdout_handle = child.stdout.take();
@@ -436,28 +449,23 @@ impl ShellTool {
                 let raw_stderr = String::from_utf8_lossy(&err).into_owned();
                 let (stdout, stderr) =
                     truncate_output(&raw_stdout, &raw_stderr, self.config.max_output_chars);
-                CommandOutput {
-                    exit_code: status.code(),
-                    stdout,
-                    stderr,
-                    timed_out: false,
-                }
+                CommandOutput::plain(status.code(), stdout, stderr, false)
             }
             Ok(Err(e)) => {
                 guard.child = None;
-                CommandOutput {
-                    exit_code: Some(1),
-                    stdout: String::new(),
-                    stderr: format!("argv spawn I/O error: {e}"),
-                    timed_out: false,
-                }
+                CommandOutput::plain(
+                    Some(1),
+                    String::new(),
+                    format!("argv spawn I/O error: {e}"),
+                    false,
+                )
             }
-            Err(_) => CommandOutput {
-                exit_code: None,
-                stdout: String::new(),
-                stderr: format!("Command timed out after {}s", timeout.as_secs()),
-                timed_out: true,
-            },
+            Err(_) => CommandOutput::plain(
+                None,
+                String::new(),
+                format!("Command timed out after {}s", timeout.as_secs()),
+                true,
+            ),
         }
     }
 
@@ -522,6 +530,8 @@ impl ShellTool {
                     .all(|p| p.starts_with("neomind ") || *p == "neomind");
             if all_neomind {
                 let mut outputs: Vec<String> = Vec::new();
+                let mut domain_index: Option<String> = None;
+                let mut usage_hint: Option<String> = None;
                 for part in parts {
                     // Boxed: the recursive async call needs indirection (the
                     // chain length is runtime-variable → unbounded future).
@@ -529,13 +539,21 @@ impl ShellTool {
                         Some(out) => {
                             let code = out.exit_code.unwrap_or(1);
                             outputs.push(out.stdout);
+                            if domain_index.is_none() {
+                                domain_index = out.domain_index;
+                            }
+                            if out.usage_hint.is_some() {
+                                usage_hint = out.usage_hint;
+                            }
                             // `&&` stops on failure; `;` always continues.
                             if sep == "&&" && code != 0 {
                                 return Some(CommandOutput {
                                     exit_code: Some(code),
                                     stdout: outputs.join("\n--- && ---\n"),
-                                    stderr: String::new(),
+                                    stderr: out.stderr,
                                     timed_out: false,
+                                    domain_index,
+                                    usage_hint,
                                 });
                             }
                         }
@@ -547,6 +565,8 @@ impl ShellTool {
                     stdout: outputs.join(format!("\n--- {} ---\n", sep.trim()).as_str()),
                     stderr: String::new(),
                     timed_out: false,
+                    domain_index,
+                    usage_hint,
                 });
             }
             // Mixed neomind/non-neomind with && or ; → let /bin/sh handle it.
@@ -591,12 +611,7 @@ impl ShellTool {
         let argv = match inject_structured_json_argv(argv) {
             Ok(a) => a,
             Err(msg) => {
-                return Some(CommandOutput {
-                    exit_code: Some(1),
-                    stdout: String::new(),
-                    stderr: msg,
-                    timed_out: false,
-                });
+                return Some(CommandOutput::plain(Some(1), String::new(), msg, false));
             }
         };
 
@@ -606,12 +621,7 @@ impl ShellTool {
         let argv = match bind_extension_invoke_prepared_token(argv) {
             Ok(a) => a,
             Err(msg) => {
-                return Some(CommandOutput {
-                    exit_code: Some(1),
-                    stdout: String::new(),
-                    stderr: msg,
-                    timed_out: false,
-                });
+                return Some(CommandOutput::plain(Some(1), String::new(), msg, false));
             }
         };
 
@@ -642,55 +652,24 @@ impl ShellTool {
         match tokio::time::timeout(timeout, neomind_cli_ops::dispatch::dispatch(&argv)).await {
             Ok(Ok(resp)) => {
                 let exit_code = if resp.success { 0 } else { 1 };
-                let mut stdout = serde_json::to_string_pretty(&resp).unwrap_or_else(|e| {
+                let stdout = serde_json::to_string_pretty(&resp).unwrap_or_else(|e| {
                     format!(
                         "{{\"success\":false,\"error\":\"serialize failed: {}\"}}",
                         e
                     )
                 });
-                // [context-injection] (D) FIRST shell call of the process →
-                // cross-domain index card (see DOMAIN_INDEX for why this
-                // lives here and not in the static description). (B)
-                // failure → --help to correct on retry; (C) FIRST
-                // successful call in a domain → --help as reference for the
-                // upcoming steps of multi-step flows.
-                if !INDEX_INJECTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                    stdout.push_str(DOMAIN_INDEX);
-                }
-                if let Some(domain) = argv.get(1) {
-                    // First non-flag token after the domain = the subcommand;
-                    // its --help lists the actual flags the model may have
-                    // guessed wrong (`--all`, `--format=json`, ...).
-                    let subcommand = argv
-                        .get(2)
-                        .map(String::as_str)
-                        .filter(|s| !s.starts_with('-'));
-                    let help: Option<String> = if !resp.success {
-                        Self::domain_help(domain.as_str(), subcommand, "retry with the exact one")
-                            .await
-                    } else if !Self::domain_injected(domain.as_str()) {
-                        let h = Self::domain_help(
-                            domain.as_str(),
-                            subcommand,
-                            "use the exact one for the next steps",
-                        )
-                        .await;
-                        if h.is_some() {
-                            Self::mark_domain_injected(domain.as_str());
-                        }
-                        h
-                    } else {
-                        None
-                    };
-                    if let Some(help) = help {
-                        stdout.push_str(&help);
-                    }
-                }
+                // Keep `stdout` 100% valid JSON: deliver the session-scoped
+                // cross-domain index card in its own `domain_index` field once
+                // per session, and never attach `--help` on successful runs or
+                // runtime business errors.
+                let domain_index = self.take_domain_index_once();
                 Some(CommandOutput {
                     exit_code: Some(exit_code),
                     stdout,
                     stderr: String::new(),
                     timed_out: false,
+                    domain_index,
+                    usage_hint: None,
                 })
             }
             Ok(Err(neomind_cli_ops::dispatch::DispatchError::NotInProcess)) => {
@@ -714,39 +693,59 @@ impl ShellTool {
                         "\nHint: an argument containing SPACES (e.g. a path under \"Application Support\") must be wrapped in double quotes: neomind widget install \"/Users/.../Application Support/.../device-info-widget\".",
                     );
                 }
-                // [context-injection] bad subcommand/args → append domain --help.
-                if let Some(domain) = argv.get(1) {
+                let domain_index = self.take_domain_index_once();
+                // Clap parse failure / unknown subcommand → attach in-process
+                // clap `--help` in its own `usage_hint` JSON field (never
+                // concatenated onto `stdout` or `stderr`). Preserve exit_code 2
+                // so Phase 1's pre-submission rejection classifier matches.
+                let usage_hint = argv.get(1).and_then(|domain| {
                     let subcommand = argv
                         .get(2)
                         .map(String::as_str)
                         .filter(|s| !s.starts_with('-'));
-                    if let Some(help) =
-                        Self::domain_help(domain.as_str(), subcommand, "retry with the exact one")
-                            .await
-                    {
-                        stderr.push_str(&help);
-                    }
-                }
+                    Self::in_process_domain_help(
+                        domain.as_str(),
+                        subcommand,
+                        "retry with the exact one",
+                    )
+                    .or_else(|| {
+                        if domain_index.is_none() {
+                            Some(format!(
+                                "Unknown domain `{}`. Valid domains: device, agent, rule, dashboard, connector, extension, transform, widget, message, push, llm, settings, system, api-key.",
+                                domain
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                });
                 Some(CommandOutput {
                     exit_code: Some(2),
                     stdout: String::new(),
                     stderr,
                     timed_out: false,
+                    domain_index,
+                    usage_hint,
                 })
             }
-            Ok(Err(neomind_cli_ops::dispatch::DispatchError::Api(msg))) => Some(CommandOutput {
-                exit_code: Some(1),
-                stdout: String::new(),
-                stderr: classify_extension_transport_error(&msg),
-                timed_out: false,
-            }),
+            Ok(Err(neomind_cli_ops::dispatch::DispatchError::Api(msg))) => {
+                let domain_index = self.take_domain_index_once();
+                Some(CommandOutput {
+                    exit_code: Some(1),
+                    stdout: String::new(),
+                    stderr: classify_extension_transport_error(&msg),
+                    timed_out: false,
+                    domain_index,
+                    usage_hint: None,
+                })
+            }
             // Timeout (outer Err = elapsed) — mirror the subprocess timeout behavior.
-            Err(_) => Some(CommandOutput {
-                exit_code: None,
-                stdout: String::new(),
-                stderr: format!("Command timed out after {}s", timeout.as_secs()),
-                timed_out: true,
-            }),
+            Err(_) => Some(CommandOutput::plain(
+                None,
+                String::new(),
+                format!("Command timed out after {}s", timeout.as_secs()),
+                true,
+            )),
         }
     }
 
@@ -766,17 +765,17 @@ impl ShellTool {
         // echo/printf is never legitimate agent behavior: refuse it and
         // name the cure.
         if let Some(real_cmd) = fabricated_tool_output(command) {
-            return Ok(CommandOutput {
-                exit_code: Some(126),
-                stdout: format!(
+            return Ok(CommandOutput::plain(
+                Some(126),
+                format!(
                     "FABRICATED TOOL OUTPUT REFUSED: this command prints a fake tool-result \
                      JSON (exit_code/command/stdout keys) instead of executing the real \
                      action — that reports success for something that never ran. Execute the \
                      real command instead: `{real_cmd}`"
                 ),
-                stderr: String::new(),
-                timed_out: false,
-            });
+                String::new(),
+                false,
+            ));
         }
 
         // Fast path: route `neomind` data commands through the in-process
@@ -908,12 +907,7 @@ impl ShellTool {
                 } else {
                     stdout
                 };
-                Ok(CommandOutput {
-                    exit_code: status.code(),
-                    stdout,
-                    stderr,
-                    timed_out: false,
-                })
+                Ok(CommandOutput::plain(status.code(), stdout, stderr, false))
             }
             Ok(Err(e)) => {
                 // Pipe/wait error — let guard's Drop handle cleanup so we
@@ -933,12 +927,12 @@ impl ShellTool {
                     let _ = child.wait().await;
                 }
                 guard.child = None;
-                Ok(CommandOutput {
-                    exit_code: None,
-                    stdout: String::new(),
-                    stderr: format!("Command timed out after {}s", timeout.as_secs()),
-                    timed_out: true,
-                })
+                Ok(CommandOutput::plain(
+                    None,
+                    String::new(),
+                    format!("Command timed out after {}s", timeout.as_secs()),
+                    true,
+                ))
             }
         }
     }
@@ -2156,6 +2150,19 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
         ToolCategory::System
     }
 
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn clone_for_chat_session(&self, session_id: &str) -> Option<super::tool::DynTool> {
+        Some(std::sync::Arc::new(self.for_chat_session(session_id)))
+    }
+
+    fn reset_session_state(&self) {
+        self.index_injected
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
     fn execution_timeout(&self, args: &Value) -> Result<Duration> {
         Ok(self.command_timeout(args)? + Duration::from_secs(5))
     }
@@ -2228,6 +2235,12 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
         }
         if let Some(dir) = working_dir {
             result["working_dir"] = serde_json::Value::String(dir.to_string());
+        }
+        if let Some(domain_index) = output.domain_index {
+            result["domain_index"] = serde_json::Value::String(domain_index);
+        }
+        if let Some(usage_hint) = output.usage_hint {
+            result["usage_hint"] = serde_json::Value::String(usage_hint);
         }
 
         // Enrich error responses with recovery hints for neomind CLI commands
@@ -2417,12 +2430,7 @@ mod tests {
 
     #[test]
     fn truncation_applied_head_then_tail_in_order() {
-        let out = CommandOutput {
-            exit_code: Some(0),
-            stdout: "1\n2\n3\n4\n5".into(),
-            stderr: String::new(),
-            timed_out: false,
-        };
+        let out = CommandOutput::plain(Some(0), "1\n2\n3\n4\n5".into(), String::new(), false);
         let out = apply_truncation_pipeline(
             out,
             false,
@@ -4001,5 +4009,390 @@ mod fabrication_guard_tests {
         );
         assert_eq!(fabricated_tool_output("neomind extension list"), None);
         assert_eq!(fabricated_tool_output("printf '%s' hi"), None);
+    }
+}
+
+#[cfg(test)]
+mod p0_2_envelope_help_session_tests {
+    use super::*;
+    use crate::agent::task_continuity::outcome_is_pre_submission_rejection;
+    use crate::toolkit::registry::ToolRegistryBuilder;
+    use crate::toolkit::tool::{effective_success, Tool};
+    use serde_json::json;
+
+    fn enabled_shell_config() -> ShellConfig {
+        ShellConfig {
+            enabled: true,
+            timeout_secs: 10,
+            max_output_chars: 10000,
+        }
+    }
+
+    #[test]
+    fn in_process_domain_help_renders_subcommand_and_domain_from_clap() {
+        let sub = ShellTool::in_process_domain_help(
+            "dashboard",
+            Some("update-component"),
+            "retry with the exact one",
+        )
+        .expect("dashboard update-component help must render in-process");
+        assert!(
+            sub.contains("update-component")
+                && sub.contains("--component-id")
+                && sub.contains("--set"),
+            "subcommand help must list exact flags: {sub}"
+        );
+        assert!(sub.lines().count() <= 30, "help must stay bounded: {sub}");
+
+        // Unknown subcommand falls back to bare domain subcommand listing.
+        let dom = ShellTool::in_process_domain_help(
+            "dashboard",
+            Some("nonexistent-sub"),
+            "retry with the exact one",
+        )
+        .expect("unknown subcommand should fall back to domain help");
+        assert!(
+            dom.contains("add-components") && dom.contains("update-component"),
+            "domain help must list real subcommands: {dom}"
+        );
+
+        // Unknown top-level domain returns None (no subprocess spawn).
+        assert!(ShellTool::in_process_domain_help("no-such-domain", None, "note").is_none());
+    }
+
+    #[tokio::test]
+    async fn parse_error_emits_usage_hint_in_separate_field_with_exit_code_2() {
+        let tool = ShellTool::new(enabled_shell_config());
+        let out = tool
+            .execute(json!({
+                "command": "neomind dashboard update-component dash-1 --bogus-flag 1"
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            out.data["exit_code"], 2,
+            "clap parse error must keep exit_code=2"
+        );
+        assert_eq!(
+            out.data["stdout"], "",
+            "stdout must stay empty on parse error"
+        );
+        let stderr = out.data["stderr"].as_str().unwrap_or("");
+        assert!(
+            !stderr.contains("[Reference —"),
+            "help must NOT be concatenated onto stderr: {stderr}"
+        );
+        let hint = out.data["usage_hint"]
+            .as_str()
+            .expect("parse error must attach in-process usage_hint");
+        assert!(
+            hint.contains("--component-id") && hint.contains("--set"),
+            "usage_hint must come from in-process clap help: {hint}"
+        );
+        assert!(
+            out.data["domain_index"]
+                .as_str()
+                .is_some_and(|s| s.contains("[neomind CLI domain index")),
+            "first call in session should emit domain_index in its own field"
+        );
+        assert!(
+            outcome_is_pre_submission_rejection("shell", &Ok(out)),
+            "exit_code=2 parse failure must still classify as pre-submission rejection (Phase 1)"
+        );
+    }
+
+    /// Spawn a tiny in-process HTTP server returning realistic `ApiResponse<T>`
+    /// envelopes (including HTTP 200 embedded `"success": false` fake-successes).
+    async fn spawn_mock_api_server() -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let n = socket.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let first_line = req.lines().next().unwrap_or("");
+                    let path = first_line.split_whitespace().nth(1).unwrap_or("");
+
+                    let body = match path {
+                        "/api/dashboards/dash-1" => json!({
+                            "success": true,
+                            "data": {
+                                "id": "dash-1",
+                                "name": "Ops",
+                                "components": [
+                                    {"id": "c1", "type": "metric", "position": {"x": 0, "y": 0, "w": 4, "h": 2}}
+                                ]
+                            },
+                            "meta": {"timestamp": 1}
+                        }),
+                        "/api/rules/rule-1" => json!({
+                            "success": true,
+                            "data": {
+                                "rule": {"id": "rule-1", "name": "HighTemp", "enabled": true},
+                                "history": []
+                            },
+                            "meta": {"timestamp": 1}
+                        }),
+                        "/api/devices/dev-1/current" => json!({
+                            "success": true,
+                            "data": {
+                                "device": {"id": "dev-1", "name": "Sensor"},
+                                "metrics": {"temp": {"value": 23.5, "unit": "C", "timestamp": 1000}},
+                                "commands": []
+                            },
+                            "meta": {"timestamp": 1}
+                        }),
+                        "/api/agents/agent-1" => json!({
+                            "success": true,
+                            "data": {"id": "agent-1", "name": "Monitor", "status": "active"},
+                            "meta": {"timestamp": 1}
+                        }),
+                        "/api/brokers/b-1/test" => json!({
+                            "success": true,
+                            "data": {
+                                "success": false,
+                                "message": "Invalid broker configuration: empty host"
+                            },
+                            "meta": {"timestamp": 1}
+                        }),
+                        "/api/extensions/market/install" => json!({
+                            "success": true,
+                            "data": {
+                                "success": false,
+                                "extension_id": "bogus",
+                                "downloaded": false,
+                                "installed": false,
+                                "error": "Extension not found: 404 Not Found"
+                            },
+                            "meta": {"timestamp": 1}
+                        }),
+                        _ => json!({
+                            "success": true,
+                            "data": {"path": path},
+                            "meta": {"timestamp": 1}
+                        }),
+                    }
+                    .to_string();
+
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = socket.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        (format!("http://{addr}/api"), handle)
+    }
+
+    struct ApiBaseEnvGuard(Option<std::ffi::OsString>);
+    impl ApiBaseEnvGuard {
+        fn set(url: &str) -> Self {
+            let prev = std::env::var_os("NEOMIND_API_BASE");
+            std::env::set_var("NEOMIND_API_BASE", url);
+            Self(prev)
+        }
+    }
+    impl Drop for ApiBaseEnvGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(v) => std::env::set_var("NEOMIND_API_BASE", v),
+                None => std::env::remove_var("NEOMIND_API_BASE"),
+            }
+        }
+    }
+
+    #[serial_test::serial]
+    #[tokio::test]
+    async fn l2_single_layer_json_stdout_no_success_help_and_http_200_fake_success_blocked() {
+        let (base_url, server) = spawn_mock_api_server().await;
+        let _env = ApiBaseEnvGuard::set(&base_url);
+
+        let tool = ShellTool::new(enabled_shell_config());
+
+        // 1. First successful command (`dashboard get`):
+        //    - stdout is 100% valid JSON (no plain-text `--help` or `DOMAIN_INDEX`)
+        //    - single-layer CliResponse envelope (no nested `data.success` or `data.data`)
+        //    - `domain_index` delivered once in its own field
+        //    - `usage_hint` absent on success
+        let dash = tool
+            .execute(json!({"command": "neomind dashboard get dash-1"}))
+            .await
+            .unwrap();
+        assert_eq!(dash.data["exit_code"], 0);
+        assert!(effective_success("shell", &dash));
+        assert!(
+            dash.data.get("usage_hint").is_none(),
+            "successful dashboard get must NOT attach 28-line --help: {}",
+            dash.data
+        );
+        assert!(
+            dash.data["domain_index"]
+                .as_str()
+                .is_some_and(|s| s.contains("[neomind CLI domain index")),
+            "first session call must emit domain_index in separate field"
+        );
+        let stdout = dash.data["stdout"].as_str().unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(stdout).expect("stdout must be 100% valid JSON");
+        assert_eq!(parsed["success"], true);
+        assert_eq!(parsed["data"]["id"], "dash-1");
+        assert!(
+            parsed["data"].get("success").is_none() && parsed["data"].get("data").is_none(),
+            "dashboard get must have single-layer envelope: {parsed}"
+        );
+
+        // 2. Subsequent successful calls (`rule get`, `device get`, `agent get`):
+        //    all pure single-layer JSON, no repeated `domain_index`, no `usage_hint`.
+        for (cmd, check_key) in [
+            ("neomind rule get rule-1", "rule"),
+            ("neomind device get dev-1", "device"),
+            ("neomind agent get agent-1", "id"),
+        ] {
+            let out = tool.execute(json!({"command": cmd})).await.unwrap();
+            assert_eq!(out.data["exit_code"], 0, "cmd `{cmd}` failed: {}", out.data);
+            assert!(
+                out.data.get("domain_index").is_none(),
+                "domain_index must only fire once per session"
+            );
+            assert!(
+                out.data.get("usage_hint").is_none(),
+                "usage_hint must not fire on success"
+            );
+            let parsed: serde_json::Value =
+                serde_json::from_str(out.data["stdout"].as_str().unwrap())
+                    .expect("stdout must remain valid JSON");
+            assert_eq!(parsed["success"], true);
+            assert!(
+                parsed["data"].get(check_key).is_some(),
+                "expected `{check_key}` directly in single-layer data for `{cmd}`: {parsed}"
+            );
+            assert!(
+                parsed["data"].get("success").is_none(),
+                "nested `data.success` must not exist for `{cmd}`: {parsed}"
+            );
+        }
+
+        // 3. HTTP 200 embedded `"success": false` fake-successes (`mqtt/brokers.rs`,
+        //    `extensions/marketplace.rs`): must exit non-zero, effective_success=false,
+        //    and NOT be misclassified as pre-submission `Rejected`.
+        for (cmd, expected_err) in [
+            (
+                "neomind connector test b-1",
+                "Invalid broker configuration: empty host",
+            ),
+            (
+                "neomind extension market-install bogus",
+                "Extension not found: 404 Not Found",
+            ),
+        ] {
+            let out = tool.execute(json!({"command": cmd})).await.unwrap();
+            assert_eq!(
+                out.data["exit_code"], 1,
+                "HTTP 200 embedded success:false must return non-zero exit_code for `{cmd}`: {}",
+                out.data
+            );
+            assert!(
+                !effective_success("shell", &out),
+                "effective_success must be false for `{cmd}`"
+            );
+            assert!(
+                !outcome_is_pre_submission_rejection("shell", &Ok(out.clone())),
+                "server-side HTTP 200 business failure must NOT be misclassified as Rejected: {}",
+                out.data
+            );
+            let stderr = out.data["stderr"].as_str().unwrap_or("");
+            assert!(
+                stderr.contains(expected_err),
+                "stderr must carry real business error `{expected_err}`, got: {stderr}"
+            );
+        }
+
+        server.abort();
+    }
+
+    #[serial_test::serial]
+    #[tokio::test]
+    async fn l2_multi_session_domain_index_isolation_in_same_process() {
+        let (base_url, server) = spawn_mock_api_server().await;
+        let _env = ApiBaseEnvGuard::set(&base_url);
+
+        // One shared registry (mirrors long-running server / SessionManager).
+        let shared_registry = ToolRegistryBuilder::new()
+            .with_shell_tool(Some(enabled_shell_config()))
+            .build();
+
+        let session_a = shared_registry.for_chat_session("session-a");
+        let session_b = shared_registry.for_chat_session("session-b");
+
+        let shell_a = session_a.get("shell").expect("shell in session A");
+        let shell_b = session_b.get("shell").expect("shell in session B");
+
+        // Session A: call 1 gets domain_index, call 2 does not.
+        let a1 = shell_a
+            .execute(json!({"command": "neomind dashboard get dash-1"}))
+            .await
+            .unwrap();
+        assert!(
+            a1.data["domain_index"].is_string(),
+            "Session A first call must receive domain_index"
+        );
+        let a2 = shell_a
+            .execute(json!({"command": "neomind rule get rule-1"}))
+            .await
+            .unwrap();
+        assert!(
+            a2.data.get("domain_index").is_none(),
+            "Session A second call must not repeat domain_index"
+        );
+
+        // Session B (same process, started after Session A): call 1 MUST STILL
+        // receive domain_index — proving no process-global static leakage.
+        let b1 = shell_b
+            .execute(json!({"command": "neomind dashboard get dash-1"}))
+            .await
+            .unwrap();
+        assert!(
+            b1.data["domain_index"].is_string(),
+            "Session B first call must receive domain_index independently of Session A"
+        );
+        let b2 = shell_b
+            .execute(json!({"command": "neomind rule get rule-1"}))
+            .await
+            .unwrap();
+        assert!(
+            b2.data.get("domain_index").is_none(),
+            "Session B second call must not repeat domain_index"
+        );
+
+        // Clearing history resets Session A's injection state without affecting Session B.
+        session_a.reset_session_state();
+        let a3 = shell_a
+            .execute(json!({"command": "neomind agent get agent-1"}))
+            .await
+            .unwrap();
+        assert!(
+            a3.data["domain_index"].is_string(),
+            "Session A after reset_session_state must receive domain_index again"
+        );
+        let b3 = shell_b
+            .execute(json!({"command": "neomind agent get agent-1"}))
+            .await
+            .unwrap();
+        assert!(
+            b3.data.get("domain_index").is_none(),
+            "Resetting Session A must not affect Session B"
+        );
+
+        server.abort();
     }
 }

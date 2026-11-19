@@ -146,7 +146,7 @@ impl ApiClient {
                     }
                 );
             }
-            return Ok(body);
+            return unwrap_api_envelope(body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
@@ -182,7 +182,7 @@ impl ApiClient {
                     }
                 );
             }
-            return Ok(resp_body);
+            return unwrap_api_envelope(resp_body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
@@ -231,7 +231,7 @@ impl ApiClient {
                     }
                 );
             }
-            return Ok(resp_body);
+            return unwrap_api_envelope(resp_body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
@@ -267,7 +267,7 @@ impl ApiClient {
                     }
                 );
             }
-            return Ok(resp_body);
+            return unwrap_api_envelope(resp_body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
@@ -303,7 +303,7 @@ impl ApiClient {
                     }
                 );
             }
-            return Ok(resp_body);
+            return unwrap_api_envelope(resp_body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
@@ -339,7 +339,7 @@ impl ApiClient {
                     }
                 );
             }
-            return Ok(resp_body);
+            return unwrap_api_envelope(resp_body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
@@ -375,7 +375,7 @@ impl ApiClient {
                     }
                 );
             }
-            return Ok(resp_body);
+            return unwrap_api_envelope(resp_body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
@@ -415,7 +415,7 @@ impl ApiClient {
                     }
                 );
             }
-            return Ok(resp_body);
+            return unwrap_api_envelope(resp_body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
@@ -475,7 +475,7 @@ impl ApiClient {
                     }
                 );
             }
-            return Ok(resp_body);
+            return unwrap_api_envelope(resp_body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
@@ -532,23 +532,72 @@ impl ApiClient {
                     }
                 );
             }
-            return Ok(resp_body);
+            return unwrap_api_envelope(resp_body);
         }
         anyhow::bail!("API request failed after retry — is the server running? Try: neomind health")
     }
 }
 
-/// Extract the inner `data` payload from a standard API response envelope.
+/// True when a JSON object matches the standard `ApiResponse<T>` envelope
+/// (`{"success": true, "data": <payload>, "error"?: ..., "meta"?: ...}`).
 ///
-/// All NeoMind API endpoints return `{"success": bool, "data": <payload>}`.
-/// Callers that need to read fields from the payload (e.g. a newly-created
-/// entity's `id`) MUST go through this helper — indexing the envelope
-/// directly returns Null, silently masking the real value.
+/// Rejects domain objects that merely happen to carry a `data` key (such as
+/// telemetry `{"device_id": ..., "data": {...}}` or data-source listings
+/// `{"data": [...], "total": N}`) so unwrapping never drops sibling fields.
+fn is_api_response_envelope(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
+    obj.get("success").and_then(|v| v.as_bool()) == Some(true)
+        && obj.contains_key("data")
+        && obj
+            .keys()
+            .all(|k| matches!(k.as_str(), "success" | "data" | "error" | "meta"))
+}
+
+/// Unwrap a standard NeoMind `ApiResponse<T>` envelope at the `ApiClient`
+/// boundary and turn HTTP 200 business failures (`"success": false`) into `Err`.
 ///
-/// Falls back to the original value if the envelope shape is unexpected
-/// (e.g. legacy endpoints that return the payload without wrapping).
+/// - Peels outer `ApiResponse` wrappers (including accidental double wraps)
+///   so `cli-ops` wraps payloads in a single `CliResponse` layer instead of
+///   producing `data.data` nesting.
+/// - Intercepts `"success": false` on either the outer envelope or the
+///   unwrapped top-level payload (covering HTTP 200 fake-success endpoints in
+///   `extensions/marketplace.rs`, `mqtt/{brokers,subscriptions}.rs`,
+///   `automations.rs`, `instances.rs`, etc.).
+/// - Uses an `"API business error: ..."` prefix so downstream pre-submission
+///   classifiers (`outcome_is_pre_submission_rejection`) do not misclassify
+///   server-side business failures as client-side `Rejected` JSON errors.
+pub fn unwrap_api_envelope(body: serde_json::Value) -> Result<serde_json::Value> {
+    let mut current = body;
+    for _ in 0..4 {
+        if current.get("success").and_then(|v| v.as_bool()) == Some(false) {
+            anyhow::bail!("API business error: {}", extract_error_message(&current));
+        }
+        let is_envelope = current.as_object().is_some_and(is_api_response_envelope);
+        if !is_envelope {
+            break;
+        }
+        current = current
+            .as_object_mut()
+            .and_then(|obj| obj.remove("data"))
+            .unwrap_or(serde_json::Value::Null);
+    }
+    if current.get("success").and_then(|v| v.as_bool()) == Some(false) {
+        anyhow::bail!("API business error: {}", extract_error_message(&current));
+    }
+    Ok(current)
+}
+
+/// Extract the inner `data` payload from a standard `ApiResponse` envelope.
+///
+/// `ApiClient` methods already unwrap `ApiResponse` via [`unwrap_api_envelope`].
+/// This helper remains safe if called on an already-unwrapped payload: it only
+/// peels objects that actually match the `ApiResponse` envelope shape, so
+/// domain objects with their own `data` field are left untouched.
 pub fn extract_inner_data(resp: serde_json::Value) -> serde_json::Value {
-    resp.get("data").cloned().unwrap_or(resp)
+    if resp.as_object().is_some_and(is_api_response_envelope) {
+        resp.get("data").cloned().unwrap_or(resp)
+    } else {
+        resp
+    }
 }
 
 /// Extract error message from API response body — message PLUS the API's
@@ -560,11 +609,24 @@ pub fn extract_inner_data(resp: serde_json::Value) -> serde_json::Value {
 /// required fields (live: four attempts at the component schema, each one
 /// field further). Every CLI-surfaced error now keeps the hint.
 fn extract_error_message(body: &serde_json::Value) -> String {
+    let non_empty = |s: &str| !s.trim().is_empty();
     let message = body
         .get("error")
-        .and_then(|e| e.get("message").and_then(|v| v.as_str()))
-        .or_else(|| body.get("message").and_then(|v| v.as_str()))
-        .or_else(|| body.get("error").and_then(|v| v.as_str()))
+        .and_then(|e| {
+            e.get("message")
+                .and_then(|v| v.as_str())
+                .filter(|s| non_empty(s))
+        })
+        .or_else(|| {
+            body.get("message")
+                .and_then(|v| v.as_str())
+                .filter(|s| non_empty(s))
+        })
+        .or_else(|| {
+            body.get("error")
+                .and_then(|v| v.as_str())
+                .filter(|s| non_empty(s))
+        })
         .unwrap_or("Unknown error")
         .to_string();
     let hint = body
@@ -787,5 +849,190 @@ mod tests {
             hint.contains("Run: neomind login"),
             "bare 401 must suggest login, got: {hint}"
         );
+    }
+
+    #[test]
+    fn unwrap_api_envelope_strips_single_and_double_wrappers() {
+        let single = serde_json::json!({
+            "success": true,
+            "data": { "id": "dash-1", "name": "Main" },
+            "meta": { "timestamp": 1700000000 }
+        });
+        let unwrapped = unwrap_api_envelope(single).unwrap();
+        assert_eq!(unwrapped["id"], "dash-1");
+        assert!(unwrapped.get("success").is_none());
+        assert!(unwrapped.get("data").is_none());
+        assert!(unwrapped.get("meta").is_none());
+
+        let double = serde_json::json!({
+            "success": true,
+            "data": {
+                "success": true,
+                "data": { "id": "rule-1" }
+            },
+            "meta": {}
+        });
+        let unwrapped = unwrap_api_envelope(double).unwrap();
+        assert_eq!(unwrapped["id"], "rule-1");
+        assert!(unwrapped.get("success").is_none());
+        assert!(unwrapped.get("data").is_none());
+    }
+
+    #[test]
+    fn unwrap_api_envelope_preserves_domain_payloads_with_data_key() {
+        let telemetry = serde_json::json!({
+            "success": true,
+            "data": {
+                "device_id": "dev-1",
+                "data": { "temperature": [{ "timestamp": 1000, "value": 24.5 }] },
+                "pagination": { "total": 1 }
+            },
+            "meta": {}
+        });
+        let unwrapped = unwrap_api_envelope(telemetry).unwrap();
+        assert_eq!(unwrapped["device_id"], "dev-1");
+        assert!(
+            unwrapped["data"]["temperature"].is_array(),
+            "telemetry inner `data` map must stay intact: {unwrapped}"
+        );
+        assert_eq!(unwrapped["pagination"]["total"], 1);
+
+        let sources = serde_json::json!({
+            "success": true,
+            "data": { "data": [{ "id": "device:d1:temp" }], "total": 1 }
+        });
+        let unwrapped = unwrap_api_envelope(sources).unwrap();
+        assert_eq!(unwrapped["total"], 1);
+        assert!(unwrapped["data"].is_array());
+    }
+
+    #[test]
+    fn unwrap_api_envelope_intercepts_outer_and_embedded_success_false() {
+        let cases = [
+            // Outer ApiResponse error
+            (
+                serde_json::json!({
+                    "success": false,
+                    "error": { "code": "INTERNAL", "message": "storage write failed", "hint": "check disk" }
+                }),
+                "storage write failed",
+            ),
+            // extensions/marketplace.rs HTTP 200 fake success
+            (
+                serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "success": false,
+                        "extension_id": "bogus-ext",
+                        "error": "Extension not found: 404 Not Found"
+                    }
+                }),
+                "Extension not found: 404 Not Found",
+            ),
+            // mqtt/brokers.rs HTTP 200 fake success
+            (
+                serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "success": false,
+                        "message": "Invalid broker configuration: empty host"
+                    }
+                }),
+                "Invalid broker configuration: empty host",
+            ),
+            // mqtt/subscriptions.rs HTTP 200 fake success
+            (
+                serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "success": false,
+                        "message": "No MQTT adapter available"
+                    }
+                }),
+                "No MQTT adapter available",
+            ),
+            // automations.rs test-code HTTP 200 fake success
+            (
+                serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "success": false,
+                        "error": "ReferenceError: x is not defined"
+                    }
+                }),
+                "ReferenceError: x is not defined",
+            ),
+            // instances.rs HTTP 200 fake success
+            (
+                serde_json::json!({
+                    "success": true,
+                    "data": {
+                        "success": false,
+                        "status": "offline",
+                        "error": "HTTP 502"
+                    }
+                }),
+                "HTTP 502",
+            ),
+        ];
+
+        for (payload, expected_substr) in cases {
+            let err = unwrap_api_envelope(payload)
+                .expect_err("embedded or outer success:false must return Err")
+                .to_string();
+            assert!(
+                err.contains(expected_substr),
+                "error should carry real business reason `{expected_substr}`, got: {err}"
+            );
+            let lower = err.to_lowercase();
+            assert!(
+                !lower.contains("invalid json") && !lower.contains("api error (400"),
+                "business error must not be labeled as client JSON/400 error: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn api_client_http_200_unwraps_payload_and_rejects_embedded_failure() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let responses = [
+                r#"{"success":true,"data":{"id":"dash-1","name":"Ops"},"meta":{"timestamp":1}}"#,
+                r#"{"success":true,"data":{"success":false,"error":"Extension not found: 404 Not Found"}}"#,
+            ];
+            for body in responses {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buf = [0u8; 2048];
+                let _ = socket.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                socket.write_all(resp.as_bytes()).await.unwrap();
+            }
+        });
+
+        let client = ApiClient::with_base_url(&format!("http://{addr}/api"));
+
+        let ok_val = client.get("/dashboards/dash-1").await.unwrap();
+        assert_eq!(ok_val["id"], "dash-1");
+        assert!(ok_val.get("success").is_none());
+        assert!(ok_val.get("data").is_none());
+
+        let err = client
+            .post(
+                "/extensions/market/install",
+                &serde_json::json!({"id": "bogus"}),
+            )
+            .await
+            .expect_err("HTTP 200 embedded success:false must fail")
+            .to_string();
+        assert!(err.contains("Extension not found"), "got: {err}");
+
+        server.await.unwrap();
     }
 }

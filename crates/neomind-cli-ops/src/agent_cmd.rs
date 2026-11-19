@@ -296,8 +296,8 @@ pub async fn create_agent(
 
     let data = client.post("/agents", &body).await?;
     let agent_id = data
-        .get("data")
-        .and_then(|d| d.get("id"))
+        .get("id")
+        .or_else(|| data.get("data").and_then(|d| d.get("id")))
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
