@@ -161,3 +161,53 @@ async fn creating_a_channel_is_admin_only() {
     .await;
     assert_eq!(denied, 403, "a non-admin must not create a channel");
 }
+
+/// P1-5: unknown channel type returns 422 with a hint listing valid types.
+#[tokio::test]
+async fn create_channel_rejects_unknown_type_with_422_and_valid_types_hint() {
+    let state = create_test_server_state().await;
+    let err = create_channel_handler(
+        State(state),
+        Extension(session(UserRole::Admin)),
+        Json(CreateChannelRequest {
+            name: "bad-type".to_string(),
+            channel_type: "carrier_pigeon".to_string(),
+            config: json!({}),
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.status.as_u16(), 422);
+    assert!(err.message.contains("carrier_pigeon"), "{err:?}");
+    let hint = err.hint.expect("hint must list valid channel types");
+    assert!(hint.contains("Valid channel types:"), "{hint}");
+    assert!(hint.contains("webhook"), "{hint}");
+}
+
+/// P1-5: missing required config fields return 422 with a hint naming the
+/// required fields and schema lookup command (replaces CLI preflight GETs).
+#[tokio::test]
+async fn create_channel_rejects_missing_required_fields_with_422_and_hint() {
+    let state = create_test_server_state().await;
+    let err = create_channel_handler(
+        State(state),
+        Extension(session(UserRole::Admin)),
+        Json(CreateChannelRequest {
+            name: "missing-url".to_string(),
+            channel_type: "webhook".to_string(),
+            config: json!({}),
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert_eq!(err.status.as_u16(), 422);
+    assert!(err.message.contains("url"), "{err:?}");
+    let hint = err.hint.expect("hint must name required fields");
+    assert!(hint.contains("url"), "{hint}");
+    assert!(
+        hint.contains("neomind message channel-type-schema webhook"),
+        "{hint}"
+    );
+}

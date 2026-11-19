@@ -136,7 +136,11 @@ pub fn merge_channel_config(config: Option<&str>, param: &[String]) -> Result<St
     Ok(value.to_string())
 }
 
-/// Create a message channel
+/// Create a message channel with a single `POST /messages/channels` request.
+///
+/// Channel type validity and required config fields are validated server-side,
+/// returning a 400/422 `ErrorResponse` with a `.hint` listing valid types or
+/// missing fields.
 pub async fn create_channel(
     client: &ApiClient,
     name: &str,
@@ -144,16 +148,15 @@ pub async fn create_channel(
     config: &str,
     enabled: bool,
 ) -> Result<CliResponse> {
-    // 1. Validate name is non-empty
-    if name.is_empty() {
+    // Lightweight client-side syntax checks only (no preflight HTTP round-trips).
+    if name.trim().is_empty() {
         return Ok(CliResponse::error(
             "Channel name is required. Use --name <NAME>",
             "MISSING_NAME",
         ));
     }
 
-    // 2. Validate channel_type is non-empty
-    if channel_type.is_empty() {
+    if channel_type.trim().is_empty() {
         return Ok(CliResponse::error_with_suggestion(
             "Channel type is required. Use --type <TYPE>.",
             "MISSING_TYPE",
@@ -161,9 +164,18 @@ pub async fn create_channel(
         ));
     }
 
-    // 3. Validate config is valid JSON
     let config_value: serde_json::Value = match crate::json_arg::parse_json_arg(config) {
-        Ok(v) => v,
+        Ok(v) if v.is_object() => v,
+        Ok(_) => {
+            return Ok(CliResponse::error_with_suggestion(
+                "Channel config must be a JSON object.",
+                "INVALID_JSON",
+                format!(
+                    "Run `neomind message channel-type-schema {}` for field details.",
+                    channel_type
+                ),
+            ));
+        }
         Err(e) => {
             return Ok(CliResponse::error_with_suggestion(
                 format!("Invalid config JSON: {}", e),
@@ -176,71 +188,11 @@ pub async fn create_channel(
         }
     };
 
-    // 4. Validate channel type exists (call channel-types API)
-    match client.get("/messages/channels/types").await {
-        Ok(types_data) => {
-            // ApiClient already unwraps ApiResponse → {"types":[...]}
-            let types_list = types_data
-                .get("types")
-                .or_else(|| types_data.get("data").and_then(|d| d.get("types")));
-            let valid_types: Vec<&str> = types_list
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|t| t["id"].as_str()).collect())
-                .unwrap_or_default();
-            if !valid_types.is_empty() && !valid_types.contains(&channel_type) {
-                return Ok(CliResponse::error_with_suggestion(
-                    format!("Unknown channel type '{}'.", channel_type),
-                    "UNKNOWN_TYPE",
-                    format!(
-                        "Available types: {}. Run `neomind message channel-types` for details.",
-                        valid_types.join(", ")
-                    ),
-                ));
-            }
-        }
-        Err(_) => {
-            // If types API is unavailable, skip this validation and let the server handle it
-        }
-    }
-
-    // 5. Validate required config fields via schema API
-    if let Ok(schema_resp) = client
-        .get(&format!("/messages/channels/types/{}/schema", channel_type))
-        .await
-    {
-        let schema_data = schema_resp
-            .get("config_schema")
-            .or_else(|| schema_resp.get("data").and_then(|d| d.get("config_schema")));
-        if let Some(required_fields) = schema_data
-            .and_then(|s| s.get("required"))
-            .and_then(|r| r.as_array())
-        {
-            if let Some(config_obj) = config_value.as_object() {
-                let missing: Vec<&str> = required_fields
-                    .iter()
-                    .filter_map(|f| f.as_str())
-                    .filter(|f| !config_obj.contains_key(*f))
-                    .collect();
-                if !missing.is_empty() {
-                    return Ok(CliResponse::error_with_suggestion(
-                        format!("Missing required config field(s): {}.", missing.join(", ")),
-                        "MISSING_FIELDS",
-                        format!(
-                            "Pass each one as --param <field>=<value>, or run `neomind message channel-type-schema {}` for field details.",
-                            channel_type
-                        ),
-                    ));
-                }
-            }
-        }
-    }
-
-    let body = json!({
+    let mut body = json!({
         "name": name,
         "channel_type": channel_type,
     });
     // Merge config into body (flattened)
-    let mut body = body;
     if let serde_json::Value::Object(mut map) = config_value {
         body.as_object_mut().unwrap().append(&mut map);
     }
@@ -323,5 +275,67 @@ mod tests {
     #[test]
     fn bad_kv_entry_errors() {
         assert!(merge_channel_config(None, &["noequals".into()]).is_err());
+    }
+
+    /// P1-5: `create_channel` must issue a single `POST /messages/channels`
+    /// without preflight `GET /types` or `GET /types/:t/schema` requests, and
+    /// must surface the server's 422 error + hint directly.
+    #[tokio::test]
+    async fn create_channel_issues_single_post_and_surfaces_server_hint() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let mut requests = Vec::new();
+            // Accept at most 2 connections with a short timeout so any spurious
+            // preflight GET would be caught and counted.
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).await.unwrap();
+            let req_text = String::from_utf8_lossy(&buf[..n]).to_string();
+            requests.push(req_text);
+
+            let body = r#"{"success":false,"error":{"code":"VALIDATION_ERROR","message":"Missing required config field(s) for 'webhook' channel: url","hint":"Required fields for 'webhook': url. Run `neomind message channel-type-schema webhook`."}}"#;
+            let reply = format!(
+                "HTTP/1.1 422 Unprocessable Entity\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(reply.as_bytes()).await;
+            let _ = stream.shutdown().await;
+            requests
+        });
+
+        let client = crate::ApiClient::with_base_url_and_key(
+            &format!("http://{addr}/api"),
+            Some("nmk_test".to_string()),
+        );
+        let err = super::create_channel(&client, "ops-hook", "webhook", "{}", true)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        let requests = server.await.unwrap();
+        assert_eq!(
+            requests.len(),
+            1,
+            "create_channel must issue exactly 1 HTTP request, saw: {requests:?}"
+        );
+        assert!(
+            requests[0].starts_with("POST /api/messages/channels "),
+            "expected single POST /api/messages/channels, got: {}",
+            requests[0]
+        );
+        assert!(err.contains("422"), "expected 422 status: {err}");
+        assert!(
+            err.contains("url"),
+            "expected missing field in error: {err}"
+        );
+        assert!(
+            err.contains("Hint: Required fields for 'webhook': url"),
+            "expected server hint preserved: {err}"
+        );
     }
 }

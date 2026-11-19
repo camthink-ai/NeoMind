@@ -490,12 +490,17 @@ export function UnifiedDeviceConnectionsTab() {
     const isExternalBroker = id !== 'builtin' && externalBrokers.some((b) => b.id === id)
 
     if (isExternalBroker || editingInstance?.plugin_type === 'mqtt') {
-      const result = await api.testBroker(id)
-      return {
-        success: result.success,
-        message: result.success
-          ? 'Connection successful'
-          : (result.message || 'Connection failed'),
+      try {
+        const result = await api.testBroker(id)
+        return {
+          success: true,
+          message: result.message || 'Connection successful',
+        }
+      } catch (err) {
+        return {
+          success: false,
+          message: err instanceof Error ? err.message : 'Connection failed',
+        }
       }
     }
 

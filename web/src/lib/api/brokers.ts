@@ -25,8 +25,10 @@ export const brokersApi = {
       method: 'DELETE',
     }),
   testBroker: (id: string) =>
-    fetchAPI<{ success: boolean; message?: string; broker_url?: string; broker?: ExternalBroker }>(`/brokers/${id}/test`, {
+    fetchAPI<{ connected?: boolean; message?: string; broker_url?: string; broker?: ExternalBroker }>(`/brokers/${id}/test`, {
       method: 'POST',
+      skipErrorToast: true,
+      skipRetry: true,
     }),
 
   // Embedded Broker Config

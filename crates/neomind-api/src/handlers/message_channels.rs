@@ -253,74 +253,148 @@ pub async fn create_channel_handler(
 ) -> HandlerResult<serde_json::Value> {
     require_admin(&admin.0)?;
 
+    if req.name.trim().is_empty() {
+        return Err(ErrorResponse::validation("Channel name is required")
+            .with_hint("Provide a non-empty channel name via --name <NAME>."));
+    }
+
+    let valid_types: Vec<String> = neomind_messages::list_channel_types()
+        .into_iter()
+        .map(|t| t.id)
+        .collect();
+    if req.channel_type.trim().is_empty() || !valid_types.iter().any(|t| t == &req.channel_type) {
+        return Err(ErrorResponse::validation(format!(
+            "Unknown channel type '{}'",
+            req.channel_type
+        ))
+        .with_hint(format!(
+            "Valid channel types: {}. Run `neomind message channel-types` for details.",
+            valid_types.join(", ")
+        )));
+    }
+
+    let required_fields: Vec<String> = neomind_messages::get_channel_schema(&req.channel_type)
+        .and_then(|schema| {
+            schema
+                .get("required")
+                .and_then(|r| r.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+        })
+        .unwrap_or_default();
+
+    if !required_fields.is_empty() {
+        let missing: Vec<&str> = match req.config.as_object() {
+            Some(obj) => required_fields
+                .iter()
+                .map(String::as_str)
+                .filter(|field| !obj.contains_key(*field) || obj[*field].is_null())
+                .collect(),
+            None => required_fields.iter().map(String::as_str).collect(),
+        };
+        if !missing.is_empty() {
+            return Err(ErrorResponse::validation(format!(
+                "Missing required config field(s) for '{}' channel: {}",
+                req.channel_type,
+                missing.join(", ")
+            ))
+            .with_hint(format!(
+                "Required fields for '{}': {}. Pass them via --config '{{...}}' or --param key=value, or run `neomind message channel-type-schema {}`.",
+                req.channel_type,
+                required_fields.join(", "),
+                req.channel_type
+            )));
+        }
+    }
+
     let registry = state.core.message_manager.channels().await;
 
     // Check if channel already exists
     {
         let registry_guard = registry.read().await;
         if registry_guard.get(&req.name).await.is_some() {
-            return Err(ErrorResponse::bad_request("Channel already exists"));
+            return Err(ErrorResponse::bad_request(format!(
+                "Channel '{}' already exists",
+                req.name
+            ))
+            .with_hint(
+                "Choose a different channel name, or update/delete the existing channel first.",
+            ));
         }
     }
 
     // Prepare config value for storing
     let config_value = req.config.clone();
 
+    let invalid_config_err = |e: neomind_messages::Error| {
+        let hint = if !required_fields.is_empty() {
+            format!(
+                "Required fields for '{}': {}. Run `neomind message channel-type-schema {}` for field details.",
+                req.channel_type,
+                required_fields.join(", "),
+                req.channel_type
+            )
+        } else {
+            format!(
+                "Run `neomind message channel-type-schema {}` for field details.",
+                req.channel_type
+            )
+        };
+        ErrorResponse::validation(format!(
+            "Invalid config for '{}' channel: {}",
+            req.channel_type, e
+        ))
+        .with_hint(hint)
+    };
+
     // Create channel based on type
     let channel: std::sync::Arc<dyn MessageChannel> = match req.channel_type.as_str() {
         #[cfg(feature = "webhook")]
         "webhook" => {
             let factory = WebhookChannelFactory;
-            factory
-                .create(&req.config)
-                .map_err(|e| ErrorResponse::bad_request(format!("Invalid config: {}", e)))?
+            factory.create(&req.config).map_err(invalid_config_err)?
         }
         #[cfg(feature = "email")]
         "email" => {
             let factory = EmailChannelFactory;
-            factory
-                .create(&req.config)
-                .map_err(|e| ErrorResponse::bad_request(format!("Invalid config: {}", e)))?
+            factory.create(&req.config).map_err(invalid_config_err)?
         }
         #[cfg(feature = "telegram")]
         "telegram" => {
             let factory = TelegramChannelFactory;
-            factory
-                .create(&req.config)
-                .map_err(|e| ErrorResponse::bad_request(format!("Invalid config: {}", e)))?
+            factory.create(&req.config).map_err(invalid_config_err)?
         }
         #[cfg(feature = "wecom")]
         "wecom" => {
             let factory = WeComChannelFactory;
-            factory
-                .create(&req.config)
-                .map_err(|e| ErrorResponse::bad_request(format!("Invalid config: {}", e)))?
+            factory.create(&req.config).map_err(invalid_config_err)?
         }
         #[cfg(feature = "dingtalk")]
         "dingtalk" => {
             let factory = DingTalkChannelFactory;
-            factory
-                .create(&req.config)
-                .map_err(|e| ErrorResponse::bad_request(format!("Invalid config: {}", e)))?
+            factory.create(&req.config).map_err(invalid_config_err)?
         }
         #[cfg(feature = "slack")]
         "slack" => {
             let factory = SlackChannelFactory;
-            factory
-                .create(&req.config)
-                .map_err(|e| ErrorResponse::bad_request(format!("Invalid config: {}", e)))?
+            factory.create(&req.config).map_err(invalid_config_err)?
         }
         #[cfg(feature = "feishu")]
         "feishu" => {
             let factory = FeishuChannelFactory;
-            factory
-                .create(&req.config)
-                .map_err(|e| ErrorResponse::bad_request(format!("Invalid config: {}", e)))?
+            factory.create(&req.config).map_err(invalid_config_err)?
         }
         _ => {
-            return Err(ErrorResponse::bad_request(format!(
-                "Unknown channel type: {}. Supported types: webhook, email, telegram, wecom, dingtalk, slack, feishu",
+            return Err(ErrorResponse::validation(format!(
+                "Unknown channel type '{}'",
                 req.channel_type
+            ))
+            .with_hint(format!(
+                "Valid channel types: {}. Run `neomind message channel-types` for details.",
+                valid_types.join(", ")
             )));
         }
     };

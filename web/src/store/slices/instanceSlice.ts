@@ -162,7 +162,16 @@ async function deleteInstanceApi(id: string): Promise<void> {
 }
 
 async function testInstanceApi(id: string): Promise<InstanceTestResult> {
-  return api.post<InstanceTestResult>(`/instances/${id}/test`, {})
+  const res = await api.post<{ latency_ms: number; status: string }>(
+    `/instances/${id}/test`,
+    {},
+    { skipErrorToast: true, skipRetry: true },
+  )
+  return {
+    success: true,
+    latency_ms: res.latency_ms ?? 0,
+    status: res.status ?? 'online',
+  }
 }
 
 /** Read cached instance list from localStorage (available before any API call).

@@ -61,12 +61,10 @@ interface MarketplaceListResponse {
 }
 
 interface MarketplaceInstallResponse {
-  success: boolean
   extension_id: string
   downloaded: boolean
   installed: boolean
   path?: string | null
-  error?: string | null
 }
 
 interface FullExtensionMetadata {
@@ -225,42 +223,35 @@ export function MarketplaceDialog({
     setInstallingId(id)
 
     try {
-      const response = await api.post<MarketplaceInstallResponse>(
+      await api.post<MarketplaceInstallResponse>(
         "/extensions/market/install",
-        { id }
+        { id },
+        { skipErrorToast: true, skipRetry: true }
       )
 
-      if (response.success) {
-        toast({
-          title: t("extensions:market.installSuccess", "Extension installed successfully"),
-          description: t("extensions:market.installSuccessDesc", "{{name}} has been installed", {
-            name: extensionsList.find((e) => e.id === id)?.name || id,
-          }),
-        })
+      toast({
+        title: t("extensions:market.installSuccess", "Extension installed successfully"),
+        description: t("extensions:market.installSuccessDesc", "{{name}} has been installed", {
+          name: extensionsList.find((e) => e.id === id)?.name || id,
+        }),
+      })
 
-        await fetchExtensions()
+      await fetchExtensions()
 
-        try {
-          const { syncExtensionComponents } = await import('@/hooks/useExtensionComponents')
-          await syncExtensionComponents()
-        } catch (e) {
-          console.warn('[Marketplace] Failed to sync extension components:', e)
-        }
-
-        onInstallComplete?.(id)
-
-        setTimeout(() => {
-          onOpenChange(false)
-          setShowDetail(false)
-          setSelectedExtension(null)
-        }, 1000)
-      } else {
-        toast({
-          title: t("extensions:market.installFailed", "Installation failed"),
-          description: response.error || t("extensions:market.installFailedDesc", "Failed to install extension"),
-          variant: "destructive",
-        })
+      try {
+        const { syncExtensionComponents } = await import('@/hooks/useExtensionComponents')
+        await syncExtensionComponents()
+      } catch (e) {
+        console.warn('[Marketplace] Failed to sync extension components:', e)
       }
+
+      onInstallComplete?.(id)
+
+      setTimeout(() => {
+        onOpenChange(false)
+        setShowDetail(false)
+        setSelectedExtension(null)
+      }, 1000)
     } catch (e) {
       console.error("Failed to install extension:", e)
       toast({

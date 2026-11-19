@@ -251,7 +251,6 @@ pub async fn test_instance_handler(
         Ok(resp) if resp.status().is_success() => {
             let _ = state.instance_store.update_status(&id, "online");
             ok(json!({
-                "success": true,
                 "latency_ms": latency_ms,
                 "status": "online",
             }))
@@ -259,21 +258,21 @@ pub async fn test_instance_handler(
         Ok(resp) => {
             let status = resp.status().as_u16();
             let _ = state.instance_store.update_status(&id, "offline");
-            ok(json!({
-                "success": false,
-                "latency_ms": latency_ms,
-                "status": "offline",
-                "error": format!("HTTP {}", status),
-            }))
+            Err(ErrorResponse::new(
+                "INSTANCE_UNREACHABLE",
+                format!("Instance health check failed: HTTP {}", status),
+                axum::http::StatusCode::BAD_GATEWAY,
+            )
+            .with_hint("Verify the instance URL, API key, and remote server health."))
         }
         Err(e) => {
             let _ = state.instance_store.update_status(&id, "offline");
-            ok(json!({
-                "success": false,
-                "latency_ms": latency_ms,
-                "status": "offline",
-                "error": e.to_string(),
-            }))
+            Err(ErrorResponse::new(
+                "INSTANCE_UNREACHABLE",
+                format!("Instance connection failed: {}", e),
+                axum::http::StatusCode::BAD_GATEWAY,
+            )
+            .with_hint("Verify the instance URL and that the remote NeoMind server is reachable."))
         }
     }
 }

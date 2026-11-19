@@ -121,9 +121,18 @@ pub async fn run_logout() -> Result<CliResponse> {
 
 /// `neomind whoami` — validate the current key against the server.
 pub async fn run_whoami() -> Result<CliResponse> {
+    run_whoami_with_context(&crate::dispatch::DispatchContext::default()).await
+}
+
+/// `neomind whoami` using an explicit [`crate::dispatch::DispatchContext`].
+pub async fn run_whoami_with_context(
+    ctx: &crate::dispatch::DispatchContext,
+) -> Result<CliResponse> {
+    let explicit_key = ctx.api_key.clone();
     // Determine current key (same resolution as ApiClient)
-    let key = std::env::var("NEOMIND_API_KEY")
-        .ok()
+    let key = explicit_key
+        .clone()
+        .or_else(|| std::env::var("NEOMIND_API_KEY").ok())
         .or_else(auto_auth::read_logged_in_key)
         .or_else(|| auto_auth::read_default_api_key_from(&auto_auth::resolve_data_dir()));
 
@@ -139,9 +148,14 @@ pub async fn run_whoami() -> Result<CliResponse> {
     };
 
     let masked = mask_key(&key);
+    let source = if explicit_key.is_some() {
+        "dispatch context"
+    } else {
+        key_source()
+    };
 
     // Validate against the server via a lightweight authed endpoint
-    let client = crate::ApiClient::new();
+    let client = ctx.api_client();
     let base_url = client.base_url().to_string();
 
     match client.get("/settings/timezone").await {
@@ -149,7 +163,7 @@ pub async fn run_whoami() -> Result<CliResponse> {
             serde_json::json!({
                 "key_preview": masked,
                 "server": base_url,
-                "source": key_source(),
+                "source": source,
             }),
             format!("Authenticated as {} @ {}", masked, base_url),
         )),

@@ -1193,18 +1193,14 @@ export function TransformBuilder({
         output_prefix: outputPrefix,
       })
 
-      if (result.success) {
-        setTestPreview({
-          outputText: JSON.stringify(result.output_with_prefix || result.output, null, 2),
-          metrics: result.metrics ?? [],
-          count: result.count ?? (result.metrics?.length ?? 0),
-          unverified: result.unverified ?? [],
-          warnings: result.warnings ?? [],
-          codeSuccess: true,
-        })
-      } else {
-        setTestError(result.error || 'Unknown error')
-      }
+      setTestPreview({
+        outputText: JSON.stringify(result.output_with_prefix || result.output, null, 2),
+        metrics: result.metrics ?? [],
+        count: result.count ?? (result.metrics?.length ?? 0),
+        unverified: result.unverified ?? [],
+        warnings: result.warnings ?? [],
+        codeSuccess: true,
+      })
     } catch (err) {
       setTestError(err instanceof Error ? err.message : String(err))
     } finally {

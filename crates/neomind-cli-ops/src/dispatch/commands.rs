@@ -515,19 +515,29 @@ pub enum ExtensionCommand {
         /// Extension ID or .nep file path.
         #[arg(required = true)]
         id_or_path: String,
+        /// Inspect local .nep packages on disk instead of querying the running server.
+        #[arg(long)]
+        offline: bool,
     },
     /// Install a .nep extension package.
     ///
-    /// Installs from a local file path. The extension is loaded immediately.
+    /// Uploads the .nep package to the running server and loads it immediately.
+    /// Pass `--offline` to copy into the local `./data/extensions` directory
+    /// without contacting a running server.
     /// Example: `neomind extension install ./weather-forecast.nep`
     Install {
-        /// Path to the .nep file or URL.
+        /// Path to the .nep file.
         #[arg(required = true)]
         package: String,
+        /// Copy the .nep package into the local extensions directory without
+        /// uploading to a running server (takes effect on next restart).
+        #[arg(long)]
+        offline: bool,
     },
     /// Uninstall an extension.
     ///
-    /// Stops the extension process and removes all files. This is irreversible.
+    /// Stops the extension process and removes all files via the running server.
+    /// Pass `--offline` to delete local .nep files from disk without a server.
     /// Example: `neomind extension uninstall weather-forecast --yes`
     Uninstall {
         /// Extension ID.
@@ -537,6 +547,10 @@ pub enum ExtensionCommand {
         /// the AI agent / scripts get a refusal instead of a hang without it).
         #[arg(long)]
         yes: bool,
+        /// Remove local .nep package files from disk without contacting the
+        /// running server.
+        #[arg(long)]
+        offline: bool,
     },
     /// Create a new extension scaffold.
     ///
@@ -2886,10 +2900,16 @@ mod unify_enable_disable_tests {
         match (cmd_get, cmd_info) {
             (
                 Command::Extension {
-                    extension_cmd: super::ExtensionCommand::Get { id_or_path: id1 },
+                    extension_cmd:
+                        super::ExtensionCommand::Get {
+                            id_or_path: id1, ..
+                        },
                 },
                 Command::Extension {
-                    extension_cmd: super::ExtensionCommand::Get { id_or_path: id2 },
+                    extension_cmd:
+                        super::ExtensionCommand::Get {
+                            id_or_path: id2, ..
+                        },
                 },
             ) => {
                 assert_eq!(id1, "weather-forecast");

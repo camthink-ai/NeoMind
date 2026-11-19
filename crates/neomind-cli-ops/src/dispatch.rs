@@ -22,11 +22,65 @@ pub use host_context::{
     ExtensionInvokeHostContext,
 };
 
-use crate::types::CliResponse;
+use crate::types::{CliResponse, OutputFormat};
 use clap::Parser;
 use commands::{Args, Command};
 
-/// Errors returned by [`dispatch`].
+/// Explicit execution context for in-process and CLI dispatch.
+///
+/// Carries API base URL, API key, and output format explicitly so callers
+/// never need to mutate process-global environment variables (`std::env::set_var`)
+/// on async hot paths.
+#[derive(Debug, Clone, Default)]
+pub struct DispatchContext {
+    /// Explicit API base URL (e.g. `http://localhost:9375/api`).
+    /// When `None`, falls back to `NEOMIND_API_BASE` or the default base URL.
+    pub api_base: Option<String>,
+    /// Explicit API key (Bearer token).
+    /// When `None`, falls back to `NEOMIND_API_KEY` or auto-auth.
+    pub api_key: Option<String>,
+    /// Explicit output format.
+    /// When `None`, falls back to `NEOMIND_JSON` (`Json` if set, else `Human`).
+    pub output_format: Option<OutputFormat>,
+}
+
+impl DispatchContext {
+    /// Build a context from the current process environment without mutating it.
+    pub fn from_env() -> Self {
+        Self {
+            api_base: std::env::var("NEOMIND_API_BASE").ok(),
+            api_key: std::env::var("NEOMIND_API_KEY").ok(),
+            output_format: if std::env::var("NEOMIND_JSON").is_ok() {
+                Some(OutputFormat::Json)
+            } else {
+                None
+            },
+        }
+    }
+
+    /// Build an [`crate::ApiClient`] honoring this context's base URL and API key.
+    pub fn api_client(&self) -> crate::ApiClient {
+        let base = self
+            .api_base
+            .clone()
+            .or_else(|| std::env::var("NEOMIND_API_BASE").ok())
+            .unwrap_or_else(|| "http://localhost:9375/api".to_string());
+        crate::ApiClient::with_base_url_and_key(&base, self.api_key.clone())
+    }
+
+    /// Resolve the effective output format.
+    pub fn output_format(&self) -> OutputFormat {
+        self.output_format.unwrap_or_else(|| {
+            if std::env::var("NEOMIND_JSON").is_ok() {
+                OutputFormat::Json
+            } else {
+                OutputFormat::Human
+            }
+        })
+    }
+}
+
+/// Errors returned by [`dispatch`] and [`dispatch_with_context`].
 #[derive(Debug)]
 pub enum DispatchError {
     /// The command cannot be executed in-process (it is side-effecting,
@@ -50,7 +104,18 @@ impl std::fmt::Display for DispatchError {
 
 impl std::error::Error for DispatchError {}
 
-/// Dispatch a tokenized `neomind` command in-process.
+/// Dispatch a tokenized `neomind` command in-process using default environment
+/// resolution.
+///
+/// Prefer [`dispatch_with_context`] from concurrent async callers so API base,
+/// API key, and output format are passed explicitly without mutating process
+/// environment variables.
+pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
+    dispatch_with_context(argv, &DispatchContext::default()).await
+}
+
+/// Dispatch a tokenized `neomind` command in-process with an explicit
+/// [`DispatchContext`].
 ///
 /// `argv` is the full argument vector including the program name as the first
 /// element (e.g. `["neomind", "dashboard", "list"]`). Data commands
@@ -59,7 +124,10 @@ impl std::error::Error for DispatchError {}
 ///
 /// Uses `try_parse_from` so malformed input yields [`DispatchError::Parse`]
 /// instead of `exit()`-ing the host process.
-pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
+pub async fn dispatch_with_context(
+    argv: &[String],
+    ctx: &DispatchContext,
+) -> Result<CliResponse, DispatchError> {
     let parsed = match Args::try_parse_from(argv.iter()) {
         Ok(args) => args,
         Err(e) => {
@@ -79,7 +147,7 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
                 // stays Usage text.
                 if e.kind() == ErrorKind::DisplayHelp {
                     if let Some(id) = extension_commands_id_from_help_argv(argv) {
-                        return redirect_extension_commands_help(&id).await;
+                        return redirect_extension_commands_help(&id, ctx).await;
                     }
                 }
                 return Ok(CliResponse::success(
@@ -97,6 +165,25 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
             );
             return Err(DispatchError::Parse(e.to_string()));
         }
+    };
+
+    // Respect explicit `--format json|text` when the caller did not pin one.
+    let effective_ctx = if ctx.output_format.is_none() {
+        match parsed.format.as_deref() {
+            Some("json") => {
+                let mut c = ctx.clone();
+                c.output_format = Some(OutputFormat::Json);
+                c
+            }
+            Some("text") => {
+                let mut c = ctx.clone();
+                c.output_format = Some(OutputFormat::Human);
+                c
+            }
+            _ => ctx.clone(),
+        }
+    } else {
+        ctx.clone()
     };
 
     match parsed.command {
@@ -119,7 +206,7 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
         //     which an in-process caller (agent shell / tauri pre-dispatch)
         //     cannot supply — keep it out-of-process. ---
         Command::ApiKey { key_cmd } => {
-            let (resp, _) = handlers::run_api_key_cmd(key_cmd)
+            let (resp, _) = handlers::run_api_key_cmd_with_context(key_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
@@ -128,7 +215,7 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
             if matches!(user_cmd, commands::UserCommand::ResetPassword { .. }) {
                 Err(DispatchError::NotInProcess)
             } else {
-                let (resp, _) = handlers::run_user_cmd(user_cmd)
+                let (resp, _) = handlers::run_user_cmd_with_context(user_cmd, &effective_ctx)
                     .await
                     .map_err(|e| DispatchError::Api(e.to_string()))?;
                 Ok(resp)
@@ -138,112 +225,113 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
             if handlers::is_local_extension_command(&extension_cmd) {
                 Err(DispatchError::NotInProcess)
             } else {
-                let (resp, _fmt) = handlers::run_extension_cmd(extension_cmd)
-                    .await
-                    .map_err(|e| DispatchError::Api(e.to_string()))?;
+                let (resp, _fmt) =
+                    handlers::run_extension_cmd_with_context(extension_cmd, &effective_ctx)
+                        .await
+                        .map_err(|e| DispatchError::Api(e.to_string()))?;
                 Ok(resp)
             }
         }
 
         // --- Pure data commands ---
         Command::Llm { llm_cmd } => {
-            let (resp, _) = handlers::run_llm_cmd(llm_cmd)
+            let (resp, _) = handlers::run_llm_cmd_with_context(llm_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Device { device_cmd } => {
-            let (resp, _) = handlers::run_device_cmd(device_cmd)
+            let (resp, _) = handlers::run_device_cmd_with_context(device_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Dashboard { dashboard_cmd } => {
-            let (resp, _) = handlers::run_dashboard_cmd(dashboard_cmd)
+            let (resp, _) = handlers::run_dashboard_cmd_with_context(dashboard_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Rule { rule_cmd } => {
-            let (resp, _) = handlers::run_rule_cmd(rule_cmd)
+            let (resp, _) = handlers::run_rule_cmd_with_context(rule_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Transform { transform_cmd } => {
-            let (resp, _) = handlers::run_transform_cmd(transform_cmd)
+            let (resp, _) = handlers::run_transform_cmd_with_context(transform_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Agent { agent_cmd } => {
-            let (resp, _) = handlers::run_agent_cmd(agent_cmd)
+            let (resp, _) = handlers::run_agent_cmd_with_context(agent_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Message { message_cmd } => {
-            let (resp, _) = handlers::run_message_cmd(message_cmd)
+            let (resp, _) = handlers::run_message_cmd_with_context(message_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Push { push_cmd } => {
-            let (resp, _) = handlers::run_push_cmd(push_cmd)
+            let (resp, _) = handlers::run_push_cmd_with_context(push_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Widget { widget_cmd } => {
-            let (resp, _) = handlers::run_widget_cmd(widget_cmd)
+            let (resp, _) = handlers::run_widget_cmd_with_context(widget_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::System { system_cmd } => {
-            let (resp, _) = handlers::run_system_cmd(system_cmd)
+            let (resp, _) = handlers::run_system_cmd_with_context(system_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Config { config_cmd } => {
-            let (resp, _) = handlers::run_config_cmd(config_cmd)
+            let (resp, _) = handlers::run_config_cmd_with_context(config_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Data { data_cmd } => {
-            let (resp, _) = handlers::run_data_cmd(data_cmd)
+            let (resp, _) = handlers::run_data_cmd_with_context(data_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Settings { settings_cmd } => {
-            let (resp, _) = handlers::run_settings_cmd(settings_cmd)
+            let (resp, _) = handlers::run_settings_cmd_with_context(settings_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Connector { connector_cmd } => {
-            let (resp, _) = handlers::run_connector_cmd(connector_cmd)
+            let (resp, _) = handlers::run_connector_cmd_with_context(connector_cmd, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Login { data_dir, force } => {
-            let (resp, _) = handlers::run_login_cmd(data_dir, force)
+            let (resp, _) = handlers::run_login_cmd_with_context(data_dir, force, &effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Logout => {
-            let (resp, _) = handlers::run_logout_cmd()
+            let (resp, _) = handlers::run_logout_cmd_with_context(&effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
         Command::Whoami => {
-            let (resp, _) = handlers::run_whoami_cmd()
+            let (resp, _) = handlers::run_whoami_cmd_with_context(&effective_ctx)
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
@@ -302,12 +390,18 @@ Returning the machine-readable command list instead. Discovery API: \
 `neomind extension invoke <id> <command> --params '{...}'`.";
 
 /// Run `extension commands <id>` and annotate that `--help` was redirected.
-async fn redirect_extension_commands_help(id: &str) -> Result<CliResponse, DispatchError> {
+async fn redirect_extension_commands_help(
+    id: &str,
+    ctx: &DispatchContext,
+) -> Result<CliResponse, DispatchError> {
     use commands::ExtensionCommand;
-    let (mut resp, _) = handlers::run_extension_cmd(ExtensionCommand::Commands {
-        id: Some(id.to_string()),
-        search: None,
-    })
+    let (mut resp, _) = handlers::run_extension_cmd_with_context(
+        ExtensionCommand::Commands {
+            id: Some(id.to_string()),
+            search: None,
+        },
+        ctx,
+    )
     .await
     .map_err(|e| DispatchError::Api(e.to_string()))?;
 
@@ -540,14 +634,14 @@ mod tests {
     /// error) — exactly what the agent's shell tool renders. With no server
     /// on the default base URL this is the "server down" path the incident
     /// agent would have hit; it must degrade to a message, never a panic.
-    #[serial_test::serial]
     #[tokio::test]
     async fn data_command_degrades_to_error_response_without_server() {
-        // Pin a port nothing listens on so the test never depends on (or
-        // races with) a locally running dev server.
-        std::env::set_var("NEOMIND_API_BASE", "http://127.0.0.1:9/test-api");
-        let result = dispatch(&argv(&["device", "list"])).await;
-        std::env::remove_var("NEOMIND_API_BASE");
+        let ctx = DispatchContext {
+            api_base: Some("http://127.0.0.1:9/test-api".to_string()),
+            api_key: None,
+            output_format: Some(OutputFormat::Json),
+        };
+        let result = dispatch_with_context(&argv(&["device", "list"]), &ctx).await;
 
         match result {
             Ok(resp) => {
@@ -560,6 +654,225 @@ mod tests {
                 assert!(!msg.is_empty(), "api error must carry a message");
             }
             Err(other) => panic!("expected Ok(error-response) or Api, got {other:?}"),
+        }
+    }
+
+    async fn spawn_mock_http_server(
+        responses: Vec<(&'static str, String)>,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::task::JoinHandle<Vec<(String, String)>>,
+    ) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let mut captured = Vec::new();
+            for (status_line, body) in responses {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let header_end = loop {
+                    let n = stream.read(&mut chunk).await.unwrap();
+                    if n == 0 {
+                        break buf.len();
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break pos + 4;
+                    }
+                };
+                let headers_str = String::from_utf8_lossy(&buf[..header_end]).to_string();
+                let content_len: usize = headers_str
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        if k.eq_ignore_ascii_case("content-length") {
+                            v.trim().parse().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                while buf.len() < header_end + content_len {
+                    let n = stream.read(&mut chunk).await.unwrap();
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let body_str =
+                    String::from_utf8_lossy(&buf[header_end..header_end + content_len]).to_string();
+                captured.push((headers_str, body_str));
+
+                let reply = format!(
+                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes()).await;
+                let _ = stream.shutdown().await;
+            }
+            captured
+        });
+        (addr, handle)
+    }
+
+    /// P1-1: concurrent callers with distinct `DispatchContext`s hit their own
+    /// servers with their own Bearer keys without mutating process env vars.
+    #[tokio::test]
+    async fn dispatch_with_context_isolates_concurrent_callers_without_env_mutation() {
+        let env_key_before = std::env::var_os("NEOMIND_API_KEY");
+        let env_json_before = std::env::var_os("NEOMIND_JSON");
+
+        let (addr_a, srv_a) = spawn_mock_http_server(vec![(
+            "200 OK",
+            r#"{"success":true,"data":{"id":"ext-a","name":"Ext A"}}"#.to_string(),
+        )])
+        .await;
+        let (addr_b, srv_b) = spawn_mock_http_server(vec![(
+            "200 OK",
+            r#"{"success":true,"data":{"id":"ext-b","name":"Ext B"}}"#.to_string(),
+        )])
+        .await;
+
+        let ctx_a = DispatchContext {
+            api_base: Some(format!("http://{addr_a}/api")),
+            api_key: Some("nmk_caller_a".to_string()),
+            output_format: Some(OutputFormat::Json),
+        };
+        let ctx_b = DispatchContext {
+            api_base: Some(format!("http://{addr_b}/api")),
+            api_key: Some("nmk_caller_b".to_string()),
+            output_format: Some(OutputFormat::Json),
+        };
+
+        let argv_a = argv(&["extension", "get", "ext-a"]);
+        let argv_b = argv(&["extension", "get", "ext-b"]);
+        let (res_a, res_b) = tokio::join!(
+            dispatch_with_context(&argv_a, &ctx_a),
+            dispatch_with_context(&argv_b, &ctx_b),
+        );
+
+        let resp_a = res_a.expect("caller A must succeed");
+        let resp_b = res_b.expect("caller B must succeed");
+        assert_eq!(resp_a.data.unwrap()["id"], "ext-a");
+        assert_eq!(resp_b.data.unwrap()["id"], "ext-b");
+
+        let reqs_a = srv_a.await.unwrap();
+        let reqs_b = srv_b.await.unwrap();
+        assert!(
+            reqs_a[0].0.contains("authorization: Bearer nmk_caller_a")
+                || reqs_a[0].0.contains("Authorization: Bearer nmk_caller_a"),
+            "caller A header mismatch: {}",
+            reqs_a[0].0
+        );
+        assert!(
+            reqs_b[0].0.contains("authorization: Bearer nmk_caller_b")
+                || reqs_b[0].0.contains("Authorization: Bearer nmk_caller_b"),
+            "caller B header mismatch: {}",
+            reqs_b[0].0
+        );
+        assert_eq!(
+            std::env::var_os("NEOMIND_API_KEY"),
+            env_key_before,
+            "dispatch_with_context must never mutate NEOMIND_API_KEY"
+        );
+        assert_eq!(
+            std::env::var_os("NEOMIND_JSON"),
+            env_json_before,
+            "dispatch_with_context must never mutate NEOMIND_JSON"
+        );
+    }
+
+    /// P1-1: `extension get`, `extension install`, and `extension uninstall`
+    /// unify onto the HTTP in-process path by default, while `--offline` and
+    /// local dev commands (`validate`, `create`, `build`) stay `NotInProcess`.
+    #[tokio::test]
+    async fn extension_install_uninstall_get_use_http_and_offline_is_not_in_process() {
+        let tmp_nep =
+            std::env::temp_dir().join(format!("neomind_p1_1_test_{}.nep", std::process::id()));
+        std::fs::write(&tmp_nep, b"PK\x03\x04dummy-nep-bytes").unwrap();
+        let tmp_nep_str = tmp_nep.to_string_lossy().to_string();
+
+        let (addr, srv) = spawn_mock_http_server(vec![
+            (
+                "200 OK",
+                r#"{"success":true,"data":{"id":"weather-v2","version":"1.0.0"}}"#.to_string(),
+            ),
+            (
+                "200 OK",
+                r#"{"success":true,"data":{"extension_id":"weather-v2","version":"1.0.0"}}"#
+                    .to_string(),
+            ),
+            (
+                "200 OK",
+                r#"{"success":true,"data":{"extension_id":"weather-v2","message":"Extension uninstalled completely"}}"#
+                    .to_string(),
+            ),
+        ])
+        .await;
+
+        let ctx = DispatchContext {
+            api_base: Some(format!("http://{addr}/api")),
+            api_key: Some("nmk_ext_test".to_string()),
+            output_format: Some(OutputFormat::Json),
+        };
+
+        let get_resp = dispatch_with_context(&argv(&["extension", "get", "weather-v2"]), &ctx)
+            .await
+            .expect("extension get must run in-process via HTTP");
+        assert!(get_resp.success);
+        assert_eq!(get_resp.data.unwrap()["id"], "weather-v2");
+
+        let install_resp =
+            dispatch_with_context(&argv(&["extension", "install", &tmp_nep_str]), &ctx)
+                .await
+                .expect("extension install must run in-process via HTTP upload");
+        assert!(install_resp.success);
+        assert_eq!(install_resp.data.unwrap()["extension_id"], "weather-v2");
+
+        let uninstall_resp = dispatch_with_context(
+            &argv(&["extension", "uninstall", "weather-v2", "--yes"]),
+            &ctx,
+        )
+        .await
+        .expect("extension uninstall must run in-process via HTTP");
+        assert!(uninstall_resp.success);
+
+        let _ = std::fs::remove_file(&tmp_nep);
+
+        let reqs = srv.await.unwrap();
+        assert_eq!(reqs.len(), 3);
+        assert!(reqs[0].0.starts_with("GET /api/extensions/weather-v2 "));
+        assert!(reqs[1].0.starts_with("POST /api/extensions/upload/file "));
+        let upload_body: serde_json::Value = serde_json::from_str(&reqs[1].1).unwrap();
+        assert!(upload_body["data"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(upload_body["filename"]
+            .as_str()
+            .is_some_and(|f| f.ends_with(".nep")));
+        assert!(reqs[2]
+            .0
+            .starts_with("DELETE /api/extensions/weather-v2/uninstall "));
+
+        // Offline mode and true local dev commands must remain NotInProcess.
+        for local_args in [
+            vec!["extension", "get", "weather-v2", "--offline"],
+            vec!["extension", "install", "./foo.nep", "--offline"],
+            vec!["extension", "uninstall", "weather-v2", "--offline"],
+            vec!["extension", "validate", "./foo.nep"],
+            vec!["extension", "create", "my-ext"],
+            vec!["extension", "build", "./my-ext"],
+        ] {
+            let err = dispatch_with_context(&argv(&local_args), &ctx)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, DispatchError::NotInProcess),
+                "`neomind {:?}` must stay NotInProcess, got {err:?}",
+                local_args
+            );
         }
     }
 }

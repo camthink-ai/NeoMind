@@ -149,6 +149,10 @@ pub async fn get_extension_logs(
 
 /// Install extension from file
 pub async fn install_extension_file(client: &ApiClient, file_path: &str) -> Result<CliResponse> {
+    if !std::path::Path::new(file_path).exists() {
+        anyhow::bail!("Package file not found: {}", file_path);
+    }
+
     // Extension upload API expects JSON body with base64-encoded file data
     use std::io::Read;
     let mut file = std::fs::File::open(file_path)?;
@@ -200,13 +204,15 @@ pub async fn install_extension_market(
 
 /// Uninstall extension
 pub async fn uninstall_extension(client: &ApiClient, id: &str) -> Result<CliResponse> {
-    client
-        .delete(&format!("/extensions/{}/uninstall", id))
+    let data = client
+        .delete(&format!("/extensions/{}/uninstall", encode_segment(id)))
         .await?;
-    Ok(CliResponse::success(
-        json!({ "id": id }),
-        "Extension uninstalled",
-    ))
+    let payload = if data.is_null() {
+        json!({ "id": id })
+    } else {
+        data
+    };
+    Ok(CliResponse::success(payload, "Extension uninstalled"))
 }
 
 /// Reload an extension (restart from file)

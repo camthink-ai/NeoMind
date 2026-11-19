@@ -827,18 +827,16 @@ pub async fn test_broker_handler(Path(id): Path<String>) -> HandlerResult<serde_
 
     // Basic validation
     if broker_host.is_empty() {
-        return ok(json!({
-            "success": false,
-            "message": "Invalid broker configuration: empty host",
-            "broker_url": broker_url,
-        }));
+        return Err(
+            ErrorResponse::validation("Invalid broker configuration: empty host")
+                .with_hint("Update the broker with a valid hostname or IP address before testing."),
+        );
     }
     if broker_port == 0 {
-        return ok(json!({
-            "success": false,
-            "message": "Invalid broker configuration: port cannot be 0",
-            "broker_url": broker_url,
-        }));
+        return Err(
+            ErrorResponse::validation("Invalid broker configuration: port cannot be 0")
+                .with_hint("Set a valid MQTT port (typically 1883 or 8883 for TLS)."),
+        );
     }
 
     tracing::info!(
@@ -875,6 +873,18 @@ pub async fn test_broker_handler(Path(id): Path<String>) -> HandlerResult<serde_
         tracing::warn!("Failed to update broker status: {}", e);
     }
 
+    if !result.success {
+        return Err(ErrorResponse::new(
+            "CONNECTION_FAILED",
+            format!(
+                "MQTT connection test failed for {}: {}",
+                broker_url, result.message
+            ),
+            axum::http::StatusCode::BAD_GATEWAY,
+        )
+        .with_hint("Verify broker host, port, TLS configuration, and credentials."));
+    }
+
     // Reload broker to get updated status
     let broker_dto = store
         .load_external_broker(&id)
@@ -883,7 +893,7 @@ pub async fn test_broker_handler(Path(id): Path<String>) -> HandlerResult<serde_
         .map(ExternalBrokerDto::from);
 
     ok(json!({
-        "success": result.success,
+        "connected": true,
         "message": result.message,
         "broker_url": broker_url,
         "host": broker_host,

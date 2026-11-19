@@ -625,18 +625,14 @@ impl ShellTool {
             }
         };
 
-        // Make auth + JSON-output env visible to the in-process handler.
-        // `dispatch`'s `ApiClient` reads `NEOMIND_API_KEY` (via auto_auth)
-        // and the handlers read `NEOMIND_JSON` to pick the output format.
-        // This mirrors the env injection done for the subprocess in
-        // `build_command`.
-        if let Some(key) = Self::resolve_api_key() {
-            // NOTE: env mutation is process-global. The agent runtime is
-            // single-tenancy and is the only concurrent writer of this var,
-            // so this is equivalent to the existing subprocess env injection.
-            std::env::set_var("NEOMIND_API_KEY", key);
-        }
-        std::env::set_var("NEOMIND_JSON", "1");
+        // Pass auth + JSON output explicitly via DispatchContext — never mutate
+        // process-global environment variables (`std::env::set_var`) on an
+        // async multi-threaded hot path.
+        let dispatch_ctx = neomind_cli_ops::dispatch::DispatchContext {
+            api_base: std::env::var("NEOMIND_API_BASE").ok(),
+            api_key: Self::resolve_api_key(),
+            output_format: Some(neomind_cli_ops::types::OutputFormat::Json),
+        };
 
         tracing::debug!(
             target: "neomind::agent::shell",
@@ -649,7 +645,12 @@ impl ShellTool {
         // ApiClient has its own HTTP timeout (70s for agent invoke), but may issue
         // multiple requests; this guarantees the in-process path cannot hang
         // longer than the subprocess equivalent would.
-        match tokio::time::timeout(timeout, neomind_cli_ops::dispatch::dispatch(&argv)).await {
+        match tokio::time::timeout(
+            timeout,
+            neomind_cli_ops::dispatch::dispatch_with_context(&argv, &dispatch_ctx),
+        )
+        .await
+        {
             Ok(Ok(resp)) => {
                 let exit_code = if resp.success { 0 } else { 1 };
                 let stdout = serde_json::to_string_pretty(&resp).unwrap_or_else(|e| {
@@ -1324,9 +1325,10 @@ pub(crate) fn not_in_process_uses_parsed_argv() -> bool {
 }
 
 /// NM-240/247: for `extension invoke`, claim the **classify-time** PreparedInvoke
-/// (never re-prepare). Prefer host-managed ticket from dispatch context; legacy
-/// `--prepared-operation-id` on argv remains compat-only. Missing/stale →
-/// "not executed; resubmit business call".
+/// (never re-prepare) exclusively from the host-managed [`ExtensionInvokeHostContext`].
+/// `strip_host_meta_from_argv` already removes any model-supplied
+/// `--prepared-operation-id` tokens before this point, so argv never carries a
+/// ticket. Missing/stale → "not executed; resubmit business call".
 pub(crate) fn bind_extension_invoke_prepared_token(
     argv: Vec<String>,
 ) -> std::result::Result<Vec<String>, String> {
@@ -1337,45 +1339,35 @@ pub(crate) fn bind_extension_invoke_prepared_token(
     let host_op = host.as_ref().and_then(|h| h.prepared_operation_id.clone());
     let host_params = host.and_then(|h| h.structured_params);
 
-    let argv_op = argv
-        .iter()
-        .position(|a| a == "--prepared-operation-id")
-        .and_then(|idx| argv.get(idx + 1).cloned());
-
-    // Host ticket wins; legacy argv token is compat only.
-    let op_id = match (host_op, argv_op) {
-        (Some(h), _) => h,
-        (None, Some(a)) => a,
-        (None, None) => {
-            let parsed = match Args::try_parse_from(argv.iter()) {
-                Ok(a) => a,
-                Err(_) => return Ok(argv),
-            };
-            return match parsed.command {
-                Command::Extension {
-                    extension_cmd:
-                        ExtensionCommand::Invoke {
-                            extension_id,
-                            command,
-                            ..
-                        },
-                } => {
-                    tracing::warn!(
-                        extension_id = %extension_id,
-                        command = %command,
-                        stage = "shell_bind",
-                        "PreparedInvoke missing at Shell bind — host context had no ticket \
-                         (likely stripped at execute canonicalize without restore)"
-                    );
-                    Err(format!(
-                        "PreparedInvoke missing for '{extension_id}/{command}' — not executed; \
-                         resubmit the business call (command + params). Do not invent \
-                         prepared-operation tickets."
-                    ))
-                }
-                _ => Ok(argv),
-            };
-        }
+    let Some(op_id) = host_op else {
+        let parsed = match Args::try_parse_from(argv.iter()) {
+            Ok(a) => a,
+            Err(_) => return Ok(argv),
+        };
+        return match parsed.command {
+            Command::Extension {
+                extension_cmd:
+                    ExtensionCommand::Invoke {
+                        extension_id,
+                        command,
+                        ..
+                    },
+            } => {
+                tracing::warn!(
+                    extension_id = %extension_id,
+                    command = %command,
+                    stage = "shell_bind",
+                    "PreparedInvoke missing at Shell bind — host context had no ticket \
+                     (likely stripped at execute canonicalize without restore)"
+                );
+                Err(format!(
+                    "PreparedInvoke missing for '{extension_id}/{command}' — not executed; \
+                     resubmit the business call (command + params). Do not invent \
+                     prepared-operation tickets."
+                ))
+            }
+            _ => Ok(argv),
+        };
     };
     tracing::debug!(
         prepared_operation_id = %op_id,
@@ -1893,6 +1885,16 @@ fn stdout_has_server_guidance(stdout: &str) -> bool {
         || val.get("data").is_some_and(obj_has_guidance)
 }
 
+/// Return `true` when `stderr` already carries a server-originated `Hint:`
+/// line extracted from `ErrorResponse.hint` by `ApiClient`.
+fn stderr_has_server_guidance(stderr: &str) -> bool {
+    stderr.lines().any(|line| {
+        line.trim_start()
+            .strip_prefix("Hint:")
+            .is_some_and(|rest| !rest.trim().is_empty())
+    })
+}
+
 /// True for targeted parse-error hints that add value alongside clap's
 /// in-process `usage_hint` (as opposed to broad domain action summaries).
 fn is_targeted_parse_hint(hint: &str) -> bool {
@@ -1912,9 +1914,9 @@ impl ShellTool {
         }
 
         // If the server / CLI already returned structured guidance in JSON
-        // `stdout` (`suggestion` / `hint`), do not overwrite or stack a generic
-        // hint that could contradict it.
-        if stdout_has_server_guidance(stdout) {
+        // `stdout` (`suggestion` / `hint`) or extracted `Hint:` in `stderr`,
+        // do not overwrite or stack a generic hint that could contradict it.
+        if stdout_has_server_guidance(stdout) || stderr_has_server_guidance(stderr) {
             return None;
         }
 
@@ -2440,6 +2442,14 @@ mod tests {
             "neomind rule create --body '{}'",
             r#"{"success":false,"error":{"code":"VALIDATION_ERROR","message":"bad","hint":"Use greater_than"}}"#,
             "",
+        )
+        .is_none());
+        // When `stderr` carries a server-extracted `Hint:` line (e.g. 422 from
+        // `POST /messages/channels`), `recovery_hint` must not stack generic copy.
+        assert!(ShellTool::recovery_hint(
+            "neomind message channel-create --name ops --type webhook --config '{}'",
+            "",
+            "API error (422 Unprocessable Entity): Missing required config field(s) for 'webhook' channel: url\nHint: Required fields for 'webhook': url. Run `neomind message channel-type-schema webhook`.",
         )
         .is_none());
         let control_validation = hint(
@@ -3965,8 +3975,8 @@ mod prepared_invoke_bind_tests {
             .unwrap();
     }
 
-    #[test]
-    fn shell_bind_after_ro_classify_reload_mutating_is_stale() {
+    #[tokio::test]
+    async fn shell_bind_after_ro_classify_reload_mutating_is_stale() {
         let id = "weather-forecast-shell-bind-v1";
         publish(id, CommandEffect::ReadOnly);
         let params = json!({"city": "Xiamen"});
@@ -3984,10 +3994,16 @@ mod prepared_invoke_bind_tests {
             "get_weather".into(),
             "--params".into(),
             r#"{"city":"Xiamen"}"#.into(),
-            "--prepared-operation-id".into(),
-            op,
         ];
-        let err = bind_extension_invoke_prepared_token(argv).unwrap_err();
+        let err = neomind_cli_ops::dispatch::with_extension_invoke_host_context(
+            neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
+                prepared_operation_id: Some(op),
+                structured_params: Some(params.clone()),
+            },
+            async { bind_extension_invoke_prepared_token(argv) },
+        )
+        .await
+        .unwrap_err();
         assert!(
             err.contains("stale")
                 || err.contains("unbound")
@@ -4024,11 +4040,44 @@ mod prepared_invoke_bind_tests {
         invalidate_instance_capability(id);
     }
 
+    /// B5: argv `--prepared-operation-id` without host context is ignored and
+    /// rejected as missing (host context is the sole source of tickets).
+    #[test]
+    fn shell_bind_ignores_argv_ticket_without_host_context() {
+        let id = "weather-forecast-shell-bind-argv-only";
+        publish(id, CommandEffect::ReadOnly);
+        let params = json!({"city": "Xiamen"});
+        let bind = classify_and_bind_chat_invoke(id, "get_weather", &params);
+        let op = bind.prepared_operation_id.unwrap();
+
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "invoke".into(),
+            id.into(),
+            "get_weather".into(),
+            "--params".into(),
+            r#"{"city":"Xiamen"}"#.into(),
+            "--prepared-operation-id".into(),
+            op.clone(),
+        ];
+        let err = bind_extension_invoke_prepared_token(argv).unwrap_err();
+        assert!(
+            err.contains("PreparedInvoke missing"),
+            "argv-only ticket must not be accepted: {err}"
+        );
+        assert!(
+            peek_prepared_invoke(&op).is_some(),
+            "ticket must remain untouched"
+        );
+        invalidate_instance_capability(id);
+    }
+
     /// A RO classify → reload → B Mutating classify → A bind with A's id →
     /// stale. B's ticket stays unclaimed; "execute count" stays zero because
     /// bind fails before HTTP/extension dispatch.
-    #[test]
-    fn shell_interleave_a_ro_reload_b_write_a_bind_stale_zero_exec() {
+    #[tokio::test]
+    async fn shell_interleave_a_ro_reload_b_write_a_bind_stale_zero_exec() {
         static EXEC_COUNT: AtomicUsize = AtomicUsize::new(0);
         EXEC_COUNT.store(0, Ordering::SeqCst);
 
@@ -4053,10 +4102,16 @@ mod prepared_invoke_bind_tests {
             "get_weather".into(),
             "--params".into(),
             r#"{"city":"Xiamen"}"#.into(),
-            "--prepared-operation-id".into(),
-            a_id.clone(),
         ];
-        let err = bind_extension_invoke_prepared_token(argv).unwrap_err();
+        let err = neomind_cli_ops::dispatch::with_extension_invoke_host_context(
+            neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
+                prepared_operation_id: Some(a_id.clone()),
+                structured_params: Some(params),
+            },
+            async { bind_extension_invoke_prepared_token(argv) },
+        )
+        .await
+        .unwrap_err();
         assert!(
             err.contains("stale") || err.contains("missing") || err.contains("unbound"),
             "A must get stale, got: {err}"

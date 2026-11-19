@@ -376,7 +376,7 @@ export const agentsApi = {
    * PUT /api/settings/timezone
    */
   updateTimezone: (timezone: string) =>
-    fetchAPI<{ success: boolean; timezone: string }>('/settings/timezone', {
+    fetchAPI<{ timezone: string }>('/settings/timezone', {
       method: 'PUT',
       body: JSON.stringify({ timezone }),
     }),
@@ -398,7 +398,6 @@ export const agentsApi = {
    */
   getMemoryFile: (target: string) =>
     fetchAPI<{
-      success: boolean
       target: string
       content: string
       chars: number
@@ -409,7 +408,7 @@ export const agentsApi = {
    * PUT /api/memory/file/:target
    */
   updateMemoryFile: (target: string, content: string) =>
-    fetchAPI<{ success: boolean; message: string; chars: number }>(`/memory/file/${target}`, {
+    fetchAPI<{ message: string; chars: number }>(`/memory/file/${target}`, {
       method: 'PUT',
       body: JSON.stringify({ content }),
     }),
@@ -439,7 +438,7 @@ export const agentsApi = {
    * PUT /api/memory/config
    */
   updateMemoryConfig: (config: Partial<MemorySystemConfig>) =>
-    fetchAPI<{ success: boolean; config: MemorySystemConfig }>('/memory/config', {
+    fetchAPI<{ config: MemorySystemConfig }>('/memory/config', {
       method: 'PUT',
       body: JSON.stringify({ config }),
     }),
@@ -460,9 +459,9 @@ export const agentsApi = {
     }
 
     return fetchAPI<{
-      success: boolean
-      compressed: number
-      deleted: number
+      lines_evicted?: number
+      compressed?: number
+      deleted?: number
       message: string
     }>('/memory/compress', {
       method: 'POST',
@@ -489,7 +488,6 @@ export const agentsApi = {
    */
   listCustomMemoryFiles: () =>
     fetchAPI<{
-      success: boolean
       files: Array<{ name: string; chars: number }>
     }>('/memory/custom'),
 
@@ -499,7 +497,6 @@ export const agentsApi = {
    */
   getCustomMemoryFile: (name: string) =>
     fetchAPI<{
-      success: boolean
       name: string
       content: string
       chars: number
@@ -510,7 +507,7 @@ export const agentsApi = {
    * PUT /api/memory/custom/:name
    */
   updateCustomMemoryFile: (name: string, content: string) =>
-    fetchAPI<{ success: boolean; message: string; chars: number }>(`/memory/custom/${name}`, {
+    fetchAPI<{ message: string; chars: number }>(`/memory/custom/${name}`, {
       method: 'PUT',
       body: JSON.stringify({ content }),
     }),
@@ -520,7 +517,7 @@ export const agentsApi = {
    * DELETE /api/memory/custom/:name
    */
   deleteCustomMemoryFile: (name: string) =>
-    fetchAPI<{ success: boolean; message: string }>(`/memory/custom/${name}`, {
+    fetchAPI<{ message: string }>(`/memory/custom/${name}`, {
       method: 'DELETE',
     }),
 
@@ -546,7 +543,7 @@ export const agentsApi = {
    * PUT /api/memory/:source_type/:id
    */
   updateMemoryContent: (sourceType: string, id: string, content: string) =>
-    fetchAPI<{ success: boolean; message: string }>(`/memory/${sourceType}/${id}`, {
+    fetchAPI<{ message: string }>(`/memory/${sourceType}/${id}`, {
       method: 'PUT',
       body: JSON.stringify({ content }),
     }),
@@ -556,7 +553,7 @@ export const agentsApi = {
    * DELETE /api/memory/:source_type/:id
    */
   deleteMemoryFile: (sourceType: string, id: string) =>
-    fetchAPI<{ success: boolean; message: string }>(`/memory/${sourceType}/${id}`, {
+    fetchAPI<{ message: string }>(`/memory/${sourceType}/${id}`, {
       method: 'DELETE',
     }),
 

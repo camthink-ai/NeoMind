@@ -5,31 +5,39 @@
 //! `format_output`) and the in-process dispatcher (which returns the data to
 //! the agent without touching stdout).
 
+use super::DispatchContext;
 use crate::types::{CliResponse, OutputFormat};
 use anyhow::Result;
 // Bring all clap command types into scope.
 #[allow(unused_imports)]
 use super::commands::*;
 
-/// Returns true for extension subcommands that touch the local filesystem
-/// (`validate`, `install`, `uninstall`, `create`, `build`, `info`) and must
-/// run as a subprocess so their stdout is captured by the agent.
+/// Returns true for extension subcommands that operate purely on the local
+/// filesystem (`validate`, `create`, `build`, or explicit `--offline` mode for
+/// `install`/`uninstall`/`get`) and must run out-of-process in the full CLI.
 pub fn is_local_extension_command(cmd: &ExtensionCommand) -> bool {
     matches!(
         cmd,
         ExtensionCommand::Validate { .. }
-            | ExtensionCommand::Install { .. }
-            | ExtensionCommand::Uninstall { .. }
             | ExtensionCommand::Create { .. }
             | ExtensionCommand::Build { .. }
-            | ExtensionCommand::Get { .. }
+            | ExtensionCommand::Install { offline: true, .. }
+            | ExtensionCommand::Uninstall { offline: true, .. }
+            | ExtensionCommand::Get { offline: true, .. }
     )
 }
 
 pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, OutputFormat)> {
-    // Local-only subcommands (validate/install/uninstall/create/build/info) are
-    // handled by the binary directly — they print to stdout and rely on
-    // subprocess capture. The dispatcher pre-filters them via
+    run_extension_cmd_with_context(cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_extension_cmd_with_context(
+    cmd: ExtensionCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    // Local-only subcommands (validate/create/build or explicit --offline) are
+    // handled by the binary directly — they touch the local filesystem and
+    // print to stdout. The dispatcher pre-filters them via
     // `is_local_extension_command`, so reaching this handler with a local
     // command is a programming error.
     if is_local_extension_command(&cmd) {
@@ -38,17 +46,24 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
         );
     }
 
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
-    let client = crate::ApiClient::with_base_url(&api_base);
-    let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let output_format = ctx.output_format();
 
     let response = match cmd {
         ExtensionCommand::List { verbose: _ } => crate::extension::list_extensions(&client).await?,
+        ExtensionCommand::Get {
+            id_or_path,
+            offline: false,
+        } => crate::extension::get_extension(&client, &id_or_path).await?,
+        ExtensionCommand::Install {
+            package,
+            offline: false,
+        } => crate::extension::install_extension_file(&client, &package).await?,
+        ExtensionCommand::Uninstall {
+            id,
+            yes: _,
+            offline: false,
+        } => crate::extension::uninstall_extension(&client, &id).await?,
         ExtensionCommand::Status { id } => {
             crate::extension::get_extension_status(&client, &id).await?
         }
@@ -114,16 +129,17 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
 }
 
 pub async fn run_llm_cmd(cmd: LlmCommand) -> Result<(CliResponse, OutputFormat)> {
+    run_llm_cmd_with_context(cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_llm_cmd_with_context(
+    cmd: LlmCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
     use crate::llm::*;
 
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
-    let client = crate::ApiClient::with_base_url(&api_base);
-    let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let output_format = ctx.output_format();
 
     let response = match cmd {
         LlmCommand::List {} => list_backends(&client).await?,
@@ -176,21 +192,17 @@ pub async fn run_llm_cmd(cmd: LlmCommand) -> Result<(CliResponse, OutputFormat)>
 }
 
 pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFormat)> {
-    use crate::{device::*, ApiClient};
+    run_device_cmd_with_context(cmd, &DispatchContext::default()).await
+}
 
-    // Get API base URL from environment or use default
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
+pub async fn run_device_cmd_with_context(
+    cmd: DeviceCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    use crate::device::*;
 
-    // Create API client
-    let client = ApiClient::with_base_url(&api_base);
-
-    // Resolve output format: NEOMIND_JSON env var > Human default
-    let base_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let base_format = ctx.output_format();
 
     let (response, output_format) = match cmd {
         DeviceCommand::List {
@@ -311,7 +323,7 @@ pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFo
         }
         DeviceCommand::WebhookUrl { id } => (get_webhook_url(&client, &id).await?, base_format),
         DeviceCommand::Drafts { draft_cmd } => {
-            return run_draft_cmd(draft_cmd).await;
+            return run_draft_cmd_with_context(draft_cmd, ctx).await;
         }
     };
 
@@ -321,14 +333,17 @@ pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFo
 
 /// Run device draft management commands.
 pub async fn run_draft_cmd(cmd: DraftCommand) -> Result<(CliResponse, OutputFormat)> {
+    run_draft_cmd_with_context(cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_draft_cmd_with_context(
+    cmd: DraftCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
     use crate::device::*;
 
-    let client = crate::ApiClient::new();
-    let base_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let base_format = ctx.output_format();
     let response = match cmd {
         DraftCommand::List {} => (list_drafts(&client).await?, base_format),
         DraftCommand::Get { id } => (get_draft(&client, &id).await?, base_format),
@@ -389,21 +404,17 @@ pub async fn run_device_type_cmd(
 
 /// Run dashboard management commands.
 pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, OutputFormat)> {
-    use crate::{dashboard::*, ApiClient};
+    run_dashboard_cmd_with_context(cmd, &DispatchContext::default()).await
+}
 
-    // Get API base URL from environment or use default
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
+pub async fn run_dashboard_cmd_with_context(
+    cmd: DashboardCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    use crate::dashboard::*;
 
-    // Create API client
-    let client = ApiClient::with_base_url(&api_base);
-
-    // Get output format (controlled by NEOMIND_JSON env var)
-    let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let output_format = ctx.output_format();
 
     let (response, output_format) = match cmd {
         DashboardCommand::List {} => {
@@ -523,21 +534,17 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
 
 /// Run rule management commands.
 pub async fn run_rule_cmd(cmd: RuleCommand) -> Result<(CliResponse, OutputFormat)> {
-    use crate::{rule::*, ApiClient};
+    run_rule_cmd_with_context(cmd, &DispatchContext::default()).await
+}
 
-    // Get API base URL from environment or use default
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
+pub async fn run_rule_cmd_with_context(
+    cmd: RuleCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    use crate::rule::*;
 
-    // Create API client
-    let client = ApiClient::with_base_url(&api_base);
-
-    // Get output format (controlled by NEOMIND_JSON env var)
-    let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let output_format = ctx.output_format();
 
     let response = match cmd {
         RuleCommand::List => list_rules(&client).await?,
@@ -657,21 +664,17 @@ pub async fn run_rule_cmd(cmd: RuleCommand) -> Result<(CliResponse, OutputFormat
 
 /// Run transform management commands.
 pub async fn run_transform_cmd(cmd: TransformCommand) -> Result<(CliResponse, OutputFormat)> {
-    use crate::{transform::*, ApiClient};
+    run_transform_cmd_with_context(cmd, &DispatchContext::default()).await
+}
 
-    // Get API base URL from environment or use default
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
+pub async fn run_transform_cmd_with_context(
+    cmd: TransformCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    use crate::transform::*;
 
-    // Create API client
-    let client = ApiClient::with_base_url(&api_base);
-
-    // Get output format (controlled by NEOMIND_JSON env var)
-    let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let output_format = ctx.output_format();
 
     let response = match cmd {
         TransformCommand::List => list_transforms(&client).await?,
@@ -736,21 +739,17 @@ pub async fn run_transform_cmd(cmd: TransformCommand) -> Result<(CliResponse, Ou
 
 /// Run agent management commands.
 pub async fn run_agent_cmd(cmd: AgentCommand) -> Result<(CliResponse, OutputFormat)> {
-    use crate::{agent_cmd::*, ApiClient};
+    run_agent_cmd_with_context(cmd, &DispatchContext::default()).await
+}
 
-    // Get API base URL from environment or use default
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
+pub async fn run_agent_cmd_with_context(
+    cmd: AgentCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    use crate::agent_cmd::*;
 
-    // Create API client
-    let client = ApiClient::with_base_url(&api_base);
-
-    // Get output format (controlled by NEOMIND_JSON env var)
-    let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let output_format = ctx.output_format();
 
     let response = match cmd {
         AgentCommand::List => list_agents(&client).await?,
@@ -878,21 +877,17 @@ pub async fn run_agent_cmd(cmd: AgentCommand) -> Result<(CliResponse, OutputForm
 
 /// Run message management commands.
 pub async fn run_message_cmd(cmd: MessageCommand) -> Result<(CliResponse, OutputFormat)> {
-    use crate::{message::*, ApiClient};
+    run_message_cmd_with_context(cmd, &DispatchContext::default()).await
+}
 
-    // Get API base URL from environment or use default
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
+pub async fn run_message_cmd_with_context(
+    cmd: MessageCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    use crate::message::*;
 
-    // Create API client
-    let client = ApiClient::with_base_url(&api_base);
-
-    // Get output format (controlled by NEOMIND_JSON env var)
-    let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let output_format = ctx.output_format();
 
     let response = match cmd {
         MessageCommand::List {
@@ -948,16 +943,17 @@ pub async fn run_message_cmd(cmd: MessageCommand) -> Result<(CliResponse, Output
 
 /// Run push management commands.
 pub async fn run_push_cmd(cmd: PushCommand) -> Result<(CliResponse, OutputFormat)> {
-    use crate::{data_push::*, ApiClient};
+    run_push_cmd_with_context(cmd, &DispatchContext::default()).await
+}
 
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
-    let client = ApiClient::with_base_url(&api_base);
-    let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+pub async fn run_push_cmd_with_context(
+    cmd: PushCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    use crate::data_push::*;
+
+    let client = ctx.api_client();
+    let output_format = ctx.output_format();
 
     let response = match cmd {
         PushCommand::List => list_targets(&client).await?,
@@ -1013,21 +1009,17 @@ pub async fn run_push_cmd(cmd: PushCommand) -> Result<(CliResponse, OutputFormat
 
 /// Run widget management commands.
 pub async fn run_widget_cmd(cmd: WidgetCommand) -> Result<(CliResponse, OutputFormat)> {
-    use crate::{widget::*, ApiClient};
+    run_widget_cmd_with_context(cmd, &DispatchContext::default()).await
+}
 
-    // Get API base URL from environment or use default
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
+pub async fn run_widget_cmd_with_context(
+    cmd: WidgetCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    use crate::widget::*;
 
-    // Create API client
-    let client = ApiClient::with_base_url(&api_base);
-
-    // Get output format (controlled by NEOMIND_JSON env var)
-    let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let output_format = ctx.output_format();
 
     let (response, output_format) = match cmd {
         WidgetCommand::List {} => {
@@ -1091,12 +1083,15 @@ pub async fn run_widget_cmd(cmd: WidgetCommand) -> Result<(CliResponse, OutputFo
 }
 
 pub async fn run_system_cmd(cmd: SystemCommand) -> Result<(CliResponse, OutputFormat)> {
-    let client = crate::ApiClient::new();
-    let base_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    run_system_cmd_with_context(cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_system_cmd_with_context(
+    cmd: SystemCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    let client = ctx.api_client();
+    let base_format = ctx.output_format();
 
     let result = match cmd {
         SystemCommand::Info {} => {
@@ -1110,13 +1105,16 @@ pub async fn run_system_cmd(cmd: SystemCommand) -> Result<(CliResponse, OutputFo
 pub async fn run_data_cmd(
     cmd: crate::dispatch::commands::DataCommand,
 ) -> Result<(CliResponse, OutputFormat)> {
+    run_data_cmd_with_context(cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_data_cmd_with_context(
+    cmd: crate::dispatch::commands::DataCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
     use crate::dispatch::commands::DataCommand;
-    let client = crate::ApiClient::new();
-    let base_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let base_format = ctx.output_format();
     let result = match cmd {
         DataCommand::List { source_type } => {
             let path = match &source_type {
@@ -1164,13 +1162,16 @@ pub async fn run_data_cmd(
 pub async fn run_config_cmd(
     cmd: crate::dispatch::commands::ConfigCommand,
 ) -> Result<(CliResponse, OutputFormat)> {
+    run_config_cmd_with_context(cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_config_cmd_with_context(
+    cmd: crate::dispatch::commands::ConfigCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
     use crate::dispatch::commands::ConfigCommand;
-    let client = crate::ApiClient::new();
-    let base_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    let client = ctx.api_client();
+    let base_format = ctx.output_format();
 
     let result = match cmd {
         ConfigCommand::Export {} => (
@@ -1198,12 +1199,15 @@ pub async fn run_config_cmd(
 }
 
 pub async fn run_settings_cmd(cmd: SettingsCommand) -> Result<(CliResponse, OutputFormat)> {
-    let client = crate::ApiClient::new();
-    let base_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    run_settings_cmd_with_context(cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_settings_cmd_with_context(
+    cmd: SettingsCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    let client = ctx.api_client();
+    let base_format = ctx.output_format();
 
     let result = match cmd {
         SettingsCommand::Timezone {} => {
@@ -1247,12 +1251,15 @@ pub async fn run_settings_cmd(cmd: SettingsCommand) -> Result<(CliResponse, Outp
 }
 
 pub async fn run_connector_cmd(cmd: ConnectorCommand) -> Result<(CliResponse, OutputFormat)> {
-    let client = crate::ApiClient::new();
-    let base_format = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    run_connector_cmd_with_context(cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_connector_cmd_with_context(
+    cmd: ConnectorCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    let client = ctx.api_client();
+    let base_format = ctx.output_format();
 
     let result = match cmd {
         ConnectorCommand::List {} => {
@@ -1375,41 +1382,52 @@ pub async fn run_login_cmd(
     data_dir: Option<String>,
     force: bool,
 ) -> Result<(CliResponse, OutputFormat)> {
-    let fmt = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    run_login_cmd_with_context(data_dir, force, &DispatchContext::default()).await
+}
+
+pub async fn run_login_cmd_with_context(
+    data_dir: Option<String>,
+    force: bool,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    let fmt = ctx.output_format();
     let resp = crate::auth_cmd::run_login(data_dir, force).await?;
     Ok((resp, fmt))
 }
 
 pub async fn run_logout_cmd() -> Result<(CliResponse, OutputFormat)> {
-    let fmt = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    run_logout_cmd_with_context(&DispatchContext::default()).await
+}
+
+pub async fn run_logout_cmd_with_context(
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    let fmt = ctx.output_format();
     let resp = crate::auth_cmd::run_logout().await?;
     Ok((resp, fmt))
 }
 
 pub async fn run_whoami_cmd() -> Result<(CliResponse, OutputFormat)> {
-    let fmt = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
-    let resp = crate::auth_cmd::run_whoami().await?;
+    run_whoami_cmd_with_context(&DispatchContext::default()).await
+}
+
+pub async fn run_whoami_cmd_with_context(
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    let fmt = ctx.output_format();
+    let resp = crate::auth_cmd::run_whoami_with_context(ctx).await?;
     Ok((resp, fmt))
 }
 
 pub async fn run_user_cmd(user_cmd: UserCommand) -> Result<(CliResponse, OutputFormat)> {
-    let fmt = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
+    run_user_cmd_with_context(user_cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_user_cmd_with_context(
+    user_cmd: UserCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    let fmt = ctx.output_format();
     let resp = match user_cmd {
         UserCommand::List { data_dir } => crate::user_cmd::run_list_users(data_dir).await?,
         UserCommand::ResetPassword { username, data_dir } => {
@@ -1437,12 +1455,15 @@ pub async fn run_user_cmd(user_cmd: UserCommand) -> Result<(CliResponse, OutputF
 /// `--data-dir` flag is therefore about the RUNNING server's store, not a
 /// local path this command opens.
 pub async fn run_api_key_cmd(key_cmd: ApiKeyCommand) -> Result<(CliResponse, OutputFormat)> {
-    let fmt = if std::env::var("NEOMIND_JSON").is_ok() {
-        OutputFormat::Json
-    } else {
-        OutputFormat::Human
-    };
-    let client = crate::ApiClient::new();
+    run_api_key_cmd_with_context(key_cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_api_key_cmd_with_context(
+    key_cmd: ApiKeyCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    let fmt = ctx.output_format();
+    let client = ctx.api_client();
     let resp = match key_cmd {
         ApiKeyCommand::Create { name, .. } => {
             let out = client

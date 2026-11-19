@@ -459,7 +459,6 @@ pub async fn publish_event_handler(
     }
 
     ok(serde_json::json!({
-        "success": true,
         "event_type": req.event_type,
         "source": source,
     }))

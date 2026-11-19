@@ -179,7 +179,6 @@ pub async fn register_device_type_handler(
         })?;
 
     ok(json!({
-        "success": true,
         "registered": true,
         "device_type": type_id,
         "name": type_name,
@@ -212,7 +211,6 @@ pub async fn delete_device_type_handler(
         .map_err(|e| ErrorResponse::internal(format!("Failed to delete device type: {}", e)))?;
 
     ok(json!({
-        "success": true,
         "device_type": device_type,
         "deleted": true,
     }))

@@ -1755,7 +1755,6 @@ pub async fn uninstall_component_handler(
     );
 
     ok(json!({
-        "success": true,
         "component_id": id_for_event,
         "state": "uninstalled"
     }))

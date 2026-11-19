@@ -40,14 +40,16 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // `--format json` maps onto the existing NEOMIND_JSON switch so every
-    // output-format reader (terminal print paths) sees one signal;
-    // `--format text` leaves the human default alone. The in-process agent
-    // path already returns JSON regardless — the flag's main job there is
-    // being ACCEPTED (it's a generic CLI convention models reach for).
-    if args.format.as_deref() == Some("json") {
-        std::env::set_var("NEOMIND_JSON", "1");
-    }
+    // Build an explicit DispatchContext without mutating process env vars.
+    let dispatch_ctx = neomind_cli_ops::dispatch::DispatchContext {
+        api_base: std::env::var("NEOMIND_API_BASE").ok(),
+        api_key: std::env::var("NEOMIND_API_KEY").ok(),
+        output_format: match args.format.as_deref() {
+            Some("json") => Some(neomind_cli_ops::types::OutputFormat::Json),
+            Some("text") => Some(neomind_cli_ops::types::OutputFormat::Human),
+            _ => None,
+        },
+    };
 
     // Initialize logging
     let json_logging = std::env::var("NEOMIND_LOG_JSON")
@@ -149,7 +151,9 @@ async fn main() -> Result<()> {
             level,
             since,
         } => run_logs(tail, follow, level, since).await,
-        Command::Extension { extension_cmd } => run_extension_cmd(extension_cmd).await,
+        Command::Extension { extension_cmd } => {
+            run_extension_cmd(extension_cmd, &dispatch_ctx).await
+        }
         Command::CheckUpdate => run_check_update().await,
         Command::Upgrade {
             version,
@@ -164,60 +168,110 @@ async fn main() -> Result<()> {
         }
         Command::Uninstall { purge, yes } => self_update::run_uninstall(purge, yes).await,
         Command::ApiKey { key_cmd } => run_api_key_cmd(key_cmd).await,
-        Command::Llm { llm_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_llm_cmd(llm_cmd).await)
-        }
-        Command::Device { device_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_device_cmd(device_cmd).await)
-        }
+        Command::Llm { llm_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_llm_cmd_with_context(llm_cmd, &dispatch_ctx)
+                .await,
+        ),
+        Command::Device { device_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_device_cmd_with_context(
+                device_cmd,
+                &dispatch_ctx,
+            )
+            .await,
+        ),
         Command::Dashboard { dashboard_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_dashboard_cmd(dashboard_cmd).await,
+            neomind_cli_ops::dispatch::handlers::run_dashboard_cmd_with_context(
+                dashboard_cmd,
+                &dispatch_ctx,
+            )
+            .await,
         ),
-        Command::Rule { rule_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_rule_cmd(rule_cmd).await)
-        }
+        Command::Rule { rule_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_rule_cmd_with_context(rule_cmd, &dispatch_ctx)
+                .await,
+        ),
         Command::Transform { transform_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_transform_cmd(transform_cmd).await,
+            neomind_cli_ops::dispatch::handlers::run_transform_cmd_with_context(
+                transform_cmd,
+                &dispatch_ctx,
+            )
+            .await,
         ),
-        Command::Agent { agent_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_agent_cmd(agent_cmd).await)
-        }
-        Command::Message { message_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_message_cmd(message_cmd).await)
-        }
-        Command::Push { push_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_push_cmd(push_cmd).await)
-        }
-        Command::Widget { widget_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_widget_cmd(widget_cmd).await)
-        }
-        Command::System { system_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_system_cmd(system_cmd).await)
-        }
-        Command::Config { config_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_config_cmd(config_cmd).await)
-        }
-        Command::Data { data_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_data_cmd(data_cmd).await)
-        }
+        Command::Agent { agent_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_agent_cmd_with_context(
+                agent_cmd,
+                &dispatch_ctx,
+            )
+            .await,
+        ),
+        Command::Message { message_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_message_cmd_with_context(
+                message_cmd,
+                &dispatch_ctx,
+            )
+            .await,
+        ),
+        Command::Push { push_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_push_cmd_with_context(push_cmd, &dispatch_ctx)
+                .await,
+        ),
+        Command::Widget { widget_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_widget_cmd_with_context(
+                widget_cmd,
+                &dispatch_ctx,
+            )
+            .await,
+        ),
+        Command::System { system_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_system_cmd_with_context(
+                system_cmd,
+                &dispatch_ctx,
+            )
+            .await,
+        ),
+        Command::Config { config_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_config_cmd_with_context(
+                config_cmd,
+                &dispatch_ctx,
+            )
+            .await,
+        ),
+        Command::Data { data_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_data_cmd_with_context(data_cmd, &dispatch_ctx)
+                .await,
+        ),
         Command::Connector { connector_cmd } => print_result(
-            neomind_cli_ops::dispatch::handlers::run_connector_cmd(connector_cmd).await,
+            neomind_cli_ops::dispatch::handlers::run_connector_cmd_with_context(
+                connector_cmd,
+                &dispatch_ctx,
+            )
+            .await,
         ),
-        Command::Settings { settings_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_settings_cmd(settings_cmd).await)
-        }
-        Command::Login { data_dir, force } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_login_cmd(data_dir, force).await)
-        }
-        Command::Logout => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_logout_cmd().await)
-        }
-        Command::Whoami => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_whoami_cmd().await)
-        }
-        Command::User { user_cmd } => {
-            print_result(neomind_cli_ops::dispatch::handlers::run_user_cmd(user_cmd).await)
-        }
+        Command::Settings { settings_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_settings_cmd_with_context(
+                settings_cmd,
+                &dispatch_ctx,
+            )
+            .await,
+        ),
+        Command::Login { data_dir, force } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_login_cmd_with_context(
+                data_dir,
+                force,
+                &dispatch_ctx,
+            )
+            .await,
+        ),
+        Command::Logout => print_result(
+            neomind_cli_ops::dispatch::handlers::run_logout_cmd_with_context(&dispatch_ctx).await,
+        ),
+        Command::Whoami => print_result(
+            neomind_cli_ops::dispatch::handlers::run_whoami_cmd_with_context(&dispatch_ctx).await,
+        ),
+        Command::User { user_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_user_cmd_with_context(user_cmd, &dispatch_ctx)
+                .await,
+        ),
     }
 }
 
@@ -1006,58 +1060,74 @@ fn matches_level(line: &str, level: &Option<String>) -> bool {
 }
 
 /// Run extension management commands.
-async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<()> {
-    // Local-only subcommands (validate/install/uninstall/create/build/info) are
-    // handled here in the binary — they touch the local filesystem and print
-    // directly to stdout. API subcommands are delegated to the cli-ops handler
-    // (which is the same code path used by the in-process dispatcher).
-    match &cmd {
-        ExtensionCommand::Validate { .. } => {
-            if let ExtensionCommand::Validate { path, verbose } = cmd {
-                return validate_nep_package(&path, verbose).await;
-            }
-            unreachable!()
+async fn run_extension_cmd(
+    cmd: ExtensionCommand,
+    ctx: &neomind_cli_ops::dispatch::DispatchContext,
+) -> Result<()> {
+    // Only true local developer commands (`validate`, `create`, `build`) and
+    // explicit `--offline` operations touch the local filesystem directly.
+    // All online extension operations (`install`, `uninstall`, `get`, `list`,
+    // `status`, `logs`, `config`, `commands`, `invoke`, marketplace) converge
+    // on the same `neomind-cli-ops` HTTP handler used by in-process dispatch.
+    match cmd {
+        ExtensionCommand::Validate { path, verbose } => validate_nep_package(&path, verbose).await,
+        ExtensionCommand::Create {
+            name,
+            extension_type,
+            output,
+        } => {
+            create_extension_scaffold(&name, &extension_type, output)?;
+            Ok(())
         }
-        ExtensionCommand::Install { .. } => {
-            if let ExtensionCommand::Install { package } = cmd {
-                return install_extension(&package).await;
-            }
-            unreachable!()
+        ExtensionCommand::Build { path } => {
+            build_extension(&path)?;
+            Ok(())
         }
-        ExtensionCommand::Uninstall { .. } => {
-            if let ExtensionCommand::Uninstall { id, yes, .. } = cmd {
-                return uninstall_extension(&id, yes).await;
-            }
-            unreachable!()
+        ExtensionCommand::Install {
+            package,
+            offline: true,
+        } => install_extension_offline(&package).await,
+        ExtensionCommand::Uninstall {
+            id,
+            yes,
+            offline: true,
+        } => uninstall_extension_offline(&id, yes).await,
+        ExtensionCommand::Get {
+            id_or_path,
+            offline: true,
+        } => show_extension_info_offline(&id_or_path).await,
+        ExtensionCommand::Get {
+            ref id_or_path,
+            offline: false,
+        } if std::path::Path::new(id_or_path)
+            .extension()
+            .is_some_and(|e| e == "nep") =>
+        {
+            validate_nep_package(&std::path::PathBuf::from(id_or_path), true).await
         }
-        ExtensionCommand::Create { .. } => {
-            if let ExtensionCommand::Create {
-                name,
-                extension_type,
-                output,
-            } = cmd
-            {
-                create_extension_scaffold(&name, &extension_type, output)?;
-                return Ok(());
-            }
-            unreachable!()
+        ExtensionCommand::Uninstall {
+            id,
+            yes,
+            offline: false,
+        } => {
+            confirm_or_abort(&format!("Uninstall extension '{}'?", id), yes)?;
+            print_result(
+                neomind_cli_ops::dispatch::handlers::run_extension_cmd_with_context(
+                    ExtensionCommand::Uninstall {
+                        id,
+                        yes: true,
+                        offline: false,
+                    },
+                    ctx,
+                )
+                .await,
+            )
         }
-        ExtensionCommand::Build { .. } => {
-            if let ExtensionCommand::Build { path } = cmd {
-                build_extension(&path)?;
-                return Ok(());
-            }
-            unreachable!()
-        }
-        ExtensionCommand::Get { .. } => {
-            // Get has local fallback logic, handled separately
-            if let ExtensionCommand::Get { id_or_path } = cmd {
-                return show_extension_info(&id_or_path).await;
-            }
-            unreachable!()
-        }
-        // API commands — delegate to cli-ops handler (shared with in-process dispatch).
-        _ => print_result(neomind_cli_ops::dispatch::handlers::run_extension_cmd(cmd).await),
+        // Online API commands (including `install`, `get`, and all runtime ops)
+        // share the exact same `neomind-cli-ops` HTTP handler as in-process dispatch.
+        other => print_result(
+            neomind_cli_ops::dispatch::handlers::run_extension_cmd_with_context(other, ctx).await,
+        ),
     }
 }
 
@@ -1187,12 +1257,8 @@ async fn validate_nep_package(path: &std::path::PathBuf, verbose: bool) -> Resul
     Ok(())
 }
 
-/// List installed extensions.
-/// Show extension information.
-async fn show_extension_info(id_or_path: &str) -> Result<()> {
-    use neomind_cli_ops::output::format_output;
-    use neomind_cli_ops::types::OutputFormat;
-
+/// Show extension information from local `.nep` files (`--offline`).
+async fn show_extension_info_offline(id_or_path: &str) -> Result<()> {
     let path = std::path::PathBuf::from(id_or_path);
 
     if path.exists() {
@@ -1201,31 +1267,7 @@ async fn show_extension_info(id_or_path: &str) -> Result<()> {
         return Ok(());
     }
 
-    // Try API first (shows runtime info: status, commands, metrics). A 2xx
-    // whose body isn't JSON (the web SPA fallback for an unrouted path)
-    // parses to Null in the client — treat anything but a non-empty JSON
-    // object as "no answer" and fall through, never as success.
-    let client = neomind_cli_ops::ApiClient::new();
-    if let Ok(response) = neomind_cli_ops::extension::get_extension(&client, id_or_path).await {
-        let looks_like_extension = response
-            .data
-            .as_ref()
-            .and_then(|d| d.as_object())
-            .is_some_and(|o| !o.is_empty());
-        if looks_like_extension {
-            let output_format = if std::env::var("NEOMIND_JSON").is_ok() {
-                OutputFormat::Json
-            } else {
-                OutputFormat::Human
-            };
-            // format_output is PURE (returns the string) — a bare call here
-            // used to drop the whole report, printing nothing with exit 0.
-            print!("{}", format_output(&response, output_format));
-            return Ok(());
-        }
-    }
-
-    // Fallback: search local filesystem for .nep files
+    // Search local filesystem for .nep files
     use std::fs;
 
     let search_dirs = [
@@ -1254,12 +1296,12 @@ async fn show_extension_info(id_or_path: &str) -> Result<()> {
         validate_nep_package(&found_path, true).await?;
         Ok(())
     } else {
-        anyhow::bail!("Extension not found: {}", id_or_path);
+        anyhow::bail!("Extension not found locally: {}", id_or_path);
     }
 }
 
-/// Install an extension from .nep package.
-async fn install_extension(package: &str) -> Result<()> {
+/// Install an extension from a `.nep` package into the local directory (`--offline`).
+async fn install_extension_offline(package: &str) -> Result<()> {
     let source_path = std::path::PathBuf::from(package);
 
     if !source_path.exists() {
@@ -1319,7 +1361,7 @@ fn confirm_or_abort(prompt: &str, yes: bool) -> Result<()> {
     Ok(())
 }
 
-async fn uninstall_extension(id: &str, yes: bool) -> Result<()> {
+async fn uninstall_extension_offline(id: &str, yes: bool) -> Result<()> {
     use std::fs;
 
     let search_dirs = [

@@ -227,15 +227,6 @@ pub async fn test_transform_code(
     let data = client
         .post("/automations/transforms/test-code", &body)
         .await?;
-    // Flatten: API returns {success:false, error:"..."} on execution failure
-    // wrapped inside the outer success response — detect and surface as error
-    if data.get("success").and_then(|v| v.as_bool()) == Some(false) {
-        let error_msg = data
-            .get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Transform code execution failed");
-        return Ok(CliResponse::error(error_msg, "TRANSFORM_TEST_FAILED"));
-    }
     Ok(CliResponse::success(data, "Transform code tested"))
 }
 

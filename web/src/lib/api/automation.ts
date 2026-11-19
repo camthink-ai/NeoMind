@@ -154,7 +154,6 @@ export const automationApi = {
     timestamp?: number
   }) =>
     fetchAPI<{
-      success: boolean
       metrics: Array<{
         device_id: string
         metric: string
@@ -199,7 +198,6 @@ export const automationApi = {
     output_prefix?: string
   }) =>
     fetchAPI<{
-      success: boolean
       output: Record<string, unknown>
       output_with_prefix: Record<string, unknown>
       metrics: Array<{
@@ -212,10 +210,10 @@ export const automationApi = {
       count: number
       unverified?: string[]
       warnings?: string[]
-      error?: string
     }>('/automations/transforms/test-code', {
       method: 'POST',
       body: JSON.stringify(req),
+      skipErrorToast: true,
     }),
   // List all transforms
   listTransforms: () =>

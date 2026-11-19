@@ -249,7 +249,6 @@ pub async fn update_timezone(
     tracing::info!("Global timezone updated to: {}", req.timezone);
 
     ok(json!({
-        "success": true,
         "timezone": req.timezone,
     }))
 }
@@ -375,7 +374,6 @@ pub async fn update_retention_config(
     );
 
     ok(json!({
-        "success": true,
         "enabled": config.enabled,
         "interval_hours": config.interval_hours,
         "default_retention": config.default_retention,
@@ -509,7 +507,6 @@ pub async fn update_agent_defaults(
     );
 
     ok(json!({
-        "success": true,
         "max_rounds": config.max_rounds,
         "execution_timeout_secs": config.execution_timeout_secs,
         "tool_concurrency": config.tool_concurrency,
@@ -587,7 +584,6 @@ pub async fn update_device_defaults(
     );
 
     ok(json!({
-        "success": true,
         "default_offline_timeout_secs": config.default_offline_timeout_secs,
         "auto_onboard_enabled": config.auto_onboard_enabled,
     }))
@@ -643,7 +639,6 @@ pub async fn trigger_retention_cleanup(
     });
 
     ok(json!({
-        "success": true,
         "triggered": true,
         "message": "Retention cleanup scheduled in background",
     }))

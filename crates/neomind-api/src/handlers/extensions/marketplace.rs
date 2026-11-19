@@ -427,17 +427,14 @@ pub struct MarketplaceInstallRequest {
     pub version: Option<String>,
 }
 
-/// Response for install operation
+/// Response for a successful marketplace install operation.
 #[derive(Debug, Serialize)]
 pub struct MarketplaceInstallResponse {
-    pub success: bool,
     pub extension_id: String,
     pub downloaded: bool,
     pub installed: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    #[serde(default)]
-    pub error: Option<String>,
 }
 
 /// GET /api/extensions/market/list
@@ -853,38 +850,33 @@ pub async fn install_marketplace_extension_handler(
         .send()
         .await
     {
-        Ok(r) if r.status().is_success() => match r.json().await {
-            Ok(m) => m,
-            Err(e) => {
-                return ok(MarketplaceInstallResponse {
-                    success: false,
-                    extension_id: req.id,
-                    downloaded: false,
-                    installed: false,
-                    path: None,
-                    error: Some(format!("Failed to parse metadata: {}", e)),
-                });
-            }
-        },
+        Ok(r) if r.status().is_success() => r.json().await.map_err(|e| {
+            ErrorResponse::internal(format!(
+                "Failed to parse marketplace metadata for '{}': {}",
+                req.id, e
+            ))
+            .with_hint("Retry later or verify the marketplace registry metadata.")
+        })?,
+        Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
+            return Err(
+                ErrorResponse::not_found(format!("Marketplace extension '{}'", req.id))
+                    .with_hint("Run `neomind extension market-list` to see available extensions."),
+            );
+        }
         Ok(r) => {
-            return ok(MarketplaceInstallResponse {
-                success: false,
-                extension_id: req.id.clone(),
-                downloaded: false,
-                installed: false,
-                path: None,
-                error: Some(format!("Extension not found: {}", r.status())),
-            });
+            return Err(ErrorResponse::service_unavailable(format!(
+                "Marketplace metadata fetch failed for '{}': HTTP {}",
+                req.id,
+                r.status()
+            ))
+            .with_hint("Check network access to the marketplace registry and retry."));
         }
         Err(e) => {
-            return ok(MarketplaceInstallResponse {
-                success: false,
-                extension_id: req.id.clone(),
-                downloaded: false,
-                installed: false,
-                path: None,
-                error: Some(format!("Network error: {}", e)),
-            });
+            return Err(ErrorResponse::service_unavailable(format!(
+                "Network error fetching marketplace metadata for '{}': {}",
+                req.id, e
+            ))
+            .with_hint("Check network connectivity to the marketplace registry and retry."));
         }
     };
 
@@ -932,58 +924,35 @@ pub async fn install_marketplace_extension_handler(
         );
 
         // Download the .nep package
-        let package_response = match client
+        let package_response = client
             .get(package_url)
             .header("User-Agent", "NeoMind-Extension-Marketplace")
             .send()
             .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                return ok(MarketplaceInstallResponse {
-                    success: false,
-                    extension_id: req.id.clone(),
-                    downloaded: false,
-                    installed: false,
-                    path: None,
-                    error: Some(format!("Failed to download package: {}", e)),
-                });
-            }
-        };
+            .map_err(|e| {
+                ErrorResponse::service_unavailable(format!(
+                    "Failed to download package for '{}': {}",
+                    req.id, e
+                ))
+                .with_hint("Check network connectivity to the marketplace registry and retry.")
+            })?;
 
         if !package_response.status().is_success() {
-            return ok(MarketplaceInstallResponse {
-                success: false,
-                extension_id: req.id.clone(),
-                downloaded: false,
-                installed: false,
-                path: None,
-                error: Some(format!(
-                    "Package download failed: {}",
-                    package_response.status()
-                )),
-            });
+            return Err(ErrorResponse::service_unavailable(format!(
+                "Package download failed for '{}': HTTP {}",
+                req.id,
+                package_response.status()
+            ))
+            .with_hint("Verify the release artifact is available in the marketplace registry."));
         }
 
         // Stream the package body to a temp file (never buffer the whole
         // .nep in memory — large ML model bundles would OOM). The temp file
         // is cleaned up via _guard on every exit path.
         let tmp_path =
-            match download_to_temp_file(package_response, MAX_EXTENSION_DOWNLOAD_SIZE, &req.id)
+            download_to_temp_file(package_response, MAX_EXTENSION_DOWNLOAD_SIZE, &req.id)
                 .await
-            {
-                Ok(p) => p,
-                Err(msg) => {
-                    return ok(MarketplaceInstallResponse {
-                        success: false,
-                        extension_id: req.id.clone(),
-                        downloaded: false,
-                        installed: false,
-                        path: None,
-                        error: Some(msg),
-                    });
-                }
-            };
+                .map_err(ErrorResponse::internal)?;
         let _guard = AutoRemove(tmp_path.clone());
 
         // Verify it's a valid ZIP file by reading only the magic bytes from
@@ -998,14 +967,11 @@ pub async fn install_marketplace_extension_handler(
             || magic_buf == [0x50, 0x4B, 0x07, 0x08];
 
         if !is_zip {
-            return ok(MarketplaceInstallResponse {
-                success: false,
-                extension_id: req.id.clone(),
-                downloaded: false,
-                installed: false,
-                path: None,
-                error: Some("Downloaded file is not a valid .nep package (ZIP format)".to_string()),
-            });
+            return Err(ErrorResponse::bad_request(format!(
+                "Downloaded file for '{}' is not a valid .nep package (ZIP format)",
+                req.id
+            ))
+            .with_hint("Verify the marketplace build URL points to a valid .nep archive."));
         }
 
         // The marketplace index does not carry sha256 yet (the release
@@ -1030,17 +996,10 @@ pub async fn install_marketplace_extension_handler(
                 .unwrap_or(false);
             if strict {
                 let _ = std::fs::remove_file(&tmp_path);
-                return ok(MarketplaceInstallResponse {
-                    success: false,
-                    extension_id: req.id.clone(),
-                    downloaded: true,
-                    installed: false,
-                    path: None,
-                    error: Some(
-                        "Marketplace metadata carries no sha256 and NEOMIND_STRICT_PACKAGE_SHA256 is enabled — refusing to install an unverified package"
-                            .to_string(),
-                    ),
-                });
+                return Err(ErrorResponse::bad_request(
+                    "Marketplace metadata carries no sha256 and NEOMIND_STRICT_PACKAGE_SHA256 is enabled — refusing to install an unverified package",
+                )
+                .with_hint("Unset NEOMIND_STRICT_PACKAGE_SHA256 or publish a release checksum."));
             }
             tracing::warn!(
                 extension_id = %req.id,
@@ -1059,17 +1018,11 @@ pub async fn install_marketplace_extension_handler(
                     tracing::debug!(extension_id = %req.id, "Package SHA256 verified");
                 }
                 Ok(actual) => {
-                    return ok(MarketplaceInstallResponse {
-                        success: false,
-                        extension_id: req.id.clone(),
-                        downloaded: true,
-                        installed: false,
-                        path: None,
-                        error: Some(format!(
-                            "Package SHA256 mismatch: expected {}, got {} — refusing to install",
-                            expected, actual
-                        )),
-                    });
+                    return Err(ErrorResponse::bad_request(format!(
+                        "Package SHA256 mismatch for '{}': expected {}, got {} — refusing to install",
+                        req.id, expected, actual
+                    ))
+                    .with_hint("Retry the download; if mismatch persists, report a corrupted marketplace artifact."));
                 }
                 Err(e) => {
                     // Fail CLOSED: the whole point of the pinned sha is that
@@ -1124,16 +1077,12 @@ pub async fn install_marketplace_extension_handler(
 
                 if is_registered {
                     tracing::info!("Extension {} already registered, will replace", ext_id);
-                    if let Err(e) = runtime.unregister(&ext_id).await {
-                        return ok(MarketplaceInstallResponse {
-                            success: false,
-                            extension_id: req.id.clone(),
-                            downloaded: true,
-                            installed: false,
-                            path: Some(result.binary_path.to_string_lossy().to_string()),
-                            error: Some(format!("Failed to unregister existing extension: {}", e)),
-                        });
-                    }
+                    runtime.unregister(&ext_id).await.map_err(|e| {
+                        ErrorResponse::internal(format!(
+                            "Failed to unregister existing extension '{}': {}",
+                            ext_id, e
+                        ))
+                    })?;
                 }
 
                 // Load and register the extension binary (unified handles isolated/in-process)
@@ -1202,40 +1151,26 @@ pub async fn install_marketplace_extension_handler(
                         }
 
                         ok(MarketplaceInstallResponse {
-                            success: true,
                             extension_id: ext_id,
                             downloaded: true,
                             installed: true,
                             path: Some(result.binary_path.to_string_lossy().to_string()),
-                            error: None,
                         })
                     }
-                    Err(e) => ok(MarketplaceInstallResponse {
-                        success: false,
-                        extension_id: req.id.clone(),
-                        downloaded: true,
-                        installed: false,
-                        path: Some(result.binary_path.to_string_lossy().to_string()),
-                        error: Some(format!("Failed to load extension binary: {}", e)),
-                    }),
+                    Err(e) => Err(ErrorResponse::internal(format!(
+                        "Failed to load extension binary for '{}': {}",
+                        req.id, e
+                    ))),
                 }
             }
-            Ok(Err(e)) => ok(MarketplaceInstallResponse {
-                success: false,
-                extension_id: req.id.clone(),
-                downloaded: true,
-                installed: false,
-                path: None,
-                error: Some(format!("Package installation failed: {}", e)),
-            }),
-            Err(e) => ok(MarketplaceInstallResponse {
-                success: false,
-                extension_id: req.id.clone(),
-                downloaded: true,
-                installed: false,
-                path: None,
-                error: Some(format!("Task join error: {}", e)),
-            }),
+            Ok(Err(e)) => Err(ErrorResponse::internal(format!(
+                "Package installation failed for '{}': {}",
+                req.id, e
+            ))),
+            Err(e) => Err(ErrorResponse::internal(format!(
+                "Task join error installing '{}': {}",
+                req.id, e
+            ))),
         }
     } else {
         // Fall back to platform-specific binary download with variant fallback.
@@ -1243,14 +1178,9 @@ pub async fn install_marketplace_extension_handler(
         let variant = neomind_core::extension::accel::detect_variant();
 
         if platform == "unknown" {
-            return ok(MarketplaceInstallResponse {
-                success: false,
-                extension_id: req.id,
-                downloaded: false,
-                installed: false,
-                path: None,
-                error: Some("Unsupported platform".to_string()),
-            });
+            return Err(ErrorResponse::bad_request(
+                "Unsupported platform for marketplace extension installation",
+            ));
         }
 
         let available_keys: std::collections::HashSet<&str> =
@@ -1284,14 +1214,12 @@ pub async fn install_marketplace_extension_handler(
             .map_err(|e| ErrorResponse::internal(format!("Download failed: {}", e)))?;
 
         if !download_response.status().is_success() {
-            return ok(MarketplaceInstallResponse {
-                success: false,
-                extension_id: req.id,
-                downloaded: false,
-                installed: false,
-                path: None,
-                error: Some(format!("Download failed: {}", download_response.status())),
-            });
+            return Err(ErrorResponse::service_unavailable(format!(
+                "Download failed for '{}': HTTP {}",
+                req.id,
+                download_response.status()
+            ))
+            .with_hint("Verify the release artifact is available in the marketplace registry."));
         }
 
         // Stream the binary to a temp file (don't buffer large ORT/model
@@ -1308,17 +1236,11 @@ pub async fn install_marketplace_extension_handler(
                 ErrorResponse::internal(format!("Failed to hash downloaded file: {}", e))
             })?;
             if checksum != build.sha256 {
-                return ok(MarketplaceInstallResponse {
-                    success: false,
-                    extension_id: req.id,
-                    downloaded: false,
-                    installed: false,
-                    path: None,
-                    error: Some(format!(
-                        "Checksum verification failed: expected {}, got {}",
-                        build.sha256, checksum
-                    )),
-                });
+                return Err(ErrorResponse::bad_request(format!(
+                    "Checksum verification failed for '{}': expected {}, got {}",
+                    req.id, build.sha256, checksum
+                ))
+                .with_hint("Retry the download; if mismatch persists, report a corrupted marketplace artifact."));
             }
         }
 
@@ -1385,26 +1307,20 @@ pub async fn install_marketplace_extension_handler(
                 state.refresh_extension_tools().await;
 
                 ok(MarketplaceInstallResponse {
-                    success: true,
                     extension_id: req.id,
                     downloaded: true,
                     installed: true,
                     path: Some(file_path.to_string_lossy().to_string()),
-                    error: None,
                 })
             }
             Err(e) => {
                 // Clean up the downloaded file on failure
                 let _ = std::fs::remove_file(&file_path);
 
-                ok(MarketplaceInstallResponse {
-                    success: false,
-                    extension_id: req.id,
-                    downloaded: true,
-                    installed: false,
-                    path: None,
-                    error: Some(format!("Failed to load extension: {}", e)),
-                })
+                Err(ErrorResponse::internal(format!(
+                    "Failed to load extension '{}': {}",
+                    req.id, e
+                )))
             }
         }
     }

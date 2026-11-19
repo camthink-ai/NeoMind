@@ -928,7 +928,6 @@ pub async fn process_data_handler(
             // event-driven path produce virtual metrics for real.
 
             ok(json!({
-                "success": true,
                 "metrics": transform_result.metrics,
                 "count": transform_result.metrics.len(),
                 "warnings": transform_result.warnings,
@@ -1315,7 +1314,6 @@ pub async fn test_transform_code_handler(
             };
 
             ok(json!({
-                "success": true,
                 "output": result_obj,
                 "metrics": metrics,
                 "count": metrics.len(),
@@ -1323,13 +1321,9 @@ pub async fn test_transform_code_handler(
                 "output_with_prefix": serde_json::to_value(&result_obj).unwrap_or_else(|_| json!({}))
             }))
         }
-        Err(e) => {
-            let error_msg: String = e.to_string();
-            ok(json!({
-                "success": false,
-                "error": error_msg
-            }))
-        }
+        Err(e) => Err(ErrorResponse::bad_request(e.to_string()).with_hint(
+            "Check JavaScript syntax and ensure the transform returns a valid value or JSON object.",
+        )),
     }
 }
 

@@ -866,7 +866,6 @@ pub async fn webhook_handler(
     );
 
     ok(serde_json::json!({
-        "success": true,
         "device_id": device_id,
         "metrics_received": metrics_count,
     }))
@@ -971,7 +970,6 @@ pub async fn webhook_generic_handler(
     );
 
     ok(serde_json::json!({
-        "success": true,
         "device_id": device_id,
         "metrics_processed": metrics_count,
     }))

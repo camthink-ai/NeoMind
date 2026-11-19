@@ -11,6 +11,7 @@ pub struct ApiClient {
     base_url: String,
     client: Client,
     api_key: RwLock<Option<String>>,
+    explicit_api_key: bool,
 }
 
 impl Default for ApiClient {
@@ -27,6 +28,15 @@ impl ApiClient {
     }
 
     pub fn with_base_url(base_url: &str) -> Self {
+        Self::with_base_url_and_key(base_url, None)
+    }
+
+    /// Construct a client with an explicit base URL and optional explicit API key.
+    ///
+    /// When `api_key` is `Some`, it is used directly without reading or mutating
+    /// `NEOMIND_API_KEY`. When `None`, falls back to `NEOMIND_API_KEY` or the
+    /// default auto-auth key.
+    pub fn with_base_url_and_key(base_url: &str, api_key: Option<String>) -> Self {
         // The /api-suffix convention has bitten three independent callers
         // (tauri frontend — CLAUDE.md gotcha #9; this crate's own auth-key
         // handlers double-prefixed into /api/api/... and 404'd; the eval
@@ -43,22 +53,34 @@ impl ApiClient {
             b = format!("{stem}/api");
         }
         let base_url = b;
-        let api_key = std::env::var("NEOMIND_API_KEY")
-            .ok()
-            .or_else(crate::auto_auth::read_default_api_key);
+        let explicit_api_key = api_key.is_some();
+        let resolved_key = api_key.or_else(|| {
+            std::env::var("NEOMIND_API_KEY")
+                .ok()
+                .or_else(crate::auto_auth::read_default_api_key)
+        });
         let client = Client::builder()
             .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
             .build()
             .unwrap_or_default();
         Self {
-            base_url: base_url.to_string(),
+            base_url,
             client,
-            api_key: RwLock::new(api_key),
+            api_key: RwLock::new(resolved_key),
+            explicit_api_key,
         }
     }
 
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    fn unauthorized_hint_for_client(&self) -> &'static str {
+        if self.explicit_api_key {
+            "\nHint: the configured API key was rejected by the server — verify or refresh your credentials"
+        } else {
+            unauthorized_hint()
+        }
     }
 
     fn add_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -135,7 +157,7 @@ impl ApiClient {
                     status,
                     extract_error_message(&body),
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        unauthorized_hint()
+                        self.unauthorized_hint_for_client()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
@@ -171,7 +193,7 @@ impl ApiClient {
                     status,
                     extract_error_message(&resp_body),
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        unauthorized_hint()
+                        self.unauthorized_hint_for_client()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
@@ -223,7 +245,7 @@ impl ApiClient {
                     status,
                     extract_error_message(&resp_body),
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        unauthorized_hint()
+                        self.unauthorized_hint_for_client()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
                         "\nHint: not found — check the exact ID using this resource's list command"
                     } else {
@@ -256,7 +278,7 @@ impl ApiClient {
                     status,
                     extract_error_message(&resp_body),
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        unauthorized_hint()
+                        self.unauthorized_hint_for_client()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
@@ -292,7 +314,7 @@ impl ApiClient {
                     status,
                     extract_error_message(&resp_body),
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        unauthorized_hint()
+                        self.unauthorized_hint_for_client()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
@@ -328,7 +350,7 @@ impl ApiClient {
                     status,
                     extract_error_message(&resp_body),
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        unauthorized_hint()
+                        self.unauthorized_hint_for_client()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
@@ -364,7 +386,7 @@ impl ApiClient {
                     status,
                     extract_error_message(&resp_body),
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        unauthorized_hint()
+                        self.unauthorized_hint_for_client()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
@@ -404,7 +426,7 @@ impl ApiClient {
                     status,
                     extract_error_message(&resp_body),
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        unauthorized_hint()
+                        self.unauthorized_hint_for_client()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
@@ -464,7 +486,7 @@ impl ApiClient {
                     status,
                     extract_error_message(&resp_body),
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        unauthorized_hint()
+                        self.unauthorized_hint_for_client()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here
@@ -521,7 +543,7 @@ impl ApiClient {
                     status,
                     extract_error_message(&resp_body),
                     if status == reqwest::StatusCode::UNAUTHORIZED {
-                        unauthorized_hint()
+                        self.unauthorized_hint_for_client()
                     } else if status == reqwest::StatusCode::NOT_FOUND {
                         // The server ANSWERED — a 404 is not a connectivity
                         // problem. The old "is the server running?" hint here

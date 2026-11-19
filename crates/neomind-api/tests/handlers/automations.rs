@@ -332,4 +332,117 @@ mod tests {
         .await;
         assert!(result.is_err());
     }
+
+    /// P1-5: `/transforms/test-code` returns a clean DTO (no inner `success`)
+    /// on success and HTTP 400 `ErrorResponse` with a hint on failure — never
+    /// HTTP 200 with embedded `"success": false`.
+    #[tokio::test]
+    async fn test_code_returns_clean_dto_and_non_200_error_on_failure() {
+        let state = create_test_server_state().await;
+
+        let ok_resp = test_transform_code_handler(
+            State(state.clone()),
+            Json(TestTransformCodeRequest {
+                code: "return { doubled: 42 };".to_string(),
+                input_data: json!({ "value": 21 }),
+                output_prefix: "out".to_string(),
+            }),
+        )
+        .await
+        .expect("valid JS must succeed");
+        assert!(ok_resp.0.success, "outer ApiResponse carries success=true");
+        let data = ok_resp.0.data.expect("response payload");
+        assert!(
+            data.get("success").is_none(),
+            "inner DTO must not duplicate `success`: {data}"
+        );
+        assert_eq!(
+            data["output"]["doubled"].as_f64(),
+            Some(42.0),
+            "unexpected output payload: {data}"
+        );
+
+        let err = test_transform_code_handler(
+            State(state),
+            Json(TestTransformCodeRequest {
+                code: "throw new Error('bad transform');".to_string(),
+                input_data: json!({}),
+                output_prefix: String::new(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status.as_u16(), 400);
+        assert!(err.hint.is_some(), "error should carry recovery hint");
+    }
+
+    /// P1-5: MQTT subscribe/unsubscribe without an adapter returns 503
+    /// `ErrorResponse` (never HTTP 200 with `"success": false`), and memory
+    /// file endpoints return clean `ApiResponse` DTOs without inner `success`.
+    #[tokio::test]
+    async fn mqtt_subscription_and_memory_handlers_return_clean_envelopes() {
+        use neomind_api::handlers::memory::{
+            get_memory_file, update_memory_file, UpdateMemoryRequest,
+        };
+        use neomind_api::handlers::mqtt::models::{MqttSubscribeRequest, MqttUnsubscribeRequest};
+        use neomind_api::handlers::mqtt::{subscribe_handler, unsubscribe_handler};
+
+        let state = create_test_server_state().await;
+
+        let sub_err = subscribe_handler(
+            State(state.clone()),
+            Json(MqttSubscribeRequest {
+                topic: "sensors/#".to_string(),
+                qos: 1,
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(sub_err.status.as_u16(), 503);
+        assert!(sub_err.hint.is_some());
+
+        let unsub_err = unsubscribe_handler(
+            State(state.clone()),
+            Json(MqttUnsubscribeRequest {
+                topic: "sensors/#".to_string(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(unsub_err.status.as_u16(), 503);
+        assert!(unsub_err.hint.is_some());
+
+        let bad_mem = get_memory_file(State(state.clone()), Path("invalid".to_string()))
+            .await
+            .unwrap_err();
+        assert_eq!(bad_mem.status.as_u16(), 400);
+        assert!(bad_mem.hint.is_some());
+
+        let updated = update_memory_file(
+            State(state.clone()),
+            Path("user".to_string()),
+            Json(UpdateMemoryRequest {
+                content: "# User Notes\n".to_string(),
+            }),
+        )
+        .await
+        .expect("update_memory_file must succeed");
+        assert!(updated.0.success);
+        let updated_data = updated.0.data.expect("payload");
+        assert!(
+            updated_data.get("success").is_none(),
+            "inner DTO must not duplicate `success`: {updated_data}"
+        );
+
+        let fetched = get_memory_file(State(state), Path("user".to_string()))
+            .await
+            .expect("get_memory_file must succeed");
+        assert!(fetched.0.success);
+        let fetched_data = fetched.0.data.expect("payload");
+        assert!(
+            fetched_data.get("success").is_none(),
+            "inner DTO must not duplicate `success`: {fetched_data}"
+        );
+        assert_eq!(fetched_data["target"], json!("user"));
+    }
 }

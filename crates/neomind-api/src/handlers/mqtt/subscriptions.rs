@@ -101,10 +101,10 @@ pub async fn subscribe_handler(
     let adapter_id = match mqtt_adapter {
         Some(a) => &a.id,
         None => {
-            return ok(json!({
-                "success": false,
-                "message": "No MQTT adapter available",
-            }));
+            return Err(
+                ErrorResponse::service_unavailable("No MQTT adapter available")
+                    .with_hint("Configure and enable an MQTT broker first."),
+            );
         }
     };
 
@@ -132,7 +132,6 @@ pub async fn subscribe_handler(
                 "Successfully subscribed to custom topic"
             );
             ok(json!({
-                "success": true,
                 "message": "Subscribed to topic",
                 "topic": req.topic,
                 "qos": req.qos,
@@ -145,11 +144,11 @@ pub async fn subscribe_handler(
                 error = %e,
                 "Failed to subscribe to custom topic"
             );
-            ok(json!({
-                "success": false,
-                "message": format!("Failed to subscribe: {}", e),
-                "topic": req.topic,
-            }))
+            Err(ErrorResponse::internal(format!(
+                "Failed to subscribe to topic '{}': {}",
+                req.topic, e
+            ))
+            .with_hint("Verify the MQTT broker is connected and the topic filter is valid."))
         }
     }
 }
@@ -183,10 +182,10 @@ pub async fn unsubscribe_handler(
     let adapter_id = match mqtt_adapter {
         Some(a) => &a.id,
         None => {
-            return ok(json!({
-                "success": false,
-                "message": "No MQTT adapter available",
-            }));
+            return Err(
+                ErrorResponse::service_unavailable("No MQTT adapter available")
+                    .with_hint("Configure and enable an MQTT broker first."),
+            );
         }
     };
 
@@ -213,7 +212,6 @@ pub async fn unsubscribe_handler(
                 "Successfully unsubscribed from custom topic"
             );
             ok(json!({
-                "success": true,
                 "message": "Unsubscribed from topic",
                 "topic": req.topic,
             }))
@@ -225,11 +223,11 @@ pub async fn unsubscribe_handler(
                 error = %e,
                 "Failed to unsubscribe from custom topic"
             );
-            ok(json!({
-                "success": false,
-                "message": format!("Failed to unsubscribe: {}", e),
-                "topic": req.topic,
-            }))
+            Err(ErrorResponse::internal(format!(
+                "Failed to unsubscribe from topic '{}': {}",
+                req.topic, e
+            ))
+            .with_hint("Verify the MQTT broker is connected and the topic is subscribed."))
         }
     }
 }
