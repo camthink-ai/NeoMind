@@ -43,8 +43,3 @@ Show images you produce as ![short description](url). Edits are exact: change on
 ## Thinking Mode
 Identify the goal and missing evidence; choose the next useful action; check its result.
 <!-- END_THINKING -->
-
-## Current time
-- Current Time (UTC): {{CURRENT_TIME}}
-- Local: {{LOCAL_TIME}}
-- Timezone: {{TIMEZONE}}

@@ -1426,4 +1426,122 @@ mod multimodal_shell_deny {
             "nudge deny must surface Blocked by safety policy"
         );
     }
+
+    struct FailingShell;
+
+    #[async_trait::async_trait]
+    impl crate::toolkit::tool::Tool for FailingShell {
+        fn name(&self) -> &str {
+            "shell"
+        }
+        fn description(&self) -> &str {
+            "fake failing shell"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": { "command": { "type": "string" } },
+                "required": ["command"]
+            })
+        }
+        async fn execute(
+            &self,
+            args: serde_json::Value,
+        ) -> crate::toolkit::error::Result<crate::toolkit::tool::ToolOutput> {
+            let cmd = args["command"].as_str().unwrap_or("");
+            // Mirrors real ShellTool: transport Ok(ToolOutput::success(...)) with non-zero exit_code.
+            Ok(crate::toolkit::tool::ToolOutput::success(
+                serde_json::json!({
+                    "exit_code": 1,
+                    "stdout": r#"{"success":false,"error":"Device not found"}"#,
+                    "stderr": "",
+                    "command": cmd,
+                    "timed_out": false
+                }),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn text_and_multimodal_tool_call_end_emit_effective_success_false_on_failed_shell() {
+        // 1) Text streaming path (`stream_core.rs`)
+        let rt_text = MockLlmRuntime::new(vec![
+            MockResponse::tool_call(
+                "shell",
+                serde_json::json!({ "command": "neomind device get missing-id" }),
+            ),
+            MockResponse::text("设备不存在。"),
+        ]);
+        let (iface, state, _) = harness(&rt_text);
+        let mut reg = ToolRegistry::new();
+        reg.register(Arc::new(FailingShell));
+        let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+            iface,
+            state,
+            Arc::new(reg),
+            "查看 missing-id",
+            crate::agent::StreamSafeguards::default(),
+            None,
+            None,
+            0,
+        )
+        .await
+        .expect("text stream");
+        let text_events = collect(stream).await;
+        assert!(
+            text_events.iter().any(|e| matches!(
+                e,
+                AgentEvent::ToolCallEnd { tool, success: false, .. } if tool == "shell"
+            )),
+            "text stream must emit ToolCallEnd(success=false) for non-zero shell exit_code: {text_events:?}"
+        );
+        assert!(
+            !text_events.iter().any(|e| matches!(
+                e,
+                AgentEvent::ToolCallEnd { tool, success: true, .. } if tool == "shell"
+            )),
+            "text stream must NOT emit fake green checkmark for failed shell: {text_events:?}"
+        );
+
+        // 2) Multimodal streaming path (`stream_multimodal.rs`)
+        let rt_mm = MockLlmRuntime::new(vec![
+            MockResponse::tool_call(
+                "shell",
+                serde_json::json!({ "command": "neomind device get missing-id" }),
+            ),
+            MockResponse::text("设备不存在。"),
+        ]);
+        let (iface_mm, state_mm, _) = harness(&rt_mm);
+        let mut reg_mm = ToolRegistry::new();
+        reg_mm.register(Arc::new(FailingShell));
+        let stream_mm = crate::agent::streaming::process_multimodal_stream_events_with_safeguards(
+            iface_mm,
+            state_mm,
+            Arc::new(reg_mm),
+            "查看 missing-id",
+            vec![],
+            crate::agent::StreamSafeguards::default(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("multimodal stream");
+        let mm_events = collect(stream_mm).await;
+        assert!(
+            mm_events.iter().any(|e| matches!(
+                e,
+                AgentEvent::ToolCallEnd { tool, success: false, .. } if tool == "shell"
+            )),
+            "multimodal stream must emit ToolCallEnd(success=false) for non-zero shell exit_code: {mm_events:?}"
+        );
+        assert!(
+            !mm_events.iter().any(|e| matches!(
+                e,
+                AgentEvent::ToolCallEnd { tool, success: true, .. } if tool == "shell"
+            )),
+            "multimodal stream must NOT emit fake green checkmark for failed shell: {mm_events:?}"
+        );
+    }
 }

@@ -2152,6 +2152,7 @@ impl TaskState {
 /// every skill guide forever.
 pub async fn begin_user_turn_clear_transient_skills(llm: &crate::llm::LlmInterface) {
     llm.clear_skill_context().await;
+    llm.pin_turn_timestamp().await;
 }
 
 /// Whether `text` is a plain-text Unknown re-run confirm phrase.

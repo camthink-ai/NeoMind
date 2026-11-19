@@ -276,7 +276,10 @@ mod tests {
         assert!(prompt.contains("Do not invent resources"));
         assert!(prompt.contains("Parallelize independent reads"));
         assert!(prompt.contains("Live checks and actual operations require evidence"));
-        assert!(prompt.contains("{{CURRENT_TIME}}")); // KV-cache boundary preserved
+        // Base template must stay static (KV-cache friendly); `## Current time`
+        // is appended at the tail after assembly in `LlmInterface`.
+        assert!(!prompt.contains("{{CURRENT_TIME}}"));
+        assert!(!prompt.contains("## Current time"));
         assert!(prompt.contains("## Environment"));
         assert!(prompt.contains("load device-onboarding")); // guided onboarding
     }

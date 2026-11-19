@@ -15,7 +15,7 @@ triggers:
     - tool: system
       actions: [info]
     - tool: device
-      actions: [create, list, types, control, latest, drafts, webhook-url, update, delete, history, write-metric]
+      actions: [create, list, get, types, control, drafts, webhook-url, update, delete, history, write-metric]
 anti_triggers:
   keywords: [rule, 规则, agent, 代理, dashboard, 仪表盘, transform, 转换]
 ---
@@ -53,15 +53,11 @@ Use skill(action="load", id="device-onboarding", section="<exact returned title>
 
 ## Command Cheat-Sheet (run these via `shell`)
 
-Always RUN the command yourself and report the real output — don't narrate.
-
 | Command | Purpose |
 |---|---|
 | `neomind device list` | List all devices (grouped by type) |
 | `neomind device get <id>` | Details: metadata + metrics + commands |
 | `neomind device create --name <N> --device-type <TYPE> [--id <id>] [--adapter-type <a>]` | Create a device |
-
-**When the user gives a device ID in their request (e.g. "create cam-office"), you MUST pass `--id <that-id>`** — never silently swap it for an auto-generated one. If you omit `--id`, the CLI auto-generates a random ID and the user's requested identifier is lost.
 | `neomind device update <id>` | Update a device |
 | `neomind device delete <id>` | Delete a device |
 | `neomind device history <id>` | Telemetry history |
@@ -70,6 +66,8 @@ Always RUN the command yourself and report the real output — don't narrate.
 | `neomind device write-metric <ID> --metric <METRIC> --value <VALUE> [--timestamp <ms_epoch>]` | Write a metric data point — THE tool for virtual-device simulation / test reporting (any metric name, device goes online). ⚠️ `--metric`/`--value` are FLAGS (only `<ID>` is positional); value may be a number or "true"/"false" |
 | `neomind device webhook-url <id>` | Get the webhook URL for a device |
 | `neomind device drafts` | Manage auto-discovery drafts |
+
+**When the user gives a device ID in their request (e.g. "create cam-office"), you MUST pass `--id <that-id>`** — never silently swap it for an auto-generated one. If you omit `--id`, the CLI auto-generates a random ID and the user's requested identifier is lost.
 
 ## Sending Control Commands
 

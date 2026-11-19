@@ -252,13 +252,13 @@ fn long_prompt_thinking_threshold(max_context: usize) -> usize {
 /// [`skill_bodies_token_budget`] so 15+ full guides cannot zero history budget.
 #[derive(Default)]
 struct TransientSkillContext {
-    loaded_ids: std::collections::HashSet<String>,
-    /// Per-key ACTUAL injection state for every guide loaded THIS turn —
+    loaded_ids: std::collections::HashSet<(String, Option<String>)>,
+    /// Per-key ACTUAL injection state for every guide/section loaded THIS turn —
     /// complete and unbounded (the source of truth for duplicate loads).
     /// Kept separately from the display ring: a guide evicted from `recent`
     /// by the 8-entry cap still has its true state here, so a repeat request
     /// cannot misreport an in-context body as "not in context".
-    turn_states: std::collections::HashMap<String, RecentSkillState>,
+    turn_states: std::collections::HashMap<(String, Option<String>), RecentSkillState>,
     body: String,
     /// Display-only usage record of the most recent guides, kept ACROSS user
     /// turns (the bodies themselves are cleared at each turn boundary).
@@ -595,6 +595,10 @@ pub struct LlmInterface {
     /// Cross-turn TaskState prompt section (goal / confirmed / next). Set by
     /// stream entry from `AgentInternalState.task_state.to_prompt_section()`.
     task_state_prompt: Arc<RwLock<Option<String>>>,
+    /// Timestamp pinned at the start of a user turn so multi-round ReAct calls
+    /// within the same turn emit an identical `## Current time` tail and keep
+    /// llama.cpp KV-prefix cache hot.
+    turn_timestamp: Arc<RwLock<Option<chrono::DateTime<chrono::Utc>>>>,
 }
 
 impl LlmInterface {
@@ -716,6 +720,7 @@ impl LlmInterface {
             image_delegation_prompt: Arc::new(RwLock::new(None)),
             pinned_skills: Arc::new(RwLock::new(Vec::new())),
             task_state_prompt: Arc::new(RwLock::new(None)),
+            turn_timestamp: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -758,6 +763,7 @@ impl LlmInterface {
             image_delegation_prompt: Arc::new(RwLock::new(None)),
             pinned_skills: Arc::new(RwLock::new(Vec::new())),
             task_state_prompt: Arc::new(RwLock::new(None)),
+            turn_timestamp: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -1413,12 +1419,29 @@ impl LlmInterface {
         }
     }
 
+    /// Pin the current UTC timestamp for the duration of a single user turn so
+    /// multi-round follow-up requests emit a byte-identical `## Current time`
+    /// tail and preserve llama.cpp KV-prefix cache.
+    pub async fn pin_turn_timestamp(&self) {
+        *self.turn_timestamp.write().await = Some(chrono::Utc::now());
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn set_turn_timestamp_for_test(
+        &self,
+        timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        *self.turn_timestamp.write().await = timestamp;
+    }
+
     /// Append transient skill context (from skill tool results).
     ///
-    /// Deduplicates by `skill_id`: if the same skill is loaded again in this turn,
-    /// the call is a no-op (first load retained). Distinct skill ids accumulate
-    /// under [`skill_bodies_token_budget`] — later loads truncate or skip when
-    /// the total would blow the fixed-prefix budget (plan §12 P1).
+    /// Deduplicates by `(skill_id, section)`: loading a skill overview and then
+    /// loading a specific reference section in the same turn are distinct entries
+    /// and both survive; repeating the same `(skill_id, section)` is a no-op
+    /// (first load retained). Distinct loads accumulate under
+    /// [`skill_bodies_token_budget`] — later loads truncate or skip when the
+    /// total would blow the fixed-prefix budget (plan §12 P1).
     pub async fn set_skill_context(&self, skill_id: String, content: String) {
         self.set_skill_context_outcome(skill_id, content).await;
     }
@@ -1431,29 +1454,43 @@ impl LlmInterface {
         skill_id: String,
         content: String,
     ) -> SkillBodyAppendOutcome {
+        let (canonical_id, section) = normalize_skill_dedup_key(&skill_id, &content);
+        self.set_skill_section_context_outcome(canonical_id, section, content)
+            .await
+    }
+
+    /// Append transient skill context keyed explicitly by `(skill_id, section)`.
+    pub(crate) async fn set_skill_section_context_outcome(
+        &self,
+        skill_id: String,
+        section: Option<String>,
+        content: String,
+    ) -> SkillBodyAppendOutcome {
         // Reserve tokens already committed to pinned skills so mid-turn loads
         // cannot fill the whole shared budget before assemble merges both.
         let pinned_reserved = self.estimate_pinned_skill_tokens().await;
         let total = skill_bodies_token_budget(self.max_context_length().await);
         let budget = total.saturating_sub(pinned_reserved);
+        let dedup_key = (skill_id.clone(), section.clone());
+        let display_key = format_skill_dedup_display_key(&skill_id, section.as_deref());
         let mut guard = self.skill_context.write().await;
-        if !guard.loaded_ids.insert(skill_id.clone()) {
+        if !guard.loaded_ids.insert(dedup_key.clone()) {
             // Already loaded this turn — skip to avoid duplicate context bloat.
             // The usage record keeps the state recorded by the ORIGINAL load
             // (a repeat request must never upgrade a partial/skipped entry to
             // "full": the body was not re-appended).
             tracing::info!(
                 target: "neomind::skills",
-                skill = %skill_id,
+                skill = %display_key,
                 outcome = "already_present",
                 "skill_inject"
             );
             let prior = guard
                 .turn_states
-                .get(&skill_id)
+                .get(&dedup_key)
                 .copied()
                 .unwrap_or(RecentSkillState::Skipped);
-            touch_recent(&mut guard.recent, &skill_id, prior);
+            touch_recent(&mut guard.recent, &display_key, prior);
             return SkillBodyAppendOutcome::AlreadyPresent;
         }
         let (outcome, piece) = plan_skill_body_append(&guard.body, &content, budget);
@@ -1467,7 +1504,7 @@ impl LlmInterface {
             SkillBodyAppendOutcome::Full => "full",
             SkillBodyAppendOutcome::Truncated => {
                 tracing::warn!(
-                    skill_id = %skill_id,
+                    skill_id = %display_key,
                     budget_tokens = budget,
                     "skill context truncated to fit total skill body budget"
                 );
@@ -1475,7 +1512,7 @@ impl LlmInterface {
             }
             SkillBodyAppendOutcome::Skipped => {
                 tracing::warn!(
-                    skill_id = %skill_id,
+                    skill_id = %display_key,
                     budget_tokens = budget,
                     "skill context skipped: total skill body budget exhausted"
                 );
@@ -1485,7 +1522,7 @@ impl LlmInterface {
         };
         tracing::info!(
             target: "neomind::skills",
-            skill = %skill_id,
+            skill = %display_key,
             outcome = logged,
             budget_tokens = budget,
             "skill_inject"
@@ -1494,12 +1531,12 @@ impl LlmInterface {
             SkillBodyAppendOutcome::Full | SkillBodyAppendOutcome::Truncated => {
                 guard.body.push_str(&piece)
             }
-            // Id stays in loaded_ids so the model cannot re-append the same
+            // Key stays in loaded_ids so the model cannot re-append the same
             // oversized body in a retry loop.
             SkillBodyAppendOutcome::Skipped | SkillBodyAppendOutcome::AlreadyPresent => {}
         }
-        guard.turn_states.insert(skill_id.clone(), recorded_state);
-        touch_recent(&mut guard.recent, &skill_id, recorded_state);
+        guard.turn_states.insert(dedup_key, recorded_state);
+        touch_recent(&mut guard.recent, &display_key, recorded_state);
         outcome
     }
 
@@ -1623,14 +1660,13 @@ impl LlmInterface {
     }
 
     /// Assemble session/skill context without resolving volatile time fields.
-    /// All chat paths resolve time fields in the system prompt.
+    /// All chat paths append `## Current time` LAST after all stable and
+    /// session sections so KV-prefix caches stay warm.
     async fn assemble_system_prompt(&self, user_message: Option<&str>) -> String {
-        // Start from the RAW base prompt (time placeholders still intact).
-        // Time is injected LAST, after all variable sections are appended —
-        // the template deliberately places the time block near the end for
-        // KV-prefix caching, and appending sections after a resolved time
-        // block used to re-prefill pinned skills / memory / suffix on every
-        // time change.
+        // Start from the static base prompt (no volatile time block).
+        // `inject_time_placeholders` appends `## Current time` strictly at the
+        // tail after suffix, pinned/transient skills, task state, intent addon,
+        // and any history summary.
         let mut prompt = self.build_base_system_prompt().await;
 
         // Session-scoped suffix (page-scoped focus). This is the ONLY place
@@ -1750,17 +1786,23 @@ impl LlmInterface {
         prompt
     }
 
-    /// Replace the base prompt's time placeholders with current values.
-    /// Extracted so the streaming builder can defer time injection until all
-    /// variable sections are appended (KV-prefix-cache friendly) while the
-    /// other callers keep the up-front behavior.
+    /// Resolve time placeholders or append `## Current time` strictly at the
+    /// end of an assembled system prompt.
+    ///
+    /// Uses the turn-pinned timestamp when present so multi-round ReAct calls
+    /// within one turn emit a byte-identical tail and avoid invalidating the
+    /// local KV-prefix cache across second/minute boundaries.
     async fn inject_time_placeholders(&self, prompt: String, timezone: Option<&str>) -> String {
         use crate::prompts::{
             CURRENT_TIME_PLACEHOLDER, LOCAL_TIME_PLACEHOLDER, TIMEZONE_PLACEHOLDER,
         };
 
-        // Calculate current times
-        let now = chrono::Utc::now();
+        // Reuse the turn-pinned timestamp when available; fall back to Utc::now().
+        let now = self
+            .turn_timestamp
+            .read()
+            .await
+            .unwrap_or_else(chrono::Utc::now);
         let current_time_utc = now.format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
         // Use self.global_timezone first, then parameter, then default
@@ -1804,11 +1846,21 @@ impl LlmInterface {
             date_str, local_time, time_period, day_of_week
         );
 
-        // Replace placeholders
-        prompt
-            .replace(CURRENT_TIME_PLACEHOLDER, &current_time_utc)
-            .replace(LOCAL_TIME_PLACEHOLDER, &local_time_with_context)
-            .replace(TIMEZONE_PLACEHOLDER, &effective_timezone)
+        let has_placeholder = prompt.contains(CURRENT_TIME_PLACEHOLDER)
+            || prompt.contains(LOCAL_TIME_PLACEHOLDER)
+            || prompt.contains(TIMEZONE_PLACEHOLDER);
+
+        if has_placeholder {
+            prompt
+                .replace(CURRENT_TIME_PLACEHOLDER, &current_time_utc)
+                .replace(LOCAL_TIME_PLACEHOLDER, &local_time_with_context)
+                .replace(TIMEZONE_PLACEHOLDER, &effective_timezone)
+        } else {
+            let trimmed = prompt.trim_end();
+            format!(
+                "{trimmed}\n\n## Current time\n- Current Time (UTC): {current_time_utc}\n- Local: {local_time_with_context}\n- Timezone: {effective_timezone}\n"
+            )
+        }
     }
 
     /// Update the model name.
@@ -1879,8 +1931,9 @@ impl LlmInterface {
     ) -> AgentResult<ChatResponse> {
         let user_message: String = user_message.into();
 
-        // Clear transient skill context from previous turn
+        // Clear transient skill context and pin timestamp for this turn
         self.clear_skill_context().await;
+        self.pin_turn_timestamp().await;
 
         let max_ctx = self.max_context_length().await;
 
@@ -1915,13 +1968,12 @@ impl LlmInterface {
         let has_tools = !self.tool_definitions.read().await.is_empty();
 
         let system_prompt = if has_tools {
-            self.build_system_prompt_with_tools(Some(&user_message))
-                .await
+            let assembled = self.assemble_system_prompt(Some(&user_message)).await;
+            let assembled = Self::with_history_summary(assembled, history);
+            self.inject_time_placeholders(assembled, None).await
         } else {
-            self.system_prompt.read().await.clone()
+            Self::with_history_summary(self.system_prompt.read().await.clone(), history)
         };
-
-        let system_prompt = Self::with_history_summary(system_prompt, history);
 
         // Build input outside the lock
         let model_guard = model_arc.read().await;
@@ -2103,8 +2155,9 @@ impl LlmInterface {
         user_message: Message, // Can contain text + images
         history: Option<&[Message]>,
     ) -> AgentResult<ChatResponse> {
-        // Clear transient skill context from previous turn
+        // Clear transient skill context and pin timestamp for this turn
         self.clear_skill_context().await;
+        self.pin_turn_timestamp().await;
 
         let max_ctx = self.max_context_length().await;
 
@@ -2122,12 +2175,12 @@ impl LlmInterface {
         let system_prompt = if has_tools {
             // Extract text from user message for system prompt
             let user_text = user_message.content.as_text();
-            self.build_system_prompt_with_tools(Some(&user_text)).await
+            let assembled = self.assemble_system_prompt(Some(&user_text)).await;
+            let assembled = Self::with_history_summary(assembled, history);
+            self.inject_time_placeholders(assembled, None).await
         } else {
-            self.system_prompt.read().await.clone()
+            Self::with_history_summary(self.system_prompt.read().await.clone(), history)
         };
-
-        let system_prompt = Self::with_history_summary(system_prompt, history);
 
         // Build input outside the lock
         let model_guard = model_arc.read().await;
@@ -2332,6 +2385,7 @@ impl LlmInterface {
         user_message: impl Into<String>,
         history: &[Message],
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+        self.pin_turn_timestamp().await;
         self.chat_stream_internal(user_message, Some(history), true, None, None)
             .await
     }
@@ -2347,6 +2401,7 @@ impl LlmInterface {
         history: &[Message],
         thinking_override: Option<bool>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+        self.pin_turn_timestamp().await;
         self.chat_stream_internal(user_message, Some(history), true, thinking_override, None)
             .await
     }
@@ -2421,6 +2476,7 @@ impl LlmInterface {
         user_message: Message, // Can contain text + images via Content::Parts
         history: &[Message],
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<(String, bool)>> + Send>>> {
+        self.pin_turn_timestamp().await;
         self.chat_stream_internal_message(user_message, Some(history), true, false)
             .await
     }
@@ -2447,20 +2503,24 @@ impl LlmInterface {
         let tools_disabled = self.tool_definitions.read().await.is_empty();
         let system_prompt = if has_user_images && tools_disabled {
             let custom = self.system_prompt.read().await.clone();
-            if custom.trim().is_empty() {
+            let base = if custom.trim().is_empty() {
                 self.build_base_system_prompt().await
             } else {
                 custom
-            }
+            };
+            Self::with_history_summary(base, history)
         } else if include_tools {
-            self.build_system_prompt_with_tools(None).await
+            let assembled = self.assemble_system_prompt(None).await;
+            let assembled = Self::with_history_summary(assembled, history);
+            self.inject_time_placeholders(assembled, None).await
         } else {
             // Simple system prompt for non-tool calls
-            "You are NeoMind, a helpful IoT assistant. Answer questions concisely and accurately."
-                .to_string()
+            Self::with_history_summary(
+                "You are NeoMind, a helpful IoT assistant. Answer questions concisely and accurately."
+                    .to_string(),
+                history,
+            )
         };
-
-        let system_prompt = Self::with_history_summary(system_prompt, history);
 
         // Build input outside the lock
         let model_guard = model_arc.read().await;
@@ -2729,24 +2789,39 @@ impl LlmInterface {
         let system_prompt = if include_tools {
             if use_compact_prompt {
                 // Compact prompt for small context models (< 4096)
-                "You are NeoMind, a helpful IoT assistant. Answer questions concisely. \
-                 You can help with device management, data queries, and automation rules. \
-                 Keep responses brief."
-                    .to_string()
+                let mut compact = Self::with_history_summary(
+                    "You are NeoMind, a helpful IoT assistant. Answer questions concisely. \
+                     You can help with device management, data queries, and automation rules. \
+                     Keep responses brief."
+                        .to_string(),
+                    history,
+                );
+                if exclude_skill {
+                    compact.push_str("\nFor this request only, the skill tool is unavailable. Use remaining tools within the original user's scope, or answer from verified results. Do not invent missing prerequisites because guide lookup failed.");
+                }
+                compact
             } else {
-                self.build_system_prompt_with_tools(Some(task_message.unwrap_or(&user_message)))
-                    .await
+                let mut assembled = self
+                    .assemble_system_prompt(Some(task_message.unwrap_or(&user_message)))
+                    .await;
+                assembled = Self::with_history_summary(assembled, history);
+                if exclude_skill {
+                    assembled.push_str("\nFor this request only, the skill tool is unavailable. Use remaining tools within the original user's scope, or answer from verified results. Do not invent missing prerequisites because guide lookup failed.");
+                }
+                self.inject_time_placeholders(assembled, None).await
             }
         } else {
             // Simple system prompt for non-tool calls
-            "You are NeoMind, a helpful IoT assistant. Answer questions concisely and accurately."
-                .to_string()
+            let mut simple = Self::with_history_summary(
+                "You are NeoMind, a helpful IoT assistant. Answer questions concisely and accurately."
+                    .to_string(),
+                history,
+            );
+            if exclude_skill {
+                simple.push_str("\nFor this request only, the skill tool is unavailable. Use remaining tools within the original user's scope, or answer from verified results. Do not invent missing prerequisites because guide lookup failed.");
+            }
+            simple
         };
-
-        let mut system_prompt = Self::with_history_summary(system_prompt, history);
-        if exclude_skill {
-            system_prompt.push_str("\nFor this request only, the skill tool is unavailable. Use remaining tools within the original user's scope, or answer from verified results. Do not invent missing prerequisites because guide lookup failed.");
-        }
 
         // Build input outside the lock
         let model_guard = model_arc.read().await;
@@ -3094,33 +3169,62 @@ impl LlmInterface {
     }
 }
 
-/// Extract a stable skill id from a `skill` tool result body for dedup purposes.
-///
-/// Skill tool `load` results are JSON like `{"id":"rule-management","name":"...","guide":"..."}`.
-/// We pull `id` (or `skill_id`) out of that. If the payload isn't JSON or lacks an id
-/// (e.g. `search` results, error payloads), fall back to a content-derived key so the call
-/// still dedups repeated identical payloads without accidentally collapsing distinct skills.
-pub(crate) fn extract_skill_id_from_result(result_str: &str) -> String {
+const SKILL_SECTION_SEP: &str = "#section:";
+
+fn format_skill_dedup_display_key(skill_id: &str, section: Option<&str>) -> String {
+    match section {
+        Some(section) if !section.is_empty() => format!("{skill_id}{SKILL_SECTION_SEP}{section}"),
+        _ => skill_id.to_string(),
+    }
+}
+
+/// Normalize `(skill_id, content)` into a structured `(skill_id, section_opt)`
+/// dedup key. Honors either an already-encoded `id#section:title` string or a
+/// JSON payload carrying `"section": "..."`, so loading an overview followed by
+/// a section with the same base `skill_id` never collides.
+fn normalize_skill_dedup_key(skill_id: &str, content: &str) -> (String, Option<String>) {
+    if let Some((base, sec)) = skill_id.split_once(SKILL_SECTION_SEP) {
+        if !sec.is_empty() {
+            return (base.to_string(), Some(sec.to_string()));
+        }
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(content) {
+        if let Some(sec) = v
+            .get("section")
+            .and_then(|s| s.as_str())
+            .filter(|s| !s.is_empty())
+        {
+            return (skill_id.to_string(), Some(sec.to_string()));
+        }
+    }
+    (skill_id.to_string(), None)
+}
+
+/// Extract a structured `(skill_id, section_opt)` dedup key from a `skill` tool
+/// result body.
+pub(crate) fn extract_skill_key_from_result(result_str: &str) -> (String, Option<String>) {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(result_str) {
         if let Some(id) = v
             .get("id")
             .or_else(|| v.get("skill_id"))
             .and_then(|i| i.as_str())
         {
-            return match v.get("section").and_then(|s| s.as_str()) {
-                Some(section) => format!("{id}#section:{section}"),
-                None => id.to_string(),
-            };
+            let section = v
+                .get("section")
+                .and_then(|s| s.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            return (id.to_string(), section);
         }
         // `search` returns an array of entries — distinct skill loads shouldn't collapse,
         // so derive a stable key from the payload itself.
         if let Some(arr) = v.as_array() {
             if let Some(first) = arr.first() {
                 if let Some(id) = first.get("id").and_then(|i| i.as_str()) {
-                    return format!("search:{}", id);
+                    return (format!("search:{}", id), None);
                 }
             }
-            return format!("search:len:{}", result_str.len());
+            return (format!("search:len:{}", result_str.len()), None);
         }
     }
     // Last-resort stable fallback: hash the content so repeated identical payloads dedup.
@@ -3128,7 +3232,19 @@ pub(crate) fn extract_skill_id_from_result(result_str: &str) -> String {
     use std::hash::{Hash, Hasher};
     let mut h = DefaultHasher::new();
     result_str.hash(&mut h);
-    format!("hash:{:x}", h.finish())
+    (format!("hash:{:x}", h.finish()), None)
+}
+
+/// Extract a stable skill id from a `skill` tool result body for dedup purposes.
+///
+/// Skill tool `load` results are JSON like `{"id":"rule-management","name":"...","guide":"..."}`.
+/// We pull `id` (or `skill_id`) out of that. If the payload isn't JSON or lacks an id
+/// (e.g. `search` results, error payloads), fall back to a content-derived key so the call
+/// still dedups repeated identical payloads without accidentally collapsing distinct skills.
+#[cfg(test)]
+pub(crate) fn extract_skill_id_from_result(result_str: &str) -> String {
+    let (id, section) = extract_skill_key_from_result(result_str);
+    format_skill_dedup_display_key(&id, section.as_deref())
 }
 
 /// Extract in-band token usage marker from a stream chunk.
@@ -3998,5 +4114,140 @@ mod tests {
             Some(false),
             "non-integral model must honor the override"
         );
+    }
+
+    #[tokio::test]
+    async fn current_time_is_appended_at_tail_of_assembled_system_prompt() {
+        let interface = LlmInterface::new(ChatConfig::default());
+        interface
+            .set_system_prompt_suffix(Some("SUFFIX_MARKER_TAIL_TEST".into()))
+            .await;
+        interface
+            .set_skill_context("rule-management".into(), "SKILL_MARKER_TAIL_TEST".into())
+            .await;
+        interface
+            .set_task_state_prompt(Some("## Task State\nTASK_MARKER_TAIL_TEST".into()))
+            .await;
+
+        let fixed = chrono::DateTime::parse_from_rfc3339("2026-11-19T12:34:56Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        interface.set_turn_timestamp_for_test(Some(fixed)).await;
+
+        let prompt = interface
+            .build_system_prompt_with_tools(Some("list my devices"))
+            .await;
+        let time_pos = prompt
+            .find("## Current time")
+            .expect("final system prompt must include `## Current time`");
+        for marker in [
+            "SUFFIX_MARKER_TAIL_TEST",
+            "SKILL_MARKER_TAIL_TEST",
+            "TASK_MARKER_TAIL_TEST",
+            "## Current Task:",
+        ] {
+            let marker_pos = prompt
+                .find(marker)
+                .unwrap_or_else(|| panic!("expected marker `{marker}` in prompt"));
+            assert!(
+                time_pos > marker_pos,
+                "`## Current time` (at {time_pos}) must appear AFTER `{marker}` (at {marker_pos})"
+            );
+        }
+        // `## Current time` must be the final section (no `## ` heading after it).
+        let after_time = &prompt[time_pos + "## Current time".len()..];
+        assert!(
+            !after_time.contains("\n## "),
+            "no section may follow `## Current time`: {after_time}"
+        );
+        assert!(after_time.contains("2026-11-19 12:34:56 UTC"));
+    }
+
+    #[tokio::test]
+    async fn turn_pinned_timestamp_remains_stable_across_rounds() {
+        let interface = LlmInterface::new(ChatConfig::default());
+        let t1 = chrono::DateTime::parse_from_rfc3339("2026-11-19T08:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        interface.set_turn_timestamp_for_test(Some(t1)).await;
+
+        let round1 = interface
+            .build_system_prompt_with_tools(Some("check devices"))
+            .await;
+        let round2 = interface
+            .build_system_prompt_with_tools(Some("check devices"))
+            .await;
+        assert_eq!(
+            round1, round2,
+            "system prompt must stay byte-identical across rounds within one turn"
+        );
+        assert!(round1.contains("2026-11-19 08:00:00 UTC"));
+
+        // A new turn refreshes the pinned timestamp.
+        let t2 = chrono::DateTime::parse_from_rfc3339("2026-11-19T08:05:30Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        interface.set_turn_timestamp_for_test(Some(t2)).await;
+        let next_turn = interface
+            .build_system_prompt_with_tools(Some("check devices"))
+            .await;
+        assert!(next_turn.contains("2026-11-19 08:05:30 UTC"));
+    }
+
+    #[tokio::test]
+    async fn skill_dedup_key_includes_section_so_overview_never_blocks_section() {
+        let interface = LlmInterface::new(ChatConfig::default());
+
+        // 1) Load overview `(id, None)`.
+        let o1 = interface
+            .set_skill_section_context_outcome(
+                "dashboard-management".into(),
+                None,
+                r#"{"id":"dashboard-management","guide":"OVERVIEW_BODY"}"#.into(),
+            )
+            .await;
+        assert_eq!(o1, SkillBodyAppendOutcome::Full);
+
+        // 2) Load a specific section `(id, Some("Layout"))` via direct API with
+        //    the SAME base `skill_id` — must NOT be dropped as AlreadyPresent.
+        let o2 = interface
+            .set_skill_context_outcome(
+                "dashboard-management".into(),
+                r#"{"id":"dashboard-management","section":"Layout","guide":"LAYOUT_SECTION"}"#
+                    .into(),
+            )
+            .await;
+        assert_eq!(
+            o2,
+            SkillBodyAppendOutcome::Full,
+            "loading a section after overview must not be deduped as AlreadyPresent"
+        );
+
+        // 3) Repeating the same `(id, Some("Layout"))` IS AlreadyPresent.
+        let o3 = interface
+            .set_skill_section_context_outcome(
+                "dashboard-management".into(),
+                Some("Layout".into()),
+                r#"{"id":"dashboard-management","section":"Layout","guide":"LAYOUT_SECTION"}"#
+                    .into(),
+            )
+            .await;
+        assert_eq!(o3, SkillBodyAppendOutcome::AlreadyPresent);
+
+        // 4) Loading a DIFFERENT section of the same skill still succeeds.
+        let o4 = interface
+            .set_skill_section_context_outcome(
+                "dashboard-management".into(),
+                Some("DataSource".into()),
+                r#"{"id":"dashboard-management","section":"DataSource","guide":"DATASOURCE_SECTION"}"#
+                    .into(),
+            )
+            .await;
+        assert_eq!(o4, SkillBodyAppendOutcome::Full);
+
+        let body = interface.get_skill_context().await.unwrap();
+        assert_eq!(body.matches("OVERVIEW_BODY").count(), 1);
+        assert_eq!(body.matches("LAYOUT_SECTION").count(), 1);
+        assert_eq!(body.matches("DATASOURCE_SECTION").count(), 1);
     }
 }

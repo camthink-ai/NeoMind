@@ -95,6 +95,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             .call_site_turn
     };
     {
+        llm_interface.pin_turn_timestamp().await;
         let section = internal_state.read().await.task_state.to_prompt_section();
         llm_interface.set_task_state_prompt(section).await;
     }
@@ -601,10 +602,11 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                 }
                 match execution.result {
                     Ok(output) => {
-                        if crate::toolkit::tool::effective_success(
+                        let succeeded = crate::toolkit::tool::effective_success(
                             &crate::tools::resolve_tool_name(&name),
                             &output,
-                        ) {
+                        );
+                        if succeeded {
                             let args_canon =
                                 serde_json::to_string(&exec_arguments).unwrap_or_default();
                             let call_fp = super::intent::mutating_write_fingerprint(
@@ -692,7 +694,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                             round: Some(1),
                         });
 
-                        yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, 1);
+                        yield AgentEvent::tool_call_end_round(&name, &display_str, succeeded, 1);
 
                         tool_call_results.push((name.clone(), sanitized_str));
                     }
@@ -753,8 +755,15 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             // above — no second `cache.store` needed here.
             for (tool_name, result_str) in &tool_call_results {
                 if tool_name == "skill" {
-                    let skill_id = crate::llm::extract_skill_id_from_result(result_str);
-                    llm_interface.set_skill_context(skill_id, result_str.clone()).await;
+                    let (skill_id, section) =
+                        crate::llm::extract_skill_key_from_result(result_str);
+                    llm_interface
+                        .set_skill_section_context_outcome(
+                            skill_id,
+                            section,
+                            result_str.clone(),
+                        )
+                        .await;
                 } else {
                     let mut state = internal_state.write().await;
                     let tool_result_msg = AgentMessage::tool_result(tool_name, result_str);
@@ -1010,7 +1019,11 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                     // as the main path above.
                                     let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
                                     let display_str = sanitized_str.clone();
-                                    yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, 2);
+                                    let succeeded = crate::toolkit::tool::effective_success(
+                                        &crate::tools::resolve_tool_name(&name),
+                                        &output,
+                                    );
+                                    yield AgentEvent::tool_call_end_round(&name, &display_str, succeeded, 2);
                                     let mut state = internal_state.write().await;
                                     state.push_message(AgentMessage::tool_result(&name, &sanitized_str));
                                     tool_call_results.push((name.clone(), sanitized_str));
@@ -1418,7 +1431,11 @@ pub async fn process_multimodal_stream_events_with_safeguards(
                                 };
                                 let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
                                 let display_str = sanitized_str.clone();
-                                yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, 2);
+                                let succeeded = crate::toolkit::tool::effective_success(
+                                    &crate::tools::resolve_tool_name(&name),
+                                    &output,
+                                );
+                                yield AgentEvent::tool_call_end_round(&name, &display_str, succeeded, 2);
                                 let mut state = internal_state.write().await;
                                 state.push_message(AgentMessage::tool_result(&name, &sanitized_str));
                                 nudge_tool_results.push((name.clone(), sanitized_str));

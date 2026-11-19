@@ -400,6 +400,13 @@ mod tests {
                 "flag `{}` does not exist on clap command `neomind {domain} {action}`",
                 spec.flag
             );
+            let argv = vec!["neomind".to_string(), (*domain).into(), (*action).into()];
+            assert_eq!(
+                primary_json_flag(&argv),
+                Some(spec.flag),
+                "primary_json_flag must resolve `{domain} {action}` to `{}`",
+                spec.flag
+            );
         }
     }
 }

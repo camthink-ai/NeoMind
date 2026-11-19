@@ -523,4 +523,134 @@ mod tests {
         );
         invalidate_instance_capability(id);
     }
+
+    /// P2-3 anti-drift check: capability classification must remain fail-closed
+    /// for unknown/unparsed/mutating commands while covering every known
+    /// read-only query subcommand across all CLI domains.
+    #[test]
+    fn capability_is_fail_closed_and_covers_all_known_read_only_queries() {
+        let read_only_commands = [
+            "health",
+            "whoami",
+            "list-models",
+            "device list",
+            "device get dev-1",
+            "device latest dev-1",
+            "device history dev-1",
+            "device webhook-url dev-1",
+            "device types list",
+            "device types get temp_sensor",
+            "device drafts list",
+            "device drafts get draft-1",
+            "dashboard list",
+            "dashboard get dash-1",
+            "rule list",
+            "rule get rule-1",
+            "rule history rule-1",
+            "rule explain rule-1",
+            "agent list",
+            "agent get agent-1",
+            "agent executions agent-1",
+            "agent latest-execution agent-1",
+            "agent conversation agent-1",
+            "agent memory agent-1",
+            "extension list",
+            "extension get weather",
+            "extension status weather",
+            "extension logs weather",
+            "extension validate ./ext.nep",
+            "extension config weather",
+            "extension market-list",
+            "extension commands weather",
+            "transform list",
+            "transform get tr-1",
+            "transform executions tr-1",
+            "transform metrics",
+            "transform data-sources",
+            "widget list",
+            "widget get value-card",
+            "widget market-list",
+            "message list",
+            "message get msg-1",
+            "message channel-list",
+            "message channel-get ops",
+            "message channel-types",
+            "message channel-type-schema webhook",
+            "push list",
+            "push get target-1",
+            "push logs target-1",
+            "push stats",
+            "llm list",
+            "llm get backend-1",
+            "llm models",
+            "connector list",
+            "connector get conn-1",
+            "connector subscriptions",
+            "settings timezone",
+            "settings timezones",
+            "settings retention",
+            "system info",
+            "api-key list",
+            "user list",
+            "data list",
+            "config export",
+            "config validate ./config.toml",
+        ];
+        for cmd in read_only_commands {
+            assert_eq!(
+                classify_line(cmd),
+                CliSideEffect::ProvenReadOnly,
+                "known read-only command `{cmd}` must classify as ProvenReadOnly"
+            );
+        }
+
+        let mutating_commands = [
+            "device create --name s1 --device-type sensor",
+            "device update dev-1 --name s2",
+            "device delete dev-1",
+            "device control dev-1 reboot",
+            "device write-metric dev-1 --metric temp --value 25",
+            "dashboard create --name d1",
+            "dashboard delete dash-1",
+            "rule delete rule-1",
+            "rule enable rule-1",
+            "rule disable rule-1",
+            "agent invoke agent-1",
+            "agent delete agent-1",
+            "extension reload weather",
+            "extension config weather --set {}",
+            "extension install ./ext.nep",
+            "extension uninstall weather",
+            "transform delete tr-1",
+            "widget uninstall my-widget",
+            "message send --title hi --body body",
+            "message delete msg-1",
+            "push delete target-1",
+            "llm activate backend-1",
+            "connector delete conn-1",
+            "settings set-timezone UTC",
+            "settings cleanup",
+            "api-key delete key-1",
+        ];
+        for cmd in mutating_commands {
+            assert_eq!(
+                classify_line(cmd),
+                CliSideEffect::Mutating,
+                "mutating command `{cmd}` must classify as Mutating"
+            );
+        }
+
+        // Fail-closed: unknown domain or unknown action must return Err.
+        for bogus in [
+            vec!["neomind", "unknown-domain", "list"],
+            vec!["neomind", "device", "unknown-action"],
+            vec!["neomind", "extension", "info-nonexistent"],
+        ] {
+            let argv: Vec<String> = bogus.into_iter().map(str::to_string).collect();
+            assert!(
+                classify_argv(&argv).is_err(),
+                "unparsed argv {argv:?} must fail closed with Err"
+            );
+        }
+    }
 }

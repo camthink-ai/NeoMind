@@ -1868,17 +1868,58 @@ fn find_safe_truncation_point(s: &str, max_bytes: usize) -> usize {
 // Error Recovery Hints
 // ============================================================================
 
+/// Return `true` when `stdout` is a JSON `CliResponse` / error payload that
+/// already carries a non-empty `suggestion` or `hint` (at top level, under
+/// `error`, or under `data`). Since Phase 2 keeps `stdout` pure JSON, we parse
+/// it directly instead of substring-matching raw text.
+fn stdout_has_server_guidance(stdout: &str) -> bool {
+    fn non_empty_str(v: &serde_json::Value, key: &str) -> bool {
+        v.get(key)
+            .and_then(|s| s.as_str())
+            .is_some_and(|s| !s.trim().is_empty())
+    }
+    fn obj_has_guidance(v: &serde_json::Value) -> bool {
+        non_empty_str(v, "suggestion") || non_empty_str(v, "hint")
+    }
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return false;
+    };
+    obj_has_guidance(&val)
+        || val.get("error").is_some_and(obj_has_guidance)
+        || val.get("data").is_some_and(obj_has_guidance)
+}
+
+/// True for targeted parse-error hints that add value alongside clap's
+/// in-process `usage_hint` (as opposed to broad domain action summaries).
+fn is_targeted_parse_hint(hint: &str) -> bool {
+    hint.starts_with("ID is a positional argument")
+        || hint.starts_with("Device-defined command parameters")
+}
+
 impl ShellTool {
     /// Generate a recovery hint when a neomind CLI command fails.
     fn recovery_hint(command: &str, stdout: &str, stderr: &str) -> Option<String> {
         let cmd = command.trim();
-        if !cmd.starts_with("neomind ") {
+        let argv = tokenize_neomind_command(cmd)
+            .unwrap_or_else(|_| cmd.split_whitespace().map(str::to_string).collect());
+        let argv = strip_host_meta_from_argv(argv);
+        if argv.first().map(String::as_str) != Some("neomind") {
             return None;
         }
 
-        let parts: Vec<&str> = cmd.splitn(4, ' ').collect();
-        let domain = parts.get(1).copied().unwrap_or("");
-        let action = parts.get(2).copied().unwrap_or("");
+        // If the server / CLI already returned structured guidance in JSON
+        // `stdout` (`suggestion` / `hint`), do not overwrite or stack a generic
+        // hint that could contradict it.
+        if stdout_has_server_guidance(stdout) {
+            return None;
+        }
+
+        let domain = argv.get(1).map(String::as_str).unwrap_or("");
+        let action = argv.get(2).map(String::as_str).unwrap_or("");
         let combined = format!("{} {}", stdout, stderr).to_lowercase();
 
         let is_not_found = combined.contains("not found")
@@ -1896,26 +1937,39 @@ impl ShellTool {
             || combined.contains("unrecognized argument")
             || combined.contains("unused arguments")
             || combined.contains("error: found argument");
+        let has_id_flag = argv
+            .iter()
+            .skip(1)
+            .any(|tok| tok == "--id" || tok.starts_with("--id="));
+        let missing_positional_id = combined.contains("required arguments were not provided")
+            && (combined.contains("<id>")
+                || combined.contains("<device_id>")
+                || combined.contains("<dashboard_id>")
+                || combined.contains("<rule_id>")
+                || combined.contains("<agent_id>")
+                || combined.contains("<extension_id>"));
 
-        // Common syntax hint for all neomind commands when unexpected argument
-        if is_unexpected_arg {
-            if cmd.contains("--id ") {
+        // Targeted syntax hints only — never blindly tell the model "ID is
+        // positional" on unrelated flag errors, and avoid fighting with
+        // clap's in-process `usage_hint` on exit_code 2.
+        if is_unexpected_arg || missing_positional_id {
+            if has_id_flag || missing_positional_id {
                 return Some("ID is a positional argument, not a flag. Use: neomind <domain> <action> <ID> [options]. Example: neomind device get abc123 (not --id abc123).".to_string());
             }
             if domain == "device" && action == "control" {
                 return Some("Device-defined command parameters are not standalone CLI flags. Use neomind device control <ID> <COMMAND> --param 'key=value' (repeat for each parameter), or --params '<JSON>'. For a text parameter, use --param 'text=your content', not --text. Use device get <ID> to check actual parameter names and types; do not invent keys. Run neomind device control --help for CLI options.".to_string());
             }
-            return Some("Command syntax error. ID is positional (not --id flag). Run 'neomind <domain> <action> --help' to see correct usage.".to_string());
+            return None;
         }
 
         match domain {
             "device" => {
-                if is_not_found {
+                if action == "control" && is_not_found {
+                    Some("Device or command not found. Run 'neomind device list' to verify the device ID and 'neomind device get <ID>' to inspect supported commands, then call 'neomind device control <ID> <COMMAND>' with shell `params` (COMMAND is positional, not a flag).".to_string())
+                } else if is_not_found {
                     Some("Run 'neomind device list' to see available devices, then retry with a valid ID.".to_string())
                 } else if action == "create" && is_validation {
                     Some("Required flags: --name, --device-type, --adapter-type (mqtt|webhook). Use 'neomind device types list' to see built-in types.".to_string())
-                } else if action == "control" && is_not_found {
-                    Some("Device not found. Run 'neomind device list' first, then 'neomind device control <ID> <COMMAND> --params {json}' (COMMAND is positional, not a flag).".to_string())
                 } else if action == "control" && is_validation {
                     // Server already returns schema + params_example + "NOT sent".
                     // Do NOT overwrite that with the generic device subcommand list.
@@ -2120,7 +2174,7 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
             serde_json::json!({
                 "command": {
                     "type": "string",
-                    "description": "The shell command to execute. Supports pipes, redirections, and other shell features. For neomind commands that take JSON (--params/--set/--components/--ids/--body/--input/--config), prefer the structured `params` field instead of embedding quoted JSON in this string. Never put `_new_operation` inside this string — it is a separate tool field."
+                    "description": "The shell command to execute. For `neomind` commands, use built-in filter flags (no `| grep/jq`); only native host commands support pipes and redirections. For neomind commands that take JSON (--params/--set/--components/--ids/--body/--input/--config), prefer the structured `params` field instead of embedding quoted JSON in this string. Never put `_new_operation` inside this string — it is a separate tool field."
                 },
                 "params": {
                     "anyOf": [
@@ -2245,9 +2299,12 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
 
         // Enrich error responses with recovery hints for neomind CLI commands
         let is_error = output.exit_code.unwrap_or(1) != 0;
+        let has_usage_hint = result.get("usage_hint").is_some();
         if is_error {
             if let Some(hint) = Self::recovery_hint(command, &stdout, &stderr) {
-                result["suggestion"] = serde_json::Value::String(hint);
+                if !has_usage_hint || is_targeted_parse_hint(&hint) {
+                    result["suggestion"] = serde_json::Value::String(hint);
+                }
             }
         } else if stdout.is_empty() && stderr.is_empty() {
             // Success but zero output — typical of GUI launchers (`open`,
@@ -2335,22 +2392,54 @@ mod tests {
             hint("neomind device control --id eink-test render_text", error)
                 .starts_with("ID is a positional argument")
         );
-        let other = hint(
-            "neomind rule create --bogus 1",
-            "error: unexpected argument '--bogus' found",
-        );
-        assert_eq!(other, "Command syntax error. ID is positional (not --id flag). Run 'neomind <domain> <action> --help' to see correct usage.");
-        assert!(!hint(
-            "neomind device control eink-test bad_command",
-            "Command not found"
+        assert!(hint(
+            "neomind device get --id=eink-test",
+            "error: unexpected argument '--id=eink-test' found"
         )
-        .contains("--param"));
+        .starts_with("ID is a positional argument"));
+        assert!(hint(
+            "neomind device get",
+            "error: the following required arguments were not provided:\n  <ID>"
+        )
+        .starts_with("ID is a positional argument"));
+        // Unrelated unexpected flag must NOT blindly claim "ID is positional"
+        // (and avoids fighting with clap's in-process `usage_hint`).
+        assert!(ShellTool::recovery_hint(
+            "neomind rule create --bogus 1",
+            "",
+            "error: unexpected argument '--bogus' found",
+        )
+        .is_none());
+        // `action == "control" && is_not_found` is no longer shadowed by generic `is_not_found`.
+        let ctrl_nf = hint(
+            "neomind device control eink-test bad_command",
+            "Command not found",
+        );
+        assert!(
+            ctrl_nf.contains("COMMAND is positional"),
+            "control not-found branch must be reachable: {ctrl_nf}"
+        );
+        assert!(!ctrl_nf.contains("--param"));
         // Server schema / NOT-sent feedback must not be replaced by the
         // generic "Available actions" device subcommand list.
         assert!(ShellTool::recovery_hint(
             "neomind device control eink-test render_text --params '{\"cmd\":\"render_text\",\"params\":{\"text\":\"hi\"}}'",
             "",
             "Failed to send command: Command 'render_text' was NOT sent: missing required top-level params: text. Example: {\"text\":\"Hello\"}.\nHint: {\"params_example\":{\"text\":\"Hello\"}}",
+        )
+        .is_none());
+        // When `stdout` is a JSON CliResponse that already carries `suggestion` or `hint`,
+        // `recovery_hint` must not overwrite or layer a generic hint on top.
+        assert!(ShellTool::recovery_hint(
+            "neomind device get missing-1",
+            r#"{"success":false,"error":"Device not found","suggestion":"Run 'neomind device list' first."}"#,
+            "",
+        )
+        .is_none());
+        assert!(ShellTool::recovery_hint(
+            "neomind rule create --body '{}'",
+            r#"{"success":false,"error":{"code":"VALIDATION_ERROR","message":"bad","hint":"Use greater_than"}}"#,
+            "",
         )
         .is_none());
         let control_validation = hint(
@@ -4394,5 +4483,228 @@ mod p0_2_envelope_help_session_tests {
         );
 
         server.abort();
+    }
+
+    /// P2-3 Anti-Drift Scanner: every `neomind <domain> <subcommand>` referenced
+    /// in `DOMAIN_INDEX` and in ALL builtin skill guides (`skills/builtins/*.md`,
+    /// both command examples and YAML `tool_target`) must resolve to a real
+    /// clap subcommand in `neomind_cli_ops::dispatch::commands::Args`.
+    #[test]
+    fn anti_drift_scanner_builtin_skills_and_domain_index_match_clap_tree() {
+        use clap::CommandFactory;
+        use std::collections::{BTreeMap, BTreeSet};
+
+        let root = neomind_cli_ops::dispatch::commands::Args::command();
+        // Map domain name -> set of valid subcommand names + aliases.
+        let mut domain_subcommands: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for sub in root.get_subcommands() {
+            if !sub.has_subcommands() {
+                continue;
+            }
+            let mut names = BTreeSet::new();
+            for child in sub.get_subcommands() {
+                names.insert(child.get_name().to_string());
+                for alias in child.get_all_aliases() {
+                    names.insert(alias.to_string());
+                }
+            }
+            domain_subcommands.insert(sub.get_name().to_string(), names);
+        }
+
+        let mut failures: Vec<String> = Vec::new();
+
+        // 1) Scan `DOMAIN_INDEX` bullet lines (`- <domain>: verb1 verb2 ...`).
+        for line in DOMAIN_INDEX.lines() {
+            let Some(rest) = line.trim().strip_prefix("- ") else {
+                continue;
+            };
+            let Some((domain, body)) = rest.split_once(':') else {
+                continue;
+            };
+            let domain = domain.trim();
+            let Some(valid) = domain_subcommands.get(domain) else {
+                failures.push(format!("DOMAIN_INDEX: unknown domain `{domain}`"));
+                continue;
+            };
+            // Stop before parenthetical prose notes.
+            let verbs_part = body.split('(').next().unwrap_or(body);
+            for tok in verbs_part.split_whitespace() {
+                // Skip placeholder args like `<ID>`, `<CMD>`, `<active|paused>`.
+                if tok.starts_with('<') || tok.starts_with('[') || tok.starts_with('-') {
+                    continue;
+                }
+                if !valid.contains(tok) {
+                    failures.push(format!(
+                        "DOMAIN_INDEX: `neomind {domain} {tok}` does not exist in Args::command()"
+                    ));
+                }
+            }
+        }
+
+        // 2) Scan every builtin skill `.md` file under `src/skills/builtins/`.
+        //    Inspects YAML `tool_target` entries, fenced code blocks, and inline
+        //    backtick code spans so prose words after `` `neomind settings` ``
+        //    are never misread as subcommands.
+        let builtins_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/skills/builtins");
+        let mut md_paths: Vec<std::path::PathBuf> = std::fs::read_dir(&builtins_dir)
+            .expect("read src/skills/builtins")
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("md"))
+            .collect();
+        md_paths.sort();
+        assert!(
+            !md_paths.is_empty(),
+            "expected builtin skill markdown files in {}",
+            builtins_dir.display()
+        );
+
+        let is_cli_ident = |s: &str| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+                && s.as_bytes()[0].is_ascii_lowercase()
+        };
+
+        let check_code_snippet = |snippet: &str,
+                                  file: &str,
+                                  line_no: usize,
+                                  domain_subcommands: &BTreeMap<String, BTreeSet<String>>,
+                                  failures: &mut Vec<String>| {
+            let mut search_from = 0usize;
+            while let Some(rel) = snippet[search_from..].find("neomind ") {
+                let pos = search_from + rel;
+                search_from = pos + "neomind ".len();
+                if pos > 0 {
+                    let prev = snippet.as_bytes()[pos - 1];
+                    if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'-' {
+                        continue;
+                    }
+                }
+                let after = &snippet[pos + "neomind ".len()..];
+                let mut tokens = after.split_whitespace();
+                let Some(raw_dom) = tokens.next() else {
+                    continue;
+                };
+                let dom = raw_dom.trim_matches(|c: char| {
+                    matches!(c, '"' | '\'' | '(' | ')' | ',' | '.' | ':' | ';' | '|')
+                });
+                let Some(valid) = domain_subcommands.get(dom) else {
+                    continue;
+                };
+                let Some(raw_sub) = tokens.next() else {
+                    continue;
+                };
+                let sub = raw_sub.trim_matches(|c: char| {
+                    matches!(c, '"' | '\'' | '(' | ')' | ',' | '.' | ':' | ';' | '|')
+                });
+                if !is_cli_ident(sub) {
+                    continue;
+                }
+                if !valid.contains(sub) {
+                    failures.push(format!(
+                        "{file}:{line_no} `neomind {dom} {sub}` does not exist in Args::command()"
+                    ));
+                }
+            }
+        };
+
+        for path in md_paths {
+            let file = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown");
+            let content = std::fs::read_to_string(&path).expect("read builtin skill");
+
+            let mut in_frontmatter = false;
+            let mut in_code_fence = false;
+            let mut current_tool: Option<String> = None;
+            for (idx, raw_line) in content.lines().enumerate() {
+                let line_no = idx + 1;
+                let trimmed = raw_line.trim();
+                if idx == 0 && trimmed == "---" {
+                    in_frontmatter = true;
+                    continue;
+                }
+                if in_frontmatter {
+                    if trimmed == "---" {
+                        in_frontmatter = false;
+                        continue;
+                    }
+                    if let Some(t) = trimmed.strip_prefix("- tool:") {
+                        current_tool = Some(t.trim().to_string());
+                    } else if let Some(rest) = trimmed.strip_prefix("actions:") {
+                        if let Some(domain) = current_tool.as_deref() {
+                            if let Some(valid) = domain_subcommands.get(domain) {
+                                let list =
+                                    rest.trim().trim_start_matches('[').trim_end_matches(']');
+                                for act in list.split(',').map(str::trim).filter(|s| !s.is_empty())
+                                {
+                                    if !valid.contains(act) {
+                                        failures.push(format!(
+                                            "{file}:{line_no} tool_target `{domain}` action `{act}` does not exist in Args::command()"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                if trimmed.starts_with("```") {
+                    in_code_fence = !in_code_fence;
+                    continue;
+                }
+
+                if in_code_fence {
+                    let code_part = raw_line.split('#').next().unwrap_or(raw_line);
+                    check_code_snippet(
+                        code_part,
+                        file,
+                        line_no,
+                        &domain_subcommands,
+                        &mut failures,
+                    );
+                    continue;
+                }
+
+                // Skip explicit negative examples documenting non-existent commands.
+                if raw_line.contains("do NOT exist") || raw_line.contains("does NOT exist") {
+                    continue;
+                }
+
+                // Scan inline backtick code spans: `neomind <domain> <subcommand> ...`
+                let mut rest = raw_line;
+                while let Some(open) = rest.find('`') {
+                    let after_open = &rest[open + 1..];
+                    let Some(close) = after_open.find('`') else {
+                        break;
+                    };
+                    let span = &after_open[..close];
+                    check_code_snippet(span, file, line_no, &domain_subcommands, &mut failures);
+                    rest = &after_open[close + 1..];
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "Anti-drift scanner found {} stale CLI reference(s):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn shell_command_param_pipe_description_matches_capability_index() {
+        let params = ShellTool::new(ShellConfig::default()).parameters();
+        let cmd_desc = params["properties"]["command"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            cmd_desc.contains("built-in filter flags") && cmd_desc.contains("native host commands"),
+            "shell command param description must unify pipe rules with capability_index: {cmd_desc}"
+        );
     }
 }

@@ -17,9 +17,9 @@ triggers:
     - tool: widget
       actions: [list, get]
     - tool: device
-      actions: [list, latest]
+      actions: [list, get]
     - tool: extension
-      actions: [info, list]
+      actions: [get, list]
 anti_triggers:
   keywords: [rule, 规则, agent, 代理, extension develop, 扩展开发]
 ---

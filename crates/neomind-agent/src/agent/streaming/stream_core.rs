@@ -2153,7 +2153,7 @@ pub async fn process_stream_events_with_safeguards(
                                     round: Some(tool_iteration_count + 1),
                                 });
 
-                                yield AgentEvent::tool_call_end_round(&name, &display_str, output.success, tool_iteration_count + 1);
+                                yield AgentEvent::tool_call_end_round(&name, &display_str, succeeded, tool_iteration_count + 1);
 
                                 tool_call_results.push((name.clone(), sanitized_str));
                             }
@@ -2479,8 +2479,15 @@ pub async fn process_stream_events_with_safeguards(
                     // above — no second `cache.store` needed here.
                     for (tool_name, result_str) in &tool_call_results {
                         if tool_name == "skill" {
-                            let skill_id = crate::llm::extract_skill_id_from_result(result_str);
-                            llm_interface.set_skill_context(skill_id, result_str.clone()).await;
+                            let (skill_id, section) =
+                                crate::llm::extract_skill_key_from_result(result_str);
+                            llm_interface
+                                .set_skill_section_context_outcome(
+                                    skill_id,
+                                    section,
+                                    result_str.clone(),
+                                )
+                                .await;
                         } else {
                             let mut state = internal_state.write().await;
                             let tool_result_msg = AgentMessage::tool_result(tool_name, result_str);
