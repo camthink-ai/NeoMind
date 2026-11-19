@@ -1,8 +1,10 @@
-//! Host-only extras for Chat → shell → `extension invoke` (NM-247).
+//! Host-only extras for Chat → shell → CLI (NM-247, generalized).
 //!
 //! One dispatch-internal field carries:
-//! - structured `params` object (no model-facing re-stringify / quoting)
-//! - host-managed PreparedInvoke ticket (not model-visible)
+//! - structured JSON object from the shell tool `params` field (no
+//!   model-facing re-stringify / quoting) — used for `--params`, `--set`,
+//!   `--components`, and other primary JSON flags after argv injection
+//! - host-managed PreparedInvoke ticket (extension invoke only; not model-visible)
 //!
 //! Production uses `tokio::task_local` only — parallel tool calls cannot steal
 //! each other's ticket or params. Sync test helpers stay behind `cfg(test)`.
@@ -10,12 +12,15 @@
 use serde_json::Value;
 use std::cell::RefCell;
 
-/// Dispatch-internal host context for one extension invoke.
+/// Dispatch-internal host context for one shell → CLI call.
+///
+/// Historically named for extension invoke; now also carries structured JSON
+/// for any domain that accepts a primary JSON flag via shell `params`.
 #[derive(Debug, Clone, Default)]
 pub struct ExtensionInvokeHostContext {
     /// PreparedInvoke id issued at classify; gate/authorize/exec use this.
     pub prepared_operation_id: Option<String>,
-    /// Parsed params object from the shell tool `params` field.
+    /// Parsed JSON object from the shell tool `params` field.
     pub structured_params: Option<Value>,
 }
 

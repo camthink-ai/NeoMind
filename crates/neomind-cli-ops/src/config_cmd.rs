@@ -10,7 +10,7 @@ pub async fn export_config(client: &ApiClient) -> Result<CliResponse> {
 
 /// Import system configuration from JSON
 pub async fn import_config(client: &ApiClient, config_json: &str) -> Result<CliResponse> {
-    let config: serde_json::Value = serde_json::from_str(config_json)
+    let config = crate::json_arg::parse_json_arg(config_json)
         .map_err(|e| anyhow::anyhow!("Invalid JSON config: {}", e))?;
     let data = client.post("/config/import", &config).await?;
     Ok(CliResponse::success(data, "Configuration imported"))
@@ -18,7 +18,7 @@ pub async fn import_config(client: &ApiClient, config_json: &str) -> Result<CliR
 
 /// Validate configuration without applying
 pub async fn validate_config(client: &ApiClient, config_json: &str) -> Result<CliResponse> {
-    let config: serde_json::Value = serde_json::from_str(config_json)
+    let config = crate::json_arg::parse_json_arg(config_json)
         .map_err(|e| anyhow::anyhow!("Invalid JSON config: {}", e))?;
     let data = client.post("/config/validate", &config).await?;
     Ok(CliResponse::success(data, "Configuration validated"))

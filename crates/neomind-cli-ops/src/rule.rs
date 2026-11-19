@@ -392,7 +392,7 @@ pub async fn update_rule_fast(
 ///
 /// Accepts a raw JSON string that is forwarded to the API.
 pub async fn create_rule(client: &ApiClient, json_body: &str) -> Result<CliResponse> {
-    let body: serde_json::Value = match serde_json::from_str(json_body) {
+    let body: serde_json::Value = match crate::json_arg::parse_json_arg(json_body) {
         Ok(v) => v,
         Err(e) => {
             // Surface a copy-pasteable rule example so the caller (LLM agent
@@ -413,7 +413,7 @@ pub async fn create_rule(client: &ApiClient, json_body: &str) -> Result<CliRespo
 
 /// Update rule via JSON body.
 pub async fn update_rule(client: &ApiClient, id: &str, json_body: &str) -> Result<CliResponse> {
-    let body: serde_json::Value = match serde_json::from_str(json_body) {
+    let body: serde_json::Value = match crate::json_arg::parse_json_arg(json_body) {
         Ok(v) => v,
         Err(e) => {
             // Surface a copy-pasteable rule example so the caller (LLM agent

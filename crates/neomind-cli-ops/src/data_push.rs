@@ -104,7 +104,7 @@ pub async fn create_target(
     }
 
     // 3. Validate config is valid JSON
-    let mut config_val: serde_json::Value = match serde_json::from_str(config) {
+    let mut config_val: serde_json::Value = match crate::json_arg::parse_json_arg(config) {
         Ok(v) => v,
         Err(e) => {
             return Ok(CliResponse::error_with_suggestion(
@@ -184,7 +184,7 @@ pub async fn update_target(
         // take effect instead of being silently swallowed by the webhook/mqtt
         // config parser.
         let mut cfg_val: serde_json::Value =
-            serde_json::from_str(c).unwrap_or_else(|_| json!({"url": c}));
+            crate::json_arg::parse_json_arg(c).unwrap_or_else(|_| json!({"url": c}));
         lift_top_level_fields(&mut cfg_val, &mut body);
         body["config"] = cfg_val;
     }
@@ -210,7 +210,7 @@ pub async fn update_target(
         };
     }
     if let Some(tpl) = template {
-        body["template"] = serde_json::from_str(tpl).unwrap_or_else(|_| json!(tpl));
+        body["template"] = crate::json_arg::parse_json_arg(tpl).unwrap_or_else(|_| json!(tpl));
     }
 
     let data = client.put(&format!("/data-push/{}", id), &body).await?;

@@ -650,7 +650,7 @@ fn load_invoke_params(
     if let Some(path) = params_file {
         let text = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("failed to read --params-file {}: {e}", path.display()))?;
-        let v: serde_json::Value = serde_json::from_str(text.trim())
+        let v = crate::json_arg::parse_json_arg(text.trim())
             .map_err(|e| anyhow::anyhow!("--params-file must contain a JSON object: {e}"))?;
         if !v.is_object() && !v.is_null() {
             anyhow::bail!("--params-file must contain a JSON object");
@@ -660,7 +660,7 @@ fn load_invoke_params(
     match params_json {
         None => Ok(json!({})),
         Some(s) => {
-            let v: serde_json::Value = serde_json::from_str(s.trim())
+            let v = crate::json_arg::parse_json_arg(s.trim())
                 .map_err(|e| anyhow::anyhow!("--params must be a JSON object: {e}"))?;
             if !v.is_object() && !v.is_null() {
                 anyhow::bail!("--params must be a JSON object");

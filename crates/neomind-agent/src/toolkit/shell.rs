@@ -582,6 +582,24 @@ impl ShellTool {
             return None;
         }
 
+        // Host lifecycle tokens must never reach clap (`_new_operation=true`
+        // appended inside `command` was a live clap "unexpected argument").
+        let argv = strip_host_meta_from_argv(argv);
+
+        // Structured shell `params` → primary JSON flag as a clean argv token
+        // (no model-facing quote wrapping). Host context wins when present.
+        let argv = match inject_structured_json_argv(argv) {
+            Ok(a) => a,
+            Err(msg) => {
+                return Some(CommandOutput {
+                    exit_code: Some(1),
+                    stdout: String::new(),
+                    stderr: msg,
+                    timed_out: false,
+                });
+            }
+        };
+
         // NM-240: bind Chat write-gate to the same PreparedInvoke HTTP will
         // consume. Authorize Mutating tickets on the execute path (RO was
         // authorized at classify); inject --prepared-operation-id.
@@ -1396,8 +1414,9 @@ pub(crate) fn bind_extension_invoke_prepared_token(
     Ok(argv)
 }
 
-/// Reject when shell `params` object conflicts with `--params`/`--params-file`,
-/// or when `params` is present but not an object. Non-extension shell is OK.
+/// Reject when shell `params` object conflicts with the command's primary
+/// JSON flag (`--params`/`--set`/`--components`/…), or when `params` is
+/// present but not an object.
 pub fn validate_extension_params_sources(args: &Value) -> std::result::Result<(), String> {
     let Some(params_val) = args.get("params") else {
         return Ok(());
@@ -1406,7 +1425,10 @@ pub fn validate_extension_params_sources(args: &Value) -> std::result::Result<()
         return Ok(());
     }
     if !params_val.is_object() {
-        return Err("shell params must be a JSON object (for extension invoke only)".into());
+        return Err(
+            "shell params must be a JSON object (primary JSON payload for --params/--set/--components/…)"
+                .into(),
+        );
     }
     let cmd = args
         .get("command")
@@ -1416,18 +1438,17 @@ pub fn validate_extension_params_sources(args: &Value) -> std::result::Result<()
     if cmd.is_empty() {
         return Ok(());
     }
-    // params only applies to extension invoke; ignore otherwise.
-    let is_invoke = cmd.contains("extension invoke") || cmd.contains("extension  invoke");
-    if !is_invoke {
-        return Ok(());
-    }
     let argv = tokenize_neomind_command(cmd).map_err(|e| e.to_string())?;
-    if argv.iter().any(|a| a == "--params" || a == "--params-file") {
-        return Err(
-            "conflict: pass extension invoke params via shell `params` object OR \
-             `--params`/`--params-file` in command — not both"
-                .into(),
-        );
+    let argv = strip_host_meta_from_argv(argv);
+    let Some(flag) = neomind_cli_ops::json_arg::primary_json_flag(&argv) else {
+        // Structured params with no known primary flag — ignore (legacy callers).
+        return Ok(());
+    };
+    let file_flag = format!("{flag}-file");
+    if argv.iter().any(|a| a == flag || a.as_str() == file_flag) {
+        return Err(format!(
+            "conflict: pass JSON via shell `params` object OR `{flag}` in command — not both"
+        ));
     }
     Ok(())
 }
@@ -1436,9 +1457,6 @@ fn extension_invoke_host_context_from_args(
     args: &Value,
 ) -> Option<neomind_cli_ops::dispatch::ExtensionInvokeHostContext> {
     let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
-    if !(cmd.contains("extension invoke") || cmd.contains("extension  invoke")) {
-        return None;
-    }
     let ticket = args
         .get(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG)
         .and_then(|v| v.as_str())
@@ -1452,13 +1470,105 @@ fn extension_invoke_host_context_from_args(
             None
         }
     });
+    // Prepared ticket only applies to extension invoke; structured JSON applies
+    // to any primary-JSON-flag command.
+    let is_invoke = cmd.contains("extension invoke") || cmd.contains("extension  invoke");
     if ticket.is_none() && structured.is_none() {
         return None;
     }
     Some(neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
-        prepared_operation_id: ticket,
+        // Drop ticket for non-invoke — never leak into unrelated domains.
+        prepared_operation_id: if is_invoke { ticket } else { None },
         structured_params: structured,
     })
+}
+
+/// Strip Chat lifecycle / PreparedInvoke tokens from argv before clap.
+///
+/// Models sometimes append `_new_operation=true` or `--_new_operation` inside
+/// the `command` string. Those are tool-schema fields, never CLI flags.
+pub(crate) fn strip_host_meta_from_argv(argv: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(argv.len());
+    let mut i = 0;
+    while i < argv.len() {
+        let tok = argv[i].as_str();
+        if is_host_meta_token(tok) {
+            i += 1;
+            continue;
+        }
+        if tok == "--prepared-operation-id" {
+            i += 1;
+            if i < argv.len() {
+                i += 1;
+            }
+            continue;
+        }
+        if let Some(rest) = tok.strip_prefix("--prepared-operation-id=") {
+            let _ = rest;
+            i += 1;
+            continue;
+        }
+        out.push(argv[i].clone());
+        i += 1;
+    }
+    out
+}
+
+fn is_host_meta_token(tok: &str) -> bool {
+    matches!(
+        tok,
+        "_new_operation"
+            | "_new_operation=true"
+            | "_new_operation=false"
+            | "--_new_operation"
+            | "--_new_operation=true"
+            | "--_new_operation=false"
+            | crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG
+            | crate::agent::task_continuity::PREPARED_OPERATION_ARG
+    ) || tok.starts_with("_new_operation=")
+        || tok.starts_with("--_new_operation=")
+        || tok.starts_with(&format!(
+            "{}=",
+            crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG
+        ))
+        || tok.starts_with(&format!(
+            "{}=",
+            crate::agent::task_continuity::PREPARED_OPERATION_ARG
+        ))
+}
+
+/// Inject host structured JSON as the command's primary JSON flag argv pair.
+fn inject_structured_json_argv(argv: Vec<String>) -> std::result::Result<Vec<String>, String> {
+    let host = neomind_cli_ops::dispatch::peek_extension_invoke_host_context();
+    let Some(params) = host.and_then(|h| h.structured_params) else {
+        return Ok(argv);
+    };
+    let Some(flag) = neomind_cli_ops::json_arg::primary_json_flag(&argv) else {
+        return Ok(argv);
+    };
+    let file_flag = format!("{flag}-file");
+    if argv.iter().any(|a| a == flag || a.as_str() == file_flag) {
+        // validate_extension_params_sources should have caught this; keep
+        // host params preferred by dropping the CLI flag pair.
+        let mut cleaned = Vec::with_capacity(argv.len());
+        let mut i = 0;
+        while i < argv.len() {
+            if argv[i] == flag || argv[i] == file_flag {
+                i += 2;
+                continue;
+            }
+            cleaned.push(argv[i].clone());
+            i += 1;
+        }
+        let mut out = cleaned;
+        out.push(flag.to_string());
+        out.push(params.to_string());
+        return Ok(out);
+    }
+    let mut out = argv;
+    out.push(flag.to_string());
+    out.push(params.to_string());
+    Ok(out)
 }
 
 /// Annotate localhost API transport failures so PreferKnown / recovery can
@@ -1967,11 +2077,11 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
             serde_json::json!({
                 "command": {
                     "type": "string",
-                    "description": "The shell command to execute. Supports pipes, redirections, and other shell features. For `neomind extension invoke`, prefer the structured `params` object instead of embedding `--params` JSON in this string."
+                    "description": "The shell command to execute. Supports pipes, redirections, and other shell features. For neomind commands that take JSON (--params/--set/--components/--body/--input/--config), prefer the structured `params` object instead of embedding quoted JSON in this string. Never put `_new_operation` inside this string — it is a separate tool field."
                 },
                 "params": {
                     "type": "object",
-                    "description": "Optional structured parameters for `neomind extension invoke` only. Pass the command's param object here (e.g. {\"city\":\"Beijing\"}). Do not also pass `--params` / `--params-file` in `command`. Other shell commands ignore this field."
+                    "description": "Optional structured JSON for the command's primary JSON flag (--params for device control / extension invoke, --set for dashboard update-component / extension config, --components for add-components, --body for rules, etc.). Prefer this over quoting JSON in `command`. Do not also pass the same flag in `command`."
                 },
                 "timeout": {
                     "type": "number",
@@ -3292,7 +3402,10 @@ mod dispatch_edge_tests {
 }
 #[cfg(test)]
 mod nm247_structured_params_tests {
-    use super::{bind_extension_invoke_prepared_token, validate_extension_params_sources};
+    use super::{
+        bind_extension_invoke_prepared_token, strip_host_meta_from_argv,
+        validate_extension_params_sources,
+    };
     use neomind_core::extension::{
         begin_instance_generation, classify_and_bind_chat_invoke, invalidate_instance_capability,
         CommandEffect, ExtensionCommand, ExtensionCommandSnapshot, MetricDataType,
@@ -3326,6 +3439,48 @@ mod nm247_structured_params_tests {
         ExtensionCommandSnapshot::build(id, "2.14.0", None, vec![get], gen)
             .publish_capabilities()
             .unwrap();
+    }
+
+    #[test]
+    fn strip_host_meta_drops_new_operation_and_prepared_tokens() {
+        let argv = vec![
+            "neomind".into(),
+            "dashboard".into(),
+            "update-component".into(),
+            "d1".into(),
+            "--component-id".into(),
+            "c1".into(),
+            "--set".into(),
+            r#"{"position":{"w":2,"h":2}}"#.into(),
+            "_new_operation=true".into(),
+            "--prepared-operation-id".into(),
+            "op_dead".into(),
+        ];
+        let cleaned = strip_host_meta_from_argv(argv);
+        assert_eq!(
+            cleaned,
+            vec![
+                "neomind",
+                "dashboard",
+                "update-component",
+                "d1",
+                "--component-id",
+                "c1",
+                "--set",
+                r#"{"position":{"w":2,"h":2}}"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn conflict_params_object_and_set_flag_rejected_for_dashboard() {
+        let args = json!({
+            "command": "neomind dashboard update-component d1 --component-id c1 --set {\"w\":2}",
+            "params": {"position":{"w":2,"h":2}}
+        });
+        let err = validate_extension_params_sources(&args).unwrap_err();
+        assert!(err.contains("conflict"), "{err}");
+        assert!(err.contains("--set"), "{err}");
     }
 
     #[test]

@@ -28,6 +28,7 @@ anti_triggers:
 
 Ask vs inspect vs mutate: how-to / layout questions → answer with zero writes; inspect with `dashboard list`/`get` and widget/device discovery; mutate only on an explicit create/update/add/remove request.
 Always `dashboard get <ID>` before adding components — read occupied rows / next free row / existing ids, then `add-components` (append). Never guess layout.
+Resize/tweak in place: keep current `position.x/y`; only patch `position.w`/`position.h` (grid units — "N行N列" means h=N,w=N). Do not ask for pixels. Prefer shell `params` object for `--set` JSON.
 Inspect available dashboards and data sources. Discover component types/schema before adding unfamiliar widgets. Bind actual device, extension, transform or AI output fields.
 Create or update the requested dashboard and widgets, then read them back. A saved dashboard does not prove every data binding has live values.
 Preserve existing layout and unrelated widgets during edits. Use resource IDs, not display labels or guessed metric paths.
@@ -79,9 +80,9 @@ Creating dashboards with data-bound components is the most complex CLI operation
 2. **Use `add-components` to add widgets** — this appends without replacing existing components
 3. **To change ONE component's fields use `update-component`** — deep-merges a partial JSON into it; no need to re-send the whole component or remove+re-add
 4. **`update --components` is GATED** — it replaces ALL components and requires the explicit `--replace-all` flag; without it the command fails. You almost never want it: ADD → `add-components`, TWEAK → `update-component`
-5. **ALWAYS `dashboard get <ID>` before adding components** — its output ends with a grid summary (occupied rows + `next free row: y=N`); place new widgets at that y. Component ids are listed too (avoid collisions)
-6. **Grid is 12 columns wide** — plan layout accordingly
-7. **NEVER use Python/pipe/file tricks** — each shell call is an isolated process; you cannot share data between calls via files, pipes, or variables. Build the complete JSON string inline.
+5. **ALWAYS `dashboard get <ID>` before adding components** — its output ends with a grid summary (occupied rows + `next free row: y=N`); place **new** widgets at that y. Component ids are listed too (avoid collisions). **Resize/move are different:** keep current x,y unless the user asks to move; only change `position.w`/`position.h`.
+6. **Grid is 12 columns wide** — `w`/`h` are grid units (not pixels). "大概2行2列" → `--set`/`params` `{"position":{"w":2,"h":2}}` at the existing x,y.
+7. **NEVER use Python/pipe/file tricks** — each shell call is an isolated process; you cannot share data between calls via files, pipes, or variables. Prefer shell structured `params` for JSON; if you must inline, keep a single clean JSON object (no leftover quotes).
 8. **Use `widget get <type>` to inspect config_schema** before configuring unfamiliar widgets
 9. **NEVER use emoji in component titles or descriptions** — plain text labels only ("Temperature" / "温度", not "🌡 Temperature")
 10. **Charts (line-chart, area-chart, bar-chart, sparkline, pie-chart) MUST use `mode: "timeseries"`** — using `mode: "latest"` on charts causes rendering errors. Always include `timeWindow` (e.g., `"timeWindow": {"type": "last_24hours"}`) for proper historical data. Value-cards and indicators use `mode: "latest"`.
@@ -228,12 +229,16 @@ neomind dashboard update-component <ID> --component-id c3 \
 neomind dashboard update-component <ID> --component-id c1 \
   --set '{"data_source":{"id":"sensor-002","field":"humidity","metricId":"humidity"}}'
 
-# Retitle + resize + display tweak
+# Retitle + resize + display tweak (w/h = grid units; omit x/y to keep place)
 neomind dashboard update-component <ID> --component-id c2 \
   --set '{"title":"Humidity","position":{"w":6},"display":{"unit":"%"}}'
+
+# Preferred (no JSON quoting): shell tool `params` object
+# command: neomind dashboard update-component <ID> --component-id c2
+# params:  {"position":{"w":2,"h":2}}
 ```
 
-Find component IDs with `neomind dashboard get <ID>` (each component has an `id`).
+Find component IDs with `neomind dashboard get <ID>` (each component has an `id`). Resize = patch `w`/`h` only; do not relocate to `next free row` unless adding a new widget.
 
 ## Expression Data Source (inline computed values — NO transform needed)
 

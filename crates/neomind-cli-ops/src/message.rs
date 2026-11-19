@@ -144,7 +144,7 @@ pub async fn get_channel_type_schema(
 /// string for [`create_channel`].
 pub fn merge_channel_config(config: Option<&str>, param: &[String]) -> Result<String> {
     let mut value: serde_json::Value = match config {
-        Some(c) => serde_json::from_str(c)?,
+        Some(c) => crate::json_arg::parse_json_arg(c)?,
         None => serde_json::json!({}),
     };
     if !param.is_empty() {
@@ -183,7 +183,7 @@ pub async fn create_channel(
     }
 
     // 3. Validate config is valid JSON
-    let config_value: serde_json::Value = match serde_json::from_str(config) {
+    let config_value: serde_json::Value = match crate::json_arg::parse_json_arg(config) {
         Ok(v) => v,
         Err(e) => {
             return Ok(CliResponse::error_with_suggestion(
@@ -276,7 +276,7 @@ pub async fn create_channel(
 
 /// Update a channel's configuration
 pub async fn update_channel(client: &ApiClient, name: &str, config: &str) -> Result<CliResponse> {
-    let config_value = serde_json::from_str(config).unwrap_or(json!(config));
+    let config_value = crate::json_arg::parse_json_arg(config).unwrap_or_else(|_| json!(config));
     let body = json!({ "config": config_value });
     let data = client
         .put(&format!("/messages/channels/{}", name), &body)

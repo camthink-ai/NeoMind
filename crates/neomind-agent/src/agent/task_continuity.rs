@@ -3617,22 +3617,11 @@ pub fn strip_host_prepared_from_arguments(arguments: &mut serde_json::Value) {
 
 fn strip_prepared_id_from_shell_command(cmd: &str) -> Option<String> {
     let argv = crate::toolkit::shell::tokenize_neomind_command(cmd.trim()).ok()?;
-    let mut out = Vec::with_capacity(argv.len());
-    let mut i = 0;
-    let mut changed = false;
-    while i < argv.len() {
-        if argv[i] == "--prepared-operation-id" {
-            changed = true;
-            i += 2; // skip flag + value
-            continue;
-        }
-        out.push(argv[i].clone());
-        i += 1;
-    }
-    if !changed {
+    let stripped = crate::toolkit::shell::strip_host_meta_from_argv(argv.clone());
+    if stripped.len() == argv.len() && stripped == argv {
         return None;
     }
-    Some(out.join(" "))
+    Some(stripped.join(" "))
 }
 
 /// Classify capability from a **resolved** tool name + already-canonical args.

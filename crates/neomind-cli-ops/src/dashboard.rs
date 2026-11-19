@@ -150,10 +150,9 @@ pub async fn get_dashboard(client: &ApiClient, id: &str) -> Result<CliResponse> 
     Ok(CliResponse::success(
         data,
         format!(
-            "Dashboard retrieved — {} components, 12-col grid, occupied rows: {}, next free row: y={} (place new widgets at y={} to avoid overlap)",
+            "Dashboard retrieved — {} components, 12-col grid, occupied rows: {}, next free row: y={} (use next free row only when ADDING widgets; to resize/tweak in place keep current x,y and patch position.w/h via update-component — grid units, not pixels)",
             comps.len(),
             occupied,
-            next_free_y,
             next_free_y
         ),
     ))

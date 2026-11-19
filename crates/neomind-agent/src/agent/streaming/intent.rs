@@ -638,11 +638,11 @@ pub(crate) fn mutating_write_fingerprint(
 
 /// Shell write-fingerprint body.
 ///
-/// - Default: the original command string (preserves quotes / arg boundaries).
-/// - Only when this is `neomind extension invoke …` **and** carries the
-///   internal `--prepared-operation-id` option: drop that option by argv
-///   position, then fingerprint the remaining argv as stable JSON so Chat
-///   tokens do not splinter the business key and quoted values stay distinct.
+/// - Always strip host-meta tokens (`_new_operation`, prepared-operation-id)
+///   so PreferKnown keys stay business-only regardless of flag placement.
+/// - When a primary JSON flag / structured `params` is present, normalize to
+///   `{argv, flag, params}` so object form and CLI string form share one key.
+/// - Otherwise fingerprint stripped argv as stable JSON (token boundaries).
 fn shell_command_fingerprint_body(cmd: &str, args: &serde_json::Value) -> String {
     let trimmed = cmd.trim();
     if trimmed.is_empty() {
@@ -651,39 +651,29 @@ fn shell_command_fingerprint_body(cmd: &str, args: &serde_json::Value) -> String
     let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(trimmed) else {
         return cmd.to_string();
     };
-    if !argv_is_extension_invoke(&argv) {
-        return cmd.to_string();
-    }
-    // NM-247: normalize structured `params` and `--params` to one business key.
-    if let Some((base_argv, params)) = extension_invoke_fingerprint_parts(&argv, args) {
+    let argv = crate::toolkit::shell::strip_host_meta_from_argv(argv);
+    if let Some((base_argv, flag, params)) = primary_json_fingerprint_parts(&argv, args) {
         return serde_json::json!({
             "argv": base_argv,
+            "flag": flag,
             "params": params,
         })
         .to_string();
     }
-    let Some(stripped) = strip_prepared_operation_id_option(&argv) else {
-        // Extension invoke without a Chat token — keep original string.
-        return cmd.to_string();
-    };
     // Argv JSON preserves each token boundary (unlike `join(" ")`).
-    serde_json::Value::Array(
-        stripped
-            .into_iter()
-            .map(serde_json::Value::String)
-            .collect(),
-    )
-    .to_string()
+    serde_json::Value::Array(argv.into_iter().map(serde_json::Value::String).collect()).to_string()
 }
 
-/// Split extension-invoke argv into business argv + params Value.
+/// Split argv into business argv + primary JSON payload.
 ///
-/// Structured shell `params` and `--params` JSON canonicalize to the same
-/// pair so write-gate PreferKnown treats them as one operation.
-fn extension_invoke_fingerprint_parts(
+/// Structured shell `params` and CLI `--params`/`--set`/… canonicalize to the
+/// same pair so write-gate PreferKnown treats them as one operation.
+fn primary_json_fingerprint_parts(
     argv: &[String],
     args: &serde_json::Value,
-) -> Option<(Vec<String>, serde_json::Value)> {
+) -> Option<(Vec<String>, &'static str, serde_json::Value)> {
+    let flag = neomind_cli_ops::json_arg::primary_json_flag(argv)?;
+    let file_flag = format!("{flag}-file");
     let structured = args.get("params").and_then(|p| {
         if p.is_object() {
             Some(p.clone())
@@ -699,22 +689,15 @@ fn extension_invoke_fingerprint_parts(
     let mut i = 0;
     while i < argv.len() {
         let a = &argv[i];
-        if a == "--prepared-operation-id" {
-            i += 2;
-            continue;
-        }
-        if a == "--params" {
+        if a == flag || a.as_str() == file_flag {
             if let Some(raw) = argv.get(i + 1) {
-                cli_params = serde_json::from_str(raw).ok();
-            }
-            i += 2;
-            continue;
-        }
-        if a == "--params-file" {
-            if let Some(path) = argv.get(i + 1) {
-                if let Ok(text) = std::fs::read_to_string(path) {
-                    cli_params = serde_json::from_str(text.trim()).ok();
-                }
+                cli_params = if a.as_str() == file_flag {
+                    std::fs::read_to_string(raw)
+                        .ok()
+                        .and_then(|t| neomind_cli_ops::json_arg::parse_json_arg_str(t.trim()).ok())
+                } else {
+                    neomind_cli_ops::json_arg::parse_json_arg_str(raw).ok()
+                };
             }
             i += 2;
             continue;
@@ -726,54 +709,17 @@ fn extension_invoke_fingerprint_parts(
     let params = match (structured, cli_params) {
         (Some(s), _) => s,
         (None, Some(c)) => c,
-        (None, None) => {
-            // No params source — keep legacy argv-JSON fingerprint path.
-            return None;
-        }
+        (None, None) => return None,
     };
     Some((
         base,
+        flag,
         if params.is_null() {
             serde_json::json!({})
         } else {
             params
         },
     ))
-}
-
-fn argv_is_extension_invoke(argv: &[String]) -> bool {
-    argv.len() >= 3 && argv[0] == "neomind" && argv[1] == "extension" && argv[2] == "invoke"
-}
-
-/// Remove the Chat-only `--prepared-operation-id` option by parsed position.
-///
-/// Returns `None` when the option is absent (caller keeps the original
-/// command string). Only exact flag tokens are removed — a parameter *value*
-/// equal to the flag name is never treated as the option.
-fn strip_prepared_operation_id_option(argv: &[String]) -> Option<Vec<String>> {
-    let mut out = Vec::with_capacity(argv.len());
-    let mut i = 0;
-    let mut removed = false;
-    while i < argv.len() {
-        let tok = &argv[i];
-        if tok.as_str() == "--prepared-operation-id" {
-            // Flag + following value (injection always uses two argv slots).
-            i += 1;
-            if i < argv.len() {
-                i += 1;
-            }
-            removed = true;
-            continue;
-        }
-        if let Some(_val) = tok.strip_prefix("--prepared-operation-id=") {
-            i += 1;
-            removed = true;
-            continue;
-        }
-        out.push(tok.clone());
-        i += 1;
-    }
-    removed.then_some(out)
 }
 
 /// Mutation-pattern → action class (the same vocabulary ACTION_CLASSES
@@ -1589,6 +1535,42 @@ mod tests {
         assert_eq!(
             mutating_write_fingerprint("shell", &nested_flag).unwrap(),
             mutating_write_fingerprint("shell", &nested_obj).unwrap()
+        );
+    }
+
+    /// Host meta leaked into `command` must not splinter PreferKnown keys, and
+    /// dashboard `--set` / structured `params` must share one write fingerprint.
+    #[test]
+    fn shell_host_meta_and_dashboard_set_fingerprint_hygiene() {
+        let clean = serde_json::json!({
+            "command": "neomind dashboard update-component dash-1 --component-id c1 --set '{\"position\":{\"w\":2,\"h\":2}}'"
+        });
+        let polluted = serde_json::json!({
+            "command": "neomind dashboard update-component dash-1 --component-id c1 --set '{\"position\":{\"w\":2,\"h\":2}}' _new_operation=true"
+        });
+        let flagged = serde_json::json!({
+            "command": "neomind dashboard update-component dash-1 --component-id c1 --set '{\"position\":{\"w\":2,\"h\":2}}'",
+            "_new_operation": true
+        });
+        let via_object = serde_json::json!({
+            "command": "neomind dashboard update-component dash-1 --component-id c1",
+            "params": {"position":{"w":2,"h":2}}
+        });
+        let fp_clean = mutating_write_fingerprint("shell", &clean).expect("clean");
+        let fp_polluted = mutating_write_fingerprint("shell", &polluted).expect("polluted");
+        let fp_flagged = mutating_write_fingerprint("shell", &flagged).expect("flagged");
+        let fp_obj = mutating_write_fingerprint("shell", &via_object).expect("object");
+        assert_eq!(
+            fp_clean, fp_polluted,
+            "_new_operation inside command must not change business fingerprint"
+        );
+        assert_eq!(
+            fp_clean, fp_flagged,
+            "_new_operation tool field must not change business fingerprint"
+        );
+        assert_eq!(
+            fp_clean, fp_obj,
+            "dashboard --set and structured params must share one fingerprint"
         );
     }
 

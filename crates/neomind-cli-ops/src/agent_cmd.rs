@@ -176,7 +176,7 @@ pub async fn create_agent(
         "execution_mode": exec_mode,
     });
     if let Some(schema_json) = output_schema {
-        let parsed: serde_json::Value = serde_json::from_str(schema_json).map_err(|e| {
+        let parsed: serde_json::Value = crate::json_arg::parse_json_arg(schema_json).map_err(|e| {
             anyhow::anyhow!(
                 "--output-schema is not valid JSON: {} — expected an array of fields, e.g. a status enum field",
                 e
@@ -193,14 +193,15 @@ pub async fn create_agent(
         body["memory_mode"] = json!(mm);
     }
     if let Some(notify_json) = notify {
-        let parsed: serde_json::Value = serde_json::from_str(notify_json).map_err(|e| {
-            anyhow::anyhow!(
-                "--notify is not valid JSON: {} — expected an object like \
+        let parsed: serde_json::Value =
+            crate::json_arg::parse_json_arg(notify_json).map_err(|e| {
+                anyhow::anyhow!(
+                    "--notify is not valid JSON: {} — expected an object like \
                  {{\"channels\":[\"IM\"],\"on\":\"failure|always|judgment\"}}. \"judgment\" routes \
                  nothing and lets the task decide whether to speak.",
-                e
-            )
-        })?;
+                    e
+                )
+            })?;
         body["notify"] = parsed;
     }
 
@@ -227,7 +228,7 @@ pub async fn create_agent(
         // Malformed JSON must FAIL, not silently drop the binding — the agent
         // would be created without its resources while the caller believes it
         // succeeded (focused-validation bypass / free-mode degradation).
-        let parsed: serde_json::Value = match serde_json::from_str(res_str) {
+        let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(res_str) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(CliResponse::error_with_suggestion(
@@ -252,7 +253,7 @@ pub async fn create_agent(
         // Malformed JSON must FAIL, not silently drop the binding — the agent
         // would be created without its resources while the caller believes it
         // succeeded (focused-validation bypass / free-mode degradation).
-        let parsed: serde_json::Value = match serde_json::from_str(metrics_str) {
+        let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(metrics_str) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(CliResponse::error_with_suggestion(
@@ -268,7 +269,7 @@ pub async fn create_agent(
         // Malformed JSON must FAIL, not silently drop the binding — the agent
         // would be created without its resources while the caller believes it
         // succeeded (focused-validation bypass / free-mode degradation).
-        let parsed: serde_json::Value = match serde_json::from_str(commands_str) {
+        let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(commands_str) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(CliResponse::error_with_suggestion(
@@ -410,14 +411,14 @@ pub async fn update_agent(
         body["execution_mode"] = json!(em);
     }
     if let Some(schema_json) = output_schema {
-        body["output_schema"] = serde_json::from_str::<serde_json::Value>(schema_json)
+        body["output_schema"] = crate::json_arg::parse_json_arg(schema_json)
             .map_err(|e| anyhow::anyhow!("--output-schema is not valid JSON: {}", e))?;
     }
     if let Some(mm) = memory_mode {
         body["memory_mode"] = json!(mm);
     }
     if let Some(notify_json) = notify {
-        body["notify"] = serde_json::from_str::<serde_json::Value>(notify_json)
+        body["notify"] = crate::json_arg::parse_json_arg(notify_json)
             .map_err(|e| anyhow::anyhow!("--notify is not valid JSON: {}", e))?;
     }
     if let Some(ids) = device_ids {
@@ -432,7 +433,7 @@ pub async fn update_agent(
         // Malformed JSON must FAIL, not silently drop the binding — the agent
         // would be created without its resources while the caller believes it
         // succeeded (focused-validation bypass / free-mode degradation).
-        let parsed: serde_json::Value = match serde_json::from_str(res_str) {
+        let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(res_str) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(CliResponse::error_with_suggestion(
@@ -457,7 +458,7 @@ pub async fn update_agent(
         // Malformed JSON must FAIL, not silently drop the binding — the agent
         // would be created without its resources while the caller believes it
         // succeeded (focused-validation bypass / free-mode degradation).
-        let parsed: serde_json::Value = match serde_json::from_str(metrics_str) {
+        let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(metrics_str) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(CliResponse::error_with_suggestion(
@@ -473,7 +474,7 @@ pub async fn update_agent(
         // Malformed JSON must FAIL, not silently drop the binding — the agent
         // would be created without its resources while the caller believes it
         // succeeded (focused-validation bypass / free-mode degradation).
-        let parsed: serde_json::Value = match serde_json::from_str(commands_str) {
+        let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(commands_str) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(CliResponse::error_with_suggestion(

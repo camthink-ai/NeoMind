@@ -68,7 +68,8 @@ pub async fn run_extension_cmd(cmd: ExtensionCommand) -> Result<(CliResponse, Ou
         ExtensionCommand::Reload { id } => crate::extension::reload_extension(&client, &id).await?,
         ExtensionCommand::Config { id, set } => match set {
             Some(json_str) => {
-                let config = serde_json::from_str(&json_str).unwrap_or(serde_json::json!(json_str));
+                let config = crate::json_arg::parse_json_arg(&json_str)
+                    .unwrap_or_else(|_| serde_json::json!(json_str));
                 crate::extension::update_extension_config(&client, &id, config).await?
             }
             None => crate::extension::get_extension_config(&client, &id).await?,
@@ -212,7 +213,7 @@ pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFo
             config,
         } => {
             let connection_config = if let Some(config_str) = config {
-                Some(serde_json::from_str(&config_str)?)
+                Some(crate::json_arg::parse_json_arg(&config_str)?)
             } else {
                 None
             };
@@ -231,7 +232,7 @@ pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFo
         }
         DeviceCommand::Update { id, name, config } => {
             let connection_config = if let Some(config_str) = config {
-                Some(serde_json::from_str(&config_str)?)
+                Some(crate::json_arg::parse_json_arg(&config_str)?)
             } else {
                 None
             };
@@ -267,7 +268,7 @@ pub async fn run_device_cmd(cmd: DeviceCommand) -> Result<(CliResponse, OutputFo
             param,
         } => {
             let mut params_json = if let Some(params_str) = params {
-                serde_json::from_str(&params_str)?
+                crate::json_arg::parse_json_arg(&params_str)?
             } else {
                 serde_json::json!({})
             };
@@ -371,9 +372,9 @@ pub async fn run_device_type_cmd(
             metrics,
             commands,
         } => {
-            let metrics_json = serde_json::from_str(&metrics)?;
+            let metrics_json = crate::json_arg::parse_json_arg(&metrics)?;
             let commands_json = if let Some(cmds_str) = commands {
-                Some(serde_json::from_str(&cmds_str)?)
+                Some(crate::json_arg::parse_json_arg(&cmds_str)?)
             } else {
                 None
             };
@@ -420,12 +421,12 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
             components,
         } => {
             let layout_json = if let Some(layout_str) = layout {
-                Some(serde_json::from_str(&layout_str)?)
+                Some(crate::json_arg::parse_json_arg(&layout_str)?)
             } else {
                 None
             };
             let components_json = if let Some(components_str) = components {
-                Some(serde_json::from_str(&components_str)?)
+                Some(crate::json_arg::parse_json_arg(&components_str)?)
             } else {
                 None
             };
@@ -462,12 +463,12 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
                 ));
             }
             let layout_json = if let Some(layout_str) = layout {
-                Some(serde_json::from_str(&layout_str)?)
+                Some(crate::json_arg::parse_json_arg(&layout_str)?)
             } else {
                 None
             };
             let components_json = if let Some(components_str) = components {
-                Some(serde_json::from_str(&components_str)?)
+                Some(crate::json_arg::parse_json_arg(&components_str)?)
             } else {
                 None
             };
@@ -487,7 +488,7 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
             // Propagate parse errors — a silent empty-array fallback made
             // malformed JSON "succeed" with zero components added, and the
             // model retried in a confused loop (observed ×5 in evals).
-            let comps = serde_json::from_str(&components)?;
+            let comps = crate::json_arg::parse_json_arg(&components)?;
             let resp = add_components(&client, &id, comps).await?;
             (resp, output_format)
         }
@@ -496,12 +497,12 @@ pub async fn run_dashboard_cmd(cmd: DashboardCommand) -> Result<(CliResponse, Ou
             component_id,
             set,
         } => {
-            let patch = serde_json::from_str(&set)?;
+            let patch = crate::json_arg::parse_json_arg(&set)?;
             let resp = update_component(&client, &id, &component_id, patch).await?;
             (resp, output_format)
         }
         DashboardCommand::RemoveComponents { id, ids } => {
-            let ids_val = serde_json::from_str(&ids)?;
+            let ids_val = crate::json_arg::parse_json_arg(&ids)?;
             let resp = remove_components(&client, &id, ids_val).await?;
             (resp, output_format)
         }
@@ -643,7 +644,7 @@ pub async fn run_rule_cmd(cmd: RuleCommand) -> Result<(CliResponse, OutputFormat
         RuleCommand::Enable { id } => enable_rule(&client, &id).await?,
         RuleCommand::Disable { id } => disable_rule(&client, &id).await?,
         RuleCommand::Test { id, input } => {
-            let input_json = serde_json::from_str(&input)?;
+            let input_json = crate::json_arg::parse_json_arg(&input)?;
             test_rule(&client, &id, input_json).await?
         }
         RuleCommand::History { id } => get_rule_history(&client, &id).await?,
@@ -723,7 +724,7 @@ pub async fn run_transform_cmd(cmd: TransformCommand) -> Result<(CliResponse, Ou
         TransformCommand::Disable { id } => disable_transform(&client, &id).await?,
         TransformCommand::Metrics => list_virtual_metrics(&client).await?,
         TransformCommand::TestCode { code, input } => {
-            let input_json = serde_json::from_str(&input)?;
+            let input_json = crate::json_arg::parse_json_arg(&input)?;
             test_transform_code(&client, &code, input_json).await?
         }
         TransformCommand::DataSources => list_transform_data_sources(&client).await?,

@@ -3,6 +3,7 @@ pub mod auth_cmd;
 pub mod auto_auth;
 pub mod data_dir;
 pub mod dispatch;
+pub mod json_arg;
 pub mod kv;
 pub mod output;
 pub mod types;
