@@ -39,6 +39,9 @@ pub enum GuardKind {
     SkillExploration,
     /// One bounded continuation using capabilities other than guide lookup.
     SkillRecovery,
+    /// One lightweight pre-exhaustion hint nudging a stalled mutation request
+    /// from repeated `skill`/`--help` exploration to executing the target command.
+    SkillActionExitHint,
     /// Turn-end "requested action was not executed" note.
     IncompleteActionNote,
     /// Pre-nudge narration restored after a degenerate nudge round.
@@ -72,6 +75,7 @@ impl GuardKind {
             GuardKind::ReadOnlyStreak => "read_only_streak",
             GuardKind::SkillExploration => "skill_exploration",
             GuardKind::SkillRecovery => "skill_recovery",
+            GuardKind::SkillActionExitHint => "skill_action_exit_hint",
             GuardKind::IncompleteActionNote => "incomplete_action_note",
             GuardKind::DegenerateRestore => "degenerate_restore",
             GuardKind::DegenerateSuppressed => "degenerate_suppressed",
@@ -283,6 +287,40 @@ pub(crate) struct SkillExplorationBudget {
     empty_searches: usize,
     repeated_loads: usize,
     loaded_guides: std::collections::HashSet<String>,
+    /// Canonical skill IDs loaded at least once this turn (for domain-match
+    /// detection on the pre-exhaustion action-exit hint).
+    loaded_skill_ids: std::collections::HashSet<String>,
+    /// `--help` / `-h` shell calls issued AFTER a workflow guide was already loaded.
+    post_guide_help_calls: usize,
+    /// Exploration rounds (skill or `--help`) after a guide was already loaded.
+    post_guide_exploration_rounds: usize,
+    /// At most one pre-exhaustion action-exit hint per turn (reset on mutation).
+    action_exit_hint_sent: bool,
+}
+
+/// True when a shell command is querying CLI help (`--help` or `-h`).
+pub(crate) fn is_shell_help_command(cmd: &str) -> bool {
+    cmd.split_whitespace()
+        .any(|tok| tok == "--help" || tok == "-h")
+}
+
+/// Whether a loaded canonical skill id matches the extracted target CLI domain.
+fn skill_matches_domain(skill_id: &str, domain: &str) -> bool {
+    match domain {
+        "rule" => skill_id == "rule-management",
+        "agent" => skill_id == "agent-management",
+        "dashboard" => skill_id == "dashboard-management",
+        "transform" => skill_id == "transform-management",
+        "widget" => skill_id == "widget-management" || skill_id == "widget-development",
+        "extension" => skill_id == "extension-management" || skill_id == "extension-development",
+        "message" => skill_id == "message-management",
+        "device" => skill_id == "device-onboarding",
+        "push" => skill_id == "data-push-management",
+        "connector" => skill_id == "connector-management",
+        "llm" => skill_id == "llm-management",
+        "settings" => skill_id == "settings-management",
+        other => !other.is_empty() && skill_id.contains(other),
+    }
 }
 
 impl SkillExplorationBudget {
@@ -293,7 +331,19 @@ impl SkillExplorationBudget {
                 Some(true) => self.empty_searches = 0,
                 None => {}
             },
+            // Turn-scoped single-copy load: repeating the exact same `(id, section)`
+            // returns `{"already_present": true, ...}` without re-emitting the body.
+            // Count it as repeated exploration so the budget still bounds loops.
+            Some("load") if data.get("already_present").and_then(|v| v.as_bool()) == Some(true) => {
+                if let Some(id) = data.get("id").and_then(|v| v.as_str()) {
+                    self.loaded_skill_ids.insert(id.to_string());
+                }
+                self.repeated_loads += 1;
+            }
             Some("load") if data.get("guide").is_some() && data.get("id").is_some() => {
+                if let Some(id) = data.get("id").and_then(|v| v.as_str()) {
+                    self.loaded_skill_ids.insert(id.to_string());
+                }
                 // Track the resolved guide and its actual revision/content,
                 // not spelling variations of its requested id.
                 let key = serde_json::json!([data["id"], data["guide"]]).to_string();
@@ -323,6 +373,97 @@ impl SkillExplorationBudget {
             }
             _ => {}
         }
+    }
+
+    /// Observe a shell command executed this round to detect `skill ↔ --help`
+    /// churn after a workflow guide is already in context.
+    pub(crate) fn observe_shell_command(&mut self, cmd: &str) {
+        if !self.loaded_skill_ids.is_empty() && is_shell_help_command(cmd) {
+            self.post_guide_help_calls += 1;
+        }
+    }
+
+    /// Record round-end exploration state (called once per tool round).
+    pub(crate) fn observe_round_end(
+        &mut self,
+        round_had_skill: bool,
+        round_had_help: bool,
+        round_had_mutation: bool,
+    ) {
+        if round_had_mutation {
+            self.post_guide_help_calls = 0;
+            self.post_guide_exploration_rounds = 0;
+        } else if !self.loaded_skill_ids.is_empty() && (round_had_skill || round_had_help) {
+            self.post_guide_exploration_rounds += 1;
+        }
+    }
+
+    pub(crate) fn has_matching_domain_guide(&self, domain: &str) -> bool {
+        self.loaded_skill_ids
+            .iter()
+            .any(|id| skill_matches_domain(id, domain))
+    }
+
+    /// Before the exploration budget exhausts, emit ONE lightweight exit hint
+    /// when the user explicitly asked for a mutation, a matching domain guide
+    /// is already loaded in context, the target mutation has not been delivered
+    /// yet, and the model is still churning on `skill` or `--help`.
+    ///
+    /// Designed to break tip-138 Pattern A (`skill ↔ --help` stall) without
+    /// enabling heavy coercion (`behavioral_guards` remains off by default).
+    pub(crate) fn action_exit_hint(
+        &mut self,
+        user_message: &str,
+        successful_mutations: &[String],
+        no_execution_requested: bool,
+    ) -> Option<String> {
+        if self.action_exit_hint_sent || self.exhausted() || no_execution_requested {
+            return None;
+        }
+        if !super::intent::user_message_requires_action(user_message) {
+            return None;
+        }
+        let (domain, action) = super::intent::extract_action_parts(user_message);
+        if domain.is_empty() || !self.has_matching_domain_guide(domain) {
+            return None;
+        }
+        if successful_mutations
+            .iter()
+            .any(|cmd| super::intent::mutation_satisfies_action(cmd, domain, action))
+        {
+            return None;
+        }
+        // Trigger only after a post-guide exploration signal (repeated load,
+        // empty search, `--help` after guide, or ≥2 exploration rounds after
+        // loading the guide) — never on the first legitimate guide load.
+        let exploration_churn = self.repeated_loads >= 1
+            || self.empty_searches >= 1
+            || self.post_guide_help_calls >= 1
+            || self.post_guide_exploration_rounds >= 2;
+        if !exploration_churn {
+            return None;
+        }
+
+        self.action_exit_hint_sent = true;
+        let target_cmd = super::intent::extract_action_hint(user_message);
+        let hint = if crate::agent::text_prefers_chinese(user_message) {
+            if target_cmd.is_empty() {
+                "你已加载匹配域的操作指南并掌握语法。请直接执行目标命令，或若确实缺少必填参数，用一句话向用户说明缺失的信息，不要再反复查阅 skill 或 `--help`。"
+                    .to_string()
+            } else {
+                format!(
+                    "你已加载匹配域的操作指南并掌握语法。请直接执行目标命令（例如 `{target_cmd}`），或若确实缺少必填参数，用一句话向用户说明缺失的信息，不要再反复查阅 skill 或 `--help`。"
+                )
+            }
+        } else if target_cmd.is_empty() {
+            "You already have the matching workflow guide in context and know the CLI syntax. Execute the target command now, or if a required input is genuinely missing, ask the user in one concise sentence — do not keep looping on skill lookup or `--help`."
+                .to_string()
+        } else {
+            format!(
+                "You already have the matching workflow guide in context and know the CLI syntax. Execute the target command now (e.g. `{target_cmd}`), or if a required input is genuinely missing, ask the user in one concise sentence — do not keep looping on skill lookup or `--help`."
+            )
+        };
+        Some(hint)
     }
 
     pub(crate) fn exhausted(&self) -> bool {
@@ -569,6 +710,96 @@ mod tests {
         assert_eq!(
             foreshadow_no_result_note("What's the weather today?"),
             "No result obtained this turn."
+        );
+    }
+
+    /// P1-3: `already_present: true` repeat loads must still count toward
+    /// `SkillExplorationBudget::repeated_loads`, and a concrete mutation ask
+    /// with a matching loaded guide gets ONE lightweight pre-exhaustion exit
+    /// hint when churning on `--help` or repeated skill lookups.
+    #[test]
+    fn skill_exploration_budget_tracks_already_present_and_emits_single_action_exit_hint() {
+        let mut budget = SkillExplorationBudget::default();
+        // 1) Initial matching domain guide load: no premature hint yet.
+        budget.observe(
+            &serde_json::json!({"action": "load", "id": "rule-management"}),
+            &serde_json::json!({"id": "rule-management", "guide": "overview"}),
+        );
+        budget.observe_round_end(true, false, false);
+        assert!(
+            budget
+                .action_exit_hint("帮我创建一条温度告警规则", &[], false)
+                .is_none(),
+            "first legitimate guide load must not trigger exit hint"
+        );
+
+        // 2) Model churns into `--help` after already loading `rule-management`
+        //    → emit ONE lightweight Chinese exit hint before budget exhaustion.
+        budget.observe_shell_command("neomind rule create --help");
+        budget.observe_round_end(false, true, false);
+        assert!(!budget.exhausted());
+        let hint = budget
+            .action_exit_hint("帮我创建一条温度告警规则", &[], false)
+            .expect("post-guide --help churn on mutation ask must emit one exit hint");
+        assert!(hint.contains("neomind rule create"), "{hint}");
+        assert!(
+            budget
+                .action_exit_hint("帮我创建一条温度告警规则", &[], false)
+                .is_none(),
+            "exit hint must fire at most once per turn"
+        );
+
+        // 3) Repeating the same load (`already_present: true`) ×2 exhausts the budget.
+        let load_args = serde_json::json!({"action": "load", "id": "rule-management"});
+        let already = serde_json::json!({
+            "id": "rule-management",
+            "already_present": true,
+            "hint": "Guide already in context — run the next CLI command now."
+        });
+        budget.observe(&load_args, &already);
+        assert!(!budget.exhausted());
+        budget.observe(&load_args, &already);
+        assert!(budget.exhausted());
+    }
+
+    #[test]
+    fn skill_action_exit_hint_respects_plan_only_and_read_queries_and_delivered_mutations() {
+        let mut budget = SkillExplorationBudget::default();
+        budget.observe(
+            &serde_json::json!({"action": "load", "id": "rule-management"}),
+            &serde_json::json!({"id": "rule-management", "guide": "overview"}),
+        );
+        budget.observe_shell_command("neomind rule create --help");
+        budget.observe_round_end(false, true, false);
+
+        // Plan-only request → suppressed.
+        assert!(budget
+            .action_exit_hint("帮我创建规则，先不要执行，只告诉我步骤", &[], true)
+            .is_none());
+        // Pure read query → suppressed.
+        assert!(budget
+            .action_exit_hint("列出所有规则", &[], false)
+            .is_none());
+        // Different domain (loaded rule guide, user asked for dashboard) → suppressed.
+        assert!(budget
+            .action_exit_hint("Create a new dashboard", &[], false)
+            .is_none());
+        // Mutation already delivered → suppressed.
+        assert!(budget
+            .action_exit_hint(
+                "Create a temperature alert rule",
+                &["neomind rule create --name t1".to_string()],
+                false,
+            )
+            .is_none());
+        // English concrete mutation request → English single-language hint.
+        let en = budget
+            .action_exit_hint("Create a temperature alert rule", &[], false)
+            .expect("English mutation churn must get English hint");
+        assert!(en.contains("neomind rule create"), "{en}");
+        assert!(
+            !en.chars().any(|c| matches!(c, '\u{4e00}'..='\u{9fff}')),
+            "English hint must stay single-language: {en}"
         );
     }
 }

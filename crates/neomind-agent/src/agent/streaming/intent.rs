@@ -575,6 +575,63 @@ pub(crate) fn is_mutation_command(cmd: &str) -> bool {
     MUTATION_COMMAND_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
+/// Canonical business fingerprint for ANY tool call (both read-only and mutating).
+///
+/// **Single source of truth** across the read-only layer (turn reuse,
+/// `ToolResultCache`, duplicate-call advisory, no-progress loop detection) and
+/// the write layer (`OperationLedger`, `failed_tool_signatures` circuit breaker).
+///
+/// Normalizes:
+/// - strips `_new_operation` / `_host_prepared_operation_id` / `_prepared_operation_id`
+/// - maps CLI-domain aliases (`device`, `rule`, …) to canonical `shell`
+/// - folds shell structured `params` (object or array) and CLI `--params` /
+///   `--set` / `--components` / `--ids` / `--config` into one sorted-key shape
+/// - sorts nested JSON object keys via `stable_json_string`
+pub(crate) fn canonical_tool_call_fingerprint(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> String {
+    let canonical =
+        crate::agent::task_continuity::canonicalize_tool_arguments(tool_name, arguments);
+    let real = crate::tools::resolve_tool_name(tool_name);
+    canonical_tool_call_fingerprint_from_canonical(real.as_str(), &canonical)
+}
+
+fn canonical_tool_call_fingerprint_from_canonical(
+    real_tool_name: &str,
+    canonical: &serde_json::Value,
+) -> String {
+    match real_tool_name {
+        "shell" => {
+            let cmd = canonical
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let body = shell_command_fingerprint_body(cmd, canonical);
+            if !body.is_empty() {
+                super::super::task_continuity::write_fingerprint("shell", body.as_str())
+            } else if canonical
+                .as_object()
+                .is_some_and(|m| m.iter().any(|(k, v)| k != "command" && !v.is_null()))
+            {
+                let args = super::super::task_continuity::stable_json_string(canonical);
+                super::super::task_continuity::write_fingerprint("shell", &args)
+            } else {
+                super::super::task_continuity::write_fingerprint("shell", "<empty>")
+            }
+        }
+        other => {
+            let mut for_fp = canonical.clone();
+            if let Some(obj) = for_fp.as_object_mut() {
+                obj.remove(crate::agent::task_continuity::PREPARED_OPERATION_ARG);
+                obj.remove(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG);
+            }
+            let args = super::super::task_continuity::stable_json_string(&for_fp);
+            super::super::task_continuity::write_fingerprint(other, &args)
+        }
+    }
+}
+
 /// Fingerprint for a mutating tool call, if this call is a write.
 ///
 /// **Single source of truth:** canonicalize once (lifecycle flag stripped
@@ -601,39 +658,10 @@ pub(crate) fn mutating_write_fingerprint(
     if cap.read_only {
         return None;
     }
-    match real.as_str() {
-        "shell" => {
-            let cmd = canonical
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            // Only Chat-injected extension-invoke tokens are stripped; other
-            // commands keep the original string so quoted arg boundaries stay
-            // in the write-gate key. Structured `params` (NM-247) folds into
-            // the same business key as `--params` JSON.
-            let body = shell_command_fingerprint_body(cmd, &canonical);
-            Some(super::super::task_continuity::write_fingerprint(
-                "shell",
-                if body.is_empty() {
-                    "<empty>"
-                } else {
-                    body.as_str()
-                },
-            ))
-        }
-        other => {
-            // Sorted-key JSON — preserve_order must not let key insertion
-            // order mint divergent fingerprints for the same write.
-            let mut for_fp = canonical.clone();
-            if let Some(obj) = for_fp.as_object_mut() {
-                obj.remove(crate::agent::task_continuity::PREPARED_OPERATION_ARG);
-            }
-            let args = super::super::task_continuity::stable_json_string(&for_fp);
-            Some(super::super::task_continuity::write_fingerprint(
-                other, &args,
-            ))
-        }
-    }
+    Some(canonical_tool_call_fingerprint_from_canonical(
+        real.as_str(),
+        &canonical,
+    ))
 }
 
 /// Shell write-fingerprint body.
@@ -2016,5 +2044,53 @@ mod tests {
             !zh.contains("STATED-INTENT MISMATCH"),
             "no English sentence in the Chinese directive: {zh}"
         );
+    }
+
+    /// P1-2: canonical fingerprint is the single source of truth shared across
+    /// `ToolResultCache::make_key`, read-only reuse / loop detection, and
+    /// `mutating_write_fingerprint` (write ledger).
+    #[test]
+    fn canonical_fingerprint_unifies_read_cache_and_write_ledger() {
+        use super::super::cache::ToolResultCache;
+
+        // 1) Read-only tool with reordered nested JSON keys shares one key.
+        let ro_a = serde_json::json!({
+            "image": "img.png",
+            "options": {"z": 1, "a": 2}
+        });
+        let ro_b = serde_json::json!({
+            "options": {"a": 2, "z": 1},
+            "image": "img.png"
+        });
+        let fp_ro_a = canonical_tool_call_fingerprint("vision", &ro_a);
+        let fp_ro_b = canonical_tool_call_fingerprint("vision", &ro_b);
+        assert_eq!(fp_ro_a, fp_ro_b);
+        assert_eq!(ToolResultCache::make_key("vision", &ro_a), fp_ro_a);
+        assert_eq!(ToolResultCache::make_key("vision", &ro_b), fp_ro_b);
+
+        // 2) Mutating shell call: CLI flag form, structured params form, and
+        //    `_new_operation` form all collapse to the exact same canonical
+        //    fingerprint as `mutating_write_fingerprint` and `ToolResultCache::make_key`.
+        let mut_flag = serde_json::json!({
+            "command": "neomind dashboard add-components d1 --components '[{\"type\":\"card\",\"id\":\"c1\"}]'"
+        });
+        let mut_struct = serde_json::json!({
+            "command": "neomind dashboard add-components d1",
+            "params": [{"id": "c1", "type": "card"}],
+            "_new_operation": true
+        });
+        let fp_flag = canonical_tool_call_fingerprint("shell", &mut_flag);
+        let fp_struct = canonical_tool_call_fingerprint("shell", &mut_struct);
+        assert_eq!(fp_flag, fp_struct);
+        assert_eq!(
+            mutating_write_fingerprint("shell", &mut_flag).as_deref(),
+            Some(fp_flag.as_str())
+        );
+        assert_eq!(
+            mutating_write_fingerprint("shell", &mut_struct).as_deref(),
+            Some(fp_struct.as_str())
+        );
+        assert_eq!(ToolResultCache::make_key("shell", &mut_flag), fp_flag);
+        assert_eq!(ToolResultCache::make_key("shell", &mut_struct), fp_struct);
     }
 }

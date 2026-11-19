@@ -44,6 +44,7 @@ pub use thinking::cleanup_thinking_content;
 /// Write-lease fingerprint (canonical args; lifecycle flag stripped first).
 /// Un-gated: production code outside this module tree (ledger fingerprint
 /// migration at restore) also needs it, not just tests.
+pub(crate) use context::compact_skill_tool_reference;
 pub(crate) use intent::mutating_write_fingerprint;
 
 /// `StreamExt::next().await` wrapped in `tokio::time::timeout`.

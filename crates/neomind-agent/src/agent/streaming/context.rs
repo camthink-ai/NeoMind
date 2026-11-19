@@ -376,6 +376,22 @@ fn truncate_agent_message(msg: &AgentMessage, max_len: usize) -> AgentMessage {
     truncated
 }
 
+/// Build a compact `already_loaded` reference when history compaction trims a
+/// `skill` tool message. Preserves `(id, section)` so the model knows which
+/// guide/section was already consulted without keeping the full guide body.
+pub(crate) fn compact_skill_tool_reference(raw_content: &str) -> String {
+    let (skill_id, section) = crate::llm::extract_skill_key_from_result(raw_content);
+    let mut obj = serde_json::json!({
+        "already_loaded": true,
+        "id": skill_id,
+        "hint": "Workflow guide was loaded earlier and compacted from history; call skill(action='load') if you need its full text again."
+    });
+    if let Some(sec) = section {
+        obj["section"] = serde_json::json!(sec);
+    }
+    obj.to_string()
+}
+
 /// Compact tool results with custom configuration.
 fn compact_tool_results_stream_with_config(
     messages: &[AgentMessage],
@@ -401,6 +417,14 @@ fn compact_tool_results_stream_with_config(
 
             if tool_result_count <= config.keep_recent_tool_results {
                 result.push(msg.clone());
+            } else if msg.tool_call_name.as_deref() == Some("skill") {
+                // Keep a compact `already_loaded` reference when compaction
+                // trims an older `skill` tool result from history.
+                let compact = compact_skill_tool_reference(msg.content.as_ref());
+                result.push(AgentMessage {
+                    content: compact.into(),
+                    ..msg.clone()
+                });
             } else {
                 // Build descriptive summary preserving action + args + result preview
                 let summary_content = if let Some(ref tool_calls) = msg.tool_calls {
@@ -740,5 +764,43 @@ mod tests {
             .messages
             .iter()
             .any(|m| m.content.as_ref() == latest_tool));
+    }
+
+    /// P1-3: when history compaction trims an older `skill` tool message,
+    /// it retains a compact `already_loaded` reference carrying `(id, section)`.
+    #[test]
+    fn compact_tool_results_preserves_already_loaded_ref_for_trimmed_skill() {
+        let skill_body = serde_json::json!({
+            "id": "dashboard-management",
+            "section": "Layout",
+            "guide": "## Layout\n".to_string() + &"grid rules ".repeat(400),
+        })
+        .to_string();
+        let messages = vec![
+            AgentMessage::user("create dashboard"),
+            AgentMessage::assistant("loading guide"),
+            AgentMessage::tool_result("skill", &skill_body),
+            AgentMessage::assistant("listing devices"),
+            AgentMessage::tool_result("shell", r#"{"exit_code":0,"stdout":"[]"}"#),
+            AgentMessage::assistant("listing dashboards"),
+            AgentMessage::tool_result("shell", r#"{"exit_code":0,"stdout":"[]"}"#),
+        ];
+        let mut cfg = CompactionConfig::for_context_size(8_000);
+        cfg.keep_recent_tool_results = 1;
+        let compacted = compact_tool_results_stream_with_config(&messages, &cfg);
+        let skill_msg = compacted
+            .iter()
+            .find(|m| m.role == "tool" && m.tool_call_name.as_deref() == Some("skill"))
+            .expect("compacted history must retain compact skill reference message");
+        let parsed: serde_json::Value =
+            serde_json::from_str(skill_msg.content.as_ref()).expect("valid JSON ref");
+        assert_eq!(parsed["already_loaded"], true);
+        assert_eq!(parsed["id"], "dashboard-management");
+        assert_eq!(parsed["section"], "Layout");
+        assert!(
+            skill_msg.content.len() < 300,
+            "compacted skill ref must be compact, got {} bytes",
+            skill_msg.content.len()
+        );
     }
 }

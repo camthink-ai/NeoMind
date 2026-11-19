@@ -64,28 +64,12 @@ impl ToolResultCache {
         }
     }
 
-    /// Generate cache key from tool name and arguments.
-    /// Sorts object keys to ensure consistent keys regardless of parameter order.
+    /// Generate canonical cache key from tool name and arguments.
+    /// Shares the exact same canonical fingerprint as the read-only reuse /
+    /// loop-detection layer and write-gate ledger (recursive sorted keys,
+    /// stripped host-meta flags, structured `params` aligned with CLI flags).
     pub fn make_key(name: &str, arguments: &Value) -> String {
-        // For objects, sort keys to ensure consistent cache keys
-        if let Some(obj) = arguments.as_object() {
-            let mut sorted_pairs: Vec<_> = obj.iter().collect();
-            sorted_pairs.sort_by(|a, b| a.0.cmp(b.0));
-
-            let sorted_obj: serde_json::Map<String, Value> = sorted_pairs
-                .into_iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-
-            format!(
-                "{}:{}",
-                name,
-                serde_json::to_string(&sorted_obj).unwrap_or_default()
-            )
-        } else {
-            // For non-objects (arrays, strings, numbers, etc.), use as-is
-            format!("{}:{}", name, arguments)
-        }
+        super::intent::canonical_tool_call_fingerprint(name, arguments)
     }
 }
 

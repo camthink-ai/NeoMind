@@ -2,6 +2,8 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 
 use super::error::{Result, ToolError};
 use super::object_schema;
@@ -9,6 +11,69 @@ use super::tool::{Tool, ToolCategory};
 use super::ToolOutput;
 use crate::skills;
 use crate::skills::matcher::description_intent_phrases;
+
+/// Key identifying one loaded workflow guide (or specific reference section)
+/// within a single user turn: `(canonical_skill_id, section_opt)`.
+pub type SkillLoadKey = (String, Option<String>);
+
+/// Turn-scoped tracker of `(skill_id, section_opt)` entries already present in
+/// the current turn's conversation `tool` history.
+///
+/// When the model calls `skill(action="load")` again for the exact same
+/// `(skill_id, section_opt)` in the same turn, [`SkillTool`] returns a compact
+/// `{"already_present": true, ...}` payload instead of re-emitting the full
+/// guide body. Loading a different `section` of the same skill still returns
+/// the full chapter.
+#[derive(Debug, Default)]
+pub struct TurnLoadedSkills {
+    loaded: Mutex<HashSet<SkillLoadKey>>,
+}
+
+impl TurnLoadedSkills {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record `(id, section)` as loaded for this turn.
+    /// Returns `true` if newly inserted (first load), `false` if already present.
+    pub fn mark_loaded(&self, id: &str, section: Option<&str>) -> bool {
+        let key = (id.to_string(), section.map(str::to_string));
+        self.loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key)
+    }
+
+    /// Check whether `(id, section)` is already recorded in this turn.
+    pub fn contains(&self, id: &str, section: Option<&str>) -> bool {
+        let key = (id.to_string(), section.map(str::to_string));
+        self.loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&key)
+    }
+
+    /// Clear all cached load entries for `id` (called after `update`/`delete`
+    /// so a subsequent `load` in the same turn observes the new body).
+    pub fn invalidate_skill(&self, id: &str) {
+        self.loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|(k, _)| k != id);
+    }
+}
+
+tokio::task_local! {
+    static TURN_LOADED_SKILLS: Arc<TurnLoadedSkills>;
+}
+
+/// Bind a turn-local [`TurnLoadedSkills`] tracker for the duration of `fut`.
+pub async fn with_turn_loaded_skills<F, T>(tracker: Arc<TurnLoadedSkills>, fut: F) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    TURN_LOADED_SKILLS.scope(tracker, fut).await
+}
 
 /// Per-signal score composition for one (skill, query) pair (see
 /// [`SkillTool::score_skill_query_parts`]).
@@ -539,6 +604,29 @@ When NOT to load: standard CRUD (list/get/update/delete by id), plain reads of c
                     );
                     let mut result = skill.load_guide(section)
                         .map_err(ToolError::InvalidArguments)?;
+                    // Turn-scoped single-copy dedup: if the exact `(canonical_id, section)`
+                    // is already present in this turn's `tool` history, return a lightweight
+                    // acknowledgment instead of re-emitting the full guide body.
+                    let already_present = TURN_LOADED_SKILLS
+                        .try_with(|tracker| !tracker.mark_loaded(&skill.metadata.id, section))
+                        .unwrap_or(false);
+                    if already_present {
+                        tracing::info!(
+                            target: "neomind::skills",
+                            resolved = %skill.metadata.id,
+                            section = ?section,
+                            "skill_load_already_present"
+                        );
+                        let mut compact = serde_json::json!({
+                            "id": skill.metadata.id,
+                            "already_present": true,
+                            "hint": "Guide already in context — run the next CLI command now."
+                        });
+                        if let Some(sec) = section {
+                            compact["section"] = serde_json::json!(sec);
+                        }
+                        return Ok(ToolOutput::success(compact));
+                    }
                     if via_alias {
                         result["resolved_from"] = serde_json::json!(id);
                     }
@@ -690,6 +778,7 @@ When NOT to load: standard CRUD (list/get/update/delete by id), plain reads of c
                         }
                         let skill = registry_guard.get(id)
                             .ok_or_else(|| ToolError::Execution("Skill updated but not found in registry".into()))?;
+                        let _ = TURN_LOADED_SKILLS.try_with(|tracker| tracker.invalidate_skill(id));
                         Ok(ToolOutput::success(serde_json::json!({
                             "id": skill.metadata.id,
                             "name": skill.metadata.name,
@@ -727,6 +816,7 @@ When NOT to load: standard CRUD (list/get/update/delete by id), plain reads of c
                                 id, e
                             )));
                         }
+                        let _ = TURN_LOADED_SKILLS.try_with(|tracker| tracker.invalidate_skill(id));
                         Ok(ToolOutput::success(serde_json::json!({
                             "message": format!("Skill '{}' ('{}') deleted successfully", id, skill.metadata.name),
                         })))
@@ -1462,5 +1552,136 @@ mod tests {
             .await
             .unwrap();
         assert!(!out.success);
+    }
+
+    /// P1-3: within one turn, repeating `skill(action="load")` for the same
+    /// `(skill_id, section_opt)` (including via alias) returns the lightweight
+    /// `already_present: true` response instead of duplicating the guide body,
+    /// while loading a different `section` of the same skill returns the full chapter.
+    #[tokio::test]
+    async fn turn_loaded_skills_dedups_same_key_and_allows_distinct_sections() {
+        let tool = builtin_tool();
+        let tracker = Arc::new(TurnLoadedSkills::new());
+
+        // 1) First load via declared alias `dashboard` → full overview guide.
+        let first = with_turn_loaded_skills(
+            tracker.clone(),
+            tool.execute(serde_json::json!({"action": "load", "id": "dashboard"})),
+        )
+        .await
+        .unwrap();
+        assert!(first.success);
+        assert_eq!(first.data["id"], "dashboard-management");
+        assert!(first.data["guide"].as_str().is_some_and(|g| g.len() > 50));
+        assert!(first.data.get("already_present").is_none());
+
+        let first_section = first.data["sections"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .expect("dashboard-management must expose reference sections")
+            .to_string();
+
+        // 2) Repeat load of the same overview via canonical id → lightweight `already_present`.
+        let repeat = with_turn_loaded_skills(
+            tracker.clone(),
+            tool.execute(serde_json::json!({"action": "load", "id": "dashboard-management"})),
+        )
+        .await
+        .unwrap();
+        assert!(repeat.success);
+        assert_eq!(repeat.data["already_present"], true);
+        assert_eq!(repeat.data["id"], "dashboard-management");
+        assert!(repeat.data.get("guide").is_none());
+        assert_eq!(
+            repeat.data["hint"],
+            "Guide already in context — run the next CLI command now."
+        );
+
+        // 3) Loading a distinct reference section of the SAME skill still returns full chapter.
+        let sec = with_turn_loaded_skills(
+            tracker.clone(),
+            tool.execute(serde_json::json!({
+                "action": "load",
+                "id": "dashboard-management",
+                "section": first_section,
+            })),
+        )
+        .await
+        .unwrap();
+        assert!(sec.success);
+        assert_eq!(sec.data["section"], first_section);
+        assert!(sec.data["guide"]
+            .as_str()
+            .is_some_and(|g| g.starts_with("## ")));
+        assert!(sec.data.get("already_present").is_none());
+
+        // 4) Repeating that exact `(id, section)` returns lightweight `already_present`.
+        let sec_repeat = with_turn_loaded_skills(
+            tracker.clone(),
+            tool.execute(serde_json::json!({
+                "action": "load",
+                "id": "dashboard",
+                "section": first_section,
+            })),
+        )
+        .await
+        .unwrap();
+        assert!(sec_repeat.success);
+        assert_eq!(sec_repeat.data["already_present"], true);
+        assert_eq!(sec_repeat.data["section"], first_section);
+        assert!(sec_repeat.data.get("guide").is_none());
+
+        // 5) Fresh turn (new tracker) loads the full overview again.
+        let next_turn = with_turn_loaded_skills(
+            Arc::new(TurnLoadedSkills::new()),
+            tool.execute(serde_json::json!({"action": "load", "id": "dashboard-management"})),
+        )
+        .await
+        .unwrap();
+        assert!(next_turn.data["guide"]
+            .as_str()
+            .is_some_and(|g| g.len() > 50));
+    }
+
+    #[tokio::test]
+    async fn turn_loaded_skills_invalidated_after_skill_update() {
+        let (_dir, tool) = writable_dir_tool();
+        let tracker = Arc::new(TurnLoadedSkills::new());
+
+        tool.execute(serde_json::json!({"action": "create", "content": USER_SKILL_A}))
+            .await
+            .unwrap();
+        let first = with_turn_loaded_skills(
+            tracker.clone(),
+            tool.execute(serde_json::json!({"action": "load", "id": "user-guide-a"})),
+        )
+        .await
+        .unwrap();
+        assert!(first.data["guide"].as_str().unwrap().contains("first body"));
+
+        // Update within same turn clears tracker entry.
+        with_turn_loaded_skills(
+            tracker.clone(),
+            tool.execute(serde_json::json!({
+                "action": "update",
+                "id": "user-guide-a",
+                "content": USER_SKILL_A_UPDATED,
+            })),
+        )
+        .await
+        .unwrap();
+
+        let reloaded = with_turn_loaded_skills(
+            tracker,
+            tool.execute(serde_json::json!({"action": "load", "id": "user-guide-a"})),
+        )
+        .await
+        .unwrap();
+        assert!(reloaded.data.get("already_present").is_none());
+        assert!(reloaded.data["guide"]
+            .as_str()
+            .unwrap()
+            .contains("second body"));
     }
 }

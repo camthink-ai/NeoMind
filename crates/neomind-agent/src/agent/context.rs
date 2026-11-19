@@ -20,6 +20,13 @@ pub fn compact_tool_results(messages: &[AgentMessage], keep_recent: usize) -> Ve
             tool_result_count += 1;
             if tool_result_count <= keep_recent && msg.content.len() <= 8000 {
                 result.push(msg.clone());
+            } else if msg.tool_call_name.as_deref() == Some("skill") {
+                let compact =
+                    crate::agent::streaming::compact_skill_tool_reference(msg.content.as_ref());
+                result.push(AgentMessage {
+                    content: compact.into(),
+                    ..msg.clone()
+                });
             } else {
                 // Compress tool result — preserve meaningful preview
                 let summary: Arc<str> = if msg.content.len() > 800 {

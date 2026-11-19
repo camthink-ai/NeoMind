@@ -20,7 +20,7 @@ use super::result_format::format_tool_results;
 use super::sanitize::sanitize_tool_result_for_prompt;
 use super::thinking::cleanup_thinking_content;
 use super::tool_detect::detect_json_tool_calls;
-use super::tool_exec::execute_tool_with_retry;
+use super::tool_exec::{execute_tool_with_retry, shell_policy_block};
 use crate::agent::staged::{IntentCategory, IntentClassifier};
 use crate::agent::tool_parser::{
     is_degenerate_final_output, parse_tool_calls, remove_tool_calls_from_response,
@@ -143,6 +143,122 @@ impl StreamSafeguards {
     }
 }
 
+/// Boxed stream of `(text, is_thinking)` chunks returned by the LLM backend.
+pub(super) type LlmChunkStream = Pin<Box<dyn Stream<Item = Result<(String, bool)>> + Send>>;
+
+/// Boxed stream of user-visible [`AgentEvent`] items.
+pub(super) type AgentEventStream = Pin<Box<dyn Stream<Item = AgentEvent> + Send>>;
+
+/// Mode-specific entry metadata for [`drive_react_stream`].
+///
+/// Text and multimodal streams differ only in how their first user message is
+/// constructed and what initial progress/intent events are emitted; the entire
+/// multi-round ReAct loop, two-layer gating, PreparedInvoke host context,
+/// single-copy skill tracking, exploration budget, bounded foreshadow continue,
+/// and tool-free empty-reply recovery are shared.
+pub(super) enum InitialStreamMode {
+    Text {
+        intent_event: AgentEvent,
+        plan_steps: Vec<(&'static str, &'static str)>,
+    },
+    Multimodal {
+        has_images: bool,
+    },
+}
+
+/// Shared turn-history preparation and dynamic context-window budget calculation
+/// used by both text and multimodal streaming entry points.
+pub(super) async fn prepare_turn_history_and_budget(
+    llm_interface: &Arc<LlmInterface>,
+    internal_state: &Arc<tokio::sync::RwLock<AgentInternalState>>,
+    user_message: &str,
+    conversation_summary: Option<&str>,
+    summary_up_to_index: Option<u64>,
+) -> std::result::Result<(Vec<neomind_core::Message>, usize), AgentEventStream> {
+    let state_guard = internal_state.read().await;
+    let mut history_messages = state_guard.memory.clone();
+    drop(state_guard);
+
+    // [dup-fix] The caller pushes the current user message into memory BEFORE
+    // creating this stream, and the LLM layer appends the user message itself
+    // when building the request (`msgs.push(user_msg)` in llm.rs) — drop the
+    // trailing copy so prompts never carry duplicate current user messages.
+    if history_messages
+        .last()
+        .map(|m| m.role == "user" && m.content.as_ref() == user_message)
+        .unwrap_or(false)
+    {
+        history_messages.pop();
+    }
+
+    // === CHAT HISTORY DEPTH (configurable, /api/settings/agent) ===
+    let drained = crate::agent::apply_chat_history_depth(&mut history_messages);
+
+    // [summary alignment] shift the full-history summary index into the
+    // drained window's index space.
+    let summary_up_to_index =
+        crate::agent::adjust_summary_index_after_drain(summary_up_to_index, drained);
+
+    // [image budget] history images are re-sent every turn; keep only recent ones.
+    crate::agent::strip_stale_images(&mut history_messages);
+
+    // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
+    let max_context = llm_interface.max_context_length().await;
+    let prompt_overhead = llm_interface.estimate_prompt_overhead_tokens().await;
+    let effective_max = effective_history_budget(max_context, prompt_overhead);
+
+    tracing::debug!(
+        "Context window: model_capacity={}, prompt_overhead={}, reserve={}, effective_max={} for history",
+        max_context,
+        prompt_overhead,
+        RESERVE_FOR_RESPONSE,
+        effective_max
+    );
+
+    if prompt_overhead >= max_context {
+        let message = format!(
+            "上下文窗口不足：系统提示与工具定义约 {prompt_overhead} tokens，而模型窗口只有 {max_context} tokens。请提高上下文设置（例如 NEOMIND_BUILTIN_LLM_CTX=32768）或减少工具/技能。"
+        );
+        tracing::error!(max_context, prompt_overhead, "{}", message);
+        {
+            let mut state = internal_state.write().await;
+            state.stamp_final_goal_on_last_assistant(
+                crate::agent::task_continuity::SystemGoalStatus::NotApplicable,
+                crate::agent::task_continuity::StreamEndReason::Error,
+            );
+        }
+        return Err(Box::pin(async_stream::stream! {
+            yield AgentEvent::Error { message };
+            yield AgentEvent::end()
+                .with_goal_status(
+                    crate::agent::task_continuity::SystemGoalStatus::NotApplicable,
+                )
+                .with_end_reason(crate::agent::task_continuity::StreamEndReason::Error);
+        }));
+    }
+
+    let history_for_llm: Vec<neomind_core::Message> = {
+        let built = super::context::build_context_window_with_summary_marked(
+            &history_messages,
+            effective_max,
+            conversation_summary,
+            summary_up_to_index,
+        );
+        if built.pressure || built.latest_tool_feedback_dropped {
+            llm_interface.mark_history_truncated();
+        }
+        if built.latest_tool_feedback_dropped {
+            llm_interface.mark_history_window_dropped_latest_feedback();
+        }
+        built.messages
+    }
+    .iter()
+    .map(|msg| msg.to_core())
+    .collect::<Vec<_>>();
+
+    Ok((history_for_llm, effective_max))
+}
+
 // 7 params: the streaming entry's dependency bundle (iface/state/tools)
 // plus the turn's inputs; grouping them into a struct has been rejected to
 // keep the nudge_tests harness calls flat.
@@ -161,18 +277,25 @@ pub async fn process_stream_events_with_safeguards(
 ) -> Result<Pin<Box<dyn Stream<Item = AgentEvent> + Send>>> {
     // New user turn: drop transient skill bodies; TaskState (goal / writes)
     // survives on AgentInternalState (accept already applied directives).
-    // Later ReAct rounds in THIS turn may reload skills under the total budget.
     super::super::task_continuity::begin_user_turn_clear_transient_skills(&llm_interface).await;
     {
-        let section = internal_state.read().await.task_state.to_prompt_section();
+        let (section, new_op_tools) = {
+            let state = internal_state.read().await;
+            (
+                state.task_state.to_prompt_section(),
+                state.task_state.tools_needing_new_operation_protocol(),
+            )
+        };
         llm_interface.set_task_state_prompt(section).await;
+        llm_interface
+            .set_new_operation_protocol_tools(new_op_tools)
+            .await;
     }
     let turn_context =
         super::context::TurnContext::new(conversation_summary.clone(), summary_up_to_index);
     let user_message = user_message.to_string();
 
     // === INTENT RECOGNITION: Understand user intent before LLM call ===
-    // This helps reduce cognitive load and provides better visualization
     let classifier = IntentClassifier::default();
     let intent_result = classifier.classify(&user_message);
 
@@ -183,7 +306,6 @@ pub async fn process_stream_events_with_safeguards(
         intent_result.keywords
     );
 
-    // Prepare intent and plan events for frontend visualization
     let intent_event = AgentEvent::intent(
         format!("{:?}", intent_result.category),
         intent_result.category.display_name(),
@@ -191,7 +313,6 @@ pub async fn process_stream_events_with_safeguards(
         intent_result.keywords.clone(),
     );
 
-    // Plan steps based on intent
     let plan_steps = match intent_result.category {
         IntentCategory::Device => vec![
             ("识别用户查询意图", "Intent"),
@@ -222,149 +343,82 @@ pub async fn process_stream_events_with_safeguards(
         IntentCategory::General => vec![("理解用户问题", "Intent"), ("生成回复", "Response")],
     };
 
-    // === Get conversation history and pass to LLM ===
-    // This prevents the LLM from repeating actions or calling tools again
-    // Pure async - no block_in_place
-    let state_guard = internal_state.read().await;
-    let mut history_messages = state_guard.memory.clone();
-    drop(state_guard); // Release lock before calling LLM
-
-    // [dup-fix] The caller (process_stream_events_with_safeguards) pushes
-    // the current user message into memory BEFORE creating this stream, and
-    // the LLM layer appends the user message itself when building the
-    // request (`msgs.push(user_msg)` in llm.rs) — without dropping the
-    // trailing copy here, every text prompt carried [.., user(current),
-    // user(current)]. The multimodal path pushes after stream creation and
-    // never had this duplication.
-    if history_messages
-        .last()
-        .map(|m| m.role == "user" && m.content.as_ref() == user_message)
-        .unwrap_or(false)
+    let (history_for_llm, effective_max) = match prepare_turn_history_and_budget(
+        &llm_interface,
+        &internal_state,
+        &user_message,
+        conversation_summary.as_deref(),
+        summary_up_to_index,
+    )
+    .await
     {
-        history_messages.pop();
-    }
-
-    // === CHAT HISTORY DEPTH (configurable, /api/settings/agent) ===
-    // Same cap the non-streaming path applies — the server chat entry
-    // points (SSE/WS) all stream, so without this the advertised setting
-    // would never run for real conversations.
-    let drained = crate::agent::apply_chat_history_depth(&mut history_messages);
-
-    // [summary alignment] summary_up_to_index is stored against the FULL
-    // history; after the front drain the indices shift. Without recentring,
-    // the summary filter dropped `drained` extra messages the summary does
-    // NOT cover — a silent content gap between summary and window.
-    let summary_up_to_index =
-        crate::agent::adjust_summary_index_after_drain(summary_up_to_index, drained);
-
-    // [image budget] history images are re-sent (and really charged) every
-    // turn; keep only the most recent ones.
-    crate::agent::strip_stale_images(&mut history_messages);
-
-    // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
-    let max_context = llm_interface.max_context_length().await;
-
-    // Measure actual overhead from system prompt + tool definitions
-    let prompt_overhead = llm_interface.estimate_prompt_overhead_tokens().await;
-
-    let effective_max = effective_history_budget(max_context, prompt_overhead);
-
-    tracing::debug!(
-        "Context window: model_capacity={}, prompt_overhead={}, reserve={}, effective_max={} for history",
-        max_context, prompt_overhead, RESERVE_FOR_RESPONSE, effective_max
-    );
-
-    // A window that cannot even hold the system prompt + tool definitions is
-    // unusable: the backend rejects every request after burning the whole
-    // prompt. Fail fast with an actionable message instead of letting the
-    // turn die mid-stream (2026-10-30: ctx 8192, prompt overhead 11684).
-    if prompt_overhead >= max_context {
-        let message = format!(
-            "上下文窗口不足：系统提示与工具定义约 {prompt_overhead} tokens，而模型窗口只有 {max_context} tokens。请提高上下文设置（例如 NEOMIND_BUILTIN_LLM_CTX=32768）或减少工具/技能。"
-        );
-        tracing::error!(max_context, prompt_overhead, "{}", message);
-        // Fail before first assistant output — still persist a terminal row
-        // so history reload keeps End.goalStatus / endReason.
-        {
-            let mut state = internal_state.write().await;
-            state.stamp_final_goal_on_last_assistant(
-                crate::agent::task_continuity::SystemGoalStatus::NotApplicable,
-                crate::agent::task_continuity::StreamEndReason::Error,
-            );
-        }
-        return Ok(Box::pin(async_stream::stream! {
-            yield AgentEvent::Error { message };
-            // No task state yet — still emit explicit status+reason.
-            yield AgentEvent::end()
-                .with_goal_status(
-                    crate::agent::task_continuity::SystemGoalStatus::NotApplicable,
-                )
-                .with_end_reason(crate::agent::task_continuity::StreamEndReason::Error);
-        }));
-    }
-
-    let history_for_llm: Vec<neomind_core::Message> = {
-        let built = super::context::build_context_window_with_summary_marked(
-            &history_messages,
-            effective_max,
-            conversation_summary.as_deref(),
-            summary_up_to_index,
-        );
-        if built.pressure || built.latest_tool_feedback_dropped {
-            llm_interface.mark_history_truncated();
-        }
-        if built.latest_tool_feedback_dropped {
-            // Tool-capable request follows: feed the assemble gate — the
-            // inner selector sees only the trimmed window and would
-            // vacuously keep tools.
-            llm_interface.mark_history_window_dropped_latest_feedback();
-        }
-        built.messages
-    }
-    .iter()
-    .map(|msg| msg.to_core())
-    .collect::<Vec<_>>();
+        Ok(ready) => ready,
+        Err(overflow_stream) => return Ok(overflow_stream),
+    };
 
     tracing::debug!(
         "Passing {} messages from history to LLM",
         history_for_llm.len()
     );
 
-    // === THINKING CONTROL ===
-    // Thinking is controlled by the user/instance thinking_enabled setting.
-    // The LlmInterface resolves the effective thinking state from:
-    //   1. Local override (per-request)
-    //   2. Instance manager setting (from storage/frontend)
-    //   3. Backend default
-    // No keyword-based filtering — model providers have inconsistent standards.
-
-    // Thinking control: Respect the user/instance thinking_enabled setting directly.
-    // The llm_interface already resolves thinking priority: local override > instance setting > None.
-    // No keyword-based filtering — model providers have different standards, keyword heuristics
-    // are unreliable and override user preference without good reason.
     tracing::info!("Thinking control: respecting user/instance thinking_enabled setting directly");
 
-    // Get the stream from llm_interface - thinking is controlled by instance/user settings
     let stream_result = llm_interface
         .chat_stream_with_history(&user_message, &history_for_llm)
         .await;
 
     let stream = stream_result.map_err(|e| NeoMindError::Llm(e.to_string()))?;
 
-    Ok(Box::pin(async_stream::stream! {
+    Ok(drive_react_stream(
+        llm_interface,
+        internal_state,
+        tools,
+        user_message,
+        stream,
+        safeguards,
+        turn_context,
+        effective_max,
+        call_site_turn,
+        InitialStreamMode::Text {
+            intent_event,
+            plan_steps,
+        },
+    ))
+}
+
+/// Unified multi-round ReAct streaming engine shared by text and multimodal chats.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn drive_react_stream(
+    llm_interface: Arc<LlmInterface>,
+    internal_state: Arc<tokio::sync::RwLock<AgentInternalState>>,
+    tools: Arc<crate::toolkit::ToolRegistry>,
+    user_message: String,
+    initial_stream: LlmChunkStream,
+    safeguards: StreamSafeguards,
+    turn_context: super::context::TurnContext,
+    effective_max: usize,
+    call_site_turn: u64,
+    mode: InitialStreamMode,
+) -> AgentEventStream {
+    Box::pin(async_stream::stream! {
             // Owner-scoped lease teardown: only THIS stream's Prepared/Running
             // ops are abandoned on interrupt/drop/timeout — never sibling turns.
-            // Owner is passed explicitly into create/lease — never via a shared
-            // session hop (concurrent streams must not overwrite each other).
             let stream_owner = super::super::task_continuity::new_stream_owner();
-            // Immutable Turn ID captured at function entry (message-receive
-            // time) — moved into the stream; never re-read shared turn_count.
             let call_site_turn = call_site_turn;
+            let lease_drop_reason = match &mode {
+                InitialStreamMode::Text { .. } => "stream dropped or timed out",
+                InitialStreamMode::Multimodal { .. } => "stream dropped or timed out (multimodal)",
+            };
             let _stream_lease_guard = super::super::task_continuity::StreamLeaseGuard::new(
                 internal_state.clone(),
                 stream_owner.clone(),
-                "stream dropped or timed out",
+                lease_drop_reason,
             );
+            let stream = initial_stream;
+            // Turn-scoped `(skill_id, section_opt)` tracker for single-copy skill
+            // loading in conversation `tool` history.
+            let turn_loaded_skills =
+                std::sync::Arc::new(crate::toolkit::skill_tool::TurnLoadedSkills::new());
             // Emit confirm removals / SystemNotes from accept_user_message.
             {
                 let (notices, sys_notes) = {
@@ -619,6 +673,7 @@ pub async fn process_stream_events_with_safeguards(
             let mut promise_rounds: usize = 0;
             let mut promise_directive_sent = false;
             let mut promise_directive_pending: Option<String> = None;
+            let mut skill_action_exit_hint_pending: Option<String> = None;
 
             // User-facing guard notes for THIS turn (incomplete action,
             // guard budget spent): emitted as SystemNote events and
@@ -654,13 +709,24 @@ pub async fn process_stream_events_with_safeguards(
                 );
             }
 
-            // === INTENT & PLAN VISUALIZATION ===
-            // Send intent and plan events first to show user what's happening
-            yield intent_event;
-            last_event_time = Instant::now();
-
-            for (step, stage) in &plan_steps {
-                yield AgentEvent::plan(*step, *stage);
+            // === INTENT & PLAN / IMAGE ANALYSIS VISUALIZATION ===
+            match mode {
+                InitialStreamMode::Text {
+                    intent_event,
+                    plan_steps,
+                } => {
+                    yield intent_event;
+                    last_event_time = Instant::now();
+                    for (step, stage) in &plan_steps {
+                        yield AgentEvent::plan(*step, *stage);
+                    }
+                }
+                InitialStreamMode::Multimodal { has_images } => {
+                    if has_images {
+                        yield AgentEvent::progress("正在分析图像...", "analyzing", 0);
+                        last_event_time = Instant::now();
+                    }
+                }
             }
 
             // === MULTI-ROUND TOOL CALLING LOOP ===
@@ -826,6 +892,10 @@ pub async fn process_stream_events_with_safeguards(
                             } else {
                                 String::new()
                             };
+                            let action_exit_guard = match skill_action_exit_hint_pending.take() {
+                                Some(hint) => format!("\n\n{}", hint),
+                                None => String::new(),
+                            };
                             format!(
                                 "Round {} of processing.\n\n\
                                 Previously executed tools (results are in context above):\n{}\n\n\
@@ -834,10 +904,11 @@ pub async fn process_stream_events_with_safeguards(
                                 - If information that ONLY the user can provide is missing → ask ONE concise clarifying question in your final answer; do not guess and do not keep calling tools to search for it.\n\
                                 - If the original goal is NOT yet verified end-to-end (expected data not returned, created resource not yet readable) → continue with the next tool call now — a plan alone is not a completed task.\n\
                                 - If you need different tools → call them in ONE batch using JSON array: [{{\"name\":\"tool\",\"arguments\":{{...}}}}]\n\
-                                - Repeat a read-only call only when fresh state is needed to verify progress; otherwise use the results already in context.{}",
+                                - Repeat a read-only call only when fresh state is needed to verify progress; otherwise use the results already in context.{}{}",
                                 tool_iteration_count + 1,
                                 executed_summary,
-                                failure_guard
+                                failure_guard,
+                                action_exit_guard
                             )
                         }
                     };
@@ -1516,6 +1587,7 @@ pub async fn process_stream_events_with_safeguards(
                     let state_for_write_gate = internal_state.clone();
                     let stream_owner_for_tools = stream_owner.clone();
                     let call_site_turn_for_tools = call_site_turn;
+                    let turn_loaded_skills_for_tools = turn_loaded_skills.clone();
                     let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments, cached_read)| {
                         let tools_clone = tools.clone();
                         let cache_clone = cache.clone();
@@ -1524,6 +1596,7 @@ pub async fn process_stream_events_with_safeguards(
                         let state_for_write_gate = state_for_write_gate.clone();
                         let stream_owner = stream_owner_for_tools.clone();
                         let call_site_turn = call_site_turn_for_tools;
+                        let turn_loaded_skills = turn_loaded_skills_for_tools.clone();
 
                         async move {
                             // `$cached:` read-back: served from the cache in
@@ -1558,74 +1631,36 @@ pub async fn process_stream_events_with_safeguards(
                                     },
                                 );
                             }
-                            // Shell policy check — same deny-list as Loop A (tool_loop.rs).
-                            // Blocks catastrophic commands (rm -rf /, dd, mkfs, etc.) in chat.
-                            if name == "shell" {
-                                if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
-                                    if let Some(reason) = crate::toolkit::policy::deny_reason(cmd) {
-                                        tracing::warn!(
-                                            "Chat tool call blocked by safety policy: {}",
-                                            reason
-                                        );
-                                        return (
-                                            i,
-                                            name.clone(),
-                                            ToolExecutionResult {
-                                                _name: name.clone(),
-                                                arguments: arguments.clone(),
-                                                result: Err(
-                                                    crate::toolkit::error::ToolError::Execution(
-                                                        format!(
-                                                            "Blocked by safety policy: {}",
-                                                            reason
-                                                        ),
-                                                    ),
-                                                ),
-                                                operation_id: None,
-                                            },
-                                        );
-                                    }
-                                }
-                            }
-                            // Identical-call reuse for deterministic tools.
-                            // Checked BEFORE the write gate so a same-turn
-                            // image_edit/vision re-call keeps the `_reused`
-                            // marker instead of short-circuiting on PreferKnown.
-                            let reusable = REUSABLE_TOOLS.contains(&name.as_str());
-                            let sig = format!(
-                                "{}|{}",
-                                name,
-                                serde_json::to_string(&arguments).unwrap_or_default()
-                            );
-
-                            // === LOOP BREAK (see failed_tool_signatures) ===
-                            if let Some((failures, last_err)) =
-                                failed_map.lock().unwrap().get(&sig).cloned()
-                            {
-                                if let Some(msg) = loop_break_message(failures, &last_err) {
-                                    tracing::warn!(
-                                        tool = %name,
-                                        failures,
-                                        "Loop break: identical call already failed {}× this turn — refusing to re-execute",
-                                        failures
-                                    );
-                                    return (
-                                        i,
-                                        name.clone(),
-                                        ToolExecutionResult {
-                                            _name: name.clone(),
-                                            arguments: arguments.clone(),
-                                            result: Err(
-                                                crate::toolkit::error::ToolError::Execution(msg),
-                                            ),
-                                            operation_id: None,
-                                        },
-                                    );
-                                }
+                            // Shared shell deny-list gate (blocks catastrophic commands).
+                            if let Some(blocked) = shell_policy_block(&name, &arguments) {
+                                return (i, name.clone(), blocked);
                             }
 
+                            // =========================================================
+                            // TWO-LAYER TOOL GATE (single canonical fingerprint):
+                            //   Layer 1 (Read-Only): turn-local deterministic reuse
+                            //     (`REUSABLE_TOOLS`) + `ToolResultCache` + duplicate
+                            //     advisory + no-progress loop tracking.
+                            //   Layer 2 (Write): `OperationLedger` (`TaskState`) owns
+                            //     idempotency, InProgress lease, Unknown confirm,
+                            //     Succeeded replay block, and Rejected pre-validation
+                            //     exemption. `failed_tool_signatures` uses the exact
+                            //     same canonical fingerprint as a consecutive real-
+                            //     failure circuit breaker without preempting PreferKnown.
+                            // =========================================================
+                            let real_name = crate::tools::resolve_tool_name(&name);
+                            let canonical_sig =
+                                super::intent::canonical_tool_call_fingerprint(&name, &arguments);
+
+                            // Layer 1a: identical-call reuse for deterministic tools.
+                            // Checked before the write gate so a same-turn
+                            // image_edit/vision re-call keeps the `_reused` marker
+                            // instead of short-circuiting on PreferKnown.
+                            let reusable = REUSABLE_TOOLS.contains(&real_name.as_str());
                             if reusable {
-                                if let Some(prev) = reuse_map.lock().unwrap().get(&sig).cloned() {
+                                if let Some(prev) =
+                                    reuse_map.lock().unwrap().get(&canonical_sig).cloned()
+                                {
                                     if let Ok(mut v) =
                                         serde_json::from_str::<serde_json::Value>(&prev)
                                     {
@@ -1657,12 +1692,7 @@ pub async fn process_stream_events_with_safeguards(
                                 }
                             }
 
-                            // Round 2 write gate / Operation lifecycle: same-op
-                            // resume prefers known result; Unknown → inquire
-                            // (no auto-replay); first attempt calls
-                            // begin_new_operation via evaluate_mutating_gate.
-                            // Durable write-intent is committed before Proceed
-                            // returns — fail closed if the commit sink errors.
+                            // Layer 2: Write gate / OperationLedger + failure circuit breaker.
                             // NM-240: bind PreparedInvoke id to this dispatch
                             // before write-gate / execute (no global FIFO claim).
                             let mut arguments = arguments;
@@ -1674,8 +1704,52 @@ pub async fn process_stream_events_with_safeguards(
                             if let Some(fp) =
                                 super::intent::mutating_write_fingerprint(&name, &arguments)
                             {
-                                use super::super::task_continuity::MutatingGateOutcome;
+                                use super::super::task_continuity::{
+                                    MutatingGateOutcome, WriteDispatch,
+                                };
                                 let mut state = state_for_write_gate.write().await;
+                                // Never let the consecutive-failure circuit breaker
+                                // preempt `OperationLedger` (InProgress / PreferKnown /
+                                // Unknown confirm / Succeeded replay block). Only check
+                                // the circuit breaker when the ledger would start a fresh
+                                // execution (first attempt, post-Rejected retry, or
+                                // explicit `_new_operation: true`) — before creating a
+                                // Running lease so a refused loop leaves no orphan lease.
+                                let ledger_authoritative_non_exec =
+                                    !super::super::task_continuity::wants_new_operation(&arguments)
+                                        && !matches!(
+                                            state.task_state.dispatch_mutating_write(&fp),
+                                            WriteDispatch::Execute { .. }
+                                        );
+                                if !ledger_authoritative_non_exec {
+                                    if let Some((failures, last_err)) =
+                                        failed_map.lock().unwrap().get(&canonical_sig).cloned()
+                                    {
+                                        if let Some(msg) = loop_break_message(failures, &last_err) {
+                                            drop(state);
+                                            tracing::warn!(
+                                                tool = %name,
+                                                failures,
+                                                "Loop break: identical canonical call already failed {}× this turn — refusing to re-execute",
+                                                failures
+                                            );
+                                            return (
+                                                i,
+                                                name.clone(),
+                                                ToolExecutionResult {
+                                                    _name: name.clone(),
+                                                    arguments: arguments.clone(),
+                                                    result: Err(
+                                                        crate::toolkit::error::ToolError::Execution(
+                                                            msg,
+                                                        ),
+                                                    ),
+                                                    operation_id: None,
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
                                 match state.evaluate_mutating_gate_durable(
                                     &name,
                                     &arguments,
@@ -1735,9 +1809,6 @@ pub async fn process_stream_events_with_safeguards(
                                             fingerprint = %fp,
                                             "Write gate blocked mutating tool"
                                         );
-                                        // ConfirmRequest was queued on
-                                        // task_state.confirm_lifecycle_notices;
-                                        // the stream drains + emits after the batch.
                                         return (
                                             i,
                                             name.clone(),
@@ -1754,27 +1825,61 @@ pub async fn process_stream_events_with_safeguards(
                                         );
                                     }
                                 }
+                            } else {
+                                // Read-only call: apply consecutive real-failure
+                                // circuit breaker on the same canonical fingerprint.
+                                if let Some((failures, last_err)) =
+                                    failed_map.lock().unwrap().get(&canonical_sig).cloned()
+                                {
+                                    if let Some(msg) = loop_break_message(failures, &last_err) {
+                                        tracing::warn!(
+                                            tool = %name,
+                                            failures,
+                                            "Loop break: identical canonical call already failed {}× this turn — refusing to re-execute",
+                                            failures
+                                        );
+                                        return (
+                                            i,
+                                            name.clone(),
+                                            ToolExecutionResult {
+                                                _name: name.clone(),
+                                                arguments: arguments.clone(),
+                                                result: Err(
+                                                    crate::toolkit::error::ToolError::Execution(
+                                                        msg,
+                                                    ),
+                                                ),
+                                                operation_id: None,
+                                            },
+                                        );
+                                    }
+                                }
                             }
                             let mut exec_args = arguments.clone();
                             super::super::task_continuity::strip_new_operation_flag(
                                 &mut exec_args,
                             );
-                            let result = execute_tool_with_retry(
-                                &tools_clone,
-                                &cache_clone,
-                                &name,
-                                exec_args,
+                            let result = crate::toolkit::skill_tool::with_turn_loaded_skills(
+                                turn_loaded_skills,
+                                execute_tool_with_retry(
+                                    &tools_clone,
+                                    &cache_clone,
+                                    &name,
+                                    exec_args,
+                                ),
                             )
                             .await;
 
-                            // Strike bookkeeping: failures accumulate per
-                            // signature; a success clears the strikes.
+                            // Strike bookkeeping on canonical fingerprint: real failures
+                            // accumulate; a success clears the strikes.
                             {
                                 let failed_now: Option<String> = match &result {
                                     Ok(out)
-                                        if crate::toolkit::tool::effective_success(&name, out) =>
+                                        if crate::toolkit::tool::effective_success(
+                                            &real_name, out,
+                                        ) =>
                                     {
-                                        failed_map.lock().unwrap().remove(&sig);
+                                        failed_map.lock().unwrap().remove(&canonical_sig);
                                         None
                                     }
                                     Ok(out) => Some(
@@ -1794,17 +1899,21 @@ pub async fn process_stream_events_with_safeguards(
                                 };
                                 if let Some(err) = failed_now {
                                     let mut m = failed_map.lock().unwrap();
-                                    let entry =
-                                        m.entry(sig.clone()).or_insert((0, String::new()));
+                                    let entry = m
+                                        .entry(canonical_sig.clone())
+                                        .or_insert((0, String::new()));
                                     entry.0 += 1;
                                     entry.1 = err;
                                 }
                             }
                             if reusable {
                                 if let Ok(out) = &result {
-                                    if out.success {
+                                    if crate::toolkit::tool::effective_success(&real_name, out) {
                                         if let Ok(data_str) = serde_json::to_string(&out.data) {
-                                            reuse_map.lock().unwrap().insert(sig, data_str);
+                                            reuse_map
+                                                .lock()
+                                                .unwrap()
+                                                .insert(canonical_sig, data_str);
                                         }
                                     }
                                 }
@@ -1903,6 +2012,7 @@ pub async fn process_stream_events_with_safeguards(
                     let mut round_has_errors = false;
                     let mut round_other_progress = false;
                     let mut round_had_skill = false;
+                    let mut round_had_help = false;
                     let mut round_had_successful_mutation = false;
                     let mut this_round_success_sigs: std::collections::HashSet<String> =
                         std::collections::HashSet::new();
@@ -1914,27 +2024,27 @@ pub async fn process_stream_events_with_safeguards(
                         super::super::task_continuity::strip_host_prepared_from_arguments(
                             &mut exec_arguments,
                         );
-                        // Novel (tool + arguments) → this round is gaining
-                        // information even if the model stays quiet.
-                        let call_sig = format!(
-                            "{}|{}",
-                            name,
-                            serde_json::to_string(&exec_arguments).unwrap_or_default()
+                        // Unified canonical fingerprint shared across read-only
+                        // loop detection, duplicate advisory, and write ledger.
+                        let real_name = crate::tools::resolve_tool_name(&name);
+                        let canonical_sig = super::intent::canonical_tool_call_fingerprint(
+                            &name,
+                            &exec_arguments,
                         );
-                        let is_new_call = seen_tool_sigs.insert(call_sig);
+                        let is_new_call = seen_tool_sigs.insert(canonical_sig.clone());
                         yield AgentEvent::tool_call_start_round(&name, exec_arguments.clone(), tool_iteration_count + 1);
 
                         // Mutation-flavored SHELL commands that effectively
                         // SUCCEEDED this turn, as raw strings — feeds the
-                        // turn-end completeness note, which checks whether
-                        // any of them DELIVERS the requested action ("a
-                        // command ran" is not enough: live, add-components
-                        // ran and FAILED, and widget create on another
-                        // domain ran and SUCCEEDED).
-                        if name == "shell" {
+                        // turn-end completeness note.
+                        if real_name == "shell" {
                             if let Some(cmd) =
                                 exec_arguments.get("command").and_then(|v| v.as_str())
                             {
+                                if super::guard::is_shell_help_command(cmd) {
+                                    round_had_help = true;
+                                    skill_exploration.observe_shell_command(cmd);
+                                }
                                 if super::intent::is_mutation_command(cmd)
                                     && matches!(
                                         &execution.result,
@@ -1977,21 +2087,9 @@ pub async fn process_stream_events_with_safeguards(
                             if matches!(
                                 &execution.result,
                                 Ok(out) if crate::toolkit::tool::effective_success(
-                                    &crate::tools::resolve_tool_name(&name), out
+                                    &real_name, out
                                 )
                             ) {
-                                let args_canon =
-                                    serde_json::to_string(&exec_arguments).unwrap_or_default();
-                                let call_fp = super::intent::mutating_write_fingerprint(
-                                    &name,
-                                    &exec_arguments,
-                                )
-                                .unwrap_or_else(|| {
-                                    super::super::task_continuity::write_fingerprint(
-                                        &crate::tools::resolve_tool_name(&name),
-                                        &args_canon,
-                                    )
-                                });
                                 let result_body = match &execution.result {
                                     Ok(out) => out.data.to_string(),
                                     Err(e) => e.to_string(),
@@ -2003,48 +2101,35 @@ pub async fn process_stream_events_with_safeguards(
                                 );
                                 let summary =
                                     super::super::task_continuity::build_structured_summary(
-                                        &crate::tools::resolve_tool_name(&name),
+                                        &real_name,
                                         "succeeded",
                                         &result_body,
                                         target.as_deref(),
                                         None,
                                     );
                                 state.task_state.confirm_step_from_tool(
-                                    &crate::tools::resolve_tool_name(&name),
-                                    &call_fp,
+                                    &real_name,
+                                    &canonical_sig,
                                     &result_fp,
                                     summary,
                                 );
                                 if let Ok(out) = &execution.result {
-                                    // Bind goal evidence to THIS execution's
-                                    // Operation (never the shared
-                                    // current_operation_id pointer, which a
-                                    // concurrent sibling write already
-                                    // overwrote — parallel tool batches run
-                                    // up to 6 wide).
                                     let op_id = execution.operation_id.clone();
                                     state.task_state.observe_tool_result_for_goal(
-                                        &crate::tools::resolve_tool_name(&name),
+                                        &real_name,
                                         &exec_arguments,
                                         &out.data,
                                         op_id.as_deref(),
                                     );
                                 }
-                                // write_ledger is filled by complete_operation_succeeded
-                                // when the Operation carries a write_fingerprint.
                             }
                         }
 
-                        // Duplicate-call advisory (see last_round_success_sigs):
-                        // non-reusable tool, identical signature, succeeded LAST
+                        // Duplicate-call advisory (read-only layer, canonical fingerprint):
+                        // non-reusable tool, identical canonical signature, succeeded LAST
                         // round. Tag the result value; execution already happened.
-                        let dup_sig = format!(
-                            "{}|{}",
-                            name,
-                            serde_json::to_string(&exec_arguments).unwrap_or_default()
-                        );
-                        let was_dup = !REUSABLE_TOOLS.contains(&name.as_str())
-                            && last_round_success_sigs.contains(&dup_sig);
+                        let was_dup = !REUSABLE_TOOLS.contains(&real_name.as_str())
+                            && last_round_success_sigs.contains(&canonical_sig);
 
                         let outcome = match &execution.result {
                             Ok(output) => serde_json::json!({
@@ -2056,25 +2141,24 @@ pub async fn process_stream_events_with_safeguards(
                         };
                         let succeeded = execution.result.as_ref().is_ok_and(|output|
                             crate::toolkit::tool::effective_success(
-                                &crate::tools::resolve_tool_name(&name), output,
+                                &real_name, output,
                             )
                         );
-                        round_had_skill |= crate::tools::resolve_tool_name(&name) == "skill";
+                        round_had_skill |= real_name == "skill";
                         if succeeded {
-                            if name == "skill" {
+                            if real_name == "skill" {
                                 round_had_skill = true;
                                 if let Ok(output) = &execution.result {
                                     skill_exploration.observe(&exec_arguments, &output.data);
                                 }
                             } else {
-                                let real_name = crate::tools::resolve_tool_name(&name);
                                 let command = exec_arguments.get("command").and_then(|v| v.as_str()).unwrap_or("");
                                 // Re-reading volatile host status does not supply
                                 // new vendor evidence; new telemetry/query results do.
                                 let progress_key = if real_name == "shell" && super::dedup::command_similarity_key(command) == "system info" {
                                     "host_system_info".to_string()
                                 } else {
-                                    format!("{}|{}|{}", real_name, exec_arguments, outcome)
+                                    format!("{}|{}", canonical_sig, outcome)
                                 };
                                 round_other_progress |= seen_non_skill_outcomes.insert(progress_key);
                                 round_had_successful_mutation |= (real_name == "shell" && super::intent::is_mutation_command(&command.to_lowercase()))
@@ -2087,12 +2171,12 @@ pub async fn process_stream_events_with_safeguards(
                         if is_new_call && image_failure.is_none() {
                             round_new_calls += 1;
                         }
-                        round_progress_results.push(image_failure.unwrap_or((dup_sig.clone(), outcome)));
+                        round_progress_results.push(image_failure.unwrap_or((canonical_sig.clone(), outcome)));
 
                         match execution.result {
                             Ok(output) => {
-                                if crate::toolkit::tool::effective_success(&name, &output) {
-                                    this_round_success_sigs.insert(dup_sig.clone());
+                                if crate::toolkit::tool::effective_success(&real_name, &output) {
+                                    this_round_success_sigs.insert(canonical_sig.clone());
                                 }
                                 let mut result_value = output.prompt_value();
                                 if was_dup {
@@ -2419,8 +2503,27 @@ pub async fn process_stream_events_with_safeguards(
                             0,
                         );
                     }
+                    // Sync dynamic `_new_operation` schema exposure after this
+                    // round's operations settled in TaskState (only tools with a
+                    // terminal Succeeded/Failed/Unknown write expose it).
+                    {
+                        let new_op_tools = internal_state
+                            .read()
+                            .await
+                            .task_state
+                            .tools_needing_new_operation_protocol();
+                        llm_interface
+                            .set_new_operation_protocol_tools(new_op_tools)
+                            .await;
+                    }
+
                     // Tools in a batch execute concurrently. Decide progress only
                     // after ALL results, independent of their emission order.
+                    skill_exploration.observe_round_end(
+                        round_had_skill,
+                        round_had_help,
+                        round_had_successful_mutation,
+                    );
                     if round_had_successful_mutation {
                         skill_exploration = super::guard::SkillExplorationBudget::default();
                     }
@@ -2453,6 +2556,26 @@ pub async fn process_stream_events_with_safeguards(
                         || read_only_loop_terminated || skill_exploration_exhausted
                         || tool_iteration_count >= MAX_TOOL_ITERATIONS - 1;
                     let should_continue = !force_summary;
+                    // Pre-exhaustion action-exit hint: if the user asked for a
+                    // concrete mutation and the matching domain guide is already
+                    // in context, emit one lightweight reminder before the
+                    // exploration budget exhausts (helps break `skill ↔ --help`
+                    // stalls without modifying the system prompt).
+                    if should_continue && !try_guide_recovery {
+                        if let Some(hint) = skill_exploration.action_exit_hint(
+                            &user_message,
+                            &successful_mutations,
+                            no_execution_requested,
+                        ) {
+                            guard_ledger.record(
+                                super::guard::GuardKind::SkillActionExitHint,
+                                super::guard::GuardOutcome::Fired,
+                                tool_iteration_count + 1,
+                                "guide_loaded_exit_to_action",
+                            );
+                            skill_action_exit_hint_pending = Some(hint);
+                        }
+                    }
                     // === Save assistant message with tool_calls BEFORE tool results ===
                     let response_to_save = if content_before_tools.is_empty() {
                         String::new()
@@ -2473,23 +2596,13 @@ pub async fn process_stream_events_with_safeguards(
                         initial_msg.tool_calls.as_ref().map_or(0, |c| c.len()), tool_iteration_count + 1);
                     internal_state.write().await.push_message(initial_msg);
 
-                    // Save tool results to memory.
-                    // `tool_call_results` already contains the cache summaries (or
-                    // passthrough for small results) computed during the execute loop
-                    // above — no second `cache.store` needed here.
-                    for (tool_name, result_str) in &tool_call_results {
-                        if tool_name == "skill" {
-                            let (skill_id, section) =
-                                crate::llm::extract_skill_key_from_result(result_str);
-                            llm_interface
-                                .set_skill_section_context_outcome(
-                                    skill_id,
-                                    section,
-                                    result_str.clone(),
-                                )
-                                .await;
-                        } else {
-                            let mut state = internal_state.write().await;
+                    // Save ALL tool results (including `skill`) as `tool` messages in
+                    // conversation history. Mid-turn `skill(load)` no longer mutates
+                    // the system prompt, keeping the KV-prefix cache byte-identical
+                    // across ReAct rounds within a turn.
+                    {
+                        let mut state = internal_state.write().await;
+                        for (tool_name, result_str) in &tool_call_results {
                             let tool_result_msg = AgentMessage::tool_result(tool_name, result_str);
                             state.push_message(tool_result_msg);
                         }
@@ -3096,16 +3209,11 @@ pub async fn process_stream_events_with_safeguards(
                             "Stream completed with empty/fence-only content, attempting retry without thinking"
                         );
 
-                        // Build a compact history for the retry (keep last few messages)
+                        // Build a compact history for the tool-free summary retry
+                        // (keep last few messages so the prompt stays small).
                         let state_guard = internal_state.read().await;
                         let retry_history: Vec<neomind_core::Message> = {
-                            let (context, outer_feedback_dropped) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
-                            if outer_feedback_dropped {
-                                // Tool-capable request follows: feed the assemble gate so tools
-                                // are refused when the newest tool feedback was evicted (the inner
-                                // selector cannot see the loss).
-                                llm_interface.mark_history_window_dropped_latest_feedback();
-                            }
+                            let (context, _) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                             let non_system: Vec<&AgentMessage> = context.iter().collect();
                             // Keep at most last 6 messages to reduce prompt size
                             let keep = non_system.len().saturating_sub(6);
@@ -3113,26 +3221,23 @@ pub async fn process_stream_events_with_safeguards(
                         };
                         drop(state_guard);
 
-                        // Get original user message from the first message in history
-                        let retry_user_msg = retry_history.iter()
-                            .find(|m| m.role == neomind_core::MessageRole::User)
-                            .map(|m| m.content.as_text())
-                            .unwrap_or_default();
-
-                        let retry_prompt = if retry_user_msg.is_empty() {
-                            "Please provide a response.".to_string()
+                        // Call the tool-free summary path (`include_tools = false`,
+                        // `thinking_enabled = Some(false)`) so the model must emit
+                        // a direct text answer instead of emitting tool-call JSON
+                        // that would be stripped into an empty error.
+                        let retry_prompt = if !all_round_tool_results.is_empty() {
+                            "Based on the tool execution results already in the conversation above, \
+                             provide a direct and concise final answer to the user's request. \
+                             Do NOT output any tool calls or JSON arrays — respond in plain text only."
                         } else {
-                            format!(
-                                "Please respond to the user's message directly and concisely.\n\nUser: {}",
-                                retry_user_msg
-                            )
+                            "Please respond to the user's message directly and concisely in plain text. \
+                             Do NOT output any tool calls or JSON arrays."
                         };
 
-                        let retry_result = llm_interface.chat_stream_tool_followup(
+                        let retry_result = llm_interface.chat_stream_summary_for_task(
                             &user_message,
-                            &retry_prompt,
+                            retry_prompt,
                             &retry_history,
-                            Some(false), // Force disable thinking
                         ).await;
 
                         match retry_result {
@@ -3172,7 +3277,7 @@ pub async fn process_stream_events_with_safeguards(
                                             if !is_thinking {
                                                 retry_content.push_str(&text);
                                             }
-                                            // Don't yield yet — check for tool calls first.
+                                            // Don't yield yet — check for stray tool JSON first.
                                         }
                                         Err(e) => {
                                             tracing::error!("Retry stream error: {}", e);
@@ -3181,15 +3286,13 @@ pub async fn process_stream_events_with_safeguards(
                                     }
                                 }
 
-                                // Check for tool calls in retry content and strip them.
-                                // When the first stream is interrupted, the retry may produce
-                                // tool call JSON instead of plain content. We must not yield
-                                // raw JSON to the user.
+                                // Defensive strip in case a model emits literal tool JSON in text
+                                // despite tool definitions being omitted.
                                 let cleaned = match parse_tool_calls(&retry_content) {
                                     Ok((content, calls)) if !calls.is_empty() => {
                                         tracing::warn!(
                                             calls_count = calls.len(),
-                                            "Retry produced tool calls instead of content, stripping them"
+                                            "Tool-free summary retry still emitted tool JSON, stripping it"
                                         );
                                         content
                                     }
@@ -3201,16 +3304,18 @@ pub async fn process_stream_events_with_safeguards(
                                     yield AgentEvent::content(cleaned);
                                     tracing::info!(
                                         content_len = raw_response.len(),
-                                        "Retry without thinking succeeded"
+                                        "Tool-free no-thinking recovery succeeded"
                                     );
+                                } else if !all_round_tool_results.is_empty() {
+                                    let deduped = deduplicate_tool_results(&all_round_tool_results);
+                                    let formatted = format_tool_results(&deduped);
+                                    tracing::warn!(
+                                        formatted_len = formatted.len(),
+                                        "Tool-free recovery produced empty content; falling back to formatted tool results"
+                                    );
+                                    raw_response = formatted.clone();
+                                    yield AgentEvent::content(formatted);
                                 } else {
-                                    // Diagnose WHICH empty-content failure this is:
-                                    // large thinking_chars → the model wedged in a
-                                    // thinking loop until the budget ran out (the
-                                    // known llama.cpp mid-stream wedge family);
-                                    // all-zero → the backend stalled/rejected the
-                                    // request outright. The old single warn said
-                                    // "only tool calls" even for plain-empty retries.
                                     let retry_was_tool_calls = !retry_content.trim().is_empty();
                                     tracing::warn!(
                                         thinking_chars = thinking_content.chars().count(),
@@ -3231,9 +3336,14 @@ pub async fn process_stream_events_with_safeguards(
                             }
                             Err(e) => {
                                 tracing::error!("Retry LLM call failed: {}", e);
-                                let fallback = format!(
-                                    "Sorry, the model could not produce a response. Please retry.\n[error: {e}]"
-                                );
+                                let fallback = if !all_round_tool_results.is_empty() {
+                                    let deduped = deduplicate_tool_results(&all_round_tool_results);
+                                    format_tool_results(&deduped)
+                                } else {
+                                    format!(
+                                        "Sorry, the model could not produce a response. Please retry.\n[error: {e}]"
+                                    )
+                                };
                                 raw_response = fallback.clone();
                                 yield AgentEvent::content(fallback);
                             }
@@ -3305,7 +3415,7 @@ pub async fn process_stream_events_with_safeguards(
                 AgentEvent::final_end(&state.task_state, reason, usage)
             };
             yield end;
-        }))
+        })
 }
 
 /// Reserve tokens for model response generation (minimum 1024).

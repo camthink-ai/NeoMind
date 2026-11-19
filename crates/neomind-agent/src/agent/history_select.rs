@@ -543,10 +543,22 @@ fn is_short_tool_header(line: &str) -> bool {
         && trimmed.chars().count() <= TOOL_HEADER_MAX_CHARS
 }
 
+/// True when a rendered tool-result message originated from the `skill` tool.
+fn is_skill_tool_result_header(header: &str) -> bool {
+    let trimmed = header.trim();
+    trimmed.starts_with("[Tool: skill") || trimmed.starts_with("Tool 'skill'")
+}
+
 /// Last-resort stub: needles come from system metadata when present, else a
 /// fresh parse of the body (never from body marker lines).
 fn stub_tool_result_message(msg: &mut Message) {
     let text = msg.content.as_text();
+    let (header, body) = split_tool_result_header(&text);
+    if is_skill_tool_result_header(header) {
+        let compact = crate::agent::streaming::compact_skill_tool_reference(body);
+        msg.content = neomind_core::Content::text(format!("{header}\n{compact}"));
+        return;
+    }
     let evidence = trusted_compress_evidence(msg);
     let stub = tool_result_stub(&text, &evidence);
     msg.content = neomind_core::Content::text(stub);
@@ -582,6 +594,12 @@ fn extract_details_ref_stub(text: &str) -> Option<String> {
 fn compress_tool_result_message(msg: &mut Message, max_chars: usize) {
     let text = msg.content.as_text();
     if text.chars().count() <= max_chars {
+        return;
+    }
+    let (header, body) = split_tool_result_header(&text);
+    if is_skill_tool_result_header(header) {
+        let compact = crate::agent::streaming::compact_skill_tool_reference(body);
+        msg.content = neomind_core::Content::text(format!("{header}\n{compact}"));
         return;
     }
     let needles = trusted_compress_evidence(msg);
@@ -1597,5 +1615,22 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[1].role, "user");
+    }
+
+    #[test]
+    fn compress_skill_tool_message_retains_compact_already_loaded_ref() {
+        let big_guide = serde_json::json!({
+            "id": "rule-management",
+            "section": "Condition DSL",
+            "guide": "rule syntax ".repeat(300),
+        });
+        let mut msg = Message::user(format!("[Tool: skill returned]\n{}", big_guide));
+        compress_tool_result_message(&mut msg, 200);
+        let text = msg.content.as_text();
+        assert!(text.contains("[Tool: skill returned]"), "{text}");
+        assert!(text.contains("\"already_loaded\":true"), "{text}");
+        assert!(text.contains("\"id\":\"rule-management\""), "{text}");
+        assert!(text.contains("\"section\":\"Condition DSL\""), "{text}");
+        assert!(!text.contains("[unknown: need details"), "{text}");
     }
 }

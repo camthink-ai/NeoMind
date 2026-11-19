@@ -535,6 +535,9 @@ pub struct LlmInterface {
     system_prompt_suffix: Arc<RwLock<Option<String>>>,
     /// Tool definitions for function calling.
     tool_definitions: Arc<RwLock<Vec<neomind_core::llm::backend::ToolDefinition>>>,
+    /// Tools that currently have a terminal write operation in `TaskState` and
+    /// should expose the `_new_operation` lifecycle parameter on the next LLM call.
+    expose_new_operation_tools: Arc<RwLock<std::collections::HashSet<String>>>,
     /// System prompt cache to avoid rebuilding on every request.
     /// Stores (tools_hash, prompt) to invalidate when tools change.
     system_prompt_cache: Arc<RwLock<Option<(String, String)>>>,
@@ -698,6 +701,7 @@ impl LlmInterface {
             system_prompt: Arc::new(RwLock::new("You are a helpful AI assistant.".to_string())),
             system_prompt_suffix: Arc::new(RwLock::new(None)),
             tool_definitions: Arc::new(RwLock::new(Vec::new())),
+            expose_new_operation_tools: Arc::new(RwLock::new(std::collections::HashSet::new())),
             system_prompt_cache: Arc::new(RwLock::new(None)),
             cached_tools_hash: Arc::new(RwLock::new(None)),
             limiter: ConcurrencyLimiter::new(concurrent_limit),
@@ -741,6 +745,7 @@ impl LlmInterface {
             system_prompt: Arc::new(RwLock::new("You are a helpful AI assistant.".to_string())),
             system_prompt_suffix: Arc::new(RwLock::new(None)),
             tool_definitions: Arc::new(RwLock::new(Vec::new())),
+            expose_new_operation_tools: Arc::new(RwLock::new(std::collections::HashSet::new())),
             system_prompt_cache: Arc::new(RwLock::new(None)),
             cached_tools_hash: Arc::new(RwLock::new(None)),
             limiter: ConcurrencyLimiter::new(concurrent_limit),
@@ -1563,6 +1568,50 @@ impl LlmInterface {
     /// Inject / clear the TaskState prompt section for the next assemble.
     pub async fn set_task_state_prompt(&self, section: Option<String>) {
         *self.task_state_prompt.write().await = section;
+    }
+
+    /// Update the subset of mutating tools whose schemas should expose the
+    /// `_new_operation` lifecycle parameter (only tools with a terminal write
+    /// operation in `TaskState`).
+    pub async fn set_new_operation_protocol_tools(&self, tools: std::collections::HashSet<String>) {
+        *self.expose_new_operation_tools.write().await = tools;
+    }
+
+    /// Build the request-scoped tool definition list, applying optional filters
+    /// and dynamically exposing `_new_operation` only on tools that have a
+    /// terminal write operation in `TaskState`.
+    async fn build_request_tools_input(
+        &self,
+        attach_tools: bool,
+        exclude_skill: bool,
+        exclude_vision: bool,
+    ) -> Option<Vec<neomind_core::llm::backend::ToolDefinition>> {
+        if !attach_tools {
+            return None;
+        }
+        let tools = self.tool_definitions.read().await;
+        if tools.is_empty() {
+            return None;
+        }
+        let mut available: Vec<_> = tools
+            .iter()
+            .filter(|t| {
+                (!exclude_skill || t.name != "skill") && (!exclude_vision || t.name != "vision")
+            })
+            .cloned()
+            .collect();
+        drop(tools);
+        if available.is_empty() {
+            return None;
+        }
+        let active_new_op = self.expose_new_operation_tools.read().await;
+        if !active_new_op.is_empty() {
+            crate::agent::task_continuity::inject_new_operation_protocol_for_llm_tools(
+                &mut available,
+                &active_new_op,
+            );
+        }
+        Some(available)
     }
 
     /// Estimated tokens already committed to pinned skill chunks (same shape
@@ -2510,7 +2559,13 @@ impl LlmInterface {
             };
             Self::with_history_summary(base, history)
         } else if include_tools {
-            let assembled = self.assemble_system_prompt(None).await;
+            let user_text = user_message.content.as_text();
+            let user_text_opt = if user_text.trim().is_empty() {
+                None
+            } else {
+                Some(user_text.as_str())
+            };
+            let assembled = self.assemble_system_prompt(user_text_opt).await;
             let assembled = Self::with_history_summary(assembled, history);
             self.inject_time_placeholders(assembled, None).await
         } else {
@@ -2652,26 +2707,11 @@ impl LlmInterface {
         }
 
         // Get tool definitions — filter out "vision" when the user message already
-        // contains images.  The model is multimodal and can analyse them directly;
-        // the vision tool is only needed for fetching images from URLs/files.
-        let tools = self.tool_definitions.read().await;
-        let tools_input = if !attach_tools || tools.is_empty() {
-            None
-        } else if has_user_images {
-            let filtered: Vec<_> = tools
-                .iter()
-                .filter(|t| t.name != "vision")
-                .cloned()
-                .collect();
-            if filtered.is_empty() {
-                None
-            } else {
-                Some(filtered)
-            }
-        } else {
-            Some(tools.clone())
-        };
-        drop(tools);
+        // contains images, and dynamically expose `_new_operation` only on tools
+        // that have a terminal write operation in TaskState.
+        let tools_input = self
+            .build_request_tools_input(attach_tools, false, has_user_images)
+            .await;
 
         self.observe_send_boundary(
             &messages,
@@ -3031,23 +3071,11 @@ impl LlmInterface {
             );
         }
 
-        // Get tool definitions
-        let tools = self.tool_definitions.read().await;
-        let tools_input = if !attach_tools {
-            None
-        } else {
-            let available: Vec<_> = tools
-                .iter()
-                .filter(|tool| !exclude_skill || tool.name != "skill")
-                .cloned()
-                .collect();
-            if available.is_empty() {
-                None
-            } else {
-                Some(available)
-            }
-        };
-        drop(tools);
+        // Get tool definitions, dynamically exposing `_new_operation` only on
+        // tools that have a terminal write operation in TaskState.
+        let tools_input = self
+            .build_request_tools_input(attach_tools, exclude_skill, false)
+            .await;
 
         self.observe_send_boundary(
             &messages,

@@ -415,40 +415,92 @@ pub fn strip_new_operation_flag(arguments: &mut serde_json::Value) {
 /// schemas so models can find “run again / new execution” without a hidden
 /// manual flag. Idempotent.
 pub fn inject_new_operation_protocol(defs: &mut [crate::toolkit::tool::ToolDefinition]) {
-    let desc = "Set true to begin a NEW Operation with the same business args after a \
-         prior known terminal result (Succeeded/Failed). After Unknown outcome, \
-         this flag alone is not enough — the user must authorize a re-run \
-         (confirm re-run). Default false = resume PreferKnown / block; never \
-         auto-replay. Lifecycle-only; stripped before tool execution."
-        .to_string();
+    let all: std::collections::HashSet<String> = NEW_OPERATION_PROTOCOL_TOOLS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    inject_new_operation_protocol_filtered(defs, &all);
+}
+
+/// Inject `{NEW_OPERATION_ARG}` only into the subset of `NEW_OPERATION_PROTOCOL_TOOLS`
+/// present in `active_tools`. Used to expose the lifecycle flag only when a
+/// session actually has a terminal mutating operation (Succeeded/Failed/Unknown)
+/// that may require an explicit re-run, keeping clean schemas free of noise.
+pub fn inject_new_operation_protocol_filtered(
+    defs: &mut [crate::toolkit::tool::ToolDefinition],
+    active_tools: &std::collections::HashSet<String>,
+) {
+    if active_tools.is_empty() {
+        return;
+    }
+    let desc = new_operation_arg_description();
     for def in defs.iter_mut() {
-        if !NEW_OPERATION_PROTOCOL_TOOLS.contains(&def.name.as_str()) {
+        if !NEW_OPERATION_PROTOCOL_TOOLS.contains(&def.name.as_str())
+            || !active_tools.contains(def.name.as_str())
+        {
             continue;
         }
-        let Some(obj) = def.parameters.as_object_mut() else {
+        inject_new_operation_into_schema(&mut def.parameters, &mut def.description, desc);
+    }
+}
+
+/// Core-LLM variant of [`inject_new_operation_protocol_filtered`] applied at
+/// the LLM request boundary so `_new_operation` appears only on tools that have
+/// a terminal write operation in `TaskState`.
+pub fn inject_new_operation_protocol_for_llm_tools(
+    defs: &mut [neomind_core::llm::backend::ToolDefinition],
+    active_tools: &std::collections::HashSet<String>,
+) {
+    if active_tools.is_empty() {
+        return;
+    }
+    let desc = new_operation_arg_description();
+    for def in defs.iter_mut() {
+        if !NEW_OPERATION_PROTOCOL_TOOLS.contains(&def.name.as_str())
+            || !active_tools.contains(def.name.as_str())
+        {
             continue;
-        };
-        let props = obj
-            .entry("properties")
-            .or_insert_with(|| serde_json::json!({}));
-        let Some(props) = props.as_object_mut() else {
-            continue;
-        };
-        props
-            .entry(NEW_OPERATION_ARG.to_string())
-            .or_insert_with(|| {
-                serde_json::json!({
-                    "type": "boolean",
-                    "description": desc,
-                })
-            });
-        if !def.description.contains(NEW_OPERATION_ARG) {
-            def.description.push_str(&format!(
-                " Lifecycle: optional `{NEW_OPERATION_ARG}` starts a fresh same-args \
-                 Operation after a known terminal result; after Unknown, user \
-                 authorization is required."
-            ));
         }
+        inject_new_operation_into_schema(&mut def.parameters, &mut def.description, desc);
+    }
+}
+
+fn new_operation_arg_description() -> &'static str {
+    "Set true to begin a NEW Operation with the same business args after a \
+     prior known terminal result (Succeeded/Failed). After Unknown outcome, \
+     this flag alone is not enough — the user must authorize a re-run \
+     (confirm re-run). Default false = resume PreferKnown / block; never \
+     auto-replay. Lifecycle-only; stripped before tool execution."
+}
+
+fn inject_new_operation_into_schema(
+    parameters: &mut serde_json::Value,
+    description: &mut String,
+    arg_desc: &str,
+) {
+    let Some(obj) = parameters.as_object_mut() else {
+        return;
+    };
+    let props = obj
+        .entry("properties")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(props) = props.as_object_mut() else {
+        return;
+    };
+    props
+        .entry(NEW_OPERATION_ARG.to_string())
+        .or_insert_with(|| {
+            serde_json::json!({
+                "type": "boolean",
+                "description": arg_desc,
+            })
+        });
+    if !description.contains(NEW_OPERATION_ARG) {
+        description.push_str(&format!(
+            " Lifecycle: optional `{NEW_OPERATION_ARG}` starts a fresh same-args \
+             Operation after a known terminal result; after Unknown, user \
+             authorization is required."
+        ));
     }
 }
 
@@ -2141,6 +2193,31 @@ impl TaskState {
             description: description.into(),
             source: source.into(),
         });
+    }
+
+    /// Mutating tools that currently have a terminal write operation
+    /// (`Succeeded` / `Failed` / `Unknown`) in the ledger and therefore may
+    /// legitimately need explicit `_new_operation: true` schema exposure.
+    ///
+    /// Pre-submission `Rejected` operations are intentionally excluded because
+    /// they never lock behind `PreferKnown` and do not require `_new_operation`.
+    pub fn tools_needing_new_operation_protocol(&self) -> std::collections::HashSet<String> {
+        let mut tools = std::collections::HashSet::new();
+        for op in &self.operations {
+            if op.write_fingerprint.is_none() {
+                continue;
+            }
+            if matches!(
+                op.status,
+                OperationStatus::Succeeded | OperationStatus::Failed | OperationStatus::Unknown
+            ) {
+                let real = crate::tools::resolve_tool_name(&op.tool_name);
+                if NEW_OPERATION_PROTOCOL_TOOLS.contains(&real.as_str()) {
+                    tools.insert(real);
+                }
+            }
+        }
+        tools
     }
 }
 

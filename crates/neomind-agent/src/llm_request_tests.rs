@@ -20,6 +20,7 @@ impl CaptureRuntime {
             "messages": input.messages,
             "tools_count": input.tools.as_ref().map_or(0, Vec::len),
             "tool_names": input.tools.as_ref().map(|tools| tools.iter().map(|t| t.name.clone()).collect::<Vec<_>>()).unwrap_or_default(),
+            "tools": input.tools,
             "thinking": input.params.thinking_enabled,
             "effort": input.params.thinking_effort,
             "temperature": input.params.temperature,
@@ -326,12 +327,32 @@ async fn new_text_turn_clears_old_skill_but_keeps_skills_loaded_in_its_tool_roun
     }
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 3);
+    // Old turn's stale transient skill must be cleared before turn 1.
     assert!(!requests[0]["messages"]
         .to_string()
         .contains("STALE_SKILL_SENTINEL"));
-    assert!(requests[1]["messages"][0]
-        .to_string()
-        .contains("CURRENT_SKILL_SENTINEL"));
+    // P1-3 single-copy invariant: mid-turn `skill(load)` must NOT rewrite the
+    // system prompt (keeps llama.cpp KV-prefix cache byte-identical across
+    // rounds within a turn). The guide lives once in conversation `tool` history.
+    assert_eq!(
+        requests[0]["messages"][0]["content"], requests[1]["messages"][0]["content"],
+        "system prompt content must remain byte-identical after mid-turn skill(load)"
+    );
+    assert!(
+        !requests[1]["messages"][0]
+            .to_string()
+            .contains("CURRENT_SKILL_SENTINEL"),
+        "skill body must not be duplicated into the system prompt"
+    );
+    assert!(
+        requests[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .skip(1)
+            .any(|m| m.to_string().contains("CURRENT_SKILL_SENTINEL")),
+        "skill body must be retained in conversation tool history"
+    );
     assert!(!requests[2]["messages"][0]
         .to_string()
         .contains("CURRENT_SKILL_SENTINEL"));
@@ -1235,5 +1256,621 @@ async fn task_state_prompt_injected_into_system_on_stream_request() {
     assert!(
         system.contains("Active Task State") && system.contains("写天气到 EK410"),
         "TaskState must reach the model context: {system}"
+    );
+}
+
+// =========================================================================
+// Phase 5 (P1-2, P1-3, P1-4) end-to-end regressions
+// =========================================================================
+
+fn tool_has_new_operation_prop(req: &serde_json::Value, tool_name: &str) -> bool {
+    req["tools"]
+        .as_array()
+        .and_then(|arr| arr.iter().find(|t| t["name"] == tool_name))
+        .and_then(|t| t["parameters"]["properties"].get("_new_operation"))
+        .is_some()
+}
+
+/// P1-2:
+/// - Clean turn schemas do NOT expose `_new_operation` noise;
+/// - Pre-submission `Rejected` (exit code 2) stays exempt from `PreferKnown`
+///   and does NOT expose `_new_operation`;
+/// - After a terminal `Succeeded` write on `shell`, ONLY `shell` exposes
+///   `_new_operation` while unrelated mutating tools (`run_now`) stay clean;
+/// - Repeating the same succeeded write returns `PreferKnown` (never preempted
+///   by `failed_tool_signatures`);
+/// - Reordered JSON keys on read-only failing calls still trip the canonical
+///   `failed_tool_signatures` loop break on the 3rd attempt.
+#[tokio::test]
+async fn p1_2_two_layer_gate_canonical_fingerprints_and_dynamic_new_operation_exposure() {
+    struct ScriptedShell {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    #[async_trait::async_trait]
+    impl crate::toolkit::tool::Tool for ScriptedShell {
+        fn name(&self) -> &str {
+            "shell"
+        }
+        fn description(&self) -> &str {
+            "scripted shell for P1-2"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "params": {}
+                }
+            })
+        }
+        async fn execute(
+            &self,
+            args: serde_json::Value,
+        ) -> crate::toolkit::Result<crate::toolkit::tool::ToolOutput> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let cmd = args["command"].as_str().unwrap_or("");
+            if cmd.contains("--bad-flag") {
+                return Ok(crate::toolkit::tool::ToolOutput::success(
+                    serde_json::json!({
+                        "exit_code": 2,
+                        "stdout": "",
+                        "stderr": "error: unexpected argument '--bad-flag'",
+                        "command": cmd,
+                        "timed_out": false
+                    }),
+                ));
+            }
+            Ok(crate::toolkit::tool::ToolOutput::success(
+                serde_json::json!({
+                    "exit_code": 0,
+                    "stdout": r#"{"ok":true,"id":"rule-1"}"#,
+                    "stderr": "",
+                    "command": cmd,
+                    "timed_out": false
+                }),
+            ))
+        }
+    }
+
+    struct FailingReadTool {
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    #[async_trait::async_trait]
+    impl crate::toolkit::tool::Tool for FailingReadTool {
+        fn name(&self) -> &str {
+            "web_fetch"
+        }
+        fn description(&self) -> &str {
+            "failing read tool"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object","properties":{"url":{"type":"string"},"mode":{"type":"string"}}})
+        }
+        async fn execute(
+            &self,
+            _: serde_json::Value,
+        ) -> crate::toolkit::Result<crate::toolkit::tool::ToolOutput> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Err(crate::toolkit::ToolError::Execution("404 not found".into()))
+        }
+    }
+
+    let (iface, requests) = harness(vec![
+        // Round 1: syntax error (exit 2 → OperationStatus::Rejected)
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({"command": "neomind rule create --bad-flag"}),
+        ),
+        // Round 2: fixed syntax → Succeeded write on shell
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({"command": "neomind rule create --name ok-rule"}),
+        ),
+        // Round 3: repeat same write without `_new_operation` → PreferKnown resume (not executed again)
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({"command": "neomind rule create --name ok-rule"}),
+        ),
+        // Rounds 4-6: failing read tool with reordered JSON keys → 3rd call must LOOP BREAK
+        MockResponse::tool_call(
+            "web_fetch",
+            serde_json::json!({"url": "https://example.invalid/a", "mode": "text"}),
+        ),
+        MockResponse::tool_call(
+            "web_fetch",
+            serde_json::json!({"mode": "text", "url": "https://example.invalid/a"}),
+        ),
+        MockResponse::tool_call(
+            "web_fetch",
+            serde_json::json!({"url": "https://example.invalid/a", "mode": "text"}),
+        ),
+        MockResponse::text("all checked"),
+    ])
+    .await;
+
+    iface
+        .set_tool_definitions(vec![tool("shell"), tool("run_now"), tool("web_fetch")])
+        .await;
+
+    let shell_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let read_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut registry = crate::toolkit::ToolRegistry::new();
+    registry.register(Arc::new(ScriptedShell {
+        calls: shell_calls.clone(),
+    }));
+    registry.register(Arc::new(FailingReadTool {
+        calls: read_calls.clone(),
+    }));
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("p1-2-test".into()),
+    ));
+
+    let mut stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        Arc::new(registry),
+        "create rule ok-rule",
+        Default::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .unwrap();
+    let mut events = Vec::new();
+    while let Some(ev) = stream.next().await {
+        events.push(ev);
+    }
+
+    // Shell executed twice (Round 1 Rejected + Round 2 Succeeded); Round 3 was served by PreferKnown.
+    assert_eq!(shell_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    // Failing read tool executed twice; 3rd call with reordered keys tripped canonical LOOP BREAK.
+    assert_eq!(read_calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            crate::agent::types::AgentEvent::ToolCallEnd { tool, result, success: false, .. }
+            if tool == "web_fetch" && result.contains("LOOP BREAK")
+        )),
+        "canonical failure circuit breaker must refuse the 3rd reordered-key failure"
+    );
+
+    let captured = requests.lock().unwrap();
+    // Round 1 (clean session): neither shell nor run_now exposes `_new_operation`.
+    assert!(!tool_has_new_operation_prop(&captured[0], "shell"));
+    assert!(!tool_has_new_operation_prop(&captured[0], "run_now"));
+    // Round 2 (after exit-2 Rejected only): STILL no `_new_operation` noise!
+    assert!(
+        !tool_has_new_operation_prop(&captured[1], "shell"),
+        "Rejected pre-submission error must not expose _new_operation"
+    );
+    assert!(!tool_has_new_operation_prop(&captured[1], "run_now"));
+    // Round 3 (after Succeeded write on shell): ONLY `shell` exposes `_new_operation`; `run_now` stays clean.
+    assert!(
+        tool_has_new_operation_prop(&captured[2], "shell"),
+        "terminal write on shell must expose _new_operation on shell schema"
+    );
+    assert!(
+        !tool_has_new_operation_prop(&captured[2], "run_now"),
+        "unrelated mutating tool must not expose _new_operation"
+    );
+}
+
+/// P1-3: Single-copy skill loading across a multi-round ReAct turn using the
+/// real `SkillTool` and builtin registry:
+/// 1) System prompt stays 100% byte-identical across every round in the turn
+///    (no mid-turn system prompt mutation breaking KV-prefix cache);
+/// 2) Repeating the same `(skill_id, None)` (even via alias vs canonical id)
+///    returns lightweight `{"already_present": true, ...}`;
+/// 3) Loading a distinct `section` of the same skill still returns full chapter text.
+#[tokio::test]
+async fn p1_3_single_copy_skill_keeps_system_prompt_byte_identical_across_rounds() {
+    let builtin_registry = Arc::new(tokio::sync::RwLock::new(
+        crate::skills::SkillRegistry::load_all(None),
+    ));
+    let sample_section = {
+        let reg = builtin_registry.read().await;
+        let skill = reg
+            .get("dashboard-management")
+            .expect("builtin dashboard-management");
+        let overview = skill.load_guide(None).unwrap();
+        overview["sections"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|v| v.as_str())
+            .expect("dashboard-management section")
+            .to_string()
+    };
+
+    let (iface, requests) = harness(vec![
+        // Round 1: load overview via alias
+        MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action": "load", "id": "dashboard"}),
+        ),
+        // Round 2: repeat same overview via canonical id → lightweight already_present
+        MockResponse::tool_call(
+            "skill",
+            serde_json::json!({"action": "load", "id": "dashboard-management"}),
+        ),
+        // Round 3: load distinct section of same skill → full chapter
+        MockResponse::tool_call(
+            "skill",
+            serde_json::json!({
+                "action": "load",
+                "id": "dashboard-management",
+                "section": sample_section,
+            }),
+        ),
+        MockResponse::text("ready to build dashboard"),
+    ])
+    .await;
+    iface.set_tool_definitions(vec![tool("skill")]).await;
+
+    let mut registry = crate::toolkit::ToolRegistry::new();
+    registry.register(Arc::new(crate::toolkit::skill_tool::SkillTool::new(
+        builtin_registry,
+    )));
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("p1-3-single-copy".into()),
+    ));
+
+    let mut stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        Arc::new(registry),
+        "explain how to add dashboard components",
+        Default::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .unwrap();
+    let mut tool_ends: Vec<String> = Vec::new();
+    while let Some(ev) = stream.next().await {
+        if let crate::agent::types::AgentEvent::ToolCallEnd { result, .. } = ev {
+            tool_ends.push(result);
+        }
+    }
+
+    assert_eq!(tool_ends.len(), 3, "3 skill calls must complete");
+    let r1: serde_json::Value = serde_json::from_str(&tool_ends[0]).unwrap();
+    let r2: serde_json::Value = serde_json::from_str(&tool_ends[1]).unwrap();
+    let r3: serde_json::Value = serde_json::from_str(&tool_ends[2]).unwrap();
+    assert!(r1["guide"].as_str().is_some_and(|g| g.len() > 50));
+    assert_eq!(r2["already_present"], true);
+    assert_eq!(
+        r2["hint"],
+        "Guide already in context — run the next CLI command now."
+    );
+    assert!(r2.get("guide").is_none());
+    assert_eq!(r3["section"], sample_section);
+    assert!(r3["guide"].as_str().is_some_and(|g| g.starts_with("## ")));
+
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 4);
+    let base_system = &captured[0]["messages"][0]["content"];
+    for (idx, req) in captured.iter().enumerate().skip(1) {
+        assert_eq!(
+            &req["messages"][0]["content"],
+            base_system,
+            "system prompt content changed on round {} after skill(load) — KV cache would break",
+            idx + 1
+        );
+    }
+}
+
+/// P1-4 (empty reply recovery): when a turn already has tool results and the
+/// follow-up produces an empty/degenerate response (`[]`), the recovery path
+/// MUST call the tool-free summary route (`tools_count == 0`, `thinking == false`)
+/// and return a usable text answer.
+#[tokio::test]
+async fn p1_4_empty_reply_recovery_uses_tool_free_summary_path() {
+    struct StaticShell;
+    #[async_trait::async_trait]
+    impl crate::toolkit::tool::Tool for StaticShell {
+        fn name(&self) -> &str {
+            "shell"
+        }
+        fn description(&self) -> &str {
+            "static shell"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object", "properties": {"command": {"type": "string"}}})
+        }
+        async fn execute(
+            &self,
+            _: serde_json::Value,
+        ) -> crate::toolkit::Result<crate::toolkit::tool::ToolOutput> {
+            Ok(crate::toolkit::tool::ToolOutput::success(
+                serde_json::json!({
+                    "exit_code": 0,
+                    "stdout": r#"{"devices":[{"id":"sensor-1","temp":23.5}]}"#,
+                    "stderr": "",
+                    "timed_out": false
+                }),
+            ))
+        }
+    }
+
+    let (iface, requests) = harness(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({"command": "neomind device list"}),
+        ),
+        // Round 2 degenerates to bare `[]` (thinking budget exhausted)
+        MockResponse::text("[]").with_thinking("burned all tokens thinking"),
+        // Recovery summary produces clean final text
+        MockResponse::text("sensor-1 当前温度 23.5°C。"),
+    ])
+    .await;
+    iface.set_tool_definitions(vec![tool("shell")]).await;
+
+    let mut registry = crate::toolkit::ToolRegistry::new();
+    registry.register(Arc::new(StaticShell));
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("p1-4-empty-recovery".into()),
+    ));
+
+    let mut stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state,
+        Arc::new(registry),
+        "查看设备温度",
+        Default::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .unwrap();
+    let mut visible = String::new();
+    while let Some(ev) = stream.next().await {
+        if let crate::agent::types::AgentEvent::Content { content } = ev {
+            visible.push_str(&content);
+        }
+    }
+
+    assert!(
+        visible.contains("sensor-1 当前温度 23.5°C"),
+        "recovery answer must reach user, got: {visible}"
+    );
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 3);
+    // Recovery request (index 2) MUST be tool-free and have thinking disabled.
+    assert_eq!(
+        captured[2]["tools_count"], 0,
+        "empty-reply recovery must omit tool schema so model cannot loop on tool JSON"
+    );
+    assert_eq!(
+        captured[2]["thinking"],
+        serde_json::json!(false),
+        "empty-reply recovery must force thinking_enabled=false"
+    );
+}
+
+/// P1-4 (unified multimodal state machine):
+/// - Supports >2 tool rounds (3 distinct rounds + final answer);
+/// - Propagates `PreparedInvoke` host context (`_host_prepared_operation_id`
+///   restored across canonicalize) and structured `params` to `shell`;
+/// - Emits `ToolCallEnd.success = effective_success` (false for non-zero exit);
+/// - Fires exactly 1 bounded NM-250 `foreshadow_continue` under default
+///   `behavioral_guards = false` and stops honestly with `本次未取得结果。` if
+///   the model foreshadows again.
+#[tokio::test]
+async fn p1_4_multimodal_unified_engine_multi_round_prepared_invoke_and_foreshadow() {
+    struct InspectingShell {
+        seen_prepared_ids: Arc<Mutex<Vec<Option<String>>>>,
+        seen_params: Arc<Mutex<Vec<Option<serde_json::Value>>>>,
+    }
+    #[async_trait::async_trait]
+    impl crate::toolkit::tool::Tool for InspectingShell {
+        fn name(&self) -> &str {
+            "shell"
+        }
+        fn description(&self) -> &str {
+            "inspecting shell"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "params": {}
+                }
+            })
+        }
+        async fn execute(
+            &self,
+            args: serde_json::Value,
+        ) -> crate::toolkit::Result<crate::toolkit::tool::ToolOutput> {
+            let cmd = args["command"].as_str().unwrap_or("");
+            let host_op = args
+                .get(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG)
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            self.seen_prepared_ids.lock().unwrap().push(host_op);
+            self.seen_params
+                .lock()
+                .unwrap()
+                .push(args.get("params").cloned());
+            if cmd.contains("missing-device") {
+                return Ok(crate::toolkit::tool::ToolOutput::success(
+                    serde_json::json!({
+                        "exit_code": 1,
+                        "stdout": r#"{"success":false,"error":"not found"}"#,
+                        "stderr": "",
+                        "command": cmd,
+                        "timed_out": false
+                    }),
+                ));
+            }
+            Ok(crate::toolkit::tool::ToolOutput::success(
+                serde_json::json!({
+                    "exit_code": 0,
+                    "stdout": format!(r#"{{"ok":true,"cmd":"{cmd}"}}"#),
+                    "stderr": "",
+                    "command": cmd,
+                    "timed_out": false
+                }),
+            ))
+        }
+    }
+
+    // Publish a real ReadOnly extension command snapshot so
+    // `attach_chat_prepared_invoke` mints a live PreparedInvoke ticket on the
+    // multimodal path (verifying the full PreparedInvoke + structured params
+    // carriage across canonicalize → execute).
+    let ext_id = "p1-4-mm-weather-test";
+    {
+        use neomind_core::extension::{
+            begin_instance_generation, invalidate_instance_capability, CommandEffect,
+            ExtensionCommand, ExtensionCommandSnapshot, MetricDataType, ParameterDefinition,
+        };
+        invalidate_instance_capability(ext_id);
+        let gen = begin_instance_generation(ext_id);
+        let cmd = ExtensionCommand {
+            name: "get_weather".into(),
+            display_name: "Get Weather".into(),
+            description: "Query weather".into(),
+            parameters: vec![ParameterDefinition {
+                name: "city".into(),
+                display_name: "City".into(),
+                description: "City name".into(),
+                param_type: MetricDataType::String,
+                required: true,
+                default_value: None,
+                min: None,
+                max: None,
+                options: vec![],
+            }],
+            effect: Some(CommandEffect::ReadOnly),
+            replay_safety: None,
+            execution: None,
+            ..Default::default()
+        };
+        ExtensionCommandSnapshot::build(ext_id, "1.0.0", None, vec![cmd], gen)
+            .publish_capabilities()
+            .unwrap();
+    }
+
+    // Part A: 3 tool rounds (>2!) including a failed shell, an extension invoke
+    // carrying PreparedInvoke + structured params, and a final text reply.
+    let (iface, _requests) = harness(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({"command": "neomind device get missing-device"}),
+        ),
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({"command": "neomind device list"}),
+        ),
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": format!("neomind extension invoke {ext_id} get_weather"),
+                "params": {"city": "Xiamen"}
+            }),
+        ),
+        MockResponse::text("三轮排查与天气查询全部完成。"),
+    ])
+    .await;
+    iface.set_tool_definitions(vec![tool("shell")]).await;
+
+    let seen_prepared_ids = Arc::new(Mutex::new(Vec::new()));
+    let seen_params = Arc::new(Mutex::new(Vec::new()));
+    let mut registry = crate::toolkit::ToolRegistry::new();
+    registry.register(Arc::new(InspectingShell {
+        seen_prepared_ids: seen_prepared_ids.clone(),
+        seen_params: seen_params.clone(),
+    }));
+    let state = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("p1-4-mm-multi".into()),
+    ));
+
+    let mut stream = crate::agent::streaming::process_multimodal_stream_events_with_safeguards(
+        iface,
+        state,
+        Arc::new(registry),
+        "看图排查设备并查询厦门天气",
+        vec!["data:image/png;base64,iVBORw0KGgo=".to_string()],
+        Default::default(),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let mut tool_end_statuses: Vec<(usize, bool)> = Vec::new();
+    let mut visible = String::new();
+    while let Some(ev) = stream.next().await {
+        match ev {
+            crate::agent::types::AgentEvent::ToolCallEnd { success, round, .. } => {
+                tool_end_statuses.push((round.unwrap_or(0), success));
+            }
+            crate::agent::types::AgentEvent::Content { content } => {
+                visible.push_str(&content);
+            }
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        tool_end_statuses,
+        vec![(1, false), (2, true), (3, true)],
+        "multimodal unified engine must run >2 rounds and emit ToolCallEnd.success = effective_success"
+    );
+    assert!(visible.contains("三轮排查与天气查询全部完成"));
+    // Round 3 extension invoke must have carried a host PreparedInvoke id + structured params.
+    {
+        let prepared = seen_prepared_ids.lock().unwrap();
+        assert_eq!(prepared.len(), 3);
+        assert!(
+            prepared[2].as_deref().is_some_and(|id| !id.is_empty()),
+            "multimodal extension invoke must preserve host PreparedInvoke ticket: {prepared:?}"
+        );
+        let params = seen_params.lock().unwrap();
+        assert_eq!(params[2], Some(serde_json::json!({"city": "Xiamen"})));
+    }
+
+    // Part B: NM-250 bounded 1x foreshadow_continue under default behavioral_guards=false.
+    let (iface_fs, requests_fs) = harness(vec![
+        MockResponse::text("好的，我马上帮您查询设备状态："),
+        MockResponse::text("我现在来查看一下设备情况："),
+    ])
+    .await;
+    let state_fs = Arc::new(tokio::sync::RwLock::new(
+        crate::agent::types::AgentInternalState::new("p1-4-mm-foreshadow".into()),
+    ));
+    let mut stream_fs = crate::agent::streaming::process_multimodal_stream_events_with_safeguards(
+        iface_fs,
+        state_fs,
+        Arc::new(crate::toolkit::ToolRegistry::new()),
+        "帮我查一下设备状态",
+        vec!["data:image/png;base64,iVBORw0KGgo=".to_string()],
+        Default::default(),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let mut notes = Vec::new();
+    while let Some(ev) = stream_fs.next().await {
+        if let crate::agent::types::AgentEvent::SystemNote { note } = ev {
+            notes.push(note);
+        }
+    }
+    assert_eq!(
+        requests_fs.lock().unwrap().len(),
+        2,
+        "multimodal stream must trigger exactly 1 bounded foreshadow_continue"
+    );
+    assert!(
+        notes.iter().any(|n| n.contains("本次未取得结果")),
+        "after spending the 1x foreshadow budget, multimodal must emit honest no-result note: {notes:?}"
     );
 }

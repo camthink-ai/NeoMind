@@ -820,8 +820,9 @@ mod multimodal_recovery_guards {
         assert_no_secret(&events, &state).await;
     }
 
-    /// Dead-end continuation buffer + the summary that follows it: both
-    /// consumers must drop the reasoning channel.
+    /// Multi-round foreshadow continuation + final reply on the unified
+    /// multimodal engine: reasoning on intermediate and final rounds must
+    /// never leak into Content events or persisted assistant content.
     #[tokio::test]
     async fn multimodal_continuation_buffer_drops_reasoning_channel() {
         let rt = MockLlmRuntime::new(vec![
@@ -829,17 +830,17 @@ mod multimodal_recovery_guards {
                 "shell",
                 serde_json::json!({ "command": "neomind device list" }),
             ),
-            // Continuation answer: reasoning plus a public line, no tool
-            // calls — falls through to the summary.
-            MockResponse::text("I will create the dashboard next.")
-                .with_thinking(SECRET_CONTINUATION),
+            // Round 2 ends on an action foreshadow with private reasoning —
+            // unified engine triggers bounded NM-250 foreshadow_continue once.
+            MockResponse::text("我现在来创建仪表盘：").with_thinking(SECRET_CONTINUATION),
             MockResponse::text(PUBLIC_SUMMARY).with_thinking(SECRET_SUMMARY),
         ]);
         let (events, state) = run_multimodal(&rt, "创建一个温湿度仪表盘").await;
-        assert!(events.iter().any(|e| matches!(
-            e,
-            AgentEvent::Progress { ref stage, .. } if stage.as_deref() == Some("continuing")
-        )));
+        assert_eq!(
+            rt.call_count(),
+            3,
+            "unified engine must run bounded foreshadow continue"
+        );
         assert!(joined_content(&events).contains(PUBLIC_SUMMARY));
         assert_no_secret(&events, &state).await;
     }

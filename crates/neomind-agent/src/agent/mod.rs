@@ -816,8 +816,10 @@ impl Agent {
                     || self.config.allowed_tools.iter().any(|a| a == &d.name)
             });
         }
-        // Discoverable new-execution protocol on mutating tools (schema + prompt).
-        task_continuity::inject_new_operation_protocol(&mut defs);
+        // `_new_operation` is no longer unconditionally injected into every
+        // mutating tool schema up front; the LLM request layer exposes it only
+        // for tools that actually have a terminal write operation in TaskState
+        // (Succeeded / Failed / Unknown), eliminating schema noise on clean turns.
         defs
     }
 }
