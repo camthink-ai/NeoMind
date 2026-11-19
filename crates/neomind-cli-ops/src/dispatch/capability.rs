@@ -61,6 +61,9 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
             ExtensionCommand::List { .. }
             | ExtensionCommand::Get { .. }
             | ExtensionCommand::Status { .. }
+            | ExtensionCommand::Logs { .. }
+            | ExtensionCommand::Validate { .. }
+            | ExtensionCommand::Config { set: None, .. }
             | ExtensionCommand::MarketList { .. }
             | ExtensionCommand::Commands { .. } => ProvenReadOnly,
             // NM-240: classify by preparing a real PreparedInvoke and binding
@@ -154,7 +157,10 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
             _ => Mutating,
         },
         Command::Push { push_cmd } => match push_cmd {
-            PushCommand::List | PushCommand::Get { .. } | PushCommand::Stats => ProvenReadOnly,
+            PushCommand::List
+            | PushCommand::Get { .. }
+            | PushCommand::Logs { .. }
+            | PushCommand::Stats => ProvenReadOnly,
             _ => Mutating,
         },
         Command::Widget { widget_cmd } => match widget_cmd {
@@ -338,6 +344,31 @@ mod tests {
         assert_eq!(
             classify_line("extension commands weather-forecast-v2"),
             CliSideEffect::ProvenReadOnly
+        );
+    }
+
+    #[test]
+    fn extension_logs_validate_readonly_config_and_push_logs_are_read_only() {
+        assert_eq!(
+            classify_line("extension logs weather-forecast-v2 --lines 50"),
+            CliSideEffect::ProvenReadOnly
+        );
+        assert_eq!(
+            classify_line("extension config weather-forecast-v2"),
+            CliSideEffect::ProvenReadOnly
+        );
+        assert_eq!(
+            classify_line("extension validate ./pkg.nep"),
+            CliSideEffect::ProvenReadOnly
+        );
+        assert_eq!(
+            classify_line("push logs target-1 --limit 20"),
+            CliSideEffect::ProvenReadOnly
+        );
+        // Writing config with --set must stay Mutating.
+        assert_eq!(
+            classify_line("extension config weather-forecast-v2 --set {\"city\":\"Beijing\"}"),
+            CliSideEffect::Mutating
         );
     }
 

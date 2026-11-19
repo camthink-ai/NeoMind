@@ -1202,6 +1202,18 @@ fn apply_truncation_pipeline(
 pub(crate) fn classify_shell_capability(
     cmd: &str,
 ) -> crate::agent::task_continuity::ToolCapability {
+    classify_shell_capability_with_args(cmd, &serde_json::json!({}))
+}
+
+/// Classify a shell tool call using both `command` and structured `args`
+/// (e.g. `params`). Strips leaked host-meta tokens (`_new_operation`,
+/// `--prepared-operation-id`) before clap parsing so a read-only query does
+/// not degrade into `mutating_unknown_sensitive`, and reflects structured
+/// `params` (e.g. `extension config <id>` + `params` → `Mutating`).
+pub(crate) fn classify_shell_capability_with_args(
+    cmd: &str,
+    args: &Value,
+) -> crate::agent::task_continuity::ToolCapability {
     use crate::agent::task_continuity::ToolCapability;
     use neomind_cli_ops::dispatch::CliSideEffect;
 
@@ -1216,7 +1228,7 @@ pub(crate) fn classify_shell_capability(
             use crate::agent::task_continuity::RetryPolicy;
             let mut any_mutating = false;
             for part in &parts {
-                let cap = classify_shell_capability(part);
+                let cap = classify_shell_capability_with_args(part, args);
                 match cap.retry_policy {
                     RetryPolicy::Never => {
                         return ToolCapability::mutating_unknown_sensitive();
@@ -1251,6 +1263,27 @@ pub(crate) fn classify_shell_capability(
         Ok(a) => a,
         Err(_) => return ToolCapability::mutating_unknown_sensitive(),
     };
+    // Strip leaked host-meta tokens (`_new_operation=true`, `--_new_operation`,
+    // `--prepared-operation-id`) before clap classification so a read-only
+    // query is never downgraded to `mutating_unknown_sensitive`.
+    let mut argv = strip_host_meta_from_argv(argv);
+
+    // Reflect structured shell `params` onto the command's primary JSON flag
+    // for classification (e.g. `extension config <id>` with `params` is a write,
+    // while bare `extension config <id>` is read-only).
+    if let Some(params_val) = args.get("params").filter(|v| v.is_object() || v.is_array()) {
+        if let Some(spec) = neomind_cli_ops::json_arg::primary_json_spec(&argv) {
+            let file_flag = format!("{}-file", spec.flag);
+            if !argv
+                .iter()
+                .any(|a| a == spec.flag || a.as_str() == file_flag)
+            {
+                argv.push(spec.flag.to_string());
+                argv.push(params_val.to_string());
+            }
+        }
+    }
+
     match neomind_cli_ops::dispatch::classify_argv(&argv) {
         Ok(CliSideEffect::ProvenReadOnly) => ToolCapability::read_query(),
         Ok(CliSideEffect::Mutating) => ToolCapability::mutating_write(),
@@ -1414,9 +1447,9 @@ pub(crate) fn bind_extension_invoke_prepared_token(
     Ok(argv)
 }
 
-/// Reject when shell `params` object conflicts with the command's primary
-/// JSON flag (`--params`/`--set`/`--components`/…), or when `params` is
-/// present but not an object.
+/// Reject when shell `params` conflicts with the command's primary JSON flag
+/// (`--params`/`--set`/`--components`/`--ids`/`--body`/`--input`/`--config`),
+/// or when `params` has the wrong JSON container kind (object vs array).
 pub fn validate_extension_params_sources(args: &Value) -> std::result::Result<(), String> {
     let Some(params_val) = args.get("params") else {
         return Ok(());
@@ -1424,9 +1457,9 @@ pub fn validate_extension_params_sources(args: &Value) -> std::result::Result<()
     if params_val.is_null() {
         return Ok(());
     }
-    if !params_val.is_object() {
+    if !params_val.is_object() && !params_val.is_array() {
         return Err(
-            "shell params must be a JSON object (primary JSON payload for --params/--set/--components/…)"
+            "shell params must be a JSON object or array (primary JSON payload for --params/--set/--components/--ids/--body/--input/--config)"
                 .into(),
         );
     }
@@ -1440,14 +1473,30 @@ pub fn validate_extension_params_sources(args: &Value) -> std::result::Result<()
     }
     let argv = tokenize_neomind_command(cmd).map_err(|e| e.to_string())?;
     let argv = strip_host_meta_from_argv(argv);
-    let Some(flag) = neomind_cli_ops::json_arg::primary_json_flag(&argv) else {
+    let Some(spec) = neomind_cli_ops::json_arg::primary_json_spec(&argv) else {
         // Structured params with no known primary flag — ignore (legacy callers).
         return Ok(());
     };
+    match spec.kind {
+        neomind_cli_ops::json_arg::ExpectedJsonKind::Object if !params_val.is_object() => {
+            return Err(format!(
+                "shell params for `{}` must be a JSON object",
+                spec.flag
+            ));
+        }
+        neomind_cli_ops::json_arg::ExpectedJsonKind::Array if !params_val.is_array() => {
+            return Err(format!(
+                "shell params for `{}` must be a JSON array",
+                spec.flag
+            ));
+        }
+        _ => {}
+    }
+    let flag = spec.flag;
     let file_flag = format!("{flag}-file");
     if argv.iter().any(|a| a == flag || a.as_str() == file_flag) {
         return Err(format!(
-            "conflict: pass JSON via shell `params` object OR `{flag}` in command — not both"
+            "conflict: pass JSON via shell `params` OR `{flag}` in command — not both"
         ));
     }
     Ok(())
@@ -1462,7 +1511,7 @@ fn extension_invoke_host_context_from_args(
         .and_then(|v| v.as_str())
         .map(str::to_string);
     let structured = args.get("params").and_then(|v| {
-        if v.is_object() {
+        if v.is_object() || v.is_array() {
             Some(v.clone())
         } else if v.is_null() {
             Some(serde_json::json!({}))
@@ -1884,7 +1933,7 @@ impl ShellTool {
                         None
                     } else {
                         Some(
-                            "device control --params takes the command's own param object from `device get` (see params_example). \
+                            "Pass the command's own param object from `device get` via shell `params` (or --params; see shell_example / params_example). \
                              Do not wrap as protocol {\"cmd\":...,\"params\":{...}}; the host builds that envelope. \
                              Validation failure means the command was NOT sent."
                                 .to_string(),
@@ -1903,7 +1952,7 @@ impl ShellTool {
                 } else if action == "create" && is_validation {
                     Some("Required field: --name. Example: neomind dashboard create --name \"My Dashboard\"".to_string())
                 } else if action == "update" {
-                    Some("update --components full-replaces the widget array and requires --replace-all. For ONE widget use 'neomind dashboard update-component <ID> --component-id <CID> --set {json}' (deep-merge patch); to add widgets use 'add-components'; to remove use 'remove-components'.".to_string())
+                    Some("update --components full-replaces the widget array and requires --replace-all. For ONE widget use shell with command=\"neomind dashboard update-component <ID> --component-id <CID>\" and params={...} (deep-merge patch); to add widgets use add-components with params=[...]; to remove use remove-components with params=[\"<CID>\"].".to_string())
                 } else {
                     Some("Available actions: list, get, create, update, add-components, update-component, remove-components, delete, share.".to_string())
                 }
@@ -1938,7 +1987,7 @@ impl ShellTool {
                 } else if action == "install" && is_validation {
                     Some("Provide the extension zip file path. Use 'neomind extension market-list' to browse marketplace.".to_string())
                 } else if action == "config" {
-                    Some("Usage: neomind extension config <ID> to view, or neomind extension config <ID> --set '{\"key\":\"value\"}' to update.".to_string())
+                    Some("Usage: `neomind extension config <ID>` to view, or shell with command=\"neomind extension config <ID>\" and params={\"key\":\"value\"} to update.".to_string())
                 } else if action == "commands" || action == "invoke" {
                     Some("Concrete task: neomind extension commands --search \"<task>\" (use shell_example). Overview: extension list — do not search \"extension capabilities\". Reuse known on follow-up.".to_string())
                 } else {
@@ -1974,7 +2023,7 @@ impl ShellTool {
                 } else if action == "send" && is_validation {
                     Some("Required fields: --title, --body, --severity (info|warning|critical|emergency). Example: neomind message send --title \"Alert\" --body \"High temp\" --severity warning".to_string())
                 } else if action == "channel-update" {
-                    Some("Usage: neomind message channel-update --name <N> --config '<JSON>'. To filter by severity: --config '{\"min_severity\":\"warning\"}'. To filter by source type: --config '{\"source_types\":[\"device\"]}'. channel-create uses --name flag; channel-delete/channel-test take name as positional arg.".to_string())
+                    Some("Usage: shell with command=\"neomind message channel-update --name <N>\" and params={\"min_severity\":\"warning\"} (or --config '<JSON>'). To filter by source type: params={\"source_types\":[\"device\"]}. channel-create uses --name flag; channel-delete/channel-test take name as positional arg.".to_string())
                 } else {
                     Some("Available actions: list, get, send, read, delete, channel-list, channel-get, channel-types, channel-type-schema, channel-create, channel-update, channel-delete, channel-test.".to_string())
                 }
@@ -2077,11 +2126,14 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
             serde_json::json!({
                 "command": {
                     "type": "string",
-                    "description": "The shell command to execute. Supports pipes, redirections, and other shell features. For neomind commands that take JSON (--params/--set/--components/--body/--input/--config), prefer the structured `params` object instead of embedding quoted JSON in this string. Never put `_new_operation` inside this string — it is a separate tool field."
+                    "description": "The shell command to execute. Supports pipes, redirections, and other shell features. For neomind commands that take JSON (--params/--set/--components/--ids/--body/--input/--config), prefer the structured `params` field instead of embedding quoted JSON in this string. Never put `_new_operation` inside this string — it is a separate tool field."
                 },
                 "params": {
-                    "type": "object",
-                    "description": "Optional structured JSON for the command's primary JSON flag (--params for device control / extension invoke, --set for dashboard update-component / extension config, --components for add-components, --body for rules, etc.). Prefer this over quoting JSON in `command`. Do not also pass the same flag in `command`."
+                    "anyOf": [
+                        { "type": "object" },
+                        { "type": "array" }
+                    ],
+                    "description": "Optional structured JSON payload (object or array) for the command's primary JSON flag (--params for device control / extension invoke, --set for dashboard update-component / extension config, --components/--ids array for dashboard add/remove-components, --body for rules, --input for rule test / transform test-code, --config for device/push/message channel). Prefer this over quoting JSON in `command`. Do not also pass the same flag in `command`."
                 },
                 "timeout": {
                     "type": "number",
@@ -2789,14 +2841,16 @@ mod dispatch_edge_tests {
         assert_eq!(toks, ["rule", "create", "--name", "温湿度告警"]);
     }
 
-    /// NM-254: `device get` shell_example must be a `--params '<JSON>'` string
-    /// that survives the shell invoke tokenizer and delivers byte-identical
-    /// text (CJK + spaces + `'`) to the device adapter exactly once.
+    /// NM-254 + P0-1: `device get` `shell_example` is a structured
+    /// `{command, params}` object that survives shell structured `params`
+    /// injection (and the terminal CLI `--params '<JSON>'` form still survives
+    /// verbatim tokenization) and delivers byte-identical text (CJK + spaces + `'`)
+    /// to the device adapter exactly once.
     #[tokio::test]
     async fn nm254_device_shell_example_cjk_space_quote_roundtrips_to_adapter() {
         use clap::Parser;
         use futures::Stream;
-        use neomind_cli_ops::device::device_control_shell_example;
+        use neomind_cli_ops::device::{device_control_cli_example, device_control_shell_example};
         use neomind_cli_ops::dispatch::commands::{Args, Command, DeviceCommand};
         use neomind_core::EventBus;
         use neomind_devices::mdl::MetricDataType;
@@ -2812,39 +2866,66 @@ mod dispatch_edge_tests {
         let params = serde_json::json!({"text": text});
         let example = device_control_shell_example("eink-nm254", "render_text", &params)
             .expect("reliable object params must yield a shell_example");
+        validate_extension_params_sources(&example)
+            .expect("structured shell_example must pass shell validation");
 
-        // Verbatim through the shell invoke path (same tokenizer as in-process dispatch).
-        let argv = tokenize_neomind_command(&example).expect("example must tokenize");
-        let parsed = Args::try_parse_from(argv.iter()).expect("example must clap-parse");
-        let Command::Device { device_cmd } = parsed.command else {
-            panic!("expected device command from shell_example");
-        };
-        let DeviceCommand::Control {
-            id,
-            command,
-            params: params_flag,
-            param,
-        } = device_cmd
-        else {
-            panic!("expected device control from shell_example");
-        };
-        assert!(
-            param.is_empty(),
-            "shell_example uses --params, not repeated --param"
-        );
-        let params_json: serde_json::Value = serde_json::from_str(
-            params_flag
-                .as_deref()
-                .expect("--params must be present on shell_example"),
-        )
-        .expect("--params JSON");
-        assert_eq!(
-            params_json["text"].as_str(),
-            Some(text),
-            "tokenizer+clap must preserve text byte/char-identical"
-        );
-        assert_eq!(id, "eink-nm254");
-        assert_eq!(command, "render_text");
+        // Route structured {command, params} through host-context argv injection.
+        let cmd_str = example["command"].as_str().expect("command string");
+        let base_argv = tokenize_neomind_command(cmd_str).expect("command must tokenize");
+        let host_ctx = extension_invoke_host_context_from_args(&example).expect("host ctx");
+        let injected_argv =
+            neomind_cli_ops::dispatch::with_extension_invoke_host_context(host_ctx, async {
+                inject_structured_json_argv(base_argv)
+            })
+            .await
+            .expect("structured params injection");
+
+        // Terminal CLI string form must also tokenize + parse cleanly.
+        let cli_example =
+            device_control_cli_example("eink-nm254", "render_text", &params).expect("CLI example");
+        let cli_argv = tokenize_neomind_command(&cli_example).expect("CLI example must tokenize");
+
+        let mut parsed_params_json = serde_json::Value::Null;
+        let mut parsed_id = String::new();
+        let mut parsed_command = String::new();
+        for argv in [injected_argv, cli_argv] {
+            let parsed = Args::try_parse_from(argv.iter()).expect("example must clap-parse");
+            let Command::Device { device_cmd } = parsed.command else {
+                panic!("expected device command from shell_example");
+            };
+            let DeviceCommand::Control {
+                id,
+                command,
+                params: params_flag,
+                param,
+            } = device_cmd
+            else {
+                panic!("expected device control from shell_example");
+            };
+            assert!(
+                param.is_empty(),
+                "shell_example uses --params, not repeated --param"
+            );
+            let pj: serde_json::Value = serde_json::from_str(
+                params_flag
+                    .as_deref()
+                    .expect("--params must be present on shell_example"),
+            )
+            .expect("--params JSON");
+            assert_eq!(
+                pj["text"].as_str(),
+                Some(text),
+                "tokenizer+clap must preserve text byte/char-identical"
+            );
+            assert_eq!(id, "eink-nm254");
+            assert_eq!(command, "render_text");
+            parsed_params_json = pj;
+            parsed_id = id;
+            parsed_command = command;
+        }
+        let params_json = parsed_params_json;
+        let id = parsed_id;
+        let command = parsed_command;
 
         struct RecordingAdapter {
             sent: Arc<tokio::sync::Mutex<Vec<(String, String, String)>>>,
@@ -3403,8 +3484,9 @@ mod dispatch_edge_tests {
 #[cfg(test)]
 mod nm247_structured_params_tests {
     use super::{
-        bind_extension_invoke_prepared_token, strip_host_meta_from_argv,
-        validate_extension_params_sources,
+        bind_extension_invoke_prepared_token, classify_shell_capability_with_args,
+        extension_invoke_host_context_from_args, inject_structured_json_argv,
+        strip_host_meta_from_argv, validate_extension_params_sources,
     };
     use neomind_core::extension::{
         begin_instance_generation, classify_and_bind_chat_invoke, invalidate_instance_capability,
@@ -3510,6 +3592,112 @@ mod nm247_structured_params_tests {
             "params": {"city": "Xiamen"}
         });
         assert!(validate_extension_params_sources(&args).is_ok());
+    }
+
+    #[tokio::test]
+    async fn array_params_accepted_and_injected_for_dashboard_array_flags() {
+        let add_args = json!({
+            "command": "neomind dashboard add-components d1",
+            "params": [{"id": "c1", "type": "value-card", "position": {"x":0,"y":0,"w":4,"h":2}}]
+        });
+        validate_extension_params_sources(&add_args)
+            .expect("array params must be accepted for dashboard add-components");
+
+        let rem_args = json!({
+            "command": "neomind dashboard remove-components d1",
+            "params": ["c1", "c2"]
+        });
+        validate_extension_params_sources(&rem_args)
+            .expect("array params must be accepted for dashboard remove-components");
+
+        // Wrong container kind must be rejected cleanly.
+        let wrong_obj_for_add = json!({
+            "command": "neomind dashboard add-components d1",
+            "params": {"id": "c1"}
+        });
+        let err = validate_extension_params_sources(&wrong_obj_for_add).unwrap_err();
+        assert!(err.contains("array"), "{err}");
+
+        let wrong_arr_for_set = json!({
+            "command": "neomind dashboard update-component d1 --component-id c1",
+            "params": ["c1"]
+        });
+        let err = validate_extension_params_sources(&wrong_arr_for_set).unwrap_err();
+        assert!(err.contains("object"), "{err}");
+
+        // Host context + argv injection preserves array JSON cleanly.
+        let ctx = extension_invoke_host_context_from_args(&rem_args).expect("host ctx");
+        let argv = vec![
+            "neomind".into(),
+            "dashboard".into(),
+            "remove-components".into(),
+            "d1".into(),
+        ];
+        let out = neomind_cli_ops::dispatch::with_extension_invoke_host_context(ctx, async {
+            inject_structured_json_argv(argv)
+        })
+        .await
+        .expect("inject array params");
+        assert_eq!(
+            out,
+            vec![
+                "neomind",
+                "dashboard",
+                "remove-components",
+                "d1",
+                "--ids",
+                r#"["c1","c2"]"#,
+            ]
+        );
+    }
+
+    #[test]
+    fn classify_shell_strips_host_meta_and_respects_structured_params() {
+        // Read-only query with leaked _new_operation inside command must stay read_query
+        // (never downgraded to mutating_unknown_sensitive).
+        let cap = classify_shell_capability_with_args(
+            "neomind device get cam-1 _new_operation=true",
+            &json!({}),
+        );
+        assert!(
+            cap.read_only,
+            "leaked _new_operation must not downgrade RO: {cap:?}"
+        );
+
+        let cap_logs = classify_shell_capability_with_args(
+            "neomind extension logs weather-forecast-v2 --_new_operation",
+            &json!({}),
+        );
+        assert!(
+            cap_logs.read_only,
+            "extension logs must be RO: {cap_logs:?}"
+        );
+
+        let cap_push_logs =
+            classify_shell_capability_with_args("neomind push logs p1 --limit 10", &json!({}));
+        assert!(
+            cap_push_logs.read_only,
+            "push logs must be RO: {cap_push_logs:?}"
+        );
+
+        // extension config without --set/params is read-only; WITH structured params is Mutating.
+        let cfg_read = classify_shell_capability_with_args(
+            "neomind extension config weather-forecast-v2",
+            &json!({}),
+        );
+        assert!(
+            cfg_read.read_only,
+            "extension config read must be RO: {cfg_read:?}"
+        );
+
+        let cfg_write = classify_shell_capability_with_args(
+            "neomind extension config weather-forecast-v2",
+            &json!({"params": {"city": "Beijing"}}),
+        );
+        assert!(
+            !cfg_write.read_only,
+            "extension config with params must be Mutating: {cfg_write:?}"
+        );
     }
 
     #[tokio::test]

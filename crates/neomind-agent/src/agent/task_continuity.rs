@@ -124,6 +124,10 @@ pub enum OperationStatus {
     Running,
     Succeeded,
     Failed,
+    /// Pre-submission client/parse/validation rejection or connect refuse
+    /// before reaching backend side effects. Terminal for this attempt, but
+    /// does not lock behind PreferKnown or require `_new_operation` to retry.
+    Rejected,
     /// Timeout / indeterminate outcome — not success; do not auto-replay.
     Unknown,
     /// Cancelled before execution (e.g. Correct of a not-yet-executed op).
@@ -134,7 +138,7 @@ impl OperationStatus {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Succeeded | Self::Failed | Self::Unknown | Self::Cancelled
+            Self::Succeeded | Self::Failed | Self::Rejected | Self::Unknown | Self::Cancelled
         )
     }
 
@@ -1508,6 +1512,27 @@ impl TaskState {
                         }
                     }
                 }
+                OperationStatus::Rejected => {
+                    // Never bypass a prior Unknown on the same fingerprint.
+                    if let Some(prev_unknown) = self
+                        .operations
+                        .iter()
+                        .rev()
+                        .find(|o| {
+                            o.write_fingerprint.as_deref() == Some(write_fingerprint)
+                                && o.status != OperationStatus::Rejected
+                        })
+                        .filter(|o| o.status == OperationStatus::Unknown)
+                    {
+                        WriteDispatch::InquireStatus {
+                            operation_id: prev_unknown.operation_id.clone(),
+                        }
+                    } else {
+                        WriteDispatch::Execute {
+                            operation_id: String::new(),
+                        }
+                    }
+                }
             },
         }
     }
@@ -1567,6 +1592,24 @@ impl TaskState {
             return;
         }
         op.status = OperationStatus::Failed;
+        op.result = Some(StructuredResult {
+            success: false,
+            summary: result.summary,
+            body: result.body,
+            details_ref: result.details_ref,
+        });
+    }
+
+    /// Pre-submission rejection (parse/validation/connect-refuse) — terminal
+    /// for this attempt without recording a write fact or locking PreferKnown.
+    pub fn complete_operation_rejected(&mut self, operation_id: &str, result: StructuredResult) {
+        let Some(op) = self.operation_mut(operation_id) else {
+            return;
+        };
+        if op.status.is_terminal() {
+            return;
+        }
+        op.status = OperationStatus::Rejected;
         op.result = Some(StructuredResult {
             success: false,
             summary: result.summary,
@@ -2015,6 +2058,18 @@ impl TaskState {
                 // Only the Prepared lease candidate may execute; Running =
                 // another holder already in flight.
                 OperationStatus::Prepared => return true,
+                OperationStatus::Rejected => {
+                    let prior_unknown = self
+                        .operations
+                        .iter()
+                        .rev()
+                        .find(|o| {
+                            o.write_fingerprint.as_deref() == Some(write_fingerprint)
+                                && o.status != OperationStatus::Rejected
+                        })
+                        .is_some_and(|o| o.status == OperationStatus::Unknown);
+                    return !prior_unknown;
+                }
                 OperationStatus::Running
                 | OperationStatus::Succeeded
                 | OperationStatus::Failed
@@ -3640,7 +3695,7 @@ pub fn derive_tool_capability_resolved(
                 .unwrap_or("");
             // Platform CLI → parsed command type; other/unknown shell →
             // unknown side-effects. Keyword absence is NOT proven read-only.
-            crate::toolkit::shell::classify_shell_capability(cmd)
+            crate::toolkit::shell::classify_shell_capability_with_args(cmd, canonical_arguments)
         }
         "file_read" | "web_search" | "web_fetch" | "vision" => ToolCapability::read_query(),
         // Skill is polymorphic: search/load are RO; create/update/delete
@@ -4464,37 +4519,153 @@ pub fn finalize_operation_from_tool_result(
                 .error
                 .clone()
                 .unwrap_or_else(|| "tool reported failure".into());
-            state.complete_operation_failed(
+            let rejected = outcome_is_pre_submission_rejection(tool_name, result);
+            let structured = build_structured_result_with_cache(
+                cache,
                 operation_id,
-                build_structured_result_with_cache(
-                    cache,
-                    operation_id,
-                    tool_name,
-                    "failed",
-                    false,
-                    &body,
-                    target.as_deref(),
-                    Some(&err),
-                ),
+                tool_name,
+                if rejected { "rejected" } else { "failed" },
+                false,
+                &body,
+                target.as_deref(),
+                Some(&err),
             );
+            if rejected {
+                state.complete_operation_rejected(operation_id, structured);
+            } else {
+                state.complete_operation_failed(operation_id, structured);
+            }
         }
         Err(e) => {
             let err = e.to_string();
-            state.complete_operation_failed(
+            let rejected = outcome_is_pre_submission_rejection(tool_name, result);
+            let structured = build_structured_result_with_cache(
+                cache,
                 operation_id,
-                build_structured_result_with_cache(
-                    cache,
-                    operation_id,
-                    tool_name,
-                    "failed",
-                    false,
-                    &err,
-                    target.as_deref(),
-                    Some(&err),
-                ),
+                tool_name,
+                if rejected { "rejected" } else { "failed" },
+                false,
+                &err,
+                target.as_deref(),
+                Some(&err),
             );
+            if rejected {
+                state.complete_operation_rejected(operation_id, structured);
+            } else {
+                state.complete_operation_failed(operation_id, structured);
+            }
         }
     }
+}
+
+/// True when a non-unknown failure is guaranteed to have been rejected BEFORE
+/// reaching backend side-effect execution:
+/// - tool argument validation (`ToolError::InvalidArguments`)
+/// - clap syntax/parse rejection (`exit_code == 2` on `shell`)
+/// - local JSON/param validation or unbound `PreparedInvoke` ("not executed")
+/// - API 422 / 400 validation preflight ("was NOT sent", schema/field errors)
+/// - localhost `http_connect` / connection refused ("not submitted")
+///
+/// Always called AFTER [`outcome_is_unknown`] so timeouts / ambiguous transport
+/// remain `OperationStatus::Unknown`. Real server execution errors (5xx,
+/// adapter runtime send failures, etc.) return `false` and stay `Failed`.
+pub fn outcome_is_pre_submission_rejection(
+    tool_name: &str,
+    result: &Result<crate::toolkit::tool::ToolOutput, crate::toolkit::error::ToolError>,
+) -> bool {
+    if outcome_is_unknown(result) {
+        return false;
+    }
+    match result {
+        Err(crate::toolkit::error::ToolError::InvalidArguments(_)) => true,
+        Err(e) => {
+            let l = e.to_string().to_lowercase();
+            l.contains("http_connect:")
+                || l.contains("not submitted")
+                || l.contains("was not sent")
+                || (l.contains("connection refused") && l.contains("not reached"))
+        }
+        Ok(out) => {
+            let resolved = crate::tools::resolve_tool_name(tool_name);
+            if resolved == "shell" && out.data.get("exit_code").and_then(|v| v.as_i64()) == Some(2)
+            {
+                return true;
+            }
+            let mut blob = String::new();
+            if let Some(e) = out.error.as_deref() {
+                blob.push_str(e);
+                blob.push('\n');
+            }
+            if let Some(s) = out.data.get("stderr").and_then(|v| v.as_str()) {
+                blob.push_str(s);
+                blob.push('\n');
+            }
+            if let Some(s) = out.data.get("stdout").and_then(|v| v.as_str()) {
+                blob.push_str(s);
+            }
+            text_indicates_pre_submission_rejection(&blob)
+        }
+    }
+}
+
+fn text_indicates_pre_submission_rejection(text: &str) -> bool {
+    let l = text.to_lowercase();
+    // Explicit connect-refuse / never reached server.
+    if l.contains("http_connect:")
+        || l.contains("not submitted")
+        || (l.contains("connection refused") && l.contains("not reached"))
+    {
+        return true;
+    }
+    // Local pre-dispatch / JSON / argument / PreparedInvoke rejection.
+    if l.contains("invalid json")
+        || l.contains("is not valid json")
+        || l.contains("\"code\":\"invalid_json\"")
+        || l.contains("\"code\": \"invalid_json\"")
+        || l.contains("\"code\":\"missing_name\"")
+        || l.contains("\"code\": \"missing_name\"")
+        || l.contains("\"code\":\"missing_type\"")
+        || l.contains("\"code\": \"missing_type\"")
+        || l.contains("\"code\":\"missing_fields\"")
+        || l.contains("\"code\": \"missing_fields\"")
+        || l.contains("\"code\":\"unknown_type\"")
+        || l.contains("\"code\": \"unknown_type\"")
+        || l.contains("\"code\":\"invalid_schedule_config\"")
+        || l.contains("\"code\": \"invalid_schedule_config\"")
+        || l.contains("conflict: pass json via shell")
+        || l.contains("preparedinvoke missing")
+        || l.contains("preparedinvoke stale")
+        || l.contains("fabricated tool output refused")
+    {
+        return true;
+    }
+    // Server preflight explicitly declaring command was NOT sent.
+    if l.contains("was not sent") || l.contains("not sent:") {
+        return true;
+    }
+    // HTTP 422 Unprocessable Entity is validation before execution.
+    if l.contains("api error (422") {
+        return true;
+    }
+    // HTTP 400 Bad Request when paired with validation/schema/parse markers
+    // (excludes runtime adapter send errors wrapped in 400 like "no adapter connected").
+    if l.contains("api error (400")
+        && (l.contains("missing field")
+            || l.contains("unknown field")
+            || l.contains("missing required")
+            || l.contains("validation")
+            || l.contains("invalid")
+            || l.contains("params_example")
+            || l.contains("input_schema")
+            || l.contains("unknown command")
+            || l.contains("command not found")
+            || l.contains("cannot be empty")
+            || l.contains("must be")
+            || l.contains("failed to deserialize"))
+    {
+        return true;
+    }
+    false
 }
 
 /// Apply a progress-loop stop to TaskState (all entry points: text + image).
@@ -9042,5 +9213,214 @@ mod tests {
             OperationStatus::Unknown,
             "newer write intent must survive interleaved stale persist"
         );
+    }
+
+    #[test]
+    fn pre_submission_rejections_do_not_lock_prefer_known() {
+        use crate::agent::types::LargeDataCache;
+        use crate::toolkit::error::ToolError;
+        use crate::toolkit::tool::ToolOutput;
+
+        let args = serde_json::json!({
+            "command": "neomind dashboard update-component dash-1 --component-id c1",
+            "params": {"position": {"w": 2, "h": 2}}
+        });
+        let fp = write_fingerprint("shell", &serde_json::to_string(&args).unwrap());
+
+        let cases: Vec<(&str, Result<ToolOutput, ToolError>)> = vec![
+            (
+                "clap exit 2",
+                Ok(ToolOutput::success(serde_json::json!({
+                    "exit_code": 2,
+                    "stdout": "",
+                    "stderr": "error: unexpected argument '--width' found"
+                }))),
+            ),
+            (
+                "invalid arguments",
+                Err(ToolError::InvalidArguments(
+                    "shell params for `--components` must be a JSON array".into(),
+                )),
+            ),
+            (
+                "api 400 preflight NOT sent",
+                Ok(ToolOutput::success(serde_json::json!({
+                    "exit_code": 1,
+                    "stdout": "",
+                    "stderr": "API error (400 Bad Request): Failed to send command: Command 'render_text' was NOT sent: missing required top-level params: text."
+                }))),
+            ),
+            (
+                "api 422 validation",
+                Ok(ToolOutput::success(serde_json::json!({
+                    "exit_code": 1,
+                    "stdout": "",
+                    "stderr": "API error (422 Unprocessable Entity): Rule error: missing field condition"
+                }))),
+            ),
+            (
+                "http_connect refused",
+                Ok(ToolOutput::success(serde_json::json!({
+                    "exit_code": 1,
+                    "stdout": "",
+                    "stderr": "transport error (localhost API): http_connect: connection refused. Stage=transport — connection failed before submit; extension business body was not reached (not submitted)."
+                }))),
+            ),
+        ];
+
+        for (label, outcome) in cases {
+            let mut s = TaskState::default();
+            let mut cache = LargeDataCache::default();
+            let MutatingGateOutcome::Proceed { operation_id } =
+                evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, 1)
+            else {
+                panic!("{label}: initial attempt must Proceed");
+            };
+            finalize_operation_from_tool_result(
+                &mut s,
+                &mut cache,
+                &operation_id,
+                "shell",
+                &outcome,
+            );
+            assert_eq!(
+                s.operation(&operation_id).unwrap().status,
+                OperationStatus::Rejected,
+                "{label} must finalize as Rejected, not Failed"
+            );
+            assert!(
+                s.write_ledger.is_empty(),
+                "{label} must not record a write fact"
+            );
+            assert!(s.may_execute_write(&fp), "{label} must allow direct retry");
+
+            // Immediate retry WITHOUT `_new_operation: true` must Proceed (no PreferKnown lock).
+            match evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, 1) {
+                MutatingGateOutcome::Proceed {
+                    operation_id: retry_op,
+                } => assert_ne!(retry_op, operation_id, "{label} retry must open a fresh op"),
+                other => {
+                    panic!("{label}: retry without _new_operation must Proceed, got {other:?}")
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn real_backend_failures_succeeded_and_unknown_still_protected() {
+        use crate::agent::types::LargeDataCache;
+        use crate::toolkit::tool::ToolOutput;
+
+        let args = serde_json::json!({
+            "command": "neomind device control EK410 render_text",
+            "params": {"text": "hello"}
+        });
+        let fp = write_fingerprint("shell", &serde_json::to_string(&args).unwrap());
+
+        // 1) Real runtime backend failure (e.g. adapter send error / 500) stays Failed → PreferKnown.
+        {
+            let mut s = TaskState::default();
+            let mut cache = LargeDataCache::default();
+            let MutatingGateOutcome::Proceed { operation_id } =
+                evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, 1)
+            else {
+                panic!("must Proceed");
+            };
+            let runtime_err = Ok(ToolOutput::success(serde_json::json!({
+                "exit_code": 1,
+                "stdout": "",
+                "stderr": "API error (400 Bad Request): Failed to send command: no adapter connected"
+            })));
+            finalize_operation_from_tool_result(
+                &mut s,
+                &mut cache,
+                &operation_id,
+                "shell",
+                &runtime_err,
+            );
+            assert_eq!(
+                s.operation(&operation_id).unwrap().status,
+                OperationStatus::Failed
+            );
+            assert!(
+                matches!(
+                    evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, 1),
+                    MutatingGateOutcome::ResumeKnown { .. }
+                ),
+                "real backend failure must still PreferKnown"
+            );
+        }
+
+        // 2) Succeeded stays PreferKnown.
+        {
+            let mut s = TaskState::default();
+            let mut cache = LargeDataCache::default();
+            let MutatingGateOutcome::Proceed { operation_id } =
+                evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, 1)
+            else {
+                panic!("must Proceed");
+            };
+            let ok_out = Ok(ToolOutput::success(serde_json::json!({
+                "exit_code": 0,
+                "stdout": "{\"success\":true}",
+                "stderr": ""
+            })));
+            finalize_operation_from_tool_result(
+                &mut s,
+                &mut cache,
+                &operation_id,
+                "shell",
+                &ok_out,
+            );
+            assert_eq!(
+                s.operation(&operation_id).unwrap().status,
+                OperationStatus::Succeeded
+            );
+            assert!(
+                matches!(
+                    evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, 1),
+                    MutatingGateOutcome::ResumeKnown { .. }
+                ),
+                "succeeded op must still PreferKnown"
+            );
+        }
+
+        // 3) Timeout / Unknown stays InquireStatus (even if a later Rejected op exists).
+        {
+            let mut s = TaskState::default();
+            let mut cache = LargeDataCache::default();
+            let MutatingGateOutcome::Proceed { operation_id } =
+                evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, 1)
+            else {
+                panic!("must Proceed");
+            };
+            let timeout_out = Ok(ToolOutput::success(serde_json::json!({
+                "exit_code": 1,
+                "timed_out": false,
+                "stdout": "",
+                "stderr": "http_timeout: request timed out"
+            })));
+            finalize_operation_from_tool_result(
+                &mut s,
+                &mut cache,
+                &operation_id,
+                "shell",
+                &timeout_out,
+            );
+            assert_eq!(
+                s.operation(&operation_id).unwrap().status,
+                OperationStatus::Unknown
+            );
+            assert!(
+                matches!(
+                    evaluate_mutating_gate(&mut s, "shell", &args, &fp, None, 1),
+                    MutatingGateOutcome::Block {
+                        confirm: Some(_),
+                        ..
+                    }
+                ),
+                "timeout must still require Unknown confirm"
+            );
+        }
     }
 }

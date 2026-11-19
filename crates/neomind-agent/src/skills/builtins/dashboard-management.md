@@ -42,9 +42,9 @@ Load widget/layout/binding reference sections before constructing complex config
 | `neomind dashboard get <id>` | Dashboard details |
 | `neomind dashboard create` | Create a new dashboard |
 | `neomind dashboard update <id>` | Update name/description/layout (--components needs --replace-all) |
-| `neomind dashboard add-components <id>` | Add components (append mode) |
-| `neomind dashboard update-component <id> --component-id <cid> --set '<partial JSON>'` | **Tweak ONE component** (deep merge — preferred) |
-| `neomind dashboard remove-components <id>` | Remove components by ID |
+| `neomind dashboard add-components <id>` (with shell `params: [...]`) | Add components (append mode) |
+| `neomind dashboard update-component <id> --component-id <cid>` (with shell `params: {...}`) | **Tweak ONE component** (deep merge — preferred) |
+| `neomind dashboard remove-components <id>` (with shell `params: ["<cid>"]`) | Remove components by ID |
 | `neomind dashboard delete <id>` | Delete a dashboard |
 | `neomind dashboard share <id>` | Share a dashboard |
 
@@ -66,9 +66,9 @@ Ask → answer from this guide with examples (**zero shell writes**). Inspect �
 | `neomind dashboard get <id>` | Dashboard details |
 | `neomind dashboard create` | Create a new dashboard |
 | `neomind dashboard update <id>` | Update name/description/layout (--components needs --replace-all) |
-| `neomind dashboard add-components <id>` | Add components (append mode) |
-| `neomind dashboard update-component <id> --component-id <cid> --set '<partial JSON>'` | **Tweak ONE component** (deep merge — preferred) |
-| `neomind dashboard remove-components <id>` | Remove components by ID |
+| `neomind dashboard add-components <id>` (with shell `params: [...]`) | Add components (append mode) |
+| `neomind dashboard update-component <id> --component-id <cid>` (with shell `params: {...}`) | **Tweak ONE component** (deep merge — preferred) |
+| `neomind dashboard remove-components <id>` (with shell `params: ["<cid>"]`) | Remove components by ID |
 | `neomind dashboard delete <id>` | Delete a dashboard |
 | `neomind dashboard share <id>` | Share a dashboard |
 
@@ -103,12 +103,12 @@ Creating dashboards with data-bound components is the most complex CLI operation
 
 | Command | Purpose |
 |---------|---------|
-| `dashboard add-components <ID> --components '<JSON>'` | **Append** new components — the reply lists added ids, confirms types verified, and gives the next free row (no follow-up get needed) |
-| `dashboard update-component <ID> --component-id c1 --set '{"title":"New"}'` | **Change fields of ONE component** (deep merge — preferred for tweaks) |
-| `dashboard remove-components <ID> --ids '["c1","c2"]'` | Remove components by ID |
-| `dashboard update <ID> --name 'New Name'` | Update metadata only (name, description) |
-| `dashboard update <ID> --replace-all --components '<JSON>'` | Replace ALL components (gated — rarely needed) |
-| `dashboard delete <ID>` | Delete entire dashboard |
+| `shell`: `command="neomind dashboard add-components <ID>"`, `params=[{...}]` (terminal CLI: `--components '<JSON>'`) | **Append** new components — the reply lists added ids, confirms types verified, and gives the next free row (no follow-up get needed) |
+| `shell`: `command="neomind dashboard update-component <ID> --component-id c1"`, `params={"title":"New"}` (terminal CLI: `--set '<JSON>'`) | **Change fields of ONE component** (deep merge — preferred for tweaks) |
+| `shell`: `command="neomind dashboard remove-components <ID>"`, `params=["c1","c2"]` (terminal CLI: `--ids '<JSON>'`) | Remove components by ID |
+| `neomind dashboard update <ID> --name 'New Name'` | Update metadata only (name, description) |
+| `shell`: `command="neomind dashboard update <ID> --replace-all"`, `params=[...]` (terminal CLI: `--components '<JSON>'`) | Replace ALL components (gated — rarely needed) |
+| `neomind dashboard delete <ID>` | Delete entire dashboard |
 
 ## Step-by-Step: Create a Data Dashboard
 

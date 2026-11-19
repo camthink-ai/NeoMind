@@ -413,20 +413,17 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
                 .cloned()
                 .filter(|v| v.is_object())
                 .or_else(|| example_params_value_from_schema(&schema));
-            let example_params = example_val
-                .as_ref()
-                .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "{}".into()))
-                .unwrap_or_else(|| "{}".into());
-            // Model-facing: prefer structured shell params form (NM-247).
-            let invoke_example = if example_val.is_some() {
-                format!(
-                    "shell: command=\"neomind extension invoke {id} {name}\" params={example_params}"
-                )
-            } else {
-                format!(
-                    "shell: command=\"neomind extension invoke {id} {name}\" params={{}} \
-                     (see input_schema — no reliable params_example)"
-                )
+            // Model-facing: single canonical structured `{command, params}` example
+            // matching `extension commands --search` and `device get` (no pseudo-syntax
+            // or conflicting string-quoted CLI forms).
+            let shell_example = match &example_val {
+                Some(ex) => json!({
+                    "command": format!("neomind extension invoke {id} {name}"),
+                    "params": ex,
+                }),
+                None => json!({
+                    "command": format!("neomind extension invoke {id} {name}"),
+                }),
             };
             let mut entry = json!({
                 "id": c.get("command_id").cloned().unwrap_or_else(|| {
@@ -448,10 +445,7 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
                 "ai_exposed": ai_exposed,
                 "disabled": disabled,
                 "ai_invokable": ai_exposed && !disabled,
-                "invoke_example": invoke_example,
-                "cli_invoke_example": format!(
-                    "neomind extension invoke {id} {name} --params '{example_params}'"
-                ),
+                "shell_example": shell_example,
             });
             if let Some(ex) = example_val {
                 if let Some(obj) = entry.as_object_mut() {
@@ -488,7 +482,7 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
     } else {
         let first = invokable[0];
         resp = resp.with_suggestion(format!(
-            "Next: neomind extension invoke {id} {first} --params '{{...}}'  (use input_schema / invoke_example on each command)"
+            "Next: call the shell tool with commands[].shell_example `{{command, params}}` (e.g. command=\"neomind extension invoke {id} {first}\", params={{...}} per input_schema)."
         ));
     }
     Ok(resp)

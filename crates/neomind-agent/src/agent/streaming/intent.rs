@@ -651,34 +651,61 @@ fn shell_command_fingerprint_body(cmd: &str, args: &serde_json::Value) -> String
     let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(trimmed) else {
         return cmd.to_string();
     };
-    let argv = crate::toolkit::shell::strip_host_meta_from_argv(argv);
-    if let Some((base_argv, flag, params)) = primary_json_fingerprint_parts(&argv, args) {
-        return serde_json::json!({
+    let orig_len = argv.len();
+    let stripped = crate::toolkit::shell::strip_host_meta_from_argv(argv);
+    let meta_stripped = stripped.len() != orig_len;
+    if let Some((base_argv, flag, params)) = primary_json_fingerprint_parts(&stripped, args) {
+        return super::super::task_continuity::stable_json_string(&serde_json::json!({
             "argv": base_argv,
             "flag": flag,
             "params": params,
-        })
-        .to_string();
+        }));
     }
-    // Argv JSON preserves each token boundary (unlike `join(" ")`).
-    serde_json::Value::Array(argv.into_iter().map(serde_json::Value::String).collect()).to_string()
+    if !meta_stripped {
+        // No host-meta tokens were stripped and no primary JSON payload is present:
+        // keep the original command string so persisted ledger fingerprints remain
+        // compatible across upgrades and quoted arg boundaries stay intact.
+        return cmd.to_string();
+    }
+    // Host-meta tokens were stripped from a non-JSON command: when every remaining
+    // token is plain (no whitespace or quotes), rejoin with spaces so it matches
+    // the clean command string; otherwise serialize as an argv array to preserve
+    // quoted token boundaries.
+    if stripped.iter().all(|t| {
+        !t.chars()
+            .any(|c| c.is_whitespace() || c == '\'' || c == '"')
+    }) {
+        return stripped.join(" ");
+    }
+    serde_json::Value::Array(
+        stripped
+            .into_iter()
+            .map(serde_json::Value::String)
+            .collect(),
+    )
+    .to_string()
 }
 
 /// Split argv into business argv + primary JSON payload.
 ///
-/// Structured shell `params` and CLI `--params`/`--set`/… canonicalize to the
-/// same pair so write-gate PreferKnown treats them as one operation.
+/// Structured shell `params` (object or array) and CLI `--params`/`--set`/
+/// `--components`/`--ids`/… canonicalize to the same pair so write-gate
+/// PreferKnown treats them as one operation.
 fn primary_json_fingerprint_parts(
     argv: &[String],
     args: &serde_json::Value,
 ) -> Option<(Vec<String>, &'static str, serde_json::Value)> {
-    let flag = neomind_cli_ops::json_arg::primary_json_flag(argv)?;
+    let spec = neomind_cli_ops::json_arg::primary_json_spec(argv)?;
+    let flag = spec.flag;
     let file_flag = format!("{flag}-file");
     let structured = args.get("params").and_then(|p| {
-        if p.is_object() {
+        if p.is_object() || p.is_array() {
             Some(p.clone())
         } else if p.is_null() {
-            Some(serde_json::json!({}))
+            Some(match spec.kind {
+                neomind_cli_ops::json_arg::ExpectedJsonKind::Object => serde_json::json!({}),
+                neomind_cli_ops::json_arg::ExpectedJsonKind::Array => serde_json::json!([]),
+            })
         } else {
             None
         }
@@ -715,7 +742,10 @@ fn primary_json_fingerprint_parts(
         base,
         flag,
         if params.is_null() {
-            serde_json::json!({})
+            match spec.kind {
+                neomind_cli_ops::json_arg::ExpectedJsonKind::Object => serde_json::json!({}),
+                neomind_cli_ops::json_arg::ExpectedJsonKind::Array => serde_json::json!([]),
+            }
         } else {
             params
         },
@@ -1571,6 +1601,45 @@ mod tests {
         assert_eq!(
             fp_clean, fp_obj,
             "dashboard --set and structured params must share one fingerprint"
+        );
+    }
+
+    #[test]
+    fn shell_array_params_and_cli_flag_share_stable_fingerprint() {
+        let add_cli = serde_json::json!({
+            "command": "neomind dashboard add-components dash-1 --components '[{\"type\":\"value-card\",\"id\":\"c1\"}]'"
+        });
+        let add_arr = serde_json::json!({
+            "command": "neomind dashboard add-components dash-1",
+            "params": [{"id": "c1", "type": "value-card"}]
+        });
+        assert_eq!(
+            mutating_write_fingerprint("shell", &add_cli).unwrap(),
+            mutating_write_fingerprint("shell", &add_arr).unwrap(),
+            "add-components CLI string and structured array params must share one key regardless of object key order"
+        );
+
+        let rem_cli = serde_json::json!({
+            "command": "neomind dashboard remove-components dash-1 --ids '[\"c1\",\"c2\"]'"
+        });
+        let rem_arr = serde_json::json!({
+            "command": "neomind dashboard remove-components dash-1",
+            "params": ["c1", "c2"]
+        });
+        assert_eq!(
+            mutating_write_fingerprint("shell", &rem_cli).unwrap(),
+            mutating_write_fingerprint("shell", &rem_arr).unwrap(),
+            "remove-components CLI string and structured array params must share one key"
+        );
+
+        // Read-only commands with leaked _new_operation must return None (never enter write gate).
+        let ro_polluted = serde_json::json!({
+            "command": "neomind extension logs weather-forecast-v2 _new_operation=true"
+        });
+        assert_eq!(
+            mutating_write_fingerprint("shell", &ro_polluted),
+            None,
+            "RO command with leaked _new_operation must not enter write gate"
         );
     }
 

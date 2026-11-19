@@ -78,30 +78,188 @@ fn strip_unpaired_edge_quotes(s: &str) -> String {
     out
 }
 
-/// Which primary JSON flag a `neomind …` argv expects for structured shell
-/// `params` injection. Multi-flag create/update commands return the most
-/// common primary payload flag; callers still XOR against an existing flag.
-pub fn primary_json_flag(argv: &[String]) -> Option<&'static str> {
+/// Expected top-level JSON container kind for a CLI command's primary JSON flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpectedJsonKind {
+    Object,
+    Array,
+}
+
+/// Primary JSON flag specification for a `neomind …` command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrimaryJsonSpec {
+    pub flag: &'static str,
+    pub kind: ExpectedJsonKind,
+}
+
+/// Canonical `(domain, action) -> PrimaryJsonSpec` table shared by structured
+/// shell `params` validation/injection and cross-check unit tests against clap.
+pub const PRIMARY_JSON_SPECS: &[(&str, &str, PrimaryJsonSpec)] = &[
+    (
+        "extension",
+        "invoke",
+        PrimaryJsonSpec {
+            flag: "--params",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "device",
+        "control",
+        PrimaryJsonSpec {
+            flag: "--params",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "device",
+        "create",
+        PrimaryJsonSpec {
+            flag: "--config",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "device",
+        "update",
+        PrimaryJsonSpec {
+            flag: "--config",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "extension",
+        "config",
+        PrimaryJsonSpec {
+            flag: "--set",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "dashboard",
+        "update-component",
+        PrimaryJsonSpec {
+            flag: "--set",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "dashboard",
+        "add-components",
+        PrimaryJsonSpec {
+            flag: "--components",
+            kind: ExpectedJsonKind::Array,
+        },
+    ),
+    (
+        "dashboard",
+        "remove-components",
+        PrimaryJsonSpec {
+            flag: "--ids",
+            kind: ExpectedJsonKind::Array,
+        },
+    ),
+    (
+        "dashboard",
+        "create",
+        PrimaryJsonSpec {
+            flag: "--components",
+            kind: ExpectedJsonKind::Array,
+        },
+    ),
+    (
+        "dashboard",
+        "update",
+        PrimaryJsonSpec {
+            flag: "--components",
+            kind: ExpectedJsonKind::Array,
+        },
+    ),
+    (
+        "rule",
+        "create",
+        PrimaryJsonSpec {
+            flag: "--body",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "rule",
+        "update",
+        PrimaryJsonSpec {
+            flag: "--body",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "rule",
+        "test",
+        PrimaryJsonSpec {
+            flag: "--input",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "transform",
+        "test-code",
+        PrimaryJsonSpec {
+            flag: "--input",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "push",
+        "create",
+        PrimaryJsonSpec {
+            flag: "--config",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "push",
+        "update",
+        PrimaryJsonSpec {
+            flag: "--config",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "message",
+        "channel-create",
+        PrimaryJsonSpec {
+            flag: "--config",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
+        "message",
+        "channel-update",
+        PrimaryJsonSpec {
+            flag: "--config",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+];
+
+/// Primary JSON flag + expected container kind for a `neomind …` argv.
+/// Callers still XOR against an existing flag in `argv`.
+pub fn primary_json_spec(argv: &[String]) -> Option<PrimaryJsonSpec> {
     if argv.len() < 3 || argv[0] != "neomind" {
         return None;
     }
     let domain = argv[1].as_str();
     let action = argv[2].as_str();
-    match (domain, action) {
-        ("extension", "invoke") | ("device", "control") => Some("--params"),
-        ("extension", "config") | ("dashboard", "update-component") => Some("--set"),
-        ("dashboard", "add-components") => Some("--components"),
-        ("dashboard", "remove-components") => Some("--ids"),
-        ("dashboard", "create") | ("dashboard", "update") => Some("--components"),
-        ("rule", "create") | ("rule", "update") => Some("--body"),
-        ("transform", "create")
-        | ("transform", "test")
-        | ("transform", "test-code")
-        | ("agent", "invoke") => Some("--input"),
-        ("push", "create") | ("push", "update") | ("message", "channel-create") => Some("--config"),
-        ("connector", "create") | ("connector", "update") => Some("--config"),
-        _ => None,
-    }
+    PRIMARY_JSON_SPECS
+        .iter()
+        .find(|(d, a, _)| *d == domain && *a == action)
+        .map(|(_, _, spec)| *spec)
+}
+
+/// Which primary JSON flag a `neomind …` argv expects for structured shell
+/// `params` injection. Multi-flag create/update commands return the most
+/// common primary payload flag; callers still XOR against an existing flag.
+pub fn primary_json_flag(argv: &[String]) -> Option<&'static str> {
+    primary_json_spec(argv).map(|s| s.flag)
 }
 
 #[cfg(test)]
@@ -166,5 +324,82 @@ mod tests {
             "get_weather".into(),
         ];
         assert_eq!(primary_json_flag(&ext), Some("--params"));
+    }
+
+    #[test]
+    fn primary_json_spec_distinguishes_object_vs_array_and_drops_invalid_mappings() {
+        let add = vec![
+            "neomind".into(),
+            "dashboard".into(),
+            "add-components".into(),
+            "d1".into(),
+        ];
+        assert_eq!(
+            primary_json_spec(&add),
+            Some(PrimaryJsonSpec {
+                flag: "--components",
+                kind: ExpectedJsonKind::Array,
+            })
+        );
+        let rem = vec![
+            "neomind".into(),
+            "dashboard".into(),
+            "remove-components".into(),
+            "d1".into(),
+        ];
+        assert_eq!(
+            primary_json_spec(&rem),
+            Some(PrimaryJsonSpec {
+                flag: "--ids",
+                kind: ExpectedJsonKind::Array,
+            })
+        );
+        let ch_upd = vec![
+            "neomind".into(),
+            "message".into(),
+            "channel-update".into(),
+            "--name".into(),
+            "ops".into(),
+        ];
+        assert_eq!(
+            primary_json_spec(&ch_upd),
+            Some(PrimaryJsonSpec {
+                flag: "--config",
+                kind: ExpectedJsonKind::Object,
+            })
+        );
+        // `transform create` has no --input flag and must not map to one.
+        let tr_create = vec!["neomind".into(), "transform".into(), "create".into()];
+        assert_eq!(primary_json_spec(&tr_create), None);
+    }
+
+    /// Mechanical anti-drift check: every entry in `PRIMARY_JSON_SPECS` must
+    /// match a real clap subcommand and a real `--<flag>` argument on `Args`.
+    #[test]
+    fn primary_json_specs_match_real_clap_definitions() {
+        use clap::CommandFactory;
+        let root = crate::dispatch::commands::Args::command();
+        for (domain, action, spec) in PRIMARY_JSON_SPECS {
+            let domain_cmd = root
+                .get_subcommands()
+                .find(|c| c.get_name() == *domain)
+                .unwrap_or_else(|| panic!("domain `{domain}` missing from clap Args"));
+            let action_cmd = domain_cmd
+                .get_subcommands()
+                .find(|c| c.get_name() == *action)
+                .unwrap_or_else(|| panic!("action `{domain} {action}` missing from clap Args"));
+            let want_long = spec
+                .flag
+                .strip_prefix("--")
+                .expect("primary flag must start with --");
+            let has_flag = action_cmd
+                .get_arguments()
+                .any(|a| a.get_long() == Some(want_long));
+            assert!(
+                has_flag,
+                "flag `{}` does not exist on clap command `neomind {domain} {action}`",
+                spec.flag
+            );
+        }
     }
 }
