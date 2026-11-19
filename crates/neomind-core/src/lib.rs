@@ -5,6 +5,7 @@
 // alerts module removed - use neomind_messages instead
 pub mod brand;
 pub mod builtin_llm;
+pub mod command_contract;
 pub mod config;
 pub mod cron;
 pub mod crypto;

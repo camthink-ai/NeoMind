@@ -254,6 +254,13 @@ async fn main() -> Result<()> {
             )
             .await,
         ),
+        Command::Operation { operation_cmd } => print_result(
+            neomind_cli_ops::dispatch::handlers::run_operation_cmd_with_context(
+                operation_cmd,
+                &dispatch_ctx,
+            )
+            .await,
+        ),
         Command::Login { data_dir, force } => print_result(
             neomind_cli_ops::dispatch::handlers::run_login_cmd_with_context(
                 data_dir,

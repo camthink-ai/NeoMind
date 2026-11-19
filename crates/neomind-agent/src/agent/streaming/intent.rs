@@ -2093,4 +2093,57 @@ mod tests {
         assert_eq!(ToolResultCache::make_key("shell", &mut_flag), fp_flag);
         assert_eq!(ToolResultCache::make_key("shell", &mut_struct), fp_struct);
     }
+
+    /// P2-1 anti-drift check: every `DomainCommandContract` across Device, Rule,
+    /// Dashboard, and Agent must stay aligned with `derive_tool_capability_resolved`,
+    /// `mutating_write_fingerprint`, and structured-vs-flag canonical equivalence.
+    #[test]
+    fn core_domain_contracts_align_with_agent_capability_and_fingerprints() {
+        use neomind_core::command_contract::{core_domain_contracts, DomainCommandSideEffect};
+
+        for contract in core_domain_contracts() {
+            let ex = contract.shell_example_value();
+            let cap = crate::agent::task_continuity::derive_tool_capability_resolved("shell", &ex);
+            let expected_ro = contract.side_effect == DomainCommandSideEffect::ReadOnly;
+            assert_eq!(
+                cap.read_only, expected_ro,
+                "derive_tool_capability_resolved disagreed with contract for `{} {}`",
+                contract.domain, contract.action
+            );
+
+            let fp_structured = mutating_write_fingerprint("shell", &ex);
+            assert_eq!(
+                fp_structured.is_some(),
+                !expected_ro,
+                "mutating_write_fingerprint presence mismatch for `{} {}`",
+                contract.domain,
+                contract.action
+            );
+
+            // When a primary JSON flag exists, passing the same payload via
+            // CLI flag string vs shell `params` must produce the exact same
+            // canonical write fingerprint and pass ShellTool validation.
+            if let (Some(spec), Some(params)) = (contract.primary_json, ex.get("params")) {
+                crate::toolkit::shell::validate_extension_params_sources(&ex).unwrap_or_else(|e| {
+                    panic!(
+                        "validate_extension_params_sources rejected contract example for `{} {}`: {e}",
+                        contract.domain, contract.action
+                    )
+                });
+                let base_cmd = ex["command"].as_str().unwrap();
+                let flag_cmd = format!(
+                    "{base_cmd} {} '{}'",
+                    spec.flag,
+                    params.to_string().replace('\'', "'\\''")
+                );
+                let flag_args = serde_json::json!({ "command": flag_cmd });
+                let fp_flag = mutating_write_fingerprint("shell", &flag_args);
+                assert_eq!(
+                    fp_structured, fp_flag,
+                    "structured params vs CLI flag fingerprint mismatch for `{} {}`",
+                    contract.domain, contract.action
+                );
+            }
+        }
+    }
 }

@@ -1545,4 +1545,257 @@ mod multimodal_shell_deny {
             "multimodal stream must NOT emit fake green checkmark for failed shell: {mm_events:?}"
         );
     }
+
+    /// P2-2 + E4: In a multi-target device control turn where `device_a` succeeds
+    /// (`adapter_accepted`) and `device_b` fails (`offline`), `drive_react_stream`
+    /// must inject the compact `SystemGoalStatus` hard-fact block with per-target
+    /// receipts into BOTH the normal post-tool follow-up prompt AND the
+    /// empty-reply `chat_stream_summary_for_task` recovery prompt.
+    #[tokio::test]
+    async fn e4_multi_target_partial_failure_injects_system_goal_status_into_followup_and_recovery()
+    {
+        use crate::toolkit::{Tool, ToolOutput};
+        struct MultiDeviceShell;
+        #[async_trait::async_trait]
+        impl Tool for MultiDeviceShell {
+            fn name(&self) -> &str {
+                "shell"
+            }
+            fn description(&self) -> &str {
+                "stub shell"
+            }
+            fn parameters(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": {"type": "string"},
+                        "params": {"type": "object"}
+                    },
+                    "required": ["command"]
+                })
+            }
+            async fn execute(&self, args: serde_json::Value) -> crate::toolkit::Result<ToolOutput> {
+                let cmd = args["command"].as_str().unwrap_or("");
+                if cmd.contains("device_a") {
+                    Ok(ToolOutput::success(serde_json::json!({
+                        "exit_code": 0,
+                        "stdout": serde_json::json!({
+                            "success": true,
+                            "data": {
+                                "device_id": "device_a",
+                                "command": "render_text",
+                                "delivery": "adapter_accepted"
+                            }
+                        }).to_string(),
+                        "stderr": ""
+                    })))
+                } else {
+                    Ok(ToolOutput::success(serde_json::json!({
+                        "exit_code": 1,
+                        "stdout": serde_json::json!({
+                            "success": false,
+                            "error": "offline"
+                        }).to_string(),
+                        "stderr": "Error: offline"
+                    })))
+                }
+            }
+        }
+
+        // Script:
+        // 1) Round 1 calls device_a + device_b in one batch.
+        // 2) Round 2 (normal follow-up) emits empty content (thinking-only wedge),
+        //    triggering `chat_stream_summary_for_task` recovery.
+        // 3) Round 3 (tool-free summary recovery) emits honest per-target answer.
+        let rt = MockLlmRuntime::new(vec![
+            MockResponse {
+                text: String::new(),
+                thinking: None,
+                tool_calls: vec![
+                    serde_json::json!({
+                        "name": "shell",
+                        "arguments": {
+                            "command": "neomind device control device_a render_text",
+                            "params": {"text": "26C"}
+                        }
+                    }),
+                    serde_json::json!({
+                        "name": "shell",
+                        "arguments": {
+                            "command": "neomind device control device_b render_text",
+                            "params": {"text": "26C"}
+                        }
+                    }),
+                ],
+                error_msg: None,
+            },
+            MockResponse::text("").with_thinking("thinking through results..."),
+            MockResponse::text("device_a 已下发(adapter_accepted)，device_b 离线失败。"),
+        ]);
+        let (iface, state, _) = harness(&rt);
+        let mut reg = ToolRegistry::new();
+        reg.register(Arc::new(MultiDeviceShell));
+
+        let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+            iface,
+            state,
+            Arc::new(reg),
+            "把天气同时显示到 device_a 和 device_b",
+            crate::agent::StreamSafeguards::default(),
+            None,
+            None,
+            0,
+        )
+        .await
+        .expect("stream");
+        let _events = collect(stream).await;
+
+        let calls = rt.captured_messages();
+        assert!(
+            calls.len() >= 3,
+            "expected initial + follow-up + empty-reply recovery calls, got {}",
+            calls.len()
+        );
+
+        let followup_blob = calls[1].to_string();
+        assert!(
+            followup_blob.contains("[SystemGoalStatus — Authoritative Execution Facts"),
+            "normal follow-up prompt must include SystemGoalStatus fact block: {followup_blob}"
+        );
+        assert!(
+            followup_blob.contains("device_a: adapter_accepted")
+                && followup_blob.contains("device_b: failed(offline)"),
+            "normal follow-up prompt must carry per-target receipts: {followup_blob}"
+        );
+
+        let recovery_blob = calls[2].to_string();
+        assert!(
+            recovery_blob.contains("[SystemGoalStatus — Authoritative Execution Facts"),
+            "empty-reply recovery prompt must include SystemGoalStatus fact block: {recovery_blob}"
+        );
+        assert!(
+            recovery_blob.contains("device_a: adapter_accepted")
+                && recovery_blob.contains("device_b: failed(offline)"),
+            "empty-reply recovery prompt must carry per-target receipts: {recovery_blob}"
+        );
+    }
+
+    /// P2-2: Running `neomind operation get <op_id>` inside `drive_react_stream`
+    /// when it confirms a prior `Unknown` op is `succeeded` must reconcile
+    /// `TaskState` to `Succeeded` and sync `llm_interface.set_new_operation_protocol_tools`.
+    #[tokio::test]
+    async fn p2_2_operation_get_reconciles_unknown_op_and_syncs_protocol_tools_in_stream() {
+        use crate::toolkit::{Tool, ToolOutput};
+        struct OpGetShell {
+            op_id: String,
+        }
+        #[async_trait::async_trait]
+        impl Tool for OpGetShell {
+            fn name(&self) -> &str {
+                "shell"
+            }
+            fn description(&self) -> &str {
+                "stub shell"
+            }
+            fn parameters(&self) -> serde_json::Value {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": { "command": {"type": "string"} },
+                    "required": ["command"]
+                })
+            }
+            async fn execute(
+                &self,
+                _args: serde_json::Value,
+            ) -> crate::toolkit::Result<ToolOutput> {
+                Ok(ToolOutput::success(serde_json::json!({
+                    "exit_code": 0,
+                    "stdout": serde_json::json!({
+                        "success": true,
+                        "data": {
+                            "operation_id": self.op_id,
+                            "status": "succeeded",
+                            "result_summary": "adapter_accepted",
+                            "evidence": ["delivery=adapter_accepted"]
+                        }
+                    }).to_string(),
+                    "stderr": ""
+                })))
+            }
+        }
+
+        let op_id;
+        let rt = MockLlmRuntime::new(vec![
+            MockResponse::tool_call(
+                "shell",
+                serde_json::json!({ "command": "neomind operation get op-unknown-1" }),
+            ),
+            MockResponse::text("查询确认操作 op-unknown-1 已成功。"),
+        ]);
+        let (iface, state, _) = harness(&rt);
+
+        // Seed an Unknown mutating op with id `op-unknown-1` in TaskState.
+        {
+            let mut st = state.write().await;
+            let args = serde_json::json!({
+                "command": "neomind device control device_a reboot"
+            });
+            let fp = crate::agent::streaming::mutating_write_fingerprint("shell", &args).unwrap();
+            let id = st.task_state.begin_new_operation_for_owner(
+                "shell",
+                Some("device_a".into()),
+                args.to_string(),
+                Some(fp),
+                None,
+            );
+            // Rewrite id to deterministic `op-unknown-1` for our scripted tool call.
+            st.task_state.operations.last_mut().unwrap().operation_id = "op-unknown-1".into();
+            st.task_state.current_operation_id = "op-unknown-1".into();
+            let _ = id;
+            st.task_state.complete_operation_unknown(
+                "op-unknown-1",
+                crate::agent::task_continuity::StructuredResult::with_body(
+                    false,
+                    "http_timeout",
+                    "timed out",
+                    None,
+                ),
+            );
+            op_id = "op-unknown-1".to_string();
+        }
+
+        let mut reg = ToolRegistry::new();
+        reg.register(Arc::new(OpGetShell { op_id }));
+
+        let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+            iface.clone(),
+            state.clone(),
+            Arc::new(reg),
+            "查一下 op-unknown-1 的结果",
+            crate::agent::StreamSafeguards::default(),
+            None,
+            None,
+            0,
+        )
+        .await
+        .expect("stream");
+        let _events = collect(stream).await;
+
+        let st = state.read().await;
+        let op = st
+            .task_state
+            .operation("op-unknown-1")
+            .expect("operation still present");
+        assert_eq!(
+            op.status,
+            crate::agent::task_continuity::OperationStatus::Succeeded,
+            "operation get must reconcile Unknown -> Succeeded in TaskState"
+        );
+        assert!(
+            st.task_state
+                .tools_needing_new_operation_protocol()
+                .contains("shell"),
+            "reconciled terminal op keeps shell in new-operation protocol set"
+        );
+    }
 }

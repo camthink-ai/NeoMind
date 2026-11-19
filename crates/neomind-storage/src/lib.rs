@@ -73,7 +73,8 @@ pub use timeseries::{compress_series_adaptive, DataPoint, TimeSeriesStore};
 pub use vector::{VectorDocument, VectorStore};
 
 pub use session::{
-    PendingStreamState, SessionMessage, SessionMessageImage, SessionStore, StreamStage,
+    PendingStreamState, PersistedOperationRecord, SessionMessage, SessionMessageImage,
+    SessionStore, StreamStage,
 };
 
 pub use messages::{MessageStore, StoredMessage};

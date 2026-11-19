@@ -33,6 +33,52 @@ const PENDING_STREAM_TABLE: TableDefinition<&str, Vec<u8>> =
 // leases are never stored here — agent sanitizes Running→Unknown on restore.
 const OP_LEDGER_TABLE: TableDefinition<&str, Vec<u8>> = TableDefinition::new("op_ledgers");
 
+// Per-operation status index keyed by operation_id (JSON) for O(1) lookup via
+// `GET /api/v1/operations/:id` and `neomind operation get <op_id>`.
+const OPERATIONS_INDEX_TABLE: TableDefinition<&str, Vec<u8>> =
+    TableDefinition::new("operations_index");
+
+/// Persisted operation status entry queryable by `operation_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedOperationRecord {
+    pub operation_id: String,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// One of: `in_progress`, `succeeded`, `failed`, `unknown`, `rejected`, `cancelled`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<String>,
+    #[serde(default)]
+    pub origin_turn_id: u64,
+    #[serde(default)]
+    pub created_at_ms: u64,
+    #[serde(default)]
+    pub updated_at_ms: u64,
+}
+
+impl PersistedOperationRecord {
+    /// True when the operation has reached a confirmed terminal outcome
+    /// (`succeeded`, `failed`, `rejected`, or `cancelled`).
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.status.as_str(),
+            "succeeded" | "failed" | "rejected" | "cancelled"
+        )
+    }
+}
+
 /// Default value for memory_enabled: true.
 const fn default_memory_enabled() -> bool {
     true
@@ -1179,6 +1225,114 @@ impl SessionStore {
         }
         write_txn.commit()?;
         Ok(())
+    }
+
+    /// List all persisted `(session_id, ledger_json)` entries from `op_ledgers`.
+    pub fn list_op_ledgers(&self) -> Result<Vec<(String, Vec<u8>)>, Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(OP_LEDGER_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(e) => {
+                return Err(Error::Storage(format!(
+                    "Failed to open op_ledgers table: {e}"
+                )));
+            }
+        };
+        let mut out = Vec::new();
+        for entry in table.iter()? {
+            let (k, v) = entry?;
+            out.push((k.value().to_string(), v.value()));
+        }
+        Ok(out)
+    }
+
+    /// Insert or update a persisted operation record by `operation_id`.
+    pub fn upsert_operation_record(&self, record: &PersistedOperationRecord) -> Result<(), Error> {
+        if record.operation_id.trim().is_empty() {
+            return Err(Error::InvalidInput("operation_id must not be empty".into()));
+        }
+        let bytes = serde_json::to_vec(record)
+            .map_err(|e| Error::Storage(format!("Failed to serialize operation record: {e}")))?;
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(OPERATIONS_INDEX_TABLE).map_err(|e| {
+                Error::Storage(format!("Failed to open operations_index table: {e}"))
+            })?;
+            table.insert(record.operation_id.as_str(), bytes)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    /// Look up one persisted operation record by `operation_id`.
+    pub fn get_operation_record(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<PersistedOperationRecord>, Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(OPERATIONS_INDEX_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => {
+                return Err(Error::Storage(format!(
+                    "Failed to open operations_index table: {e}"
+                )));
+            }
+        };
+        let Some(raw) = table.get(operation_id)? else {
+            return Ok(None);
+        };
+        let record = serde_json::from_slice::<PersistedOperationRecord>(&raw.value())
+            .map_err(|e| Error::Storage(format!("Failed to decode operation record: {e}")))?;
+        Ok(Some(record))
+    }
+
+    /// List persisted operation records ordered newest-first (`updated_at_ms` desc).
+    pub fn list_operation_records(
+        &self,
+        session_id: Option<&str>,
+        status: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<PersistedOperationRecord>, Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(OPERATIONS_INDEX_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(e) => {
+                return Err(Error::Storage(format!(
+                    "Failed to open operations_index table: {e}"
+                )));
+            }
+        };
+        let mut out = Vec::new();
+        for entry in table.iter()? {
+            let (_k, v) = entry?;
+            let Ok(rec) = serde_json::from_slice::<PersistedOperationRecord>(&v.value()) else {
+                continue;
+            };
+            if let Some(sid) = session_id {
+                if rec.session_id != sid {
+                    continue;
+                }
+            }
+            if let Some(st) = status {
+                if !rec.status.eq_ignore_ascii_case(st) {
+                    continue;
+                }
+            }
+            out.push(rec);
+        }
+        out.sort_by(|a, b| {
+            b.updated_at_ms
+                .cmp(&a.updated_at_ms)
+                .then_with(|| b.created_at_ms.cmp(&a.created_at_ms))
+                .then_with(|| a.operation_id.cmp(&b.operation_id))
+        });
+        if limit > 0 && out.len() > limit {
+            out.truncate(limit);
+        }
+        Ok(out)
     }
 
     // ========== P0.3: Pending Stream State Management ==========
@@ -2697,6 +2851,74 @@ mod retention_tests {
             ],
             "newest stamp must come first regardless of key order"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn persisted_operation_records_roundtrip_filter_and_order() {
+        let dir = scratch("op-index");
+        let db_path = dir.join("sessions.redb");
+        {
+            let store = SessionStore::open_isolated(&db_path).unwrap();
+            store
+                .upsert_operation_record(&PersistedOperationRecord {
+                    operation_id: "op-1".into(),
+                    session_id: "sess-a".into(),
+                    domain: Some("device".into()),
+                    action: Some("control".into()),
+                    tool_name: "shell".into(),
+                    target: Some("device_a".into()),
+                    status: "succeeded".into(),
+                    result_summary: Some("adapter_accepted".into()),
+                    error_summary: None,
+                    evidence: vec!["delivery=adapter_accepted".into()],
+                    origin_turn_id: 1,
+                    created_at_ms: 1000,
+                    updated_at_ms: 1100,
+                })
+                .unwrap();
+            store
+                .upsert_operation_record(&PersistedOperationRecord {
+                    operation_id: "op-2".into(),
+                    session_id: "sess-b".into(),
+                    domain: Some("rule".into()),
+                    action: Some("create".into()),
+                    tool_name: "shell".into(),
+                    target: Some("rule_1".into()),
+                    status: "failed".into(),
+                    result_summary: None,
+                    error_summary: Some("offline".into()),
+                    evidence: vec![],
+                    origin_turn_id: 2,
+                    created_at_ms: 2000,
+                    updated_at_ms: 2500,
+                })
+                .unwrap();
+        }
+        // Reopen to prove redb persistence.
+        let reopened = SessionStore::open_isolated(&db_path).unwrap();
+        let got = reopened.get_operation_record("op-1").unwrap().unwrap();
+        assert_eq!(got.status, "succeeded");
+        assert!(got.is_terminal());
+        assert_eq!(got.target.as_deref(), Some("device_a"));
+
+        let all = reopened.list_operation_records(None, None, 10).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].operation_id, "op-2");
+        assert_eq!(all[1].operation_id, "op-1");
+
+        let only_failed = reopened
+            .list_operation_records(None, Some("failed"), 10)
+            .unwrap();
+        assert_eq!(only_failed.len(), 1);
+        assert_eq!(only_failed[0].operation_id, "op-2");
+
+        let only_sess_a = reopened
+            .list_operation_records(Some("sess-a"), None, 10)
+            .unwrap();
+        assert_eq!(only_sess_a.len(), 1);
+        assert_eq!(only_sess_a[0].operation_id, "op-1");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

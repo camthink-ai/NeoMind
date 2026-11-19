@@ -78,22 +78,17 @@ fn strip_unpaired_edge_quotes(s: &str) -> String {
     out
 }
 
-/// Expected top-level JSON container kind for a CLI command's primary JSON flag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExpectedJsonKind {
-    Object,
-    Array,
-}
-
-/// Primary JSON flag specification for a `neomind …` command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PrimaryJsonSpec {
-    pub flag: &'static str,
-    pub kind: ExpectedJsonKind,
-}
+pub use neomind_core::command_contract::{
+    core_domain_contracts, find_domain_command_contract, find_domain_command_contract_for_argv,
+    DomainCommandContract, DomainCommandSideEffect, ExpectedJsonKind, PrimaryJsonSpec,
+};
 
 /// Canonical `(domain, action) -> PrimaryJsonSpec` table shared by structured
 /// shell `params` validation/injection and cross-check unit tests against clap.
+///
+/// For the 4 core business domains (Device / Rule / Dashboard / Agent), entries
+/// stay locked to [`neomind_core::command_contract::CORE_DOMAIN_CONTRACTS`] via
+/// `primary_json_spec` and anti-drift unit tests.
 pub const PRIMARY_JSON_SPECS: &[(&str, &str, PrimaryJsonSpec)] = &[
     (
         "extension",
@@ -242,10 +237,15 @@ pub const PRIMARY_JSON_SPECS: &[(&str, &str, PrimaryJsonSpec)] = &[
 ];
 
 /// Primary JSON flag + expected container kind for a `neomind …` argv.
-/// Callers still XOR against an existing flag in `argv`.
+/// Consults [`neomind_core::command_contract::CORE_DOMAIN_CONTRACTS`] first for
+/// the 4 core business domains, falling back to [`PRIMARY_JSON_SPECS`] for other
+/// CLI domains. Callers still XOR against an existing flag in `argv`.
 pub fn primary_json_spec(argv: &[String]) -> Option<PrimaryJsonSpec> {
     if argv.len() < 3 || argv[0] != "neomind" {
         return None;
+    }
+    if let Some(contract) = find_domain_command_contract_for_argv(argv) {
+        return contract.primary_json;
     }
     let domain = argv[1].as_str();
     let action = argv[2].as_str();
@@ -408,5 +408,140 @@ mod tests {
                 spec.flag
             );
         }
+    }
+
+    /// P2-1 anti-drift check: every registered `DomainCommandContract` across
+    /// Device / Rule / Dashboard / Agent must match:
+    /// 1) real `Args::command()` clap subcommands and flags (including `key_params` flags)
+    /// 2) `PRIMARY_JSON_SPECS` and `primary_json_spec()`
+    /// 3) its own `shell_example` passes `validate_primary_json` and parses via clap
+    /// 4) `dispatch::capability::classify_argv` side-effect classification.
+    #[test]
+    fn core_domain_command_contracts_align_with_clap_specs_and_capability() {
+        use crate::dispatch::capability::{classify_argv, CliSideEffect};
+        use clap::{CommandFactory, Parser};
+
+        let root = crate::dispatch::commands::Args::command();
+
+        for contract in core_domain_contracts() {
+            let domain_cmd = root
+                .get_subcommands()
+                .find(|c| c.get_name() == contract.domain)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "contract domain `{}` missing from clap Args",
+                        contract.domain
+                    )
+                });
+            let action_cmd = domain_cmd
+                .get_subcommands()
+                .find(|c| c.get_name() == contract.action)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "contract action `{} {}` missing from clap Args",
+                        contract.domain, contract.action
+                    )
+                });
+
+            // Check every `--flag` listed in key_params exists in clap.
+            for param in contract.key_params {
+                if let Some(long) = param.name.strip_prefix("--") {
+                    let exists = action_cmd
+                        .get_arguments()
+                        .any(|a| a.get_long() == Some(long));
+                    assert!(
+                        exists,
+                        "key_param `{}` missing from clap `neomind {} {}`",
+                        param.name, contract.domain, contract.action
+                    );
+                }
+            }
+
+            // Check primary_json matches PRIMARY_JSON_SPECS + primary_json_spec + clap.
+            let base_argv = vec![
+                "neomind".to_string(),
+                contract.domain.to_string(),
+                contract.action.to_string(),
+            ];
+            let table_spec = PRIMARY_JSON_SPECS
+                .iter()
+                .find(|(d, a, _)| *d == contract.domain && *a == contract.action)
+                .map(|(_, _, spec)| *spec);
+            assert_eq!(
+                contract.primary_json, table_spec,
+                "DomainCommandContract.primary_json drifted from PRIMARY_JSON_SPECS for `{} {}`",
+                contract.domain, contract.action
+            );
+            assert_eq!(
+                primary_json_spec(&base_argv),
+                contract.primary_json,
+                "primary_json_spec drifted for `{} {}`",
+                contract.domain,
+                contract.action
+            );
+
+            // Check shell_example: params validate, command + injected primary flag parses in clap,
+            // and classify_argv matches contract.side_effect.
+            let ex = contract.shell_example_value();
+            let ex_cmd = ex["command"]
+                .as_str()
+                .expect("shell_example must have command string");
+            let mut argv = tokenize_simple_shell_example(ex_cmd);
+            if let Some(params) = ex.get("params") {
+                contract.validate_primary_json(params).unwrap_or_else(|e| {
+                    panic!(
+                        "shell_example params failed contract validation for `{} {}`: {e}",
+                        contract.domain, contract.action
+                    )
+                });
+                let spec = contract
+                    .primary_json
+                    .expect("contract with params example must declare primary_json");
+                argv.push(spec.flag.to_string());
+                argv.push(params.to_string());
+            }
+            crate::dispatch::commands::Args::try_parse_from(argv.iter()).unwrap_or_else(|e| {
+                panic!(
+                    "shell_example argv {argv:?} for `{} {}` failed clap parse: {e}",
+                    contract.domain, contract.action
+                )
+            });
+
+            let expected_effect = match contract.side_effect {
+                DomainCommandSideEffect::ReadOnly => CliSideEffect::ProvenReadOnly,
+                DomainCommandSideEffect::Mutating => CliSideEffect::Mutating,
+            };
+            assert_eq!(
+                classify_argv(&argv).unwrap_or_else(|e| panic!(
+                    "classify_argv failed for `{} {}`: {e}",
+                    contract.domain, contract.action
+                )),
+                expected_effect,
+                "side_effect mismatch between DomainCommandContract and capability.rs for `{} {}`",
+                contract.domain,
+                contract.action
+            );
+        }
+    }
+
+    fn tokenize_simple_shell_example(cmd: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cur = String::new();
+        let mut in_quotes = false;
+        for ch in cmd.chars() {
+            match ch {
+                '"' => in_quotes = !in_quotes,
+                c if c.is_whitespace() && !in_quotes => {
+                    if !cur.is_empty() {
+                        out.push(std::mem::take(&mut cur));
+                    }
+                }
+                c => cur.push(c),
+            }
+        }
+        if !cur.is_empty() {
+            out.push(cur);
+        }
+        out
     }
 }

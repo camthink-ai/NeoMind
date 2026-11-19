@@ -382,13 +382,13 @@ pub fn device_control_shell_example(
     cmd_name: &str,
     params: &serde_json::Value,
 ) -> Option<serde_json::Value> {
-    if !params.is_object() {
+    let contract =
+        neomind_core::command_contract::find_domain_command_contract("device", "control")?;
+    if contract.validate_primary_json(params).is_err() {
         return None;
     }
-    Some(json!({
-        "command": format!("neomind device control {device_id} {cmd_name}"),
-        "params": params,
-    }))
+    let command = format!("neomind device control {device_id} {cmd_name}");
+    Some(neomind_core::command_contract::build_structured_shell_example(&command, Some(params)))
 }
 
 /// Terminal CLI string example `neomind device control <id> <cmd> --params '<JSON>'`.

@@ -231,6 +231,17 @@ pub enum Command {
         #[command(subcommand)]
         settings_cmd: SettingsCommand,
     },
+    /// Inspect persisted write-operation ledger status.
+    ///
+    /// Check whether an in-progress or timed-out (`unknown`) operation reached
+    /// a terminal outcome (`succeeded` / `failed`) without replaying it.
+    ///
+    /// Example: `neomind operation get <OP_ID>`
+    /// Example: `neomind operation list --limit 20`
+    Operation {
+        #[command(subcommand)]
+        operation_cmd: OperationCommand,
+    },
     /// Log in by reading a key from the server's auth DB and saving it locally.
     ///
     /// After `neomind login`, the CLI works from any working directory without
@@ -2457,6 +2468,39 @@ pub enum SettingsCommand {
     ///
     /// Example: `neomind settings cleanup`
     Cleanup {},
+}
+
+/// Operation ledger inspection subcommands (read-only).
+#[derive(Subcommand, Debug)]
+pub enum OperationCommand {
+    /// Get persisted status of one operation by operation ID.
+    ///
+    /// Returns domain/action, target, status (`in_progress`, `succeeded`,
+    /// `failed`, `unknown`, `rejected`, `cancelled`), result/error summary,
+    /// and timestamps.
+    ///
+    /// Example: `neomind operation get op-123`
+    Get {
+        /// Operation ID.
+        #[arg(required = true)]
+        id: String,
+    },
+    /// List persisted operations (newest first).
+    ///
+    /// Filter optionally by `--session-id`, `--status`, or `--limit`.
+    ///
+    /// Example: `neomind operation list --limit 20`
+    List {
+        /// Filter by session ID.
+        #[arg(long)]
+        session_id: Option<String>,
+        /// Filter by status (`in_progress`, `succeeded`, `failed`, `unknown`, `rejected`, `cancelled`).
+        #[arg(long)]
+        status: Option<String>,
+        /// Maximum number of operations to return (default: 50).
+        #[arg(short, long)]
+        limit: Option<usize>,
+    },
 }
 
 /// Data connector subcommands (MQTT, webhook, HTTP, etc.).

@@ -8,8 +8,8 @@
 use super::commands::{
     AgentCommand, ApiKeyCommand, Args, Command, ConfigCommand, ConnectorCommand, DashboardCommand,
     DataCommand, DeviceCommand, DeviceTypeCommand, DraftCommand, ExtensionCommand, LlmCommand,
-    MessageCommand, PushCommand, RuleCommand, SettingsCommand, SystemCommand, TransformCommand,
-    UserCommand, WidgetCommand,
+    MessageCommand, OperationCommand, PushCommand, RuleCommand, SettingsCommand, SystemCommand,
+    TransformCommand, UserCommand, WidgetCommand,
 };
 use clap::Parser;
 use serde_json::json;
@@ -190,6 +190,9 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
             | ConnectorCommand::Get { .. }
             | ConnectorCommand::Subscriptions { .. } => ProvenReadOnly,
             _ => Mutating,
+        },
+        Command::Operation { operation_cmd } => match operation_cmd {
+            OperationCommand::Get { .. } | OperationCommand::List { .. } => ProvenReadOnly,
         },
     }
 }
@@ -590,6 +593,8 @@ mod tests {
             "settings timezone",
             "settings timezones",
             "settings retention",
+            "operation get op-1",
+            "operation list",
             "system info",
             "api-key list",
             "user list",

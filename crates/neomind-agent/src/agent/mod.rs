@@ -964,6 +964,17 @@ impl Agent {
     pub async fn snapshot_op_ledger(&self) -> task_continuity::PersistedOpLedger {
         self.internal_state.read().await.snapshot_op_ledger()
     }
+
+    /// Project this session's live operations into API/storage records.
+    pub async fn list_operation_records(&self) -> Vec<neomind_storage::PersistedOperationRecord> {
+        let state = self.internal_state.read().await;
+        state
+            .task_state
+            .operations
+            .iter()
+            .map(|op| op.to_persisted_record(&self.session_id))
+            .collect()
+    }
 }
 impl Agent {
     /// Single durable commit path: bump version + sink (fail closed when untrusted).

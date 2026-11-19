@@ -149,6 +149,18 @@ impl OperationStatus {
             Self::Succeeded | Self::Failed | Self::Unknown | Self::Cancelled
         )
     }
+
+    /// Canonical status string exposed by the operations HTTP API / CLI.
+    pub fn as_api_str(&self) -> &'static str {
+        match self {
+            Self::Prepared | Self::Running => "in_progress",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Rejected => "rejected",
+            Self::Unknown => "unknown",
+            Self::Cancelled => "cancelled",
+        }
+    }
 }
 
 /// How a tool may be retried after a terminal outcome (Round 3).
@@ -257,6 +269,10 @@ pub struct OperationRecord {
     pub operation_id: OperationId,
     pub origin_turn_id: u64,
     pub tool_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
     pub target: Option<String>,
     pub arguments: String,
     pub status: OperationStatus,
@@ -271,6 +287,101 @@ pub struct OperationRecord {
     /// Stream/batch that began this operation (owner-scoped teardown).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_id: Option<StreamOwnerId>,
+    /// Creation timestamp (epoch milliseconds).
+    #[serde(default)]
+    pub created_at_ms: u64,
+    /// Last status transition timestamp (epoch milliseconds).
+    #[serde(default)]
+    pub updated_at_ms: u64,
+}
+
+impl OperationRecord {
+    /// Convert this ledger entry into a storage/API-facing [`neomind_storage::PersistedOperationRecord`].
+    pub fn to_persisted_record(
+        &self,
+        session_id: &str,
+    ) -> neomind_storage::PersistedOperationRecord {
+        let (domain, action) = if self.domain.is_some() || self.action.is_some() {
+            (self.domain.clone(), self.action.clone())
+        } else {
+            let parsed_args =
+                serde_json::from_str::<serde_json::Value>(&self.arguments).unwrap_or_default();
+            extract_operation_domain_action(&self.tool_name, &parsed_args)
+        };
+        let (result_summary, error_summary) = match (&self.status, &self.result) {
+            (OperationStatus::Succeeded, Some(r)) => (Some(r.summary.clone()), None),
+            (
+                OperationStatus::Failed
+                | OperationStatus::Rejected
+                | OperationStatus::Unknown
+                | OperationStatus::Cancelled,
+                Some(r),
+            ) => (None, Some(r.summary.clone())),
+            (_, Some(r)) if r.success => (Some(r.summary.clone()), None),
+            (_, Some(r)) => (None, Some(r.summary.clone())),
+            (_, None) => (None, None),
+        };
+        neomind_storage::PersistedOperationRecord {
+            operation_id: self.operation_id.clone(),
+            session_id: session_id.to_string(),
+            domain,
+            action,
+            tool_name: self.tool_name.clone(),
+            target: self.target.clone(),
+            status: self.status.as_api_str().to_string(),
+            result_summary,
+            error_summary,
+            evidence: self.evidence.clone(),
+            origin_turn_id: self.origin_turn_id,
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.updated_at_ms,
+        }
+    }
+}
+
+/// Compact per-target receipt aggregated by `(target, operation_id)` for
+/// multi-target / multi-step write tasks (E4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TargetReceipt {
+    pub target: String,
+    pub operation_id: OperationId,
+    pub status: OperationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl TargetReceipt {
+    /// Compact one-item summary, e.g. `device_a: adapter_accepted` or
+    /// `device_b: failed(offline)`.
+    pub fn format_compact(&self) -> String {
+        match self.status {
+            OperationStatus::Succeeded => {
+                if let Some(delivery) = self.delivery.as_deref().filter(|s| !s.is_empty()) {
+                    format!("{}: {}", self.target, delivery)
+                } else {
+                    format!("{}: succeeded", self.target)
+                }
+            }
+            OperationStatus::Failed => match self.detail.as_deref().filter(|s| !s.is_empty()) {
+                Some(d) => format!("{}: failed({d})", self.target),
+                None => format!("{}: failed", self.target),
+            },
+            OperationStatus::Unknown => match self.detail.as_deref().filter(|s| !s.is_empty()) {
+                Some(d) => format!("{}: unknown({d})", self.target),
+                None => format!("{}: unknown", self.target),
+            },
+            OperationStatus::Rejected => match self.detail.as_deref().filter(|s| !s.is_empty()) {
+                Some(d) => format!("{}: rejected({d})", self.target),
+                None => format!("{}: rejected", self.target),
+            },
+            OperationStatus::Prepared | OperationStatus::Running => {
+                format!("{}: in_progress", self.target)
+            }
+            OperationStatus::Cancelled => format!("{}: cancelled", self.target),
+        }
+    }
 }
 
 /// How the stream path should treat a mutating write (Round 2 + prod lease).
@@ -878,16 +989,19 @@ impl TaskState {
     ) -> OperationId {
         let tool_name = tool_name.into();
         let arguments = arguments.into();
-        let capability = Some(derive_tool_capability(
-            &tool_name,
-            &serde_json::from_str(&arguments).unwrap_or(serde_json::json!({})),
-        ));
+        let parsed_args =
+            serde_json::from_str::<serde_json::Value>(&arguments).unwrap_or(serde_json::json!({}));
+        let capability = Some(derive_tool_capability(&tool_name, &parsed_args));
+        let (domain, action) = extract_operation_domain_action(&tool_name, &parsed_args);
+        let now = Self::now_ms();
         let id = uuid::Uuid::new_v4().to_string();
         self.current_operation_id = id.clone();
         self.operations.push(OperationRecord {
             operation_id: id.clone(),
             origin_turn_id: self.turn_count,
             tool_name,
+            domain,
+            action,
             target,
             arguments,
             status: OperationStatus::Prepared,
@@ -896,6 +1010,8 @@ impl TaskState {
             write_fingerprint,
             capability,
             owner_id: owner.map(|o| o.to_string()),
+            created_at_ms: now,
+            updated_at_ms: now,
         });
         if !matches!(
             self.status,
@@ -1592,11 +1708,13 @@ impl TaskState {
     /// Atomic Prepared → Running lease. Only the holder may run the tool.
     /// Returns `false` if missing, already Running, or terminal.
     pub fn try_acquire_execution_lease(&mut self, operation_id: &str) -> bool {
+        let now = Self::now_ms();
         let Some(op) = self.operation_mut(operation_id) else {
             return false;
         };
         if op.status == OperationStatus::Prepared {
             op.status = OperationStatus::Running;
+            op.updated_at_ms = now;
             true
         } else {
             false
@@ -1616,6 +1734,7 @@ impl TaskState {
         result: StructuredResult,
         evidence: impl IntoIterator<Item = String>,
     ) {
+        let now = Self::now_ms();
         let fp = {
             let Some(op) = self.operation_mut(operation_id) else {
                 return;
@@ -1626,6 +1745,7 @@ impl TaskState {
             op.status = OperationStatus::Succeeded;
             op.result = Some(result);
             op.evidence.extend(evidence);
+            op.updated_at_ms = now;
             op.write_fingerprint.clone()
         };
         if let Some(fp) = fp {
@@ -1637,6 +1757,7 @@ impl TaskState {
     }
 
     pub fn complete_operation_failed(&mut self, operation_id: &str, result: StructuredResult) {
+        let now = Self::now_ms();
         let Some(op) = self.operation_mut(operation_id) else {
             return;
         };
@@ -1644,6 +1765,7 @@ impl TaskState {
             return;
         }
         op.status = OperationStatus::Failed;
+        op.updated_at_ms = now;
         op.result = Some(StructuredResult {
             success: false,
             summary: result.summary,
@@ -1655,6 +1777,7 @@ impl TaskState {
     /// Pre-submission rejection (parse/validation/connect-refuse) — terminal
     /// for this attempt without recording a write fact or locking PreferKnown.
     pub fn complete_operation_rejected(&mut self, operation_id: &str, result: StructuredResult) {
+        let now = Self::now_ms();
         let Some(op) = self.operation_mut(operation_id) else {
             return;
         };
@@ -1662,6 +1785,7 @@ impl TaskState {
             return;
         }
         op.status = OperationStatus::Rejected;
+        op.updated_at_ms = now;
         op.result = Some(StructuredResult {
             success: false,
             summary: result.summary,
@@ -1672,6 +1796,7 @@ impl TaskState {
 
     /// Timeout / indeterminate — not success; do not ledger a write fact.
     pub fn complete_operation_unknown(&mut self, operation_id: &str, result: StructuredResult) {
+        let now = Self::now_ms();
         let Some(op) = self.operation_mut(operation_id) else {
             return;
         };
@@ -1679,12 +1804,158 @@ impl TaskState {
             return;
         }
         op.status = OperationStatus::Unknown;
+        op.updated_at_ms = now;
         op.result = Some(StructuredResult {
             success: false,
             summary: result.summary,
             body: result.body,
             details_ref: result.details_ref,
         });
+    }
+
+    /// Reconcile a previously `Unknown` (or still `Running`/`Prepared`)
+    /// operation when `neomind operation get <op_id>` confirms a terminal
+    /// server outcome (`succeeded` or `failed`).
+    ///
+    /// Returns `true` if `TaskState` was updated (so callers can persist the
+    /// ledger and refresh `llm_interface.set_new_operation_protocol_tools`).
+    pub fn reconcile_operation_from_lookup(
+        &mut self,
+        operation_id: &str,
+        remote_status: &str,
+        result_summary: Option<&str>,
+        error_summary: Option<&str>,
+        extra_evidence: Vec<String>,
+    ) -> bool {
+        let normalized = remote_status.trim().to_ascii_lowercase();
+        let target_status = match normalized.as_str() {
+            "succeeded" => OperationStatus::Succeeded,
+            "failed" => OperationStatus::Failed,
+            _ => return false,
+        };
+        let now = Self::now_ms();
+        let (changed, fp_to_record) = {
+            let Some(op) = self.operation_mut(operation_id) else {
+                return false;
+            };
+            if !matches!(
+                op.status,
+                OperationStatus::Unknown | OperationStatus::Running | OperationStatus::Prepared
+            ) {
+                return false;
+            }
+            let prev = op.status.as_api_str();
+            op.status = target_status.clone();
+            op.updated_at_ms = now;
+            let summary = match target_status {
+                OperationStatus::Succeeded => result_summary
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("confirmed succeeded via operation get")
+                    .to_string(),
+                OperationStatus::Failed => error_summary
+                    .or(result_summary)
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("confirmed failed via operation get")
+                    .to_string(),
+                _ => unreachable!(),
+            };
+            op.result = Some(StructuredResult::with_body(
+                target_status == OperationStatus::Succeeded,
+                summary.clone(),
+                summary,
+                None,
+            ));
+            op.evidence.push(format!(
+                "reconciled via operation get: {prev} -> {}",
+                op.status.as_api_str()
+            ));
+            for ev in extra_evidence {
+                if !ev.is_empty() && !op.evidence.contains(&ev) {
+                    op.evidence.push(ev);
+                }
+            }
+            let fp = if target_status == OperationStatus::Succeeded {
+                op.write_fingerprint.clone()
+            } else {
+                None
+            };
+            (true, fp)
+        };
+        if !changed {
+            return false;
+        }
+        if let Some(fp) = fp_to_record {
+            self.record_successful_write(operation_id, fp);
+        }
+        // Clear any pending Unknown-re-run confirm request bound to this op.
+        let (keep, removed): (Vec<_>, Vec<_>) = self
+            .pending_confirm_requests
+            .drain(..)
+            .partition(|c| c.prior_operation_id != operation_id);
+        self.pending_confirm_requests = keep;
+        for c in removed {
+            self.confirm_lifecycle_notices
+                .push(ConfirmLifecycleNotice::Removed {
+                    request_id: c.request_id,
+                    reason: ConfirmRemoveReason::Cancelled,
+                });
+        }
+        true
+    }
+
+    /// Inspect a successful `shell` tool result for `neomind operation get <id>`
+    /// and reconcile any matching `Unknown` operation in this [`TaskState`].
+    pub fn reconcile_operation_lookup_tool_result(
+        &mut self,
+        tool_name: &str,
+        arguments: &serde_json::Value,
+        result_data: &serde_json::Value,
+    ) -> bool {
+        if crate::tools::resolve_tool_name(tool_name) != "shell" {
+            return false;
+        }
+        let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        let argv = crate::toolkit::shell::tokenize_neomind_command(cmd.trim())
+            .unwrap_or_else(|_| cmd.split_whitespace().map(str::to_string).collect());
+        let argv = crate::toolkit::shell::strip_host_meta_from_argv(argv);
+        if argv.first().map(String::as_str) != Some("neomind")
+            || argv.get(1).map(String::as_str) != Some("operation")
+            || argv.get(2).map(String::as_str) != Some("get")
+        {
+            return false;
+        }
+        let payload = extract_cli_stdout_json(result_data);
+        let root = payload
+            .as_ref()
+            .and_then(|v| v.get("data"))
+            .or(payload.as_ref())
+            .unwrap_or(result_data);
+        let Some(op_id) = root
+            .get("operation_id")
+            .and_then(|v| v.as_str())
+            .or_else(|| argv.get(3).map(String::as_str))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            return false;
+        };
+        let Some(status) = root.get("status").and_then(|v| v.as_str()) else {
+            return false;
+        };
+        let result_summary = root.get("result_summary").and_then(|v| v.as_str());
+        let error_summary = root.get("error_summary").and_then(|v| v.as_str());
+        let evidence = root
+            .get("evidence")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.reconcile_operation_from_lookup(op_id, status, result_summary, error_summary, evidence)
     }
 
     /// Whether a failed write may open a new Operation under its capability.
@@ -3038,6 +3309,206 @@ impl TaskState {
             .is_ok()
     }
 
+    /// Aggregate per-target write receipts for a turn, keyed by `(target, operation_id)`.
+    ///
+    /// Preserves chronological order and joins each operation with its exact
+    /// delivery tag (`adapter_accepted`, `queued`, `device_ack`,
+    /// `physical_effect_verified`) or compact failure/unknown reason.
+    pub fn turn_write_receipts(&self, turn_id: u64) -> Vec<TargetReceipt> {
+        let mut receipts: Vec<TargetReceipt> = Vec::new();
+        let mut index_by_key: std::collections::HashMap<(String, String), usize> =
+            std::collections::HashMap::new();
+
+        for op in &self.operations {
+            let is_write = op.write_fingerprint.is_some()
+                || op.capability.as_ref().is_some_and(|c| !c.read_only);
+            if !is_write {
+                continue;
+            }
+            if turn_id > 0 && op.origin_turn_id != turn_id {
+                continue;
+            }
+
+            let matching_ev = self
+                .goal_evidences
+                .iter()
+                .rev()
+                .find(|e| e.operation_id.as_deref() == Some(op.operation_id.as_str()));
+
+            let target = op
+                .target
+                .clone()
+                .or_else(|| matching_ev.and_then(|e| e.device_id.clone()))
+                .or_else(|| {
+                    serde_json::from_str::<serde_json::Value>(&op.arguments)
+                        .ok()
+                        .and_then(|v| extract_operation_target(&v))
+                })
+                .or_else(|| match (&op.domain, &op.action) {
+                    (Some(d), Some(a)) => Some(format!("{d}:{a}")),
+                    _ => None,
+                })
+                .unwrap_or_else(|| op.tool_name.clone());
+
+            let delivery = matching_ev.and_then(|e| e.delivery.clone()).or_else(|| {
+                op.result
+                    .as_ref()
+                    .and_then(|r| extract_delivery_tag_from_body(&r.body))
+            });
+
+            let detail = if matches!(
+                op.status,
+                OperationStatus::Failed | OperationStatus::Unknown | OperationStatus::Rejected
+            ) {
+                op.result.as_ref().and_then(extract_compact_failure_reason)
+            } else {
+                None
+            };
+
+            let receipt = TargetReceipt {
+                target: target.clone(),
+                operation_id: op.operation_id.clone(),
+                status: op.status.clone(),
+                delivery,
+                detail,
+            };
+            let key = (target, op.operation_id.clone());
+            if let Some(&idx) = index_by_key.get(&key) {
+                receipts[idx] = receipt;
+            } else {
+                index_by_key.insert(key, receipts.len());
+                receipts.push(receipt);
+            }
+        }
+        receipts
+    }
+
+    /// Format this turn's per-target write receipts as one compact line, e.g.
+    /// `device_a: adapter_accepted; device_b: failed(offline)`.
+    pub fn format_per_target_receipts_line(&self, turn_id: u64) -> Option<String> {
+        let receipts = self.turn_write_receipts(turn_id);
+        if receipts.is_empty() {
+            return None;
+        }
+        Some(
+            receipts
+                .iter()
+                .map(TargetReceipt::format_compact)
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
+    }
+
+    /// Build a compact structured `SystemGoalStatus` hard-fact block for final
+    /// summary prompts whenever the current turn has failures, partial failures,
+    /// unknown/indeterminate operations, or an incomplete/halted goal status (E4).
+    ///
+    /// Returns `None` on completely clean turns so normal replies incur zero
+    /// extra prompt tokens.
+    pub fn build_summary_goal_status_fact_block(
+        &self,
+        turn_id: u64,
+        any_failed_tool_call: bool,
+    ) -> Option<String> {
+        let goal_status = self.system_goal_status();
+        let receipts = self.turn_write_receipts(turn_id);
+
+        let mut succeeded = 0usize;
+        let mut failed = 0usize;
+        let mut unknown = 0usize;
+        let mut rejected = 0usize;
+        let mut in_progress = 0usize;
+        let mut cancelled = 0usize;
+        for r in &receipts {
+            match r.status {
+                OperationStatus::Succeeded => succeeded += 1,
+                OperationStatus::Failed => failed += 1,
+                OperationStatus::Unknown => unknown += 1,
+                OperationStatus::Rejected => rejected += 1,
+                OperationStatus::Prepared | OperationStatus::Running => in_progress += 1,
+                OperationStatus::Cancelled => cancelled += 1,
+            }
+        }
+
+        let has_receipt_issues =
+            failed > 0 || unknown > 0 || rejected > 0 || in_progress > 0 || cancelled > 0;
+        let goal_is_incomplete = matches!(
+            goal_status,
+            SystemGoalStatus::Incomplete { .. }
+                | SystemGoalStatus::Halted { .. }
+                | SystemGoalStatus::Cancelled
+        );
+
+        if !has_receipt_issues && !goal_is_incomplete && !any_failed_tool_call {
+            return None;
+        }
+
+        let overall_tag = match &goal_status {
+            SystemGoalStatus::Halted { .. } => "halted",
+            SystemGoalStatus::Cancelled => "cancelled",
+            _ if succeeded > 0 && has_receipt_issues => "partial_failure",
+            _ if unknown > 0 && failed == 0 => "unknown",
+            _ if failed > 0 || rejected > 0 => "failed",
+            _ if goal_is_incomplete => "incomplete",
+            _ => "failed",
+        };
+
+        let mut out = String::from(
+            "[SystemGoalStatus — Authoritative Execution Facts (DO NOT contradict)]\n",
+        );
+        out.push_str(&format!("- status: {overall_tag}\n"));
+        if !receipts.is_empty() {
+            let line = receipts
+                .iter()
+                .map(TargetReceipt::format_compact)
+                .collect::<Vec<_>>()
+                .join("; ");
+            out.push_str(&format!("- receipts: {line}\n"));
+        }
+        match &goal_status {
+            SystemGoalStatus::Incomplete {
+                reason,
+                level,
+                physical_ok,
+                ..
+            } => {
+                out.push_str(&format!(
+                    "- goal_status: incomplete(level={level:?}, physical_ok={physical_ok}, reason={reason})\n"
+                ));
+            }
+            SystemGoalStatus::CompleteEligible {
+                level,
+                delivery,
+                physical_ok,
+                ..
+            } => {
+                out.push_str(&format!(
+                    "- goal_status: complete_eligible(level={level:?}, delivery={}, physical_ok={physical_ok})\n",
+                    delivery.as_deref().unwrap_or("none")
+                ));
+            }
+            SystemGoalStatus::Halted { reason } => {
+                out.push_str(&format!("- goal_status: halted(reason={reason})\n"));
+            }
+            SystemGoalStatus::Cancelled => {
+                out.push_str("- goal_status: cancelled\n");
+            }
+            SystemGoalStatus::Completed { evidence_id } => {
+                out.push_str(&format!(
+                    "- goal_status: completed(evidence_id={evidence_id})\n"
+                ));
+            }
+            SystemGoalStatus::NotApplicable => {}
+        }
+        out.push_str(
+            "- reporting_rule: Report EVERY target's actual outcome separately based strictly on `receipts` and tool results. \
+             NEVER claim \"all succeeded\" or \"completed\" when any item is failed, rejected, unknown, or incomplete. \
+             For unknown items, state that the outcome is unconfirmed (suggest checking with `neomind operation get <op_id>`). \
+             For `adapter_accepted`/`queued`, state dispatched only (no device ACK or physical effect verified).",
+        );
+        Some(out)
+    }
+
     /// Fold a successful tool result into per-operation goal evidence.
     ///
     /// Updates are monotonic **within the same Operation id only**. A new
@@ -3479,6 +3950,136 @@ fn short_op_id(id: &str) -> &str {
     }
 }
 
+/// Parse the JSON object printed by `neomind …` CLI inside a `ShellTool` result
+/// (`result_data["stdout"]`), returning `None` if stdout is missing or non-JSON.
+fn extract_cli_stdout_json(result_data: &serde_json::Value) -> Option<serde_json::Value> {
+    if let Some(stdout) = result_data.get("stdout").and_then(|v| v.as_str()) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// Extract exact delivery tag (`adapter_accepted`, `queued`, `device_ack`,
+/// `physical_effect_verified`, `extension_accepted`) from a stored result body.
+fn extract_delivery_tag_from_body(body: &str) -> Option<String> {
+    let v = serde_json::from_str::<serde_json::Value>(body).ok()?;
+    let candidates = [
+        v.get("delivery").and_then(|x| x.as_str()),
+        v.get("data")
+            .and_then(|d| d.get("delivery"))
+            .and_then(|x| x.as_str()),
+    ];
+    for c in candidates.into_iter().flatten() {
+        let t = c.trim();
+        if !t.is_empty() {
+            return Some(t.to_string());
+        }
+    }
+    if let Some(stdout_json) = extract_cli_stdout_json(&v) {
+        for c in [
+            stdout_json.get("delivery").and_then(|x| x.as_str()),
+            stdout_json
+                .get("data")
+                .and_then(|d| d.get("delivery"))
+                .and_then(|x| x.as_str()),
+            stdout_json
+                .get("data")
+                .and_then(|d| d.get("data"))
+                .and_then(|d| d.get("delivery"))
+                .and_then(|x| x.as_str()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let t = c.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Extract a compact failure/unknown/rejected reason string for E4 per-target receipts.
+fn extract_compact_failure_reason(result: &StructuredResult) -> Option<String> {
+    let raw = serde_json::from_str::<serde_json::Value>(&result.body)
+        .ok()
+        .and_then(|v| {
+            extract_cli_stdout_json(&v)
+                .and_then(|s| {
+                    s.get("error")
+                        .and_then(|e| e.as_str())
+                        .or_else(|| s.get("message").and_then(|m| m.as_str()))
+                        .map(str::to_string)
+                })
+                .or_else(|| {
+                    v.get("error")
+                        .and_then(|e| e.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_string)
+                })
+                .or_else(|| {
+                    v.get("stderr")
+                        .and_then(|e| e.as_str())
+                        .and_then(|s| s.lines().next())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(str::to_string)
+                })
+        })
+        .unwrap_or_else(|| result.summary.clone());
+
+    let trimmed = raw
+        .trim()
+        .strip_prefix("Error:")
+        .or_else(|| raw.trim().strip_prefix("error:"))
+        .unwrap_or(raw.trim())
+        .trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let single_line: String = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut compact: String = single_line.chars().take(60).collect();
+    if single_line.chars().count() > 60 {
+        compact.push('…');
+    }
+    Some(compact)
+}
+
+/// Extract `(domain, action)` from a tool call (e.g. `shell` running
+/// `neomind device control ...` -> `(Some("device"), Some("control"))`).
+pub fn extract_operation_domain_action(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> (Option<String>, Option<String>) {
+    let real = crate::tools::resolve_tool_name(tool_name);
+    if real == "shell" {
+        if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
+            let argv = crate::toolkit::shell::tokenize_neomind_command(cmd.trim())
+                .unwrap_or_else(|_| cmd.split_whitespace().map(str::to_string).collect());
+            let argv = crate::toolkit::shell::strip_host_meta_from_argv(argv);
+            if argv.first().map(String::as_str) == Some("neomind") {
+                let domain = argv.get(1).cloned();
+                let action = argv.get(2).cloned();
+                return (domain, action);
+            }
+        }
+        return (Some("shell".to_string()), None);
+    }
+    if let Some((ext_id, cmd)) = neomind_core::extension::parse_extension_tool_name(&real) {
+        return (
+            Some("extension".to_string()),
+            Some(format!("{ext_id}:{cmd}")),
+        );
+    }
+    let action = arguments
+        .get("action")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    (Some(real), action)
+}
+
 /// Best-effort target extraction from tool arguments (device / name / channel…).
 pub fn extract_operation_target(arguments: &serde_json::Value) -> Option<String> {
     for key in [
@@ -3498,16 +4099,90 @@ pub fn extract_operation_target(arguments: &serde_json::Value) -> Option<String>
             }
         }
     }
-    // Shell command: look for `--device VALUE` (supports quoted values with spaces).
+    // Shell command: first look for explicit target flags (`--device`, `--name`,
+    // `--channel`, `--id`), then fall back to positional `<ID>` on `neomind <domain> <action> <ID>`.
     if let Some(cmd) = arguments.get("command").and_then(|v| v.as_str()) {
         let parts: Vec<&str> = cmd.split_whitespace().collect();
         for i in 0..parts.len() {
-            if parts[i] == "--device" || parts[i] == "--name" || parts[i] == "--channel" {
+            if matches!(parts[i], "--device" | "--name" | "--channel" | "--id") {
                 if let Some(v) = shell_flag_value(&parts, i) {
                     if !v.is_empty() {
                         return Some(v);
                     }
                 }
+            }
+        }
+        let argv = crate::toolkit::shell::tokenize_neomind_command(cmd.trim())
+            .unwrap_or_else(|_| parts.iter().map(|s| (*s).to_string()).collect());
+        let argv = crate::toolkit::shell::strip_host_meta_from_argv(argv);
+        if argv.first().map(String::as_str) == Some("neomind") && argv.len() >= 4 {
+            let domain = argv[1].as_str();
+            let action = argv[2].as_str();
+            let candidate = argv[3].as_str();
+            let has_positional_target = matches!(
+                (domain, action),
+                (
+                    "device",
+                    "control" | "update" | "delete" | "write-metric" | "get" | "history" | "latest"
+                ) | (
+                    "dashboard",
+                    "update"
+                        | "update-component"
+                        | "add-components"
+                        | "remove-components"
+                        | "delete"
+                        | "share"
+                        | "get"
+                ) | (
+                    "rule",
+                    "update"
+                        | "delete"
+                        | "enable"
+                        | "disable"
+                        | "test"
+                        | "get"
+                        | "explain"
+                        | "history"
+                ) | (
+                    "agent",
+                    "update"
+                        | "delete"
+                        | "control"
+                        | "invoke"
+                        | "clear-memory"
+                        | "send-message"
+                        | "get"
+                        | "memory"
+                        | "executions"
+                        | "latest-execution"
+                        | "conversation"
+                ) | (
+                    "extension",
+                    "invoke" | "config" | "reload" | "uninstall" | "status" | "logs" | "get"
+                ) | (
+                    "transform",
+                    "update" | "delete" | "enable" | "disable" | "get" | "executions"
+                ) | (
+                    "push",
+                    "update"
+                        | "delete"
+                        | "enable"
+                        | "disable"
+                        | "start"
+                        | "stop"
+                        | "test"
+                        | "get"
+                        | "logs"
+                ) | (
+                    "connector",
+                    "update" | "delete" | "enable" | "disable" | "test" | "get"
+                ) | (
+                    "message",
+                    "get" | "read" | "delete" | "channel-get" | "channel-delete" | "channel-test"
+                ) | ("operation", "get")
+            );
+            if has_positional_target && !candidate.is_empty() && !candidate.starts_with('-') {
+                return Some(candidate.to_string());
             }
         }
     }
@@ -6876,6 +7551,8 @@ mod tests {
             operation_id: "op-mig-1".into(),
             origin_turn_id: 1,
             tool_name: "device_command".into(),
+            domain: Some("device".into()),
+            action: Some("control".into()),
             target: Some("D".into()),
             arguments: r#"{"device_id":"D","params":{"z":1,"a":2}}"#.into(),
             status: OperationStatus::Unknown,
@@ -6884,6 +7561,8 @@ mod tests {
             write_fingerprint: Some(old_fp.into()),
             capability: None,
             owner_id: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
         };
         s.restore_op_ledger(PersistedOpLedger {
             version: 1,
@@ -9500,5 +10179,191 @@ mod tests {
                 "timeout must still require Unknown confirm"
             );
         }
+    }
+
+    /// P2-2: `neomind operation get <op_id>` confirming a terminal outcome
+    /// (`succeeded` or `failed`) reconciles a previously `Unknown` operation in
+    /// `TaskState`, records the write fact on success, clears stale pending
+    /// confirms, and keeps `tools_needing_new_operation_protocol()` accurate.
+    #[test]
+    fn operation_get_reconciles_unknown_operation_to_succeeded_and_failed() {
+        let mut s = TaskState {
+            turn_count: 1,
+            ..Default::default()
+        };
+        let args_a = serde_json::json!({
+            "command": "neomind device control device_a render_text",
+            "params": {"text": "sunny"}
+        });
+        let fp_a = crate::agent::streaming::mutating_write_fingerprint("shell", &args_a)
+            .expect("fingerprint");
+        let MutatingGateOutcome::Proceed {
+            operation_id: op_ok,
+        } = evaluate_mutating_gate(&mut s, "shell", &args_a, &fp_a, None, 1)
+        else {
+            panic!("must Proceed");
+        };
+        s.complete_operation_unknown(
+            &op_ok,
+            StructuredResult::with_body(false, "http_timeout", "timed out", None),
+        );
+        // Gate issues a pending confirm for the Unknown op.
+        let MutatingGateOutcome::Block {
+            confirm: Some(_), ..
+        } = evaluate_mutating_gate(&mut s, "shell", &args_a, &fp_a, None, 1)
+        else {
+            panic!("Unknown op must issue confirm");
+        };
+        assert_eq!(s.pending_confirm_requests.len(), 1);
+
+        // `neomind operation get <op_ok>` returns confirmed `succeeded`.
+        let get_args = serde_json::json!({ "command": format!("neomind operation get {op_ok}") });
+        let get_data = serde_json::json!({
+            "exit_code": 0,
+            "stdout": serde_json::json!({
+                "success": true,
+                "data": {
+                    "operation_id": op_ok,
+                    "status": "succeeded",
+                    "result_summary": "adapter_accepted",
+                    "evidence": ["delivery=adapter_accepted"]
+                }
+            }).to_string(),
+            "stderr": ""
+        });
+        assert!(
+            s.reconcile_operation_lookup_tool_result("shell", &get_args, &get_data),
+            "operation get confirming succeeded must reconcile Unknown op"
+        );
+        let op = s.operation(&op_ok).unwrap();
+        assert_eq!(op.status, OperationStatus::Succeeded);
+        assert_eq!(op.domain.as_deref(), Some("device"));
+        assert_eq!(op.action.as_deref(), Some("control"));
+        assert_eq!(op.target.as_deref(), Some("device_a"));
+        assert!(s.pending_confirm_requests.is_empty());
+        assert!(s
+            .write_ledger
+            .iter()
+            .any(|w| w.operation_id == op_ok && w.fingerprint == fp_a));
+        assert!(s.tools_needing_new_operation_protocol().contains("shell"));
+
+        // Second op: Unknown -> Failed reconciliation.
+        let args_b = serde_json::json!({
+            "command": "neomind device control device_b render_text",
+            "params": {"text": "sunny"}
+        });
+        let fp_b = crate::agent::streaming::mutating_write_fingerprint("shell", &args_b)
+            .expect("fingerprint");
+        let MutatingGateOutcome::Proceed {
+            operation_id: op_fail,
+        } = evaluate_mutating_gate(&mut s, "shell", &args_b, &fp_b, None, 1)
+        else {
+            panic!("must Proceed");
+        };
+        s.complete_operation_unknown(
+            &op_fail,
+            StructuredResult::with_body(false, "http_timeout", "timed out", None),
+        );
+        let get_fail_args =
+            serde_json::json!({ "command": format!("neomind operation get {op_fail}") });
+        let get_fail_data = serde_json::json!({
+            "exit_code": 0,
+            "stdout": serde_json::json!({
+                "success": true,
+                "data": {
+                    "operation_id": op_fail,
+                    "status": "failed",
+                    "error_summary": "device offline"
+                }
+            }).to_string(),
+            "stderr": ""
+        });
+        assert!(s.reconcile_operation_lookup_tool_result("shell", &get_fail_args, &get_fail_data));
+        assert_eq!(
+            s.operation(&op_fail).unwrap().status,
+            OperationStatus::Failed
+        );
+        assert!(!s.write_ledger.iter().any(|w| w.operation_id == op_fail));
+    }
+
+    /// E4: multi-target per-item receipts aggregate by `(target, operation_id)`
+    /// and inject a compact `SystemGoalStatus` hard-fact block whenever any
+    /// target fails, is unknown, or the goal is incomplete (while staying silent
+    /// on clean turns).
+    #[test]
+    fn multi_target_receipts_and_system_goal_status_fact_block() {
+        let mut s = TaskState {
+            turn_count: 3,
+            ..Default::default()
+        };
+
+        // Target A succeeds with `adapter_accepted`.
+        let args_a = serde_json::json!({
+            "command": "neomind device control device_a render_text",
+            "params": {"text": "26C"}
+        });
+        let fp_a = crate::agent::streaming::mutating_write_fingerprint("shell", &args_a).unwrap();
+        let MutatingGateOutcome::Proceed { operation_id: op_a } =
+            evaluate_mutating_gate(&mut s, "shell", &args_a, &fp_a, None, 3)
+        else {
+            panic!("must Proceed");
+        };
+        let body_a = serde_json::json!({
+            "exit_code": 0,
+            "stdout": serde_json::json!({
+                "success": true,
+                "data": {"device_id": "device_a", "command": "render_text", "delivery": "adapter_accepted"}
+            }).to_string(),
+            "stderr": ""
+        });
+        s.complete_operation_succeeded(
+            &op_a,
+            StructuredResult::with_body(true, "adapter_accepted", body_a.to_string(), None),
+            None::<String>,
+        );
+        s.observe_tool_result_for_goal("shell", &args_a, &body_a, Some(&op_a));
+
+        // Clean single-target turn with no failures returns None (zero prompt noise).
+        assert!(s.build_summary_goal_status_fact_block(3, false).is_none());
+
+        // Target B fails with `offline`.
+        let args_b = serde_json::json!({
+            "command": "neomind device control device_b render_text",
+            "params": {"text": "26C"}
+        });
+        let fp_b = crate::agent::streaming::mutating_write_fingerprint("shell", &args_b).unwrap();
+        let MutatingGateOutcome::Proceed { operation_id: op_b } =
+            evaluate_mutating_gate(&mut s, "shell", &args_b, &fp_b, None, 3)
+        else {
+            panic!("must Proceed");
+        };
+        let body_b = serde_json::json!({
+            "exit_code": 1,
+            "stdout": serde_json::json!({
+                "success": false,
+                "error": "offline"
+            }).to_string(),
+            "stderr": "Error: offline"
+        });
+        s.complete_operation_failed(
+            &op_b,
+            StructuredResult::with_body(false, "offline", body_b.to_string(), None),
+        );
+
+        let line = s
+            .format_per_target_receipts_line(3)
+            .expect("per-target receipt line");
+        assert_eq!(
+            line,
+            "device_a: adapter_accepted; device_b: failed(offline)"
+        );
+
+        let block = s
+            .build_summary_goal_status_fact_block(3, true)
+            .expect("partial failure must emit SystemGoalStatus fact block");
+        assert!(block.contains("[SystemGoalStatus — Authoritative Execution Facts"));
+        assert!(block.contains("- status: partial_failure"));
+        assert!(block.contains("device_a: adapter_accepted; device_b: failed(offline)"));
+        assert!(block.contains("NEVER claim \"all succeeded\""));
     }
 }

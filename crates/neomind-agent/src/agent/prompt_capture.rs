@@ -602,6 +602,7 @@ mod tests {
             Message::system(assembled[0].content.as_text()),
             Message::user("继续写到屏幕"),
         ];
+        let _ = truncated;
         let archive = build_prompt_archive(PromptArchiveInput {
             tip_sha: "77be53f8",
             assembled_messages: &zero_budget_assembled,
@@ -610,7 +611,7 @@ mod tests {
             tools_count: 2,
             tool_names: vec!["shell".into(), "skill".into()],
             tools_attached: true,
-            history_truncated_flag: truncated || true,
+            history_truncated_flag: true,
             notes: vec![
                 format!("llm_interface_message_count={msg_count}"),
                 format!("roles={roles:?}"),

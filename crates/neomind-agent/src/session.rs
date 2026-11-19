@@ -1119,6 +1119,166 @@ impl SessionManager {
         self.store.clone()
     }
 
+    /// Choose the more authoritative of two records for the same `operation_id`:
+    /// - Confirmed terminal (`succeeded`/`failed`/`rejected`/`cancelled`) beats non-terminal (`unknown`/`in_progress`)
+    /// - Live `in_progress` beats persisted restart-sanitized `unknown`
+    /// - Otherwise newer `updated_at_ms` wins.
+    fn merge_operation_record(
+        a: neomind_storage::PersistedOperationRecord,
+        b: neomind_storage::PersistedOperationRecord,
+    ) -> neomind_storage::PersistedOperationRecord {
+        if a.is_terminal() && !b.is_terminal() {
+            return a;
+        }
+        if b.is_terminal() && !a.is_terminal() {
+            return b;
+        }
+        if a.status == "in_progress" && b.status == "unknown" {
+            return a;
+        }
+        if b.status == "in_progress" && a.status == "unknown" {
+            return b;
+        }
+        if b.updated_at_ms > a.updated_at_ms {
+            b
+        } else {
+            a
+        }
+    }
+
+    /// Look up one operation by `operation_id` across the persistent index,
+    /// live in-memory sessions, and persisted session `op_ledgers`.
+    pub async fn get_operation_record(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<neomind_storage::PersistedOperationRecord>> {
+        let mut best = self
+            .store
+            .get_operation_record(operation_id)
+            .map_err(|e| NeoMindError::Storage(format!("Failed to query operation index: {e}")))?;
+
+        let live_agents: Vec<Arc<Agent>> = {
+            let guard = self.sessions.read().await;
+            guard.values().cloned().collect()
+        };
+        for agent in live_agents {
+            for rec in agent.list_operation_records().await {
+                if rec.operation_id == operation_id {
+                    best = Some(match best {
+                        Some(cur) => Self::merge_operation_record(cur, rec),
+                        None => rec,
+                    });
+                }
+            }
+        }
+
+        // Fall back to persisted `op_ledgers` for evicted / pre-upgrade sessions.
+        if best.is_none() {
+            let ledgers = self
+                .store
+                .list_op_ledgers()
+                .map_err(|e| NeoMindError::Storage(format!("Failed to list op ledgers: {e}")))?;
+            for (sid, bytes) in ledgers {
+                let Ok(ledger) = serde_json::from_slice::<
+                    crate::agent::task_continuity::PersistedOpLedger,
+                >(&bytes) else {
+                    continue;
+                };
+                for op in &ledger.operations {
+                    if op.operation_id == operation_id {
+                        let rec = op.to_persisted_record(&sid);
+                        best = Some(match best {
+                            Some(cur) => Self::merge_operation_record(cur, rec),
+                            None => rec,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(best)
+    }
+
+    /// List operations across persisted index, live sessions, and persisted
+    /// `op_ledgers`, ordered newest-first.
+    pub async fn list_operation_records(
+        &self,
+        session_id: Option<&str>,
+        status: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<neomind_storage::PersistedOperationRecord>> {
+        let mut by_id: std::collections::HashMap<
+            String,
+            neomind_storage::PersistedOperationRecord,
+        > = std::collections::HashMap::new();
+
+        for rec in self
+            .store
+            .list_operation_records(session_id, None, 0)
+            .map_err(|e| NeoMindError::Storage(format!("Failed to list operation index: {e}")))?
+        {
+            by_id.insert(rec.operation_id.clone(), rec);
+        }
+
+        if let Ok(ledgers) = self.store.list_op_ledgers() {
+            for (sid, bytes) in ledgers {
+                if let Some(want_sid) = session_id {
+                    if sid != want_sid {
+                        continue;
+                    }
+                }
+                let Ok(ledger) = serde_json::from_slice::<
+                    crate::agent::task_continuity::PersistedOpLedger,
+                >(&bytes) else {
+                    continue;
+                };
+                for op in &ledger.operations {
+                    let rec = op.to_persisted_record(&sid);
+                    let id = rec.operation_id.clone();
+                    if let Some(existing) = by_id.remove(&id) {
+                        by_id.insert(id, Self::merge_operation_record(existing, rec));
+                    } else {
+                        by_id.insert(id, rec);
+                    }
+                }
+            }
+        }
+
+        let live_agents: Vec<(String, Arc<Agent>)> = {
+            let guard = self.sessions.read().await;
+            guard
+                .iter()
+                .filter(|(sid, _)| session_id.is_none_or(|want| sid.as_str() == want))
+                .map(|(sid, a)| (sid.clone(), a.clone()))
+                .collect()
+        };
+        for (_sid, agent) in live_agents {
+            for rec in agent.list_operation_records().await {
+                let id = rec.operation_id.clone();
+                if let Some(existing) = by_id.remove(&id) {
+                    by_id.insert(id, Self::merge_operation_record(existing, rec));
+                } else {
+                    by_id.insert(id, rec);
+                }
+            }
+        }
+
+        let mut out: Vec<_> = by_id
+            .into_values()
+            .filter(|rec| status.is_none_or(|st| rec.status.eq_ignore_ascii_case(st)))
+            .collect();
+        out.sort_by(|a, b| {
+            b.updated_at_ms
+                .cmp(&a.updated_at_ms)
+                .then_with(|| b.created_at_ms.cmp(&a.created_at_ms))
+                .then_with(|| a.operation_id.cmp(&b.operation_id))
+        });
+        if limit > 0 && out.len() > limit {
+            out.truncate(limit);
+        }
+        Ok(out)
+    }
+
     /// Register a cancel signal sender for an active streaming session.
     /// The sender is stored so that `cancel_session` can interrupt the stream.
     ///
@@ -1267,7 +1427,30 @@ impl SessionManager {
             fn commit(&self, ledger_json: &[u8]) -> std::result::Result<(), String> {
                 self.store
                     .save_op_ledger(&self.session_id, ledger_json)
-                    .map_err(|e| e.to_string())
+                    .map_err(|e| e.to_string())?;
+                // Best-effort index sync for O(1) `GET /api/v1/operations/:id` lookup.
+                // Never clobber an already-terminal indexed record with a restart-sanitized
+                // `unknown` snapshot.
+                if let Ok(ledger) = serde_json::from_slice::<
+                    crate::agent::task_continuity::PersistedOpLedger,
+                >(ledger_json)
+                {
+                    for op in &ledger.operations {
+                        let candidate = op.to_persisted_record(&self.session_id);
+                        let should_skip = self
+                            .store
+                            .get_operation_record(&candidate.operation_id)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|existing| {
+                                existing.is_terminal() && !candidate.is_terminal()
+                            });
+                        if !should_skip {
+                            let _ = self.store.upsert_operation_record(&candidate);
+                        }
+                    }
+                }
+                Ok(())
             }
         }
         let commit: Arc<dyn crate::agent::task_continuity::OpLedgerCommit> =

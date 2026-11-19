@@ -7,23 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.3.1] - 2026-11-18 — BLE broker credentials + external bind, EK410 wrap copy
+## [1.3.1] - 2026-11-20 — Full-stack Agent/CLI/API harness optimization, BLE provision fixes
 
-Post-`v1.3.0` CT-Prov BLE fixes: auth-enabled embedded broker credentials reach `config.set`, NeoMind-subscribed external brokers bind to the matching adapter, and EK410 `render_text` help matches width-based wrap. Product version is **1.3.1** across Cargo/Web/Tauri/locks. `v1.3.0` stays at `8579edbb`.
+Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neomind-storage`, `neomind-api`, `neomind-cli-ops`, `neomind-cli`, and `neomind-agent` (P0/P1/P2), plus CT-Prov BLE credential/external-broker/display-name fixes and EK410 wrap copy. Product version is **1.3.1** across Cargo/Web/Tauri/locks. `v1.3.0` stays at `8579edbb`.
 
 ### Upgrade notes
 - BLE provision against NeoMind’s auth-enabled embedded broker now mints a device-scoped MQTT username/password into `config.set` (empty creds still omitted when auth is off).
 - Choosing a NeoMind-subscribed external broker in BLE provision binds the device to `external-{id}` / `internal-mqtt` with matching host/creds/`mqtt_broker_id` so topic maps match the bridge NeoMind already owns.
+- `extension install` / `uninstall` / `get` now run through the HTTP API by default (same path for CLI and in-process agent dispatch); pass `--offline` for local-directory mode.
+- Persisted write-operation status is now queryable via `GET /api/v1/operations/:id` / `GET /api/v1/operations` and `neomind operation get <op_id>` / `neomind operation list`.
+
+### Added
+- Lightweight `DomainCommandContract` registry in `neomind-core::command_contract` covering 4 core business domains (Device `control`, Rule `create`/`update`/`test`, Dashboard `create`/`update`/`add-components`/`update-component`/`remove-components`, Agent `create`/`update`/`invoke`) aligned across `PRIMARY_JSON_SPECS`, `capability`, `ShellTool`, and `intent` write fingerprints (P2-1).
+- Persistent operation ledger query endpoints (`GET /api/v1/operations/:id`, `GET /api/v1/operations`) backed by `SessionStore` + live `SessionManager`, read-only CLI `neomind operation get <op_id>` / `list`, and `Unknown` → terminal (`Succeeded`/`Failed`) `TaskState` reconciliation syncing `_new_operation` tool exposure (P2-2).
+- Per-target write receipt aggregation by `(target, operation_id)` and structured `SystemGoalStatus` hard-fact block injection into normal follow-up, forced summary, and empty-reply recovery prompts whenever failures, partial failures, unknown ops, or incomplete goals occur (E4).
+- Explicit `DispatchContext` (`api_base`, `api_key`, `output_format`) for concurrent-safe in-process CLI dispatch with zero `std::env::set_var` on async hot paths (P1-1).
+- Mechanical anti-drift unit scanners locking `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skill examples, and `capability.rs` fail-closed classification against the live `Args::command()` clap tree (P2-3, P2-1).
+
+### Fixed — harness / agent / CLI / API
+- Structured shell `params` rejected JSON arrays on `dashboard add-components`/`remove-components`/`create`/`update`, mapped `transform create` to non-existent `--input`, and omitted `message channel-update` → `params` now accepts both object and array validated per command contract with unified `{command, params}` examples (P0-1).
+- Multi-layer `ApiResponse`/`CliResponse` nesting, HTTP 200 business failures, process-global `INDEX_INJECTED`, and subprocess `--help` concatenated onto JSON `stdout` → `ApiClient` unwraps envelopes and fails on nested `"success": false`, help renders in-process into a separate `usage_hint` field, and domain index state is session-scoped (P0-2, P1-5).
+- `extension logs`/`config`/`validate` and `push logs` triggered mutating write-gates, host-meta tokens downgraded read-only classification, and pre-submission syntax/400 errors locked into `PreferKnown` → read-only allow-list completed, host-meta stripped before classify, and pre-submission rejections settle as `OperationStatus::Rejected` without locking retry (P0-3).
+- Failed shell commands emitted `ToolCallEnd(success=true)`, `{{CURRENT_TIME}}` broke KV-prefix cache mid-prompt, and skill section loads were dropped by id-only dedup → `ToolCallEnd` emits `effective_success`, turn-pinned time appends at prompt tail, and skill dedup keys on `(skill_id, section)` (P0-4).
+- Stale `--type`/`--adapter` API hints, shadowed `recovery_hint` branches, contradictory pipe docs, and broken builtin skill commands cleaned up (P0-5).
+- Five overlapping tool gate/cache layers, dual-copy skill injection, split text/multimodal loops, and tool-bearing empty-reply retries → converged onto two-layer canonical read-cache + `OperationLedger` gating, single-copy `tool`-history skill loading with action-exit hints, unified `drive_react_stream` for text + multimodal, and tool-free `chat_stream_summary_for_task` recovery (P1-2, P1-3, P1-4).
+- Redundant pre-create HTTP validation hops in `message channel-create` removed in favor of server-side validation hints (P1-5).
 
 ### Fixed — CT-Prov / BLE provision
 - Auth-enabled embedded broker resolve no longer leaves username/password empty — mint on `resolve_only` and write them in `config.set` (empty-omit for auth-off / blank external fields).
 - NeoMind-broker selection copies host/creds into the device write, registers on `external-{id}` / `internal-mqtt`, and records `mqtt_broker_id`; disabled brokers stay out of the dropdown.
+- BLE provision display name is now editable and shown in the discovered device list.
 
 ### Fixed — devices
 - EK410 `render_text` description/help documents width-based auto-wrap + scale shrink instead of a hard 10-line cap.
 
 ### Test
-- BLE provision credential minting / empty-omit + adapter-id mapping handler tests; SoftAP transport tests covering the credential path.
+- Anti-drift tests for `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skills, and `capability.rs`; E4 multi-target partial-failure `SystemGoalStatus` injection tests; `GET /api/v1/operations` auth + in-process CLI dispatch tests; `operation get` `Unknown` → terminal reconciliation tests; `ToolCallEnd`, KV-tail time, single-copy skill, multimodal `drive_react_stream`, and BLE provision tests.
 
 ---
 

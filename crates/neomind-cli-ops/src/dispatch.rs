@@ -312,6 +312,12 @@ pub async fn dispatch_with_context(
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
         }
+        Command::Operation { operation_cmd } => {
+            let (resp, _) = handlers::run_operation_cmd_with_context(operation_cmd, &effective_ctx)
+                .await
+                .map_err(|e| DispatchError::Api(e.to_string()))?;
+            Ok(resp)
+        }
         Command::Connector { connector_cmd } => {
             let (resp, _) = handlers::run_connector_cmd_with_context(connector_cmd, &effective_ctx)
                 .await

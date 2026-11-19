@@ -419,6 +419,7 @@ pub(super) fn drive_react_stream(
             // loading in conversation `tool` history.
             let turn_loaded_skills =
                 std::sync::Arc::new(crate::toolkit::skill_tool::TurnLoadedSkills::new());
+            let current_turn_id = internal_state.read().await.task_state.turn_count;
             // Emit confirm removals / SystemNotes from accept_user_message.
             {
                 let (notices, sys_notes) = {
@@ -880,17 +881,21 @@ pub(super) fn drive_react_stream(
                             } else {
                                 consecutive_read_only_rounds = 0;
                             }
-                            // Anti-hallucination guard: small models sometimes
-                            // report FAILED commands as successful in the final
-                            // answer (observed: 404 on add-components → "已成功
-                            // 添加"). When any prior shell command exited non-zero,
-                            // remind the model that lying about it is forbidden and
-                            // point at the recovery path.
-                            let has_failed_cmds = any_failed_tool_call;
-                            let failure_guard = if has_failed_cmds {
-                                "\n\n⚠️ Some earlier command FAILED (exit≠0). You MUST NOT claim failed operations succeeded in your answer. Either fix and retry using the error/suggestion (e.g. resolve the REAL id via `neomind dashboard list` / `device list`), or report the failure honestly with its cause.".to_string()
-                            } else {
-                                String::new()
+                            // Anti-hallucination guard + E4 structured SystemGoalStatus
+                            // hard-fact block (with per-target receipts) when any failure,
+                            // partial failure, unknown operation, or Incomplete goal exists.
+                            let goal_fact_block = {
+                                let state_guard = internal_state.read().await;
+                                state_guard
+                                    .task_state
+                                    .build_summary_goal_status_fact_block(
+                                        current_turn_id,
+                                        any_failed_tool_call,
+                                    )
+                            };
+                            let failure_guard = match goal_fact_block {
+                                Some(block) => format!("\n\n{block}"),
+                                None => String::new(),
                             };
                             let action_exit_guard = match skill_action_exit_hint_pending.take() {
                                 Some(hint) => format!("\n\n{}", hint),
@@ -958,13 +963,26 @@ pub(super) fn drive_react_stream(
                                     lower.contains("error") || lower.contains("failed") || lower.contains("invalid")
                                 });
 
-                                let fallback_prompt = if has_errors {
+                                let fallback_base = if has_errors {
                                     "The tool calls above encountered errors and the LLM failed to generate a follow-up response. \
                                     Summarize what was attempted and explain the errors to the user in plain language. \
                                     Suggest what the user can do next. Do NOT output any tool calls."
                                 } else {
                                     "The tool calls above completed but the LLM failed to generate a follow-up response. \
                                     Summarize the results for the user. Do NOT output any tool calls."
+                                };
+                                let fallback_fact_block = {
+                                    let state_guard = internal_state.read().await;
+                                    state_guard
+                                        .task_state
+                                        .build_summary_goal_status_fact_block(
+                                            current_turn_id,
+                                            any_failed_tool_call || has_errors,
+                                        )
+                                };
+                                let fallback_prompt = match fallback_fact_block {
+                                    Some(block) => format!("{fallback_base}\n\n{block}"),
+                                    None => fallback_base.to_string(),
                                 };
 
                                 let summary_history: Vec<neomind_core::Message> = {
@@ -973,8 +991,9 @@ pub(super) fn drive_react_stream(
                                     compacted.iter().map(|msg| msg.to_core()).collect()
                                 };
 
-                                let summary_result = llm_interface.chat_stream_summary(
-                                    fallback_prompt,
+                                let summary_result = llm_interface.chat_stream_summary_for_task(
+                                    &user_message,
+                                    &fallback_prompt,
                                     &summary_history,
                                 ).await;
 
@@ -2121,6 +2140,40 @@ pub(super) fn drive_react_stream(
                                         &out.data,
                                         op_id.as_deref(),
                                     );
+                                    // P2-2: if `neomind operation get <op_id>` confirmed a previously
+                                    // `Unknown` operation reached a terminal state (`succeeded`/`failed`),
+                                    // reconcile TaskState, persist the ledger, and sync `_new_operation`
+                                    // protocol exposure below.
+                                    if state.task_state.reconcile_operation_lookup_tool_result(
+                                        &real_name,
+                                        &exec_arguments,
+                                        &out.data,
+                                    ) {
+                                        state.persist_op_ledger_terminal_best_effort();
+                                    }
+                                }
+                            }
+                        }
+                        // Drain any confirm-removed notices emitted by operation reconciliation.
+                        {
+                            let recon_notices = internal_state
+                                .write()
+                                .await
+                                .task_state
+                                .drain_confirm_lifecycle_notices();
+                            for notice in recon_notices {
+                                match notice {
+                                    super::super::task_continuity::ConfirmLifecycleNotice::Requested(
+                                        confirm,
+                                    ) => {
+                                        yield AgentEvent::authorize_confirm_request(&confirm);
+                                    }
+                                    super::super::task_continuity::ConfirmLifecycleNotice::Removed {
+                                        request_id,
+                                        reason,
+                                    } => {
+                                        yield AgentEvent::authorize_confirm_removed(request_id, reason);
+                                    }
                                 }
                             }
                         }
@@ -2706,7 +2759,7 @@ pub(super) fn drive_react_stream(
                         // Detect whether tool results contain errors to tailor the prompt
                         let has_errors = last_round_has_errors;
 
-                        let summary_prompt = if skill_exploration_exhausted {
+                        let summary_base = if skill_exploration_exhausted {
                             super::guard::guide_exploration_brief()
                         } else if force_summary {
                             super::guard::forced_summary_prompt()
@@ -2721,10 +2774,26 @@ pub(super) fn drive_react_stream(
                             If information that ONLY the user can provide is missing, ask ONE \
                             concise clarifying question instead of guessing."
                         };
+                        let summary_fact_block = if skill_exploration_exhausted {
+                            None
+                        } else {
+                            internal_state
+                                .read()
+                                .await
+                                .task_state
+                                .build_summary_goal_status_fact_block(
+                                    current_turn_id,
+                                    any_failed_tool_call || has_errors,
+                                )
+                        };
+                        let summary_prompt = match summary_fact_block {
+                            Some(block) => format!("{summary_base}\n\n{block}"),
+                            None => summary_base.to_string(),
+                        };
 
                         let summary_result = llm_interface.chat_stream_summary_for_task(
                             &user_message,
-                            summary_prompt,
+                            &summary_prompt,
                             &summary_history,
                         ).await;
 
@@ -3225,7 +3294,7 @@ pub(super) fn drive_react_stream(
                         // `thinking_enabled = Some(false)`) so the model must emit
                         // a direct text answer instead of emitting tool-call JSON
                         // that would be stripped into an empty error.
-                        let retry_prompt = if !all_round_tool_results.is_empty() {
+                        let retry_base = if !all_round_tool_results.is_empty() {
                             "Based on the tool execution results already in the conversation above, \
                              provide a direct and concise final answer to the user's request. \
                              Do NOT output any tool calls or JSON arrays — respond in plain text only."
@@ -3233,10 +3302,22 @@ pub(super) fn drive_react_stream(
                             "Please respond to the user's message directly and concisely in plain text. \
                              Do NOT output any tool calls or JSON arrays."
                         };
+                        let retry_fact_block = internal_state
+                            .read()
+                            .await
+                            .task_state
+                            .build_summary_goal_status_fact_block(
+                                current_turn_id,
+                                any_failed_tool_call,
+                            );
+                        let retry_prompt = match retry_fact_block {
+                            Some(block) => format!("{retry_base}\n\n{block}"),
+                            None => retry_base.to_string(),
+                        };
 
                         let retry_result = llm_interface.chat_stream_summary_for_task(
                             &user_message,
-                            retry_prompt,
+                            &retry_prompt,
                             &retry_history,
                         ).await;
 

@@ -1523,3 +1523,33 @@ pub async fn run_api_key_cmd_with_context(
     };
     Ok((resp, fmt))
 }
+
+/// Run operation ledger inspection commands (`operation get` / `operation list`).
+pub async fn run_operation_cmd(cmd: OperationCommand) -> Result<(CliResponse, OutputFormat)> {
+    run_operation_cmd_with_context(cmd, &DispatchContext::default()).await
+}
+
+pub async fn run_operation_cmd_with_context(
+    cmd: OperationCommand,
+    ctx: &DispatchContext,
+) -> Result<(CliResponse, OutputFormat)> {
+    let client = ctx.api_client();
+    let fmt = ctx.output_format();
+    let resp = match cmd {
+        OperationCommand::Get { id } => crate::operation::get_operation(&client, &id).await?,
+        OperationCommand::List {
+            session_id,
+            status,
+            limit,
+        } => {
+            crate::operation::list_operations(
+                &client,
+                session_id.as_deref(),
+                status.as_deref(),
+                limit,
+            )
+            .await?
+        }
+    };
+    Ok((resp, fmt))
+}

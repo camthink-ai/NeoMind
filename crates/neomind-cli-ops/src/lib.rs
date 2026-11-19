@@ -19,6 +19,7 @@ pub mod device;
 pub mod extension;
 pub mod llm;
 pub mod message;
+pub mod operation;
 pub mod rule;
 pub mod settings;
 pub mod system;

@@ -27,8 +27,8 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         agents, auth as auth_handlers, auth_users, automations, basic, capabilities, config,
         dashboards, data, data_push, devices, events, extension_stream, extensions,
         frontend_components, im_bridges, images, instances, llm_backends, logs, memory,
-        message_channels, messages, mqtt, onboarding, rules, sessions, settings, setup, skills,
-        stats, suggestions, system, tools,
+        message_channels, messages, mqtt, onboarding, operations, rules, sessions, settings, setup,
+        skills, stats, suggestions, system, tools,
     };
 
     // Public routes (no authentication required)
@@ -489,6 +489,20 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route(
             "/api/sessions/:id/pending",
             delete(sessions::clear_pending_stream_handler),
+        )
+        // P2-2: Persistent operation ledger query endpoints
+        .route(
+            "/api/v1/operations",
+            get(operations::list_operations_handler),
+        )
+        .route(
+            "/api/v1/operations/:id",
+            get(operations::get_operation_handler),
+        )
+        .route("/api/operations", get(operations::list_operations_handler))
+        .route(
+            "/api/operations/:id",
+            get(operations::get_operation_handler),
         )
         // Devices API
         .route("/api/devices", get(devices::list_devices_handler))

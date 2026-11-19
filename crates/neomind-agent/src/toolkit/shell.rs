@@ -104,6 +104,7 @@ const DOMAIN_INDEX: &str = r#"
 - push: list get create update delete enable disable start stop test logs stats
 - llm: list get models create update delete activate test
 - settings: timezone set-timezone timezones retention set-retention cleanup
+- operation: list get (inspect persisted write-operation ledger status by operation_id; check whether an unknown/timed-out operation succeeded or failed)
 - system: info
 - api-key: create list delete
 Deliberately not available here (do not try them): serve prompt chat logs health list-models
@@ -1459,6 +1460,10 @@ pub fn validate_extension_params_sources(args: &Value) -> std::result::Result<()
     }
     let argv = tokenize_neomind_command(cmd).map_err(|e| e.to_string())?;
     let argv = strip_host_meta_from_argv(argv);
+    if let Some(contract) = neomind_cli_ops::json_arg::find_domain_command_contract_for_argv(&argv)
+    {
+        contract.validate_primary_json(params_val)?;
+    }
     let Some(spec) = neomind_cli_ops::json_arg::primary_json_spec(&argv) else {
         // Structured params with no known primary flag — ignore (legacy callers).
         return Ok(());
@@ -2003,6 +2008,14 @@ impl ShellTool {
                     Some("Required field: --name. Example: neomind dashboard create --name \"My Dashboard\"".to_string())
                 } else if action == "update" {
                     Some("update --components full-replaces the widget array and requires --replace-all. For ONE widget use shell with command=\"neomind dashboard update-component <ID> --component-id <CID>\" and params={...} (deep-merge patch); to add widgets use add-components with params=[...]; to remove use remove-components with params=[\"<CID>\"].".to_string())
+                } else if is_validation {
+                    if let Some(contract) =
+                        neomind_cli_ops::json_arg::find_domain_command_contract(domain, action)
+                    {
+                        Some(contract.format_hint())
+                    } else {
+                        Some("Available actions: list, get, create, update, add-components, update-component, remove-components, delete, share.".to_string())
+                    }
                 } else {
                     Some("Available actions: list, get, create, update, add-components, update-component, remove-components, delete, share.".to_string())
                 }
@@ -2016,6 +2029,14 @@ impl ShellTool {
                     Some("Rule JSON format: {\"name\":\"...\",\"condition\":{\"condition_type\":\"comparison\",\"source\":\"device:SENSOR_ID:METRIC\",\"operator\":\"greater_than\",\"threshold\":30},\"actions\":[{\"type\":\"notify\",\"message\":\"Alert\",\"severity\":\"critical\"}]}. BEFORE creating: run `neomind device list` to discover real device IDs and metric_fields per type. NEVER guess device IDs or metric names.".to_string())
                 } else if action == "enable" || action == "disable" {
                     Some("Run 'neomind rule list' to find the rule ID, then 'neomind rule <enable|disable> <ID>'.".to_string())
+                } else if is_validation {
+                    if let Some(contract) =
+                        neomind_cli_ops::json_arg::find_domain_command_contract(domain, action)
+                    {
+                        Some(contract.format_hint())
+                    } else {
+                        Some("Available actions: list, get, create, update, delete, enable, disable, test, history".to_string())
+                    }
                 } else {
                     Some("Available actions: list, get, create, update, delete, enable, disable, test, history".to_string())
                 }
@@ -2027,6 +2048,14 @@ impl ShellTool {
                     Some("Required fields: --name, --prompt, --schedule-type (event|interval|cron|manual). Example: neomind agent create --name \"monitor\" --prompt \"Check devices\" --schedule-type event. Never invent device IDs or metric names: run 'neomind device list' for real IDs, then 'neomind device get <ID>' for that device's metric fields. A structured agent with no bound source refuses to run.".to_string())
                 } else if action == "control" && is_validation {
                     Some("Status is positional: neomind agent control <ID> <active|paused>. Example: neomind agent control abc123 active".to_string())
+                } else if is_validation {
+                    if let Some(contract) =
+                        neomind_cli_ops::json_arg::find_domain_command_contract(domain, action)
+                    {
+                        Some(contract.format_hint())
+                    } else {
+                        Some("Available actions: list, get, create, update, delete, control, invoke, memory, executions, latest-execution, conversation, send-message".to_string())
+                    }
                 } else {
                     Some("Available actions: list, get, create, update, delete, control, invoke, memory, executions, latest-execution, conversation, send-message".to_string())
                 }
