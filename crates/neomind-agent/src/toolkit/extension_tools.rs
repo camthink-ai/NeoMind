@@ -331,79 +331,17 @@ impl ExtensionTool {
     }
 
     /// Resolve internal image references to raw base64 before process dispatch.
-    /// The shared reader validates paths, size, and image bytes; failures are
-    /// returned here rather than forwarding a URL to an extension expecting bytes.
-    /// Data URL prefixes are stripped. Nested objects and arrays are supported.
+    /// Delegates to [`neomind_devices::image_storage::materialize_internal_image_refs_in_value`]
+    /// (shared with HTTP / CLI-only `extension invoke`).
     fn normalize_image_args(args: &Value, data_dir: &Path) -> ToolResult<Value> {
         use super::error::ToolError;
-        match args {
-            Value::String(s) => {
-                if s.starts_with("/api/images/") {
-                    let (bytes, _) =
-                        neomind_devices::image_storage::read_internal_image_url(s, data_dir)
-                            .map_err(|e| {
-                                ToolError::InvalidArguments(format!(
-                                    "Cannot read internal image reference {s}: {e}. {}",
-                                    crate::image_utils::INTERNAL_IMAGE_INPUT_HINT
-                                ))
-                            })?;
-                    use base64::Engine as _;
-                    return Ok(Value::String(
-                        base64::engine::general_purpose::STANDARD.encode(bytes),
-                    ));
-                }
-                if let Some(comma_pos) = s.find(";base64,") {
-                    let data = &s[comma_pos + 8..];
-                    if !data.is_empty() {
-                        return Ok(Value::String(data.to_string()));
-                    }
-                }
-                Ok(args.clone())
-            }
-            Value::Object(map) => {
-                let values = map
-                    .iter()
-                    .map(|(k, v)| {
-                        let image_field = matches!(
-                            k.as_str(),
-                            "image"
-                                | "images"
-                                | "image_base64"
-                                | "base64_data"
-                                | "image_data"
-                                | "img"
-                        );
-                        let value = if image_field || v.is_object() {
-                            Self::normalize_image_args(v, data_dir)?
-                        } else if let Value::Array(items) = v {
-                            Value::Array(
-                                items
-                                    .iter()
-                                    .map(|item| {
-                                        if item.is_object() {
-                                            Self::normalize_image_args(item, data_dir)
-                                        } else {
-                                            Ok(item.clone())
-                                        }
-                                    })
-                                    .collect::<ToolResult<Vec<_>>>()?,
-                            )
-                        } else {
-                            v.clone()
-                        };
-                        Ok((k.clone(), value))
-                    })
-                    .collect::<ToolResult<serde_json::Map<String, Value>>>()?;
-                Ok(Value::Object(values))
-            }
-            Value::Array(items) => Ok(Value::Array(
-                items
-                    .iter()
-                    .map(|v| Self::normalize_image_args(v, data_dir))
-                    .collect::<ToolResult<Vec<_>>>()?,
-            )),
-            _ => Ok(args.clone()),
-        }
+        neomind_devices::image_storage::materialize_internal_image_refs_in_value(args, data_dir)
+            .map_err(|e| {
+                ToolError::InvalidArguments(format!(
+                    "{e} {}",
+                    crate::image_utils::INTERNAL_IMAGE_INPUT_HINT
+                ))
+            })
     }
 }
 
@@ -448,17 +386,13 @@ impl Tool for ExtensionTool {
     }
 
     async fn execute(&self, args: Value) -> ToolResult<ToolOutput> {
-        // Normalize image data in parameters so extensions receive raw base64:
-        // - resolve /api/images/ internal URLs to bytes (extensions are a
-        //   separate process and can't read hostless internal paths);
-        // - strip the data:image/...;base64, prefix (extensions fail with
-        //   "Invalid base64: Invalid symbol 58" when they get the data URI).
-        let data_dir = neomind_core::paths::data_dir();
-        let image_normalized = Self::normalize_image_args(&args, &data_dir)?;
-
         // NM-240: claim the classify-time PreparedInvoke id carried on this
         // dispatch only — never mint or FIFO-claim by params.
-        let op_id = image_normalized
+        //
+        // Claim MUST use the mint-time param form (often `/api/images/...`).
+        // Materializing to base64 *before* claim would fingerprint-mismatch
+        // the ticket. Resolve images only for IPC after consume (NM-314).
+        let op_id = args
             .get(crate::agent::task_continuity::PREPARED_OPERATION_ARG)
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
@@ -468,8 +402,8 @@ impl Tool for ExtensionTool {
                         .into(),
                 )
             })?;
-        // Strip host-only token before extension process sees params.
-        let mut for_dispatch = image_normalized.clone();
+        // Strip host-only token before fingerprint / extension params.
+        let mut for_dispatch = args.clone();
         if let Some(obj) = for_dispatch.as_object_mut() {
             obj.remove(crate::agent::task_continuity::PREPARED_OPERATION_ARG);
         }
@@ -493,13 +427,17 @@ impl Tool for ExtensionTool {
         )
         .map_err(super::error::ToolError::InvalidArguments)?;
 
+        // Host-side materialize: extensions are a separate process and cannot
+        // fetch hostless `/api/images/` paths (or parse data-URI headers).
+        let data_dir = neomind_core::paths::data_dir();
+        let for_extension = Self::normalize_image_args(&prepared.canonical_params, &data_dir)?;
+
         // Execute with the centralized SLOW tier timeout (300s) for extensions that
         // need longer inference. Routed through `timeouts` so the ceiling is tunable
         // from a single source of truth.
-        let canonical = prepared.canonical_params.clone();
         let result = tokio::time::timeout(crate::toolkit::timeouts::extension_invoke(), async {
             let ext = self.extension.read().await;
-            ext.execute_command(&self.command.name, &canonical).await
+            ext.execute_command(&self.command.name, &for_extension).await
         })
         .await;
 

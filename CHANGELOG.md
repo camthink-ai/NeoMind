@@ -25,6 +25,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Mechanical anti-drift unit scanners locking `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skill examples, and `capability.rs` fail-closed classification against the live `Args::command()` clap tree (P2-3, P2-1).
 
 ### Fixed — harness / agent / CLI / API
+- CLI-only / HTTP `extension invoke` and direct extension tools forwarded hostless `/api/images/...` refs into the child process (unreachable externally) → host materializes refs to raw base64 **after** PreparedInvoke claim and **before** IPC (`materialize_internal_image_refs_in_value`); mint/fingerprint keep the short reference (NM-314).
 - Structured shell `params` rejected JSON arrays on `dashboard add-components`/`remove-components`/`create`/`update`, mapped `transform create` to non-existent `--input`, and omitted `message channel-update` → `params` now accepts both object and array validated per command contract with unified `{command, params}` examples (P0-1).
 - Multi-layer `ApiResponse`/`CliResponse` nesting, HTTP 200 business failures, process-global `INDEX_INJECTED`, and subprocess `--help` concatenated onto JSON `stdout` → `ApiClient` unwraps envelopes and fails on nested `"success": false`, help renders in-process into a separate `usage_hint` field, and domain index state is session-scoped (P0-2, P1-5).
 - `extension logs`/`config`/`validate` and `push logs` triggered mutating write-gates, host-meta tokens downgraded read-only classification, and pre-submission syntax/400 errors locked into `PreferKnown` → read-only allow-list completed, host-meta stripped before classify, and pre-submission rejections settle as `OperationStatus::Rejected` without locking retry (P0-3).
@@ -74,6 +75,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - NM-302 PreparedInvoke params gates: bare `--params {"city":"xiamen"}` tokenize/mint, illegal `{city:xiamen}` attach `HOST_ATTACH_ERROR` + structured-params tip, structured `params` mint→restore→bind, bind never-minted vs case-c wording.
 - NM-309: parallel `mutate_dashboard` append regression; invented `--params` recovery tips; JSON parse readability/batch hints; skill overview+section thrash hard-gate.
 - NM-310: TurnTimeline / ThinkingBlock / toolCallUtils vitest (33).
+- NM-314: `materialize_internal_image_refs_in_value` resolves `/api/images/` + strips image-field data-URIs; missing refs fail closed; HTTP prepare→execute and ExtensionTool claim-then-materialize paths covered.
 
 ---
 

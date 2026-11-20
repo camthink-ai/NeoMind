@@ -115,7 +115,7 @@ pub async fn execute_extension_command_handler(
         session.as_ref().map(|e| &e.0),
         req.prepared_operation_id.as_deref(),
     );
-    let prepared = prepare_or_consume_extension_invoke(
+    let mut prepared = prepare_or_consume_extension_invoke(
         &state,
         &id,
         &req.command,
@@ -124,6 +124,9 @@ pub async fn execute_extension_command_handler(
         caller,
     )
     .await?;
+    // NM-314: host-side materialize `/api/images/` → raw base64 before IPC.
+    // Fingerprint/claim already used the short reference form.
+    materialize_prepared_image_params(&mut prepared)?;
 
     // Consume the bound prepared invoke (generation + canonical params).
     // Do not re-resolve by id alone — a reload must refuse, not swap instances.
@@ -234,7 +237,7 @@ pub async fn invoke_extension_handler(
         session.as_ref().map(|e| &e.0),
         req.prepared_operation_id.as_deref(),
     );
-    let prepared = prepare_or_consume_extension_invoke(
+    let mut prepared = prepare_or_consume_extension_invoke(
         &state,
         &id,
         &req.command,
@@ -243,6 +246,9 @@ pub async fn invoke_extension_handler(
         caller,
     )
     .await?;
+    // NM-314: CLI-only Chat `extension invoke` lands here — resolve platform
+    // image handles on the host before the child process sees params.
+    materialize_prepared_image_params(&mut prepared)?;
 
     let result = match runtime.execute_prepared(&prepared).await {
         Ok(r) => r,
@@ -315,6 +321,24 @@ fn ai_policy_from_loaded_record(
         ))),
         Some(r) => Ok((r.ai_enabled, r.disabled_commands)),
     }
+}
+
+/// Resolve `/api/images/...` (and image-field data-URIs) inside a prepared
+/// invoke's canonical params to raw base64 for extension IPC (NM-314).
+///
+/// Must run **after** claim/fingerprint (mint keeps the short reference) and
+/// **before** [`ExtensionRuntime::execute_prepared`].
+fn materialize_prepared_image_params(
+    prepared: &mut neomind_core::extension::PreparedInvoke,
+) -> Result<(), ErrorResponse> {
+    let data_dir = neomind_core::paths::data_dir();
+    prepared.canonical_params =
+        neomind_devices::image_storage::materialize_internal_image_refs_in_value(
+            &prepared.canonical_params,
+            &data_dir,
+        )
+        .map_err(ErrorResponse::bad_request)?;
+    Ok(())
 }
 
 /// Shared prepare for HTTP execute + invoke (same path as CLI / tools).
