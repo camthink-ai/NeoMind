@@ -2354,22 +2354,23 @@ impl DeviceService {
 
     /// Externally-reachable API origin for device HTTP pulls.
     ///
-    /// Uses [`neomind_core::advertise::resolve_advertise_base_url`]:
-    /// `NEOMIND_SERVER_URL` → `NEOMIND_PUBLIC_HOST` → primary LAN IPv4 →
-    /// localhost last resort. Never the browser Host header (MQTT downlink
-    /// is not tied to a page load).
+    /// Uses [`neomind_core::advertise::resolve_device_advertise_base_url`]:
+    /// `NEOMIND_SERVER_URL` → `NEOMIND_PUBLIC_HOST` → primary LAN IPv4.
+    /// **Never** localhost / 127.0.0.1 (devices like EK410 cannot fetch the
+    /// host's loopback). Never the browser Host header.
     fn advertise_server_base_url() -> Option<(String, neomind_core::advertise::AdvertiseUrlSource)>
     {
-        neomind_core::advertise::resolve_advertise_base_url()
+        neomind_core::advertise::resolve_device_advertise_base_url()
     }
 
     /// Resolve `/api/images/` handles in command params for device downlink.
     ///
     /// - URL-capable params (`url` / `display_url` / …) → absolute
     ///   `{advertise_base}/api/images/...` via
-    ///   [`neomind_core::advertise::resolve_advertise_base_url`]. Hard-fail
-    ///   with an actionable error only if no usable origin exists — never
-    ///   silently send a relative path.
+    ///   [`neomind_core::advertise::resolve_device_advertise_base_url`].
+    ///   Hard-fail with an actionable “configure a device-reachable URL”
+    ///   error when only loopback would apply — never send `127.0.0.1` or a
+    ///   relative path to the device.
     /// - Other image params → data-URL via [`resolve_internal_image_to_data_url`].
     /// - Missing / unreadable files on the data-URL path: leave the original
     ///   string so the device surfaces its own error.
@@ -2389,13 +2390,19 @@ impl DeviceService {
                 ImageOutboundForm::AbsoluteHttp => {
                     let Some((ref base, src)) = advertise else {
                         return Err(DeviceError::InvalidParameter(format!(
-                            "Param `{key}` needs an absolute HTTP URL for device fetch, but no \
-                             usable advertise origin was found. Set NEOMIND_SERVER_URL (e.g. \
-                             https://edge.example.com) or NEOMIND_PUBLIC_HOST to this host's \
-                             reachable address so `{s}` can be advertised; do not send a \
-                             relative /api/images/ path to the device."
+                            "Param `{key}` needs a device-reachable absolute HTTP URL, but none \
+                             was configured. Set NEOMIND_SERVER_URL (e.g. https://edge.example.com) \
+                             or NEOMIND_PUBLIC_HOST to an address the device can fetch (LAN IP / \
+                             public hostname) — do not rely on localhost/127.0.0.1 (unreachable \
+                             from EK410 and other remotes) or send relative `{s}`."
                         )));
                     };
+                    if src.is_loopback() {
+                        return Err(DeviceError::InvalidParameter(format!(
+                            "Param `{key}` refuses localhost advertise origin `{base}` — configure \
+                             a device-reachable URL via NEOMIND_SERVER_URL or NEOMIND_PUBLIC_HOST."
+                        )));
+                    }
                     if src != neomind_core::advertise::AdvertiseUrlSource::Env {
                         tracing::debug!(
                             target: "neomind::devices",
@@ -3024,6 +3031,10 @@ mod tests {
 
     use super::*;
     use crate::registry::ConnectionConfig;
+    use std::sync::Mutex;
+
+    /// Serialize tests that mutate process-global advertise env knobs.
+    static ADVERTISE_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[tokio::test]
     async fn test_service_template_registration() {
@@ -3514,6 +3525,7 @@ mod tests {
     #[test]
     fn test_resolve_command_url_param_advertise_gating() {
         // Serial: touches process-global advertise env knobs.
+        let _lock = ADVERTISE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         struct EnvGuard {
             key: &'static str,
             prev: Option<String>,
@@ -3568,36 +3580,121 @@ mod tests {
         }
         drop(_env);
 
-        // Without SERVER_URL but with PUBLIC_HOST → absolute via public host.
+        // Without SERVER_URL but with PUBLIC_HOST → absolute via public host +
+        // recorded listen port (not a stale hardcoded 9375).
         let _pub = EnvGuard::set("NEOMIND_PUBLIC_HOST", Some("edge.lan"));
-        let _port = EnvGuard::set("NEOMIND_PORT", Some("9375"));
+        let _port_env = EnvGuard::set("NEOMIND_PORT", None);
+        let prev_listen = neomind_core::advertise::http_listen_port();
+        neomind_core::advertise::set_http_listen_port(9444);
         let mut params_pub = HashMap::new();
         params_pub.insert("display_url".to_string(), MetricValue::String(rel.clone()));
         DeviceService::resolve_command_image_urls(&mut params_pub, &temp).unwrap();
         match &params_pub["display_url"] {
             MetricValue::String(s) => {
-                assert_eq!(s, "http://edge.lan:9375/api/images/cam/frame/1.jpg");
+                assert_eq!(s, "http://edge.lan:9444/api/images/cam/frame/1.jpg");
             }
             other => panic!("display_url should be absolute, got {other:?}"),
         }
+        neomind_core::advertise::set_http_listen_port(prev_listen);
         drop(_pub);
-        drop(_port);
+        drop(_port_env);
 
-        // Without overrides → auto LAN/localhost absolute (never silent relative).
+        // Without overrides → LAN absolute if available; never localhost/127.0.0.1
+        // (device-unreachable). If no device-reachable origin, hard-fail.
         let mut params2 = HashMap::new();
         params2.insert("display_url".to_string(), MetricValue::String(rel.clone()));
-        DeviceService::resolve_command_image_urls(&mut params2, &temp).unwrap();
-        match &params2["display_url"] {
-            MetricValue::String(s) => {
+        match DeviceService::resolve_command_image_urls(&mut params2, &temp) {
+            Ok(()) => match &params2["display_url"] {
+                MetricValue::String(s) => {
+                    assert!(
+                        s.starts_with("http://") && s.ends_with("/api/images/cam/frame/1.jpg"),
+                        "expected auto-detected absolute URL, got: {s}"
+                    );
+                    assert!(
+                        !s.contains("127.0.0.1") && !s.contains("localhost"),
+                        "device path must not advertise loopback: {s}"
+                    );
+                    assert!(!s.starts_with("/api/images/"), "must not leave relative");
+                }
+                other => panic!("expected absolute string, got {other:?}"),
+            },
+            Err(e) => {
+                let msg = e.to_string();
                 assert!(
-                    s.starts_with("http://") && s.ends_with("/api/images/cam/frame/1.jpg"),
-                    "expected auto-detected absolute URL, got: {s}"
+                    msg.contains("device-reachable")
+                        || msg.contains("NEOMIND_SERVER_URL")
+                        || msg.contains("NEOMIND_PUBLIC_HOST"),
+                    "expected actionable device-reachable error, got: {msg}"
                 );
-                assert!(!s.starts_with("/api/images/"), "must not leave relative");
+                match &params2["display_url"] {
+                    MetricValue::String(s) => assert_eq!(s, &rel, "must not mutate on failure"),
+                    other => panic!("expected relative left as-is on error, got {other:?}"),
+                }
             }
-            other => panic!("expected absolute string, got {other:?}"),
         }
 
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_resolve_command_rejects_localhost_advertise_for_devices() {
+        // Force the device path past PUBLIC_HOST/SERVER_URL; if only loopback
+        // would apply, AbsoluteHttp must hard-fail (never send 127.0.0.1).
+        let _lock = ADVERTISE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        struct EnvGuard {
+            key: &'static str,
+            prev: Option<String>,
+        }
+        impl EnvGuard {
+            fn set(key: &'static str, value: Option<&str>) -> Self {
+                let prev = std::env::var(key).ok();
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+                Self { key, prev }
+            }
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+
+        let _g1 = EnvGuard::set("NEOMIND_SERVER_URL", None);
+        let _g2 = EnvGuard::set("NEOMIND_PUBLIC_HOST", None);
+        // Device audience uses resolve_device_advertise_base_url — when it
+        // returns None (no LAN), error; when LanIp, URL must not be loopback.
+        // Explicitly assert Localhost is never accepted even if a caller
+        // somehow got that source (defense in depth already in resolve).
+        let temp =
+            std::env::temp_dir().join(format!("neomind_test_cmd_loop_{}", std::process::id()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let rel = "/api/images/cam/frame/1.jpg".to_string();
+        let mut params = HashMap::new();
+        params.insert("display_url".to_string(), MetricValue::String(rel.clone()));
+
+        match DeviceService::resolve_command_image_urls(&mut params, &temp) {
+            Ok(()) => {
+                let MetricValue::String(s) = &params["display_url"] else {
+                    panic!("expected string");
+                };
+                assert!(
+                    !s.contains("127.0.0.1") && !s.contains("localhost"),
+                    "must not send loopback to device: {s}"
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("device-reachable") || msg.contains("NEOMIND_SERVER_URL"),
+                    "{msg}"
+                );
+            }
+        }
         let _ = std::fs::remove_dir_all(&temp);
     }
 

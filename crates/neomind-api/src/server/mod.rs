@@ -43,7 +43,6 @@ use tower_http::timeout::{RequestBodyTimeoutLayer, TimeoutLayer};
 /// reachable on the LAN (0.0.0.0) or only locally (127.0.0.1/localhost).
 static HTTP_BIND_LOOPBACK: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
-static HTTP_BIND_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 
 /// Whether the HTTP server is bound to loopback only.
 pub fn http_bind_is_loopback() -> bool {
@@ -51,8 +50,11 @@ pub fn http_bind_is_loopback() -> bool {
 }
 
 /// The bound HTTP port (0 if not yet bound).
+///
+/// Delegates to [`neomind_core::advertise::http_listen_port`] so device
+/// advertise URLs and the dashboards proxy share one recorded bind port.
 pub fn http_bind_port() -> u16 {
-    HTTP_BIND_PORT.load(std::sync::atomic::Ordering::Relaxed)
+    neomind_core::advertise::http_listen_port()
 }
 
 pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
@@ -65,7 +67,8 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
         bind.ip().is_loopback(),
         std::sync::atomic::Ordering::Relaxed,
     );
-    HTTP_BIND_PORT.store(bind.port(), std::sync::atomic::Ordering::Relaxed);
+    // Single source of truth for advertise / proxy port (not hardcoded 9375).
+    neomind_core::advertise::set_http_listen_port(bind.port());
     use crate::startup::{ServiceStatus, StartupLogger};
 
     // Note: V2 extension system doesn't require panic hook installation

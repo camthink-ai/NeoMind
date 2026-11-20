@@ -410,8 +410,10 @@ pub fn resolve_server_url(headers: Option<&axum::http::HeaderMap>) -> (String, S
     //    (and the Loopback source) to teach "restart with
     //    NEOMIND_HOST=0.0.0.0" rather than silently implying the address is
     //    fine. Falls back to localhost only when no routable host exists.
-    let port = crate::server::http_bind_port();
-    let port = if port == 0 { 9375 } else { port };
+    // Prefer the live bind port (config / NEOMIND_PORT → actual listen), then
+    // the shared advertise fallback — never invent a stale hardcoded 9375 when
+    // the process already bound elsewhere.
+    let port = neomind_core::advertise::advertise_http_port();
     let host = get_server_host();
     let host_is_loopback = host == "localhost" || host == "127.0.0.1" || host == "::1";
     let source = if !host_is_loopback && crate::server::http_bind_is_loopback() {
