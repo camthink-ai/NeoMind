@@ -72,6 +72,8 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
         })
         .collect();
 
+    // RO success with a non-empty complete list: no suggestion (facts only).
+    // Empty / truncated keep a recovery tip so callers know why the view is limited.
     let mut resp = CliResponse::success(
         json!({
             "total": total,
@@ -87,14 +89,8 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
         );
     } else if truncated {
         resp = resp.with_suggestion(format!(
-            "Showing first {LIST_CAP} of {total} (AI-visible overview). Concrete task → \
-neomind extension commands --search \"<task>\". Do not search for \"extension capabilities\"."
+            "Showing first {LIST_CAP} of {total}. Narrow with: neomind extension commands --search \"<task>\"."
         ));
-    } else {
-        resp = resp.with_suggestion(
-            "Compact AI-visible overview. Concrete task → neomind extension commands --search \"<task>\" \
-(use hit shell_example). Do not search for \"extension capabilities\".",
-        );
     }
     Ok(resp)
 }
@@ -321,6 +317,8 @@ pub async fn search_extension_commands(
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
     });
+    // RO success with complete hits: no suggestion (shell_example already in data).
+    // Empty / schema-incomplete keep recovery tips only.
     let mut resp = CliResponse::success(
         data,
         if n == 0 {
@@ -331,19 +329,13 @@ pub async fn search_extension_commands(
     );
     if n == 0 {
         resp = resp.with_suggestion(
-            "No relevant extension command. Try a clearer task phrase, install the needed \
-extension, or use web tools for announcements/general web intent.",
+            "No matching AI-visible command. Try a clearer task phrase, or confirm the \
+needed extension is installed: neomind extension list.",
         );
     } else if needs_schema {
         resp = resp.with_suggestion(
-            "Prefer hits[].shell_example `{command, params}` (replace <placeholders>). \
-requires_schema_lookup → `neomind extension commands <id>` for full schema first. \
-Reuse known id/command on follow-up.",
-        );
-    } else {
-        resp = resp.with_suggestion(
-            "Prefer hits[].shell_example `{command, params}` — paste into the shell tool \
-(replace <placeholders>). Reuse known on follow-up; full schema via commands <id> only if needed.",
+            "Some hits need full schema first: neomind extension commands <id>. \
+Then use hits[].shell_example `{command, params}` (replace <placeholders>).",
         );
     }
     Ok(resp)
@@ -449,6 +441,8 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
         .filter_map(|c| c.get("command").and_then(|v| v.as_str()))
         .collect();
 
+    // RO success with invokable commands: no write-leading suggestion.
+    // Empty / all-disabled keep recovery tips; shell_example stays in data.
     let mut resp = CliResponse::success(
         json!({
             "extension_id": id,
@@ -466,11 +460,6 @@ pub async fn list_extension_commands(client: &ApiClient, id: &str) -> Result<Cli
         resp = resp.with_suggestion(
             "All commands are AI-disabled or author-hidden (ai_exposed=false). Re-enable in extension settings if AI should call them.",
         );
-    } else {
-        let first = invokable[0];
-        resp = resp.with_suggestion(format!(
-            "Next: call the shell tool with commands[].shell_example `{{command, params}}` (e.g. command=\"neomind extension invoke {id} {first}\", params={{...}} per input_schema)."
-        ));
     }
     Ok(resp)
 }
@@ -812,7 +801,7 @@ mod market_install_verdict_tests {
     }
 
     #[tokio::test]
-    async fn list_extensions_omits_per_item_next_and_keeps_top_level_suggestion() {
+    async fn list_extensions_ro_success_has_no_write_leading_suggestion() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -851,11 +840,56 @@ mod market_install_verdict_tests {
             );
         }
         assert!(
+            out.suggestion.is_none(),
+            "non-empty RO list must not carry a write-leading suggestion: {:?}",
             out.suggestion
-                .as_deref()
-                .is_some_and(|s| s.contains("extension commands --search")),
-            "single top-level suggestion must remain: {:?}",
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_extension_commands_ro_success_has_no_next_call_suggestion() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let body = json!({
+                "success": true,
+                "data": [
+                    {
+                        "id": "get_weather",
+                        "description": "Fetch weather",
+                        "ai_exposed": true,
+                        "effect": "read",
+                        "input_schema": {"type":"object","properties":{}}
+                    }
+                ]
+            })
+            .to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(resp.as_bytes()).await.unwrap();
+        });
+
+        let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
+        let out = super::list_extension_commands(&client, "weather").await.unwrap();
+        assert!(out.success);
+        assert!(
+            out.suggestion.is_none(),
+            "RO commands list with invokable cmds must not suggest Next: call: {:?}",
             out.suggestion
+        );
+        let msg = format!("{:?}{:?}", out.message, out.data);
+        assert!(
+            !msg.contains("Next: call"),
+            "response must not contain Next: call: {msg}"
         );
         server.await.unwrap();
     }

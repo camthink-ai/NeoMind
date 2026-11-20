@@ -473,9 +473,9 @@ pub async fn run_dashboard_cmd_with_context(
             if components.is_some() && !replace_all {
                 return Err(anyhow::anyhow!(
                     "--components replaces ALL dashboard components and needs an explicit --replace-all confirmation.\n\
-                     Most likely you want one of these instead:\n\
-                     - ADD widgets:    neomind dashboard add-components {id} --components '[...]'\n\
-                     - TWEAK one widget: neomind dashboard update-component {id} --component-id <cid> --set '{...}'\n\
+                     Most likely you want one of these instead (prefer shell {{command, params}}):\n\
+                     - ADD widgets:    {{\"command\":\"neomind dashboard add-components {id}\",\"params\":[<component objects>]}}\n\
+                     - TWEAK one widget: {{\"command\":\"neomind dashboard update-component {id} --component-id <cid>\",\"params\":{{...}}}}\n\
                      - TRULY replace everything: re-run with --replace-all"
                         .replace("{id}", &id)
                 ));
@@ -634,9 +634,10 @@ pub async fn run_rule_cmd_with_context(
                         || cooldown.is_some();
                     if !has_any {
                         anyhow::bail!(
-                            "nothing to update: pass --body '<JSON>' or fast-path flags \
-                             (--name / --trigger-device + --metric + --operator + --threshold / \
-                             --notify / --cooldown)"
+                            "nothing to update: pass a JSON body via shell params \
+                             ({{command:\"neomind rule update <ID>\", params:{{...}}}}) \
+                             or fast-path flags (--name / --trigger-device + --metric + \
+                             --operator + --threshold / --notify / --cooldown)"
                         );
                     }
                     let patch = crate::rule::RuleFastPatchArgs {

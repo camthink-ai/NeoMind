@@ -595,9 +595,8 @@ pub async fn get_device(client: &ApiClient, id: &str, metric: Option<&str>) -> R
     if let Some(field) = metric {
         filter_single_metric(&mut sanitized, field);
     }
-    Ok(CliResponse::success(sanitized, "Device details retrieved").with_suggestion(
-        "Current snapshot only: a false connection flag or null transition time does not establish earlier connections or a root cause. For missing telemetry, also check device history <ID>.",
-    ))
+    // RO success: facts only — no follow-up write/read tutorial in suggestion.
+    Ok(CliResponse::success(sanitized, "Device details retrieved"))
 }
 
 /// Reduce a /devices/{id}/current response to a single metric field.
@@ -742,8 +741,10 @@ pub async fn get_telemetry_history(
     // snapshot's value is preserved so the downstream streaming-layer slim
     // can cache it as a `$cached:` reference for the `vision` tool.
     let summarized = summarize_image_history(&data, id);
-    Ok(CliResponse::success(summarized, "Telemetry history retrieved").with_suggestion(
-        "History evidence applies only to the returned start/end time range. Empty results do not identify a root cause or prove that a device never connected.",
+    // RO success: facts only — truncation / empty recovery stays in data fields.
+    Ok(CliResponse::success(
+        summarized,
+        "Telemetry history retrieved",
     ))
 }
 
@@ -961,7 +962,7 @@ fn summarize_image_history(data: &serde_json::Value, device_id: &str) -> serde_j
         summary.insert(
             "note".to_string(),
             json!(format!(
-                "{page_count} telemetry point(s){window}{more}. Points are deduplicated per second: a camera bursting several frames in one second leaves ONE point, so point counts undercount saved images — the image file store keeps one file per frame (data/images/<device_id>/<metric>/, filename timestamp = platform ingest time in seconds). The newest frame is in `latest_value` and is ready for analysis via the `vision` tool.",
+                "{page_count} telemetry point(s){window}{more}. Points are deduplicated per second: a camera bursting several frames in one second leaves ONE point, so point counts undercount saved images — the image file store keeps one file per frame (data/images/<device_id>/<metric>/, filename timestamp = platform ingest time in seconds). The newest frame is in `latest_value`.",
                 page_count = page_count,
                 window = time_window,
                 more = match truncated {
@@ -1439,7 +1440,7 @@ mod tests {
         // latest_value carries the FULL data URL of the NEWEST point
         // (slim layer will cache it).
         assert_eq!(summary["latest_value"], url);
-        // Note mentions count + vision hint.
+        // Note mentions count + latest_value; no write/vision-leading tip.
         let note = summary["note"].as_str().unwrap();
         assert!(
             note.contains("3 telemetry point"),
@@ -1447,8 +1448,13 @@ mod tests {
             note
         );
         assert!(
-            note.contains("vision"),
-            "note should mention vision: {}",
+            note.contains("latest_value"),
+            "note should mention latest_value: {}",
+            note
+        );
+        assert!(
+            !note.contains("vision"),
+            "note must not urge vision tool: {}",
             note
         );
     }
@@ -1533,7 +1539,7 @@ mod tests {
 
     /// v0.9.6 regression guard: image metrics now store `/api/images/...` URLs
     /// (file-backed), not base64. `is_image_value` must recognize them so
-    /// `device history` still synthesizes the image summary + vision hint.
+    /// `device history` still synthesizes the image summary + latest_value.
     #[test]
     fn test_summarize_detects_api_images_urls() {
         let device_id = "dev-004b";
@@ -2018,5 +2024,44 @@ mod tests {
         assert!(parse_time_range_to_timestamp("0h", now).is_none());
         assert!(parse_time_range_to_timestamp("-1h", now).is_none());
         assert!(parse_time_range_to_timestamp("30", now).is_none());
+    }
+
+    #[tokio::test]
+    async fn get_device_ro_success_has_no_suggestion() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let body = json!({
+                "success": true,
+                "data": {
+                    "id": "d1",
+                    "name": "Sensor",
+                    "status": "online",
+                    "metrics": {"temperature": {"value": 21.5}}
+                }
+            })
+            .to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(resp.as_bytes()).await.unwrap();
+        });
+
+        let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
+        let out = get_device(&client, "d1", None).await.unwrap();
+        assert!(out.success);
+        assert!(
+            out.suggestion.is_none(),
+            "RO device get must not carry a follow-up suggestion: {:?}",
+            out.suggestion
+        );
+        server.await.unwrap();
     }
 }

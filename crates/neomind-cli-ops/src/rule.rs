@@ -403,7 +403,11 @@ pub async fn create_rule(client: &ApiClient, json_body: &str) -> Result<CliRespo
             return Ok(CliResponse::error_with_suggestion(
                 format!("Invalid JSON: {}", e),
                 "INVALID_JSON",
-                "Example: --body '{\"name\":\"HighTemp\",\"condition\":{\"condition_type\":\"comparison\",\"source\":\"device:sensor-001:temperature\",\"operator\":\"greater_than\",\"threshold\":30},\"actions\":[{\"type\":\"notify\",\"message\":\"Too hot!\"}]}'",
+                "Pass a JSON object via shell params, e.g. \
+{\"command\":\"neomind rule create\",\"params\":{\"name\":\"HighTemp\",\
+\"condition\":{\"condition_type\":\"comparison\",\"source\":\"device:sensor-001:temperature\",\
+\"operator\":\"greater_than\",\"threshold\":30},\
+\"actions\":[{\"type\":\"notify\",\"message\":\"Too hot!\"}]}}",
             ));
         }
     };
@@ -424,7 +428,11 @@ pub async fn update_rule(client: &ApiClient, id: &str, json_body: &str) -> Resul
             return Ok(CliResponse::error_with_suggestion(
                 format!("Invalid JSON: {}", e),
                 "INVALID_JSON",
-                "Example: --body '{\"name\":\"HighTemp\",\"condition\":{\"condition_type\":\"comparison\",\"source\":\"device:sensor-001:temperature\",\"operator\":\"greater_than\",\"threshold\":30},\"actions\":[{\"type\":\"notify\",\"message\":\"Too hot!\"}]}'",
+                "Pass a JSON object via shell params, e.g. \
+{\"command\":\"neomind rule update <ID>\",\"params\":{\"name\":\"HighTemp\",\
+\"condition\":{\"condition_type\":\"comparison\",\"source\":\"device:sensor-001:temperature\",\
+\"operator\":\"greater_than\",\"threshold\":30},\
+\"actions\":[{\"type\":\"notify\",\"message\":\"Too hot!\"}]}}",
             ));
         }
     };

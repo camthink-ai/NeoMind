@@ -132,8 +132,8 @@ pub fn create_widget(
             "Widget scaffold created (TEMPLATE code, not yet registered): {dir_str}. \
              Next: 1) edit bundle.js to implement the component, \
              2) `neomind widget install {widget_id}` to register, \
-             3) `neomind dashboard add-components <dashboard-id> --components \
-             '[{{\"id\":\"c1\",\"type\":\"{widget_id}\",\"position\":{{\"x\":0,\"y\":0,\"w\":4,\"h\":3}}}}]'`. \
+             3) shell {{command:\"neomind dashboard add-components <dashboard-id>\", \
+             params:[{{id:\"c1\",type:\"{widget_id}\",position:{{x:0,y:0,w:4,h:3}}}}]}}. \
              Shortcut: re-run create with --install to scaffold AND register in one step."
         ),
     ))

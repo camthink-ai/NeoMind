@@ -391,9 +391,9 @@ fn extension_commands_id_from_help_argv(argv: &[String]) -> Option<String> {
 
 const EXTENSION_COMMANDS_HELP_REDIRECT_NOTE: &str = "\
 `--help` on `extension commands <id>` is CLI-verb Usage, not the command list. \
-Returning the machine-readable command list instead. Discovery API: \
-`neomind extension commands <id>` (no --help), then \
-`neomind extension invoke <id> <command> --params '{...}'`.";
+Returning the machine-readable command list instead. Discovery: \
+`neomind extension commands <id>` (no --help); invoke via shell \
+`{command:\"neomind extension invoke <id> <command>\", params:{...}}`.";
 
 /// Run `extension commands <id>` and annotate that `--help` was redirected.
 async fn redirect_extension_commands_help(
