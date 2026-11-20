@@ -177,6 +177,8 @@ pub(super) async fn prepare_turn_history_and_budget(
 ) -> std::result::Result<(Vec<neomind_core::Message>, usize), AgentEventStream> {
     let state_guard = internal_state.read().await;
     let mut history_messages = state_guard.memory.clone();
+    // Album from full memory (incl. current turn) before depth drain / strip.
+    let album = crate::agent::session_album::build_session_album(&history_messages);
     drop(state_guard);
 
     // [dup-fix] The caller pushes the current user message into memory BEFORE
@@ -202,8 +204,15 @@ pub(super) async fn prepare_turn_history_and_budget(
     // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
     let max_context = llm_interface.max_context_length().await;
 
+    llm_interface
+        .set_session_album_prompt(crate::agent::session_album::format_album_prompt_block(
+            &album,
+            Some(max_context),
+        ))
+        .await;
+
     // [image budget] history images are re-sent every turn; keep only recent ones
-    // (≤16K windows keep 1; larger keep 2).
+    // (≤16K windows keep 1; larger keep 2). Annotates durable handles before hydrate.
     crate::agent::strip_stale_images(&mut history_messages, Some(max_context));
     let prompt_overhead = llm_interface.estimate_prompt_overhead_tokens().await;
     let effective_max = effective_history_budget(max_context, prompt_overhead);

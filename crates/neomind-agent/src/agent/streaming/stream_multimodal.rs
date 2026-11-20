@@ -64,14 +64,29 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             state.large_data_cache.store_user_image(&cache_key, url);
         }
     }
+    // Persist eagerly (content-hash idempotent) so album / NM-231 strip see
+    // durable `/api/images/…` handles on this turn; attach companion captions.
+    let captions = llm_interface
+        .take_image_delegation_captions()
+        .await
+        .unwrap_or_default();
+    let images_dir = neomind_core::paths::data_dir().join("images");
     let user_images: Vec<AgentMessageImage> = images
         .iter()
-        .map(|data_url| {
+        .enumerate()
+        .map(|(i, data_url)| {
             let mime_type =
                 crate::image_utils::parse_image_data(data_url).map(|p| p.mime_type.to_string());
+            let data = if data_url.starts_with("/api/images/") {
+                data_url.clone()
+            } else {
+                crate::session::SessionManager::persist_image_to_file(data_url, &images_dir)
+                    .unwrap_or_else(|| data_url.clone())
+            };
             AgentMessageImage {
-                data: data_url.clone(),
+                data,
                 mime_type,
+                caption: captions.get(i).cloned(),
             }
         })
         .collect();

@@ -25,6 +25,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Mechanical anti-drift unit scanners locking `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skill examples, and `capability.rs` fail-closed classification against the live `Args::command()` clap tree (P2-3, P2-1).
 
 ### Fixed — harness / agent / CLI / API
+- Spark / text-only primary chat: uploaded images stayed on disk but follow-up turns lost tool-usable context → session album (`img_N` → `/api/images/…` + captions) injects into the system prompt; NM-231 strip annotates durable handles before hydrate; companion captions persist on message images; delegation copy tells the model to pass paths to vision/OCR instead of “images are not accessible”; multimodal stream path no longer double-calls MiniCPM.
 - CLI-only / HTTP `extension invoke` and direct extension tools forwarded hostless `/api/images/...` refs into the child process (unreachable externally) → host materializes refs to raw base64 **after** PreparedInvoke claim and **before** IPC (`materialize_internal_image_refs_in_value`); mint/fingerprint keep the short reference (NM-314).
 - Structured shell `params` rejected JSON arrays on `dashboard add-components`/`remove-components`/`create`/`update`, mapped `transform create` to non-existent `--input`, and omitted `message channel-update` → `params` now accepts both object and array validated per command contract with unified `{command, params}` examples (P0-1).
 - Multi-layer `ApiResponse`/`CliResponse` nesting, HTTP 200 business failures, process-global `INDEX_INJECTED`, and subprocess `--help` concatenated onto JSON `stdout` → `ApiClient` unwraps envelopes and fails on nested `"success": false`, help renders in-process into a separate `usage_hint` field, and domain index state is session-scoped (P0-2, P1-5).
@@ -78,6 +79,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - NM-310: TurnTimeline / ThinkingBlock / toolCallUtils vitest (33).
 - NM-314: `materialize_internal_image_refs_in_value` resolves `/api/images/` + strips image-field data-URIs; missing refs fail closed; HTTP prepare→execute and ExtensionTool claim-then-materialize paths covered.
 - NM-314: device outbound `url` + `NEOMIND_SERVER_URL` → absolute HTTP; without advertise stays relative; `image` still data-URL.
+- Chat session album / NM-231 strip: `session_album` build/format/resolve + durable-path annotate-before-hydrate + text-only `messages_to_api` path fold-in (llama.cpp + OpenAI).
 
 ---
 

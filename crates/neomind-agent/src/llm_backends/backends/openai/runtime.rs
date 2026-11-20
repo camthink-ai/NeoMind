@@ -114,6 +114,7 @@ impl CloudRuntime {
                 let content = match &msg.content {
                     Content::Text(text) => ApiContent::Text(text.clone()),
                     Content::Parts(parts) => {
+                        let mut stripped_paths: Vec<String> = Vec::new();
                         let mut api_parts: Vec<ApiContentPart> = parts
                             .iter()
                             .filter_map(|part| match part {
@@ -121,8 +122,14 @@ impl CloudRuntime {
                                     Some(ApiContentPart::Text { text: text.clone() })
                                 }
                                 ContentPart::ImageUrl { url, detail } => {
-                                    // Drop image parts entirely for text-only models.
+                                    // Drop image parts for text-only models; keep
+                                    // durable /api/images/ handles in text (NM-231).
                                     if !can_multimodal {
+                                        if let Some(path) =
+                                            crate::agent::session_album::durable_image_path(url)
+                                        {
+                                            stripped_paths.push(path.to_string());
+                                        }
                                         return None;
                                     }
                                     if is_anthropic {
@@ -180,14 +187,46 @@ impl CloudRuntime {
                             })
                             .collect();
 
+                        if !can_multimodal && !stripped_paths.is_empty() {
+                            let handle_block =
+                                crate::agent::session_album::stripped_images_placeholder(
+                                    &stripped_paths,
+                                );
+                            match api_parts.first_mut() {
+                                Some(ApiContentPart::Text { text }) => {
+                                    for path in &stripped_paths {
+                                        if !text.contains(path) {
+                                            if !text.ends_with('\n') && !text.is_empty() {
+                                                text.push('\n');
+                                            }
+                                            text.push_str(
+                                                &crate::agent::session_album::format_attached_handle(
+                                                    None, path,
+                                                ),
+                                            );
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    api_parts.insert(
+                                        0,
+                                        ApiContentPart::Text {
+                                            text: handle_block,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+
                         // If every part was a stripped image (image-only message),
                         // leave a text placeholder so the message is non-empty (some
                         // APIs reject empty content) and the model knows context was
                         // dropped.
                         if api_parts.is_empty() {
                             api_parts.push(ApiContentPart::Text {
-                                text: "[image content omitted — current model does not support image input]"
-                                    .to_string(),
+                                text: crate::agent::session_album::stripped_images_placeholder(
+                                    &stripped_paths,
+                                ),
                             });
                         }
 

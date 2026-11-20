@@ -24,6 +24,7 @@ pub mod fallback;
 pub mod history_select;
 pub mod prompt_capture;
 pub mod semantic_mapper;
+pub mod session_album;
 pub mod smart_followup;
 pub mod staged;
 pub mod streaming;

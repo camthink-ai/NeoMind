@@ -545,6 +545,9 @@ pub struct AgentMessageImage {
     /// MIME type (e.g., "image/png")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// Optional companion / VLM caption bound to this durable image (persisted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
 }
 
 /// Resolve a persisted `/api/images/<file>` reference back to a data URL
@@ -839,8 +842,22 @@ impl AgentMessage {
             _ => return Message::user(self.content.as_ref()),
         };
 
+        // Ensure durable `/api/images/…` handles stay in the text part so
+        // text-only primaries (NM-231 strip) still see tool-usable paths.
+        let durable_paths: Vec<(Option<u32>, String)> = images
+            .iter()
+            .filter_map(|img| {
+                crate::agent::session_album::durable_image_path(&img.data)
+                    .map(|p| (None, p.to_string()))
+            })
+            .collect();
+        let text = crate::agent::session_album::append_attached_handles(
+            self.content.as_ref(),
+            durable_paths,
+        );
+
         // Build content parts: text + images
-        let mut parts = vec![ContentPart::text(self.content.to_string())];
+        let mut parts = vec![ContentPart::text(text)];
         let mut unresolvable = 0usize;
 
         for image in images {
@@ -850,11 +867,8 @@ impl AgentMessage {
                 match load_image_reference(&image.data) {
                     Some(data_url) => data_url,
                     None => {
-                        // Drop the part, but leave a VISIBLE note in the
-                        // text: silently vanishing images make the model
-                        // answer follow-ups about a picture it never saw as
-                        // if it had seen it — hallucinations with
-                        // confidence. Same style as the stale-image notes.
+                        // Drop the bytes part; text already carries the durable
+                        // handle from `append_attached_handles` above.
                         unresolvable += 1;
                         continue;
                     }
@@ -3882,6 +3896,7 @@ mod image_reference_tests {
         msg.images = Some(vec![AgentMessageImage {
             data: "/api/images/definitely-missing.png".to_string(),
             mime_type: Some("image/png".to_string()),
+            caption: None,
         }]);
         let core = msg.to_core();
         let parts = match core.content {
@@ -3910,6 +3925,7 @@ mod image_reference_tests {
         msg.images = Some(vec![AgentMessageImage {
             data: tiny_png_data_url(),
             mime_type: None,
+            caption: None,
         }]);
         let core = msg.to_core();
         let parts = match core.content {

@@ -530,7 +530,17 @@ fn parse_extracted_facts(text: &str) -> (Vec<String>, Vec<String>) {
     (user, knowledge)
 }
 
-async fn delegate_images_to_companion(message: &str, images: &[String]) -> Option<String> {
+/// Result of companion image delegation for a text-only primary.
+struct ImageDelegation {
+    /// One-shot prompt for the current LLM turn (includes captions + paths).
+    prompt: String,
+    /// Per-image captions in upload order (persisted onto history images).
+    captions: Vec<String>,
+    /// Durable `/api/images/…` paths in upload order (when persistence succeeded).
+    paths: Vec<Option<String>>,
+}
+
+async fn delegate_images_to_companion(message: &str, images: &[String]) -> Option<ImageDelegation> {
     if let Ok(v) = std::env::var("NEOMIND_BUILTIN_VLM_DELEGATE") {
         if v.trim().eq_ignore_ascii_case("off") {
             return None;
@@ -546,8 +556,20 @@ async fn delegate_images_to_companion(message: &str, images: &[String]) -> Optio
     use neomind_core::llm::backend::{GenerationParams, LlmInput};
     use neomind_core::message::{Content, ContentPart, Message, MessageRole};
 
-    let mut described = Vec::with_capacity(images.len());
+    let images_dir = neomind_core::paths::data_dir().join("images");
+    let mut captions = Vec::with_capacity(images.len());
+    let mut paths = Vec::with_capacity(images.len());
     for img in images {
+        // Prefer durable path early so the turn prompt and history share it.
+        let path = if img.starts_with("/api/images/") {
+            Some(img.trim().to_string())
+        } else if img.starts_with("data:image/") {
+            SessionManager::persist_image_to_file(img, &images_dir)
+        } else {
+            None
+        };
+        paths.push(path.clone());
+
         // Chat uploads arrive as data URLs — anything else takes the
         // legacy error path rather than guessing the encoding.
         let raw = img.trim().strip_prefix("data:")?;
@@ -557,7 +579,7 @@ async fn delegate_images_to_companion(message: &str, images: &[String]) -> Optio
             MessageRole::User,
             Content::Parts(vec![
                 ContentPart::text(
-                    "Describe this image factually and concisely: objects, people, visible text, colors, and the overall scene. Describe only what is visible — do not speculate.",
+                    "Describe this image factually and concisely: objects, people, visible text, colors, and the overall scene. Describe only what is visible — do not speculate. Keep under 120 Chinese characters or ~60 English words.",
                 ),
                 ContentPart::image_base64(data, &mime),
             ]),
@@ -565,7 +587,7 @@ async fn delegate_images_to_companion(message: &str, images: &[String]) -> Optio
         let input = LlmInput {
             messages: vec![msg],
             params: GenerationParams {
-                max_tokens: Some(400),
+                max_tokens: Some(200),
                 ..Default::default()
             },
             model: None,
@@ -581,32 +603,57 @@ async fn delegate_images_to_companion(message: &str, images: &[String]) -> Optio
         if text.is_empty() {
             return None;
         }
-        described.push(text.to_string());
+        // Soft-clip caption for album/prompt budget.
+        let clipped: String = text.chars().take(160).collect();
+        captions.push(clipped);
     }
 
     let mut combined = message.to_string();
-    // Explicit handling instructions matter for small models: without them
-    // the model deliberates calling the `vision` tool (still in its tool
-    // list — the vision-tool filter only fires when the message ITSELF
-    // carries images, and this turn is text-only) and burns minutes of
-    // thinking before an empty answer (observed 2026-10-20: 2min of
-    // "should I call vision..." then a no-content retry).
+    // Pixels are not inline on the text-only primary; durable paths remain
+    // usable with vision / OCR / image_edit. Short captions ≠ OCR full text.
     combined.push_str(&format!(
-        "\n\n[The user attached {} image(s); a local vision model has ALREADY analyzed \
-         them — the descriptions below are complete. Answer directly from these \
-         descriptions. Do NOT call the vision tool: the images are not accessible \
-         to you and are already analyzed.]\n",
-        described.len()
+        "\n\n[The user attached {} image(s). A local vision companion wrote short \
+         captions below — useful for orientation, NOT a substitute for OCR. \
+         Pixels are not inline on this text model. Pass the /api/images/… path \
+         (or img_N from Session images) to vision / OCR / image_edit when you \
+         need exact text or finer analysis.]\n",
+        captions.len()
     ));
-    for (i, d) in described.iter().enumerate() {
-        combined.push_str(&format!("[Image {}] {}\n", i + 1, d));
+    for (i, d) in captions.iter().enumerate() {
+        let path_note = paths
+            .get(i)
+            .and_then(|p| p.as_deref())
+            .map(|p| format!(" path={p}"))
+            .unwrap_or_default();
+        combined.push_str(&format!(
+            "[Image {}{}] {}\n",
+            i + 1,
+            path_note,
+            d
+        ));
     }
     tracing::info!(
         companion = %companion.id,
-        images = described.len(),
+        images = captions.len(),
         "session: delegated chat images to the vision companion"
     );
-    Some(combined)
+    Some(ImageDelegation {
+        prompt: combined,
+        captions,
+        paths,
+    })
+}
+
+async fn apply_image_delegation(
+    llm: std::sync::Arc<crate::llm::LlmInterface>,
+    delegation: ImageDelegation,
+) {
+    // Paths are re-derived idempotently (content-hash) when accepting the
+    // user message; captions must stage here for history persistence.
+    let _paths = delegation.paths;
+    llm.set_image_delegation_captions(delegation.captions)
+        .await;
+    llm.set_image_delegation_prompt(delegation.prompt).await;
 }
 
 impl SessionManager {
@@ -803,6 +850,7 @@ impl SessionManager {
                             neomind_storage::SessionMessageImage {
                                 data,
                                 mime_type: img.mime_type.clone(),
+                                caption: img.caption.clone(),
                             }
                         })
                         .collect()
@@ -899,6 +947,7 @@ impl SessionManager {
                         .map(|img| super::agent::AgentMessageImage {
                             data: img.data,
                             mime_type: img.mime_type,
+                            caption: img.caption,
                         })
                         .collect()
                 });
@@ -2577,11 +2626,8 @@ Assistant: {ar}\n"
                 // LLM turn consumes the combined prompt via the one-shot
                 // transient on the agent's LLM interface.
                 match delegate_images_to_companion(message, &images).await {
-                    Some(combined) => {
-                        agent
-                            .llm_interface()
-                            .set_image_delegation_prompt(combined)
-                            .await;
+                    Some(delegation) => {
+                        apply_image_delegation(agent.llm_interface(), delegation).await;
                     }
                     None => {
                         return Err(super::error::NeoMindError::Validation(
@@ -2596,6 +2642,7 @@ Assistant: {ar}\n"
         self.process_message_multimodal(session_id, message, images)
             .await
     }
+
 
     /// Process a multimodal message (text + images) with streaming response and optional backend override.
     pub async fn process_message_multimodal_with_backend_stream(
@@ -2632,31 +2679,8 @@ Assistant: {ar}\n"
                 })?;
         }
 
-        // Check if images are provided and model supports vision
-        if !images.is_empty() {
-            let agent = self.get_session(session_id).await?;
-            if !agent.llm_interface().supports_multimodal().await {
-                // Companion describes the images; the ORIGINAL message +
-                // attachments still go to history (clean bubble), while the
-                // LLM turn consumes the combined prompt via the one-shot
-                // transient on the agent's LLM interface.
-                match delegate_images_to_companion(message, &images).await {
-                    Some(combined) => {
-                        agent
-                            .llm_interface()
-                            .set_image_delegation_prompt(combined)
-                            .await;
-                    }
-                    None => {
-                        return Err(super::error::NeoMindError::Validation(
-                            "Current model does not support image input. Please select a vision-capable model or remove images before retrying."
-                                .to_string(),
-                        ));
-                    }
-                }
-            }
-        }
-
+        // Companion delegation runs once inside
+        // `process_message_multimodal_stream_authorize` (avoid double MiniCPM).
         self.process_message_multimodal_stream_authorize(
             session_id,
             message,
@@ -2697,11 +2721,8 @@ Assistant: {ar}\n"
                 // LLM turn consumes the combined prompt via the one-shot
                 // transient on the agent's LLM interface.
                 match delegate_images_to_companion(message, &images).await {
-                    Some(combined) => {
-                        agent
-                            .llm_interface()
-                            .set_image_delegation_prompt(combined)
-                            .await;
+                    Some(delegation) => {
+                        apply_image_delegation(agent.llm_interface(), delegation).await;
                     }
                     None => {
                         return Err(super::error::NeoMindError::Validation(
@@ -4996,15 +5017,24 @@ mod companion_delegation_tests {
         let combined = delegate_images_to_companion("what is in this picture?", &[data_url()])
             .await
             .expect("delegation must succeed with a healthy companion");
-        assert!(combined.contains("what is in this picture?"));
+        assert!(combined.prompt.contains("what is in this picture?"));
         assert!(
-            combined.contains("a red square and a green circle"),
-            "companion text must land verbatim: {combined}"
+            combined.prompt.contains("a red square and a green circle"),
+            "companion text must land verbatim: {}",
+            combined.prompt
         );
-        assert!(combined.contains("[Image 1]"));
+        assert!(combined.prompt.contains("[Image 1"));
+        assert_eq!(combined.captions.len(), 1);
         assert!(
-            combined.contains("Do NOT call the vision tool"),
-            "delegated turns must tell the model not to re-analyze via the tool: {combined}"
+            combined.prompt.contains("/api/images/")
+                || combined.prompt.contains("Pass the /api/images"),
+            "delegated turns must expose durable paths for tools: {}",
+            combined.prompt
+        );
+        assert!(
+            !combined.prompt.contains("Do NOT call the vision tool"),
+            "must not forbid vision/OCR when paths are available: {}",
+            combined.prompt
         );
     }
 

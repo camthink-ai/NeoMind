@@ -544,6 +544,7 @@ pub fn narration_nudge_prompt(language_hint: &str) -> &'static str {
 /// both streaming paths push them after the window is built.
 pub(crate) fn strip_stale_images(history: &mut [AgentMessage], max_context: Option<usize>) {
     let keep = keep_images_on_recent_user_msgs(max_context);
+    let album = super::session_album::build_session_album(history);
     let mut kept_with_images = 0usize;
     for msg in history.iter_mut().rev() {
         if msg.role != "user" {
@@ -555,6 +556,20 @@ pub(crate) fn strip_stale_images(history: &mut [AgentMessage], max_context: Opti
         };
         kept_with_images += 1;
         if kept_with_images <= keep {
+            // Annotate durable handles into text BEFORE hydrating to data URLs
+            // so NM-231 text-only strip still leaves `/api/images/…` for tools.
+            let paths = super::session_album::durable_paths_from_images(
+                msg.images.as_ref().map(|v| v.as_slice()).unwrap_or(&[]),
+            );
+            if !paths.is_empty() {
+                let pairs = paths.into_iter().map(|path| {
+                    let index = super::session_album::album_index_for_path(&album, &path);
+                    (index, path)
+                });
+                msg.content =
+                    super::session_album::append_attached_handles(msg.content.as_ref(), pairs)
+                        .into();
+            }
             // Hydrate persisted file references to data URLs — the LLM needs
             // actual image bytes, not an /api/images/ path. Restored sessions
             // hold references; active ones already hold data URLs (no-op).
@@ -569,12 +584,25 @@ pub(crate) fn strip_stale_images(history: &mut [AgentMessage], max_context: Opti
             }
             continue;
         }
+        // Stale images: drop pixels but keep durable path handles in text.
+        let paths = super::session_album::durable_paths_from_images(
+            msg.images.as_ref().map(|v| v.as_slice()).unwrap_or(&[]),
+        );
         msg.images = None;
-        let note = format!("[{image_count} image(s) omitted from history to save context]");
-        if msg.content.is_empty() {
-            msg.content = note.into();
+        if paths.is_empty() {
+            let note = format!("[{image_count} image(s) omitted from history to save context]");
+            if msg.content.is_empty() {
+                msg.content = note.into();
+            } else {
+                msg.content = format!("{} {}", msg.content, note).into();
+            }
         } else {
-            msg.content = format!("{} {}", msg.content, note).into();
+            let pairs = paths.into_iter().map(|path| {
+                let index = super::session_album::album_index_for_path(&album, &path);
+                (index, path)
+            });
+            msg.content =
+                super::session_album::append_attached_handles(msg.content.as_ref(), pairs).into();
         }
     }
 }
@@ -992,6 +1020,7 @@ mod depth_and_image_tests {
         AgentMessageImage {
             data: "data:image/png;base64,x".to_string(),
             mime_type: Some("image/png".to_string()),
+            caption: None,
         }
     }
 
@@ -1090,6 +1119,37 @@ mod depth_and_image_tests {
         assert!(c.contains("1 image(s) omitted"), "marker appended: {c}");
         // Non-user messages untouched.
         assert!(history[0].images.is_none());
+    }
+
+    #[test]
+    fn strip_stale_images_annotates_durable_paths_before_hydrate() {
+        let path = "/api/images/chat-deadbeefdeadbeef.jpg";
+        let mut history = vec![{
+            let mut m = AgentMessage::user("meter shot");
+            m.images = Some(vec![AgentMessageImage {
+                data: path.to_string(),
+                mime_type: Some("image/jpeg".to_string()),
+                caption: Some("a beige meter".into()),
+            }]);
+            m
+        }];
+        // Missing file → hydrate no-ops, but handle must still land in text.
+        strip_stale_images(&mut history, Some(32_768));
+        let c = history[0].content.as_ref();
+        assert!(c.contains("meter shot"), "original text preserved: {c}");
+        assert!(
+            c.contains(path),
+            "durable path must survive for text-only strip / tools: {c}"
+        );
+        assert!(
+            c.contains("img_1") || c.contains("[attached"),
+            "album-aware handle expected: {c}"
+        );
+        // Path still on the image field (hydrate failed → left as reference).
+        assert_eq!(
+            history[0].images.as_ref().unwrap()[0].data.as_str(),
+            path
+        );
     }
 
     #[test]

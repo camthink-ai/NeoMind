@@ -606,9 +606,14 @@ pub struct LlmInterface {
     /// but a vision companion described the images, this holds the FULL
     /// prompt (original message + descriptions) for the LLM while history
     /// keeps the ORIGINAL message + image attachments for display. One-shot
-    /// (take semantics) — consumed by the multimodal stream/turn entry and
-    /// never persisted.
+    /// (take semantics) — consumed by the multimodal stream/turn entry.
+    /// Captions are also staged (parallel order) for persistence onto
+    /// [`AgentMessageImage::caption`].
     image_delegation_prompt: Arc<RwLock<Option<String>>>,
+    /// Parallel captions from the latest companion delegation (take semantics).
+    image_delegation_captions: Arc<RwLock<Option<Vec<String>>>>,
+    /// Per-turn session image album block (relative `/api/images/…` only).
+    session_album_prompt: Arc<RwLock<Option<String>>>,
     /// Pinned skill IDs selected by the user for this session.
     /// These skills are injected as full guides (not just hints) into the system prompt.
     pinned_skills: Arc<RwLock<Vec<String>>>,
@@ -743,6 +748,8 @@ impl LlmInterface {
             skill_registry: Arc::new(RwLock::new(None)),
             skill_context: Arc::new(RwLock::new(TransientSkillContext::default())),
             image_delegation_prompt: Arc::new(RwLock::new(None)),
+            image_delegation_captions: Arc::new(RwLock::new(None)),
+            session_album_prompt: Arc::new(RwLock::new(None)),
             pinned_skills: Arc::new(RwLock::new(Vec::new())),
             task_state_prompt: Arc::new(RwLock::new(None)),
             turn_timestamp: Arc::new(RwLock::new(None)),
@@ -791,6 +798,8 @@ impl LlmInterface {
             skill_registry: Arc::new(RwLock::new(None)),
             skill_context: Arc::new(RwLock::new(TransientSkillContext::default())),
             image_delegation_prompt: Arc::new(RwLock::new(None)),
+            image_delegation_captions: Arc::new(RwLock::new(None)),
+            session_album_prompt: Arc::new(RwLock::new(None)),
             pinned_skills: Arc::new(RwLock::new(Vec::new())),
             task_state_prompt: Arc::new(RwLock::new(None)),
             turn_timestamp: Arc::new(RwLock::new(None)),
@@ -1596,6 +1605,21 @@ impl LlmInterface {
         *self.image_delegation_prompt.write().await = Some(prompt);
     }
 
+    /// Stage companion captions (parallel to upload order) for history persistence.
+    pub async fn set_image_delegation_captions(&self, captions: Vec<String>) {
+        *self.image_delegation_captions.write().await = Some(captions);
+    }
+
+    /// Take staged companion captions (one-shot).
+    pub async fn take_image_delegation_captions(&self) -> Option<Vec<String>> {
+        self.image_delegation_captions.write().await.take()
+    }
+
+    /// Set/replace the per-turn session album prompt block (relative paths only).
+    pub async fn set_session_album_prompt(&self, block: Option<String>) {
+        *self.session_album_prompt.write().await = block;
+    }
+
     /// One-shot consume: returns the staged delegation prompt (if any) and
     /// clears it, so a missed turn can never leak the prompt into a later,
     /// unrelated message.
@@ -2015,6 +2039,15 @@ impl LlmInterface {
             if !section.trim().is_empty() {
                 prompt.push('\n');
                 prompt.push_str(section.trim());
+                prompt.push('\n');
+            }
+        }
+
+        // Session image album (durable /api/images/… handles + recent captions).
+        if let Some(album) = self.session_album_prompt.read().await.clone() {
+            if !album.trim().is_empty() {
+                prompt.push('\n');
+                prompt.push_str(album.trim());
                 prompt.push('\n');
             }
         }

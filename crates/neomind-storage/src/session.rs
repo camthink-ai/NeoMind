@@ -188,11 +188,15 @@ pub struct SessionMessage {
 /// An image attached to a message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMessageImage {
-    /// Base64 data URL (e.g., "data:image/png;base64,...").
+    /// Base64 data URL (e.g., "data:image/png;base64,...") or durable
+    /// `/api/images/<file>` reference after persistence.
     pub data: String,
     /// MIME type (e.g., "image/png").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// Optional companion / VLM caption for this image (session album).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caption: Option<String>,
 }
 
 impl SessionMessage {
@@ -2406,10 +2410,12 @@ mod tests {
             SessionMessageImage {
                 data: "data:image/png;base64,iVBORw0KG...".to_string(),
                 mime_type: Some("image/png".to_string()),
+                            caption: None,
             },
             SessionMessageImage {
                 data: "data:image/jpeg;base64,/9j/4AAQ...".to_string(),
                 mime_type: Some("image/jpeg".to_string()),
+                            caption: None,
             },
         ];
 

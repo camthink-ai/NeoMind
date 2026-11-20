@@ -357,6 +357,7 @@ impl Agent {
             user_images.push(crate::agent::types::AgentMessageImage {
                 data: image_data.clone(),
                 mime_type: Some(mime_type_str.to_string()),
+                caption: None,
             });
         }
 
