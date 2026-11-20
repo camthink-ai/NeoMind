@@ -49,6 +49,10 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - `compute_history_budget` summed all unfiltered tools with legacy `estimate_tokens`, inflating 8K tool overhead into `ZeroBudget` and stripping all tools on Turn ≥ 2 → shares profile-filtered `estimate_json_schema_tokens` (Light/Balanced/Standard) and EWMA calibration with prompt overhead so 8K multi-turn keeps exposed tools.
 - Prompt-token estimates include attached `tools_input` schemas on both text and multimodal stream paths, pass real `has_user_images` to breakdown calibration, and track measured `prompt_eval` via per-backend/model EWMA factors clamped to `[0.65, 1.35]` (S3-3).
 - Shell `extension invoke` with illegal / quote-stripped `--params` silently skipped PreparedInvoke mint and later reported case-c "PreparedInvoke missing" → attach now WARNs + surfaces structured-`params` guidance; bind distinguishes never-minted vs canonicalize-stripped tickets; bare `--params {"k":"v"}` keeps JSON string quotes so small models can mint (NM-302).
+- Parallel `dashboard add-components` / `remove-components` / `update-component` / `update` used lock-free RMW and silently dropped sibling writes → mutate inside one redb write transaction; API rejects ephemeral component `data`/`label` keys and points to `data_source` (NM-309).
+- Invented CLI `--params` on commands whose primary JSON flag is `--components`/`--set`/`--ids`/`--body`/`--config`/`--input` only showed clap noise → shell recovery points at structured `params` + the real flag (NM-309).
+- `parse_json_arg` failures were bare serde messages → snippet + brace/batch hints ("add only 1–2 components") for large arrays (NM-309).
+- Skill section thrashing after overview stayed soft-`already_present` only → hard-gate further NEW sections once overview + 2 sections are loaded; dashboard skill/clap examples go structured-first with batching + no ephemeral `data` (NM-242 / NM-309).
 
 ### Fixed — CT-Prov / BLE provision
 - Auth-enabled embedded broker resolve no longer leaves username/password empty — mint on `resolve_only` and write them in `config.set` (empty-omit for auth-off / blank external fields).
@@ -64,6 +68,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Stage 2 gates: RO success `suggestion.is_none()`; device pagination/truncation honesty + never-seen `last_seen` null health; extension fallback `"Stopped"` vs `"Failed"`; health in-process JSON + `logs --since` duration/RFC3339 tests; `16_384` image-history boundary; 14 admin Forbidden (403) handler tests + `AgentDefaultsRequest` partial PUT + `market_list_handler` 502 test.
 - Stage 3 gates: `cli_api_contract` fixture suite covering 15 domains including `auth`/`data`/`api-key` and wrapped `/mqtt/status` & `/mqtt/broker-config` (S3-1); Light/Balanced/Standard tool-profile + `Light` `vision` reachability + Light `toolTokens` <1800 + 8K multi-turn history-budget & Turn-2 wire-capture tests (`compute_history_budget_8k_uses_light_profile_and_avoids_zero_budget`, `minicpm_8k_multiturn_keeps_light_profile_tools_on_turn_2`) (S3-2); prompt-token EWMA clamp/update math + tool-inclusive calibration regression test (S3-3).
 - NM-302 PreparedInvoke params gates: bare `--params {"city":"xiamen"}` tokenize/mint, illegal `{city:xiamen}` attach `HOST_ATTACH_ERROR` + structured-params tip, structured `params` mint→restore→bind, bind never-minted vs case-c wording.
+- NM-309: parallel `mutate_dashboard` append regression; invented `--params` recovery tips; JSON parse readability/batch hints; skill overview+section thrash hard-gate.
 
 ---
 
@@ -118,6 +123,7 @@ Edge-AI capability iteration merged to `main`: CamThink CT-Prov/1 BLE onboarding
 - Ordinary approve honesty + unified subscribe path; pre-enqueue cancel drops Absorb; approve retry updates type.
 
 ### Fixed — chat / agent / web
+- Chat「执行过程」expanded panel: flat R1/R2 labels, tool rows prefer audit `description`, thinking collapses as `思考 · N 字`, inter-round text collapses as `中间说明`, and device-delivery subtitle only when structured `delivery`/`delivery_note` exists (NM-310).
 - GoalStatusCallout hides default “ended normally” / N/A session-footer noise; keeps abnormal/incomplete callouts.
 - Agent refuses tools when the outer window drops the latest feedback; multimodal deny on all paths; canonical write fingerprints + restore migration hardening.
 - Chat draft/send lifecycle: MessageReceived after save, safe draft hydrate, rollback accept bound to history generation/Turn; TipTap contentNodes no longer kill CJK IME.
