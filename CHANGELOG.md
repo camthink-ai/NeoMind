@@ -32,6 +32,9 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Stale `--type`/`--adapter` API hints, shadowed `recovery_hint` branches, contradictory pipe docs, and broken builtin skill commands cleaned up (P0-5).
 - Five overlapping tool gate/cache layers, dual-copy skill injection, split text/multimodal loops, and tool-bearing empty-reply retries → converged onto two-layer canonical read-cache + `OperationLedger` gating, single-copy `tool`-history skill loading with action-exit hints, unified `drive_react_stream` for text + multimodal, and tool-free `chat_stream_summary_for_task` recovery (P1-2, P1-3, P1-4).
 - Redundant pre-create HTTP validation hops in `message channel-create` removed in favor of server-side validation hints (P1-5).
+- E4 `SystemGoalStatus` receipts kept superseded preflight `Rejected` rows after lock-free retries → fold Rejected when the same business identity later reaches a real outcome (stops false `partial_failure` after successful retry).
+- Turn-end `incomplete_action_note` fired on read-only asks that only mentioned negated mutations ("不要修改配置") → action detection ignores negated verbs while still catching mixed "create …, don't modify …" requests.
+- Clap `usage_hint`, device-control recovery copy, and message-channel 422 hints still pushed quote-fragile `--set`/`--components`/`--config` strings first → prefer Chat/shell structured `params` as the primary retry example.
 
 ### Fixed — CT-Prov / BLE provision
 - Auth-enabled embedded broker resolve no longer leaves username/password empty — mint on `resolve_only` and write them in `config.set` (empty-omit for auth-off / blank external fields).

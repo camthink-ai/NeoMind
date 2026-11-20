@@ -1162,6 +1162,8 @@ pub enum DashboardCommand {
     ///   `dashboard update-component <ID> --component-id c3 --set '{"data_source":{"timeWindow":{"type":"last_6hours"}}}'`
     ///   retitle + resize:
     ///   `dashboard update-component <ID> --component-id c3 --set '{"title":"温度","position":{"w":6}}'`
+    /// Chat/shell tool preferred: keep JSON out of the command string and pass
+    /// the object via structured `params` (maps to `--set`).
     UpdateComponent {
         /// Dashboard ID.
         #[arg(required = true)]
@@ -1179,6 +1181,8 @@ pub enum DashboardCommand {
     /// This is the RECOMMENDED way to add widgets.
     ///
     /// Example: `neomind dashboard add-components <ID> --components '[{"id":"c1","type":"value-card",...}]'`
+    /// Chat/shell tool preferred: pass the JSON array via structured `params`
+    /// (maps to `--components`) instead of quoting `--components` in `command`.
     AddComponents {
         /// Dashboard ID.
         #[arg(required = true)]
@@ -2065,6 +2069,8 @@ pub enum MessageCommand {
     ///   feishu:   '{"hook_id":"xxxxxxxx","secret":"optional_sign_secret"}'
     ///
     /// Example: `neomind message channel-create --name "alerts" --type webhook --param url=https://hooks.slack.com/...`
+    /// Chat/shell tool preferred: pass the config object via structured `params`
+    /// (maps to `--config`), e.g. `params={"url":"https://example.com/webhook"}`.
     /// (or `--config '{"url":"https://..."}'` for the full JSON form)
     ChannelCreate {
         /// Channel name (unique identifier).

@@ -82,6 +82,34 @@ const INSTRUCTIONAL_QUESTION_PATTERNS: &[&str] = &[
     "explain",
 ];
 
+/// True when an action verb at `verb_pos` is under an immediate negation
+/// ("不要修改", "don't update", "without changing"). Used so read-only asks
+/// that mention a forbidden mutation do not trip turn-end completeness notes
+/// (L3 Spark: "只读查询，不要修改配置").
+fn action_verb_is_negated(msg_lower: &str, verb_pos: usize) -> bool {
+    // Walk back up to 8 Unicode scalars so we never slice mid-codepoint on CJK.
+    let prefix = &msg_lower[..verb_pos];
+    let start = prefix
+        .char_indices()
+        .rev()
+        .nth(7)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let window = &prefix[start..];
+    window.contains("不要")
+        || window.contains("别")
+        || window.contains("勿")
+        || window.contains("无需")
+        || window.contains("不用")
+        || window.contains("禁止")
+        || window.contains("不做")
+        || window.contains("不可")
+        || window.contains("不应")
+        || window.contains("don't ")
+        || window.contains("do not ")
+        || window.contains("without ")
+}
+
 /// Check if the user message requests a mutation/action (not just a query).
 ///
 /// Position-sensitive: instructional markers only demote a message from
@@ -89,19 +117,30 @@ const INSTRUCTIONAL_QUESTION_PATTERNS: &[&str] = &[
 /// "how do I create…"). The same words AFTER the verb are filler inside a
 /// genuine request ("帮我删除这个设备，不知道怎么操作") and must not
 /// silence the guard.
+///
+/// Negation-aware: a message whose ONLY action verbs are negated
+/// ("不要修改配置", "don't update anything") is treated as non-action. A
+/// mixed request ("创建设备，不要修改配置") still requires action because
+/// the un-negated verb remains.
 pub(crate) fn user_message_requires_action(msg: &str) -> bool {
     let msg_lower = msg.to_lowercase();
-    let Some(verb_pos) = ACTION_VERBS.iter().filter_map(|v| msg_lower.find(v)).min() else {
+    let verb_hits: Vec<usize> = ACTION_VERBS
+        .iter()
+        .filter_map(|v| msg_lower.find(v))
+        .collect();
+    let Some(&first_verb_pos) = verb_hits.iter().min() else {
         return false;
     };
     if INSTRUCTIONAL_QUESTION_PATTERNS
         .iter()
         .filter_map(|p| msg_lower.find(p))
-        .any(|pos| pos < verb_pos)
+        .any(|pos| pos < first_verb_pos)
     {
         return false;
     }
-    true
+    verb_hits
+        .into_iter()
+        .any(|pos| !action_verb_is_negated(&msg_lower, pos))
 }
 
 /// Check if ALL executed tool calls so far were read-only (list/get/query).
@@ -1055,6 +1094,42 @@ mod tests {
         assert!(build_list_only_dead_end_prompt(msg, &["neomind device list"], &[], 3,).is_none());
         // The same request WITHOUT the plan-only clause still flags.
         assert!(build_incomplete_action_note("帮我创建设备", &[], &[]).is_some());
+    }
+
+    /// L3 Spark: read-only asks that forbid mutation ("不要修改配置") must not
+    /// trip `incomplete_action_note` just because "修改" is an ACTION_VERB.
+    #[test]
+    fn negated_mutation_verbs_do_not_request_action() {
+        assert!(!user_message_requires_action(
+            "请再分别查看 weather-forecast-v2 扩展的当前配置和最近日志。只读查询，不要修改配置。"
+        ));
+        assert!(!user_message_requires_action(
+            "请查询仪表盘详情，告诉我它当前有几个组件，不要做任何修改。"
+        ));
+        assert!(!user_message_requires_action(
+            "列出所有仪表盘并加载技能概览，简短总结即可，不要修改任何内容。"
+        ));
+        assert!(!user_message_requires_action(
+            "Inspect the extension config only — don't update anything."
+        ));
+        assert!(build_incomplete_action_note(
+            "只读查询扩展配置，不要修改配置。",
+            &["neomind extension config weather-forecast-v2"],
+            &[],
+        )
+        .is_none());
+
+        // Mixed: an un-negated create still requests action even if a later
+        // clause forbids a different mutation.
+        assert!(user_message_requires_action(
+            "帮我创建一个 webhook 通道，不要修改已有配置。"
+        ));
+        assert!(build_incomplete_action_note(
+            "帮我创建一个 webhook 通道，不要修改已有配置。",
+            &[],
+            &[],
+        )
+        .is_some());
     }
 
     /// Live 2026-10-21: "Send it a set_alarm command" extracts action=write/send

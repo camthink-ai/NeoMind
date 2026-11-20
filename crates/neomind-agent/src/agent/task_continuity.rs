@@ -3314,8 +3314,14 @@ impl TaskState {
     /// Preserves chronological order and joins each operation with its exact
     /// delivery tag (`adapter_accepted`, `queued`, `device_ack`,
     /// `physical_effect_verified`) or compact failure/unknown reason.
+    ///
+    /// Pre-submission `Rejected` attempts that are later superseded by a real
+    /// terminal/in-flight outcome for the same business identity
+    /// (`domain`/`action` + compatible target) are folded out of the summary
+    /// so `SystemGoalStatus` does not report a false `partial_failure` after a
+    /// successful lock-free retry (L3 Spark E4 finding).
     pub fn turn_write_receipts(&self, turn_id: u64) -> Vec<TargetReceipt> {
-        let mut receipts: Vec<TargetReceipt> = Vec::new();
+        let mut receipts: Vec<(TargetReceipt, Option<String>, Option<String>)> = Vec::new();
         let mut index_by_key: std::collections::HashMap<(String, String), usize> =
             std::collections::HashMap::new();
 
@@ -3374,13 +3380,13 @@ impl TaskState {
             };
             let key = (target, op.operation_id.clone());
             if let Some(&idx) = index_by_key.get(&key) {
-                receipts[idx] = receipt;
+                receipts[idx] = (receipt, op.domain.clone(), op.action.clone());
             } else {
                 index_by_key.insert(key, receipts.len());
-                receipts.push(receipt);
+                receipts.push((receipt, op.domain.clone(), op.action.clone()));
             }
         }
-        receipts
+        collapse_superseded_rejected_receipts(receipts)
     }
 
     /// Format this turn's per-target write receipts as one compact line, e.g.
@@ -4000,6 +4006,95 @@ fn extract_delivery_tag_from_body(body: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Whether two receipt targets describe the same business identity for E4
+/// Rejected-folding.
+///
+/// Exact target match always counts. When domain+action agree, a fallback
+/// `{domain}:{action}` target (used when concrete ID extraction failed on a
+/// preflight clap error) is also treated as compatible with a later concrete
+/// target for the same command.
+fn receipt_targets_compatible(
+    left_target: &str,
+    left_domain: Option<&str>,
+    left_action: Option<&str>,
+    right_target: &str,
+    right_domain: Option<&str>,
+    right_action: Option<&str>,
+) -> bool {
+    if left_target == right_target {
+        return true;
+    }
+    match (left_domain, left_action, right_domain, right_action) {
+        (Some(ld), Some(la), Some(rd), Some(ra)) if ld == rd && la == ra => {
+            let fallback = format!("{ld}:{la}");
+            left_target == fallback || right_target == fallback
+        }
+        _ => false,
+    }
+}
+
+/// Drop pre-submission `Rejected` receipts that were superseded by a later
+/// real outcome for the same business identity, and collapse duplicate
+/// Rejected retries down to the latest one.
+fn collapse_superseded_rejected_receipts(
+    items: Vec<(TargetReceipt, Option<String>, Option<String>)>,
+) -> Vec<TargetReceipt> {
+    let n = items.len();
+    let mut keep = vec![true; n];
+
+    for i in 0..n {
+        if items[i].0.status != OperationStatus::Rejected {
+            continue;
+        }
+        let superseded = items.iter().enumerate().any(|(j, (other, od, oa))| {
+            if i == j || !keep[j] {
+                return false;
+            }
+            // Any non-Rejected outcome for the same identity supersedes the
+            // preflight Rejected attempt (including in-progress / cancelled).
+            if other.status == OperationStatus::Rejected {
+                return false;
+            }
+            receipt_targets_compatible(
+                &items[i].0.target,
+                items[i].1.as_deref(),
+                items[i].2.as_deref(),
+                &other.target,
+                od.as_deref(),
+                oa.as_deref(),
+            )
+        });
+        if superseded {
+            keep[i] = false;
+            continue;
+        }
+        // Multiple Rejected attempts for the same identity → keep only the
+        // latest (highest index).
+        for j in (i + 1)..n {
+            if !keep[j] || items[j].0.status != OperationStatus::Rejected {
+                continue;
+            }
+            if receipt_targets_compatible(
+                &items[i].0.target,
+                items[i].1.as_deref(),
+                items[i].2.as_deref(),
+                &items[j].0.target,
+                items[j].1.as_deref(),
+                items[j].2.as_deref(),
+            ) {
+                keep[i] = false;
+                break;
+            }
+        }
+    }
+
+    items
+        .into_iter()
+        .zip(keep)
+        .filter_map(|((receipt, _, _), keep)| keep.then_some(receipt))
+        .collect()
 }
 
 /// Extract a compact failure/unknown/rejected reason string for E4 per-target receipts.
@@ -10365,5 +10460,231 @@ mod tests {
         assert!(block.contains("- status: partial_failure"));
         assert!(block.contains("device_a: adapter_accepted; device_b: failed(offline)"));
         assert!(block.contains("NEVER claim \"all succeeded\""));
+    }
+
+    /// E4 (L3 Spark): preflight `Rejected` must not survive in receipts after a
+    /// lock-free retry reaches Succeeded/Failed for the same target — otherwise
+    /// summary prompts report a false `partial_failure` and confuse small models.
+    #[test]
+    fn rejected_preflight_receipts_fold_when_same_target_reaches_terminal() {
+        let mut s = TaskState {
+            turn_count: 1,
+            ..Default::default()
+        };
+
+        // display-a: clap syntax Rejected, then lock-free retry Succeeded.
+        let args_a_bad = serde_json::json!({
+            "command": "neomind device control display-a display_text --param text=System Ready"
+        });
+        let fp_a_bad =
+            crate::agent::streaming::mutating_write_fingerprint("shell", &args_a_bad).unwrap();
+        let MutatingGateOutcome::Proceed {
+            operation_id: op_a_rej,
+        } = evaluate_mutating_gate(&mut s, "shell", &args_a_bad, &fp_a_bad, None, 1)
+        else {
+            panic!("must Proceed");
+        };
+        s.complete_operation_rejected(
+            &op_a_rej,
+            StructuredResult::with_body(
+                false,
+                "unexpected argument 'Ready'",
+                serde_json::json!({
+                    "exit_code": 2,
+                    "stdout": "",
+                    "stderr": "error: unexpected argument 'Ready' found"
+                })
+                .to_string(),
+                None,
+            ),
+        );
+
+        let args_a_ok = serde_json::json!({
+            "command": "neomind device control display-a display_text",
+            "params": {"text": "System Ready", "brightness": 80}
+        });
+        let fp_a_ok =
+            crate::agent::streaming::mutating_write_fingerprint("shell", &args_a_ok).unwrap();
+        let MutatingGateOutcome::Proceed {
+            operation_id: op_a_ok,
+        } = evaluate_mutating_gate(&mut s, "shell", &args_a_ok, &fp_a_ok, None, 1)
+        else {
+            panic!("retry must Proceed (Rejected is lock-free)");
+        };
+        let body_a = serde_json::json!({
+            "exit_code": 0,
+            "stdout": serde_json::json!({
+                "success": true,
+                "data": {"device_id": "display-a", "command": "display_text", "delivery": "adapter_accepted"}
+            }).to_string(),
+            "stderr": ""
+        });
+        s.complete_operation_succeeded(
+            &op_a_ok,
+            StructuredResult::with_body(true, "adapter_accepted", body_a.to_string(), None),
+            None::<String>,
+        );
+        s.observe_tool_result_for_goal("shell", &args_a_ok, &body_a, Some(&op_a_ok));
+
+        // display-b: Rejected then real Failed (not found).
+        let args_b_bad = serde_json::json!({
+            "command": "neomind device control display-b display_text --param text=System Ready"
+        });
+        let fp_b_bad =
+            crate::agent::streaming::mutating_write_fingerprint("shell", &args_b_bad).unwrap();
+        let MutatingGateOutcome::Proceed {
+            operation_id: op_b_rej,
+        } = evaluate_mutating_gate(&mut s, "shell", &args_b_bad, &fp_b_bad, None, 1)
+        else {
+            panic!("must Proceed");
+        };
+        s.complete_operation_rejected(
+            &op_b_rej,
+            StructuredResult::with_body(
+                false,
+                "unexpected argument 'Ready'",
+                serde_json::json!({
+                    "exit_code": 2,
+                    "stdout": "",
+                    "stderr": "error: unexpected argument 'Ready' found"
+                })
+                .to_string(),
+                None,
+            ),
+        );
+
+        let args_b_fail = serde_json::json!({
+            "command": "neomind device control display-b display_text",
+            "params": {"text": "System Ready", "brightness": 80}
+        });
+        let fp_b_fail =
+            crate::agent::streaming::mutating_write_fingerprint("shell", &args_b_fail).unwrap();
+        let MutatingGateOutcome::Proceed {
+            operation_id: op_b_fail,
+        } = evaluate_mutating_gate(&mut s, "shell", &args_b_fail, &fp_b_fail, None, 1)
+        else {
+            panic!("must Proceed");
+        };
+        let body_b = serde_json::json!({
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "API error (400 Bad Request): Failed to send command: NotFoundStr(\"display-b\")"
+        });
+        s.complete_operation_failed(
+            &op_b_fail,
+            StructuredResult::with_body(false, "not found", body_b.to_string(), None),
+        );
+
+        let line = s
+            .format_per_target_receipts_line(1)
+            .expect("receipts after fold");
+        assert!(
+            !line.contains("rejected"),
+            "superseded Rejected must be folded out: {line}"
+        );
+        assert!(
+            line.contains("display-a: adapter_accepted"),
+            "expected display-a success: {line}"
+        );
+        assert!(
+            line.contains("display-b: failed"),
+            "expected display-b failure: {line}"
+        );
+
+        let block = s
+            .build_summary_goal_status_fact_block(1, true)
+            .expect("true partial failure must still emit fact block");
+        assert!(
+            block.contains("- status: partial_failure"),
+            "status must stay partial_failure for a/b split: {block}"
+        );
+        let receipts_line = block
+            .lines()
+            .find(|l| l.starts_with("- receipts:"))
+            .expect("fact block must include receipts");
+        assert!(
+            !receipts_line.contains("rejected"),
+            "receipts line must not keep folded Rejected: {receipts_line}"
+        );
+
+        // Dashboard-style fallback target (`domain:action`) Rejected must also
+        // fold when a later Succeeded uses the concrete dashboard id.
+        let mut dash = TaskState {
+            turn_count: 2,
+            ..Default::default()
+        };
+        let args_missing_id = serde_json::json!({
+            "command": "neomind dashboard update-component --component-id widget-temp --set '{\"position\":{\"w\":2,\"h\":2}}'"
+        });
+        let fp_missing =
+            crate::agent::streaming::mutating_write_fingerprint("shell", &args_missing_id).unwrap();
+        let MutatingGateOutcome::Proceed {
+            operation_id: op_miss,
+        } = evaluate_mutating_gate(&mut dash, "shell", &args_missing_id, &fp_missing, None, 2)
+        else {
+            panic!("must Proceed");
+        };
+        // Force domain/action + fallback target the way clap-miss paths do.
+        if let Some(op) = dash.operation_mut(&op_miss) {
+            op.domain = Some("dashboard".into());
+            op.action = Some("update-component".into());
+            op.target = Some("dashboard:update-component".into());
+        }
+        dash.complete_operation_rejected(
+            &op_miss,
+            StructuredResult::with_body(
+                false,
+                "required arguments were not provided",
+                serde_json::json!({
+                    "exit_code": 2,
+                    "stdout": "",
+                    "stderr": "error: the following required arguments were not provided:\n  <ID>"
+                })
+                .to_string(),
+                None,
+            ),
+        );
+
+        let args_ok = serde_json::json!({
+            "command": "neomind dashboard update-component dash-1 --component-id widget-temp",
+            "params": {"position": {"w": 2, "h": 2}}
+        });
+        let fp_ok = crate::agent::streaming::mutating_write_fingerprint("shell", &args_ok).unwrap();
+        let MutatingGateOutcome::Proceed {
+            operation_id: op_ok,
+        } = evaluate_mutating_gate(&mut dash, "shell", &args_ok, &fp_ok, None, 2)
+        else {
+            panic!("must Proceed");
+        };
+        if let Some(op) = dash.operation_mut(&op_ok) {
+            op.domain = Some("dashboard".into());
+            op.action = Some("update-component".into());
+            op.target = Some("dash-1".into());
+        }
+        dash.complete_operation_succeeded(
+            &op_ok,
+            StructuredResult::with_body(
+                true,
+                "updated",
+                serde_json::json!({
+                    "exit_code": 0,
+                    "stdout": "{\"success\":true}",
+                    "stderr": ""
+                })
+                .to_string(),
+                None,
+            ),
+            None::<String>,
+        );
+
+        let dash_line = dash
+            .format_per_target_receipts_line(2)
+            .expect("dashboard receipts");
+        assert_eq!(dash_line, "dash-1: succeeded");
+        assert!(
+            dash.build_summary_goal_status_fact_block(2, false)
+                .is_none(),
+            "clean folded success must stay silent (zero prompt noise)"
+        );
     }
 }

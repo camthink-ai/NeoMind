@@ -302,7 +302,7 @@ pub async fn create_channel_handler(
                 missing.join(", ")
             ))
             .with_hint(format!(
-                "Required fields for '{}': {}. Pass them via --config '{{...}}' or --param key=value, or run `neomind message channel-type-schema {}`.",
+                "Required fields for '{}': {}. Preferred from Chat/shell tool: put the config JSON object in shell `params` (maps to --config). Human CLI fallback: --config '{{...}}' or --param key=value. Or run `neomind message channel-type-schema {}`.",
                 req.channel_type,
                 required_fields.join(", "),
                 req.channel_type
@@ -332,7 +332,7 @@ pub async fn create_channel_handler(
     let invalid_config_err = |e: neomind_messages::Error| {
         let hint = if !required_fields.is_empty() {
             format!(
-                "Required fields for '{}': {}. Run `neomind message channel-type-schema {}` for field details.",
+                "Required fields for '{}': {}. Preferred from Chat/shell tool: put the config JSON object in shell `params` (maps to --config). Run `neomind message channel-type-schema {}` for field details.",
                 req.channel_type,
                 required_fields.join(", "),
                 req.channel_type

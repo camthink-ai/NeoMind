@@ -324,10 +324,15 @@ impl ShellTool {
                     .collect::<Vec<_>>()
                     .join("\n");
                 if !body.trim().is_empty() {
-                    return Some(format!(
+                    let mut hint = format!(
                         "[Reference — `neomind {} {}` — {}]:\n{}",
                         domain, sub, note, body
-                    ));
+                    );
+                    if let Some(tip) = Self::structured_params_retry_tip(domain, Some(sub)) {
+                        hint.push_str("\n");
+                        hint.push_str(&tip);
+                    }
+                    return Some(hint);
                 }
             }
         }
@@ -343,9 +348,33 @@ impl ShellTool {
         if body.trim().is_empty() {
             return None;
         }
-        Some(format!(
+        let mut hint = format!(
             "[Reference — `neomind {}` subcommands — {}]:\n{}",
             domain, note, body
+        );
+        if let Some(tip) = Self::structured_params_retry_tip(domain, None) {
+            hint.push_str("\n");
+            hint.push_str(&tip);
+        }
+        Some(hint)
+    }
+
+    /// One-line Chat/shell-tool tip prepended onto clap `usage_hint` when the
+    /// failing command has a primary JSON flag — steers Spark/small models
+    /// toward structured `params` instead of quote-fragile CLI strings.
+    fn structured_params_retry_tip(domain: &str, subcommand: Option<&str>) -> Option<String> {
+        let sub = subcommand?;
+        let argv = vec!["neomind".to_string(), domain.to_string(), sub.to_string()];
+        let spec = neomind_cli_ops::json_arg::primary_json_spec(&argv)?;
+        let kind = match spec.kind {
+            neomind_cli_ops::json_arg::ExpectedJsonKind::Object => "JSON object",
+            neomind_cli_ops::json_arg::ExpectedJsonKind::Array => "JSON array",
+        };
+        Some(format!(
+            "Preferred from Chat/shell tool: put the {kind} in shell `params` (maps to {}). \
+             Keep `command` free of quoted {} strings. Example shape: \
+             {{\"command\":\"neomind {} {} …\", \"params\": <{kind}>}}.",
+            spec.flag, spec.flag, domain, sub
         ))
     }
 
@@ -1964,7 +1993,15 @@ impl ShellTool {
                 return Some("ID is a positional argument, not a flag. Use: neomind <domain> <action> <ID> [options]. Example: neomind device get abc123 (not --id abc123).".to_string());
             }
             if domain == "device" && action == "control" {
-                return Some("Device-defined command parameters are not standalone CLI flags. Use neomind device control <ID> <COMMAND> --param 'key=value' (repeat for each parameter), or --params '<JSON>'. For a text parameter, use --param 'text=your content', not --text. Use device get <ID> to check actual parameter names and types; do not invent keys. Run neomind device control --help for CLI options.".to_string());
+                return Some(
+                    "Device-defined command parameters are not standalone CLI flags. \
+                     Preferred from Chat/shell tool: command=`neomind device control <ID> <COMMAND>`, \
+                     params={...} (JSON object; maps to --params). \
+                     Human CLI fallback: --params '<JSON>' or repeated --param 'key=value'. \
+                     For text with spaces, never use bare --param text=System Ready — put it in shell `params`. \
+                     Use device get <ID> for real parameter names; do not invent keys."
+                        .to_string(),
+                );
             }
             return None;
         }
@@ -4262,6 +4299,12 @@ mod p0_2_envelope_help_session_tests {
         assert!(
             hint.contains("--component-id") && hint.contains("--set"),
             "usage_hint must come from in-process clap help: {hint}"
+        );
+        assert!(
+            hint.contains("Preferred from Chat/shell tool")
+                && hint.contains("shell `params`")
+                && hint.contains("--set"),
+            "JSON-bearing command usage_hint must steer toward structured params: {hint}"
         );
         assert!(
             out.data["domain_index"]
