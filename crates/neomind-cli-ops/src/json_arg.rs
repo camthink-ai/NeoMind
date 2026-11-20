@@ -105,7 +105,11 @@ fn parse_serde_line_col(msg: &str) -> Option<(usize, usize)> {
     Some((line, col))
 }
 
-/// Byte offset for 1-based `(line, column)` in `raw` (UTF-8 safe via char steps on the line).
+/// Absolute byte offset for serde's 1-based `(line, column)` in `raw`.
+///
+/// Serde's `column` is a **UTF-8 byte** index on the line (not a Unicode scalar
+/// count). Walk by bytes, then [`str::floor_char_boundary`] so a mid-codepoint
+/// column still yields a valid slice start for the Near snippet.
 fn offset_for_line_col(raw: &str, line_1based: usize, column_1based: usize) -> Option<usize> {
     if line_1based == 0 || column_1based == 0 {
         return None;
@@ -113,20 +117,15 @@ fn offset_for_line_col(raw: &str, line_1based: usize, column_1based: usize) -> O
     let mut byte = 0usize;
     for (i, line) in raw.split_inclusive('\n').enumerate() {
         if i + 1 == line_1based {
-            let mut chars = 0usize;
-            for (ci, _) in line.char_indices() {
-                chars += 1;
-                if chars == column_1based {
-                    return Some(byte + ci);
-                }
-            }
-            // Past end of line → clamp to line end (before trailing `\n` if any).
-            let end = if line.ends_with('\n') {
+            let line_bytes = if line.ends_with('\n') {
                 line.len().saturating_sub(1)
             } else {
                 line.len()
             };
-            return Some(byte + end);
+            // 1-based byte column → 0-based offset within the line content.
+            let col_bytes = column_1based.saturating_sub(1).min(line_bytes);
+            let abs = byte + col_bytes;
+            return Some(raw.floor_char_boundary(abs.min(raw.len())));
         }
         byte += line.len();
     }
@@ -435,6 +434,38 @@ mod tests {
         );
         assert_eq!(parse_serde_line_col("x at line 3 column 3"), Some((3, 3)));
         assert_eq!(offset_for_line_col(raw, 3, 3), Some(14)); // after "{\n  \"a\": 1,\n  "
+    }
+
+    #[test]
+    fn near_snippet_treats_serde_column_as_utf8_byte_offset_with_chinese() {
+        // Line 2 (no NL): `  "名":坏` — 名/坏 are 3-byte UTF-8 each.
+        // Bytes: 0-1 SP, 2 `"`, 3-5 名, 6 `"`, 7 `:`, 8-10 坏
+        // Serde "column 9" = 1-based byte → focus at byte 8 = start of 坏.
+        // Char-index walking would treat column 9 as past EOL and miss 坏.
+        let line2 = "  \"名\":坏";
+        assert_eq!(line2.len(), 11);
+        assert_eq!(&line2.as_bytes()[8..], "坏".as_bytes());
+        let raw = format!("{{\n{line2}\n}}");
+        let msg = format_json_parse_error(&raw, "expected value at line 2 column 9");
+        assert!(msg.contains("Near:"), "{msg}");
+        assert!(
+            msg.contains('坏'),
+            "Near must land on UTF-8 byte column (坏), got: {msg}"
+        );
+        let focus = offset_for_line_col(&raw, 2, 9).expect("offset");
+        assert!(
+            raw[focus..].starts_with('坏'),
+            "focus={focus}, rest={:?}",
+            &raw[focus..]
+        );
+        // Mid-codepoint column (byte 4 inside 名) aligns to the char start.
+        let mid = offset_for_line_col(&raw, 2, 5).expect("mid");
+        assert!(raw.is_char_boundary(mid));
+        assert!(
+            raw[mid..].starts_with('名'),
+            "mid-codepoint column must floor to 名, rest={:?}",
+            &raw[mid..]
+        );
     }
 
     #[test]
