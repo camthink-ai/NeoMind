@@ -46,6 +46,7 @@
   },
   "thinking": {
     "title": "Thinking process",
+    "inlineTitle": "Thinking",
     "thinking": "Thinking...",
     "characters": "{{count}} characters",
     "characters_one": "{{count}} character",
@@ -74,6 +75,8 @@
       "completed": "Completed",
       "failed": "Failed"
     },
+    "intermediate": "Intermediate notes",
+    "label": "Tool",
     "arguments": "Arguments",
     "result": "Result",
     "rounds": "rounds",

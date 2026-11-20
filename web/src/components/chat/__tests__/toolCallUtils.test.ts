@@ -3,7 +3,12 @@
  * Review cases (2026-11-10) plus REAL replay fixtures from the 2026-11-08
  * eval batch (rule-create 400 with suggestion; device-list success). */
 import { describe, expect, it } from "vitest"
-import { isToolError } from "../toolCallUtils"
+import {
+  extractToolDelivery,
+  getToolDisplayName,
+  getToolFailureReason,
+  isToolError,
+} from "../toolCallUtils"
 import type { ToolCall } from "@/types"
 
 const tc = (over: Partial<ToolCall>): ToolCall => ({
@@ -81,5 +86,58 @@ describe("isToolError — real replay fixtures from the 2026-11-08 batch", () =>
   it("successful device telemetry query renders as success", () => {
     const real = { exit_code: 0, stdout: '[{"id":"sensor-001","temperature":22.5}]', stderr: "", timed_out: false }
     expect(isToolError(tc({ success: true, result: real }))).toBe(false)
+  })
+})
+
+describe("getToolDisplayName", () => {
+  it("prefers the audit description over the raw command", () => {
+    expect(
+      getToolDisplayName("shell", {
+        command: "neomind device get INK",
+        description: "读取 INK 的设备信息",
+      }),
+    ).toBe("读取 INK 的设备信息")
+  })
+
+  it("falls back to a trimmed neomind command", () => {
+    expect(
+      getToolDisplayName("shell", { command: "neomind device list --json --yes" }),
+    ).toBe("device list")
+  })
+})
+
+describe("getToolFailureReason", () => {
+  it("returns a short error string from the envelope", () => {
+    expect(
+      getToolFailureReason(tc({ result: { error: "device offline" } })),
+    ).toBe("device offline")
+  })
+})
+
+describe("extractToolDelivery", () => {
+  it("reads delivery from shell stdout JSON", () => {
+    const delivery = extractToolDelivery(
+      tc({
+        result: {
+          exit_code: 0,
+          stdout: JSON.stringify({
+            sent: true,
+            delivery: "adapter_accepted",
+            delivery_note: "broker publish",
+          }),
+        },
+      }),
+    )
+    expect(delivery).toEqual({
+      sent: true,
+      delivery: "adapter_accepted",
+      delivery_note: "broker publish",
+    })
+  })
+
+  it("returns null when delivery fields are absent", () => {
+    expect(
+      extractToolDelivery(tc({ result: { exit_code: 0, stdout: "[]" } })),
+    ).toBeNull()
   })
 })

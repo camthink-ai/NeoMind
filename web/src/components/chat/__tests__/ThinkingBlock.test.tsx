@@ -1,17 +1,17 @@
-/// Rendering tests for ThinkingBlock — the collapsible reasoning surface and
-/// its warm card tokens. The global i18n mock returns raw keys, so assertions
-/// target keys rather than translated copy.
+/// Rendering tests for ThinkingBlock — the collapsible reasoning surface.
+/// The global i18n mock returns raw keys, so assertions target keys rather
+/// than translated copy.
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ThinkingBlock } from '../ThinkingBlock'
 
 describe('ThinkingBlock', () => {
-  it('renders as a token-backed collapsible card', () => {
+  it('renders as a flat collapsible section', () => {
     render(<ThinkingBlock thinking="分析设备状态" />)
     const trigger = screen.getByRole('button')
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
-    expect(trigger.parentElement?.className).toContain('bg-muted-20')
-    expect(trigger.parentElement?.className).toContain('border-chat-card-border')
+    expect(trigger.parentElement?.className).not.toContain('bg-muted-20')
+    expect(trigger.parentElement?.className).not.toContain('border-chat-card-border')
     expect(trigger.parentElement?.className).not.toContain('bg-chat-thinking-bg')
     expect(trigger.parentElement?.className).not.toContain('border-l-')
     // Collapsed content is unmounted by Radix.
@@ -46,5 +46,12 @@ describe('ThinkingBlock', () => {
     const trigger = screen.getByRole('button')
     expect(trigger.parentElement?.className).not.toContain('border-b')
     expect(trigger.parentElement?.className).not.toContain('border-t')
+    expect(screen.getByText(/thinking\.inlineTitle/)).toBeTruthy()
+  })
+
+  it('inline mode shows character count beside the title', () => {
+    render(<ThinkingBlock thinking="一二三四五" inline />)
+    expect(screen.getByText(/thinking\.inlineTitle/)).toBeTruthy()
+    expect(screen.getByText('chat:thinking.characters')).toBeTruthy()
   })
 })

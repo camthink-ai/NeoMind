@@ -1,31 +1,29 @@
 /**
  * TurnTimeline — round-based view of an assistant turn's process.
  *
- * The old layout grouped by category: all thinking in one card, all tool
- * calls in another. That made the causal chain across rounds hard to read.
- * This component groups by ROUND instead: each round owns its thinking, its
- * intermediate output, and the tools it called. The final answer stays
- * outside the timeline, rendered by ChatMessages.
+ * Expanded layout is flat and scannable: compact R1/R2 prefixes beside the
+ * first row of each round (not a lone label line), collapsed thinking
+ * (`思考 · N 字`), one tool row per call, and inter-round text shown
+ * directly in muted body type. The final answer stays outside, rendered by
+ * ChatMessages.
  *
  * Only used when a message has tool calls; a simple answer keeps the plain
  * ThinkingBlock + markdown path.
  */
 
-import { useId, useState } from "react"
+import { useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import {
   AlertCircle,
-  CheckCircle2,
   ChevronDown,
   Loader2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { textNano } from "@/design-system/tokens/typography"
 import type { ToolCall } from "@/types"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { ThinkingBlock } from "./ThinkingBlock"
 import { RoundContent, ToolCallItem } from "./ToolCallVisualization"
-import { getToolDisplayName, isToolError } from "./toolCallUtils"
+import { isToolError } from "./toolCallUtils"
 
 interface TurnTimelineProps {
   toolCalls: ToolCall[]
@@ -95,16 +93,36 @@ function buildRounds({
   return [...groups.values()].sort((a, b) => a.round - b.round)
 }
 
-function roundPreview(group: RoundGroup): string {
-  const text = group.thinking?.trim() || group.content?.trim()
-  if (text) {
-    const firstLine = text.split("\n").find(line => line.trim()) ?? text
-    const cleaned = firstLine.replace(/^[#>\-*\s]+/, "").replace(/\*\*/g, "")
-    return cleaned.length > 90 ? `${cleaned.slice(0, 87)}…` : cleaned
-  }
-  return group.calls
-    .map(call => getToolDisplayName(call.name, call.arguments))
-    .join(" · ")
+/** Compact round marker: prefix on the first row only; later rows share the gutter. */
+function RoundRow({
+  round,
+  showLabel,
+  isActive,
+  children,
+}: {
+  round: number
+  showLabel: boolean
+  isActive?: boolean
+  children: ReactNode
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <span
+        className="mt-1.5 w-7 shrink-0 text-sm font-medium tabular-nums text-muted-foreground"
+        aria-hidden={!showLabel}
+      >
+        {showLabel ? (
+          <span className="inline-flex items-center gap-1">
+            R{round}
+            {isActive && (
+              <Loader2 className="h-3 w-3 text-warning motion-safe:animate-spin" aria-hidden="true" />
+            )}
+          </span>
+        ) : null}
+      </span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  )
 }
 
 export function TurnTimeline({
@@ -117,7 +135,6 @@ export function TurnTimeline({
   finalContent,
 }: TurnTimelineProps) {
   const { t } = useTranslation("chat")
-  const idPrefix = useId()
   const rounds = buildRounds({
     toolCalls,
     roundThinking,
@@ -126,11 +143,9 @@ export function TurnTimeline({
     finalContent,
   })
 
-  // Expansion is decided once at mount: a turn that streamed open must not
-  // snap shut when isStreaming flips false. The user keeps their choice until
-  // they toggle it.
+  // A turn that streamed open must not snap shut when isStreaming flips
+  // false. The user keeps their choice until they toggle it.
   const [isExpanded, setIsExpanded] = useState(() => isStreaming)
-  const [openRounds, setOpenRounds] = useState<Record<number, boolean>>({})
 
   if (rounds.length === 0) return null
 
@@ -148,26 +163,26 @@ export function TurnTimeline({
       open={isExpanded}
       onOpenChange={setIsExpanded}
       data-testid="turn-timeline"
-      className="mb-3 min-w-0 overflow-hidden"
+      className="mb-4 min-w-0 overflow-hidden"
     >
       <CollapsibleTrigger asChild>
         <button
           type="button"
-          className="flex min-h-10 w-full items-center gap-2 px-0 py-1.5 text-left text-muted-foreground transition-colors hover:text-foreground"
+          className="flex min-h-10 w-full items-center gap-2 rounded-md py-1.5 text-left text-muted-foreground transition-colors hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2"
         >
-          <span className="truncate text-sm">
+          <span className="min-w-0 truncate text-base font-medium">
             {t("chat:timeline.title")} · {counts}
             {!isStreaming && duration > 0 ? ` · ${Math.round(duration / 100) / 10} s` : ""}
           </span>
           <div className="flex-1" />
           {isStreaming ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+            <Loader2 className="h-3.5 w-3.5 shrink-0 motion-safe:animate-spin text-muted-foreground" aria-hidden="true" />
           ) : hasError ? (
             <AlertCircle className="h-4 w-4 shrink-0 text-error" aria-hidden="true" />
           ) : null}
           <ChevronDown
             className={cn(
-              "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-normal",
+              "h-4 w-4 shrink-0 text-current transition-transform duration-normal",
               isExpanded && "rotate-180"
             )}
             aria-hidden="true"
@@ -175,95 +190,57 @@ export function TurnTimeline({
         </button>
       </CollapsibleTrigger>
 
-      <CollapsibleContent className="overflow-hidden data-[state=open]:animate-collapsible-down">
-        {/* Flush left like the trigger row and the answer below it — the
-            redesign's sm:ml-6 indent left the expanded card misaligned with
-            the rest of the message content on desktop. */}
-        <div className="overflow-hidden rounded-lg border border-border bg-muted-20">
+      <CollapsibleContent className="overflow-hidden motion-safe:data-[state=open]:animate-collapsible-down">
+        <div className="mb-1 space-y-2">
           {rounds.map(group => {
-            const isOpen = openRounds[group.round] ?? true
             const isActive = activeRound === group.round
-            const failed = group.calls.some(isToolError)
-            const complete = group.calls.length > 0
-              && group.calls.every(call => call.result != null)
-              && !isActive
-            const preview = roundPreview(group)
-            const bodyId = `${idPrefix}-round-${group.round}`
+            const rows: ReactNode[] = []
+
+            if (group.thinking?.trim()) {
+              rows.push(
+                <ThinkingBlock
+                  key={`think-${group.round}`}
+                  thinking={group.thinking}
+                  inline
+                  defaultExpanded={false}
+                />
+              )
+            }
+            for (let index = 0; index < group.calls.length; index++) {
+              const call = group.calls[index]
+              rows.push(
+                <ToolCallItem
+                  key={`call-${group.round}-${index}`}
+                  toolCall={call}
+                  isStreaming={!!isActive && call.result == null}
+                  t={t}
+                />
+              )
+            }
+            if (group.content?.trim()) {
+              rows.push(
+                <RoundContent key={`content-${group.round}`} content={group.content} />
+              )
+            }
+
+            if (rows.length === 0) return null
 
             return (
-              <div key={group.round} className="border-t border-border first:border-t-0">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setOpenRounds(prev => ({ ...prev, [group.round]: !isOpen }))
-                  }
-                  aria-expanded={isOpen}
-                  aria-controls={bodyId}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted-30",
-                    isActive && "bg-muted-30"
-                  )}
-                >
-                  <span
-                    className={cn(
-                      "inline-flex h-6 shrink-0 items-center justify-center rounded-md px-2.5 font-semibold",
-                      "border border-border bg-muted text-foreground text-xs"
-                    )}
+              <div
+                key={group.round}
+                data-testid={`turn-round-${group.round}`}
+                className="space-y-0"
+              >
+                {rows.map((row, idx) => (
+                  <RoundRow
+                    key={idx}
+                    round={group.round}
+                    showLabel={idx === 0}
+                    isActive={isActive && idx === 0}
                   >
-                    R{group.round}
-                  </span>
-                  <span
-                    className={cn(
-                      "min-w-0 flex-1 truncate text-body sm:text-sm",
-                      preview ? "text-foreground font-medium" : "text-muted-foreground"
-                    )}
-                  >
-                    {preview || t("chat:timeline.roundFallback", { round: group.round })}
-                  </span>
-                  {isActive && (
-                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-warning" aria-hidden="true" />
-                  )}
-                  {failed && !isActive && (
-                    <AlertCircle className="h-3.5 w-3.5 shrink-0 text-error" aria-hidden="true" />
-                  )}
-                  {/* Completed rounds only need a summary marker when collapsed;
-                      the tool rows below own the expanded state. Reserve green
-                      for the outer, whole-process summary. */}
-                  {!isOpen && complete && !failed && (
-                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-                  )}
-                  {group.calls.length > 0 && (
-                    <span className={cn(textNano, "shrink-0 whitespace-nowrap text-muted-foreground tabular-nums")}>
-                      {t("chat:toolCall.countShort", { count: group.calls.length })}
-                    </span>
-                  )}
-                  <ChevronDown
-                    className={cn(
-                      "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-normal",
-                      isOpen && "rotate-180"
-                    )}
-                    aria-hidden="true"
-                  />
-                </button>
-
-                {isOpen && (
-                  <div id={bodyId}>
-                    {group.thinking && group.thinking.trim() && (
-                      <ThinkingBlock thinking={group.thinking} inline defaultExpanded={false} />
-                    )}
-                    {group.content && group.content.trim() && (
-                      <RoundContent content={group.content} />
-                    )}
-                    {group.calls.map((call, index) => (
-                      <ToolCallItem
-                        key={`${group.round}-${index}`}
-                        toolCall={call}
-                        isStreaming={isActive && call.result == null}
-                        t={t}
-                      />
-                    ))}
-                  </div>
-                )}
+                    {row}
+                  </RoundRow>
+                ))}
               </div>
             )
           })}

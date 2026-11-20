@@ -46,9 +46,10 @@
   },
   "thinking": {
     "title": "思考过程",
+    "inlineTitle": "思考",
     "thinking": "思考中...",
-    "characters": "{{count}} 字符",
-    "characters_other": "{{count}} 字符",
+    "characters": "{{count}} 字",
+    "characters_other": "{{count}} 字",
     "rounds": "{{count}} 轮",
     "rounds_other": "{{count}} 轮"
   },
@@ -72,6 +73,8 @@
       "completed": "完成",
       "failed": "失败"
     },
+    "intermediate": "中间说明",
+    "label": "工具",
     "arguments": "参数",
     "result": "结果",
     "rounds": "轮",

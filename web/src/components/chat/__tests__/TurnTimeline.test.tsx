@@ -1,6 +1,5 @@
-/// Tests for the round-based execution timeline: rounds keep their own
-/// thinking/output/tools, collapse independently, and expose failures and
-/// live status.
+/// Tests for the round-based execution timeline: compact R prefixes, muted
+/// inline intermediate notes, scannable tool rows, and structured delivery.
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { TurnTimeline } from '../TurnTimeline'
@@ -10,9 +9,10 @@ const toolCalls: ToolCall[] = [
   {
     id: 't1',
     name: 'shell',
-    arguments: { command: 'neomind device list' },
+    arguments: { command: 'neomind device list', description: '读取 INK 的设备信息' },
     result: 'ok',
     round: 1,
+    durationMs: 36,
   },
   {
     id: 't2',
@@ -24,42 +24,29 @@ const toolCalls: ToolCall[] = [
 ]
 
 describe('TurnTimeline', () => {
-  it('groups thinking, output, and tools by round', () => {
+  it('expands into compact R prefixes with collapsed thinking and inline notes', () => {
     render(
       <TurnTimeline
         toolCalls={toolCalls}
-        roundThinking={{ 1: '第一轮思考', 2: '第二轮思考' }}
-        roundContents={{ 1: '中间输出内容' }}
+        roundThinking={{ 1: '第一轮思考内容较长一些', 2: '第二轮思考' }}
+        roundContents={{ 1: '我接下来会检查设备' }}
       />
     )
     expect(screen.getByText(/chat:timeline\.title/)).toBeTruthy()
-    // Completed tool work is quiet by default; details remain one tap away.
     fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
     expect(screen.getByText('R1')).toBeTruthy()
     expect(screen.getByText('R2')).toBeTruthy()
-    expect(screen.getByText('第一轮思考')).toBeTruthy()
-    expect(screen.getByText('第二轮思考')).toBeTruthy()
-    expect(screen.getByText(/中间输出内容/)).toBeTruthy()
-    // Intermediate output is content, not metadata: match the tool-name size.
-    expect(screen.getByText(/中间输出内容/).className).toContain('text-sm')
-    expect(screen.getByText('device list')).toBeTruthy()
-    expect(screen.getByText('device.query_temperature')).toBeTruthy()
-  })
-
-  it('collapses a round without collapsing the whole process', () => {
-    render(
-      <TurnTimeline
-        toolCalls={toolCalls}
-        roundThinking={{ 1: '第一轮思考', 2: '第二轮思考' }}
-      />
-    )
-    fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
-    const round1 = screen.getByRole('button', { name: /R1/ })
-    expect(round1.getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(round1)
-    expect(round1.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByText('device list')).toBeNull()
-    // The other round is still visible.
+    // R labels sit beside the first row — not a lone dedicated button row.
+    expect(screen.queryByRole('button', { name: /^R1/ })).toBeNull()
+    // Thinking stays collapsed by default — body not visible, summary is.
+    expect(screen.queryByText('第一轮思考内容较长一些')).toBeNull()
+    expect(screen.getAllByText(/thinking\.inlineTitle/).length).toBeGreaterThanOrEqual(1)
+    // Intermediate notes render directly (muted), not behind a disclosure.
+    expect(screen.getByText('我接下来会检查设备')).toBeTruthy()
+    expect(screen.getByTestId('round-intermediate').className).toContain('text-muted-foreground')
+    expect(screen.queryByText('toolCall.intermediate')).toBeNull()
+    // Tool rows prefer the readable description.
+    expect(screen.getByText('读取 INK 的设备信息')).toBeTruthy()
     expect(screen.getByText('device.query_temperature')).toBeTruthy()
   })
 
@@ -70,20 +57,68 @@ describe('TurnTimeline', () => {
     expect(screen.getByText('R1')).toBeTruthy()
   })
 
-  it('shows a failed tool inside its round', () => {
+  it('shows a short failure reason on the tool row when available', () => {
     render(
       <TurnTimeline
         toolCalls={[
           {
             ...toolCalls[0],
             success: false,
-            result: { error: 'boom' },
+            result: { error: 'device offline' },
           },
         ]}
       />
     )
     fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
-    expect(screen.getByText('toolCall.status.failed')).toBeTruthy()
+    expect(screen.getByText('device offline')).toBeTruthy()
+  })
+
+  it('shows structured delivery subtitle only when delivery fields exist', () => {
+    render(
+      <TurnTimeline
+        toolCalls={[
+          {
+            id: 't-ctrl',
+            name: 'shell',
+            arguments: {
+              command: 'neomind device control INK render_text',
+              description: '向 INK 下发显示指令',
+            },
+            result: {
+              exit_code: 0,
+              stdout: JSON.stringify({
+                sent: true,
+                delivery: 'adapter_accepted',
+                delivery_note: 'broker publish; device acknowledgment: none',
+              }),
+            },
+            round: 1,
+            durationMs: 120,
+          },
+        ]}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
+    expect(screen.getByTestId('tool-delivery-subtitle')).toBeTruthy()
+    expect(screen.getByText('devices:commandDelivery.summaryAdapter')).toBeTruthy()
+  })
+
+  it('does not invent a delivery subtitle from bare success', () => {
+    render(
+      <TurnTimeline
+        toolCalls={[
+          {
+            id: 't-ok',
+            name: 'shell',
+            arguments: { command: 'neomind device list' },
+            result: { exit_code: 0, stdout: '[]' },
+            round: 1,
+          },
+        ]}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
+    expect(screen.queryByTestId('tool-delivery-subtitle')).toBeNull()
   })
 
   it('caps expanded JSON blocks so long base64 values cannot grow the timeline', () => {
@@ -136,6 +171,8 @@ describe('TurnTimeline', () => {
         finalContent="最终回答"
       />
     )
+    fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
     expect(screen.queryByText(/最终回答/)).toBeNull()
+    expect(screen.queryByTestId('round-intermediate')).toBeNull()
   })
 })

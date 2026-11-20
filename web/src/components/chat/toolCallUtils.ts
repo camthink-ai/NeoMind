@@ -2,6 +2,7 @@
 // (react-refresh: component files export only components).
 
 import type { ToolCall } from "@/types"
+import type { SendCommandDeliveryResult } from "@/lib/commandDeliveryLadder"
 
 /** Parse a tool result into an object regardless of transport shape (live
  * events deliver objects; some persisted/eval records store JSON strings). */
@@ -9,7 +10,7 @@ function asResultObject(result: unknown): Record<string, unknown> | null {
   if (!result) return null
   if (typeof result === "string") {
     const s = result.trim()
-    if (!s.startsWith("{")) return null
+    if (!s.startsWith("{") && !s.startsWith("[")) return null
     try {
       const parsed: unknown = JSON.parse(s)
       return parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -56,32 +57,96 @@ export function isToolError(toolCall: ToolCall): boolean {
   return err != null && err !== ""
 }
 
-/** "device list --yes" → "device list" */
+/** Prefer the LLM's brief audit `description` when present; otherwise derive
+ * a scannable label from the shell command / action args. */
 export function getToolDisplayName(name: string, args?: unknown): string {
-  if (!args || typeof args !== 'object') return name
-  const a = args as Record<string, unknown>
-
-  // Shell tool: parse "neomind device list" → "device list"
-  if (typeof a.command === 'string' && a.command.trim()) {
-    const cmd = a.command.trim()
-    if (cmd.startsWith('neomind ')) {
-      let rest = cmd.slice(8).trim()
-      // Remove cosmetic flags
-      rest = rest.replace(/\s*--(?:json|yes|force)\b/g, '')
-      return rest || name
+  if (args && typeof args === "object") {
+    const a = args as Record<string, unknown>
+    if (typeof a.description === "string" && a.description.trim()) {
+      return a.description.trim()
     }
-    // Non-neomind shell commands: show as-is (truncated)
-    return cmd.length > 40 ? cmd.slice(0, 37) + '...' : cmd
+
+    // Shell tool: parse "neomind device list" → "device list"
+    if (typeof a.command === "string" && a.command.trim()) {
+      const cmd = a.command.trim()
+      if (cmd.startsWith("neomind ")) {
+        let rest = cmd.slice(8).trim()
+        // Remove cosmetic flags
+        rest = rest.replace(/\s*--(?:json|yes|force)\b/g, "")
+        return rest || name
+      }
+      // Non-neomind shell commands: show as-is (truncated)
+      return cmd.length > 40 ? cmd.slice(0, 37) + "..." : cmd
+    }
+
+    // Legacy aggregated tools: device(action)
+    const action = typeof a.action === "string" ? a.action : ""
+    if (action) {
+      const extras: string[] = []
+      if (typeof a.device_id === "string") extras.push(a.device_id)
+      if (typeof a.metric === "string") extras.push(a.metric)
+      const suffix = extras.length > 0 ? ` ${extras.join(" · ")}` : ""
+      return `${name} ${action}${suffix}`
+    }
+  }
+  return name
+}
+
+/** Short failure reason for the tool row (right side). Prefer envelope
+ * error / stderr first line; fall back to null so the caller can show the
+ * generic "failed" label. */
+export function getToolFailureReason(toolCall: ToolCall): string | null {
+  const r = asResultObject(toolCall.result)
+  if (!r) return null
+
+  const pick = (raw: unknown): string | null => {
+    if (typeof raw !== "string") return null
+    const line = raw.trim().split("\n").find((l) => l.trim())?.trim()
+    if (!line) return null
+    return line.length > 48 ? `${line.slice(0, 45)}…` : line
   }
 
-  // Legacy aggregated tools: device(action)
-  const action = typeof a.action === 'string' ? a.action : ''
-  if (!action) return name
-  const extras: string[] = []
-  if (typeof a.device_id === 'string') extras.push(a.device_id)
-  if (typeof a.metric === 'string') extras.push(a.metric)
-  const suffix = extras.length > 0 ? ` ${extras.join(' · ')}` : ''
-  return `${name} ${action}${suffix}`
+  return (
+    pick(r.error) ||
+    pick(r.stderr) ||
+    pick(r.message) ||
+    (r.timed_out === true ? "timeout" : null)
+  )
+}
+
+/** Walk a tool result for structured device-command delivery (`sent` +
+ * `delivery`). Only returns a payload when the wire shape is present —
+ * never invents a receipt from success alone. */
+export function extractToolDelivery(
+  toolCall: ToolCall,
+): SendCommandDeliveryResult | null {
+  const candidates: unknown[] = [toolCall.result]
+
+  const root = asResultObject(toolCall.result)
+  if (root) {
+    if (root.data != null) candidates.push(root.data)
+    if (root.stdout != null) candidates.push(root.stdout)
+    const stdoutObj = asResultObject(root.stdout)
+    if (stdoutObj?.data != null) candidates.push(stdoutObj.data)
+    if (stdoutObj) candidates.push(stdoutObj)
+  }
+
+  for (const c of candidates) {
+    const obj = asResultObject(c)
+    if (!obj) continue
+    if (typeof obj.sent !== "boolean") continue
+    // Only surface when structured delivery evidence exists — bare
+    // `{sent:true}` without delivery fields is not a receipt.
+    if (!("delivery" in obj) && !("delivery_note" in obj)) continue
+
+    return {
+      sent: obj.sent,
+      delivery: (obj.delivery as SendCommandDeliveryResult["delivery"]) ?? null,
+      delivery_note:
+        typeof obj.delivery_note === "string" ? obj.delivery_note : null,
+    }
+  }
+  return null
 }
 
 /** Check if thinking duplicates the content (Phase 2 LLM may echo response as "thinking") */

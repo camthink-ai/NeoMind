@@ -10,17 +10,22 @@ import { useId, useState } from "react"
 import { useTranslation } from "react-i18next"
 import {
   ChevronDown,
-  CheckCircle2,
   AlertCircle,
   Loader2,
-  Code,
-  FileText,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { textMini, textCode, textNano } from "@/design-system/tokens/typography"
 import { formatElapsedMs } from "@/lib/utils/format"
 import type { ToolCall } from "@/types"
-import { getToolDisplayName, isToolError } from "./toolCallUtils"
+import {
+  extractToolDelivery,
+  getToolDisplayName,
+  getToolFailureReason,
+  isToolError,
+} from "./toolCallUtils"
+import {
+  deriveCommandDeliveryLadder,
+  type SendCommandDeliveryResult,
+} from "@/lib/commandDeliveryLadder"
 
 // ─── Helpers ───
 
@@ -44,51 +49,28 @@ function formatJson(data: unknown): string {
   return JSON.stringify(data, null, 2)
 }
 
-// ─── RoundContent: intermediate output row inside a round ───
+function deliverySubtitleKey(delivery: SendCommandDeliveryResult): string | null {
+  const ladder = deriveCommandDeliveryLadder(delivery)
+  if (!ladder.dispatched && !ladder.reachedKind) return null
+  if (ladder.allowVerifiedSuccess) return "commandDelivery.summaryVerified"
+  if (ladder.reachedKind === "adapter_accepted") return "commandDelivery.summaryAdapter"
+  if (ladder.reachedKind === "extension_accepted") return "commandDelivery.summaryExtension"
+  if (ladder.reachedKind === "device_acknowledged") return "commandDelivery.summaryDeviceAck"
+  if (ladder.dispatched) return "commandDelivery.summaryUnknown"
+  return null
+}
+
+// ─── RoundContent: inter-round text shown directly (muted, secondary) ───
 
 export function RoundContent({ content }: { content: string }) {
-  const [isExpanded, setIsExpanded] = useState(false)
-  const contentId = useId()
-  const { t } = useTranslation("chat")
-
   if (!content || content.trim().length === 0) return null
 
   return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setIsExpanded(!isExpanded)}
-        aria-expanded={isExpanded}
-        aria-controls={contentId}
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-muted-30"
-      >
-        <FileText className="h-4 w-4 text-muted-foreground shrink-0" aria-hidden="true" />
-        {!isExpanded && (
-          <span className="text-sm text-muted-foreground truncate">
-            {content.slice(0, 80)}{content.length > 80 && "..."}
-          </span>
-        )}
-        {isExpanded && (
-          <span className="text-sm text-muted-foreground">
-            {t("toolCall.hideDetails")}
-          </span>
-        )}
-        <div className="flex-1" />
-        <ChevronDown
-          className={cn(
-            "h-4 w-4 text-muted-foreground transition-transform duration-normal",
-            isExpanded && "rotate-180"
-          )}
-          aria-hidden="true"
-        />
-      </button>
-      {isExpanded && (
-        <div id={contentId} className="px-3 pb-2">
-          <div className="text-sm font-mono text-muted-foreground whitespace-pre-wrap break-words leading-relaxed">
-            {content}
-          </div>
-        </div>
-      )}
+    <div
+      data-testid="round-intermediate"
+      className="py-1.5 text-base leading-relaxed text-muted-foreground whitespace-pre-wrap [overflow-wrap:anywhere]"
+    >
+      {content}
     </div>
   )
 }
@@ -104,6 +86,7 @@ export function ToolCallItem({
   isStreaming: boolean
   t: (key: string, options?: Record<string, unknown>) => string
 }) {
+  const { t: tDevices } = useTranslation("devices")
   const [isExpanded, setIsExpanded] = useState(false)
   const detailsId = useId()
   const status = getToolStatus(
@@ -114,89 +97,81 @@ export function ToolCallItem({
   const hasResult = toolCall.result !== undefined && toolCall.result !== null
   const hasDetails = hasArguments || hasResult
   const failed = isToolError(toolCall)
-
-  const statusLabels = {
-    pending: t("toolCall.status.pending"),
-    running: t("toolCall.status.running"),
-    completed: t("toolCall.status.completed"),
-    failed: t("toolCall.status.failed"),
-  }
+  const failureReason = failed ? getToolFailureReason(toolCall) : null
+  const delivery = !failed ? extractToolDelivery(toolCall) : null
+  const deliveryKey = delivery ? deliverySubtitleKey(delivery) : null
+  const displayName = getToolDisplayName(toolCall.name, toolCall.arguments)
 
   return (
-    <div className="px-3 py-1">
+    <div className="py-0.5">
       <button
         type="button"
         onClick={() => { if (hasDetails) setIsExpanded(!isExpanded) }}
         aria-expanded={hasDetails ? isExpanded : undefined}
         aria-controls={hasDetails ? detailsId : undefined}
         className={cn(
-          "w-full flex items-center gap-2 rounded text-left transition-colors",
-          hasDetails && "hover:bg-muted-30"
+          "flex w-full items-center gap-2 rounded text-left transition-colors",
+          hasDetails && "hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2"
         )}
         aria-label={hasDetails ? t("toolCall.toggleDetails") : undefined}
       >
-        <div className={cn(
-          "h-4 w-4 rounded-full flex items-center justify-center shrink-0",
-          failed && "text-error",
-          !failed && status === "completed" && "text-muted-foreground",
-          status === "running" && "text-warning",
-          status === "pending" && "text-muted-foreground"
-        )}>
-          {status === "running" ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          ) : failed ? (
-            <AlertCircle className="h-4 w-4" aria-hidden="true" />
-          ) : status === "completed" ? (
-            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-          ) : (
-            <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground" />
-          )}
-        </div>
-        <span className={cn("text-sm", "truncate", failed ? "text-error" : "text-muted-foreground")}>
-          {getToolDisplayName(toolCall.name, toolCall.arguments)}
+        <span className={cn("min-w-0 truncate text-base", failed ? "text-error" : "text-foreground")}>
+          <span className="mr-2 text-muted-foreground">{t("toolCall.label")}</span>
+          {displayName}
         </span>
         {!isStreaming && toolCall.durationMs != null && toolCall.durationMs > 0 && (
-          <span className={cn(textNano, "text-muted-foreground tabular-nums shrink-0")}>
+          <span className="shrink-0 text-base tabular-nums text-muted-foreground">
             {formatElapsedMs(toolCall.durationMs)}
           </span>
         )}
         {status === "running" && (
-          <span className={cn(textMini, "px-1.5 py-0.5 rounded bg-warning-light text-warning shrink-0")}>
-            {statusLabels[status]}
+          <span className="shrink-0 text-base text-warning">
+            {t("toolCall.status.running")}
           </span>
         )}
         {failed && (
-          <span className={cn(textMini, "px-1.5 py-0.5 rounded bg-error-light text-error shrink-0")}>
-            {statusLabels.failed}
+          <span className="max-w-[40%] shrink-0 truncate text-base text-error" title={failureReason ?? undefined}>
+            {failureReason || t("toolCall.status.failed")}
           </span>
         )}
         <div className="flex-1" />
+        {status === "running" && (
+          <Loader2 className="h-4 w-4 shrink-0 text-warning motion-safe:animate-spin" aria-hidden="true" />
+        )}
+        {failed && <AlertCircle className="h-4 w-4 shrink-0 text-error" aria-hidden="true" />}
         {hasDetails && (
-          <ChevronDown className={cn(
-            "h-4 w-4 text-muted-foreground transition-transform duration-normal shrink-0",
-            isExpanded && "rotate-180"
-          )} aria-hidden="true" />
+          <ChevronDown
+            className={cn(
+              "h-4 w-4 shrink-0 text-current transition-transform duration-normal",
+              isExpanded && "rotate-180"
+            )}
+            aria-hidden="true"
+          />
         )}
       </button>
+      {deliveryKey && (
+        <div className="pl-[2.5rem] text-base text-muted-foreground" data-testid="tool-delivery-subtitle">
+          {tDevices(`devices:${deliveryKey}`)}
+        </div>
+      )}
       {isExpanded && hasDetails && (
-        <div id={detailsId} className="mb-1 mt-0.5 space-y-1 sm:ml-5.5">
+        <div id={detailsId} className="mb-1 mt-0.5 space-y-1">
           {hasArguments && (
-            <div className="rounded bg-muted-30 p-1.5">
-              <div className={cn(textMini, "text-muted-foreground mb-0.5 flex items-center gap-1")}>
-                <Code className="h-3 w-3" aria-hidden="true" />{t("toolCall.arguments")}
+            <div className="py-1">
+              <div className="mb-1 flex items-center gap-1.5 text-sm text-muted-foreground">
+                {t("toolCall.arguments")}
               </div>
-              <pre className={cn(textCode, "font-mono text-muted-foreground whitespace-pre-wrap [overflow-wrap:anywhere] max-h-40 overflow-y-auto overscroll-contain leading-relaxed")}>
+              <pre className="max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">
                 {formatJson(toolCall.arguments)}
               </pre>
             </div>
           )}
           {hasResult && (
-            <div className="rounded bg-muted-30 p-1.5">
-              <div className={cn(textMini, "text-muted-foreground mb-0.5 flex items-center gap-1")}>
-                {failed ? <AlertCircle className="h-3 w-3" aria-hidden="true" /> : <CheckCircle2 className="h-3 w-3" aria-hidden="true" />}
+            <div className="py-1">
+              <div className="mb-1 flex items-center gap-1.5 text-sm text-muted-foreground">
                 {t("toolCall.result")}
               </div>
-              <pre className={cn(textCode, "font-mono text-muted-foreground whitespace-pre-wrap [overflow-wrap:anywhere] max-h-40 overflow-y-auto overscroll-contain leading-relaxed")}>
+              <pre className="max-h-40 overflow-y-auto overscroll-contain whitespace-pre-wrap font-mono text-sm leading-relaxed text-foreground [overflow-wrap:anywhere]">
                 {formatJson(toolCall.result)}
               </pre>
             </div>

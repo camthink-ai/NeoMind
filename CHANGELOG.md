@@ -123,7 +123,7 @@ Edge-AI capability iteration merged to `main`: CamThink CT-Prov/1 BLE onboarding
 - Ordinary approve honesty + unified subscribe path; pre-enqueue cancel drops Absorb; approve retry updates type.
 
 ### Fixed — chat / agent / web
-- Chat「执行过程」expanded panel: flat R1/R2 labels, tool rows prefer audit `description`, thinking collapses as `思考 · N 字`, inter-round text collapses as `中间说明`, and device-delivery subtitle only when structured `delivery`/`delivery_note` exists (NM-310).
+- Chat「执行过程」expanded panel: compact R1/Rn prefixes beside the first row (not lone label lines), scannable tool rows prefer audit `description`, thinking collapses as `思考 · N 字`, inter-round notes show muted inline (not disclosure), and device-delivery subtitle only when structured `delivery`/`delivery_note` exists (NM-310).
 - GoalStatusCallout hides default “ended normally” / N/A session-footer noise; keeps abnormal/incomplete callouts.
 - Agent refuses tools when the outer window drops the latest feedback; multimodal deny on all paths; canonical write fingerprints + restore migration hardening.
 - Chat draft/send lifecycle: MessageReceived after save, safe draft hydrate, rollback accept bound to history generation/Turn; TipTap contentNodes no longer kill CJK IME.
