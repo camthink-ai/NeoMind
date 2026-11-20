@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.3.1] - 2026-11-20 — Full-stack Agent/CLI/API harness optimization, BLE provision fixes
 
-Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neomind-storage`, `neomind-api`, `neomind-cli-ops`, `neomind-cli`, and `neomind-agent` (P0/P1/P2), plus CT-Prov BLE credential/external-broker/display-name fixes and EK410 wrap copy. Product version is **1.3.1** across Cargo/Web/Tauri/locks. `v1.3.0` stays at `8579edbb`.
+Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neomind-storage`, `neomind-api`, `neomind-cli-ops`, `neomind-cli`, and `neomind-agent` (P0/P1/P2), plus CT-Prov BLE credential/external-broker/display-name fixes, EK410 wrap copy, and Chat「执行过程」panel UX (NM-310). Product version is **1.3.1** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged). `v1.3.0` stays at `8579edbb`.
 
 ### Upgrade notes
 - BLE provision against NeoMind’s auth-enabled embedded broker now mints a device-scoped MQTT username/password into `config.set` (empty creds still omitted when auth is off).
@@ -62,6 +62,9 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 ### Fixed — devices
 - EK410 `render_text` description/help documents width-based auto-wrap + scale shrink instead of a hard 10-line cap.
 
+### Fixed — chat / web
+- Chat「执行过程」expanded panel: compact R1/Rn prefixes beside the first row (not lone label lines; vertically centered with the row), live Loader2 on the content trailing cluster (not the Rn gutter), scannable tool rows prefer audit `description`, thinking collapses as `思考 · N 字`, inter-round notes show muted inline (not disclosure), and device-delivery subtitle only when structured `delivery`/`delivery_note` exists (NM-310).
+
 ### Test
 - Anti-drift tests for `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skills, and `capability.rs`; E4 multi-target partial-failure `SystemGoalStatus` injection tests; `GET /api/v1/operations` auth + in-process CLI dispatch tests; `operation get` `Unknown` → terminal reconciliation tests; `ToolCallEnd`, KV-tail time, single-copy skill, multimodal `drive_react_stream`, and BLE provision tests.
 - Stage 1 gates: builtin toolTokens ≤3200 / `image_edit` ≤450; `device` time-range multi-unit parse; `system info` truthful/degraded mocks + 10 offline Webhook device `mqtt/status` & `stats/system` tests; 40+ intent adversarial cases including multi-hit CJK and clause punctuation; `update-component` usage_hint required-arg shape + `dashboard` grid summary.
@@ -69,6 +72,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Stage 3 gates: `cli_api_contract` fixture suite covering 15 domains including `auth`/`data`/`api-key` and wrapped `/mqtt/status` & `/mqtt/broker-config` (S3-1); Light/Balanced/Standard tool-profile + `Light` `vision` reachability + Light `toolTokens` <1800 + 8K multi-turn history-budget & Turn-2 wire-capture tests (`compute_history_budget_8k_uses_light_profile_and_avoids_zero_budget`, `minicpm_8k_multiturn_keeps_light_profile_tools_on_turn_2`) (S3-2); prompt-token EWMA clamp/update math + tool-inclusive calibration regression test (S3-3).
 - NM-302 PreparedInvoke params gates: bare `--params {"city":"xiamen"}` tokenize/mint, illegal `{city:xiamen}` attach `HOST_ATTACH_ERROR` + structured-params tip, structured `params` mint→restore→bind, bind never-minted vs case-c wording.
 - NM-309: parallel `mutate_dashboard` append regression; invented `--params` recovery tips; JSON parse readability/batch hints; skill overview+section thrash hard-gate.
+- NM-310: TurnTimeline / ThinkingBlock / toolCallUtils vitest (33).
 
 ---
 
@@ -123,7 +127,6 @@ Edge-AI capability iteration merged to `main`: CamThink CT-Prov/1 BLE onboarding
 - Ordinary approve honesty + unified subscribe path; pre-enqueue cancel drops Absorb; approve retry updates type.
 
 ### Fixed — chat / agent / web
-- Chat「执行过程」expanded panel: compact R1/Rn prefixes beside the first row (not lone label lines), scannable tool rows prefer audit `description`, thinking collapses as `思考 · N 字`, inter-round notes show muted inline (not disclosure), and device-delivery subtitle only when structured `delivery`/`delivery_note` exists (NM-310).
 - GoalStatusCallout hides default “ended normally” / N/A session-footer noise; keeps abnormal/incomplete callouts.
 - Agent refuses tools when the outer window drops the latest feedback; multimodal deny on all paths; canonical write fingerprints + restore migration hardening.
 - Chat draft/send lifecycle: MessageReceived after save, safe draft hydrate, rollback accept bound to history generation/Turn; TipTap contentNodes no longer kill CJK IME.
