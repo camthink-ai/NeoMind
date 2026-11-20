@@ -101,20 +101,16 @@ fn is_loopback_host(host: &str) -> bool {
     false
 }
 
-/// Extract the host from an absolute origin (`http://host:port`, bare host, …).
-///
-/// Uses [`url::Url`] so schemes are matched case-insensitively
-/// (`HTTP://127.0.0.1:9375` → host `127.0.0.1`, not the literal `HTTP`).
-pub fn origin_host(origin: &str) -> Option<String> {
-    let s = origin.trim();
-    if s.is_empty() {
-        return None;
-    }
-    if let Ok(parsed) = url::Url::parse(s) {
-        return parsed.host_str().map(str::to_string);
-    }
-    // Bare host / host:port (e.g. NEOMIND_PUBLIC_HOST without a scheme).
-    let authority = s.split(['/', '?', '#']).next().unwrap_or("");
+/// True when `s` begins with `http://` or `https://` (ASCII case-insensitive).
+fn has_http_scheme(s: &str) -> bool {
+    let b = s.as_bytes();
+    (b.len() >= 8 && b[..8].eq_ignore_ascii_case(b"https://"))
+        || (b.len() >= 7 && b[..7].eq_ignore_ascii_case(b"http://"))
+}
+
+/// Host from an authority / bare `host` / `host:port` / `[ipv6]:port` string.
+fn host_from_authority(authorityish: &str) -> Option<String> {
+    let authority = authorityish.split(['/', '?', '#']).next()?.trim();
     if authority.is_empty() {
         return None;
     }
@@ -136,6 +132,39 @@ pub fn origin_host(origin: &str) -> Option<String> {
     } else {
         Some(host)
     }
+}
+
+/// Build an absolute origin from `NEOMIND_PUBLIC_HOST` + listen port.
+///
+/// If `host` already carries an `http(s)://` scheme (any case), use it as-is
+/// (trimmed). Otherwise prepend `http://{host}:{port}`.
+pub fn public_host_origin(host: &str, port: u16) -> String {
+    let host = host.trim();
+    if has_http_scheme(host) {
+        trim_base(host)
+    } else {
+        format!("http://{host}:{port}")
+    }
+}
+
+/// Extract the host from an absolute origin (`http://host:port`, bare host, …).
+///
+/// One entry for both shapes:
+/// - Absolute `http(s)://…` (scheme case-insensitive) → [`url::Url`] host
+/// - Bare `host` / `host:port` (e.g. `localhost:9444`) → authority parse  
+///   (**not** `Url::parse`, which treats `localhost` as a scheme and yields no host)
+pub fn origin_host(origin: &str) -> Option<String> {
+    let s = origin.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if has_http_scheme(s) {
+        return url::Url::parse(s)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_string));
+    }
+    // Bare host[:port] — never Url::parse ("localhost:9444" → scheme=localhost).
+    host_from_authority(s)
 }
 
 /// True when the origin's host is loopback (`localhost`, `127.0.0.0/8`, `::1`).
@@ -190,15 +219,11 @@ pub fn resolve_advertise_base_url_for(
 
     let port = advertise_http_port();
 
-    // 2. Public hostname / IP override.
+    // 2. Public hostname / IP override (scheme check is case-insensitive).
     if let Ok(host) = std::env::var("NEOMIND_PUBLIC_HOST") {
         let host = host.trim();
         if !host.is_empty() {
-            let candidate = if host.starts_with("http://") || host.starts_with("https://") {
-                trim_base(host)
-            } else {
-                format!("http://{host}:{port}")
-            };
+            let candidate = public_host_origin(host, port);
             if let Some(accepted) =
                 accept_for_audience(audience, candidate, AdvertiseUrlSource::PublicHost)
             {
@@ -372,6 +397,38 @@ mod tests {
             origin_host("HTTPS://edge.example.com/path"),
             Some("edge.example.com".into())
         );
+    }
+
+    #[test]
+    fn origin_host_parses_bare_localhost_port() {
+        // Url::parse("localhost:9444") treats localhost as a scheme → no host.
+        assert_eq!(origin_host("localhost:9444"), Some("localhost".into()));
+        assert!(origin_host_is_loopback("localhost:9444"));
+        assert_eq!(
+            origin_host("192.168.1.10:9375"),
+            Some("192.168.1.10".into())
+        );
+        assert_eq!(origin_host("edge.lan"), Some("edge.lan".into()));
+    }
+
+    #[test]
+    fn public_host_uppercase_scheme_not_double_prefixed() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _a = EnvGuard::set("NEOMIND_SERVER_URL", None);
+        let _b = EnvGuard::set("NEOMIND_PUBLIC_HOST", Some("HTTPS://edge.example.com"));
+        let _port = ListenPortGuard::set(9444);
+        assert_eq!(
+            public_host_origin("HTTPS://edge.example.com", 9444),
+            "HTTPS://edge.example.com"
+        );
+        let (url, src) = resolve_advertise_base_url().expect("public host");
+        assert_eq!(src, AdvertiseUrlSource::PublicHost);
+        assert_eq!(url, "HTTPS://edge.example.com");
+        assert!(
+            !url.contains("http://HTTPS://"),
+            "must not double-prefix scheme: {url}"
+        );
+        assert_eq!(origin_host(&url), Some("edge.example.com".into()));
     }
 
     #[test]
