@@ -3,6 +3,7 @@
 //! This crate defines the foundational abstractions used across the project.
 
 // alerts module removed - use neomind_messages instead
+pub mod advertise;
 pub mod brand;
 pub mod builtin_llm;
 pub mod command_contract;

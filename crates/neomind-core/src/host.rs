@@ -30,10 +30,18 @@ fn os_pretty_name() -> Option<String> {
 /// The host's primary outbound LAN IPv4, without sending a packet: UDP
 /// `connect` only builds a route entry locally. Falls back to None on hosts
 /// with no route (air-gapped) — 8.8.8.8 is never contacted.
-fn lan_ip() -> Option<String> {
+///
+/// Prefers the default-route interface (avoids picking a random NIC). Used by
+/// [`crate::advertise::resolve_advertise_base_url`] when `NEOMIND_SERVER_URL`
+/// / `NEOMIND_PUBLIC_HOST` are unset.
+pub fn primary_lan_ipv4() -> Option<String> {
     let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
     sock.connect("8.8.8.8:80").ok()?;
     Some(sock.local_addr().ok()?.ip().to_string())
+}
+
+fn lan_ip() -> Option<String> {
+    primary_lan_ipv4()
 }
 
 fn meminfo_mib(key: &str) -> Option<u64> {

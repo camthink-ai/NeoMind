@@ -47,7 +47,9 @@ pub type ExtensionCommandRouterFn = Arc<
 /// Gated by **param name** (device-type schema signal), not by guessing a
 /// hostname from the operator's browser:
 /// - URL-shaped (`url`, `display_url`, …): device HTTP-fetches — absolute
-///   `NEOMIND_SERVER_URL` + `/api/images/...` (never coerce to data-URL).
+///   advertise base + `/api/images/...` via
+///   [`neomind_core::advertise::resolve_advertise_base_url`] (never coerce to
+///   data-URL).
 /// - Image / base64-shaped (default): embed `data:<mime>;base64,...`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ImageOutboundForm {
@@ -2352,21 +2354,22 @@ impl DeviceService {
 
     /// Externally-reachable API origin for device HTTP pulls.
     ///
-    /// Only `NEOMIND_SERVER_URL` (same advertise knob as webhooks) — never the
-    /// current browser Host header (MQTT downlink is not tied to a page load).
-    fn advertise_server_base_url() -> Option<String> {
-        std::env::var("NEOMIND_SERVER_URL")
-            .ok()
-            .map(|u| u.trim().trim_end_matches('/').to_string())
-            .filter(|u| !u.is_empty())
+    /// Uses [`neomind_core::advertise::resolve_advertise_base_url`]:
+    /// `NEOMIND_SERVER_URL` → `NEOMIND_PUBLIC_HOST` → primary LAN IPv4 →
+    /// localhost last resort. Never the browser Host header (MQTT downlink
+    /// is not tied to a page load).
+    fn advertise_server_base_url() -> Option<(String, neomind_core::advertise::AdvertiseUrlSource)>
+    {
+        neomind_core::advertise::resolve_advertise_base_url()
     }
 
     /// Resolve `/api/images/` handles in command params for device downlink.
     ///
-    /// - URL-capable params (`url` / `display_url` / …) →
-    ///   `{NEOMIND_SERVER_URL}/api/images/...`. If advertise is unset, **hard
-    ///   fail** with an actionable error — never silently send a relative path
-    ///   the device cannot fetch.
+    /// - URL-capable params (`url` / `display_url` / …) → absolute
+    ///   `{advertise_base}/api/images/...` via
+    ///   [`neomind_core::advertise::resolve_advertise_base_url`]. Hard-fail
+    ///   with an actionable error only if no usable origin exists — never
+    ///   silently send a relative path.
     /// - Other image params → data-URL via [`resolve_internal_image_to_data_url`].
     /// - Missing / unreadable files on the data-URL path: leave the original
     ///   string so the device surfaces its own error.
@@ -2384,14 +2387,25 @@ impl DeviceService {
             }
             match image_outbound_form(key) {
                 ImageOutboundForm::AbsoluteHttp => {
-                    let Some(ref base) = advertise else {
+                    let Some((ref base, src)) = advertise else {
                         return Err(DeviceError::InvalidParameter(format!(
-                            "Param `{key}` needs an absolute HTTP URL for device fetch, but \
-                             NEOMIND_SERVER_URL is unset. Set it to this host's externally \
-                             reachable origin (e.g. https://edge.example.com) so `{s}` can be \
-                             advertised; do not send a relative /api/images/ path to the device."
+                            "Param `{key}` needs an absolute HTTP URL for device fetch, but no \
+                             usable advertise origin was found. Set NEOMIND_SERVER_URL (e.g. \
+                             https://edge.example.com) or NEOMIND_PUBLIC_HOST to this host's \
+                             reachable address so `{s}` can be advertised; do not send a \
+                             relative /api/images/ path to the device."
                         )));
                     };
+                    if src != neomind_core::advertise::AdvertiseUrlSource::Env {
+                        tracing::debug!(
+                            target: "neomind::devices",
+                            param = %key,
+                            advertise_source = src.as_str(),
+                            base = %base,
+                            "AbsoluteHttp image param using auto-detected advertise base \
+                             (prefer NEOMIND_SERVER_URL for production devices)"
+                        );
+                    }
                     *s = format!("{base}{s}");
                 }
                 ImageOutboundForm::DataUrl => {
@@ -3499,17 +3513,31 @@ mod tests {
 
     #[test]
     fn test_resolve_command_url_param_advertise_gating() {
-        // Serial: both branches touch process-global NEOMIND_SERVER_URL.
-        struct EnvGuard(Option<String>);
+        // Serial: touches process-global advertise env knobs.
+        struct EnvGuard {
+            key: &'static str,
+            prev: Option<String>,
+        }
+        impl EnvGuard {
+            fn set(key: &'static str, value: Option<&str>) -> Self {
+                let prev = std::env::var(key).ok();
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+                Self { key, prev }
+            }
+        }
         impl Drop for EnvGuard {
             fn drop(&mut self) {
-                match &self.0 {
-                    Some(v) => std::env::set_var("NEOMIND_SERVER_URL", v),
-                    None => std::env::remove_var("NEOMIND_SERVER_URL"),
+                match &self.prev {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
                 }
             }
         }
-        let _guard = EnvGuard(std::env::var("NEOMIND_SERVER_URL").ok());
+        let _g1 = EnvGuard::set("NEOMIND_SERVER_URL", None);
+        let _g2 = EnvGuard::set("NEOMIND_PUBLIC_HOST", None);
 
         let temp =
             std::env::temp_dir().join(format!("neomind_test_cmd_abs_{}", std::process::id()));
@@ -3519,8 +3547,8 @@ mod tests {
         std::fs::write(images.join("1.jpg"), jpg).unwrap();
         let rel = "/api/images/cam/frame/1.jpg".to_string();
 
-        // With advertise → absolute HTTP for `url`; data-URL for `image`.
-        std::env::set_var("NEOMIND_SERVER_URL", "https://edge.example.com/");
+        // With NEOMIND_SERVER_URL → absolute HTTP for `url`; data-URL for `image`.
+        let _env = EnvGuard::set("NEOMIND_SERVER_URL", Some("https://edge.example.com/"));
         let mut params = HashMap::new();
         params.insert("url".to_string(), MetricValue::String(rel.clone()));
         params.insert("image".to_string(), MetricValue::String(rel.clone()));
@@ -3538,20 +3566,36 @@ mod tests {
             }
             other => panic!("image should be data-URL, got {other:?}"),
         }
+        drop(_env);
 
-        // Without advertise → hard fail for AbsoluteHttp params (never silent relative).
-        std::env::remove_var("NEOMIND_SERVER_URL");
+        // Without SERVER_URL but with PUBLIC_HOST → absolute via public host.
+        let _pub = EnvGuard::set("NEOMIND_PUBLIC_HOST", Some("edge.lan"));
+        let _port = EnvGuard::set("NEOMIND_PORT", Some("9375"));
+        let mut params_pub = HashMap::new();
+        params_pub.insert("display_url".to_string(), MetricValue::String(rel.clone()));
+        DeviceService::resolve_command_image_urls(&mut params_pub, &temp).unwrap();
+        match &params_pub["display_url"] {
+            MetricValue::String(s) => {
+                assert_eq!(s, "http://edge.lan:9375/api/images/cam/frame/1.jpg");
+            }
+            other => panic!("display_url should be absolute, got {other:?}"),
+        }
+        drop(_pub);
+        drop(_port);
+
+        // Without overrides → auto LAN/localhost absolute (never silent relative).
         let mut params2 = HashMap::new();
         params2.insert("display_url".to_string(), MetricValue::String(rel.clone()));
-        let err = DeviceService::resolve_command_image_urls(&mut params2, &temp).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("NEOMIND_SERVER_URL") && msg.contains("display_url"),
-            "expected actionable advertise error, got: {msg}"
-        );
+        DeviceService::resolve_command_image_urls(&mut params2, &temp).unwrap();
         match &params2["display_url"] {
-            MetricValue::String(s) => assert_eq!(s, &rel, "must not mutate on failure"),
-            other => panic!("expected relative left as-is on error, got {other:?}"),
+            MetricValue::String(s) => {
+                assert!(
+                    s.starts_with("http://") && s.ends_with("/api/images/cam/frame/1.jpg"),
+                    "expected auto-detected absolute URL, got: {s}"
+                );
+                assert!(!s.starts_with("/api/images/"), "must not leave relative");
+            }
+            other => panic!("expected absolute string, got {other:?}"),
         }
 
         let _ = std::fs::remove_dir_all(&temp);
