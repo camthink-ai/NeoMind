@@ -58,24 +58,8 @@ pub async fn get_mqtt_status_handler(
     // - devices_count: total registered devices
     // - subscriptions_count: devices actually bound to an MQTT adapter
     // - clients_count: MQTT devices currently transport-connected (or within effective offline timeout)
-    let configs = state.devices.service.list_devices();
-    let devices_count = configs.len();
-    let mut subscriptions_count = 0usize;
-    let mut clients_count = 0usize;
-    for cfg in &configs {
-        let is_mqtt_device = cfg.adapter_type.eq_ignore_ascii_case("mqtt");
-        if is_mqtt_device {
-            subscriptions_count += 1;
-            let status = state.devices.service.get_device_status(&cfg.device_id).await;
-            let timeout = state
-                .devices
-                .service
-                .effective_offline_timeout(&cfg.device_id);
-            if status.transport_connected || status.is_connected_within(timeout) {
-                clients_count += 1;
-            }
-        }
-    }
+    let (devices_count, subscriptions_count, clients_count) =
+        count_mqtt_devices(&state.devices.service).await;
 
     // Load external brokers and overlay live adapter connection state (matches /api/brokers)
     let external_brokers: Vec<ExternalBrokerConnectionDto> = match store.load_all_external_brokers()
@@ -127,4 +111,65 @@ pub async fn get_mqtt_status_handler(
             last_error,
         },
     }))
+}
+
+/// Count registered devices, MQTT-bound subscriptions, and live MQTT clients.
+async fn count_mqtt_devices(service: &neomind_devices::DeviceService) -> (usize, usize, usize) {
+    let configs = service.list_devices();
+    let devices_count = configs.len();
+    let mut subscriptions_count = 0usize;
+    let mut clients_count = 0usize;
+    for cfg in &configs {
+        if cfg.adapter_type.eq_ignore_ascii_case("mqtt") {
+            subscriptions_count += 1;
+            let status = service.get_device_status(&cfg.device_id).await;
+            let timeout = service.effective_offline_timeout(&cfg.device_id);
+            if status.transport_connected || status.is_connected_within(timeout) {
+                clients_count += 1;
+            }
+        }
+    }
+    (devices_count, subscriptions_count, clients_count)
+}
+
+#[cfg(test)]
+mod s1_3_mqtt_status_tests {
+    use super::*;
+    use neomind_devices::{ConnectionConfig, DeviceConfig, DeviceTypeTemplate};
+
+    #[tokio::test]
+    async fn ten_offline_webhook_devices_yield_zero_mqtt_clients_and_subscriptions() {
+        let state = ServerState::new_for_testing().await;
+        state
+            .devices
+            .service
+            .register_template(DeviceTypeTemplate::new("webhook_sensor", "Webhook Sensor"))
+            .await
+            .expect("register template");
+
+        for i in 0..10 {
+            let cfg = DeviceConfig {
+                device_id: format!("wh-offline-{i}"),
+                name: format!("Webhook {i}"),
+                device_type: "webhook_sensor".to_string(),
+                adapter_type: "webhook".to_string(),
+                connection_config: ConnectionConfig::default(),
+                adapter_id: None,
+                last_seen: 0,
+                offline_timeout_secs: None,
+            };
+            state
+                .devices
+                .service
+                .register_device(cfg)
+                .await
+                .expect("register webhook device");
+        }
+
+        let (devices_count, subscriptions_count, clients_count) =
+            count_mqtt_devices(&state.devices.service).await;
+        assert_eq!(devices_count, 10);
+        assert_eq!(subscriptions_count, 0);
+        assert_eq!(clients_count, 0);
+    }
 }

@@ -88,22 +88,28 @@ fn is_ascii_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
 }
 
-/// Find `needle` in `haystack` with ASCII word boundaries when `needle` is
-/// ASCII (so `add` never hits `address`/`padding`, `start` never hits
-/// `startup`/`restart`). Multi-word English phrases (`turn on`) require a
-/// boundary at both ends of the whole phrase. CJK needles keep substring
-/// match (Chinese has no spaces).
-fn find_action_verb(haystack: &str, needle: &str) -> Option<usize> {
+/// Find all occurrences of `needle` in `haystack`, enforcing ASCII word
+/// boundaries when `needle` is ASCII (so `add` never hits `address`/`padding`,
+/// `start` never hits `startup`/`restart`). CJK needles collect every substring
+/// occurrence so an excluded first mention ("已安装") never hides a genuine
+/// write verb later in the sentence ("并安装weather").
+fn find_all_action_verb_positions(haystack: &str, needle: &str) -> Vec<usize> {
+    let mut positions = Vec::new();
     if needle.is_empty() {
-        return None;
+        return positions;
     }
     let ascii_needle = needle.is_ascii();
+    let step = needle.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
     let mut search_from = 0usize;
-    while search_from <= haystack.len() {
-        let rel = haystack[search_from..].find(needle)?;
+    while search_from < haystack.len() {
+        let Some(rel) = haystack[search_from..].find(needle) else {
+            break;
+        };
         let pos = search_from + rel;
         if !ascii_needle {
-            return Some(pos);
+            positions.push(pos);
+            search_from = pos + step;
+            continue;
         }
         let before_ok = pos == 0
             || !haystack[..pos]
@@ -117,11 +123,17 @@ fn find_action_verb(haystack: &str, needle: &str) -> Option<usize> {
                 .next()
                 .is_some_and(is_ascii_word_char);
         if before_ok && after_ok {
-            return Some(pos);
+            positions.push(pos);
         }
-        search_from = pos + needle.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        search_from = pos + step;
     }
-    None
+    positions
+}
+
+fn find_action_verb(haystack: &str, needle: &str) -> Option<usize> {
+    find_all_action_verb_positions(haystack, needle)
+        .into_iter()
+        .next()
 }
 
 /// Chinese completed-aspect / interrogative prefixes that demote a verb to
@@ -137,6 +149,12 @@ const ZH_NOUN_SUFFIXES: &[&str] = &[
     "记录", "历史", "信息", "详情", "名称", "方式", "方法",
 ];
 
+/// Clause punctuation that terminates lookback for Chinese completed-aspect
+/// prefixes (so `"已连接，请删除"` does not leak `"已"` across `，`).
+fn is_clause_punctuation(c: char) -> bool {
+    matches!(c, '，' | '。' | '；' | ',' | ';' | '.' | '\n')
+}
+
 /// True when the Chinese verb at `verb_pos` is a completed-aspect /
 /// interrogative status mention or a noun-compound, not a write request.
 fn chinese_verb_is_non_action(msg: &str, verb: &str, verb_pos: usize) -> bool {
@@ -144,27 +162,24 @@ fn chinese_verb_is_non_action(msg: &str, verb: &str, verb_pos: usize) -> bool {
         return false;
     }
     let prefix = &msg[..verb_pos];
-    // Look back a few CJK chars for completed-aspect / question markers.
-    let lookback_start = prefix
+    // Stop lookback at the most recent clause boundary punctuation.
+    let clause_start = prefix
+        .char_indices()
+        .rev()
+        .find(|(_, c)| is_clause_punctuation(*c))
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0);
+    let clause_prefix = &prefix[clause_start..];
+    // Look back up to 6 chars within the current clause for aspect/question markers.
+    let lookback_start = clause_prefix
         .char_indices()
         .rev()
         .nth(5)
         .map(|(i, _)| i)
         .unwrap_or(0);
-    let lookback = &prefix[lookback_start..];
-    if ZH_COMPLETED_PREFIXES.iter().any(|p| lookback.ends_with(p) || lookback.contains(p)) {
-        // Prefer ends_with / near-verb contains of the prefix tokens.
-        if ZH_COMPLETED_PREFIXES.iter().any(|p| {
-            prefix.ends_with(p)
-                || prefix
-                    .char_indices()
-                    .rev()
-                    .take(6)
-                    .any(|(i, _)| prefix[i..].starts_with(p) && i + p.len() == verb_pos)
-                || lookback.contains(p)
-        }) {
-            return true;
-        }
+    let lookback = &clause_prefix[lookback_start..];
+    if ZH_COMPLETED_PREFIXES.iter().any(|p| lookback.contains(p)) {
+        return true;
     }
     let after = &msg[verb_pos + verb.len()..];
     ZH_NOUN_SUFFIXES.iter().any(|s| after.starts_with(s))
@@ -232,7 +247,11 @@ pub(crate) fn user_message_requires_action(msg: &str) -> bool {
     let msg_lower = msg.to_lowercase();
     let verb_hits: Vec<(usize, &'static str)> = ACTION_VERBS
         .iter()
-        .filter_map(|v| find_action_verb(&msg_lower, v).map(|pos| (pos, *v)))
+        .flat_map(|v| {
+            find_all_action_verb_positions(&msg_lower, v)
+                .into_iter()
+                .map(move |pos| (pos, *v))
+        })
         .collect();
     let Some(&(first_verb_pos, _)) = verb_hits.iter().min_by_key(|(pos, _)| *pos) else {
         return false;
@@ -1323,6 +1342,16 @@ mod tests {
         assert!(user_message_requires_action("启用监控代理"));
         assert!(user_message_requires_action("更新仪表盘标题"));
         assert!(user_message_requires_action("帮我绑定这个数据源"));
+
+        // P1-6: repeated CJK verb after an excluded first mention, and clause punctuation
+        // stopping completed-aspect lookback.
+        assert!(user_message_requires_action(
+            "查看已安装的扩展并安装weather"
+        ));
+        assert!(user_message_requires_action("已连接，请删除"));
+        assert!(user_message_requires_action("已启用。请更新配置"));
+        assert!(user_message_requires_action("已绑定; 删除规则"));
+        assert!(user_message_requires_action("已安装, 请启用它"));
     }
 
     /// Live 2026-10-21: "Send it a set_alarm command" extracts action=write/send

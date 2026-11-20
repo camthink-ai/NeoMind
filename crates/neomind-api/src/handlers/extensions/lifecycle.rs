@@ -40,6 +40,51 @@ pub struct RegisterExtensionRequest {
     pub auto_start: bool,
 }
 
+/// Derive truthful state for an extension present in storage but not in the
+/// live runtime: disabled/manual-start extensions without error are `"Stopped"`,
+/// while extensions with an error, unhealthy status, or failed auto-start are
+/// `"Failed"`.
+fn stored_record_state(record: &neomind_storage::extensions::ExtensionRecord) -> &'static str {
+    let has_error = record
+        .last_error
+        .as_deref()
+        .is_some_and(|e| !e.trim().is_empty());
+    let unhealthy = record.health_status.eq_ignore_ascii_case("error")
+        || record.health_status.eq_ignore_ascii_case("failed");
+    if has_error || unhealthy {
+        "Failed"
+    } else if !record.enabled || !record.auto_start {
+        "Stopped"
+    } else {
+        "Failed"
+    }
+}
+
+fn stored_record_to_dto(record: neomind_storage::extensions::ExtensionRecord) -> ExtensionDto {
+    let state = stored_record_state(&record).to_string();
+    ExtensionDto {
+        id: record.id.clone(),
+        name: record.name,
+        version: record.version,
+        description: record.description,
+        author: record.author,
+        state,
+        file_path: Some(record.file_path),
+        loaded_at: None,
+        health_status: record.health_status,
+        last_error: record.last_error,
+        last_error_at: record.last_error_at,
+        consecutive_crashes: 0,
+        last_crash_reason: None,
+        commands: Vec::new(),
+        metrics: Vec::new(),
+        config_parameters: None,
+        enabled: record.enabled,
+        ai_enabled: record.ai_enabled,
+        disabled_commands: record.disabled_commands,
+    }
+}
+
 /// GET /api/extensions
 /// List all registered extensions (including failed to load).
 #[utoipa::path(
@@ -88,28 +133,7 @@ pub async fn list_extensions_handler(
             continue;
         }
 
-        // Create DTO for failed extension
-        extensions.push(ExtensionDto {
-            id: record.id.clone(),
-            name: record.name,
-            version: record.version,
-            description: record.description,
-            author: record.author,
-            state: "Failed".to_string(),
-            file_path: Some(record.file_path),
-            loaded_at: None,
-            health_status: record.health_status,
-            last_error: record.last_error,
-            last_error_at: record.last_error_at,
-            consecutive_crashes: 0,
-            last_crash_reason: None,
-            commands: Vec::new(),
-            metrics: Vec::new(),
-            config_parameters: None,
-            enabled: record.enabled,
-            ai_enabled: record.ai_enabled,
-            disabled_commands: record.disabled_commands,
-        });
+        extensions.push(stored_record_to_dto(record));
     }
 
     // Filter by state
@@ -153,27 +177,7 @@ pub async fn get_extension_handler(
         .find(|r| r.id == id && !r.uninstalled)
         .ok_or_else(|| ErrorResponse::not_found(format!("Extension {}", id)))?;
 
-    ok(ExtensionDto {
-        id: record.id.clone(),
-        name: record.name,
-        version: record.version,
-        description: record.description,
-        author: record.author,
-        state: "Failed".to_string(),
-        file_path: Some(record.file_path),
-        loaded_at: None,
-        health_status: record.health_status,
-        last_error: record.last_error,
-        last_error_at: record.last_error_at,
-        consecutive_crashes: 0,
-        last_crash_reason: None,
-        commands: Vec::new(),
-        metrics: Vec::new(),
-        config_parameters: None,
-        enabled: record.enabled,
-        ai_enabled: record.ai_enabled,
-        disabled_commands: record.disabled_commands,
-    })
+    ok(stored_record_to_dto(record))
 }
 
 /// GET /api/extensions/types
@@ -446,4 +450,89 @@ pub async fn extension_health_handler(
         "extension_id": id,
         "healthy": healthy
     }))
+}
+
+#[cfg(test)]
+mod lifecycle_fallback_tests {
+    use super::*;
+    use neomind_storage::extensions::ExtensionRecord;
+
+    fn sample_record(id: &str) -> ExtensionRecord {
+        ExtensionRecord::new(
+            id.to_string(),
+            format!("Ext {id}"),
+            format!("/tmp/{id}.dylib"),
+            "native".to_string(),
+            "1.0.0".to_string(),
+        )
+    }
+
+    #[test]
+    fn disabled_and_manual_records_without_error_are_stopped_not_failed() {
+        let mut disabled = sample_record("disabled-ext");
+        disabled.enabled = false;
+        disabled.auto_start = true;
+        disabled.last_error = None;
+        disabled.health_status = "unknown".to_string();
+        assert_eq!(stored_record_state(&disabled), "Stopped");
+
+        let mut manual = sample_record("manual-ext");
+        manual.enabled = true;
+        manual.auto_start = false;
+        manual.last_error = None;
+        assert_eq!(stored_record_state(&manual), "Stopped");
+
+        let mut errored = sample_record("errored-ext");
+        errored.enabled = false;
+        errored.last_error = Some("failed to dlopen".to_string());
+        assert_eq!(stored_record_state(&errored), "Failed");
+
+        let mut auto_missing = sample_record("auto-missing-ext");
+        auto_missing.enabled = true;
+        auto_missing.auto_start = true;
+        auto_missing.last_error = None;
+        assert_eq!(stored_record_state(&auto_missing), "Failed");
+    }
+
+    #[tokio::test]
+    async fn get_extension_fallback_distinguishes_stopped_from_failed() {
+        let state = ServerState::new_for_testing().await;
+
+        let mut disabled = sample_record("ext-disabled-test");
+        disabled.enabled = false;
+        disabled.auto_start = true;
+        disabled.last_error = None;
+        state.extensions.store.save(&disabled).expect("save disabled");
+
+        let mut failed = sample_record("ext-failed-test");
+        failed.enabled = true;
+        failed.auto_start = true;
+        failed.last_error = Some("abi mismatch".to_string());
+        failed.health_status = "error".to_string();
+        state.extensions.store.save(&failed).expect("save failed");
+
+        let got_disabled = get_extension_handler(
+            State(state.clone()),
+            Path("ext-disabled-test".to_string()),
+        )
+        .await
+        .expect("disabled extension should not 404")
+        .0
+        .data
+        .expect("dto");
+        assert_eq!(got_disabled.state, "Stopped");
+        assert!(!got_disabled.enabled);
+
+        let got_failed = get_extension_handler(
+            State(state.clone()),
+            Path("ext-failed-test".to_string()),
+        )
+        .await
+        .expect("failed extension should not 404")
+        .0
+        .data
+        .expect("dto");
+        assert_eq!(got_failed.state, "Failed");
+        assert_eq!(got_failed.last_error.as_deref(), Some("abi mismatch"));
+    }
 }

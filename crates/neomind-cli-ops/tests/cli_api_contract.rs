@@ -11,11 +11,14 @@
 //! Run:
 //!     cargo test -p neomind-cli-ops --test cli_api_contract
 
-use neomind_cli_ops::{
-    agent_cmd, connector, dashboard, data_push, device, extension, llm, message, operation, rule,
-    settings, system, transform, widget, ApiClient,
-};
+use neomind_cli_ops::dispatch::commands::{ApiKeyCommand, DataCommand};
+use neomind_cli_ops::dispatch::handlers::{run_api_key_cmd_with_context, run_data_cmd_with_context};
+use neomind_cli_ops::dispatch::DispatchContext;
 use neomind_cli_ops::types::CliResponse;
+use neomind_cli_ops::{
+    agent_cmd, auth_cmd, connector, dashboard, data_push, device, extension, llm, message,
+    operation, rule, settings, system, transform, widget, ApiClient,
+};
 use neomind_storage::BackendCapabilities;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -187,20 +190,6 @@ struct CreateBackendRequest {
     name: String,
     backend_type: String,
     model: String,
-}
-
-/// Auth whoami payload shape consumed by CLI/Chat (no HTTP whoami in cli-ops).
-#[derive(Debug, Deserialize)]
-struct WhoamiUser {
-    username: String,
-    role: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct WhoamiPayload {
-    user: WhoamiUser,
-    #[serde(default)]
-    auth_type: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -589,7 +578,7 @@ async fn system_info_has_no_device_connection_tutorial() {
                     "stats": {
                         "devices": {"total_devices": 0, "online_devices": 0, "offline_devices": 0},
                         "rules": {"total_rules": 0, "enabled_rules": 0},
-                        "messages": {"active": 0}
+                        "alerts": {"active": 2}
                     }
                 }
             }),
@@ -627,16 +616,35 @@ async fn system_info_has_no_device_connection_tutorial() {
             json!({
                 "success": true,
                 "data": {
-                    "connected": true,
-                    "mqtt_connected_clients": 0,
-                    "external_brokers": []
+                    "status": {
+                        "connected": true,
+                        "listen_address": "0.0.0.0:1883",
+                        "listen_port": 1883,
+                        "server_ip": "127.0.0.1",
+                        "tls_enabled": false,
+                        "clients_count": 0,
+                        "subscriptions_count": 0,
+                        "devices_count": 0,
+                        "external_brokers": [],
+                        "last_error": null
+                    }
                 }
             }),
         ),
         (
             "/api/mqtt/broker-config",
             200,
-            json!({ "success": true, "data": { "port": 1883, "tls_enabled": false } }),
+            json!({
+                "success": true,
+                "data": {
+                    "config": {
+                        "port": 1883,
+                        "tls_enabled": false,
+                        "auth_enabled": false,
+                        "credentials": []
+                    }
+                }
+            }),
         ),
         (
             "/api/system/network-info",
@@ -655,10 +663,20 @@ async fn system_info_has_no_device_connection_tutorial() {
     let client = ApiClient::with_base_url(&base);
     let resp = system::system_info(&client).await.expect("info");
     assert!(resp.success);
+    let info = data(&resp);
     assert!(
-        data(&resp).get("device_connection").is_none(),
+        info.get("device_connection").is_none(),
         "system info must not embed device_connection tutorials"
     );
+    assert!(
+        !info["mqtt"].is_null(),
+        "mqtt section must populate from /mqtt/status wrapper"
+    );
+    assert_eq!(info["mqtt"]["connected"], json!(true));
+    assert_eq!(info["mqtt"]["clients_connected"], json!(0));
+    assert_eq!(info["mqtt"]["tls_enabled"], json!(false));
+    assert_eq!(info["mqtt"]["auth_enabled"], json!(false));
+    assert_eq!(info["resources"]["messages"]["active"], json!(2));
 }
 
 #[tokio::test]
@@ -677,14 +695,149 @@ async fn operation_list_endpoint_contract() {
     assert!(resp.success);
 }
 
-#[test]
-fn auth_whoami_payload_deserializes_role() {
-    let sample = json!({
-        "user": { "id": "u1", "username": "admin", "role": "Admin" },
-        "auth_type": "api_key"
-    });
-    let parsed: WhoamiPayload = serde_json::from_value(sample).expect("whoami shape");
-    assert_eq!(parsed.user.username, "admin");
-    assert_eq!(parsed.user.role, "Admin");
-    assert_eq!(parsed.auth_type.as_deref(), Some("api_key"));
+#[tokio::test]
+async fn auth_whoami_cli_ops_validates_key_and_handles_401() {
+    let ok_base = spawn_route_mock(vec![(
+        "/api/settings/timezone",
+        200,
+        json!({ "success": true, "data": { "timezone": "UTC" } }),
+    )])
+    .await;
+    let ctx = DispatchContext {
+        api_base: Some(ok_base.clone()),
+        api_key: Some("nm_test_secret_1234".to_string()),
+        output_format: None,
+    };
+    let resp = auth_cmd::run_whoami_with_context(&ctx)
+        .await
+        .expect("whoami ok");
+    assert!(resp.success);
+    assert_eq!(data(&resp)["source"], json!("dispatch context"));
+    assert_eq!(data(&resp)["server"], json!(ok_base));
+    assert!(data(&resp)["key_preview"].is_string());
+
+    let unauth_base = spawn_route_mock(vec![(
+        "/api/settings/timezone",
+        401,
+        json!({ "success": false, "error": { "code": "UNAUTHORIZED", "message": "Invalid key" } }),
+    )])
+    .await;
+    let bad_ctx = DispatchContext {
+        api_base: Some(unauth_base),
+        api_key: Some("nm_revoked_0000".to_string()),
+        output_format: None,
+    };
+    let bad_resp = auth_cmd::run_whoami_with_context(&bad_ctx)
+        .await
+        .expect("whoami 401");
+    assert!(!bad_resp.success);
+    assert_eq!(bad_resp.code.as_deref(), Some("INVALID_KEY"));
+}
+
+#[tokio::test]
+async fn data_sources_list_contract() {
+    let base = spawn_route_mock(vec![(
+        "/api/data/sources?source_type=device",
+        200,
+        json!({
+            "success": true,
+            "data": {
+                "data": [
+                    { "id": "device:temp-1:temperature", "source_type": "device", "field": "temperature" }
+                ],
+                "total": 1
+            }
+        }),
+    )])
+    .await;
+    let ctx = DispatchContext {
+        api_base: Some(base),
+        api_key: None,
+        output_format: None,
+    };
+    let (resp, _) = run_data_cmd_with_context(
+        DataCommand::List {
+            source_type: Some("device".to_string()),
+        },
+        &ctx,
+    )
+    .await
+    .expect("data list");
+    assert!(resp.success);
+    assert!(resp
+        .message
+        .as_deref()
+        .unwrap_or("")
+        .contains("device:temp-1:temperature"));
+    assert_eq!(data(&resp).as_array().map(|a| a.len()), Some(1));
+}
+
+#[tokio::test]
+async fn api_key_crud_contract() {
+    let (client, stop, thread) = mock_api(vec![
+        (
+            200,
+            leak(envelope(json!({
+                "api_key": "nm_live_created_key",
+                "info": { "id": "key-1", "name": "ci-bot", "active": true }
+            }))),
+        ),
+        (
+            200,
+            leak(envelope(json!({
+                "keys": [{ "id": "key-1", "name": "ci-bot", "active": true }]
+            }))),
+        ),
+        (
+            200,
+            leak(envelope(json!({
+                "keys": [{ "id": "key-1", "name": "ci-bot", "active": true }]
+            }))),
+        ),
+        (200, leak(envelope(json!({ "deleted": true })))),
+    ]);
+    let ctx = DispatchContext {
+        api_base: Some(client.base_url().to_string()),
+        api_key: None,
+        output_format: None,
+    };
+
+    let (created, _) = run_api_key_cmd_with_context(
+        ApiKeyCommand::Create {
+            name: "ci-bot".to_string(),
+            data_dir: None,
+        },
+        &ctx,
+    )
+    .await
+    .expect("create");
+    assert!(created.success);
+    assert_eq!(data(&created)["api_key"], json!("nm_live_created_key"));
+
+    let (listed, _) = run_api_key_cmd_with_context(ApiKeyCommand::List { data_dir: None }, &ctx)
+        .await
+        .expect("list");
+    assert!(listed.success);
+    assert_eq!(data(&listed).as_array().map(|a| a.len()), Some(1));
+
+    let (deleted, _) = run_api_key_cmd_with_context(
+        ApiKeyCommand::Delete {
+            name: "ci-bot".to_string(),
+            data_dir: None,
+        },
+        &ctx,
+    )
+    .await
+    .expect("delete");
+    assert!(deleted.success);
+    assert_eq!(data(&deleted)["deleted_id"], json!("key-1"));
+
+    let reqs = finish(stop, thread);
+    assert_eq!(reqs.len(), 4);
+    assert!(reqs[0].line.starts_with("POST /api/auth/keys"));
+    let body: Value =
+        serde_json::from_str(reqs[0].body.as_deref().expect("create body")).expect("json body");
+    assert_eq!(body["name"], json!("ci-bot"));
+    assert!(reqs[1].line.starts_with("GET /api/auth/keys"));
+    assert!(reqs[3].line.starts_with("DELETE /api/auth/keys/key-1"));
 }

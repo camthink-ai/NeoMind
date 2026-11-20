@@ -931,3 +931,54 @@ mod sampler_tests {
         assert_eq!(second.pid, first.pid);
     }
 }
+
+#[cfg(test)]
+mod s1_3_system_stats_tests {
+    use super::*;
+    use neomind_devices::{ConnectionConfig, DeviceConfig, DeviceTypeTemplate};
+
+    #[tokio::test]
+    async fn ten_offline_webhook_devices_yield_zero_online_in_system_stats() {
+        let state = ServerState::new_for_testing().await;
+        state
+            .devices
+            .service
+            .register_template(DeviceTypeTemplate::new("webhook_sensor", "Webhook Sensor"))
+            .await
+            .expect("register template");
+
+        for i in 0..10 {
+            let cfg = DeviceConfig {
+                device_id: format!("stats-wh-{i}"),
+                name: format!("Stats Webhook {i}"),
+                device_type: "webhook_sensor".to_string(),
+                adapter_type: "webhook".to_string(),
+                connection_config: ConnectionConfig::default(),
+                adapter_id: None,
+                last_seen: 0,
+                offline_timeout_secs: None,
+            };
+            state
+                .devices
+                .service
+                .register_device(cfg)
+                .await
+                .expect("register webhook device");
+        }
+
+        let resp = get_system_stats_handler(State(state))
+            .await
+            .expect("stats/system succeeds")
+            .0
+            .data
+            .expect("data payload");
+        let devices = &resp["stats"]["devices"];
+        assert_eq!(devices["total_devices"], json!(10));
+        assert_eq!(devices["online_devices"], json!(0));
+        assert_eq!(devices["offline_devices"], json!(10));
+        assert!(
+            resp["stats"].get("alerts").is_some(),
+            "SystemStats must serialize `alerts` field"
+        );
+    }
+}

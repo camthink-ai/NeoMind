@@ -451,28 +451,13 @@ pub async fn get_agent_defaults(
     }))
 }
 
-/// Update agent execution defaults. Values are clamped to sane ranges.
-/// Applies to the NEXT agent execution (not mid-flight).
-#[utoipa::path(
-    put,
-    path = "/api/settings/agent",
-    tag = "settings",
-    request_body = AgentDefaultsRequest,
-    responses(
-        (status = 200, description = "Agent defaults saved"),
-    )
-)]
-pub async fn update_agent_defaults(
-    State(_state): State<ServerState>,
-    Json(req): Json<AgentDefaultsRequest>,
-) -> HandlerResult<serde_json::Value> {
-    use neomind_storage::SettingsStore;
-
-    // Missing optional fields keep their current value (not a silent reset).
-    let existing = SettingsStore::open_default()
-        .map(|s| s.get_agent_defaults())
-        .unwrap_or_default();
-    let config = neomind_storage::AgentDefaults {
+/// Apply a partial [`AgentDefaultsRequest`] onto existing defaults, preserving
+/// omitted fields and clamping supplied values to valid ranges.
+fn apply_agent_defaults_patch(
+    existing: &neomind_storage::AgentDefaults,
+    req: AgentDefaultsRequest,
+) -> neomind_storage::AgentDefaults {
+    neomind_storage::AgentDefaults {
         max_rounds: req
             .max_rounds
             .map(|v| v.clamp(1, 50))
@@ -507,8 +492,32 @@ pub async fn update_agent_defaults(
             .unwrap_or(existing.chat_turn_timeout_secs),
         summary_instance_id: req
             .summary_instance_id
-            .unwrap_or(existing.summary_instance_id),
-    };
+            .unwrap_or_else(|| existing.summary_instance_id.clone()),
+    }
+}
+
+/// Update agent execution defaults. Values are clamped to sane ranges.
+/// Applies to the NEXT agent execution (not mid-flight).
+#[utoipa::path(
+    put,
+    path = "/api/settings/agent",
+    tag = "settings",
+    request_body = AgentDefaultsRequest,
+    responses(
+        (status = 200, description = "Agent defaults saved"),
+    )
+)]
+pub async fn update_agent_defaults(
+    State(_state): State<ServerState>,
+    Json(req): Json<AgentDefaultsRequest>,
+) -> HandlerResult<serde_json::Value> {
+    use neomind_storage::SettingsStore;
+
+    // Missing optional fields keep their current value (not a silent reset).
+    let existing = SettingsStore::open_default()
+        .map(|s| s.get_agent_defaults())
+        .unwrap_or_default();
+    let config = apply_agent_defaults_patch(&existing, req);
 
     let settings_store = SettingsStore::open_default()
         .map_err(|e| ErrorResponse::internal(format!("Failed to open settings store: {}", e)))?;
@@ -1013,4 +1022,122 @@ pub async fn update_llm_sources_handler(
     tracing::info!(admin = %admin.username, kind = %req.kind, url = %effective,
         "builtin llm download source updated");
     ok(json!({ "kind": req.kind, "url": effective }))
+}
+
+#[cfg(test)]
+mod s2_4_tests {
+    use super::*;
+    use axum::http::StatusCode;
+
+    fn non_admin_session() -> crate::auth_users::SessionInfo {
+        crate::auth_users::SessionInfo {
+            user_id: "u-non-admin".to_string(),
+            username: "viewer".to_string(),
+            role: crate::auth_users::UserRole::User,
+            created_at: 0,
+            expires_at: i64::MAX,
+        }
+    }
+
+    #[tokio::test]
+    async fn all_six_settings_admin_handlers_return_403_for_non_admin() {
+        let state = ServerState::new_for_testing().await;
+        let user = non_admin_session();
+
+        let e1 = create_backup_handler(
+            State(state.clone()),
+            axum::extract::Extension(user.clone()),
+        )
+        .await
+        .expect_err("create_backup must reject non-admin");
+        assert_eq!(e1.status, StatusCode::FORBIDDEN);
+
+        let e2 = list_backups_handler(
+            State(state.clone()),
+            axum::extract::Extension(user.clone()),
+        )
+        .await
+        .expect_err("list_backups must reject non-admin");
+        assert_eq!(e2.status, StatusCode::FORBIDDEN);
+
+        let e3 = get_market_source_handler(
+            State(state.clone()),
+            axum::extract::Extension(user.clone()),
+        )
+        .await
+        .expect_err("get_market_source must reject non-admin");
+        assert_eq!(e3.status, StatusCode::FORBIDDEN);
+
+        let e4 = update_market_source_handler(
+            State(state.clone()),
+            axum::extract::Extension(user.clone()),
+            Json(MarketSourceRequest {
+                market_url: "https://example.com".to_string(),
+            }),
+        )
+        .await
+        .expect_err("update_market_source must reject non-admin");
+        assert_eq!(e4.status, StatusCode::FORBIDDEN);
+
+        let e5 = get_llm_sources_handler(
+            State(state.clone()),
+            axum::extract::Extension(user.clone()),
+        )
+        .await
+        .expect_err("get_llm_sources must reject non-admin");
+        assert_eq!(e5.status, StatusCode::FORBIDDEN);
+
+        let e6 = update_llm_sources_handler(
+            State(state),
+            axum::extract::Extension(user),
+            Json(LlmSourceRequest {
+                kind: "hf_base_url".to_string(),
+                url: "https://example.com".to_string(),
+            }),
+        )
+        .await
+        .expect_err("update_llm_sources must reject non-admin");
+        assert_eq!(e6.status, StatusCode::FORBIDDEN);
+    }
+
+    #[test]
+    fn agent_defaults_partial_put_preserves_omitted_fields_and_clears_explicit_null() {
+        let existing = neomind_storage::AgentDefaults {
+            max_rounds: 20,
+            execution_timeout_secs: 600,
+            tool_concurrency: 6,
+            default_temperature: 0.4,
+            default_top_p: 0.85,
+            default_thinking_enabled: Some(true),
+            chat_history_depth: 40,
+            chat_turn_timeout_secs: 900,
+            summary_instance_id: Some("llm-summary-1".to_string()),
+        };
+
+        // Partial PUT sending only `max_rounds` must preserve all omitted fields.
+        let req: AgentDefaultsRequest =
+            serde_json::from_value(json!({ "max_rounds": 12 })).expect("partial deserialize");
+        let patched = apply_agent_defaults_patch(&existing, req);
+        assert_eq!(patched.max_rounds, 12);
+        assert_eq!(patched.execution_timeout_secs, 600);
+        assert_eq!(patched.tool_concurrency, 6);
+        assert!((patched.default_temperature - 0.4).abs() < 1e-6);
+        assert!((patched.default_top_p - 0.85).abs() < 1e-6);
+        assert_eq!(patched.default_thinking_enabled, Some(true));
+        assert_eq!(patched.chat_history_depth, 40);
+        assert_eq!(patched.chat_turn_timeout_secs, 900);
+        assert_eq!(
+            patched.summary_instance_id.as_deref(),
+            Some("llm-summary-1")
+        );
+
+        // Explicit null clears `summary_instance_id` without resetting other fields.
+        let clear_req: AgentDefaultsRequest =
+            serde_json::from_value(json!({ "summary_instance_id": null }))
+                .expect("clear deserialize");
+        let cleared = apply_agent_defaults_patch(&patched, clear_req);
+        assert_eq!(cleared.max_rounds, 12);
+        assert_eq!(cleared.execution_timeout_secs, 600);
+        assert_eq!(cleared.summary_instance_id, None);
+    }
 }

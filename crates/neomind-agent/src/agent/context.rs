@@ -209,11 +209,11 @@ pub(crate) fn adjust_summary_index_after_drain(
 /// Default keep count when max_context is unknown / large.
 const KEEP_IMAGES_ON_RECENT_USER_MSGS_DEFAULT: usize = 2;
 
-/// Dynamic image-history budget: ≤16K windows keep 1 recent image-bearing
-/// user message; larger windows keep 2 (Stage-1 toolTokens must stay intact).
+/// Dynamic image-history budget: ≤16K (16_384) windows keep 1 recent
+/// image-bearing user message; larger windows keep 2 (aligned with S1-1/S3-2).
 pub(crate) fn keep_images_on_recent_user_msgs(max_context: Option<usize>) -> usize {
     match max_context {
-        Some(m) if m <= 16_000 => 1,
+        Some(m) if m <= 16_384 => 1,
         _ => KEEP_IMAGES_ON_RECENT_USER_MSGS_DEFAULT,
     }
 }
@@ -1115,8 +1115,10 @@ mod depth_and_image_tests {
         assert!(history[0].images.is_none());
         assert!(history[1].images.is_none());
         assert_eq!(history[2].images.as_ref().unwrap().len(), 1);
-        assert_eq!(keep_images_on_recent_user_msgs(Some(16_000)), 1);
-        assert_eq!(keep_images_on_recent_user_msgs(Some(16_001)), 2);
+        assert_eq!(keep_images_on_recent_user_msgs(Some(8_192)), 1);
+        assert_eq!(keep_images_on_recent_user_msgs(Some(16_384)), 1);
+        assert_eq!(keep_images_on_recent_user_msgs(Some(16_385)), 2);
+        assert_eq!(keep_images_on_recent_user_msgs(None), 2);
     }
 }
 

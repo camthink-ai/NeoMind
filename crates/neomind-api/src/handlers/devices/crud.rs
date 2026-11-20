@@ -1374,4 +1374,50 @@ mod device_error_mapping_tests {
             Some(&serde_json::json!({"x": 1}))
         ));
     }
+
+    #[tokio::test]
+    async fn never_seen_device_health_returns_null_last_seen() {
+        use neomind_devices::{ConnectionConfig, DeviceConfig, DeviceTypeTemplate};
+
+        let state = ServerState::new_for_testing().await;
+        state
+            .devices
+            .service
+            .register_template(DeviceTypeTemplate::new("webhook_sensor", "Webhook Sensor"))
+            .await
+            .expect("register template");
+
+        // Register directly into the registry (mirrors fresh restart before any telemetry)
+        // so `get_device_status` returns `last_seen == 0`.
+        let cfg = DeviceConfig {
+            device_id: "never-seen-dev".to_string(),
+            name: "Never Seen".to_string(),
+            device_type: "webhook_sensor".to_string(),
+            adapter_type: "webhook".to_string(),
+            connection_config: ConnectionConfig::default(),
+            adapter_id: None,
+            last_seen: 0,
+            offline_timeout_secs: None,
+        };
+        state
+            .devices
+            .service
+            .registry()
+            .register_device(cfg)
+            .await
+            .expect("register in registry");
+
+        let resp = get_device_health_handler(State(state), Path("never-seen-dev".to_string()))
+            .await
+            .expect("health succeeds")
+            .0
+            .data
+            .expect("data payload");
+        assert!(resp["last_seen"].is_null(), "last_seen==0 must map to null");
+        assert!(
+            resp["seconds_since_last_seen"].is_null(),
+            "seconds_since_last_seen must be null when never seen"
+        );
+        assert_eq!(resp["health"], json!("unknown"));
+    }
 }

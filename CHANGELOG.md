@@ -37,16 +37,16 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Clap `usage_hint`, device-control recovery copy, and message-channel 422 hints still pushed quote-fragile `--set`/`--components`/`--config` strings first → prefer Chat/shell structured `params` as the primary retry example.
 - Built-in tool schemas bloated `toolTokens` (~8k est) and JSON punctuation was over-counted → flatten `image_edit`, slim tool prose, JSON-aware tool-definition estimate, and hide unused `vision`/`image_edit` on small windows (S1-1).
 - Hard CLI/API mismatches: `widget market-install` sent `id` instead of `component_id`, `llm list` `_tags` read wrong capability keys, `device history --time-range` silently fell back to 24h, `connector list` missed `brokers` fields, bad JSON configs were silently wrapped → fixed with hard errors and honest docs (S1-2).
-- `system info` advertised MQTT attach tutorials, forged connected counts, and swallowed upstream errors → aggregates real stats/health/llm/extensions/mqtt/network with `degraded`/`errors` (S1-3).
-- Intent heuristics false-fired on `address`/`已安装`/`安装路径`/`history`/`Tips:` → English word boundaries, Chinese aspect/noun exclusions, wider negation, greeting/colon fixes (S1-4).
-- `dashboard update-component` usage tips elided required `<ID>`/`--component-id`, and `dashboard get` hid grid facts inside write tutorials → full required-arg tips, Usage-first help, structured `data.grid`, resize shell example (S1-5).
-- Read-only CLI successes no longer attach write-leading `suggestion`/`Next: call` tutorials; empty/truncated/error recovery tips remain; quoted `--params`/`--body` tips prefer structured `{command,params}` (S2-1).
-- Device/extension/agent/rule/transform/push lists expose honest totals, 4-state fields, crash/error/disabled flags without optimistic `enabled` defaults; Failed extensions `get` no longer 404; never-seen device health returns null `last_seen` (S2-2).
-- `neomind health` / `system health` / `system stats` run in-process via API JSON; `logs --since` filters RFC3339 lines instead of ignoring the flag (S2-3).
-- Fourteen admin rejection sites return HTTP 403; `AgentDefaultsRequest` is partial `Option` PUT; frontend-component marketplace network errors return HTTP 502 ErrorResponse (S2-4).
-- Non-stream system prompt stops re-embedding full tool descriptions; ≤16K contexts keep 1 recent history image, >16K keep 2 (S2-5).
-- Small context windows use a Light/Balanced/Standard tool exposure profile so 8K first-round `toolTokens` stay under 1800 without deleting runtime tools (S3-2).
-- Prompt-token estimates track measured `prompt_eval` via per-backend/model EWMA factors clamped to `[0.65, 1.35]`, improving history budget and ContextUsage consistency without external tokenizers (S3-3).
+- `system info` advertised MQTT attach tutorials, forged connected counts, swallowed upstream errors, and read wrong `messages` key instead of `SystemStats.alerts` → aggregates real stats/health/llm/extensions/mqtt/network with `degraded`/`errors` and reads `alerts` (S1-3).
+- Intent heuristics false-fired on `address`/`已安装`/`安装路径`/`history`/`Tips:` and missed later CJK verb hits or crossed clause punctuation → English word boundaries, multi-hit Chinese aspect/noun exclusions with punctuation-bounded lookback, wider negation, greeting/colon fixes (S1-4).
+- `dashboard update-component` usage tips elided required `<ID>`/`--component-id`, `dashboard get` hid grid facts inside write tutorials, and `dashboard-management.md` had an unclosed bash fence → full required-arg tips, Usage-first help, structured `data.grid`, clean resize example (S1-5).
+- Read-only CLI successes no longer attach write-leading `suggestion`/`Next: call` tutorials; empty/truncated/error recovery tips remain (without nonexistent `--limit`); quoted `--params`/`--body` tips prefer structured `{command,params}` (S2-1).
+- Device/extension/agent/rule/transform/push lists expose honest totals, 4-state fields, crash/error/disabled flags without optimistic `enabled` defaults; `get`/`list` store fallback distinguishes disabled `"Stopped"` from `"Failed"` extensions; never-seen device health returns null `last_seen` (S2-2).
+- `neomind health` / `system health` / `system stats` run in-process via API JSON with `health` indexed in `DOMAIN_INDEX`; `logs --since` filters RFC3339 lines including `mo`/`month` units (S2-3).
+- Fourteen admin rejection sites return HTTP 403; `AgentDefaultsRequest` is partial `Option` PUT; frontend-component `/market/list` network errors return HTTP 502 ErrorResponse while `/updates` degrades with HTTP 200 `{error:"network_error"}` (S2-4).
+- Non-stream system prompt stops re-embedding full tool descriptions; `<= 16_384` contexts keep 1 recent history image, `> 16_384` keep 2 (S2-5).
+- Small context windows use a Light/Balanced/Standard tool exposure profile keeping 8K first-round `toolTokens` under 1800 while keeping `vision` reachable on `Light` when VLM is available and no images are inline (S3-2).
+- Prompt-token estimates include attached `tools_input` schemas on both text and multimodal stream paths, pass real `has_user_images` to breakdown calibration, and track measured `prompt_eval` via per-backend/model EWMA factors clamped to `[0.65, 1.35]` (S3-3).
 
 ### Fixed — CT-Prov / BLE provision
 - Auth-enabled embedded broker resolve no longer leaves username/password empty — mint on `resolve_only` and write them in `config.set` (empty-omit for auth-off / blank external fields).
@@ -58,9 +58,9 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 
 ### Test
 - Anti-drift tests for `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skills, and `capability.rs`; E4 multi-target partial-failure `SystemGoalStatus` injection tests; `GET /api/v1/operations` auth + in-process CLI dispatch tests; `operation get` `Unknown` → terminal reconciliation tests; `ToolCallEnd`, KV-tail time, single-copy skill, multimodal `drive_react_stream`, and BLE provision tests.
-- Stage 1 gates: builtin toolTokens ≤3200 / `image_edit` ≤450; `device` time-range multi-unit parse; `system info` truthful/degraded mocks; 40+ intent adversarial cases; `update-component` usage_hint required-arg shape + `dashboard` grid summary.
-- Stage 2 gates: RO success `suggestion.is_none()`; device pagination/truncation honesty; health in-process JSON; 8K image-history keep=1; admin Forbidden mapping.
-- Stage 3 gates: `cli_api_contract` fixture suite for 15-domain CLI↔API DTO shapes (S3-1); Light/Balanced/Standard tool-profile selection + Light `toolTokens` <1800 (S3-2); prompt-token EWMA clamp/update math (S3-3).
+- Stage 1 gates: builtin toolTokens ≤3200 / `image_edit` ≤450; `device` time-range multi-unit parse; `system info` truthful/degraded mocks + 10 offline Webhook device `mqtt/status` & `stats/system` tests; 40+ intent adversarial cases including multi-hit CJK and clause punctuation; `update-component` usage_hint required-arg shape + `dashboard` grid summary.
+- Stage 2 gates: RO success `suggestion.is_none()`; device pagination/truncation honesty + never-seen `last_seen` null health; extension fallback `"Stopped"` vs `"Failed"`; health in-process JSON + `logs --since` duration/RFC3339 tests; `16_384` image-history boundary; 14 admin Forbidden (403) handler tests + `AgentDefaultsRequest` partial PUT + `market_list_handler` 502 test.
+- Stage 3 gates: `cli_api_contract` fixture suite covering 15 domains including `auth`/`data`/`api-key` and wrapped `/mqtt/status` & `/mqtt/broker-config` (S3-1); Light/Balanced/Standard tool-profile + `Light` `vision` reachability + Light `toolTokens` <1800 (S3-2); prompt-token EWMA clamp/update math + tool-inclusive calibration regression test (S3-3).
 
 ---
 

@@ -248,8 +248,9 @@ pub async fn market_list_handler(
 /// and return those with a newer version available.
 ///
 /// Protected endpoint — requires authentication.
-/// Tolerates network failures: returns `{ updates: [], count: 0, error: "network_error" }`
-/// rather than an HTTP error so the UI can degrade gracefully.
+/// Unlike `/market/list` (which returns HTTP 502 on marketplace failures),
+/// `/updates` intentionally returns HTTP 200 `{ updates: [], count: 0, error: "network_error" }`
+/// so background update-badge checks degrade silently in the UI.
 #[utoipa::path(
     get,
     path = "/api/frontend-components/updates",
@@ -1807,5 +1808,42 @@ mod bundle_validation_tests {
         // window.Name direct assignment also counts.
         let c = b"window.Custom = { default: F };";
         assert!(validate_component_bundle(&manifest("Custom"), c).is_ok());
+    }
+
+    #[tokio::test]
+    async fn market_list_handler_returns_502_on_upstream_error() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let _ = sock
+                    .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+            }
+        });
+
+        struct EnvRestore(Option<String>);
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(v) => std::env::set_var("NEOMIND_MARKET_URL", v),
+                    None => std::env::remove_var("NEOMIND_MARKET_URL"),
+                }
+            }
+        }
+        let _restore = EnvRestore(std::env::var("NEOMIND_MARKET_URL").ok());
+        std::env::set_var("NEOMIND_MARKET_URL", format!("http://{}", addr));
+
+        let state = ServerState::new_for_testing().await;
+        let err = market_list_handler(State(state))
+            .await
+            .expect_err("upstream marketplace failure must return HTTP 502");
+        assert_eq!(err.status, axum::http::StatusCode::BAD_GATEWAY);
+        assert_eq!(err.code, "BAD_GATEWAY");
+
+        let _ = server.await;
     }
 }

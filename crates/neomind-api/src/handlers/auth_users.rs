@@ -416,3 +416,74 @@ pub async fn update_registration_settings_handler(
         serde_json::json!({"allow_registration": req.allow_registration}),
     ))
 }
+
+#[cfg(test)]
+mod admin_forbidden_tests {
+    use super::*;
+    use axum::response::IntoResponse;
+
+    fn non_admin_session() -> SessionInfo {
+        SessionInfo {
+            user_id: "u-non-admin".to_string(),
+            username: "viewer".to_string(),
+            role: UserRole::User,
+            created_at: 0,
+            expires_at: i64::MAX,
+        }
+    }
+
+    #[test]
+    fn auth_error_forbidden_maps_to_http_403() {
+        let resp = AuthError::Forbidden("Admin access required".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn all_five_auth_user_admin_handlers_return_403_for_non_admin() {
+        let state = ServerState::new_for_testing().await;
+        let user = non_admin_session();
+
+        let r1 = list_users_handler(State(state.clone()), Extension(user.clone()))
+            .await
+            .expect_err("list_users must reject non-admin");
+        assert_eq!(r1.into_response().status(), StatusCode::FORBIDDEN);
+
+        let r2 = create_user_handler(
+            State(state.clone()),
+            Extension(user.clone()),
+            Json(RegisterRequest {
+                username: "bob".to_string(),
+                password: "secretpassword".to_string(),
+                role: Some(UserRole::User),
+            }),
+        )
+        .await
+        .expect_err("create_user must reject non-admin");
+        assert_eq!(r2.into_response().status(), StatusCode::FORBIDDEN);
+
+        let r3 = delete_user_handler(
+            State(state.clone()),
+            Extension(user.clone()),
+            Path("bob".to_string()),
+        )
+        .await
+        .expect_err("delete_user must reject non-admin");
+        assert_eq!(r3.into_response().status(), StatusCode::FORBIDDEN);
+
+        let r4 = get_registration_settings_handler(State(state.clone()), Extension(user.clone()))
+            .await
+            .expect_err("get_registration_settings must reject non-admin");
+        assert_eq!(r4.into_response().status(), StatusCode::FORBIDDEN);
+
+        let r5 = update_registration_settings_handler(
+            State(state),
+            Extension(user),
+            Json(UpdateRegistrationSettingsRequest {
+                allow_registration: true,
+            }),
+        )
+        .await
+        .expect_err("update_registration_settings must reject non-admin");
+        assert_eq!(r5.into_response().status(), StatusCode::FORBIDDEN);
+    }
+}

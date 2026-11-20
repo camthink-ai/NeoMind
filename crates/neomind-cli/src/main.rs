@@ -977,7 +977,7 @@ fn parse_since_cutoff(since: Option<&str>) -> Result<Option<chrono::DateTime<chr
     let start = parse_relative_duration_to_cutoff(raw, now);
     let Some(start_ts) = start else {
         anyhow::bail!(
-            "Invalid --since '{raw}'. Use a positive duration with unit: s/m|min/h|hr/d|day (e.g. --since 1h)."
+            "Invalid --since '{raw}'. Use a positive duration with unit: s/m|min/h|hr/d|day/w|wk/mo|month (e.g. --since 1h)."
         );
     };
     Ok(chrono::DateTime::from_timestamp(start_ts, 0))
@@ -997,6 +997,7 @@ fn parse_relative_duration_to_cutoff(raw: &str, now: i64) -> Option<i64> {
         "h" | "hr" | "hrs" | "hour" | "hours" => n * 3600,
         "d" | "day" | "days" => n * 86400,
         "w" | "wk" | "week" | "weeks" => n * 7 * 86400,
+        "mo" | "month" | "months" => n * 30 * 86400,
         _ => return None,
     };
     Some(now - secs)
@@ -1896,4 +1897,92 @@ async fn run_api_key_cmd(cmd: ApiKeyCommand) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod since_tests {
+    use super::*;
+
+    #[test]
+    fn parse_relative_duration_supports_all_units_including_months() {
+        let now = 1_700_000_000i64;
+        assert_eq!(parse_relative_duration_to_cutoff("30s", now), Some(now - 30));
+        assert_eq!(
+            parse_relative_duration_to_cutoff("15min", now),
+            Some(now - 15 * 60)
+        );
+        assert_eq!(
+            parse_relative_duration_to_cutoff("2hr", now),
+            Some(now - 2 * 3600)
+        );
+        assert_eq!(
+            parse_relative_duration_to_cutoff("3days", now),
+            Some(now - 3 * 86400)
+        );
+        assert_eq!(
+            parse_relative_duration_to_cutoff("1wk", now),
+            Some(now - 7 * 86400)
+        );
+        assert_eq!(
+            parse_relative_duration_to_cutoff("2mo", now),
+            Some(now - 2 * 30 * 86400)
+        );
+        assert_eq!(
+            parse_relative_duration_to_cutoff("1month", now),
+            Some(now - 30 * 86400)
+        );
+        assert_eq!(
+            parse_relative_duration_to_cutoff("3months", now),
+            Some(now - 3 * 30 * 86400)
+        );
+        assert_eq!(parse_relative_duration_to_cutoff("0h", now), None);
+        assert_eq!(parse_relative_duration_to_cutoff("-5m", now), None);
+        assert_eq!(parse_relative_duration_to_cutoff("bogus", now), None);
+        assert_eq!(parse_relative_duration_to_cutoff("10y", now), None);
+    }
+
+    #[test]
+    fn parse_since_cutoff_handles_empty_valid_and_invalid() {
+        assert!(parse_since_cutoff(None).unwrap().is_none());
+        assert!(parse_since_cutoff(Some("   ")).unwrap().is_none());
+
+        let cutoff = parse_since_cutoff(Some("1h")).unwrap().expect("valid 1h");
+        let diff = (chrono::Utc::now() - cutoff).num_seconds();
+        assert!((3590..=3610).contains(&diff), "unexpected diff {diff}");
+
+        let mo_cutoff = parse_since_cutoff(Some("1mo")).unwrap().expect("valid 1mo");
+        let mo_diff = (chrono::Utc::now() - mo_cutoff).num_seconds();
+        assert!(
+            (30 * 86400 - 10..=30 * 86400 + 10).contains(&mo_diff),
+            "unexpected month diff {mo_diff}"
+        );
+
+        assert!(parse_since_cutoff(Some("0m")).is_err());
+        assert!(parse_since_cutoff(Some("not-a-duration")).is_err());
+    }
+
+    #[test]
+    fn matches_since_filters_rfc3339_and_preserves_continuation_lines() {
+        let cutoff = chrono::DateTime::parse_from_rfc3339("2026-11-20T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+
+        assert!(matches_since("2026-11-20T11:59:59Z INFO old", None));
+        assert!(!matches_since(
+            "2026-11-20T11:59:59Z INFO before cutoff",
+            Some(cutoff)
+        ));
+        assert!(matches_since(
+            "2026-11-20T12:00:00Z INFO exact cutoff",
+            Some(cutoff)
+        ));
+        assert!(matches_since(
+            "2026-11-20T12:05:00+00:00 WARN after cutoff",
+            Some(cutoff)
+        ));
+        assert!(matches_since(
+            "  at crate::module::func (no leading timestamp)",
+            Some(cutoff)
+        ));
+    }
 }
