@@ -52,6 +52,8 @@ aes-gcm = { workspace = true }
 base64 = { workspace = true }
 pbkdf2 = { workspace = true }
 hex = "0.4"
+# Absolute-origin host extraction (advertise); scheme is case-insensitive.
+url = "2"
 
 [lints.clippy]
 # Temporarily suppress clippy warnings for neomind-core

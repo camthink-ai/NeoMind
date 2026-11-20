@@ -102,24 +102,24 @@ fn is_loopback_host(host: &str) -> bool {
 }
 
 /// Extract the host from an absolute origin (`http://host:port`, bare host, …).
+///
+/// Uses [`url::Url`] so schemes are matched case-insensitively
+/// (`HTTP://127.0.0.1:9375` → host `127.0.0.1`, not the literal `HTTP`).
 pub fn origin_host(origin: &str) -> Option<String> {
     let s = origin.trim();
     if s.is_empty() {
         return None;
     }
-    let rest = s
-        .strip_prefix("https://")
-        .or_else(|| s.strip_prefix("http://"))
-        .unwrap_or(s);
-    // Drop path/query; keep authority.
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if let Ok(parsed) = url::Url::parse(s) {
+        return parsed.host_str().map(str::to_string);
+    }
+    // Bare host / host:port (e.g. NEOMIND_PUBLIC_HOST without a scheme).
+    let authority = s.split(['/', '?', '#']).next().unwrap_or("");
     if authority.is_empty() {
         return None;
     }
-    // Drop userinfo if present.
     let hostport = authority.rsplit('@').next().unwrap_or(authority);
     let host = if hostport.starts_with('[') {
-        // [ipv6] or [ipv6]:port
         let end = hostport.find(']')?;
         hostport[1..end].to_string()
     } else if let Some((h, port)) = hostport.rsplit_once(':') {
@@ -357,6 +357,32 @@ mod tests {
             origin_host("http://user:pass@192.168.1.5:9375/api"),
             Some("192.168.1.5".into())
         );
+    }
+
+    #[test]
+    fn origin_host_parses_uppercase_scheme_not_as_host() {
+        // Regression: lowercase-only strip left host = "HTTP" for HTTP://…
+        assert_eq!(
+            origin_host("HTTP://127.0.0.1:9375"),
+            Some("127.0.0.1".into())
+        );
+        assert!(origin_host_is_loopback("HTTP://127.0.0.1:9375"));
+        assert!(origin_host_is_loopback("HtTpS://LocalHost:9444"));
+        assert_eq!(
+            origin_host("HTTPS://edge.example.com/path"),
+            Some("edge.example.com".into())
+        );
+    }
+
+    #[test]
+    fn device_skips_uppercase_scheme_loopback_server_url() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _a = EnvGuard::set("NEOMIND_SERVER_URL", Some("HTTP://127.0.0.1:9375"));
+        let _b = EnvGuard::set("NEOMIND_PUBLIC_HOST", Some("edge.lan"));
+        let _port = ListenPortGuard::set(9444);
+        let (url, src) = resolve_device_advertise_base_url().expect("skip uppercase loopback");
+        assert_eq!(src, AdvertiseUrlSource::PublicHost);
+        assert_eq!(url, "http://edge.lan:9444");
     }
 
     #[test]
