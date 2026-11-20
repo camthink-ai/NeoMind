@@ -320,25 +320,7 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        r#"Fetch content from a URL and return cleaned text with paragraph structure.
-
-Use for EXTERNAL web content — documentation pages, reference material, public APIs.
-To FIND pages on a topic, use `web_search` first, then open the URLs it returns here.
-For NeoMind platform data (devices, rules, agents, telemetry, etc.) use `shell`
-(`neomind ...`), NOT this tool — the platform's own data never needs a web fetch.
-
-Returns the page title, the final URL after redirects, readable text, and up to
-15 unique links found on the page (use them or `web_search` to drill deeper).
-When `truncated` is true, call again with the returned `next_offset` as `offset`
-to continue reading from where it stopped.
-
-Large pages: the download is capped at 1MB (not failed). If the wire body was
-cut, `download_truncated` is true — you still get the extracted text window from
-the prefix. Prefer `offset`/`next_offset` for reading further within that text.
-
-Security: Cannot access private/local network addresses (localhost, 127.0.0.1, 10.x, 192.168.x, etc.).
-Redirects to private addresses are also blocked.
-Timeout: 15 seconds. Download cap: 1MB (prefix kept)."#
+        "Fetch EXTERNAL public http(s) web pages (private/local IPs blocked; 15s timeout). Never use for NeoMind platform data — use `shell` (`neomind ...`). Downloads are capped at 1MB (`download_truncated` flags prefix cut); paginate large text with `offset`/`next_offset`."
     }
 
     fn parameters(&self) -> Value {
@@ -346,20 +328,20 @@ Timeout: 15 seconds. Download cap: 1MB (prefix kept)."#
             serde_json::json!({
                 "url": {
                     "type": "string",
-                    "description": "The URL to fetch (http:// or https:// only)"
+                    "description": "Public http:// or https:// URL."
                 },
                 "format": {
                     "type": "string",
                     "enum": ["text", "raw"],
-                    "description": "Output format: 'text' strips HTML tags (default), 'raw' returns content as-is"
+                    "description": "'text' (default, stripped HTML) or 'raw'."
                 },
                 "max_length": {
                     "type": "number",
-                    "description": "Maximum characters to return (default: 5000, max: 50000)"
+                    "description": "Max chars (default 5000, max 50000)."
                 },
                 "offset": {
                     "type": "number",
-                    "description": "Character offset to start reading at (use next_offset from a truncated response to continue)"
+                    "description": "Char offset (`next_offset` from prior call)."
                 }
             }),
             vec!["url".to_string()],

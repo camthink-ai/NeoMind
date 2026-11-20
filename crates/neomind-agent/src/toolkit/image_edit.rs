@@ -380,11 +380,7 @@ impl Tool for ImageEditTool {
     }
 
     fn description(&self) -> &str {
-        "Crop, draw on, or blur images in ONE pipeline call. Returns a file path /api/images/... that can be passed to `vision` or shown via `![desc](url)`.\n\n\
- IMPORTANT — ONE CALL = WHOLE PIPELINE: pass all operations for an image as a single `operations` array (applied in order). Do NOT chain multiple image_edit calls for one task. Example: crop + draw label in one call, not three.\n\n\
- IMAGE ARGUMENT: use `\"image\": \"$cached:user_image\"` for an image the user uploaded to chat ($cached:user_image_1, _2, ... for additional); otherwise data URL, http(s) URL, base64, or a local path from a prior call.\n\n\
- Use `vision` (not image_edit) to ANALYZE image content. If you need to verify the edit, call `vision` with the returned path once.\n\n\
- Required fields per operation type: crop/draw_rect/blur_rect: x,y,width,height; draw_circle: cx,cy,radius; draw_line/draw_arrow: x1,y1,x2,y2; draw_polygon: points:[{x,y},...]; draw_text: text (x,y optional — defaults to centered, good for watermarks). Pixel coords origin top-left, Y down. Colors are #RRGGBB or #RRGGBBAA hex strings."
+        "Edit image via ordered operations. Source: $cached:user_image[_N], URL, path, or /api/images/…. Type fields: rect ops x,y,width,height; circle cx,cy,radius; line/arrow x1..y2; polygon points; text text. #RRGGBB[AA]."
     }
 
     fn parameters(&self) -> Value {
@@ -392,138 +388,54 @@ impl Tool for ImageEditTool {
             "type": "object",
             "required": ["image", "operations"],
             "properties": {
-                "image": {
-                    "type": "string",
-                    "description": "Source image. Use \"$cached:user_image\" to reference the most recent image uploaded to chat by the user (the runtime auto-resolves this). Other accepted forms: data URL (data:image/...;base64,...), http(s) URL, raw base64, or absolute local file path returned by a previous image_edit call."
-                },
+                "image": { "type": "string" },
                 "operations": {
                     "type": "array",
                     "maxItems": 50,
-                    "description": "Each operation needs a `type` plus that type's required fields (declared per-type in the items oneOf schema). Pixel coords origin top-left, Y down. Colors are #RRGGBB or #RRGGBBAA hex strings.",
                     "items": {
                         "type": "object",
-                        "description": "One edit operation. Required fields per type: crop/draw_rect/blur_rect: x,y,width,height; draw_circle: cx,cy,radius; draw_line/draw_arrow: x1,y1,x2,y2; draw_polygon: points:[{x,y},...]; draw_text: text (x,y optional, defaults to centered).",
-                        "oneOf": [
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "type": { "type": "string", "enum": ["crop"] },
-                                    "x": { "type": "integer" },
-                                    "y": { "type": "integer" },
-                                    "width": { "type": "integer" },
-                                    "height": { "type": "integer" }
-                                },
-                                "required": ["type", "x", "y", "width", "height"]
+                        "required": ["type"],
+                        "properties": {
+                            "type": {
+                                "type": "string",
+                                "enum": ["crop", "draw_rect", "draw_circle", "draw_line", "draw_arrow", "draw_polygon", "draw_text", "blur_rect"]
                             },
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "type": { "type": "string", "enum": ["draw_rect"] },
-                                    "x": { "type": "integer" },
-                                    "y": { "type": "integer" },
-                                    "width": { "type": "integer" },
-                                    "height": { "type": "integer" },
-                                    "color": { "type": "string" },
-                                    "stroke_width": { "type": "integer" },
-                                    "fill": { "type": "string" }
-                                },
-                                "required": ["type", "x", "y", "width", "height"]
+                            "x": { "type": "integer" },
+                            "y": { "type": "integer" },
+                            "width": { "type": "integer" },
+                            "height": { "type": "integer" },
+                            "cx": { "type": "integer" },
+                            "cy": { "type": "integer" },
+                            "radius": { "type": "integer" },
+                            "x1": { "type": "integer" },
+                            "y1": { "type": "integer" },
+                            "x2": { "type": "integer" },
+                            "y2": { "type": "integer" },
+                            "points": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": { "x": { "type": "integer" }, "y": { "type": "integer" } },
+                                    "required": ["x", "y"]
+                                }
                             },
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "type": { "type": "string", "enum": ["draw_circle"] },
-                                    "cx": { "type": "integer" },
-                                    "cy": { "type": "integer" },
-                                    "radius": { "type": "integer" },
-                                    "color": { "type": "string" },
-                                    "stroke_width": { "type": "integer" },
-                                    "fill": { "type": "string" }
-                                },
-                                "required": ["type", "cx", "cy", "radius"]
-                            },
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "type": { "type": "string", "enum": ["draw_line"] },
-                                    "x1": { "type": "integer" },
-                                    "y1": { "type": "integer" },
-                                    "x2": { "type": "integer" },
-                                    "y2": { "type": "integer" },
-                                    "color": { "type": "string" },
-                                    "stroke_width": { "type": "integer" }
-                                },
-                                "required": ["type", "x1", "y1", "x2", "y2"]
-                            },
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "type": { "type": "string", "enum": ["draw_arrow"] },
-                                    "x1": { "type": "integer" },
-                                    "y1": { "type": "integer" },
-                                    "x2": { "type": "integer" },
-                                    "y2": { "type": "integer" },
-                                    "color": { "type": "string" },
-                                    "stroke_width": { "type": "integer" },
-                                    "head_length": { "type": "integer" }
-                                },
-                                "required": ["type", "x1", "y1", "x2", "y2"]
-                            },
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "type": { "type": "string", "enum": ["draw_polygon"] },
-                                    "points": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "x": { "type": "integer" },
-                                                "y": { "type": "integer" }
-                                            },
-                                            "required": ["x", "y"]
-                                        }
-                                    },
-                                    "color": { "type": "string" },
-                                    "stroke_width": { "type": "integer" },
-                                    "fill": { "type": "string" },
-                                    "closed": { "type": "boolean" }
-                                },
-                                "required": ["type", "points"]
-                            },
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "type": { "type": "string", "enum": ["draw_text"] },
-                                    "text": { "type": "string" },
-                                    "x": { "type": "integer", "description": "optional — defaults to horizontally centered" },
-                                    "y": { "type": "integer", "description": "optional — defaults to vertically centered" },
-                                    "color": { "type": "string" },
-                                    "font_size": { "type": "integer" },
-                                    "background": { "type": "string" },
-                                    "padding": { "type": "integer" }
-                                },
-                                "required": ["type", "text"]
-                            },
-                            {
-                                "type": "object",
-                                "properties": {
-                                    "type": { "type": "string", "enum": ["blur_rect"] },
-                                    "x": { "type": "integer" },
-                                    "y": { "type": "integer" },
-                                    "width": { "type": "integer" },
-                                    "height": { "type": "integer" },
-                                    "mode": { "type": "string", "enum": ["pixelate", "gaussian"] },
-                                    "intensity": { "type": "integer" }
-                                },
-                                "required": ["type", "x", "y", "width", "height"]
-                            }
-                        ]
+                            "text": { "type": "string" },
+                            "color": { "type": "string" },
+                            "fill": { "type": "string" },
+                            "background": { "type": "string" },
+                            "stroke_width": { "type": "integer" },
+                            "head_length": { "type": "integer" },
+                            "font_size": { "type": "integer" },
+                            "padding": { "type": "integer" },
+                            "closed": { "type": "boolean" },
+                            "mode": { "type": "string", "enum": ["pixelate", "gaussian"] },
+                            "intensity": { "type": "integer" }
+                        }
                     }
                 },
-                "output_format": { "type": "string", "enum": ["png", "jpeg", "webp"], "default": "png" },
-                "output_filename": { "type": "string", "description": "Optional filename (no path). If omitted, a UUID-based name is generated." },
-                "include_base64": { "type": "boolean", "default": false }
+                "output_format": { "type": "string", "enum": ["png", "jpeg", "webp"] },
+                "output_filename": { "type": "string" },
+                "include_base64": { "type": "boolean" }
             }
         })
     }
@@ -2113,47 +2025,52 @@ mod tests {
         assert_eq!(count_changed_pixels(&[1], &[1], 0), None);
     }
 
-    /// The published JSON schema must declare per-type required fields — the
-    /// old schema only declared the `type` enum, so the LLM had no way to know
-    /// e.g. draw_text needs `text` (and optionally x/y).
+    /// The compact flat schema must enumerate all 8 operation types, document
+    /// per-type required fields in the description, and stay small enough not
+    /// to crowd out 8K-window models; runtime `validate_operations` enforces
+    /// per-type required fields.
     #[test]
     fn schema_declares_per_type_required_fields() {
         let t = ImageEditTool::new("/tmp");
         let schema = t.parameters();
-        let one_of = schema["properties"]["operations"]["items"]["oneOf"]
+        let types = schema["properties"]["operations"]["items"]["properties"]["type"]["enum"]
             .as_array()
-            .expect("per-type oneOf in operations items schema");
-        assert_eq!(one_of.len(), 8, "one branch per operation type");
-        let branch = |name: &str| {
-            one_of
-                .iter()
-                .find(|b| b["properties"]["type"]["enum"][0] == name)
-                .unwrap_or_else(|| panic!("missing {} branch", name))
-        };
-        let crop = branch("crop");
-        for f in ["type", "x", "y", "width", "height"] {
+            .expect("8-value enum in flat operations items schema");
+        assert_eq!(types.len(), 8, "all 8 operation types declared");
+        for expected in [
+            "crop",
+            "draw_rect",
+            "draw_circle",
+            "draw_line",
+            "draw_arrow",
+            "draw_polygon",
+            "draw_text",
+            "blur_rect",
+        ] {
             assert!(
-                crop["required"]
-                    .as_array()
-                    .expect("crop required list")
-                    .iter()
-                    .any(|r| r == f),
-                "crop required must contain {}",
-                f
+                types.iter().any(|v| v == expected),
+                "missing operation type {expected}"
             );
         }
-        let text = branch("draw_text");
-        let req: Vec<&str> = text["required"]
-            .as_array()
-            .expect("draw_text required list")
-            .iter()
-            .map(|r| r.as_str().expect("string entries"))
-            .collect();
-        assert!(req.contains(&"text"), "draw_text must require text");
-        assert!(
-            !req.contains(&"x") && !req.contains(&"y"),
-            "draw_text position must stay optional"
-        );
+        let desc = t.description();
+        assert!(desc.contains("crop/draw_rect/blur_rect: x,y,width,height"));
+        assert!(desc.contains("draw_text: text"));
+        // Runtime validation enforces per-type requirements while keeping draw_text x/y optional.
+        assert!(validate_operations(&serde_json::json!({
+            "image": "$cached:user_image",
+            "operations": [{"type": "crop", "x": 0, "y": 0}]
+        }))
+        .is_err());
+        assert!(validate_operations(&serde_json::json!({
+            "image": "$cached:user_image",
+            "operations": [{"type": "draw_text"}]
+        }))
+        .is_err());
+        assert!(validate_operations(&serde_json::json!({
+            "image": "$cached:user_image",
+            "operations": [{"type": "draw_text", "text": "ok"}]
+        }))
+        .is_ok());
     }
 }
 

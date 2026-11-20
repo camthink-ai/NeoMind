@@ -393,15 +393,9 @@ impl Tool for SkillTool {
     }
 
     fn description(&self) -> &str {
-        // PURPOSE CATALOG (guidance round 3): one line per skill — the SAME
-        // sentence as the frontmatter `summary` (pinned by
-        // `description_catalog_matches_frontmatter_summaries`). The model
-        // picks the exact id directly from this catalog; search is only for
-        // uncertain names and custom guides — never a mandatory step.
-        r#"Load operation guides (skills) on demand — step-by-step CLI instructions, command examples, error solutions.
-
-How to choose: for simple operations use the neomind CLI directly. When you need workflow knowledge, pick the matching skill id below and load it in ONE call (a declared alias also resolves). Use search only when unsure of the name or looking for custom guides. If an id/alias does not resolve, load returns needs_selection with candidates — pick one, don't retry the same name.
-
+        // PURPOSE CATALOG: one line per skill matching frontmatter `summary`
+        // (pinned by `description_catalog_matches_frontmatter_summaries`).
+        r#"Load workflow guides on demand (skip for plain CRUD/reads or `--help`). Pick an id/alias below for `load` in one call; use `search` only when unsure:
 - device-onboarding (device): Connect, register, and verify telemetry arrival for devices (MQTT/webhook/BLE); send device control commands.
 - connector-management (connector): Configure and diagnose external broker connections.
 - data-push-management (push): Push platform data out to external systems (webhook/mqtt).
@@ -416,9 +410,7 @@ How to choose: for simple operations use the neomind CLI directly. When you need
 - widget-development (widget-dev): Write custom widget code.
 - llm-management (llm): Add and configure LLM backends.
 - settings-management (settings): Read and change system settings.
-- system-info (system): Read system diagnostics (resources, network, storage).
-
-When NOT to load: standard CRUD (list/get/update/delete by id), plain reads of current values, or syntax you can check with neomind <domain> <command> --help. Load only for complex/unfamiliar workflows or a command failure you cannot explain."#
+- system-info (system): Read system diagnostics (resources, network, storage)."#
     }
 
     fn parameters(&self) -> Value {
@@ -427,27 +419,27 @@ When NOT to load: standard CRUD (list/get/update/delete by id), plain reads of c
                 "action": {
                     "type": "string",
                     "enum": ["search", "load", "create", "update", "delete"],
-                    "description": "Operation to perform. Use 'search' to find relevant skills, 'load' to read a skill guide."
+                    "description": "Skill action (load or search for reading)."
                 },
                 "id": {
                     "type": "string",
-                    "description": "Exact skill ID or declared alias for load/update/delete. Example: 'rule-management', 'dashboard'"
+                    "description": "Skill ID or alias (load/update/delete)."
                 },
                 "query": {
                     "type": "string",
-                    "description": "Search query for finding relevant skills. Example: 'device onboarding', 'notification'"
+                    "description": "Search keywords."
                 },
                 "section": {
                     "type": "string",
-                    "description": "Optional exact reference section title returned by load. Omit for the concise workflow."
+                    "description": "Optional exact section title returned by load."
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Optional search result count, 1-10 (default 3)."
+                    "description": "Search limit 1-10 (default 3)."
                 },
                 "content": {
                     "type": "string",
-                    "description": "Full skill file content for create/update (YAML frontmatter + Markdown body)."
+                    "description": "Full YAML+Markdown content (create/update)."
                 }
             }),
             vec!["action".to_string()],

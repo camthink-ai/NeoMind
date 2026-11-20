@@ -65,9 +65,7 @@ impl Tool for FileEditTool {
     }
 
     fn description(&self) -> &str {
-        r##"Edit a file by exact text replace. Prefer the BATCH form `edits:[{old_string,new_string,replace_all?}]` to apply several changes in ONE call (all pairs are validated first; any mismatch rejects the whole call, nothing is half-applied). Single-pair legacy form (path+old_string+new_string) still works; an EMPTY old_string appends new_string to the end of the file. Indentation-mismatched old_string still matches via whitespace-tolerant fallback (declared in the result). JSON/TOML files are syntax-checked before writing — invalid content is rejected with the parser position and nothing is written. Result echoes each edited region ±5 lines with line numbers, so no re-read is needed. Allowed dirs only (data dir + NEOMIND_ALLOWED_WRITE_DIRS). Max 10MB.
-
-For whole-file create use `file_write`; for agent cross-run memory use `memory`."##
+        "Edit an existing file atomically via `edits:[{old_string,new_string,replace_all?}]` (JSON/TOML syntax-checked before write; echoes ±5 context lines). Allowed dirs only, max 10MB. Use `file_write` for whole-file create, `memory` for cross-run memory."
     }
 
     fn parameters(&self) -> Value {
@@ -75,37 +73,25 @@ For whole-file create use `file_write`; for agent cross-run memory use `memory`.
             serde_json::json!({
                 "path": {
                     "type": "string",
-                    "description": "File path (relative to data/ or absolute)"
-                },
-                "expected": {
-                    "type": "object",
-                    "description": "Freshness guard (optional): the `state` from your last file_read/file_edit of this path; a mismatch REFUSES the edit as stale.",
-                    "properties": { "mtime_ms": {"type": "integer"}, "size": {"type": "integer"} }
+                    "description": "File path (relative to data/ or absolute)."
                 },
                 "edits": {
                     "type": "array",
-                    "description": "Batch form: list of {old_string, new_string, replace_all?} applied top-to-bottom in one atomic call. Preferred over the single-pair form.",
+                    "description": "Atomic batch of {old_string, new_string, replace_all?} replacements.",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "old_string": { "type": "string", "description": "Exact text to find (empty = append, single-pair only)" },
-                            "new_string": { "type": "string", "description": "Replacement text" },
-                            "replace_all": { "type": "boolean", "description": "Replace every occurrence (default: false)" }
+                            "old_string": { "type": "string" },
+                            "new_string": { "type": "string" },
+                            "replace_all": { "type": "boolean" }
                         },
                         "required": ["old_string", "new_string"]
                     }
                 },
-                "old_string": {
-                    "type": "string",
-                    "description": "Legacy single-pair form: the exact text to find. EMPTY string = append new_string to the end of the file."
-                },
-                "new_string": {
-                    "type": "string",
-                    "description": "Legacy single-pair form: the text to replace old_string with"
-                },
-                "replace_all": {
-                    "type": "boolean",
-                    "description": "Legacy single-pair form: replace all occurrences instead of just the first (default: false)"
+                "expected": {
+                    "type": "object",
+                    "description": "Optional freshness guard `{mtime_ms, size}` from last `file_read`.",
+                    "properties": { "mtime_ms": {"type": "integer"}, "size": {"type": "integer"} }
                 }
             }),
             vec!["path".to_string()],

@@ -2217,23 +2217,14 @@ impl Tool for ShellTool {
         // cost more cases than the index's recall gained. Defensive knowledge
         // (easy-to-miss list, GUI guard) stays out — discoverable via
         // `neomind <domain> <action> --help` or the skill tool.
-        static SLIM: &str = r#"Execute shell commands on the host. This is your PRIMARY tool for ALL NeoMind platform operations via the `neomind` CLI (14 domains: device, dashboard, rule, agent, extension, widget, transform, llm, message, connector, push, settings, system, api-key). All commands return JSON by default — do NOT pass --json.
+        static SLIM: &str = r#"PRIMARY tool for ALL NeoMind platform operations via the `neomind` CLI (JSON by default — omit `--json`) plus native host shell commands.
 
-Quick reference (run `neomind <domain> --help` or load the `skill` guide for full syntax):
-- Read: `<domain> get <ID>` (one) / `<domain> list` (all). ID is positional, never `--id`.
-- Write: `<domain> create/update/delete` take flags (`--name`, `--device-type`, …). Pass `--id <id>` on create ONLY if the user gave a specific ID.
-- Control / enable / activate are explicit writes: `device control <ID> <CMD> --param key=value` (repeat for each device-defined parameter; these are NOT standalone `--key` flags), `rule enable <ID>`, `llm activate <ID>`, `connector enable <ID>`, `push enable <ID>`.
-- Extensions: overview → `extension list`; concrete task → `extension commands --search "<task>"` (paste `shell_example`); known → reuse invoke; schema → `extension commands <ID>`. Do not invent sanitized chat-tool names as CLI subcommands.
-- History & conversation: `agent executions <ID>`, `agent conversation <ID>`, `agent send-message <ID>`.
-- Notification channels are a sub-family: `message channel-list` / `channel-create` / `channel-test`, NOT `message list`.
-
-Critical rules:
-- NEVER guess metric or subcommand names — discover via `get`/`list`/`--help` first, then use exact names.
-- Read before write when facts are missing or stale. Reuse verified target IDs and schemas from this conversation; inspect only missing or stale facts before writing.
-- COMPLETE THE FULL FLOW: perform requested actions and verify their results. Example: a request to create, enable and test a connector needs connector create, connector enable, then connector test. Configuration saved is not proof of device feedback.
-- On error, read the `suggestion` field in the JSON output for recovery.
-
-Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, docker, …"#;
+Quick reference (`neomind <domain> --help` or `skill` for full syntax):
+- Read: `<domain> get <ID>` / `<domain> list` (positional ID, never `--id`).
+- Control/writes: `device control <ID> <CMD> --param k=v`, `rule/connector/push enable <ID>`, `llm activate <ID>`, `agent executions|conversation|send-message <ID>`, `message channel-list|channel-create|channel-test`.
+- Extensions: `extension list` (overview), `extension commands --search "<task>"` (use `shell_example`), `extension commands <ID>` (schema).
+- NEVER guess IDs, metrics, or subcommands — read before write when facts are missing or stale.
+- COMPLETE THE FULL FLOW and verify results (e.g. `connector create`, `connector enable`, then `connector test`). On error check `suggestion`."#;
         SLIM
     }
 
@@ -2242,26 +2233,26 @@ Native host tools also available via `/bin/sh -c`: ping, curl, ps, df, grep, doc
             serde_json::json!({
                 "command": {
                     "type": "string",
-                    "description": "The shell command to execute. For `neomind` commands, use built-in filter flags (no `| grep/jq`); only native host commands support pipes and redirections. For neomind commands that take JSON (--params/--set/--components/--ids/--body/--input/--config), prefer the structured `params` field instead of embedding quoted JSON in this string. Never put `_new_operation` inside this string — it is a separate tool field."
+                    "description": "Command to run. neomind runs in-process (no pipes/redirects); pass JSON flags via params below, never _new_operation here."
                 },
                 "params": {
                     "anyOf": [
                         { "type": "object" },
                         { "type": "array" }
                     ],
-                    "description": "Optional structured JSON payload (object or array) for the command's primary JSON flag (--params for device control / extension invoke, --set for dashboard update-component / extension config, --components/--ids array for dashboard add/remove-components, --body for rules, --input for rule test / transform test-code, --config for device/push/message channel). Prefer this over quoting JSON in `command`. Do not also pass the same flag in `command`."
+                    "description": "Structured JSON payload for the command's primary JSON flag (--params/--set/--components/--ids/--body/--input/--config). Do not duplicate the flag in command."
                 },
                 "timeout": {
                     "type": "number",
-                    "description": "Optional per-command timeout in seconds (max 600). Overrides default timeout."
+                    "description": "Timeout in seconds (max 600)."
                 },
                 "description": {
                     "type": "string",
-                    "description": "Brief description of what this command does (5-10 words). Used for logging and audit."
+                    "description": "Brief audit note (5-10 words)."
                 },
                 "working_dir": {
                     "type": "string",
-                    "description": "Optional working directory for command execution. Must be an existing directory path."
+                    "description": "Existing working directory path."
                 }
             }),
             vec!["command".to_string()],

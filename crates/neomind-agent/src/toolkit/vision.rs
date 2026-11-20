@@ -444,29 +444,15 @@ impl Tool for VisionTool {
     }
 
     fn description(&self) -> &str {
-        r#"Analyze images you CANNOT already see, using a vision-language model. Pass an image source and get back a description/analysis.
-
-Requires a configured vision backend; adding one takes effect without restarting.
-
-Use this tool when you need to analyze images from sources other than the current message:
-- `/api/images/...` — platform image reference returned by device get; pass unchanged, no hostname or download required.
-- `$cached:xxx` — a cache ref returned by other tools (e.g. `device get --metric <image_field>` output, or extension image outputs). Pass it directly as `image`; it resolves to the full image bytes. Prefer this over base64-decoding/saving files yourself.
-- HTTP/HTTPS image URLs (e.g., camera snapshots, web images) — fetches automatically, private/local URLs blocked
-- /path/to/file.jpg — local image file on disk (must have an image extension)
-- data:image/...;base64,... — base64 data URL from extension outputs
-- raw base64 string — decoded as JPEG by default
-
-Do NOT call this for images you can already see — analyze those yourself directly (e.g. images uploaded by the user in chat, or embedded in the current message from bound data sources — those are already visible to you).
-
-Optional `model` param (e.g. "minicpm-v4.6") forces a specific VLM backend. Use it when the auto-picked model replies it can't see the image (a text-only model wrongly selected). Find available model names via `neomind llm list`."#
+        "Analyze images not already visible in this message using a vision backend. Accepts `/api/images/...` (pass unchanged), `$cached:...` refs, public http(s) URLs, local image paths, or base64. Do NOT call for images already attached directly to chat."
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "image": string_property("Image source: base64 data URL, raw base64, local image file path, or public HTTP/HTTPS URL"),
-                "prompt": string_property("Analysis instructions for the image. Match the user's language and detail level from the conversation."),
-                "model": serde_json::json!({"type": "string", "description": "Optional VLM model name to force (e.g. `minicpm-v4.6`). Use when the auto-picked model says it can't see the image. Find names via `neomind llm list`."})
+                "image": string_property("Image ref: `/api/images/...`, `$cached:...`, public URL, local path, or base64."),
+                "prompt": string_property("Analysis instructions in the user's language."),
+                "model": serde_json::json!({"type": "string", "description": "Optional VLM model name to force (from `neomind llm list`)."})
             }),
             vec!["image".to_string(), "prompt".to_string()],
         )

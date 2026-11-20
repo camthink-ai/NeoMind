@@ -116,9 +116,7 @@ impl Tool for FileReadTool {
     }
 
     fn description(&self) -> &str {
-        r#"Read a file with LINE NUMBERS (the reference for constructing file_edit old_strings). Default window: first 400 lines — use offset/limit for large files (result says when more lines exist). Result carries `state: {mtime_ms, size}`: pass it back as `expected` on file_edit/file_write to guarantee the file did not change underneath you (stale → the edit is refused with the fresh state). Binary files are rejected. Prefer this over `shell cat` for files you plan to edit. Allowed dirs only (data dir + NEOMIND_ALLOWED_WRITE_DIRS). Max 10MB.
-
-CACHED OUTPUTS: `path` may be a `$cached:...` reference from a large tool result — then offset/limit DO NOT apply; instead char_offset/char_length read a CHARACTER window (defaults: char_offset=0, char_length=8000; the result carries total_chars and next_char_offset for continuation). Cached content is not a file: no state, not editable."#
+        "Read a file with line numbers (default 400 lines; returns `state:{mtime_ms,size}` for edit freshness) or read a `$cached:...` large tool output via `char_offset`/`char_length` (default 8000 chars). Allowed dirs only, max 10MB."
     }
 
     fn parameters(&self) -> Value {
@@ -126,23 +124,23 @@ CACHED OUTPUTS: `path` may be a `$cached:...` reference from a large tool result
             serde_json::json!({
                 "path": {
                     "type": "string",
-                    "description": "File path (relative to data/ or absolute), or a $cached:... reference to read a cached large tool result"
+                    "description": "File path (relative to data/ or absolute) or `$cached:...` ref."
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "1-based line to start from (default: 1) — files only, ignored for $cached paths"
+                    "description": "1-based start line (files only; default 1)."
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max lines to return (default: 400) — files only, ignored for $cached paths"
+                    "description": "Max lines (files only; default 400)."
                 },
                 "char_offset": {
                     "type": "integer",
-                    "description": "$cached reads only: 0-based character offset of the window (default: 0)"
+                    "description": "$cached only: 0-based char offset (default 0)."
                 },
                 "char_length": {
                     "type": "integer",
-                    "description": "$cached reads only: max characters to return (default: 8000, hard cap 64000)"
+                    "description": "$cached only: max chars (default 8000, cap 64000)."
                 }
             }),
             vec!["path".to_string()],

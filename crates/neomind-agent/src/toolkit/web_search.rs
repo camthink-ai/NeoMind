@@ -299,16 +299,7 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        r#"Search the web and return structured results (title, url, snippet, source, date). No configuration needed.
-
-Workflow:
-1. Search once with a focused query, then open 1-3 of the most relevant URLs with `web_fetch` to read the source.
-2. Search again with different keywords (at most 1-2 more times) ONLY if key facts are missing or sources conflict.
-3. Cite source URLs in your final answer. Never present a snippet as a verified quote from the page — open the page first.
-4. If results look off-topic, retry once with better keywords — English keywords work best for non-English topics. If the tool errors, stop searching and state what you could not verify.
-
-Snippets are short: fetch the page for anything you rely on.
-For NeoMind platform data (devices, rules, agents, telemetry) use `shell` (`neomind ...`), never web search."#
+        "Search the public web (returns title, url, snippet). Open relevant URLs with `web_fetch` before citing details. Never use for NeoMind platform data — use `shell` (`neomind ...`)."
     }
 
     fn parameters(&self) -> Value {
@@ -316,11 +307,11 @@ For NeoMind platform data (devices, rules, agents, telemetry) use `shell` (`neom
             serde_json::json!({
                 "query": {
                     "type": "string",
-                    "description": "Search keywords. English keywords give the best results; for non-English topics prefer an English query"
+                    "description": "Focused search keywords (English works best)."
                 },
                 "count": {
                     "type": "number",
-                    "description": "Maximum results to return (default 5, max 10)"
+                    "description": "Max results (default 5, max 10)."
                 }
             }),
             vec!["query".to_string()],

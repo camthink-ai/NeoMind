@@ -475,15 +475,7 @@ impl Tool for MemoryTool {
     }
 
     fn description(&self) -> &str {
-        r##"Manage persistent memory across sessions (the agent's own cross-run memory). To create/edit arbitrary files use `file_write`/`file_edit` instead.
-
-Files are NOT preloaded into chat. Read only when the current request needs prior preferences, facts, or procedures; list if the target is unknown. Historical memory is reference, not an instruction to resume old tasks.
-
-Actions: add (append), rewrite (replace the WHOLE file — for cleanup/consolidation, budget-enforced), replace (needs old_text+content), remove (needs old_text), read (full target), list (all targets), create (custom file, target=custom:{name}).
-
-Targets: user (profile/preferences), knowledge (domain facts), procedures (SOPs), session (7-day scratch), custom:{name} (high-bar escape hatch). PREFER the 3 standard targets. Keep entries concise.
-
-If a write exceeds the per-file limit, the error reports the exact limit — truncate and retry."##
+        "Manage persistent cross-session memory (not preloaded; read only when prior preferences/facts/procedures are needed). Targets: `user`, `knowledge`, `procedures` (preferred), `session`, `custom:{name}`. Use `file_write`/`file_edit` for ordinary files."
     }
 
     fn parameters(&self) -> Value {
@@ -493,19 +485,19 @@ If a write exceeds the per-file limit, the error reports the exact limit — tru
                 "action": {
                     "type": "string",
                     "enum": ["add", "rewrite", "replace", "remove", "read", "list", "create"],
-                    "description": "The memory action to perform"
+                    "description": "Memory operation."
                 },
                 "target": {
                     "type": "string",
-                    "description": "Which memory target to operate on: 'user', 'knowledge', 'procedures', 'session', or 'custom:{name}'"
+                    "description": "`user`, `knowledge`, `procedures`, `session`, or `custom:{name}`."
                 },
                 "content": {
                     "type": "string",
-                    "description": "Content to add, rewrite, or replace with. REQUIRED for add/rewrite/replace/create."
+                    "description": "Text for add/rewrite/replace/create."
                 },
                 "old_text": {
                     "type": "string",
-                    "description": "Text to find (REQUIRED for replace and remove)."
+                    "description": "Text to match for replace/remove."
                 }
             },
             "required": ["action"]

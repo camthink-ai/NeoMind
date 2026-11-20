@@ -31,7 +31,7 @@ impl Tool for FileWriteTool {
     }
 
     fn description(&self) -> &str {
-        r#"Create or overwrite a WHOLE file. JSON/TOML content is syntax-checked BEFORE writing — invalid content is rejected with the parser position and nothing is written (fix and retry). Writing content identical to what is already on disk is a confirmed no-op ("identical": true). For targeted changes to an EXISTING file prefer `file_edit` (batch edits, context echo); for agent cross-run memory use `memory`. Allowed dirs only (data dir + NEOMIND_ALLOWED_WRITE_DIRS). Max 10MB."#
+        "Create or overwrite a whole file (JSON/TOML syntax-checked before write). Prefer `file_edit` for existing files and `memory` for cross-run memory. Allowed dirs only, max 10MB."
     }
 
     fn parameters(&self) -> Value {
@@ -39,20 +39,20 @@ impl Tool for FileWriteTool {
             serde_json::json!({
                 "path": {
                     "type": "string",
-                    "description": "File path (relative to data/ or absolute). Example: 'skills/my-skill.md', 'extensions/my-ext/src/lib.rs'"
-                },
-                "expected": {
-                    "type": "object",
-                    "description": "Freshness guard (optional): pass the `state` from your last file_read/file_write of this path ({mtime_ms, size}); if the file changed since, the write is REFUSED as stale with the fresh state for a re-read.",
-                    "properties": { "mtime_ms": {"type": "integer"}, "size": {"type": "integer"} }
+                    "description": "File path (relative to data/ or absolute)."
                 },
                 "content": {
                     "type": "string",
-                    "description": "The file content to write"
+                    "description": "Full file content."
+                },
+                "expected": {
+                    "type": "object",
+                    "description": "Optional freshness guard `{mtime_ms, size}` from last `file_read`.",
+                    "properties": { "mtime_ms": {"type": "integer"}, "size": {"type": "integer"} }
                 },
                 "create_dirs": {
                     "type": "boolean",
-                    "description": "Create parent directories if they don't exist (default: true)"
+                    "description": "Create parent dirs (default true)."
                 }
             }),
             vec!["path".to_string(), "content".to_string()],

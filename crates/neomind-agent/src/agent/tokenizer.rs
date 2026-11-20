@@ -32,6 +32,29 @@ pub fn estimate_tokens(text: &str) -> usize {
     (tokens * 1.1).ceil() as usize
 }
 
+/// Calibrated token estimator for compact JSON tool-definition schemas.
+///
+/// The general `estimate_tokens` prices every punctuation/whitespace char at
+/// `0.5 * 1.1 = 0.55` tokens, which inflates dense JSON schemas (`":"`, `","`,
+/// `{"type":"string"}`) by ~40% vs real BPE tokenizers (Qwen/Llama/MiniCPM),
+/// tripping the 8K `prompt_overhead >= max_context` gate and making frontend
+/// context-usage breakdowns exceed measured `prompt_tokens`.
+///
+/// Do NOT reuse this for history compression — keep [`estimate_tokens`] there.
+pub fn estimate_json_schema_tokens(json_str: &str) -> usize {
+    let mut tokens = 0f64;
+    for ch in json_str.chars() {
+        if is_chinese(ch) {
+            tokens += 1.6;
+        } else if ch.is_ascii_alphanumeric() {
+            tokens += 0.25;
+        } else {
+            tokens += 0.22;
+        }
+    }
+    (tokens * 1.08).ceil() as usize
+}
+
 /// Check if a character is a Chinese/Japanese/Korean character.
 fn is_chinese(c: char) -> bool {
     let cp = c as u32;
@@ -558,5 +581,67 @@ mod tests {
     #[test]
     fn truncate_to_tokens_preserves_under_budget_content() {
         assert_eq!(truncate_to_tokens("hello world", 100), "hello world");
+    }
+
+    #[test]
+    fn builtin_tool_definitions_fit_within_8k_budget() {
+        use crate::skills::SkillRegistry;
+        use crate::toolkit::{
+            skill_tool::SkillTool, shell::ShellTool, FileEditTool, FileReadTool, FileWriteTool,
+            ImageEditTool, MemoryTool, ShellConfig, Tool, VisionConfig, VisionTool, WebFetchTool,
+            WebSearchTool,
+        };
+        use crate::llm_backends::LlmBackendInstanceManager;
+        use neomind_storage::{LlmBackendStore, MarkdownMemoryStore};
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let skill_reg = Arc::new(RwLock::new(SkillRegistry::load_all(None)));
+        let llm_mgr = Arc::new(LlmBackendInstanceManager::new(
+            LlmBackendStore::open(dir.path().join("backends.redb")).expect("backend store"),
+        ));
+        let mem_store = Arc::new(RwLock::new(MarkdownMemoryStore::new(
+            dir.path().join("mem_budget_test"),
+        )));
+
+        let tools: Vec<Box<dyn Tool>> = vec![
+            Box::new(ShellTool::new(ShellConfig::default())),
+            Box::new(SkillTool::new(skill_reg)),
+            Box::new(MemoryTool::new(mem_store)),
+            Box::new(VisionTool::new(VisionConfig::default(), llm_mgr)),
+            Box::new(ImageEditTool::new(dir.path().to_path_buf())),
+            Box::new(WebSearchTool::new()),
+            Box::new(WebFetchTool::new()),
+            Box::new(FileReadTool::new(dir.path().to_path_buf())),
+            Box::new(FileWriteTool::new(dir.path().to_path_buf())),
+            Box::new(FileEditTool::new(dir.path().to_path_buf())),
+        ];
+
+        let mut total_tokens = 0usize;
+        let mut image_edit_tokens = 0usize;
+        for t in &tools {
+            let payload = serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": t.name(),
+                    "description": t.description(),
+                    "parameters": t.parameters(),
+                }
+            });
+            let toks = estimate_json_schema_tokens(&payload.to_string());
+            if t.name() == "image_edit" {
+                image_edit_tokens = toks;
+            }
+            total_tokens += toks;
+        }
+        assert!(
+            image_edit_tokens <= 450,
+            "image_edit schema regressed to {image_edit_tokens} tokens (budget <= 450)"
+        );
+        assert!(
+            total_tokens <= 3_200,
+            "10 builtin tools regressed to {total_tokens} tokens (budget <= 3200 so 8K models stay usable)"
+        );
     }
 }

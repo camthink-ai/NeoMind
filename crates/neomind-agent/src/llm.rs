@@ -1238,7 +1238,7 @@ impl LlmInterface {
                             "parameters": t.parameters,
                         }
                     });
-                    crate::agent::tokenizer::estimate_tokens(&json.to_string())
+                    crate::agent::tokenizer::estimate_json_schema_tokens(&json.to_string())
                 })
                 .sum()
         };
@@ -1577,14 +1577,36 @@ impl LlmInterface {
         *self.expose_new_operation_tools.write().await = tools;
     }
 
+    /// True when any configured backend can accept images (active multimodal
+    /// backend or a multimodal companion such as `builtin-vlm-*`).
+    async fn any_vlm_available(&self) -> bool {
+        if self.supports_multimodal().await {
+            return true;
+        }
+        if let Some(manager) = &self.instance_manager {
+            return manager
+                .list_instances()
+                .iter()
+                .any(|inst| inst.capabilities.supports_multimodal);
+        }
+        false
+    }
+
     /// Build the request-scoped tool definition list, applying optional filters
     /// and dynamically exposing `_new_operation` only on tools that have a
     /// terminal write operation in `TaskState`.
+    ///
+    /// Adaptive gates (Stage 1 harness):
+    /// - `vision` is omitted when the user message already carries images
+    ///   (model sees them inline) OR when no VLM/companion is configured.
+    /// - `image_edit` is omitted on small windows (`max_context <= 16384`)
+    ///   when the turn has no images — pure-text IoT chats do not pay its
+    ///   schema cost.
     async fn build_request_tools_input(
         &self,
         attach_tools: bool,
         exclude_skill: bool,
-        exclude_vision: bool,
+        has_user_images: bool,
     ) -> Option<Vec<neomind_core::llm::backend::ToolDefinition>> {
         if !attach_tools {
             return None;
@@ -1593,10 +1615,22 @@ impl LlmInterface {
         if tools.is_empty() {
             return None;
         }
+        let max_context = self.max_context_length().await;
+        let hide_image_edit = !has_user_images && max_context <= 16_384;
+        let hide_vision = has_user_images || !self.any_vlm_available().await;
         let mut available: Vec<_> = tools
             .iter()
             .filter(|t| {
-                (!exclude_skill || t.name != "skill") && (!exclude_vision || t.name != "vision")
+                if exclude_skill && t.name == "skill" {
+                    return false;
+                }
+                if hide_vision && t.name == "vision" {
+                    return false;
+                }
+                if hide_image_edit && t.name == "image_edit" {
+                    return false;
+                }
+                true
             })
             .cloned()
             .collect();
