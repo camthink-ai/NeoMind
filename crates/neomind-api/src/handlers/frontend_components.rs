@@ -217,12 +217,11 @@ pub async fn market_list_handler(
         Ok(c) => c,
         Err(e) => {
             tracing::error!("Failed to create HTTP client: {:?}", e);
-            return ok(json!({
-                "components": [],
-                "total": 0,
-                "error": "network_error",
-                "message": "Unable to create HTTP client"
-            }));
+            return Err(ErrorResponse::new(
+                "BAD_GATEWAY",
+                "Unable to create HTTP client for component marketplace",
+                axum::http::StatusCode::BAD_GATEWAY,
+            ));
         }
     };
 
@@ -232,12 +231,14 @@ pub async fn market_list_handler(
             "total": index.components.len(),
             "market_version": index.version,
         })),
-        Err(_) => ok(json!({
-            "components": [],
-            "total": 0,
-            "error": "network_error",
-            "message": "Unable to connect to component marketplace. Please check your internet connection."
-        })),
+        Err(e) => {
+            tracing::warn!("Marketplace network error: {e}");
+            Err(ErrorResponse::new(
+                "BAD_GATEWAY",
+                "Unable to connect to component marketplace. Please check your internet connection.",
+                axum::http::StatusCode::BAD_GATEWAY,
+            ))
+        }
     }
 }
 

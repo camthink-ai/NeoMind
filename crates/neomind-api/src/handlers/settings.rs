@@ -384,16 +384,18 @@ pub async fn update_retention_config(
 
 #[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct AgentDefaultsRequest {
+    /// Absent => keep existing. Present => clamp and apply.
     #[serde(default)]
-    pub max_rounds: u32,
+    pub max_rounds: Option<u32>,
     #[serde(default)]
-    pub execution_timeout_secs: u64,
+    pub execution_timeout_secs: Option<u64>,
     #[serde(default)]
-    pub tool_concurrency: usize,
+    pub tool_concurrency: Option<usize>,
     #[serde(default)]
-    pub default_temperature: f32,
+    pub default_temperature: Option<f32>,
     #[serde(default)]
-    pub default_top_p: f32,
+    pub default_top_p: Option<f32>,
+    /// Absent => keep; Some(None) not used here — send explicit bool to set.
     #[serde(default)]
     pub default_thinking_enabled: Option<bool>,
     /// Chat history depth in turns (5-200)
@@ -471,12 +473,30 @@ pub async fn update_agent_defaults(
         .map(|s| s.get_agent_defaults())
         .unwrap_or_default();
     let config = neomind_storage::AgentDefaults {
-        max_rounds: req.max_rounds.clamp(1, 50),
-        execution_timeout_secs: req.execution_timeout_secs.clamp(30, 1800),
-        tool_concurrency: req.tool_concurrency.clamp(1, 16),
-        default_temperature: req.default_temperature.clamp(0.0, 2.0),
-        default_top_p: req.default_top_p.clamp(0.0, 1.0),
-        default_thinking_enabled: req.default_thinking_enabled,
+        max_rounds: req
+            .max_rounds
+            .map(|v| v.clamp(1, 50))
+            .unwrap_or(existing.max_rounds),
+        execution_timeout_secs: req
+            .execution_timeout_secs
+            .map(|v| v.clamp(30, 1800))
+            .unwrap_or(existing.execution_timeout_secs),
+        tool_concurrency: req
+            .tool_concurrency
+            .map(|v| v.clamp(1, 16))
+            .unwrap_or(existing.tool_concurrency),
+        default_temperature: req
+            .default_temperature
+            .map(|v| v.clamp(0.0, 2.0))
+            .unwrap_or(existing.default_temperature),
+        default_top_p: req
+            .default_top_p
+            .map(|v| v.clamp(0.0, 1.0))
+            .unwrap_or(existing.default_top_p),
+        default_thinking_enabled: match req.default_thinking_enabled {
+            Some(v) => Some(v),
+            None => existing.default_thinking_enabled,
+        },
         chat_history_depth: req
             .chat_history_depth
             .map(|d| d.clamp(5, 200))
@@ -674,7 +694,7 @@ pub async fn create_backup_handler(
     axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
 ) -> HandlerResult<serde_json::Value> {
     if admin.role != crate::auth_users::UserRole::Admin {
-        return Err(ErrorResponse::bad_request("Admin access required"));
+        return Err(ErrorResponse::forbidden("Admin access required"));
     }
 
     let data_dir = state.data_dir.clone();
@@ -732,7 +752,7 @@ pub async fn list_backups_handler(
     axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
 ) -> HandlerResult<serde_json::Value> {
     if admin.role != crate::auth_users::UserRole::Admin {
-        return Err(ErrorResponse::bad_request("Admin access required"));
+        return Err(ErrorResponse::forbidden("Admin access required"));
     }
 
     let backups = neomind_storage::backup::list_backups(&state.data_dir);
@@ -843,7 +863,7 @@ pub async fn get_market_source_handler(
     axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
 ) -> HandlerResult<serde_json::Value> {
     if admin.role != crate::auth_users::UserRole::Admin {
-        return Err(ErrorResponse::bad_request("Admin access required"));
+        return Err(ErrorResponse::forbidden("Admin access required"));
     }
 
     use neomind_storage::SettingsStore;
@@ -886,7 +906,7 @@ pub async fn update_market_source_handler(
     Json(req): Json<MarketSourceRequest>,
 ) -> HandlerResult<serde_json::Value> {
     if admin.role != crate::auth_users::UserRole::Admin {
-        return Err(ErrorResponse::bad_request("Admin access required"));
+        return Err(ErrorResponse::forbidden("Admin access required"));
     }
 
     use neomind_storage::SettingsStore;
@@ -941,7 +961,7 @@ pub async fn get_llm_sources_handler(
     axum::extract::Extension(admin): axum::extract::Extension<crate::auth_users::SessionInfo>,
 ) -> HandlerResult<serde_json::Value> {
     if admin.role != crate::auth_users::UserRole::Admin {
-        return Err(ErrorResponse::bad_request("Admin access required"));
+        return Err(ErrorResponse::forbidden("Admin access required"));
     }
     let snap = crate::builtin_llm::sources::snapshot();
     ok(json!({
@@ -986,7 +1006,7 @@ pub async fn update_llm_sources_handler(
     Json(req): Json<LlmSourceRequest>,
 ) -> HandlerResult<serde_json::Value> {
     if admin.role != crate::auth_users::UserRole::Admin {
-        return Err(ErrorResponse::bad_request("Admin access required"));
+        return Err(ErrorResponse::forbidden("Admin access required"));
     }
     let effective = crate::builtin_llm::sources::set_override(&req.kind, &req.url)
         .map_err(ErrorResponse::bad_request)?;

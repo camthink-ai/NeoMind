@@ -45,7 +45,7 @@ pub async fn upgrade_check_handler(
     axum::extract::Query(query): axum::extract::Query<UpgradeCheckQuery>,
 ) -> HandlerResult<serde_json::Value> {
     if admin.role != UserRole::Admin {
-        return Err(ErrorResponse::bad_request("Admin access required"));
+        return Err(ErrorResponse::forbidden("Admin access required"));
     }
 
     let info = state.upgrade.check(query.force.unwrap_or(false)).await;
@@ -81,7 +81,7 @@ pub async fn start_upgrade_handler(
     payload: Option<axum::Json<serde_json::Value>>,
 ) -> HandlerResult<serde_json::Value> {
     if admin.role != UserRole::Admin {
-        return Err(ErrorResponse::bad_request("Admin access required"));
+        return Err(ErrorResponse::forbidden("Admin access required"));
     }
 
     let version = payload.and_then(|Json(v)| {
@@ -123,7 +123,7 @@ pub async fn upgrade_status_handler(
     Extension(admin): Extension<SessionInfo>,
 ) -> HandlerResult<serde_json::Value> {
     if admin.role != UserRole::Admin {
-        return Err(ErrorResponse::bad_request("Admin access required"));
+        return Err(ErrorResponse::forbidden("Admin access required"));
     }
     let s = state.upgrade.status();
     ok(json!({

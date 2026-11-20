@@ -261,7 +261,7 @@ pub async fn list_users_handler(
 ) -> Result<Json<serde_json::Value>, AuthError> {
     // Check admin permission
     if user.role != UserRole::Admin {
-        return Err(AuthError::InvalidInput("Admin access required".into()));
+        return Err(AuthError::Forbidden("Admin access required".into()));
     }
 
     let users = state.auth.user_state.list_users().await;
@@ -285,7 +285,7 @@ pub async fn create_user_handler(
 ) -> Result<(StatusCode, Json<serde_json::Value>), AuthError> {
     // Check admin permission
     if admin_user.role != UserRole::Admin {
-        return Err(AuthError::InvalidInput("Admin access required".into()));
+        return Err(AuthError::Forbidden("Admin access required".into()));
     }
 
     let role = req.role.unwrap_or(UserRole::User);
@@ -326,7 +326,7 @@ pub async fn delete_user_handler(
 ) -> Result<Json<serde_json::Value>, AuthError> {
     // Check admin permission
     if admin_user.role != UserRole::Admin {
-        return Err(AuthError::InvalidInput("Admin access required".into()));
+        return Err(AuthError::Forbidden("Admin access required".into()));
     }
 
     // Prevent self-deletion
@@ -371,7 +371,7 @@ pub async fn get_registration_settings_handler(
     Extension(admin_user): Extension<SessionInfo>,
 ) -> Result<Json<serde_json::Value>, AuthError> {
     if admin_user.role != UserRole::Admin {
-        return Err(AuthError::InvalidInput("Admin access required".into()));
+        return Err(AuthError::Forbidden("Admin access required".into()));
     }
 
     Ok(Json(serde_json::json!({
@@ -398,7 +398,7 @@ pub async fn update_registration_settings_handler(
     Json(req): Json<UpdateRegistrationSettingsRequest>,
 ) -> Result<Json<serde_json::Value>, AuthError> {
     if admin_user.role != UserRole::Admin {
-        return Err(AuthError::InvalidInput("Admin access required".into()));
+        return Err(AuthError::Forbidden("Admin access required".into()));
     }
 
     state

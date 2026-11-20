@@ -1410,6 +1410,8 @@ pub enum AuthError {
     /// Token was revoked via logout — not in the active sessions map.
     SessionRevoked,
     InvalidInput(String),
+    /// Caller authenticated but lacks admin privilege.
+    Forbidden(String),
     DatabaseError(String),
     /// Self-registration is disabled on this instance (admin toggle —
     /// `PUT /api/settings/registration`).
@@ -1430,6 +1432,7 @@ impl std::fmt::Display for AuthError {
             AuthError::ExpiredToken => write!(f, "Token has expired"),
             AuthError::SessionRevoked => write!(f, "Session has been revoked"),
             AuthError::InvalidInput(msg) => write!(f, "Invalid input: {}", msg),
+            AuthError::Forbidden(msg) => write!(f, "{}", msg),
             AuthError::DatabaseError(msg) => write!(f, "Database error: {}", msg),
             AuthError::RegistrationDisabled => {
                 write!(
@@ -1465,6 +1468,7 @@ impl IntoResponse for AuthError {
                 "Session has been revoked".into(),
             ),
             AuthError::InvalidInput(msg) => (HttpStatusCode::BAD_REQUEST, msg),
+            AuthError::Forbidden(msg) => (HttpStatusCode::FORBIDDEN, msg),
             AuthError::DatabaseError(msg) => (HttpStatusCode::INTERNAL_SERVER_ERROR, msg),
             AuthError::RegistrationDisabled => (
                 HttpStatusCode::FORBIDDEN,
