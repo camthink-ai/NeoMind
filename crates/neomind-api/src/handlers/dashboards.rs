@@ -31,6 +31,29 @@ use neomind_storage::dashboards::{
 /// drifted from the registry and recommended `gauge` — a type the dynamic
 /// validation itself rejects. Hints must come from the same source of truth
 /// as the check (builtin ∪ community ∪ extension-bundled).
+
+/// Reject ephemeral static payload keys that serde would silently drop.
+/// value-card / charts need `data_source`; static prose uses markdown-display `config.content`.
+fn reject_ephemeral_static_fields(c: &serde_json::Value, index: usize) -> Result<(), String> {
+    let Some(obj) = c.as_object() else {
+        return Ok(());
+    };
+    let mut bad = Vec::new();
+    if obj.contains_key("data") {
+        bad.push("data");
+    }
+    if obj.contains_key("label") {
+        bad.push("label");
+    }
+    if bad.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "component[{index}] has unknown field(s) {} — they are NOT persisted.          Bind live values with `data_source` (telemetry / extension-metric).          Static text belongs on `markdown-display` via `config.content`, not on value-card `data`/`label`.",
+        bad.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ")
+    ))
+}
+
 fn known_widget_types_hint(state: &ServerState) -> String {
     let mut types: Vec<String> = collect_known_widget_types(state).into_iter().collect();
     types.sort();
@@ -677,67 +700,72 @@ pub async fn update_dashboard_handler(
     Path(id): Path<String>,
     Json(req): Json<UpdateDashboardRequest>,
 ) -> HandlerResult<Dashboard> {
-    let mut dashboard = resolve_dashboard(&state, &id)?;
+    let resolved = resolve_dashboard(&state, &id)?;
+    let dash_id = resolved.id.clone();
 
-    // Update fields if provided
-    if let Some(name) = req.name {
-        dashboard.name = name;
-    }
-    if let Some(description) = req.description {
-        dashboard.description = Some(description);
-    }
-    if let Some(layout) = req.layout {
-        dashboard.layout = api_to_stored_layout(&layout);
-    }
-    if let Some(components) = req.components {
-        // Parse components from JSON — fail if any component is invalid
+    // Parse optional full-replace components outside the write txn.
+    let parsed_components: Option<Vec<StoredComponent>> = if let Some(components) = req.components {
         let parsed: Result<Vec<StoredComponent>, String> = components
             .iter()
             .enumerate()
             .map(|(i, c)| {
+                reject_ephemeral_static_fields(c, i)?;
                 serde_json::from_value::<StoredComponent>(c.clone())
                     .map_err(|e| format!("component[{}]: {}", i, e))
             })
             .collect();
         match parsed {
             Ok(parsed_components) => {
-                // Same type gate as add-components — the full-replace path is
-                // the one place a typo'd type could still sneak in silently.
                 let known = collect_known_widget_types(&state);
-                // The update path must NOT hard-fail on orphaned/legacy types:
-                // a dashboard with a widget whose type was later uninstalled (or
-                // shared from another instance) would become un-editable. Warn
-                // and persist — the renderer shows an UnknownComponent placeholder.
-                // The ADD path keeps the strict gate (typos on new widgets).
                 for c in &parsed_components {
                     if !known.contains(&c.component_type) {
                         tracing::warn!(
-                            dashboard_id = %id,
+                            dashboard_id = %dash_id,
                             component_type = %c.component_type,
                             "update-dashboard: persisting a component with an unknown type (orphaned/legacy)"
                         );
                     }
                 }
-                dashboard.components = parsed_components;
+                Some(parsed_components)
             }
             Err(e) => {
                 return Err(
                     ErrorResponse::bad_request(format!("Invalid component data: {}", e)).with_hint(
                         "Each component needs: id, type, title, position {x,y,w,h}.\n\
-                             Use 'neomind dashboard add-components' instead of full replacement.",
+                             Use 'neomind dashboard add-components' instead of full replacement.\n\
+                             Do not use ephemeral `data`/`label` — bind with `data_source`.",
                     ),
                 )
             }
         }
-    }
-    dashboard.updated_at = chrono::Utc::now().timestamp();
+    } else {
+        None
+    };
 
-    state
+    let dashboard = state
         .dashboard_store
-        .save(&dashboard)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to save dashboard: {}", e)))?;
+        .mutate_dashboard(&dash_id, |dashboard| {
+            if let Some(name) = req.name {
+                dashboard.name = name;
+            }
+            if let Some(description) = req.description {
+                dashboard.description = Some(description);
+            }
+            if let Some(layout) = req.layout {
+                dashboard.layout = api_to_stored_layout(&layout);
+            }
+            if let Some(parsed_components) = parsed_components {
+                dashboard.components = parsed_components;
+            }
+            dashboard.updated_at = chrono::Utc::now().timestamp();
+            Ok(dashboard.clone())
+        })
+        .map_err(|e| match e {
+            neomind_storage::Error::NotFound(msg) => ErrorResponse::not_found(msg),
+            other => ErrorResponse::internal(format!("Failed to save dashboard: {}", other)),
+        })?;
 
-    emit_dashboard_event(&state, &id, "update");
+    emit_dashboard_event(&state, &dash_id, "update");
 
     ok(stored_to_api(&dashboard))
 }
@@ -761,9 +789,11 @@ pub async fn add_components_handler(
     Path(id): Path<String>,
     Json(req): Json<AddComponentsRequest>,
 ) -> HandlerResult<Dashboard> {
-    let mut dashboard = resolve_dashboard(&state, &id)?;
+    // Resolve name→id before the write txn (id-or-name contract).
+    let resolved = resolve_dashboard(&state, &id)?;
+    let dash_id = resolved.id.clone();
 
-    // Parse and append new components
+    // Parse and validate new components (fail closed before mutating).
     let new_components: Vec<StoredComponent> = req
         .components
         .iter()
@@ -784,6 +814,7 @@ pub async fn add_components_handler(
                      [{{\"id\":\"my-card\",\"type\":\"{name}\",\"position\":{{\"x\":0,\"y\":0,\"w\":4,\"h\":3}}}}]"
                 ));
             }
+            reject_ephemeral_static_fields(c, i)?;
             // Hand-written JSON (models, API-first users) routinely omits
             // position — the CLI help's own example does. Inject a default
             // tile instead of 400ing; explicit positions pass through intact.
@@ -806,6 +837,7 @@ pub async fn add_components_handler(
                 format!(
                     "Each component needs: id (string), type ({}), title (string), \
                      position (optional — defaults to a standard tile).\n\
+                     Bind live values with data_source — do NOT use ephemeral `data`/`label` keys.\n\
                      Example: {{\"id\":\"temp\",\"type\":\"value-card\",\"title\":\"Temp\",\
                      \"data_source\":{{\"type\":\"device\",\"sourceId\":\"<device-id>\",\"property\":\"<metric>\"}}}}",
                     known_widget_types_hint(&state)
@@ -835,20 +867,6 @@ pub async fn add_components_handler(
         )));
     }
 
-    // Reject component-id collisions: duplicates make `update-component`
-    // (find-first) ambiguous and break the frontend's React keys.
-    if let Some(dup) = new_components.iter().find(|c| {
-        dashboard
-            .components
-            .iter()
-            .any(|existing| existing.id == c.id)
-    }) {
-        return Err(ErrorResponse::bad_request(format!(
-            "Component id '{}' already exists on dashboard '{}' — component ids must be unique. \
-             Use `dashboard get {}` to list existing ids, or `update-component` to modify one.",
-            dup.id, id, id
-        )));
-    }
     // Also reject duplicates WITHIN the same batch.
     {
         let mut seen = std::collections::HashSet::new();
@@ -860,15 +878,34 @@ pub async fn add_components_handler(
         }
     }
 
-    dashboard.components.extend(new_components);
-    dashboard.updated_at = chrono::Utc::now().timestamp();
-
-    state
+    // Append inside one write transaction so parallel Chat adds never
+    // silently overwrite each other (lock-free RMW → lost-update).
+    let dashboard = state
         .dashboard_store
-        .save(&dashboard)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to save dashboard: {}", e)))?;
+        .mutate_dashboard(&dash_id, |dashboard| {
+            if let Some(dup) = new_components.iter().find(|c| {
+                dashboard
+                    .components
+                    .iter()
+                    .any(|existing| existing.id == c.id)
+            }) {
+                return Err(neomind_storage::Error::Validation(format!(
+                    "Component id '{}' already exists on dashboard '{}' — component ids must be unique. \
+                     Use `dashboard get {}` to list existing ids, or `update-component` to modify one.",
+                    dup.id, dash_id, dash_id
+                )));
+            }
+            dashboard.components.extend(new_components.clone());
+            dashboard.updated_at = chrono::Utc::now().timestamp();
+            Ok(dashboard.clone())
+        })
+        .map_err(|e| match e {
+            neomind_storage::Error::NotFound(msg) => ErrorResponse::not_found(msg),
+            neomind_storage::Error::Validation(msg) => ErrorResponse::bad_request(msg),
+            other => ErrorResponse::internal(format!("Failed to save dashboard: {}", other)),
+        })?;
 
-    emit_dashboard_event(&state, &id, "add_components");
+    emit_dashboard_event(&state, &dash_id, "add_components");
 
     ok(stored_to_api(&dashboard))
 }
@@ -892,24 +929,30 @@ pub async fn remove_components_handler(
     Path(id): Path<String>,
     Json(req): Json<RemoveComponentsRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    let mut dashboard = resolve_dashboard(&state, &id)?;
+    let resolved = resolve_dashboard(&state, &id)?;
+    let dash_id = resolved.id.clone();
+    let ids = req.ids.clone();
 
-    let before = dashboard.components.len();
-    dashboard.components.retain(|c| !req.ids.contains(&c.id));
-    let removed = before - dashboard.components.len();
-    dashboard.updated_at = chrono::Utc::now().timestamp();
-
-    state
+    let (removed, remaining) = state
         .dashboard_store
-        .save(&dashboard)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to save dashboard: {}", e)))?;
+        .mutate_dashboard(&dash_id, |dashboard| {
+            let before = dashboard.components.len();
+            dashboard.components.retain(|c| !ids.contains(&c.id));
+            let removed = before - dashboard.components.len();
+            dashboard.updated_at = chrono::Utc::now().timestamp();
+            Ok((removed, dashboard.components.len()))
+        })
+        .map_err(|e| match e {
+            neomind_storage::Error::NotFound(msg) => ErrorResponse::not_found(msg),
+            other => ErrorResponse::internal(format!("Failed to save dashboard: {}", other)),
+        })?;
 
-    emit_dashboard_event(&state, &id, "remove_components");
+    emit_dashboard_event(&state, &dash_id, "remove_components");
 
     ok(serde_json::json!({
         "ok": true,
         "removed": removed,
-        "remaining": dashboard.components.len(),
+        "remaining": remaining,
     }))
 }
 
@@ -980,61 +1023,77 @@ pub async fn update_component_handler(
             "`set` must be a JSON object of partial component fields",
         ));
     }
+    if let Err(msg) = reject_ephemeral_static_fields(&set, 0) {
+        return Err(ErrorResponse::bad_request(msg).with_hint(
+            "Patch with `data_source` / `display` / `title` / `config` — not ephemeral `data`/`label`.",
+        ));
+    }
 
-    let mut dashboard = resolve_dashboard(&state, &id)?;
+    let resolved = resolve_dashboard(&state, &id)?;
+    let dash_id = resolved.id.clone();
+    let component_id_owned = component_id.clone();
 
-    let component = dashboard
-        .components
-        .iter_mut()
-        .find(|c| c.id == component_id)
-        .ok_or_else(|| {
-            ErrorResponse::not_found(format!(
-                "Component '{}' not found on dashboard '{}' (use `dashboard get {}` to list component ids)",
-                component_id, id, id
-            ))
+    let (patched_id, ignored_keys, component_json) = state
+        .dashboard_store
+        .mutate_dashboard(&dash_id, |dashboard| {
+            let component = dashboard
+                .components
+                .iter_mut()
+                .find(|c| c.id == component_id_owned)
+                .ok_or_else(|| {
+                    neomind_storage::Error::NotFound(format!(
+                        "Component '{}' not found on dashboard '{}' (use `dashboard get {}` to list component ids)",
+                        component_id_owned, dash_id, dash_id
+                    ))
+                })?;
+
+            let mut value = serde_json::to_value(&*component).map_err(|e| {
+                neomind_storage::Error::Serialization(format!(
+                    "Failed to serialize component: {e}"
+                ))
+            })?;
+            let mut ignored_keys: Vec<String> = Vec::new();
+            if let serde_json::Value::Object(patch) = &set {
+                let mut sanitized = patch.clone();
+                for key in ["id", "type"] {
+                    if sanitized.remove(key).is_some() {
+                        ignored_keys.push(key.to_string());
+                    }
+                }
+                deep_merge_json(&mut value, &serde_json::Value::Object(sanitized));
+            }
+            let patched: StoredComponent = serde_json::from_value(value).map_err(|e| {
+                neomind_storage::Error::Validation(format!("Patched component is invalid: {e}"))
+            })?;
+            let patched_id = patched.id.clone();
+            *component = patched;
+            dashboard.updated_at = chrono::Utc::now().timestamp();
+            let component_json = serde_json::to_value(
+                dashboard
+                    .components
+                    .iter()
+                    .find(|c| c.id == patched_id),
+            )
+            .unwrap_or(serde_json::Value::Null);
+            Ok((patched_id, ignored_keys, component_json))
+        })
+        .map_err(|e| match e {
+            neomind_storage::Error::NotFound(msg) => ErrorResponse::not_found(msg),
+            neomind_storage::Error::Validation(msg) => ErrorResponse::bad_request(msg),
+            other => ErrorResponse::internal(format!("Failed to save dashboard: {}", other)),
         })?;
 
-    // Round-trip through JSON so the patch can touch any field generically.
-    let mut value = serde_json::to_value(&*component)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to serialize component: {}", e)))?;
-    // id and type identify the component — never let a patch move/retype it.
-    // The ignored keys are REPORTED in the response: a silent strip made a
-    // retype attempt "succeed" while nothing changed (same bypass-family
-    // trap as the unknown-type escalation to a builtin widget).
-    let mut ignored_keys: Vec<&str> = Vec::new();
-    if let serde_json::Value::Object(patch) = &set {
-        let mut sanitized = patch.clone();
-        for key in ["id", "type"] {
-            if sanitized.remove(key).is_some() {
-                ignored_keys.push(key);
-            }
-        }
-        deep_merge_json(&mut value, &serde_json::Value::Object(sanitized));
-    }
-    let patched: StoredComponent = serde_json::from_value(value)
-        .map_err(|e| ErrorResponse::bad_request(format!("Patched component is invalid: {}", e)))?;
-    let patched_id = patched.id.clone();
-    *component = patched;
-
-    dashboard.updated_at = chrono::Utc::now().timestamp();
-    state
-        .dashboard_store
-        .save(&dashboard)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to save dashboard: {}", e)))?;
-
-    emit_dashboard_event(&state, &id, "update_component");
+    emit_dashboard_event(&state, &dash_id, "update_component");
 
     ok(serde_json::json!({
         "ok": true,
-        "dashboard_id": id,
+        "dashboard_id": dash_id,
         "component_id": patched_id,
         // Non-empty when the patch tried to change identity fields: they
         // were IGNORED (id/type are immutable). To REPLACE a component use
         // remove-components + add-components with a NEW type.
         "ignored_keys": ignored_keys,
-        "component": serde_json::to_value(
-            dashboard.components.iter().find(|c| c.id == patched_id)
-        ).unwrap_or(serde_json::Value::Null),
+        "component": component_json,
     }))
 }
 

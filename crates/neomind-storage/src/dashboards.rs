@@ -349,6 +349,46 @@ impl DashboardStore {
         Ok(())
     }
 
+    /// Load → mutate → save inside **one** write transaction.
+    ///
+    /// Concurrent Chat/shell `add-components` calls previously did a lock-free
+    /// RMW (read → extend → save) and silently dropped each other's appends.
+    /// redb allows only one writer at a time, so serializing the full mutate
+    /// under `begin_write` makes each caller see the latest committed row.
+    pub fn mutate_dashboard<F, T>(&self, id: &str, f: F) -> Result<T, Error>
+    where
+        F: FnOnce(&mut Dashboard) -> Result<T, Error>,
+    {
+        let write_txn = self.db.begin_write()?;
+        let mut dashboard = {
+            let table = match write_txn.open_table(DASHBOARDS_TABLE) {
+                Ok(t) => t,
+                Err(redb::TableError::TableDoesNotExist(_)) => {
+                    return Err(Error::NotFound(format!("Dashboard '{id}' not found")));
+                }
+                Err(e) => return Err(e.into()),
+            };
+            let bytes = match table.get(id)? {
+                Some(value) => value.value().to_vec(),
+                None => {
+                    return Err(Error::NotFound(format!("Dashboard '{id}' not found")));
+                }
+            };
+            drop(table);
+            let d: Dashboard = serde_json::from_slice(&bytes)?;
+            d
+        };
+
+        let result = f(&mut dashboard)?;
+        let serialized = serde_json::to_vec(&dashboard)?;
+        {
+            let mut table = write_txn.open_table(DASHBOARDS_TABLE)?;
+            table.insert(dashboard.id.as_str(), serialized)?;
+        }
+        write_txn.commit()?;
+        Ok(result)
+    }
+
     /// Load a dashboard by ID.
     pub fn load(&self, id: &str) -> Result<Option<Dashboard>, Error> {
         let read_txn = self.db.begin_read()?;
@@ -748,6 +788,72 @@ mod tests {
         assert_eq!(loaded.components.len(), 1);
         assert_eq!(loaded.components[0].id, "comp-1");
         assert_eq!(loaded.components[0].title, Some("Test Card".to_string()));
+    }
+
+    /// Parallel appends via `mutate_dashboard` must keep every component
+    /// (fixes Chat parallel add-components lost-update).
+    #[test]
+    fn parallel_mutate_appends_do_not_drop_components() {
+        let store = create_temp_store();
+        let mut dashboard = Dashboard::new(
+            "Race Board".to_string(),
+            DashboardLayout::default_layout(),
+        );
+        dashboard.id = "race-dash".to_string();
+        store.save(&dashboard).unwrap();
+
+        let mk = |id: &str| DashboardComponent {
+            id: id.to_string(),
+            component_type: "value-card".to_string(),
+            position: ComponentPosition {
+                x: 0,
+                y: 0,
+                w: 2,
+                h: 1,
+                min_w: None,
+                min_h: None,
+                max_w: None,
+                max_h: None,
+            },
+            title: Some(id.to_string()),
+            data_source: None,
+            display: None,
+            config: None,
+            actions: None,
+        };
+
+        let ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
+        std::thread::scope(|scope| {
+            for id in ids {
+                let store = store.clone();
+                scope.spawn(move || {
+                    store
+                        .mutate_dashboard("race-dash", |d| {
+                            d.components.push(mk(id));
+                            d.updated_at = chrono::Utc::now().timestamp();
+                            Ok(())
+                        })
+                        .expect("mutate append");
+                });
+            }
+        });
+
+        let loaded = store.load("race-dash").unwrap().unwrap();
+        assert_eq!(
+            loaded.components.len(),
+            ids.len(),
+            "parallel appends lost updates: {:?}",
+            loaded
+                .components
+                .iter()
+                .map(|c| c.id.as_str())
+                .collect::<Vec<_>>()
+        );
+        let mut got: Vec<_> = loaded.components.iter().map(|c| c.id.clone()).collect();
+        got.sort();
+        let mut expect: Vec<_> = ids.iter().map(|s| (*s).to_string()).collect();
+        expect.sort();
+        assert_eq!(got, expect);
     }
 
     #[test]
