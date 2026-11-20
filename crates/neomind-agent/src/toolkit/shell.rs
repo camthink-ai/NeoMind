@@ -2098,6 +2098,40 @@ fn find_safe_truncation_point(s: &str, max_bytes: usize) -> usize {
     pos
 }
 
+
+/// When the model invents CLI `--params` on a command whose primary JSON flag
+/// is something else (`--components`, `--set`, `--ids`, `--body`, `--config`,
+/// `--input`), point it at shell structured `params` instead of clap noise.
+fn misplaced_primary_json_flag_tip(domain: &str, action: &str, argv: &[String]) -> Option<String> {
+    let has_params_flag = argv
+        .iter()
+        .any(|t| t == "--params" || t.starts_with("--params="));
+    if !has_params_flag || domain.is_empty() || action.is_empty() {
+        return None;
+    }
+    let probe = vec![
+        "neomind".to_string(),
+        domain.to_string(),
+        action.to_string(),
+    ];
+    let spec = neomind_cli_ops::json_arg::primary_json_spec(&probe)?;
+    if spec.flag == "--params" {
+        // Legitimate CLI flag for extension invoke / device control.
+        return None;
+    }
+    let shape = match spec.kind {
+        neomind_cli_ops::json_arg::ExpectedJsonKind::Array => "[...]",
+        neomind_cli_ops::json_arg::ExpectedJsonKind::Object => "{...}",
+    };
+    Some(format!(
+        "`{domain} {action}` does not take CLI `--params`. Prefer shell tool: \
+         command=\"neomind {domain} {action} ...\", params={shape} \
+         (maps to `{flag}`). Do not invent `--params` inside the command string. \
+         Human CLI fallback: `{flag} '<JSON>`.",
+        flag = spec.flag
+    ))
+}
+
 // ============================================================================
 // Error Recovery Hints
 // ============================================================================
@@ -2210,6 +2244,11 @@ impl ShellTool {
                      Use device get <ID> for real parameter names; do not invent keys."
                         .to_string(),
                 );
+            }
+            // Invented CLI `--params` on commands whose primary JSON flag is
+            // `--components`/`--set`/`--ids`/`--body`/`--config`/`--input`.
+            if let Some(tip) = misplaced_primary_json_flag_tip(domain, action, &argv) {
+                return Some(tip);
             }
             return None;
         }
@@ -2660,6 +2699,42 @@ mod tests {
         assert!(hint.contains("real parameter names"));
         assert!(!hint.contains("ID is positional"));
     }
+    #[test]
+    fn invented_params_flag_on_add_components_has_structured_tip() {
+        let hint = ShellTool::recovery_hint(
+            "neomind dashboard add-components dash-1 --params '[{\"id\":\"c1\"}]'",
+            "",
+            "error: unexpected argument '--params' found",
+        )
+        .expect("tip required");
+        assert!(hint.contains("does not take CLI `--params`"), "{hint}");
+        assert!(hint.contains("--components") || hint.contains("params=[...]"), "{hint}");
+        assert!(hint.contains("shell"), "{hint}");
+    }
+
+    #[test]
+    fn invented_params_flag_on_rule_create_points_at_body() {
+        let hint = ShellTool::recovery_hint(
+            "neomind rule create --params '{\"name\":\"x\"}'",
+            "",
+            "error: unexpected argument '--params' found",
+        )
+        .expect("tip required");
+        assert!(hint.contains("--body"), "{hint}");
+        assert!(!hint.contains("ID is positional"), "{hint}");
+    }
+
+    #[test]
+    fn legitimate_extension_invoke_params_flag_not_redirected() {
+        // extension invoke's primary flag IS --params — do not claim misuse.
+        assert!(ShellTool::recovery_hint(
+            "neomind extension invoke weather-forecast-v2 get_weather --params '{\"city\":\"Xiamen\"}'",
+            "",
+            "error: unexpected argument '--bogus' found",
+        )
+        .is_none());
+    }
+
 
     #[test]
     fn control_hint_does_not_shadow_id_or_other_error_contracts() {

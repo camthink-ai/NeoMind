@@ -449,7 +449,7 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
                 r#"[{"id":"c2","type":"value-card","title":"Humidity","position":{"x":0,"y":2,"w":4,"h":2}}]"#,
             ),
         },
-        guidance: "Append new widgets without touching existing ones by passing a JSON array in shell `params` (maps to `--components`).",
+        guidance: "Append widgets via shell `params: […]` (maps to `--components`); add only 1–2 components per call; never invent CLI `--params`; bind live values with `data_source` (not ephemeral `data`/`label`).",
     },
     DomainCommandContract {
         domain: "dashboard",

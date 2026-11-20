@@ -1180,9 +1180,11 @@ pub enum DashboardCommand {
     /// Appends new widgets without replacing existing ones.
     /// This is the RECOMMENDED way to add widgets.
     ///
-    /// Example: `neomind dashboard add-components <ID> --components '[{"id":"c1","type":"value-card",...}]'`
-    /// Chat/shell tool preferred: pass the JSON array via structured `params`
-    /// (maps to `--components`) instead of quoting `--components` in `command`.
+    /// Chat/shell (preferred):
+    ///   `{ "command": "neomind dashboard add-components <ID>", "params": [ { "id":"c1", "type":"value-card", "position":{"x":0,"y":0,"w":4,"h":2}, "data_source":{...} } ] }`
+    /// Add only 1–2 components per call; append again for more.
+    /// Do NOT invent CLI `--params` — the primary flag is `--components`.
+    /// Human CLI fallback: `neomind dashboard add-components <ID> --components '[{...}]'`
     AddComponents {
         /// Dashboard ID.
         #[arg(required = true)]
@@ -1195,7 +1197,8 @@ pub enum DashboardCommand {
     ///
     /// Removes specific widgets by their component IDs.
     ///
-    /// Example: `neomind dashboard remove-components <ID> --ids '["c1","c2"]'`
+    /// Chat/shell (preferred): `{ "command": "neomind dashboard remove-components <ID>", "params": ["c1","c2"] }`
+    /// Human CLI fallback: `neomind dashboard remove-components <ID> --ids '["c1","c2"]'`
     RemoveComponents {
         /// Dashboard ID.
         #[arg(required = true)]

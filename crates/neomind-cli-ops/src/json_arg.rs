@@ -23,13 +23,92 @@ pub fn parse_json_arg(raw: &str) -> Result<Value> {
                 let retried = strip_unpaired_edge_quotes(&normalized);
                 if retried != normalized {
                     return serde_json::from_str(&retried).map_err(|e2| {
-                        anyhow!("invalid JSON after quote normalize: {e2} (original: {e})")
+                        anyhow!(
+                            "{}",
+                            format_json_parse_error(
+                                &retried,
+                                &format!("invalid JSON after quote normalize: {e2} (original: {e})")
+                            )
+                        )
                     });
                 }
             }
-            Err(anyhow!("invalid JSON: {e}"))
+            Err(anyhow!("{}", format_json_parse_error(&normalized, &msg)))
         }
     }
+}
+
+/// Enrich serde JSON errors with a short snippet and actionable hints.
+/// Large-array flags (`--components` / `--ids`) get a 1–2 item batch tip.
+pub fn format_json_parse_error(raw: &str, serde_msg: &str) -> String {
+    let trimmed = raw.trim();
+    let mut out = if serde_msg.starts_with("invalid JSON") {
+        serde_msg.to_string()
+    } else {
+        format!("invalid JSON: {serde_msg}")
+    };
+
+    // Snippet around the reported column when present (`… at line 1 column N`).
+    if let Some(col) = parse_serde_column(serde_msg) {
+        let snippet = json_error_snippet(trimmed, col);
+        if !snippet.is_empty() {
+            out.push_str("\nNear: ");
+            out.push_str(&snippet);
+        }
+    }
+
+    let lower = serde_msg.to_lowercase();
+    if lower.contains("key must be a string") {
+        out.push_str(
+            "\nHint: a closing `}` is likely missing so the next `{…}` was read as a key — \
+             finish each object before the next array element.",
+        );
+    } else if lower.contains("trailing characters") || lower.contains("expected") {
+        out.push_str(
+            "\nHint: check for an extra `}`/`]` or a leftover quote after the JSON value.",
+        );
+    }
+
+    if trimmed.starts_with('[') {
+        out.push_str(
+            "\nHint: for large arrays (dashboard `--components` / `--ids`) prefer shell \
+             `params: […]` and add only 1–2 components per call — then append again.",
+        );
+    } else {
+        out.push_str(
+            "\nHint: prefer shell structured `params` (object/array) over quoting JSON inside the command string.",
+        );
+    }
+    out
+}
+
+fn parse_serde_column(msg: &str) -> Option<usize> {
+    let marker = "column ";
+    let idx = msg.rfind(marker)?;
+    let rest = &msg[idx + marker.len()..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+fn json_error_snippet(raw: &str, column_1based: usize) -> String {
+    if raw.is_empty() || column_1based == 0 {
+        return String::new();
+    }
+    let focus = column_1based.saturating_sub(1).min(raw.len());
+    let start = focus.saturating_sub(24);
+    let end = (focus + 24).min(raw.len());
+    // Stay on char boundaries.
+    let start = raw.floor_char_boundary(start);
+    let end = raw.ceil_char_boundary(end);
+    let mut s = String::new();
+    if start > 0 {
+        s.push('…');
+    }
+    s.push_str(&raw[start..end]);
+    if end < raw.len() {
+        s.push('…');
+    }
+    s
 }
 
 /// Same as [`parse_json_arg`] but returns `String` errors (capability / classify).
@@ -271,6 +350,30 @@ mod tests {
     fn clean_object_parses() {
         let v = parse_json_arg(r#"{"position":{"w":2,"h":2}}"#).unwrap();
         assert_eq!(v["position"]["w"], 2);
+    }
+
+    #[test]
+    fn malformed_array_error_includes_snippet_and_batch_hint() {
+        // Missing `}` before next object → serde "key must be a string".
+        let err = parse_json_arg(r#"[{"id":"a","type":"value-card"},{"id":"b"]"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("invalid JSON"), "{err}");
+        assert!(
+            err.contains("1–2 components") || err.contains("1-2 components"),
+            "batch hint missing: {err}"
+        );
+        assert!(err.contains("Near:") || err.contains("Hint:"), "{err}");
+    }
+
+    #[test]
+    fn key_must_be_string_gets_brace_hint() {
+        let msg = format_json_parse_error(
+            r#"[{"a":1},{"b":2}]"#,
+            "key must be a string at line 1 column 10",
+        );
+        assert!(msg.contains("closing `}`") || msg.contains("closing }"), "{msg}");
+        assert!(msg.contains("Near:"), "{msg}");
     }
 
     #[test]
