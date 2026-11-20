@@ -90,7 +90,60 @@ fn trim_base(url: &str) -> String {
 }
 
 fn is_loopback_host(host: &str) -> bool {
-    matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
+    let host = host.trim().trim_matches(|c| c == '[' || c == ']');
+    if host.eq_ignore_ascii_case("localhost") || host.eq_ignore_ascii_case("localhost.localdomain")
+    {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return ip.is_loopback();
+    }
+    false
+}
+
+/// Extract the host from an absolute origin (`http://host:port`, bare host, …).
+pub fn origin_host(origin: &str) -> Option<String> {
+    let s = origin.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let rest = s
+        .strip_prefix("https://")
+        .or_else(|| s.strip_prefix("http://"))
+        .unwrap_or(s);
+    // Drop path/query; keep authority.
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return None;
+    }
+    // Drop userinfo if present.
+    let hostport = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if hostport.starts_with('[') {
+        // [ipv6] or [ipv6]:port
+        let end = hostport.find(']')?;
+        hostport[1..end].to_string()
+    } else if let Some((h, port)) = hostport.rsplit_once(':') {
+        if port.chars().all(|c| c.is_ascii_digit()) {
+            h.to_string()
+        } else {
+            hostport.to_string()
+        }
+    } else {
+        hostport.to_string()
+    };
+    if host.is_empty() {
+        None
+    } else {
+        Some(host)
+    }
+}
+
+/// True when the origin's host is loopback (`localhost`, `127.0.0.0/8`, `::1`).
+///
+/// Used by device AbsoluteHttp so `NEOMIND_SERVER_URL=http://127.0.0.1:…` and
+/// `NEOMIND_PUBLIC_HOST=localhost` are rejected by **host**, not by source enum.
+pub fn origin_host_is_loopback(origin: &str) -> bool {
+    origin_host(origin).as_deref().is_some_and(is_loopback_host)
 }
 
 /// Resolve an absolute API origin (localhost last resort allowed).
@@ -100,38 +153,58 @@ pub fn resolve_advertise_base_url() -> Option<(String, AdvertiseUrlSource)> {
 
 /// Resolve an origin a **remote device** can HTTP-fetch.
 ///
-/// Same chain as [`resolve_advertise_base_url`], but returns [`None`] instead of
-/// advertising `127.0.0.1` / `localhost` (EK410 cannot pull from the host's
-/// loopback).
+/// Same chain as [`resolve_advertise_base_url`], but never returns a loopback
+/// **host** — including when `NEOMIND_SERVER_URL` / `NEOMIND_PUBLIC_HOST` point
+/// at `127.0.0.1` / `localhost` (EK410 cannot pull from the host's loopback).
 pub fn resolve_device_advertise_base_url() -> Option<(String, AdvertiseUrlSource)> {
     resolve_advertise_base_url_for(AdvertiseAudience::DeviceReachable)
+}
+
+fn accept_for_audience(
+    audience: AdvertiseAudience,
+    url: String,
+    src: AdvertiseUrlSource,
+) -> Option<(String, AdvertiseUrlSource)> {
+    if audience == AdvertiseAudience::DeviceReachable && origin_host_is_loopback(&url) {
+        return None;
+    }
+    Some((url, src))
 }
 
 /// Resolve an absolute API origin for the given audience.
 pub fn resolve_advertise_base_url_for(
     audience: AdvertiseAudience,
 ) -> Option<(String, AdvertiseUrlSource)> {
-    // 1. Explicit env wins (same knob as webhooks).
+    // 1. Explicit env — for DeviceReachable, skip loopback hosts and fall through
+    //    (NEOMIND_SERVER_URL=http://127.0.0.1:… must not win for EK410).
     if let Ok(env_url) = std::env::var("NEOMIND_SERVER_URL") {
         let trimmed = trim_base(&env_url);
         if !trimmed.is_empty() {
-            return Some((trimmed, AdvertiseUrlSource::Env));
+            if let Some(accepted) = accept_for_audience(audience, trimmed, AdvertiseUrlSource::Env)
+            {
+                return Some(accepted);
+            }
+            // DeviceReachable + loopback → try PUBLIC_HOST / LAN next.
         }
     }
 
     let port = advertise_http_port();
 
-    // 2. Public hostname / IP override (MQTT / device-facing display).
+    // 2. Public hostname / IP override.
     if let Ok(host) = std::env::var("NEOMIND_PUBLIC_HOST") {
         let host = host.trim();
         if !host.is_empty() {
-            if host.starts_with("http://") || host.starts_with("https://") {
-                return Some((trim_base(host), AdvertiseUrlSource::PublicHost));
+            let candidate = if host.starts_with("http://") || host.starts_with("https://") {
+                trim_base(host)
+            } else {
+                format!("http://{host}:{port}")
+            };
+            if let Some(accepted) =
+                accept_for_audience(audience, candidate, AdvertiseUrlSource::PublicHost)
+            {
+                return Some(accepted);
             }
-            return Some((
-                format!("http://{host}:{port}"),
-                AdvertiseUrlSource::PublicHost,
-            ));
+            // Device path: loopback PUBLIC_HOST — fall through to LAN.
         }
     }
 
@@ -139,7 +212,8 @@ pub fn resolve_advertise_base_url_for(
     if let Some(ip) = primary_lan_ipv4() {
         let host = ip.trim();
         if !host.is_empty() && !is_loopback_host(host) {
-            return Some((format!("http://{host}:{port}"), AdvertiseUrlSource::LanIp));
+            let url = format!("http://{host}:{port}");
+            return accept_for_audience(audience, url, AdvertiseUrlSource::LanIp);
         }
     }
 
@@ -263,11 +337,59 @@ mod tests {
         match resolve_device_advertise_base_url() {
             Some((url, src)) => {
                 assert_eq!(src, AdvertiseUrlSource::LanIp, "device path: {url}");
-                assert!(!url.contains("127.0.0.1") && !url.contains("localhost"));
+                assert!(!origin_host_is_loopback(&url), "{url}");
             }
             None => {
                 // Air-gapped / no route — correct to refuse loopback for devices.
             }
         }
+    }
+
+    #[test]
+    fn origin_host_detects_loopback_forms() {
+        assert!(origin_host_is_loopback("http://127.0.0.1:9375"));
+        assert!(origin_host_is_loopback("http://127.0.0.2:80/"));
+        assert!(origin_host_is_loopback("https://localhost"));
+        assert!(origin_host_is_loopback("http://[::1]:9375"));
+        assert!(!origin_host_is_loopback("https://edge.example.com"));
+        assert!(!origin_host_is_loopback("http://192.168.1.10:9444"));
+        assert_eq!(
+            origin_host("http://user:pass@192.168.1.5:9375/api"),
+            Some("192.168.1.5".into())
+        );
+    }
+
+    #[test]
+    fn device_skips_loopback_server_url_and_falls_through() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _a = EnvGuard::set("NEOMIND_SERVER_URL", Some("http://127.0.0.1:9375"));
+        let _b = EnvGuard::set("NEOMIND_PUBLIC_HOST", Some("edge.lan"));
+        let _port = ListenPortGuard::set(9444);
+        let (url, src) = resolve_device_advertise_base_url().expect("public host after skip");
+        assert_eq!(src, AdvertiseUrlSource::PublicHost);
+        assert_eq!(url, "http://edge.lan:9444");
+        assert!(!origin_host_is_loopback(&url));
+    }
+
+    #[test]
+    fn device_skips_loopback_public_host() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _a = EnvGuard::set("NEOMIND_SERVER_URL", None);
+        let _b = EnvGuard::set("NEOMIND_PUBLIC_HOST", Some("localhost"));
+        let _port = ListenPortGuard::set(9375);
+        match resolve_device_advertise_base_url() {
+            Some((url, src)) => {
+                assert_eq!(src, AdvertiseUrlSource::LanIp);
+                assert!(!origin_host_is_loopback(&url), "{url}");
+            }
+            None => {
+                // No LAN — refusing localhost PUBLIC_HOST is correct.
+            }
+        }
+        // LocalOk still accepts explicit localhost PUBLIC_HOST.
+        let (local_url, local_src) =
+            resolve_advertise_base_url_for(AdvertiseAudience::LocalOk).expect("local ok");
+        assert_eq!(local_src, AdvertiseUrlSource::PublicHost);
+        assert!(origin_host_is_loopback(&local_url));
     }
 }

@@ -62,7 +62,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - BLE provision display name is now editable and shown in the discovered device list.
 
 ### Fixed — devices
-- Device downlink image params are capability-gated by name: `url`/`display_url`/`image_url`/`src`/`href` become absolute `{advertise}/api/images/...` via `NEOMIND_SERVER_URL` → `NEOMIND_PUBLIC_HOST` → primary LAN IPv4 using the **actual listen port** (bound port / `NEOMIND_PORT`, not a stale 9375); localhost/127.0.0.1 is **rejected** for devices with an actionable “configure a device-reachable URL” error (never data-URL; never silent relative); other image params still embed data-URLs — Chat/tool-to-tool keep relative refs (NM-314).
+- Device downlink image params are capability-gated by name: `url`/`display_url`/`image_url`/`src`/`href` become absolute `{advertise}/api/images/...` via `NEOMIND_SERVER_URL` → `NEOMIND_PUBLIC_HOST` → primary LAN IPv4 using the **actual listen port** (recorded from `local_addr().port()` after bind / `NEOMIND_PORT`); loopback **hosts** are rejected even when set via `NEOMIND_SERVER_URL=http://127.0.0.1:…` or `NEOMIND_PUBLIC_HOST=localhost` (not just the Localhost source enum), with an actionable “configure a device-reachable URL” error (never data-URL; never silent relative); other image params still embed data-URLs — Chat/tool-to-tool keep relative refs (NM-314).
 - EK410 `render_text` description/help documents width-based auto-wrap + scale shrink instead of a hard 10-line cap.
 
 ### Fixed — chat / web
@@ -79,7 +79,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - NM-309: parallel `mutate_dashboard` append regression; invented `--params` recovery tips; JSON parse readability/batch hints (incl. Chinese UTF-8 byte column Near); skill per-section dedupe without hard-gating unread sections.
 - NM-310 / NM-316: TurnTimeline / ThinkingBlock / toolCallUtils vitest (34).
 - NM-314: `materialize_internal_image_refs_in_value` resolves `/api/images/` only on declared image keys + strips image-field data-URIs; prose path strings untouched; missing refs fail closed; HTTP prepare→execute and ExtensionTool claim-then-materialize paths covered.
-- NM-314: device outbound `url` → absolute HTTP via advertise fallback (`NEOMIND_SERVER_URL` / `NEOMIND_PUBLIC_HOST` / LAN + live listen port); localhost rejected for devices; `image` still data-URL.
+- NM-314: device outbound `url` → absolute HTTP via advertise fallback (`NEOMIND_SERVER_URL` / `NEOMIND_PUBLIC_HOST` / LAN + post-bind listen port); loopback hosts rejected for devices (incl. env/public_host); `image` still data-URL.
 - Chat session album / NM-231 strip: `session_album` build/format/resolve + bounded album prompt block + durable-path annotate-before-hydrate + text-only `messages_to_api` path fold-in (llama.cpp + OpenAI).
 
 ---

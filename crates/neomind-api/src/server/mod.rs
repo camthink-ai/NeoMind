@@ -63,12 +63,8 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     // would otherwise panic on first TLS use (e.g. the TLS proxy below).
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    HTTP_BIND_LOOPBACK.store(
-        bind.ip().is_loopback(),
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    // Single source of truth for advertise / proxy port (not hardcoded 9375).
-    neomind_core::advertise::set_http_listen_port(bind.port());
+    // Listen port / loopback flags are recorded **after** the socket binds
+    // (see below) so port 0 gets the OS-assigned port via local_addr().
     use crate::startup::{ServiceStatus, StartupLogger};
 
     // Note: V2 extension system doesn't require panic hook installation
@@ -238,13 +234,22 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
     // with the tokio runtime is unsupported" — seen on macOS 15+).
     socket.set_nonblocking(true)?;
     let listener = tokio::net::TcpListener::from_std(socket.into())?;
+    // Prefer local_addr() over the pre-bind `bind` arg: when port is 0 the OS
+    // assigns an ephemeral port that bind.port() still reports as 0.
+    let bound_addr = listener.local_addr()?;
+    HTTP_BIND_LOOPBACK.store(
+        bound_addr.ip().is_loopback(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    neomind_core::advertise::set_http_listen_port(bound_addr.port());
 
     // Ready phase — HTTP listener is bound
     startup.phase_ready();
-    startup.ready_info(&bind.to_string());
+    startup.ready_info(&bound_addr.to_string());
 
     tracing::info!(
         elapsed_ms = t_start.elapsed().as_millis() as u64,
+        listen = %bound_addr,
         "HTTP listener ready (time to serve)"
     );
 
@@ -262,7 +267,7 @@ pub async fn run(bind: SocketAddr) -> anyhow::Result<()> {
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(9376);
-        let target = format!("127.0.0.1:{}", bind.port());
+        let target = format!("127.0.0.1:{}", bound_addr.port());
         tokio::spawn(async move {
             match run_tls_proxy(&cert, &key, tls_port, &target).await {
                 Ok(()) => unreachable!("tls proxy loop never returns Ok"),

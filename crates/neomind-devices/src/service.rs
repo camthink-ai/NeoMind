@@ -2397,10 +2397,14 @@ impl DeviceService {
                              from EK410 and other remotes) or send relative `{s}`."
                         )));
                     };
-                    if src.is_loopback() {
+                    // Defense in depth: reject by **host**, not source enum —
+                    // NEOMIND_SERVER_URL=http://127.0.0.1:… / PUBLIC_HOST=localhost
+                    // must not reach the device even if tagged Env/PublicHost.
+                    if neomind_core::advertise::origin_host_is_loopback(base) {
                         return Err(DeviceError::InvalidParameter(format!(
-                            "Param `{key}` refuses localhost advertise origin `{base}` — configure \
-                             a device-reachable URL via NEOMIND_SERVER_URL or NEOMIND_PUBLIC_HOST."
+                            "Param `{key}` refuses loopback advertise origin `{base}` — configure \
+                             a device-reachable URL via NEOMIND_SERVER_URL or NEOMIND_PUBLIC_HOST \
+                             (not localhost/127.0.0.1)."
                         )));
                     }
                     if src != neomind_core::advertise::AdvertiseUrlSource::Env {
@@ -3691,6 +3695,123 @@ mod tests {
                 let msg = e.to_string();
                 assert!(
                     msg.contains("device-reachable") || msg.contains("NEOMIND_SERVER_URL"),
+                    "{msg}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_resolve_command_rejects_loopback_server_url_config() {
+        let _lock = ADVERTISE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        struct EnvGuard {
+            key: &'static str,
+            prev: Option<String>,
+        }
+        impl EnvGuard {
+            fn set(key: &'static str, value: Option<&str>) -> Self {
+                let prev = std::env::var(key).ok();
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+                Self { key, prev }
+            }
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+
+        // Loopback SERVER_URL must not win; fall through to LAN or hard-fail —
+        // never 127.0.0.1 in the final AbsoluteHttp URL.
+        let _g1 = EnvGuard::set("NEOMIND_SERVER_URL", Some("http://127.0.0.1:9375"));
+        let _g2 = EnvGuard::set("NEOMIND_PUBLIC_HOST", None);
+        let temp =
+            std::env::temp_dir().join(format!("neomind_test_cmd_envloop_{}", std::process::id()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let rel = "/api/images/cam/frame/1.jpg".to_string();
+        let mut params = HashMap::new();
+        params.insert("display_url".to_string(), MetricValue::String(rel.clone()));
+        match DeviceService::resolve_command_image_urls(&mut params, &temp) {
+            Ok(()) => {
+                let MetricValue::String(s) = &params["display_url"] else {
+                    panic!("expected string");
+                };
+                assert!(
+                    !s.contains("127.0.0.1") && !s.contains("localhost"),
+                    "SERVER_URL loopback must not reach device: {s}"
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("device-reachable")
+                        || msg.contains("loopback")
+                        || msg.contains("NEOMIND_SERVER_URL"),
+                    "{msg}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_resolve_command_rejects_loopback_public_host_config() {
+        let _lock = ADVERTISE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        struct EnvGuard {
+            key: &'static str,
+            prev: Option<String>,
+        }
+        impl EnvGuard {
+            fn set(key: &'static str, value: Option<&str>) -> Self {
+                let prev = std::env::var(key).ok();
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+                Self { key, prev }
+            }
+        }
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+
+        let _g1 = EnvGuard::set("NEOMIND_SERVER_URL", None);
+        let _g2 = EnvGuard::set("NEOMIND_PUBLIC_HOST", Some("localhost"));
+        let temp =
+            std::env::temp_dir().join(format!("neomind_test_cmd_publoop_{}", std::process::id()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let rel = "/api/images/cam/frame/1.jpg".to_string();
+        let mut params = HashMap::new();
+        params.insert("display_url".to_string(), MetricValue::String(rel.clone()));
+        match DeviceService::resolve_command_image_urls(&mut params, &temp) {
+            Ok(()) => {
+                let MetricValue::String(s) = &params["display_url"] else {
+                    panic!("expected string");
+                };
+                assert!(
+                    !s.contains("127.0.0.1") && !s.contains("localhost"),
+                    "PUBLIC_HOST=localhost must not reach device: {s}"
+                );
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("device-reachable")
+                        || msg.contains("loopback")
+                        || msg.contains("NEOMIND_PUBLIC_HOST")
+                        || msg.contains("NEOMIND_SERVER_URL"),
                     "{msg}"
                 );
             }
