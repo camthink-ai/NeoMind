@@ -34,11 +34,13 @@ describe('ThinkingBlock', () => {
     expect(screen.queryByText('chat:thinking.characters')).toBeNull()
   })
 
-  it('renders per-round labels when multiple rounds exist', () => {
+  it('renders stacked per-round thinking without R labels', () => {
     render(<ThinkingBlock roundThinking={{ 1: '第一轮', 2: '第二轮' }} />)
     fireEvent.click(screen.getByRole('button'))
-    expect(screen.getByText('R1')).toBeTruthy()
-    expect(screen.getByText('R2')).toBeTruthy()
+    expect(screen.getByText('第一轮')).toBeTruthy()
+    expect(screen.getByText('第二轮')).toBeTruthy()
+    expect(screen.queryByText('R1')).toBeNull()
+    expect(screen.queryByText('R2')).toBeNull()
   })
 
   it('does not draw an internal divider in inline (timeline) mode', () => {

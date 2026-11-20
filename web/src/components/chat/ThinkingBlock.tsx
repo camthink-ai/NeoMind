@@ -3,7 +3,6 @@
  *
  * Supports two modes:
  * 1. Per-round thinking (roundThinking provided): shows thinking grouped by round
- *    with visual labels, differentiated styling per round
  * 2. Simple thinking (only `thinking` provided): shows as a single block
  *
  * Inline mode (inside TurnTimeline): one-line `思考 · N 字`, default collapsed.
@@ -108,7 +107,6 @@ export function ThinkingBlock({
 
           {inline && <div className="flex-1" />}
 
-          {/* Live status sits on the right with the chevron — never beside Rn. */}
           {inline && isStreaming && (
             <span className="inline-flex shrink-0 items-center gap-1.5 text-base leading-5 text-muted-foreground">
               <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
@@ -171,22 +169,18 @@ function PerRoundThinking({
     )
   }
 
-  // Multiple rounds - show with round labels
+  // Multiple rounds — stacked paragraphs, no R1/Rn chrome.
   return (
     <div className="space-y-2">
       {sortedRounds.map(([round, text], idx) => (
-        <div key={round}>
-          <div className="mb-1 flex items-center gap-1.5">
-            <span className="inline-flex items-center justify-center text-sm font-medium tabular-nums text-muted-foreground">
-              R{round}
-            </span>
-          </div>
-          <div className="leading-relaxed text-foreground whitespace-pre-wrap break-words text-base">
-            {text}
-            {idx === sortedRounds.length - 1 && isStreaming && (
-              <span className="bg-current motion-safe:animate-pulse align-middle ml-0.5 inline-block w-1 h-3.5" />
-            )}
-          </div>
+        <div
+          key={round}
+          className="leading-relaxed text-foreground whitespace-pre-wrap break-words text-base"
+        >
+          {text}
+          {idx === sortedRounds.length - 1 && isStreaming && (
+            <span className="bg-current motion-safe:animate-pulse align-middle ml-0.5 inline-block w-1 h-3.5" />
+          )}
         </div>
       ))}
     </div>

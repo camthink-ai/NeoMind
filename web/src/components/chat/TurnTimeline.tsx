@@ -1,17 +1,19 @@
 /**
  * TurnTimeline — round-based view of an assistant turn's process.
  *
- * Expanded layout is flat and scannable: compact R1/R2 prefixes beside the
- * first row of each round (not a lone label line), collapsed thinking
+ * Expanded layout is flat and scannable: collapsed thinking
  * (`思考 · N 字`), one tool row per call, and inter-round text shown
  * directly in muted body type. The final answer stays outside, rendered by
  * ChatMessages.
+ *
+ * Open while streaming; auto-collapses when the turn completes. Manual
+ * toggle still works after that.
  *
  * Only used when a message has tool calls; a simple answer keeps the plain
  * ThinkingBlock + markdown path.
  */
 
-import { useState, type ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import {
   AlertCircle,
@@ -81,7 +83,7 @@ function buildRounds({
   }
 
   // Legacy thinking has no round; attach it to the first tool round rather
-  // than inventing an R1 that never existed.
+  // than inventing a round that never existed.
   const hasRoundThinking = Object.keys(roundThinking ?? {}).length > 0
   if (thinking?.trim() && !hasRoundThinking) {
     const firstRound = toolCalls.length > 0
@@ -91,32 +93,6 @@ function buildRounds({
   }
 
   return [...groups.values()].sort((a, b) => a.round - b.round)
-}
-
-/** Compact round marker: prefix on the first row only; later rows share the gutter.
- *  Vertically center Rn with the content row (items-center). Live status
- *  spinners live on the thinking/tool rows — never jammed beside Rn. */
-function RoundRow({
-  round,
-  showLabel,
-  children,
-}: {
-  round: number
-  showLabel: boolean
-  children: ReactNode
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <span
-        className="flex w-7 shrink-0 items-center self-stretch text-base font-medium leading-5 tabular-nums text-muted-foreground"
-        aria-hidden={!showLabel}
-        data-testid={showLabel ? `round-label-${round}` : undefined}
-      >
-        {showLabel ? `R${round}` : null}
-      </span>
-      <div className="min-w-0 flex-1">{children}</div>
-    </div>
-  )
 }
 
 export function TurnTimeline({
@@ -137,9 +113,11 @@ export function TurnTimeline({
     finalContent,
   })
 
-  // A turn that streamed open must not snap shut when isStreaming flips
-  // false. The user keeps their choice until they toggle it.
+  // Expanded during streaming; collapse when the turn completes.
   const [isExpanded, setIsExpanded] = useState(() => isStreaming)
+  useEffect(() => {
+    setIsExpanded(isStreaming)
+  }, [isStreaming])
 
   if (rounds.length === 0) return null
 
@@ -227,15 +205,7 @@ export function TurnTimeline({
                 data-testid={`turn-round-${group.round}`}
                 className="space-y-0"
               >
-                {rows.map((row, idx) => (
-                  <RoundRow
-                    key={idx}
-                    round={group.round}
-                    showLabel={idx === 0}
-                  >
-                    {row}
-                  </RoundRow>
-                ))}
+                {rows}
               </div>
             )
           })}

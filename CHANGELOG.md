@@ -66,7 +66,8 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - EK410 `render_text` description/help documents width-based auto-wrap + scale shrink instead of a hard 10-line cap.
 
 ### Fixed — chat / web
-- Chat「执行过程」expanded panel: compact R1/Rn prefixes beside the first row (not lone label lines; vertically centered with the row), live Loader2 on the content trailing cluster (not the Rn gutter), scannable tool rows prefer audit `description`, thinking collapses as `思考 · N 字`, inter-round notes show muted inline (not disclosure), and device-delivery subtitle only when structured `delivery`/`delivery_note` exists (NM-310).
+- Chat「执行过程」: stays expanded while streaming, auto-collapses when the turn completes; R1/Rn round chrome removed (tool / thinking / inter-round notes still differentiated) (NM-316).
+- Chat「执行过程」expanded panel: scannable tool rows prefer audit `description`, thinking collapses as `思考 · N 字`, inter-round notes show muted inline (not disclosure), and device-delivery subtitle only when structured `delivery`/`delivery_note` exists (NM-310).
 - Streaming assistant markdown drops the blinking caret rehype inject; waiting dots use `motion-safe:animate-pulse`; message enter fade removed; user bubble max-width and composer dock horizontal padding tightened.
 
 ### Test
@@ -76,7 +77,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Stage 3 gates: `cli_api_contract` fixture suite covering 15 domains including `auth`/`data`/`api-key` and wrapped `/mqtt/status` & `/mqtt/broker-config` (S3-1); Light/Balanced/Standard tool-profile + `Light` `vision` reachability + Light `toolTokens` <1800 + 8K multi-turn history-budget & Turn-2 wire-capture tests (`compute_history_budget_8k_uses_light_profile_and_avoids_zero_budget`, `minicpm_8k_multiturn_keeps_light_profile_tools_on_turn_2`) (S3-2); prompt-token EWMA clamp/update math + tool-inclusive calibration regression test (S3-3).
 - NM-302 PreparedInvoke params gates: bare `--params {"city":"xiamen"}` tokenize/mint, illegal `{city:xiamen}` attach `HOST_ATTACH_ERROR` + structured-params tip, structured `params` mint→restore→bind, bind never-minted vs case-c wording.
 - NM-309: parallel `mutate_dashboard` append regression; invented `--params` recovery tips; JSON parse readability/batch hints; skill overview+section thrash hard-gate.
-- NM-310: TurnTimeline / ThinkingBlock / toolCallUtils vitest (33).
+- NM-310 / NM-316: TurnTimeline / ThinkingBlock / toolCallUtils vitest (34).
 - NM-314: `materialize_internal_image_refs_in_value` resolves `/api/images/` + strips image-field data-URIs; missing refs fail closed; HTTP prepare→execute and ExtensionTool claim-then-materialize paths covered.
 - NM-314: device outbound `url` + `NEOMIND_SERVER_URL` → absolute HTTP; without advertise stays relative; `image` still data-URL.
 - Chat session album / NM-231 strip: `session_album` build/format/resolve + durable-path annotate-before-hydrate + text-only `messages_to_api` path fold-in (llama.cpp + OpenAI).

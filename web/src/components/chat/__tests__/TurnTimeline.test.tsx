@@ -1,5 +1,5 @@
-/// Tests for the round-based execution timeline: compact R prefixes, muted
-/// inline intermediate notes, scannable tool rows, and structured delivery.
+/// Tests for the round-based execution timeline: collapsed-when-done header,
+/// muted inline intermediate notes, and scannable tool rows (no R1/Rn chrome).
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { TurnTimeline } from '../TurnTimeline'
@@ -24,7 +24,7 @@ const toolCalls: ToolCall[] = [
 ]
 
 describe('TurnTimeline', () => {
-  it('expands into compact R prefixes with collapsed thinking and inline notes', () => {
+  it('expands into collapsed thinking, inline notes, and tool rows without R labels', () => {
     render(
       <TurnTimeline
         toolCalls={toolCalls}
@@ -34,16 +34,9 @@ describe('TurnTimeline', () => {
     )
     expect(screen.getByText(/chat:timeline\.title/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
-    expect(screen.getByText('R1')).toBeTruthy()
-    expect(screen.getByText('R2')).toBeTruthy()
-    // Center-align: R gutter shares the row (items-center), no spinner beside Rn.
-    const r1 = screen.getByTestId('round-label-1')
-    expect(r1.className).toContain('items-center')
-    expect(r1.className).toContain('self-stretch')
-    expect(r1.className).not.toContain('mt-')
-    expect(r1.querySelector('svg')).toBeNull()
-    // R labels sit beside the first row — not a lone dedicated button row.
-    expect(screen.queryByRole('button', { name: /^R1/ })).toBeNull()
+    expect(screen.queryByText('R1')).toBeNull()
+    expect(screen.queryByText('R2')).toBeNull()
+    expect(screen.queryByTestId('round-label-1')).toBeNull()
     // Thinking stays collapsed by default — body not visible, summary is.
     expect(screen.queryByText('第一轮思考内容较长一些')).toBeNull()
     expect(screen.getAllByText(/thinking\.inlineTitle/).length).toBeGreaterThanOrEqual(1)
@@ -58,9 +51,27 @@ describe('TurnTimeline', () => {
 
   it('keeps a completed process collapsed and expands it from its summary header', () => {
     render(<TurnTimeline toolCalls={toolCalls} />)
-    expect(screen.queryByText('R1')).toBeNull()
+    expect(screen.queryByText('读取 INK 的设备信息')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
-    expect(screen.getByText('R1')).toBeTruthy()
+    expect(screen.getByText('读取 INK 的设备信息')).toBeTruthy()
+  })
+
+  it('auto-collapses when streaming finishes', () => {
+    const { rerender } = render(
+      <TurnTimeline
+        toolCalls={[{ ...toolCalls[0], result: null }]}
+        isStreaming
+        currentRound={1}
+      />
+    )
+    expect(screen.getByText('toolCall.status.running')).toBeTruthy()
+    rerender(
+      <TurnTimeline
+        toolCalls={toolCalls}
+        isStreaming={false}
+      />
+    )
+    expect(screen.queryByText('读取 INK 的设备信息')).toBeNull()
   })
 
   it('shows a short failure reason on the tool row when available', () => {
