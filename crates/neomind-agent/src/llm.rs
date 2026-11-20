@@ -1162,6 +1162,7 @@ impl LlmInterface {
 
     /// Compute the full token budget breakdown for conversation history given
     /// the model's context window, active tool profile, and EWMA calibration.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn compute_history_budget_breakdown(
         &self,
         max_ctx: usize,
@@ -1259,6 +1260,7 @@ impl LlmInterface {
     ///
     /// Returns `(available_tokens, prompt_budget_tokens)` where `available_tokens` is the
     /// token budget for history messages after reserving space for everything else.
+    #[allow(clippy::too_many_arguments)]
     async fn compute_history_budget(
         &self,
         max_ctx: usize,

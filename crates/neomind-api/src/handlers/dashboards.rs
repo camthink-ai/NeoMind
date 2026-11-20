@@ -24,14 +24,6 @@ use neomind_storage::dashboards::{
     SharePermissions as StoredSharePermissions, ShareToken as StoredShareToken,
 };
 
-/// All widget type ids the frontend can render: builtin ∪ community ∪
-/// extension-bundled. Shared by the add-components and update (full-replace)
-/// paths so both reject unknown types at the door.
-/// Sorted, pipe-joined known types for error hints. The hardcoded hint list
-/// drifted from the registry and recommended `gauge` — a type the dynamic
-/// validation itself rejects. Hints must come from the same source of truth
-/// as the check (builtin ∪ community ∪ extension-bundled).
-
 /// Reject ephemeral static payload keys that serde would silently drop.
 /// value-card / charts need `data_source`; static prose uses markdown-display `config.content`.
 fn reject_ephemeral_static_fields(c: &serde_json::Value, index: usize) -> Result<(), String> {
@@ -54,12 +46,19 @@ fn reject_ephemeral_static_fields(c: &serde_json::Value, index: usize) -> Result
     ))
 }
 
+/// Sorted, pipe-joined known types for error hints. The hardcoded hint list
+/// drifted from the registry and recommended `gauge` — a type the dynamic
+/// validation itself rejects. Hints must come from the same source of truth
+/// as the check (builtin ∪ community ∪ extension-bundled).
 fn known_widget_types_hint(state: &ServerState) -> String {
     let mut types: Vec<String> = collect_known_widget_types(state).into_iter().collect();
     types.sort();
     types.join("|")
 }
 
+/// All widget type ids the frontend can render: builtin ∪ community ∪
+/// extension-bundled. Shared by the add-components and update (full-replace)
+/// paths so both reject unknown types at the door.
 fn collect_known_widget_types(state: &ServerState) -> std::collections::HashSet<String> {
     let mut known: std::collections::HashSet<String> =
         neomind_core::dashboard::BUILTIN_WIDGET_TYPES

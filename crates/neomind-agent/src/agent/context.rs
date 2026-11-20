@@ -557,7 +557,7 @@ pub(crate) fn strip_stale_images(history: &mut [AgentMessage], max_context: Opti
             // Annotate durable handles into text BEFORE hydrating to data URLs
             // so NM-231 text-only strip still leaves `/api/images/…` for tools.
             let paths = super::session_album::durable_paths_from_images(
-                msg.images.as_ref().map(|v| v.as_slice()).unwrap_or(&[]),
+                msg.images.as_deref().unwrap_or(&[]),
             );
             if !paths.is_empty() {
                 let pairs = paths.into_iter().map(|path| {
@@ -583,9 +583,8 @@ pub(crate) fn strip_stale_images(history: &mut [AgentMessage], max_context: Opti
             continue;
         }
         // Stale images: drop pixels but keep durable path handles in text.
-        let paths = super::session_album::durable_paths_from_images(
-            msg.images.as_ref().map(|v| v.as_slice()).unwrap_or(&[]),
-        );
+        let paths =
+            super::session_album::durable_paths_from_images(msg.images.as_deref().unwrap_or(&[]));
         msg.images = None;
         if paths.is_empty() {
             let note = format!("[{image_count} image(s) omitted from history to save context]");
