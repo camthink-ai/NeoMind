@@ -79,7 +79,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - NM-309: parallel `mutate_dashboard` append regression; invented `--params` recovery tips; JSON parse readability/batch hints (incl. Chinese UTF-8 byte column Near); skill per-section dedupe without hard-gating unread sections.
 - NM-310 / NM-316: TurnTimeline / ThinkingBlock / toolCallUtils vitest (34).
 - NM-314: `materialize_internal_image_refs_in_value` resolves `/api/images/` only on declared image keys + strips image-field data-URIs; prose path strings untouched; missing refs fail closed; HTTP prepare→execute and ExtensionTool claim-then-materialize paths covered.
-- NM-314: device outbound `url` → absolute HTTP via advertise fallback (`NEOMIND_SERVER_URL` / `NEOMIND_PUBLIC_HOST` / LAN + post-bind listen port); loopback hosts rejected for devices; `PUBLIC_HOST`/`origin_host` treat `http(s)://` case-insensitively and bare `host:port` without double-prefix or Url scheme misparse; `image` still data-URL.
+- NM-314: device outbound `url` → absolute HTTP via advertise fallback (`NEOMIND_SERVER_URL` / `NEOMIND_PUBLIC_HOST` / LAN + post-bind listen port); loopback hosts rejected for devices; `PUBLIC_HOST` appends listen port only when the input has no explicit port (no `host:9444:9375`); unparseable candidates skipped; `image` still data-URL.
 - Chat session album / NM-231 strip: `session_album` build/format/resolve + bounded album prompt block + durable-path annotate-before-hydrate + text-only `messages_to_api` path fold-in (llama.cpp + OpenAI).
 
 ---

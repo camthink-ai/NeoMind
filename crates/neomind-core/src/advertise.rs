@@ -119,7 +119,7 @@ fn host_from_authority(authorityish: &str) -> Option<String> {
         let end = hostport.find(']')?;
         hostport[1..end].to_string()
     } else if let Some((h, port)) = hostport.rsplit_once(':') {
-        if port.chars().all(|c| c.is_ascii_digit()) {
+        if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) {
             h.to_string()
         } else {
             hostport.to_string()
@@ -134,17 +134,52 @@ fn host_from_authority(authorityish: &str) -> Option<String> {
     }
 }
 
+/// True when a bare authority already includes an explicit numeric port
+/// (`edge.lan:9444`, `[::1]:9444`).
+fn authority_has_explicit_port(authorityish: &str) -> bool {
+    let authority = authorityish
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim();
+    let hostport = authority.rsplit('@').next().unwrap_or(authority);
+    if hostport.starts_with('[') {
+        let Some(end) = hostport.find(']') else {
+            return false;
+        };
+        let after = &hostport[end + 1..];
+        return after
+            .strip_prefix(':')
+            .is_some_and(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    }
+    hostport
+        .rsplit_once(':')
+        .is_some_and(|(_, p)| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+}
+
 /// Build an absolute origin from `NEOMIND_PUBLIC_HOST` + listen port.
 ///
-/// If `host` already carries an `http(s)://` scheme (any case), use it as-is
-/// (trimmed). Otherwise prepend `http://{host}:{port}`.
-pub fn public_host_origin(host: &str, port: u16) -> String {
+/// - Already has `http(s)://` (any case) → trim only (do **not** append listen port).
+/// - Bare `host:port` → `http://{host:port}` (do **not** append listen port again).
+/// - Bare `host` → `http://{host}:{listen_port}`.
+/// - Unparseable host → [`None`] (caller skips the candidate).
+pub fn public_host_origin(host: &str, listen_port: u16) -> Option<String> {
     let host = host.trim();
-    if has_http_scheme(host) {
-        trim_base(host)
-    } else {
-        format!("http://{host}:{port}")
+    if host.is_empty() {
+        return None;
     }
+    let origin = if has_http_scheme(host) {
+        trim_base(host)
+    } else if authority_has_explicit_port(host) {
+        format!("http://{host}")
+    } else {
+        format!("http://{host}:{listen_port}")
+    };
+    // Refuse candidates we cannot extract a host from (device path skips these).
+    if origin_host(&origin).is_none() {
+        return None;
+    }
+    Some(origin)
 }
 
 /// Extract the host from an absolute origin (`http://host:port`, bare host, …).
@@ -194,7 +229,11 @@ fn accept_for_audience(
     url: String,
     src: AdvertiseUrlSource,
 ) -> Option<(String, AdvertiseUrlSource)> {
-    if audience == AdvertiseAudience::DeviceReachable && origin_host_is_loopback(&url) {
+    // Parse failure → skip candidate (do not advertise a broken origin).
+    let Some(host) = origin_host(&url) else {
+        return None;
+    };
+    if audience == AdvertiseAudience::DeviceReachable && is_loopback_host(&host) {
         return None;
     }
     Some((url, src))
@@ -219,17 +258,19 @@ pub fn resolve_advertise_base_url_for(
 
     let port = advertise_http_port();
 
-    // 2. Public hostname / IP override (scheme check is case-insensitive).
+    // 2. Public hostname / IP override (scheme check is case-insensitive;
+    //    listen port appended only when the input has no explicit port).
     if let Ok(host) = std::env::var("NEOMIND_PUBLIC_HOST") {
         let host = host.trim();
         if !host.is_empty() {
-            let candidate = public_host_origin(host, port);
-            if let Some(accepted) =
-                accept_for_audience(audience, candidate, AdvertiseUrlSource::PublicHost)
-            {
-                return Some(accepted);
+            if let Some(candidate) = public_host_origin(host, port) {
+                if let Some(accepted) =
+                    accept_for_audience(audience, candidate, AdvertiseUrlSource::PublicHost)
+                {
+                    return Some(accepted);
+                }
             }
-            // Device path: loopback PUBLIC_HOST — fall through to LAN.
+            // Unparseable / loopback PUBLIC_HOST — fall through to LAN.
         }
     }
 
@@ -418,8 +459,8 @@ mod tests {
         let _b = EnvGuard::set("NEOMIND_PUBLIC_HOST", Some("HTTPS://edge.example.com"));
         let _port = ListenPortGuard::set(9444);
         assert_eq!(
-            public_host_origin("HTTPS://edge.example.com", 9444),
-            "HTTPS://edge.example.com"
+            public_host_origin("HTTPS://edge.example.com", 9444).as_deref(),
+            Some("HTTPS://edge.example.com")
         );
         let (url, src) = resolve_advertise_base_url().expect("public host");
         assert_eq!(src, AdvertiseUrlSource::PublicHost);
@@ -429,6 +470,62 @@ mod tests {
             "must not double-prefix scheme: {url}"
         );
         assert_eq!(origin_host(&url), Some("edge.example.com".into()));
+    }
+
+    #[test]
+    fn public_host_origin_port_table() {
+        // Absolute scheme URL — keep as-is (no listen-port append).
+        assert_eq!(
+            public_host_origin("HTTPS://edge.example.com", 9444).as_deref(),
+            Some("HTTPS://edge.example.com")
+        );
+        // Bare host:port — http:// prefix only; do NOT append listen port again.
+        assert_eq!(
+            public_host_origin("edge.lan:9444", 9375).as_deref(),
+            Some("http://edge.lan:9444")
+        );
+        assert!(
+            !public_host_origin("edge.lan:9444", 9375)
+                .unwrap()
+                .contains(":9444:9375"),
+            "must not double-append listen port"
+        );
+        // Bare host — append listen port.
+        assert_eq!(
+            public_host_origin("edge.lan", 9375).as_deref(),
+            Some("http://edge.lan:9375")
+        );
+        // localhost:9444 builds a loopback origin (LocalOk may use; Device skips).
+        assert_eq!(
+            public_host_origin("localhost:9444", 9375).as_deref(),
+            Some("http://localhost:9444")
+        );
+        assert!(!public_host_origin("localhost:9444", 9375)
+            .unwrap()
+            .contains(":9444:9375"));
+    }
+
+    #[test]
+    fn device_skips_localhost_with_explicit_port_not_double_port() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _a = EnvGuard::set("NEOMIND_SERVER_URL", None);
+        let _b = EnvGuard::set("NEOMIND_PUBLIC_HOST", Some("localhost:9444"));
+        let _port = ListenPortGuard::set(9375);
+        match resolve_device_advertise_base_url() {
+            Some((url, src)) => {
+                assert_eq!(src, AdvertiseUrlSource::LanIp);
+                assert!(!url.contains("localhost"));
+                assert!(!url.contains(":9444:9375"));
+            }
+            None => {
+                // No LAN — refusing localhost:9444 is correct (not a double-port URL).
+            }
+        }
+        // LocalOk still accepts http://localhost:9444 (single port).
+        let (local_url, local_src) =
+            resolve_advertise_base_url_for(AdvertiseAudience::LocalOk).expect("local ok");
+        assert_eq!(local_src, AdvertiseUrlSource::PublicHost);
+        assert_eq!(local_url, "http://localhost:9444");
     }
 
     #[test]
