@@ -66,7 +66,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - EK410 `render_text` description/help documents width-based auto-wrap + scale shrink instead of a hard 10-line cap.
 
 ### Fixed — chat / web
-- Chat「执行过程」: stays expanded while streaming, auto-collapses when the turn completes; R1/Rn round chrome removed (tool / thinking / inter-round notes still differentiated) (NM-316).
+- Chat「执行过程」: stays expanded while streaming, auto-collapses when the turn completes; R1/Rn round chrome removed; inter-round gap matches intra-round row spacing (tool / thinking / inter-round notes still differentiated) (NM-316).
 - Chat「执行过程」expanded panel: scannable tool rows prefer audit `description`, thinking collapses as `思考 · N 字`, inter-round notes show muted inline (not disclosure), and device-delivery subtitle only when structured `delivery`/`delivery_note` exists (NM-310).
 - Streaming assistant markdown drops the blinking caret rehype inject; waiting dots use `motion-safe:animate-pulse`; message enter fade removed; user bubble max-width and composer dock horizontal padding tightened.
 

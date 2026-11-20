@@ -163,7 +163,8 @@ export function TurnTimeline({
       </CollapsibleTrigger>
 
       <CollapsibleContent className="overflow-hidden motion-safe:data-[state=open]:animate-collapsible-down">
-        <div className="mb-1 space-y-2">
+        {/* Flat stack: inter-round gap matches intra-round row padding (no space-y). */}
+        <div className="mb-1">
           {rounds.map(group => {
             const isActive = activeRound === group.round
             const rows: ReactNode[] = []
@@ -200,11 +201,7 @@ export function TurnTimeline({
             if (rows.length === 0) return null
 
             return (
-              <div
-                key={group.round}
-                data-testid={`turn-round-${group.round}`}
-                className="space-y-0"
-              >
+              <div key={group.round} data-testid={`turn-round-${group.round}`}>
                 {rows}
               </div>
             )
