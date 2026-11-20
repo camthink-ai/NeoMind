@@ -4245,6 +4245,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "utoipa",
  "uuid",
  "zip 9.3.0",
