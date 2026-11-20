@@ -444,15 +444,15 @@ impl Tool for VisionTool {
     }
 
     fn description(&self) -> &str {
-        "Analyze images not already visible in this message using a vision backend. Accepts `/api/images/...` (pass unchanged), `$cached:...` refs, public http(s) URLs, local image paths, or base64. Do NOT call for images already attached directly to chat."
+        "Analyze images not inline in chat via VLM. Accepts /api/images/…, $cached:…, http(s) URL, path, or base64."
     }
 
     fn parameters(&self) -> Value {
         object_schema(
             serde_json::json!({
-                "image": string_property("Image ref: `/api/images/...`, `$cached:...`, public URL, local path, or base64."),
-                "prompt": string_property("Analysis instructions in the user's language."),
-                "model": serde_json::json!({"type": "string", "description": "Optional VLM model name to force (from `neomind llm list`)."})
+                "image": string_property("Image ref (/api/images/…, $cached:…, URL, path, base64)."),
+                "prompt": string_property("Analysis instructions."),
+                "model": serde_json::json!({"type": "string", "description": "Optional VLM model name."})
             }),
             vec!["image".to_string(), "prompt".to_string()],
         )

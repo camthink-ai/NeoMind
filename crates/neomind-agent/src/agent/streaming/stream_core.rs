@@ -406,6 +406,8 @@ pub(super) fn drive_react_stream(
             // ops are abandoned on interrupt/drop/timeout — never sibling turns.
             let stream_owner = super::super::task_continuity::new_stream_owner();
             let call_site_turn = call_site_turn;
+            let has_user_images =
+                matches!(&mode, InitialStreamMode::Multimodal { has_images: true });
             let lease_drop_reason = match &mode {
                 InitialStreamMode::Text { .. } => "stream dropped or timed out",
                 InitialStreamMode::Multimodal { .. } => "stream dropped or timed out (multimodal)",
@@ -1483,7 +1485,7 @@ pub(super) fn drive_react_stream(
                             .observe_prompt_calibration(prompt_tokens)
                             .await;
                         let (system_prompt_tokens, tool_tokens) = llm_interface
-                            .calibrated_context_breakdown(prompt_tokens, false)
+                            .calibrated_context_breakdown(prompt_tokens, has_user_images)
                             .await;
                         yield AgentEvent::ContextUsage {
                             prompt_tokens,
@@ -3481,8 +3483,9 @@ pub(super) fn drive_react_stream(
                     // Calibration may already have consumed the paired raw
                     // estimate at ContextUsage time — observe is a no-op then.
                     llm_interface.observe_prompt_calibration(pt).await;
-                    let (system_tokens, tool_tokens) =
-                        llm_interface.calibrated_context_breakdown(pt, false).await;
+                    let (system_tokens, tool_tokens) = llm_interface
+                        .calibrated_context_breakdown(pt, has_user_images)
+                        .await;
                     Some((pt, system_tokens, tool_tokens))
                 }
                 None => None,

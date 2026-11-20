@@ -197,7 +197,7 @@ pub async fn list_devices(
     });
     if truncated {
         response["skipped_reason"] = json!(format!(
-            "page returned {returned} of {total}; raise --limit or page via API"
+            "page returned {returned} of {total}; filter with --device-type / --status or page via API"
         ));
     }
     if enrichment_skipped {

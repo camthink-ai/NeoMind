@@ -817,6 +817,46 @@ impl LlmInterface {
         *self.last_raw_prompt_estimate.lock().await = Some(estimated);
     }
 
+    /// Estimate raw JSON schema tokens for the tool definitions actually attached
+    /// to an outbound `LlmInput` (matching `estimate_prompt_breakdown_for_turn`).
+    pub(crate) fn estimate_tools_input_tokens(
+        tools: Option<&[neomind_core::llm::backend::ToolDefinition]>,
+    ) -> usize {
+        let Some(tools) = tools else {
+            return 0;
+        };
+        tools
+            .iter()
+            .map(|t| {
+                let json = serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    }
+                });
+                crate::agent::tokenizer::estimate_json_schema_tokens(&json.to_string())
+            })
+            .sum()
+    }
+
+    /// Estimate total raw prompt tokens (messages + images + attached tools)
+    /// for pairing against backend `prompt_eval` counts in S3-3 EWMA calibration.
+    pub(crate) fn estimate_raw_prompt_tokens_with_tools(
+        messages: &[Message],
+        tools: Option<&[neomind_core::llm::backend::ToolDefinition]>,
+        max_ctx: usize,
+    ) -> usize {
+        let msg_tokens = crate::agent::tokenizer::estimate_prompt_tokens_with_image_cost(
+            messages,
+            "",
+            "",
+            crate::agent::tokenizer::image_token_estimate(max_ctx),
+        );
+        msg_tokens.saturating_add(Self::estimate_tools_input_tokens(tools))
+    }
+
     async fn calibration_key_now(&self) -> String {
         let backend = self.bound_backend_id().await;
         let model = self.model.read().await.clone();
@@ -2849,6 +2889,13 @@ impl LlmInterface {
             .build_request_tools_input(attach_tools, false, has_user_images)
             .await;
 
+        let raw_prompt_est = Self::estimate_raw_prompt_tokens_with_tools(
+            &messages,
+            tools_input.as_deref(),
+            max_ctx,
+        );
+        self.note_raw_prompt_estimate(raw_prompt_est).await;
+
         self.observe_send_boundary(
             &messages,
             &history_before_trim,
@@ -3032,8 +3079,9 @@ impl LlmInterface {
             "LlmInterface chat_stream_internal"
         );
 
-        // Size the prompt once: feeds S3-3 EWMA calibration (raw estimate) and
-        // the large-prompt thinking-disable guard.
+        // Size the prompt for the large-prompt thinking-disable guard.
+        // S3-3 EWMA calibration records the exact trimmed messages + attached
+        // tools_input right before dispatch so tool schemas are never omitted.
         let estimated_tokens = crate::agent::tokenizer::estimate_prompt_tokens_with_image_cost(
             history.unwrap_or(&[]),
             &system_prompt,
@@ -3044,7 +3092,6 @@ impl LlmInterface {
             // budget the guard believes is still roomy.
             crate::agent::tokenizer::image_token_estimate(self.max_context_length().await),
         );
-        self.note_raw_prompt_estimate(estimated_tokens).await;
 
         // Safety: auto-disable thinking for very large prompts.
         // Small thinking models (2B) with large prompts (20k+ tokens) tend to
@@ -3212,6 +3259,13 @@ impl LlmInterface {
             .build_request_tools_input(attach_tools, exclude_skill, false)
             .await;
 
+        let raw_prompt_est = Self::estimate_raw_prompt_tokens_with_tools(
+            &messages,
+            tools_input.as_deref(),
+            max_ctx,
+        );
+        self.note_raw_prompt_estimate(raw_prompt_est).await;
+
         self.observe_send_boundary(
             &messages,
             &history_before_trim,
@@ -3247,6 +3301,7 @@ impl LlmInterface {
         let llm_retry = llm.clone();
         let limiter_retry = self.limiter.clone();
         let token_tracker = self.last_prompt_tokens.clone();
+        let raw_estimate_tracker = self.last_raw_prompt_estimate.clone();
 
         // Convert stream with tiered context overflow retry
         Ok(Box::pin(async_stream::stream! {
@@ -3285,6 +3340,12 @@ impl LlmInterface {
                             tracing::debug!(reason = "context_overflow_recovery",
                                 enabled = ?retry_thinking.0, effort = ?retry_thinking.1,
                                 "Applying recovery thinking policy");
+                            let retry_raw_est = Self::estimate_raw_prompt_tokens_with_tools(
+                                &retry_messages,
+                                None,
+                                max_ctx,
+                            );
+                            *raw_estimate_tracker.lock().await = Some(retry_raw_est);
                             let retry_input = LlmInput {
                                 messages: retry_messages,
                                 params: neomind_core::llm::backend::GenerationParams {
@@ -4412,5 +4473,76 @@ mod tests {
         assert_eq!(body.matches("OVERVIEW_BODY").count(), 1);
         assert_eq!(body.matches("LAYOUT_SECTION").count(), 1);
         assert_eq!(body.matches("DATASOURCE_SECTION").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn ewma_calibration_includes_tools_and_stays_near_one() {
+        let interface = LlmInterface::new(ChatConfig::default());
+        let tools = vec![
+            neomind_core::llm::backend::ToolDefinition {
+                name: "shell".to_string(),
+                description: "Run NeoMind CLI commands and native host commands.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["command"],
+                    "properties": {
+                        "command": { "type": "string", "description": "CLI command to run." },
+                        "params": { "type": "object", "description": "Structured JSON payload." }
+                    }
+                }),
+            },
+            neomind_core::llm::backend::ToolDefinition {
+                name: "memory".to_string(),
+                description: "Read or update long-term user and knowledge memory.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["action"],
+                    "properties": {
+                        "action": { "type": "string", "enum": ["read", "write", "list"] },
+                        "path": { "type": "string" }
+                    }
+                }),
+            },
+        ];
+
+        let messages = vec![
+            Message::system("You are NeoMind, an edge IoT assistant."),
+            Message::user("List all devices and their status."),
+        ];
+
+        let msg_only = LlmInterface::estimate_raw_prompt_tokens_with_tools(&messages, None, 8_192);
+        let tool_tokens = LlmInterface::estimate_tools_input_tokens(Some(&tools));
+        let with_tools =
+            LlmInterface::estimate_raw_prompt_tokens_with_tools(&messages, Some(&tools), 8_192);
+        assert!(tool_tokens > 50, "tool schema tokens must be non-trivial");
+        assert_eq!(with_tools, msg_only + tool_tokens);
+
+        // Simulate 10 rounds where backend measured prompt_eval matches raw messages + tools.
+        // Without tool_tokens in the raw estimate, measured/est would be >>1.5x and saturate at 1.35.
+        for _ in 0..10 {
+            interface.note_raw_prompt_estimate(with_tools).await;
+            interface
+                .observe_prompt_calibration(with_tools as u32)
+                .await;
+        }
+        let factor = interface.prompt_calibration_factor().await;
+        assert!(
+            (factor - 1.0).abs() < 0.05,
+            "EWMA factor should stay near 1.0 when tools are included, got {factor}"
+        );
+
+        // Also verify a ~5% realistic tokenizer variance converges gently instead of hitting 1.35.
+        let measured_slightly_higher = ((with_tools as f64) * 1.05).round() as u32;
+        for _ in 0..10 {
+            interface.note_raw_prompt_estimate(with_tools).await;
+            interface
+                .observe_prompt_calibration(measured_slightly_higher)
+                .await;
+        }
+        let factor2 = interface.prompt_calibration_factor().await;
+        assert!(
+            (1.0..=1.10).contains(&factor2),
+            "EWMA factor should track ~1.05 rather than saturating at 1.35, got {factor2}"
+        );
     }
 }

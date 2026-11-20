@@ -129,7 +129,11 @@ pub async fn system_info(client: &ApiClient) -> Result<CliResponse> {
         json!({
             "devices": st.get("devices").cloned().unwrap_or(Value::Null),
             "rules": st.get("rules").cloned().unwrap_or(Value::Null),
-            "messages": st.get("messages").cloned().unwrap_or(Value::Null),
+            "messages": st
+                .get("alerts")
+                .or_else(|| st.get("messages"))
+                .cloned()
+                .unwrap_or(Value::Null),
         })
     });
 
@@ -474,7 +478,7 @@ mod tests {
                         "stats": {
                             "devices": {"total_devices": 3, "online_devices": 1, "offline_devices": 2},
                             "rules": {"total_rules": 2, "enabled_rules": 1},
-                            "messages": {"active": 0}
+                            "alerts": {"active": 2}
                         }
                     }
                 }),
@@ -588,6 +592,7 @@ mod tests {
         assert_eq!(data["llm"]["active"]["supports_multimodal"], json!(true));
         assert_eq!(data["extensions"]["running"], json!(1));
         assert_eq!(data["extensions"]["failed"], json!(1));
+        assert_eq!(data["resources"]["messages"]["active"], json!(2));
         assert_eq!(data["mqtt"]["clients_connected"], json!(1));
         assert_eq!(data["mqtt"]["credentials_count"], json!(1));
         assert_eq!(data["network"]["server_url_source"], json!("lan_ip"));

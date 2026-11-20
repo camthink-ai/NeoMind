@@ -475,7 +475,7 @@ impl Tool for MemoryTool {
     }
 
     fn description(&self) -> &str {
-        "Manage persistent cross-session memory (not preloaded; read only when prior preferences/facts/procedures are needed). Targets: `user`, `knowledge`, `procedures` (preferred), `session`, `custom:{name}`. Use `file_write`/`file_edit` for ordinary files."
+        "Persistent cross-session memory (not preloaded). Targets: user, knowledge, procedures, session, custom:{name}."
     }
 
     fn parameters(&self) -> Value {
@@ -485,11 +485,11 @@ impl Tool for MemoryTool {
                 "action": {
                     "type": "string",
                     "enum": ["add", "rewrite", "replace", "remove", "read", "list", "create"],
-                    "description": "Memory operation."
+                    "description": "Operation."
                 },
                 "target": {
                     "type": "string",
-                    "description": "`user`, `knowledge`, `procedures`, `session`, or `custom:{name}`."
+                    "description": "user, knowledge, procedures, session, or custom:{name}."
                 },
                 "content": {
                     "type": "string",
@@ -497,7 +497,7 @@ impl Tool for MemoryTool {
                 },
                 "old_text": {
                     "type": "string",
-                    "description": "Text to match for replace/remove."
+                    "description": "Match text for replace/remove."
                 }
             },
             "required": ["action"]

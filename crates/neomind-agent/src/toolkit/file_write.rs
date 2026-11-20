@@ -31,7 +31,7 @@ impl Tool for FileWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Create or overwrite a whole file (JSON/TOML syntax-checked before write). Prefer `file_edit` for existing files and `memory` for cross-run memory. Allowed dirs only, max 10MB."
+        "Create/overwrite a file (JSON/TOML validated). Prefer file_edit for edits, memory for cross-run notes."
     }
 
     fn parameters(&self) -> Value {
@@ -39,7 +39,7 @@ impl Tool for FileWriteTool {
             serde_json::json!({
                 "path": {
                     "type": "string",
-                    "description": "File path (relative to data/ or absolute)."
+                    "description": "File path."
                 },
                 "content": {
                     "type": "string",
@@ -47,7 +47,7 @@ impl Tool for FileWriteTool {
                 },
                 "expected": {
                     "type": "object",
-                    "description": "Optional freshness guard `{mtime_ms, size}` from last `file_read`.",
+                    "description": "Optional {mtime_ms, size} from file_read.",
                     "properties": { "mtime_ms": {"type": "integer"}, "size": {"type": "integer"} }
                 },
                 "create_dirs": {

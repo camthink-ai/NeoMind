@@ -299,7 +299,7 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search the public web (returns title, url, snippet). Open relevant URLs with `web_fetch` before citing details. Never use for NeoMind platform data — use `shell` (`neomind ...`)."
+        "Search public web (title, url, snippet). Never for NeoMind data — use shell (neomind …)."
     }
 
     fn parameters(&self) -> Value {
@@ -307,7 +307,7 @@ impl Tool for WebSearchTool {
             serde_json::json!({
                 "query": {
                     "type": "string",
-                    "description": "Focused search keywords (English works best)."
+                    "description": "Search keywords."
                 },
                 "count": {
                     "type": "number",

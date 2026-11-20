@@ -236,7 +236,7 @@ neomind dashboard update-component <ID> --component-id c2 \
 # Preferred (no JSON quoting): shell tool `params` object
 # command: neomind dashboard update-component <ID> --component-id c2
 # params:  {"position":{"w":2,"h":2}}
-
+```
 
 ### Resize example (Chat/shell tool — copy this shape)
 
@@ -248,7 +248,6 @@ neomind dashboard update-component <ID> --component-id c2 \
 ```
 
 `"N行N列"` / `2x2` means `h=N,w=N` grid cells. Keep current `x,y` unless the user asks to move.
-```
 
 Find component IDs with `neomind dashboard get <ID>` (each component has an `id`). Resize = patch `w`/`h` only; do not relocate to `next free row` unless adding a new widget.
 

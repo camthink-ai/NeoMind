@@ -45,10 +45,10 @@ pub fn tool_exposed_in_profile(
         ToolProfile::Light => match tool_name {
             // High-cost / low-freq: defer unless the turn already has images.
             "image_edit" => has_user_images,
-            // Pure-text Light turns also defer vision (bring back with images).
-            "vision" => has_user_images && vlm_available,
             // Heavy file-edit + fetch schemas: on-demand for small windows.
             "file_edit" | "web_fetch" => false,
+            // `vision` stays reachable on Light when vlm_available && !has_user_images
+            // (filtered above when images are already inline or no VLM is configured).
             _ => true,
         },
         ToolProfile::Balanced => {
@@ -120,11 +120,20 @@ mod tests {
             false,
             true
         ));
-        assert!(!tool_exposed_in_profile(
+        // Pure-text Light turns with a configured VLM keep `vision` reachable
+        // (e.g., analyzing camera history images), while hiding it when no VLM
+        // is available or when images are already attached inline.
+        assert!(tool_exposed_in_profile(
             "vision",
             ToolProfile::Light,
             false,
             true
+        ));
+        assert!(!tool_exposed_in_profile(
+            "vision",
+            ToolProfile::Light,
+            false,
+            false
         ));
         assert!(tool_exposed_in_profile(
             "shell",
@@ -224,7 +233,14 @@ mod tests {
             "web_fetch",
             "memory",
         ];
-        let kept = filter_tools_for_profile(names, |s| *s, 8_192, false, true);
-        assert_eq!(kept, vec!["shell", "memory"]);
+        // Light + VLM available + pure-text turn keeps `vision` reachable.
+        let kept = filter_tools_for_profile(names.clone(), |s| *s, 8_192, false, true);
+        assert_eq!(kept, vec!["shell", "vision", "memory"]);
+        // Without a VLM backend, `vision` is omitted.
+        let kept_no_vlm = filter_tools_for_profile(names.clone(), |s| *s, 8_192, false, false);
+        assert_eq!(kept_no_vlm, vec!["shell", "memory"]);
+        // When user images are already inline, `image_edit` is exposed and `vision` is omitted.
+        let kept_inline = filter_tools_for_profile(names, |s| *s, 8_192, true, true);
+        assert_eq!(kept_inline, vec!["shell", "image_edit", "memory"]);
     }
 }

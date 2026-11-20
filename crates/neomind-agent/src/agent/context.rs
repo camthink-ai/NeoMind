@@ -1329,13 +1329,13 @@ mod greeting_tests {
 
     #[test]
     fn greetings_match_under_length_cap() {
-        // starts_with is case-sensitive (legacy fast-path semantics kept):
-        // exact matches work case-insensitively, prefixed text only lowercase.
+        // Case-insensitive word-boundary greeting match under length cap.
         for s in [
             "你好",
             "您好",
             "hi",
             "HI",
+            "Hi there",
             "hello",
             "hello!",
             "嗨",
@@ -1354,7 +1354,8 @@ mod greeting_tests {
             "帮我查一下设备",
             "list the devices",
             "你好，帮我创建一个温度报警规则，温度超过30度时发消息", // starts with 你好 but >20 chars
-            "Hi there", // case-sensitive starts_with: not a greeting prefix
+            "history of temp",
+            "high cpu?",
         ] {
             assert!(!is_simple_greeting(s), "{s:?} should NOT be a greeting");
         }

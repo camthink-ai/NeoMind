@@ -380,7 +380,7 @@ impl Tool for ImageEditTool {
     }
 
     fn description(&self) -> &str {
-        "Edit image via ordered operations. Source: $cached:user_image[_N], URL, path, or /api/images/…. Type fields: rect ops x,y,width,height; circle cx,cy,radius; line/arrow x1..y2; polygon points; text text. #RRGGBB[AA]."
+        "Edit image via ordered operations. Source: $cached:user_image[_N], URL, path, or /api/images/…. Type fields: crop/draw_rect/blur_rect: x,y,width,height; draw_circle: cx,cy,radius; draw_line/draw_arrow: x1,y1,x2,y2; draw_polygon: points; draw_text: text. #RRGGBB[AA]."
     }
 
     fn parameters(&self) -> Value {

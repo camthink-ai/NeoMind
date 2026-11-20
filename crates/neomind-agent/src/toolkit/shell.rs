@@ -106,8 +106,9 @@ const DOMAIN_INDEX: &str = r#"
 - settings: timezone set-timezone timezones retention set-retention cleanup
 - operation: list get (inspect persisted write-operation ledger status by operation_id; check whether an unknown/timed-out operation succeeded or failed)
 - system: info health stats
+- health: (server readiness and system stats summary)
 - api-key: create list delete
-Deliberately not available here (do not try them): serve prompt chat logs health list-models
+Deliberately not available here (do not try them): serve prompt chat logs list-models
 check-update upgrade uninstall login logout whoami user config data — the first group only runs as a
 separate process, the rest are operator commands with their own session or irreversible effects.
 
@@ -2314,7 +2315,7 @@ impl Tool for ShellTool {
 
 Quick reference (`neomind <domain> --help` or `skill` for full syntax):
 - Read: `<domain> get <ID>` / `<domain> list` (positional ID, never `--id`).
-- Control/writes: `device control <ID> <CMD> --param k=v`, `rule/connector/push enable <ID>`, `llm activate <ID>`, `agent executions|conversation|send-message <ID>`, `message channel-list|channel-create|channel-test`.
+- Control/writes: `device control <ID> <CMD> --param key=value` (NOT standalone `--key` flags), `rule/connector/push enable <ID>`, `llm activate <ID>`, `agent executions|conversation|send-message <ID>`, `message channel-list|channel-create|channel-test`.
 - Extensions: `extension list` (overview), `extension commands --search "<task>"` (use `shell_example`), `extension commands <ID>` (schema).
 - NEVER guess IDs, metrics, or subcommands — read before write when facts are missing or stale.
 - COMPLETE THE FULL FLOW and verify results (e.g. `connector create`, `connector enable`, then `connector test`). On error check `suggestion`."#;
@@ -2326,7 +2327,7 @@ Quick reference (`neomind <domain> --help` or `skill` for full syntax):
             serde_json::json!({
                 "command": {
                     "type": "string",
-                    "description": "Command to run. neomind runs in-process (no pipes/redirects); pass JSON flags via params below, never _new_operation here."
+                    "description": "Command to run. neomind runs in-process (no pipes/redirects; use built-in filter flags); pipes/redirects work only with native host commands. Pass JSON flags via params below, never _new_operation."
                 },
                 "params": {
                     "anyOf": [
@@ -2530,9 +2531,10 @@ mod tests {
             error,
         )
         .unwrap();
-        assert!(hint.contains("--param 'text=your content'"));
+        assert!(hint.contains("params={...}"));
         assert!(hint.contains("--params '<JSON>'"));
-        assert!(hint.contains("actual parameter names and types"));
+        assert!(hint.contains("--param 'key=value'"));
+        assert!(hint.contains("real parameter names"));
         assert!(!hint.contains("ID is positional"));
     }
 
@@ -4712,12 +4714,10 @@ mod p0_2_envelope_help_session_tests {
         use std::collections::{BTreeMap, BTreeSet};
 
         let root = neomind_cli_ops::dispatch::commands::Args::command();
-        // Map domain name -> set of valid subcommand names + aliases.
+        // Map domain name -> set of valid subcommand names + aliases (empty set
+        // for leaf top-level commands like `health`).
         let mut domain_subcommands: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for sub in root.get_subcommands() {
-            if !sub.has_subcommands() {
-                continue;
-            }
             let mut names = BTreeSet::new();
             for child in sub.get_subcommands() {
                 names.insert(child.get_name().to_string());
@@ -4809,6 +4809,9 @@ mod p0_2_envelope_help_session_tests {
                 let Some(valid) = domain_subcommands.get(dom) else {
                     continue;
                 };
+                if valid.is_empty() {
+                    continue;
+                }
                 let Some(raw_sub) = tokens.next() else {
                     continue;
                 };

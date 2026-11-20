@@ -116,7 +116,7 @@ impl Tool for FileReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read a file with line numbers (default 400 lines; returns `state:{mtime_ms,size}` for edit freshness) or read a `$cached:...` large tool output via `char_offset`/`char_length` (default 8000 chars). Allowed dirs only, max 10MB."
+        "Read file with line numbers (default 400 lines; returns state:{mtime_ms,size}) or $cached:… ref via char_offset/char_length."
     }
 
     fn parameters(&self) -> Value {
@@ -124,23 +124,23 @@ impl Tool for FileReadTool {
             serde_json::json!({
                 "path": {
                     "type": "string",
-                    "description": "File path (relative to data/ or absolute) or `$cached:...` ref."
+                    "description": "File path or $cached:… ref."
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "1-based start line (files only; default 1)."
+                    "description": "1-based start line (default 1)."
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Max lines (files only; default 400)."
+                    "description": "Max lines (default 400)."
                 },
                 "char_offset": {
                     "type": "integer",
-                    "description": "$cached only: 0-based char offset (default 0)."
+                    "description": "$cached char offset (default 0)."
                 },
                 "char_length": {
                     "type": "integer",
-                    "description": "$cached only: max chars (default 8000, cap 64000)."
+                    "description": "$cached max chars (default 8000, cap 64000)."
                 }
             }),
             vec!["path".to_string()],
