@@ -296,19 +296,22 @@ pub async fn get_system_stats_handler(
                 .filter(|r| r.as_ref().is_ok_and(|m| !m.is_empty()))
                 .count();
 
-            use neomind_devices::adapter::ConnectionStatus;
-            let online = state
-                .devices
-                .service
-                .get_devices_by_status(ConnectionStatus::Connected)
-                .await
-                .len();
-            let offline = state
-                .devices
-                .service
-                .get_devices_by_status(ConnectionStatus::Disconnected)
-                .await
-                .len();
+            let mut online = 0usize;
+            for cfg in &configs {
+                let status = state
+                    .devices
+                    .service
+                    .get_device_status(&cfg.device_id)
+                    .await;
+                let timeout = state
+                    .devices
+                    .service
+                    .effective_offline_timeout(&cfg.device_id);
+                if status.is_connected_within(timeout) {
+                    online += 1;
+                }
+            }
+            let offline = configs.len().saturating_sub(online);
 
             DeviceStats {
                 total_devices: configs.len(),
