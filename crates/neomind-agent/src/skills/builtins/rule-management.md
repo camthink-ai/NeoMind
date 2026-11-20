@@ -198,7 +198,7 @@ neomind rule create --name "High Temp" \
   --notify "Too hot: {value}"
 
 # FULL FORM for anything else (range/logical/multi-action/schedule):
-neomind rule create --body '<your_json>'
+Chat/shell preferred: `{ "command": "neomind rule create", "params": {…rule object…} }` (maps to `--body`). Human CLI: `neomind rule create --body '<your_json>'`
 # Note the returned rule ID.
 
 # With authorized test input: evaluate the condition; this alone does not prove duration or physical delivery.

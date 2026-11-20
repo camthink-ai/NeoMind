@@ -73,6 +73,7 @@ neomind widget install frontend-components/<widget-id>
 # ID (what `widget create` returned / `widget list` shows), NEVER "custom":
 # "custom" is the manifest's CATEGORY field and the server rejects it as an
 # unknown type
+# Prefer shell {command, params:[…]} — string flag is Human CLI fallback
 neomind dashboard add-components <DASHBOARD_ID> --components '[{
   "id": "my-widget-1",
   "type": "<widget-id>",

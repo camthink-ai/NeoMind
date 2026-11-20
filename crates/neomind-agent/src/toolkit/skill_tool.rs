@@ -30,6 +30,10 @@ pub struct TurnLoadedSkills {
 }
 
 impl TurnLoadedSkills {
+    /// After overview is in context, allow this many distinct section loads
+    /// before hard-gating further section thrashing (NM-242).
+    pub const MAX_SECTIONS_AFTER_OVERVIEW: usize = 2;
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -51,6 +55,36 @@ impl TurnLoadedSkills {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .contains(&key)
+    }
+
+    /// True when the skill overview (`section = None`) is already in this turn.
+    pub fn overview_loaded(&self, id: &str) -> bool {
+        self.contains(id, None)
+    }
+
+    /// Count distinct reference sections already loaded for `id` this turn.
+    pub fn section_load_count(&self, id: &str) -> usize {
+        self.loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(k, sec)| k == id && sec.is_some())
+            .count()
+    }
+
+    /// NM-242: when overview is already present, reject further *new* section
+    /// thrashing beyond [`Self::MAX_SECTIONS_AFTER_OVERVIEW`]. Legitimate
+    /// first 1–2 section lookups still return full chapters.
+    pub fn should_hard_gate_new_section(&self, id: &str, section: Option<&str>) -> bool {
+        let Some(sec) = section else {
+            return false;
+        };
+        if self.contains(id, Some(sec)) {
+            // Exact repeat → soft already_present path, not hard gate.
+            return false;
+        }
+        self.overview_loaded(id)
+            && self.section_load_count(id) >= Self::MAX_SECTIONS_AFTER_OVERVIEW
     }
 
     /// Clear all cached load entries for `id` (called after `update`/`delete`
@@ -596,6 +630,32 @@ impl Tool for SkillTool {
                     );
                     let mut result = skill.load_guide(section)
                         .map_err(ToolError::InvalidArguments)?;
+                    // NM-242: overview already in context + enough distinct
+                    // sections loaded → hard-gate further NEW section thrashing
+                    // (soft `already_present` alone did not stop section hunting).
+                    let hard_gated = TURN_LOADED_SKILLS
+                        .try_with(|tracker| {
+                            tracker.should_hard_gate_new_section(&skill.metadata.id, section)
+                        })
+                        .unwrap_or(false);
+                    if hard_gated {
+                        tracing::info!(
+                            target: "neomind::skills",
+                            resolved = %skill.metadata.id,
+                            section = ?section,
+                            "skill_load_hard_gated"
+                        );
+                        let mut compact = serde_json::json!({
+                            "id": skill.metadata.id,
+                            "already_present": true,
+                            "hard_gated": true,
+                            "hint": "Overview already in context and enough reference sections were loaded — run the next CLI command now (e.g. `neomind dashboard get` / `add-components`). Do not thrash skill sections."
+                        });
+                        if let Some(sec) = section {
+                            compact["section"] = serde_json::json!(sec);
+                        }
+                        return Ok(ToolOutput::success(compact));
+                    }
                     // Turn-scoped single-copy dedup: if the exact `(canonical_id, section)`
                     // is already present in this turn's `tool` history, return a lightweight
                     // acknowledgment instead of re-emitting the full guide body.
@@ -1634,6 +1694,75 @@ mod tests {
         assert!(next_turn.data["guide"]
             .as_str()
             .is_some_and(|g| g.len() > 50));
+    }
+
+    /// NM-242: after overview + MAX_SECTIONS_AFTER_OVERVIEW distinct sections,
+    /// further NEW section loads hard-gate instead of dumping more chapters.
+    #[tokio::test]
+    async fn overview_plus_section_thrash_hard_gates() {
+        let tool = builtin_tool();
+        let tracker = Arc::new(TurnLoadedSkills::new());
+
+        let overview = with_turn_loaded_skills(
+            tracker.clone(),
+            tool.execute(serde_json::json!({"action": "load", "id": "dashboard-management"})),
+        )
+        .await
+        .unwrap();
+        assert!(overview.data.get("guide").is_some());
+        let sections: Vec<String> = overview.data["sections"]
+            .as_array()
+            .expect("sections")
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        assert!(
+            sections.len() > TurnLoadedSkills::MAX_SECTIONS_AFTER_OVERVIEW,
+            "need enough sections to thrash"
+        );
+
+        // Fill the allowed section budget.
+        for sec in sections
+            .iter()
+            .take(TurnLoadedSkills::MAX_SECTIONS_AFTER_OVERVIEW)
+        {
+            let out = with_turn_loaded_skills(
+                tracker.clone(),
+                tool.execute(serde_json::json!({
+                    "action": "load",
+                    "id": "dashboard-management",
+                    "section": sec,
+                })),
+            )
+            .await
+            .unwrap();
+            assert!(out.data.get("guide").is_some(), "allowed section must load");
+            assert!(out.data.get("hard_gated").is_none());
+        }
+
+        // Next distinct section → hard gate.
+        let next = &sections[TurnLoadedSkills::MAX_SECTIONS_AFTER_OVERVIEW];
+        let gated = with_turn_loaded_skills(
+            tracker.clone(),
+            tool.execute(serde_json::json!({
+                "action": "load",
+                "id": "dashboard-management",
+                "section": next,
+            })),
+        )
+        .await
+        .unwrap();
+        assert_eq!(gated.data["already_present"], true);
+        assert_eq!(gated.data["hard_gated"], true);
+        assert!(gated.data.get("guide").is_none());
+        assert!(
+            gated.data["hint"]
+                .as_str()
+                .unwrap_or("")
+                .contains("run the next CLI command"),
+            "{:?}",
+            gated.data["hint"]
+        );
     }
 
     #[tokio::test]

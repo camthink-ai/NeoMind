@@ -81,11 +81,14 @@ Creating dashboards with data-bound components is the most complex CLI operation
 3. **To change ONE component's fields use `update-component`** — deep-merges a partial JSON into it; no need to re-send the whole component or remove+re-add
 4. **`update --components` is GATED** — it replaces ALL components and requires the explicit `--replace-all` flag; without it the command fails. You almost never want it: ADD → `add-components`, TWEAK → `update-component`
 5. **ALWAYS `dashboard get <ID>` before adding components** — its output ends with a grid summary (occupied rows + `next free row: y=N`); place **new** widgets at that y. Component ids are listed too (avoid collisions). **Resize/move are different:** keep current x,y unless the user asks to move; only change `position.w`/`position.h`.
-6. **Grid is 12 columns wide** — `w`/`h` are grid units (not pixels). "大概2行2列" → `--set`/`params` `{"position":{"w":2,"h":2}}` at the existing x,y.
-7. **NEVER use Python/pipe/file tricks** — each shell call is an isolated process; you cannot share data between calls via files, pipes, or variables. Prefer shell structured `params` for JSON; if you must inline, keep a single clean JSON object (no leftover quotes).
-8. **Use `widget get <type>` to inspect config_schema** before configuring unfamiliar widgets
-9. **NEVER use emoji in component titles or descriptions** — plain text labels only ("Temperature" / "温度", not "🌡 Temperature")
-10. **Charts (line-chart, area-chart, bar-chart, sparkline, pie-chart) MUST use `mode: "timeseries"`** — using `mode: "latest"` on charts causes rendering errors. Always include `timeWindow` (e.g., `"timeWindow": {"type": "last_24hours"}`) for proper historical data. Value-cards and indicators use `mode: "latest"`.
+6. **Grid is 12 columns wide** — `w`/`h` are grid units (not pixels). "大概2行2列" → shell `params` `{"position":{"w":2,"h":2}}` at the existing x,y.
+7. **Chat JSON = shell structured `params` ONLY** — preferred shape: `{ "command": "neomind dashboard add-components <ID>", "params": [ … ] }`. Never invent CLI `--params` for dashboard commands (primary flags are `--components` / `--set` / `--ids`). Do not paste huge `--components '[…]'` strings in Chat.
+8. **Batch 1–2 components per call** — verify with `dashboard get`, then append the next row. Never first-turn a 5+ chart mega-array.
+9. **NEVER put ephemeral `"data"` or `"label"` on value-card/charts** — those keys are rejected / not persisted. Live values require `data_source` (telemetry or extension-metric). Static prose → `markdown-display` + `config.content` only.
+10. **Weather / extension metrics** — `extension invoke … refresh` or `get_weather` first (shell `params` object), then bind `data_source` with `type:"extension-metric"`, `field:"COMMAND:FIELD"` (e.g. `get_weather:temperature_c`).
+11. **Use `widget get <type>` to inspect config_schema** before configuring unfamiliar widgets
+12. **NEVER use emoji in component titles or descriptions** — plain text labels only ("Temperature" / "温度", not "🌡 Temperature")
+13. **Charts MUST use `mode: "timeseries"`** with `timeWindow`. Value-cards use `mode: "latest"`.
 
 ## Minimal Component Shape (the schema validators REQUIRE exactly this)
 
@@ -147,67 +150,75 @@ neomind dashboard create --name "Battery Monitor"
 
 ### Step 4: Add Components (RECOMMENDED)
 
-Use `add-components` — it appends without replacing existing components:
+Use shell structured `params` (1–2 cards per call). Appends without replacing existing components:
 
-```bash
-neomind dashboard add-components <DASHBOARD_ID> --components '[
-  {
-    "id": "c1",
-    "type": "value-card",
-    "title": "Temperature",
-    "position": {"x": 0, "y": 0, "w": 4, "h": 2},
-    "data_source": {
-      "type": "telemetry",
-      "source": "device",
-      "id": "sensor-001",
-      "field": "temperature",
-      "mode": "latest",
-      "sourceId": "sensor-001",
-      "metricId": "temperature",
-      "timeRange": 1,
-      "limit": 50
-    },
-    "display": {"unit": "°C", "format": ".1f"}
-  }
-]'
+```json
+{
+  "command": "neomind dashboard add-components <DASHBOARD_ID>",
+  "params": [
+    {
+      "id": "c1",
+      "type": "value-card",
+      "title": "Temperature",
+      "position": {"x": 0, "y": 0, "w": 4, "h": 2},
+      "data_source": {
+        "type": "telemetry",
+        "source": "device",
+        "id": "sensor-001",
+        "field": "temperature",
+        "mode": "latest",
+        "sourceId": "sensor-001",
+        "metricId": "temperature",
+        "timeRange": 1,
+        "limit": 50
+      },
+      "display": {"unit": "°C", "format": ".1f"}
+    }
+  ]
+}
 ```
+
+Human CLI fallback only: `# Prefer shell params:[…] — string form is Human CLI fallback only
+neomind dashboard add-components <ID> --components '[{...}]'` (never invent `--params`).
 
 ### Complete Example: Battery Dashboard
 
-```bash
-# Step 1: Discover metrics
-neomind device list
-neomind device get sensor-001
-neomind device get sensor-002
-
-# Step 2: Create dashboard
-neomind dashboard create --name 'Battery Monitor'
-
-# Step 3: Add ALL components using add-components (append mode)
-neomind dashboard add-components <DASHBOARD_ID> --components '[
-  {"id":"b1","type":"value-card","title":"Sensor 1 Battery","position":{"x":0,"y":0,"w":4,"h":2},
-   "data_source":{"type":"telemetry","source":"device","id":"sensor-001","field":"battery","mode":"latest","sourceId":"sensor-001","metricId":"battery","timeRange":1,"limit":50},
-   "display":{"unit":"%","format":".0f"}},
-  {"id":"b2","type":"value-card","title":"Sensor 2 Battery","position":{"x":4,"y":0,"w":4,"h":2},
-   "data_source":{"type":"telemetry","source":"device","id":"sensor-002","field":"battery","mode":"latest","sourceId":"sensor-002","metricId":"battery","timeRange":1,"limit":50},
-   "display":{"unit":"%","format":".0f"}},
-  {"id":"chart","type":"line-chart","title":"Battery Trends","position":{"x":0,"y":2,"w":12,"h":4},
-   "data_source":[
-     {"type":"telemetry","source":"device","id":"sensor-001","field":"battery","mode":"timeseries","sourceId":"sensor-001","metricId":"battery","timeRange":1,"limit":50,"timeWindow":{"type":"last_24hours"}},
-     {"type":"telemetry","source":"device","id":"sensor-002","field":"battery","mode":"timeseries","sourceId":"sensor-002","metricId":"battery","timeRange":1,"limit":50,"timeWindow":{"type":"last_24hours"}}
-   ],
-   "display":{"unit":"%","showLegend":true}}
-]'
-
-# Step 4: Verify
-neomind dashboard get <DASHBOARD_ID>
+1. Discover: `neomind device list` / `device get sensor-001` / `device get sensor-002`
+2. Create: `neomind dashboard create --name "Battery Monitor"`
+3. Add **two value-cards** via shell `params` array (one call, ≤2 items):
+```json
+{
+  "command": "neomind dashboard add-components <DASHBOARD_ID>",
+  "params": [
+    {"id":"b1","type":"value-card","title":"Sensor 1 Battery","position":{"x":0,"y":0,"w":4,"h":2},
+     "data_source":{"type":"telemetry","source":"device","id":"sensor-001","field":"battery","mode":"latest","sourceId":"sensor-001","metricId":"battery","timeRange":1,"limit":50},
+     "display":{"unit":"%","format":".0f"}},
+    {"id":"b2","type":"value-card","title":"Sensor 2 Battery","position":{"x":4,"y":0,"w":4,"h":2},
+     "data_source":{"type":"telemetry","source":"device","id":"sensor-002","field":"battery","mode":"latest","sourceId":"sensor-002","metricId":"battery","timeRange":1,"limit":50},
+     "display":{"unit":"%","format":".0f"}}
+  ]
+}
 ```
+4. Append the chart in a **second** call (still 1 item):
+```json
+{
+  "command": "neomind dashboard add-components <DASHBOARD_ID>",
+  "params": [
+    {"id":"chart","type":"line-chart","title":"Battery Trends","position":{"x":0,"y":2,"w":12,"h":4},
+     "data_source":[
+       {"type":"telemetry","source":"device","id":"sensor-001","field":"battery","mode":"timeseries","sourceId":"sensor-001","metricId":"battery","timeRange":1,"limit":50,"timeWindow":{"type":"last_24hours"}},
+       {"type":"telemetry","source":"device","id":"sensor-002","field":"battery","mode":"timeseries","sourceId":"sensor-002","metricId":"battery","timeRange":1,"limit":50,"timeWindow":{"type":"last_24hours"}}
+     ],
+     "display":{"unit":"%","showLegend":true}}
+  ]
+}
+```
+5. Verify: `neomind dashboard get <DASHBOARD_ID>`
 
 ### Remove Components
 
-```bash
-# Remove specific components by their IDs
-neomind dashboard remove-components <DASHBOARD_ID> --ids '["b1","chart"]'
+```json
+{ "command": "neomind dashboard remove-components <DASHBOARD_ID>", "params": ["b1","chart"] }
 ```
 
 ### Delete Dashboard
@@ -442,6 +453,7 @@ neomind dashboard get <ID>
 # Note: find max(existing y + h) for the new y position
 
 # Step 2: Add new components (they are appended, not replaced)
+# Prefer shell params:[…] — string form is Human CLI fallback only
 neomind dashboard add-components <ID> --components '[
   {"id":"new_chart","type":"line-chart","title":"New Chart",
    "position":{"x":0,"y":4,"w":12,"h":4},
@@ -458,6 +470,7 @@ neomind extension get weather-forecast
 
 # Create dashboard with mixed sources
 neomind dashboard create --name 'Weather Comparison'
+# Prefer shell params:[…] — string form is Human CLI fallback only
 neomind dashboard add-components <ID> --components '[
   {"id":"indoor","type":"value-card","title":"Indoor Temp",
    "position":{"x":0,"y":0,"w":4,"h":2},
@@ -479,13 +492,17 @@ neomind dashboard add-components <ID> --components '[
 
 ## Static Content (no data binding)
 
-Markdown display widget for static content:
-```bash
-neomind dashboard add-components <ID> --components '[{
-  "id":"md1","type":"markdown-display","title":"Report",
-  "position":{"x":0,"y":0,"w":12,"h":4},
-  "config":{"content":"# Status\nAll systems normal"}
-}]'
+**Only** `markdown-display` + `config.content` is for static text. Never put `"data"` / `"label"` on value-card.
+
+```json
+{
+  "command": "neomind dashboard add-components <ID>",
+  "params": [{
+    "id":"md1","type":"markdown-display","title":"Report",
+    "position":{"x":0,"y":0,"w":12,"h":4},
+    "config":{"content":"# Status\nAll systems normal"}
+  }]
+}
 ```
 
 ## Share Dashboard
@@ -507,4 +524,6 @@ neomind dashboard share <ID> --expires 3600
 | Chart shows no history | mode is "latest" | Charts need `mode:"timeseries"` with `timeWindow` |
 | Position overlap | Same x,y coords | Each component needs unique position; grid is 12 columns |
 | "Dashboard not found" | Wrong dashboard ID | Run `neomind dashboard list` for valid IDs |
-| JSON parse error | Malformed JSON in --components | Validate JSON structure carefully |
+| JSON parse error | Malformed JSON in --components / string path | Prefer shell `params: […]`; add 1–2 components; fix missing `}` |
+| unexpected `--params` | Invented CLI `--params` on add-components | Use shell `params` array (maps to `--components`) — do not invent `--params` |
+| unknown field `data`/`label` | Ephemeral static payload on value-card | Use `data_source` (or markdown-display `config.content` for static text) |

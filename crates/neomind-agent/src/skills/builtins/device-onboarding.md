@@ -25,7 +25,7 @@ anti_triggers:
 Determine the requested protocol and target; ask only for missing connection information. Inspect existing devices/types before creating anything.
 MQTT: discovery creates a candidate, not an approved device. Shared topics may carry multiple JSON identities. Preserve explicit bindings and configured identity fields; do not reject topics based on guessed uplink/downlink words. Approval and association use the real device identity.
 Webhook: create with the webhook adapter, then obtain its ingest URL. A saved configuration does not prove data is arriving.
-For control, inspect supported commands and parameters. Use neomind device control <ID> <CMD> --param key=value (repeat), or --params JSON. Read delivery evidence: accepted is not physical completion. Validation errors contain command/schema hints.
+For control, inspect supported commands and parameters. Chat/shell preferred: `{ "command": "neomind device control <ID> <CMD>", "params": {…} }`. Human CLI: `--param key=value` (repeat) or quoted `--params JSON`. Read delivery evidence: accepted is not physical completion. Validation errors contain command/schema hints.
 Verify incoming telemetry after connection. If offline, report configuration and missing telemetry separately. Do not invent metrics or credentials.
 
 ## Commands

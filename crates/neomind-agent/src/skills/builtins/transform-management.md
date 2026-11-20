@@ -286,6 +286,7 @@ After creating a transform, its output appears as a virtual metric. Use it in da
 neomind transform metrics
 
 # Add to dashboard (transform output uses extension-metric binding)
+# Prefer shell {command, params:[…]} — string flag is Human CLI fallback
 neomind dashboard add-components <DASHBOARD_ID> --components '[{
   "id": "t1",
   "type": "value-card",
