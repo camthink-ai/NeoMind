@@ -170,7 +170,9 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
             _ => Mutating,
         },
         Command::System { system_cmd } => match system_cmd {
-            SystemCommand::Info { .. } => ProvenReadOnly,
+            SystemCommand::Info { .. }
+            | SystemCommand::Health { .. }
+            | SystemCommand::Stats { .. } => ProvenReadOnly,
         },
         Command::Data { data_cmd } => match data_cmd {
             DataCommand::List { .. } => ProvenReadOnly,

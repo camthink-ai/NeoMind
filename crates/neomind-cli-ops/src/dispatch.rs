@@ -192,7 +192,6 @@ pub async fn dispatch_with_context(
         | Command::Prompt { .. }
         | Command::Chat { .. }
         | Command::ListModels { .. }
-        | Command::Health
         | Command::Logs { .. }
         | Command::CheckUpdate
         | Command::Upgrade { .. }
@@ -287,6 +286,12 @@ pub async fn dispatch_with_context(
                 .await
                 .map_err(|e| DispatchError::Api(e.to_string()))?;
             Ok(resp)
+        }
+        Command::Health => {
+            let client = effective_ctx.api_client();
+            crate::system::health_check(&client)
+                .await
+                .map_err(|e| DispatchError::Api(e.to_string()))
         }
         Command::System { system_cmd } => {
             let (resp, _) = handlers::run_system_cmd_with_context(system_cmd, &effective_ctx)
@@ -494,7 +499,6 @@ mod tests {
             vec!["chat"],
             vec!["logs", "--follow"],
             vec!["upgrade"],
-            vec!["health"],
         ] {
             let err = dispatch(&argv(&args)).await.unwrap_err();
             assert!(
@@ -503,6 +507,21 @@ mod tests {
                 args
             );
         }
+    }
+
+    /// S2-3: `health` runs in-process via API JSON (never NotInProcess /
+    /// Tauri subprocess). Without a server it surfaces Api, not NotInProcess.
+    #[tokio::test]
+    async fn health_is_in_process_not_subprocess() {
+        let err = dispatch(&argv(&["health"])).await.unwrap_err();
+        assert!(
+            !matches!(err, DispatchError::NotInProcess),
+            "health must stay in-process, got {err:?}"
+        );
+        assert!(
+            matches!(err, DispatchError::Api(_)),
+            "without a server health should be Api(...), got {err:?}"
+        );
     }
 
     /// Local-only commands that an in-process caller cannot serve also stay

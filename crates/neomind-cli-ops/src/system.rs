@@ -327,6 +327,86 @@ pub async fn system_info(client: &ApiClient) -> Result<CliResponse> {
     Ok(CliResponse::success(info, message))
 }
 
+/// Subsystem readiness via `/health/ready` (in-process JSON for Chat + CLI).
+pub async fn system_health(client: &ApiClient) -> Result<CliResponse> {
+    let ready = client.get("/health/ready").await?;
+    let ready_flag = ready
+        .get("ready")
+        .or_else(|| ready.get("data").and_then(|d| d.get("ready")))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    Ok(CliResponse::success(
+        ready,
+        if ready_flag {
+            "System ready"
+        } else {
+            "System not ready"
+        },
+    ))
+}
+
+/// Host/platform stats via `/stats/system`.
+pub async fn system_stats(client: &ApiClient) -> Result<CliResponse> {
+    let stats = client.get("/stats/system").await?;
+    Ok(CliResponse::success(stats, "System stats retrieved"))
+}
+
+/// Top-level `neomind health` aggregate: readiness + compact stats/version.
+pub async fn health_check(client: &ApiClient) -> Result<CliResponse> {
+    let (ready_res, stats_res) = tokio::join!(
+        client.get("/health/ready"),
+        client.get("/stats/system"),
+    );
+    let mut errors = Map::new();
+    let ready = match ready_res {
+        Ok(v) => Some(v),
+        Err(e) => {
+            errors.insert("health".into(), json!(e.to_string()));
+            None
+        }
+    };
+    let stats = match stats_res {
+        Ok(v) => Some(v),
+        Err(e) => {
+            errors.insert("stats".into(), json!(e.to_string()));
+            None
+        }
+    };
+    if ready.is_none() && stats.is_none() {
+        anyhow::bail!("health check failed: {}", errors.values().cloned().collect::<Vec<_>>().into_iter().map(|v| v.as_str().unwrap_or("?").to_string()).collect::<Vec<_>>().join("; "));
+    }
+    let ready_flag = ready
+        .as_ref()
+        .and_then(|r| r.get("ready").or_else(|| r.get("data").and_then(|d| d.get("ready"))))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let version = stats.as_ref().and_then(|s| {
+        s.get("version")
+            .or_else(|| s.pointer("/system/version"))
+            .or_else(|| s.pointer("/stats/system/version"))
+            .cloned()
+    });
+    let degraded = !errors.is_empty() || !ready_flag;
+    Ok(CliResponse::success(
+        json!({
+            "ready": ready_flag,
+            "degraded": degraded,
+            "version": version,
+            "health": ready,
+            "stats": stats,
+            "errors": if errors.is_empty() { Value::Null } else { Value::Object(errors) },
+        }),
+        if ready_flag && !degraded {
+            "Health check passed"
+        } else if ready_flag {
+            "Health check degraded"
+        } else {
+            "Health check failed"
+        },
+    ))
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,4 +615,28 @@ mod tests {
         let dead_client = ApiClient::with_base_url(&dead_base);
         assert!(system_info(&dead_client).await.is_err());
     }
+
+    #[tokio::test]
+    async fn health_check_returns_json_ready() {
+        let base = spawn_mock_server(vec![
+            (
+                "/api/health/ready",
+                200,
+                json!({"ready": true, "dependencies": {"database": true, "llm": true, "mqtt": true}, "notes": []}),
+            ),
+            (
+                "/api/stats/system",
+                200,
+                json!({"success": true, "data": {"version": "1.3.1", "uptime_secs": 10}}),
+            ),
+        ])
+        .await;
+        let client = ApiClient::with_base_url(&base);
+        let resp = health_check(&client).await.unwrap();
+        assert!(resp.success);
+        let data = resp.data.as_ref().unwrap();
+        assert_eq!(data["ready"], json!(true));
+        assert_eq!(data["degraded"], json!(false));
+    }
+
 }

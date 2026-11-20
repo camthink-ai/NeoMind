@@ -144,7 +144,14 @@ async fn main() -> Result<()> {
         } => run_prompt(&prompt).await,
         Command::Chat { session } => run_chat(session).await,
         Command::ListModels { endpoint } => list_models(endpoint).await,
-        Command::Health => run_health().await,
+        Command::Health => print_result(
+            async {
+                let client = dispatch_ctx.api_client();
+                let resp = neomind_cli_ops::system::health_check(&client).await?;
+                Ok((resp, dispatch_ctx.output_format()))
+            }
+            .await,
+        ),
         Command::Logs {
             tail,
             follow,
@@ -798,120 +805,12 @@ fn is_file_older_than(path: &Path, max_age_secs: i64) -> bool {
         .unwrap_or(false)
 }
 
-/// Run health check command.
-async fn run_health() -> Result<()> {
-    println!("NeoMind System Health Check");
-    println!("==========================\n");
-
-    // Check if server is running
-    println!("🔍 Checking server status...");
-    let api_base = std::env::var("NEOMIND_API_BASE")
-        .unwrap_or_else(|_| "http://localhost:9375/api".to_string());
-    let check_url = format!("{}/health", api_base);
-    match reqwest::get(&check_url).await {
-        Ok(resp) if resp.status().is_success() => {
-            println!("  ✅ Server is running");
-
-            // Get detailed health status
-            if let Ok(health_json) = resp.json::<serde_json::Value>().await {
-                if let Some(status) = health_json.get("status").and_then(|v| v.as_str()) {
-                    println!("  Status: {}", status);
-                }
-            }
-        }
-        Ok(resp) => {
-            println!("  ⚠️  Server returned status: {}", resp.status());
-        }
-        Err(e) => {
-            println!("  ❌ Server is not responding: {}", e);
-            println!("  Hint: Start the server with 'neomind serve'");
-        }
-    }
-
-    println!();
-
-    // Check database files — resolved, not CWD-relative: running `neomind
-    // health` from any other directory used to report "Data directory not
-    // found" for a perfectly healthy install.
-    println!("🔍 Checking databases...");
-    let data_dir = neomind_cli_ops::data_dir::resolve(None)
-        .unwrap_or_else(|_| std::path::PathBuf::from("./data"));
-    println!("  (data dir: {})", data_dir.display());
-    if data_dir.exists() {
-        let db_files = [
-            "telemetry.redb",
-            "sessions.redb",
-            "devices.redb",
-            "extensions.redb",
-        ];
-        for db in &db_files {
-            let db_path = data_dir.join(db);
-            if db_path.exists() {
-                let metadata = std::fs::metadata(&db_path)?;
-                let size_kb = metadata.len() / 1024;
-                println!("  ✅ {} ({} KB)", db, size_kb);
-            } else {
-                println!("  ⚠️  {} not found (will be created on first use)", db);
-            }
-        }
-    } else {
-        println!("  ℹ️  Data directory not found (will be created on first use)");
-    }
-
-    println!();
-
-    // Check LLM backend (use authenticated API client)
-    println!("🔍 Checking LLM backend...");
-    let api_client = neomind_cli_ops::ApiClient::new();
-    match neomind_cli_ops::llm::list_backends(&api_client).await {
-        Ok(response) => {
-            if response.success {
-                if let Some(data) = &response.data {
-                    // Navigate past the CliResponse -> API response double-wrap
-                    let inner = data.get("data").unwrap_or(data);
-                    let count = inner.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let active_id = inner.get("active_id").and_then(|v| v.as_str());
-                    if count > 0 {
-                        println!("  ✅ {} LLM backend(s) configured", count);
-                        if let Some(id) = active_id {
-                            println!("  ✅ Active backend: {}", id);
-                        } else {
-                            println!("  ⚠️  No active backend selected");
-                            println!(
-                                "  Hint: Use 'neomind llm activate <id>' to activate a backend"
-                            );
-                        }
-                    } else {
-                        println!("  ⚠️  No LLM backend configured");
-                        println!("  Hint: Use 'neomind llm add' to add an LLM backend");
-                    }
-                }
-            } else {
-                println!("  ⚠️  Could not query LLM backends");
-            }
-        }
-        Err(e) => {
-            println!("  ⚠️  Could not query LLM backends: {}", e);
-        }
-    }
-
-    println!();
-
-    // Check extensions directory
-    println!("🔍 Checking extensions...");
-    let extensions_dir = std::path::PathBuf::from("./extensions");
-    if extensions_dir.exists() {
-        let entries = std::fs::read_dir(&extensions_dir)?;
-        let count = entries.filter_map(|e| e.ok()).count();
-        println!("  ✅ Extensions directory found ({} items)", count);
-    } else {
-        println!("  ℹ️  Extensions directory not found");
-    }
-
-    println!();
-    println!("Health check complete.");
-
-    Ok(())
+/// Legacy human-text health path removed (S2-3): `Command::Health` now
+/// goes through `neomind_cli_ops::system::health_check` for JSON parity
+/// with in-process Chat dispatch. Kept as a no-op marker for grep history.
+#[allow(dead_code)]
+async fn run_health_legacy_removed() -> Result<()> {
+    anyhow::bail!("use neomind_cli_ops::system::health_check")
 }
 
 /// Run logs command.
@@ -919,7 +818,7 @@ async fn run_logs(
     tail: usize,
     follow: bool,
     level: Option<String>,
-    _since: Option<String>,
+    since: Option<String>,
 ) -> Result<()> {
     use std::fs::File;
     use std::io::{BufRead, BufReader, Seek};
@@ -968,6 +867,8 @@ async fn run_logs(
     // Find the newest log file
     let log_path = find_newest_log(log_dir)?;
 
+    let since_cutoff = parse_since_cutoff(since.as_deref())?;
+
     if follow {
         // Follow mode (like tail -f)
         println!(
@@ -987,7 +888,7 @@ async fn run_logs(
                     continue;
                 }
                 Ok(_) => {
-                    if matches_level(&line, &level) {
+                    if matches_level(&line, &level) && matches_since(&line, since_cutoff) {
                         print!("{}", line);
                     }
                     line.clear();
@@ -1007,6 +908,7 @@ async fn run_logs(
             .lines()
             .map_while(Result::ok)
             .filter(|l| matches_level(l, &level))
+            .filter(|l| matches_since(l, since_cutoff))
             .collect();
 
         let start = if lines.len() > tail {
@@ -1065,6 +967,54 @@ fn matches_level(line: &str, level: &Option<String>) -> bool {
         None => true,
     }
 }
+
+/// Parse `--since 1h` / `30m` into a UTC cutoff. None means no filter.
+fn parse_since_cutoff(since: Option<&str>) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    let Some(raw) = since.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let now = chrono::Utc::now().timestamp();
+    let start = parse_relative_duration_to_cutoff(raw, now);
+    let Some(start_ts) = start else {
+        anyhow::bail!(
+            "Invalid --since '{raw}'. Use a positive duration with unit: s/m|min/h|hr/d|day (e.g. --since 1h)."
+        );
+    };
+    Ok(chrono::DateTime::from_timestamp(start_ts, 0))
+}
+
+fn parse_relative_duration_to_cutoff(raw: &str, now: i64) -> Option<i64> {
+    let raw = raw.trim().to_ascii_lowercase();
+    let split = raw.find(|c: char| c.is_ascii_alphabetic())?;
+    let (num, unit) = raw.split_at(split);
+    let n: i64 = num.parse().ok()?;
+    if n <= 0 {
+        return None;
+    }
+    let secs = match unit {
+        "s" | "sec" | "secs" | "second" | "seconds" => n,
+        "m" | "min" | "mins" | "minute" | "minutes" => n * 60,
+        "h" | "hr" | "hrs" | "hour" | "hours" => n * 3600,
+        "d" | "day" | "days" => n * 86400,
+        "w" | "wk" | "week" | "weeks" => n * 7 * 86400,
+        _ => return None,
+    };
+    Some(now - secs)
+}
+
+/// Keep lines at/after cutoff. Lines without a leading RFC3339 timestamp pass
+/// through so rotated/partial files are not silently emptied.
+fn matches_since(line: &str, cutoff: Option<chrono::DateTime<chrono::Utc>>) -> bool {
+    let Some(cutoff) = cutoff else {
+        return true;
+    };
+    let ts_str = line.split_whitespace().next().unwrap_or("");
+    match chrono::DateTime::parse_from_rfc3339(ts_str) {
+        Ok(ts) => ts.with_timezone(&chrono::Utc) >= cutoff,
+        Err(_) => true,
+    }
+}
+
 
 /// Run extension management commands.
 async fn run_extension_cmd(

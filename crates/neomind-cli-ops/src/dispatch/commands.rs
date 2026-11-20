@@ -2375,6 +2375,14 @@ pub enum SystemCommand {
     /// Example: `neomind system info`
     #[command(alias = "status")]
     Info {},
+    /// Subsystem readiness (`/health/ready`) as structured JSON.
+    ///
+    /// Example: `neomind system health`
+    Health {},
+    /// Host / platform stats (`/stats/system`) as structured JSON.
+    ///
+    /// Example: `neomind system stats`
+    Stats {},
 }
 
 /// Data source discovery commands.

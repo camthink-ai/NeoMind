@@ -1106,6 +1106,14 @@ pub async fn run_system_cmd_with_context(
             let resp = crate::system::system_info(&client).await?;
             (resp, base_format)
         }
+        SystemCommand::Health {} => {
+            let resp = crate::system::system_health(&client).await?;
+            (resp, base_format)
+        }
+        SystemCommand::Stats {} => {
+            let resp = crate::system::system_stats(&client).await?;
+            (resp, base_format)
+        }
     };
     Ok(result)
 }
