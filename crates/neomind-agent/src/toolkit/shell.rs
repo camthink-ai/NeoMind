@@ -323,7 +323,7 @@ impl ShellTool {
                         domain, sub, note, body
                     );
                     if let Some(tip) = Self::structured_params_retry_tip(domain, Some(sub)) {
-                        hint.push_str("\n");
+                        hint.push('\n');
                         hint.push_str(&tip);
                     }
                     return Some(hint);
@@ -341,7 +341,7 @@ impl ShellTool {
             domain, note, body
         );
         if let Some(tip) = Self::structured_params_retry_tip(domain, None) {
-            hint.push_str("\n");
+            hint.push('\n');
             hint.push_str(&tip);
         }
         Some(hint)

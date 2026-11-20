@@ -97,12 +97,10 @@ fn find_action_verb(haystack: &str, needle: &str) -> Option<usize> {
     if needle.is_empty() {
         return None;
     }
-    let ascii_needle = needle.chars().all(|c| c.is_ascii());
+    let ascii_needle = needle.is_ascii();
     let mut search_from = 0usize;
     while search_from <= haystack.len() {
-        let Some(rel) = haystack[search_from..].find(needle) else {
-            return None;
-        };
+        let rel = haystack[search_from..].find(needle)?;
         let pos = search_from + rel;
         if !ascii_needle {
             return Some(pos);

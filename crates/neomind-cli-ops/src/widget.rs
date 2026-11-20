@@ -375,14 +375,6 @@ fn get_icon_for_type(widget_type: &str) -> &'static str {
     }
 }
 
-/// List all installed widgets with compact summary.
-///
-/// Returns id, name, type, and version per installed widget, plus the
-/// catalogue of built-in widget types (sourced from the backend's
-/// `neomind_core::dashboard::BUILTIN_WIDGET_TYPES`, mirrored from
-/// `Renderers.tsx::builtInTypes`). Full manifest for an installed widget
-/// is available via `neomind widget get <id>`.
-
 /// Resolve a widget `name` that may be a plain string or an i18n object
 /// (`{"en":"...","zh":"..."}`). Prefer `en`, then `zh`, then any string value.
 fn display_i18n_name(name: &serde_json::Value) -> String {
@@ -408,6 +400,13 @@ fn display_i18n_name(name: &serde_json::Value) -> String {
     "(unnamed)".to_string()
 }
 
+/// List all installed widgets with compact summary.
+///
+/// Returns id, name, type, and version per installed widget, plus the
+/// catalogue of built-in widget types (sourced from the backend's
+/// `neomind_core::dashboard::BUILTIN_WIDGET_TYPES`, mirrored from
+/// `Renderers.tsx::builtInTypes`). Full manifest for an installed widget
+/// is available via `neomind widget get <id>`.
 pub async fn list_widgets(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/frontend-components").await?;
 
