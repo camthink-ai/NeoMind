@@ -504,6 +504,18 @@ impl From<&neomind_storage::LlmBackendInstance> for BackendRequestDefaults {
     }
 }
 
+/// Detailed token budget breakdown computed for conversation history selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HistoryBudgetBreakdown {
+    pub available_tokens: usize,
+    pub prompt_budget: usize,
+    pub tool_overhead_tokens: usize,
+    pub template_overhead_tokens: usize,
+    pub system_tokens: usize,
+    pub user_tokens: usize,
+    pub reserved: usize,
+}
+
 /// Simple LLM chat interface.
 ///
 /// This is a lightweight wrapper around LLM runtime with concurrency limiting.
@@ -1091,21 +1103,65 @@ impl LlmInterface {
         Err(NeoMindError::Llm("LLM backend not ready".to_string()))
     }
 
-    /// Compute the token budget for conversation history given the model's context window.
+    /// Estimate raw JSON schema tokens for the tool definitions exposed under
+    /// the active profile for `(max_ctx, has_user_images, exclude_skill)`.
     ///
-    /// Uses `estimate_tokens` for accurate token counting that handles Chinese (~1.8 tokens/char),
-    /// English (~0.25 tokens/char), and mixed content correctly.
-    ///
-    /// Returns `(available_tokens, prompt_budget_tokens)` where `available_tokens` is the
-    /// token budget for history messages after reserving space for everything else.
-    async fn compute_history_budget(
+    /// Shared by `estimate_prompt_breakdown_for_turn` and
+    /// `compute_history_budget_breakdown` so prompt overhead, ContextUsage,
+    /// and history budget never disagree on which tool schemas are sent.
+    async fn estimate_exposed_tools_tokens(
+        &self,
+        max_ctx: usize,
+        has_user_images: bool,
+        exclude_skill: bool,
+    ) -> usize {
+        // Resolve VLM availability before taking the tool-definitions lock so
+        // we never nest async probes under that read guard.
+        let vlm_available = self.any_vlm_available().await;
+        let profile = crate::agent::tool_profile::select_tool_profile(max_ctx);
+        let tools = self.tool_definitions.read().await;
+        if tools.is_empty() {
+            return 0;
+        }
+        tools
+            .iter()
+            .filter(|t| {
+                if exclude_skill && t.name == "skill" {
+                    return false;
+                }
+                crate::agent::tool_profile::tool_exposed_in_profile(
+                    &t.name,
+                    profile,
+                    has_user_images,
+                    vlm_available,
+                )
+            })
+            .map(|t| {
+                let json = serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    }
+                });
+                crate::agent::tokenizer::estimate_json_schema_tokens(&json.to_string())
+            })
+            .sum()
+    }
+
+    /// Compute the full token budget breakdown for conversation history given
+    /// the model's context window, active tool profile, and EWMA calibration.
+    pub(crate) async fn compute_history_budget_breakdown(
         &self,
         max_ctx: usize,
         system_prompt: &str,
         user_message: &str,
         history_msg_count: usize,
         include_tools: bool,
-    ) -> (usize, usize) {
+        has_user_images: bool,
+        exclude_skill: bool,
+    ) -> HistoryBudgetBreakdown {
         // Use more conservative budget for small contexts
         // < 8k: 50% for prompt, 50% for generation + overhead
         // < 16k: 60%, >= 16k: 70%
@@ -1137,30 +1193,11 @@ impl LlmInterface {
         };
         let prompt_budget = (max_ctx * prompt_ratio) / 100;
 
-        // Estimate tool definition overhead in tokens using estimate_tokens.
-        // Serialize each tool to its actual API JSON shape ({"type":"function",
-        // "function":{"name","description","parameters"}}) so the JSON syntax
-        // tokens are counted — the old per-field estimate undercounted.
-        let tool_overhead_tokens = if include_tools {
-            let tools = self.tool_definitions.read().await;
-            if tools.is_empty() {
-                0
-            } else {
-                tools
-                    .iter()
-                    .map(|t| {
-                        let json = serde_json::json!({
-                            "type": "function",
-                            "function": {
-                                "name": t.name,
-                                "description": t.description,
-                                "parameters": t.parameters,
-                            }
-                        });
-                        estimate_tokens(&json.to_string())
-                    })
-                    .sum::<usize>()
-            }
+        // Estimate tool definition overhead using the exact profile-filtered
+        // set and JSON-schema estimator shared with `estimate_prompt_breakdown_for_turn`.
+        let raw_tool_overhead_tokens = if include_tools {
+            self.estimate_exposed_tools_tokens(max_ctx, has_user_images, exclude_skill)
+                .await
         } else {
             0
         };
@@ -1168,8 +1205,15 @@ impl LlmInterface {
         // Chat template overhead: ~10 tokens per message for role markers and special tokens
         let template_overhead_tokens = 10 * (history_msg_count + 2);
 
-        // Use estimate_tokens for accurate Chinese/English token counting
-        let system_tokens = estimate_tokens(system_prompt);
+        // Apply EWMA calibration to system + tool overhead so history budget
+        // matches `estimate_prompt_breakdown_for_turn` (defaults to 1.0 before
+        // prompt_eval observations arrive).
+        let raw_system_tokens = estimate_tokens(system_prompt);
+        let factor = self.prompt_calibration_factor().await;
+        let system_tokens =
+            crate::agent::token_calibration::apply_calibration(raw_system_tokens, factor);
+        let tool_overhead_tokens =
+            crate::agent::token_calibration::apply_calibration(raw_tool_overhead_tokens, factor);
         let user_tokens = estimate_tokens(user_message);
 
         let reserved =
@@ -1190,7 +1234,43 @@ impl LlmInterface {
             "Computed history budget (token-based)"
         );
 
-        (available_tokens, prompt_budget)
+        HistoryBudgetBreakdown {
+            available_tokens,
+            prompt_budget,
+            tool_overhead_tokens,
+            template_overhead_tokens,
+            system_tokens,
+            user_tokens,
+            reserved,
+        }
+    }
+
+    /// Compute the token budget for conversation history given the model's context window.
+    ///
+    /// Returns `(available_tokens, prompt_budget_tokens)` where `available_tokens` is the
+    /// token budget for history messages after reserving space for everything else.
+    async fn compute_history_budget(
+        &self,
+        max_ctx: usize,
+        system_prompt: &str,
+        user_message: &str,
+        history_msg_count: usize,
+        include_tools: bool,
+        has_user_images: bool,
+        exclude_skill: bool,
+    ) -> (usize, usize) {
+        let b = self
+            .compute_history_budget_breakdown(
+                max_ctx,
+                system_prompt,
+                user_message,
+                history_msg_count,
+                include_tools,
+                has_user_images,
+                exclude_skill,
+            )
+            .await;
+        (b.available_tokens, b.prompt_budget)
     }
 
     /// Apply the shared history-budget selector and mark truncation when needed.
@@ -1345,41 +1425,10 @@ impl LlmInterface {
         let system_prompt = self.build_system_prompt_with_tools(None).await;
         let raw_prompt_tokens = crate::agent::tokenizer::estimate_tokens(&system_prompt);
 
-        // Resolve profile *before* taking the tool-definitions lock so we never
-        // nest max_context / VLM probes under that read guard.
         let max_context = self.max_context_length().await;
-        let vlm_available = self.any_vlm_available().await;
-        let profile = crate::agent::tool_profile::select_tool_profile(max_context);
-
-        // Tool definitions: serialize the *exposed* API JSON shape and measure.
-        let tools = self.tool_definitions.read().await;
-        let raw_tools_tokens: usize = if tools.is_empty() {
-            0
-        } else {
-            tools
-                .iter()
-                .filter(|t| {
-                    crate::agent::tool_profile::tool_exposed_in_profile(
-                        &t.name,
-                        profile,
-                        has_user_images,
-                        vlm_available,
-                    )
-                })
-                .map(|t| {
-                    let json = serde_json::json!({
-                        "type": "function",
-                        "function": {
-                            "name": t.name,
-                            "description": t.description,
-                            "parameters": t.parameters,
-                        }
-                    });
-                    crate::agent::tokenizer::estimate_json_schema_tokens(&json.to_string())
-                })
-                .sum()
-        };
-        drop(tools);
+        let raw_tools_tokens = self
+            .estimate_exposed_tools_tokens(max_context, has_user_images, false)
+            .await;
 
         // Apply EWMA calibration (defaults to 1.0 — no MiniCPM unlock regression
         // until real prompt_eval observations arrive).
@@ -2276,6 +2325,8 @@ impl LlmInterface {
                     &user_message,
                     history_msgs.len(),
                     has_tools,
+                    false,
+                    false,
                 )
                 .await;
             available_tokens_obs = available_tokens;
@@ -2484,6 +2535,8 @@ impl LlmInterface {
                     &user_text,
                     history_msgs.len(),
                     has_tools,
+                    user_message.has_images(),
+                    false,
                 )
                 .await;
             available_tokens_obs = available_tokens;
@@ -2837,6 +2890,8 @@ impl LlmInterface {
                     &user_text,
                     history_msgs.len(),
                     include_tools,
+                    has_user_images,
+                    false,
                 )
                 .await;
             available_tokens_obs = available_tokens;
@@ -3206,6 +3261,8 @@ impl LlmInterface {
                     &user_message,
                     history_msgs.len(),
                     include_tools,
+                    false,
+                    exclude_skill,
                 )
                 .await;
             available_tokens_obs = available_tokens;
@@ -4543,6 +4600,96 @@ mod tests {
         assert!(
             (1.0..=1.10).contains(&factor2),
             "EWMA factor should track ~1.05 rather than saturating at 1.35, got {factor2}"
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_history_budget_8k_uses_light_profile_and_avoids_zero_budget() {
+        use crate::llm_backends::LlmBackendInstanceManager;
+        use crate::skills::SkillRegistry;
+        use crate::toolkit::{
+            shell::ShellTool, skill_tool::SkillTool, FileEditTool, FileReadTool, FileWriteTool,
+            ImageEditTool, MemoryTool, ShellConfig, Tool, VisionConfig, VisionTool, WebFetchTool,
+            WebSearchTool,
+        };
+        use neomind_storage::{LlmBackendStore, MarkdownMemoryStore};
+        use tokio::sync::RwLock;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let skill_reg = Arc::new(RwLock::new(SkillRegistry::load_all(None)));
+        let llm_mgr = Arc::new(LlmBackendInstanceManager::new(
+            LlmBackendStore::open(dir.path().join("backends.redb")).expect("backend store"),
+        ));
+        let mem_store = Arc::new(RwLock::new(MarkdownMemoryStore::new(
+            dir.path().join("mem_budget_8k"),
+        )));
+
+        let builtin_tools: Vec<Box<dyn Tool>> = vec![
+            Box::new(ShellTool::new(ShellConfig::default())),
+            Box::new(SkillTool::new(skill_reg)),
+            Box::new(MemoryTool::new(mem_store)),
+            Box::new(VisionTool::new(VisionConfig::default(), llm_mgr)),
+            Box::new(ImageEditTool::new(dir.path().to_path_buf())),
+            Box::new(WebSearchTool::new()),
+            Box::new(WebFetchTool::new()),
+            Box::new(FileReadTool::new(dir.path().to_path_buf())),
+            Box::new(FileWriteTool::new(dir.path().to_path_buf())),
+            Box::new(FileEditTool::new(dir.path().to_path_buf())),
+        ];
+        let defs: Vec<neomind_core::llm::backend::ToolDefinition> = builtin_tools
+            .iter()
+            .map(|t| neomind_core::llm::backend::ToolDefinition {
+                name: t.name().to_string(),
+                description: t.description().to_string(),
+                parameters: t.parameters(),
+            })
+            .collect();
+        assert_eq!(defs.len(), 10);
+
+        let interface = LlmInterface::new(ChatConfig::default());
+        interface.set_tool_definitions(defs).await;
+
+        let system_prompt = interface.build_system_prompt_with_tools(None).await;
+        let breakdown = interface
+            .compute_history_budget_breakdown(
+                8_192,
+                &system_prompt,
+                "查看系统状态",
+                2,
+                true,
+                false,
+                false,
+            )
+            .await;
+
+        assert!(
+            breakdown.tool_overhead_tokens < 1_800,
+            "8K Light profile tool_overhead_tokens must be <1800 (got {})",
+            breakdown.tool_overhead_tokens
+        );
+        assert!(
+            breakdown.available_tokens > 800,
+            "8K history available_tokens must be >800, not ZeroBudget (got {}, reserved={}, prompt_budget={})",
+            breakdown.available_tokens,
+            breakdown.reserved,
+            breakdown.prompt_budget
+        );
+
+        // Excluding `skill` on scoped rounds must reduce tool overhead cleanly.
+        let without_skill = interface
+            .compute_history_budget_breakdown(
+                8_192,
+                &system_prompt,
+                "查看系统状态",
+                2,
+                true,
+                false,
+                true,
+            )
+            .await;
+        assert!(
+            without_skill.tool_overhead_tokens < breakdown.tool_overhead_tokens,
+            "exclude_skill=true should reduce tool_overhead_tokens"
         );
     }
 }

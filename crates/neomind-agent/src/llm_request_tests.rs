@@ -1182,6 +1182,106 @@ async fn zero_budget_history_strips_tools_on_real_stream_request() {
 }
 
 #[tokio::test]
+async fn minicpm_8k_multiturn_keeps_light_profile_tools_on_turn_2() {
+    use crate::llm_backends::LlmBackendInstanceManager;
+    use crate::skills::SkillRegistry;
+    use crate::toolkit::{
+        shell::ShellTool, skill_tool::SkillTool, FileEditTool, FileReadTool, FileWriteTool,
+        ImageEditTool, MemoryTool, ShellConfig, Tool, VisionConfig, VisionTool, WebFetchTool,
+        WebSearchTool,
+    };
+    use neomind_storage::{LlmBackendStore, MarkdownMemoryStore};
+    use tokio::sync::RwLock;
+
+    // Reproduce MiniCPM-V 8K multimodal Turn 2 with the full 10-tool builtin registry.
+    let (iface, requests) = harness_with_ctx(vec![MockResponse::text("ok")], 8_192).await;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let skill_reg = Arc::new(RwLock::new(SkillRegistry::load_all(None)));
+    let llm_mgr = Arc::new(LlmBackendInstanceManager::new(
+        LlmBackendStore::open(dir.path().join("backends.redb")).expect("backend store"),
+    ));
+    let mem_store = Arc::new(RwLock::new(MarkdownMemoryStore::new(
+        dir.path().join("mem_minicpm_8k"),
+    )));
+
+    let builtin_tools: Vec<Box<dyn Tool>> = vec![
+        Box::new(ShellTool::new(ShellConfig::default())),
+        Box::new(SkillTool::new(skill_reg)),
+        Box::new(MemoryTool::new(mem_store)),
+        Box::new(VisionTool::new(VisionConfig::default(), llm_mgr)),
+        Box::new(ImageEditTool::new(dir.path().to_path_buf())),
+        Box::new(WebSearchTool::new()),
+        Box::new(WebFetchTool::new()),
+        Box::new(FileReadTool::new(dir.path().to_path_buf())),
+        Box::new(FileWriteTool::new(dir.path().to_path_buf())),
+        Box::new(FileEditTool::new(dir.path().to_path_buf())),
+    ];
+    let defs: Vec<neomind_core::llm::backend::ToolDefinition> = builtin_tools
+        .iter()
+        .map(|t| neomind_core::llm::backend::ToolDefinition {
+            name: t.name().to_string(),
+            description: t.description().to_string(),
+            parameters: t.parameters(),
+        })
+        .collect();
+    iface.set_tool_definitions(defs).await;
+
+    // Verify compute_history_budget agrees with estimate_prompt_breakdown_for_turn
+    // and leaves comfortable history room (>800 tokens, tool overhead <1800).
+    let system_prompt = iface.build_system_prompt_with_tools(None).await;
+    let budget = iface
+        .compute_history_budget_breakdown(8_192, &system_prompt, "查看系统状态", 2, true, false, false)
+        .await;
+    let (_sys_est, tools_est) = iface.estimate_prompt_breakdown_for_turn(false).await;
+    assert_eq!(
+        budget.tool_overhead_tokens, tools_est,
+        "compute_history_budget must match estimate_prompt_breakdown_for_turn on 8K"
+    );
+    assert!(
+        budget.tool_overhead_tokens < 1_800,
+        "8K multimodal Light tool_overhead_tokens must be <1800, got {}",
+        budget.tool_overhead_tokens
+    );
+    assert!(
+        budget.available_tokens > 800,
+        "8K multimodal available_tokens must be >800, got {}",
+        budget.available_tokens
+    );
+
+    // Turn 2 with Turn 1 history must keep all 7 Light tools (including vision) on wire.
+    let history = vec![
+        Message::user("你好，请简单介绍你能做什么"),
+        Message::assistant("我可以帮你查看系统状态、管理设备和仪表板。"),
+    ];
+    drain(
+        iface
+            .chat_stream_with_history("查看系统状态", &history)
+            .await
+            .unwrap(),
+    )
+    .await;
+
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(
+        captured[0]["tools_count"], 7,
+        "MiniCPM 8K Turn 2 must keep 7 Light tools instead of ZeroBudget stripping: {:?}",
+        captured[0]["tool_names"]
+    );
+    let names: Vec<&str> = captured[0]["tool_names"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(names.contains(&"shell"), "expected shell in {:?}", names);
+    assert!(names.contains(&"vision"), "expected vision in {:?}", names);
+    assert!(!names.contains(&"image_edit"), "image_edit deferred on text turn");
+    assert!(!names.contains(&"file_edit"), "file_edit deferred on Light");
+    assert!(!names.contains(&"web_fetch"), "web_fetch deferred on Light");
+}
+
+#[tokio::test]
 async fn outer_window_feedback_drop_strips_tools_on_real_request() {
     // Streaming-layer outer window evicted the newest complete tool group
     // (mark_history_window_dropped_latest_feedback). The inner selector only
