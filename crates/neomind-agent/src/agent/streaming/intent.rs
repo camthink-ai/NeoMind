@@ -73,6 +73,7 @@ const INSTRUCTIONAL_QUESTION_PATTERNS: &[&str] = &[
     "为什么",
     "什么是",
     "是什么",
+    "如何才能",
     "how do i",
     "how to",
     "how can i",
@@ -82,32 +83,136 @@ const INSTRUCTIONAL_QUESTION_PATTERNS: &[&str] = &[
     "explain",
 ];
 
+/// True when `c` is an ASCII word constituent (letter/digit/underscore).
+fn is_ascii_word_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Find `needle` in `haystack` with ASCII word boundaries when `needle` is
+/// ASCII (so `add` never hits `address`/`padding`, `start` never hits
+/// `startup`/`restart`). Multi-word English phrases (`turn on`) require a
+/// boundary at both ends of the whole phrase. CJK needles keep substring
+/// match (Chinese has no spaces).
+fn find_action_verb(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    let ascii_needle = needle.chars().all(|c| c.is_ascii());
+    let mut search_from = 0usize;
+    while search_from <= haystack.len() {
+        let Some(rel) = haystack[search_from..].find(needle) else {
+            return None;
+        };
+        let pos = search_from + rel;
+        if !ascii_needle {
+            return Some(pos);
+        }
+        let before_ok = pos == 0
+            || !haystack[..pos]
+                .chars()
+                .next_back()
+                .is_some_and(is_ascii_word_char);
+        let after = pos + needle.len();
+        let after_ok = after >= haystack.len()
+            || !haystack[after..]
+                .chars()
+                .next()
+                .is_some_and(is_ascii_word_char);
+        if before_ok && after_ok {
+            return Some(pos);
+        }
+        search_from = pos + needle.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+    }
+    None
+}
+
+/// Chinese completed-aspect / interrogative prefixes that demote a verb to
+/// a status description ("已安装", "是否启用", "有没有绑定").
+const ZH_COMPLETED_PREFIXES: &[&str] = &[
+    "已经", "已", "曾", "是否", "有没有", "有无", "能否", "可否", "是不是",
+];
+
+/// Noun/compound suffixes that turn a verb into a noun phrase
+/// ("安装路径", "更新日志", "创建时间", "控制面板").
+const ZH_NOUN_SUFFIXES: &[&str] = &[
+    "路径", "日志", "时间", "状态", "列表", "链接", "按钮", "面板", "说明",
+    "记录", "历史", "信息", "详情", "名称", "方式", "方法",
+];
+
+/// True when the Chinese verb at `verb_pos` is a completed-aspect /
+/// interrogative status mention or a noun-compound, not a write request.
+fn chinese_verb_is_non_action(msg: &str, verb: &str, verb_pos: usize) -> bool {
+    if verb.chars().any(|c| c.is_ascii()) {
+        return false;
+    }
+    let prefix = &msg[..verb_pos];
+    // Look back a few CJK chars for completed-aspect / question markers.
+    let lookback_start = prefix
+        .char_indices()
+        .rev()
+        .nth(5)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let lookback = &prefix[lookback_start..];
+    if ZH_COMPLETED_PREFIXES.iter().any(|p| lookback.ends_with(p) || lookback.contains(p)) {
+        // Prefer ends_with / near-verb contains of the prefix tokens.
+        if ZH_COMPLETED_PREFIXES.iter().any(|p| {
+            prefix.ends_with(p)
+                || prefix
+                    .char_indices()
+                    .rev()
+                    .take(6)
+                    .any(|(i, _)| prefix[i..].starts_with(p) && i + p.len() == verb_pos)
+                || lookback.contains(p)
+        }) {
+            return true;
+        }
+    }
+    let after = &msg[verb_pos + verb.len()..];
+    ZH_NOUN_SUFFIXES.iter().any(|s| after.starts_with(s))
+}
+
 /// True when an action verb at `verb_pos` is under an immediate negation
 /// ("不要修改", "don't update", "without changing"). Used so read-only asks
 /// that mention a forbidden mutation do not trip turn-end completeness notes
 /// (L3 Spark: "只读查询，不要修改配置").
 fn action_verb_is_negated(msg_lower: &str, verb_pos: usize) -> bool {
-    // Walk back up to 8 Unicode scalars so we never slice mid-codepoint on CJK.
+    // Walk back up to 16 Unicode scalars so longer prefaces still count
+    // ("不要对任何仪表盘做修改", "don't touch any of the settings").
     let prefix = &msg_lower[..verb_pos];
     let start = prefix
         .char_indices()
         .rev()
-        .nth(7)
+        .nth(15)
         .map(|(i, _)| i)
         .unwrap_or(0);
     let window = &prefix[start..];
     window.contains("不要")
+        || window.contains("别动")
         || window.contains("别")
         || window.contains("勿")
         || window.contains("无需")
         || window.contains("不用")
         || window.contains("禁止")
+        || window.contains("不做任何")
         || window.contains("不做")
         || window.contains("不可")
         || window.contains("不应")
+        || window.contains("没有")
+        || window.contains("未")
+        || window.contains("没")
+        || window.contains("只读")
         || window.contains("don't ")
         || window.contains("do not ")
+        || window.contains("dont ")
         || window.contains("without ")
+        || window.contains("never ")
+        || window.contains("no changes")
+        || window.contains("read-only")
+        || window.contains("readonly")
+        || window.contains("don't touch")
+        || window.contains("do not touch")
+        || window.contains("not to ")
 }
 
 /// Check if the user message requests a mutation/action (not just a query).
@@ -122,13 +227,16 @@ fn action_verb_is_negated(msg_lower: &str, verb_pos: usize) -> bool {
 /// ("不要修改配置", "don't update anything") is treated as non-action. A
 /// mixed request ("创建设备，不要修改配置") still requires action because
 /// the un-negated verb remains.
+///
+/// Morphology-aware (Stage 1): English verbs need word boundaries; Chinese
+/// completed-aspect / noun-suffix forms (`已安装`, `安装路径`) are excluded.
 pub(crate) fn user_message_requires_action(msg: &str) -> bool {
     let msg_lower = msg.to_lowercase();
-    let verb_hits: Vec<usize> = ACTION_VERBS
+    let verb_hits: Vec<(usize, &'static str)> = ACTION_VERBS
         .iter()
-        .filter_map(|v| msg_lower.find(v))
+        .filter_map(|v| find_action_verb(&msg_lower, v).map(|pos| (pos, *v)))
         .collect();
-    let Some(&first_verb_pos) = verb_hits.iter().min() else {
+    let Some(&(first_verb_pos, _)) = verb_hits.iter().min_by_key(|(pos, _)| *pos) else {
         return false;
     };
     if INSTRUCTIONAL_QUESTION_PATTERNS
@@ -138,9 +246,22 @@ pub(crate) fn user_message_requires_action(msg: &str) -> bool {
     {
         return false;
     }
-    verb_hits
-        .into_iter()
-        .any(|pos| !action_verb_is_negated(&msg_lower, pos))
+    // Extra interrogative / hypothetical English shapes that often wrap a
+    // past-looking verb ("is the extension installed?", "what if I delete…").
+    const EXTRA_QUESTION_PREFIXES: &[&str] = &[
+        "is the ", "is it ", "are the ", "are there ", "did it ", "did you ",
+        "what if ", "what happens if ", "would it ", "can i safely ",
+    ];
+    if EXTRA_QUESTION_PREFIXES
+        .iter()
+        .filter_map(|p| msg_lower.find(p))
+        .any(|pos| pos < first_verb_pos)
+    {
+        return false;
+    }
+    verb_hits.into_iter().any(|(pos, verb)| {
+        !action_verb_is_negated(&msg_lower, pos) && !chinese_verb_is_non_action(&msg_lower, verb, pos)
+    })
 }
 
 /// Check if ALL executed tool calls so far were read-only (list/get/query).
@@ -527,7 +648,7 @@ pub(crate) fn extract_action_parts(msg: &str) -> (&'static str, &'static str) {
     // Action candidates in table-priority order (= the old chain order).
     let candidates: Vec<&str> = ACTION_CLASSES
         .iter()
-        .filter(|(_, kws, _)| kws.iter().any(|k| msg_lower.contains(k)))
+        .filter(|(_, kws, _)| kws.iter().any(|k| find_action_verb(&msg_lower, k).is_some()))
         .map(|(class, _, _)| *class)
         .collect();
 
@@ -1130,6 +1251,80 @@ mod tests {
             &[],
         )
         .is_some());
+    }
+
+    /// Stage 1 adversarial suite: English word boundaries, Chinese
+    /// completed-aspect / noun-suffix exclusions, long-range negation,
+    /// interrogative/hypothetical demotion.
+    #[test]
+    fn stage1_action_verb_adversarial_exclusions() {
+        // English substring false positives
+        assert!(!user_message_requires_action("Show device IP address"));
+        assert!(!user_message_requires_action("check padding on the widget"));
+        assert!(!user_message_requires_action("additional sensors online?"));
+        assert!(!user_message_requires_action("sender name for notifications"));
+        assert!(!user_message_requires_action("startup sequence looks fine"));
+        assert!(!user_message_requires_action("service restart history"));
+        assert!(!user_message_requires_action("stopwatch reading now"));
+        assert!(!user_message_requires_action("list created rules"));
+        assert!(!user_message_requires_action("show the creator of this agent"));
+        assert!(!user_message_requires_action("updated_at field value"));
+        assert!(!user_message_requires_action("controller firmware version"));
+        assert!(!user_message_requires_action("shared dashboard link please"));
+        assert!(!user_message_requires_action("list installed extensions"));
+        assert!(!user_message_requires_action("show created rules"));
+        assert!(!user_message_requires_action("check enabled agents"));
+        assert!(!user_message_requires_action("is the extension installed?"));
+        assert!(!user_message_requires_action("did it create a rule?"));
+        assert!(!user_message_requires_action(
+            "what happens if I delete this device?"
+        ));
+        assert!(!user_message_requires_action("what if I remove the rule?"));
+
+        // Chinese completed-aspect / status
+        assert!(!user_message_requires_action("查看已安装的扩展"));
+        assert!(!user_message_requires_action("列出已创建的规则"));
+        assert!(!user_message_requires_action("哪些设备已启用"));
+        assert!(!user_message_requires_action("显示已绑定的数据源"));
+        assert!(!user_message_requires_action("扩展有没有安装？"));
+        assert!(!user_message_requires_action("设备是否已经绑定规则？"));
+        assert!(!user_message_requires_action("规则是否启用了？"));
+
+        // Chinese noun-suffix compounds
+        assert!(!user_message_requires_action("查看扩展的安装路径"));
+        assert!(!user_message_requires_action("看看设备的更新日志"));
+        assert!(!user_message_requires_action("仪表盘的分享链接在哪"));
+        assert!(!user_message_requires_action("规则的创建时间是什么"));
+        assert!(!user_message_requires_action("设备的控制面板怎么进"));
+        assert!(!user_message_requires_action("告诉我删除记录"));
+        assert!(!user_message_requires_action("扩展安装说明在哪"));
+
+        // Long-distance / expanded negation
+        assert!(!user_message_requires_action(
+            "不要对任何仪表盘做修改"
+        ));
+        assert!(!user_message_requires_action(
+            "只读查询配置，未修改任何内容"
+        ));
+        assert!(!user_message_requires_action(
+            "read-only inspection, no changes please"
+        ));
+        assert!(!user_message_requires_action(
+            "never update the production rule"
+        ));
+        assert!(!user_message_requires_action(
+            "please don't touch any connectors"
+        ));
+
+        // Still true write requests
+        assert!(user_message_requires_action("create a new device"));
+        assert!(user_message_requires_action("add a widget to the dashboard"));
+        assert!(user_message_requires_action("start the connector now"));
+        assert!(user_message_requires_action("安装 weather 扩展"));
+        assert!(user_message_requires_action("删除这条规则"));
+        assert!(user_message_requires_action("启用监控代理"));
+        assert!(user_message_requires_action("更新仪表盘标题"));
+        assert!(user_message_requires_action("帮我绑定这个数据源"));
     }
 
     /// Live 2026-10-21: "Send it a set_alarm command" extracts action=write/send

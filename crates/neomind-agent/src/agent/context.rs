@@ -359,22 +359,59 @@ const PROMISE_HEAD_CHARS: usize = 80;
 /// a greeting requests no action, so a promise-shaped model reply to one is
 /// small-model chatter, not a stalled turn (do NOT label it).
 pub fn is_simple_greeting(text: &str) -> bool {
-    const GREETING_PATTERNS: [&str; 9] = [
-        "你好",
-        "您好",
-        "hi",
-        "hello",
-        "嗨",
-        "在吗",
-        "早上好",
-        "下午好",
-        "晚上好",
+    const GREETING_CJK: [&str; 7] = [
+        "你好", "您好", "嗨", "在吗", "早上好", "下午好", "晚上好",
     ];
+    const GREETING_EN: [&str; 2] = ["hi", "hello"];
     let trimmed = text.trim();
-    trimmed.chars().count() < 20
-        && GREETING_PATTERNS
-            .iter()
-            .any(|&pat| trimmed.eq_ignore_ascii_case(pat) || trimmed.starts_with(pat))
+    if trimmed.chars().count() >= 20 {
+        return false;
+    }
+    if GREETING_CJK
+        .iter()
+        .any(|&pat| trimmed == pat || trimmed.starts_with(pat))
+    {
+        return true;
+    }
+    // English greetings need a word/punct boundary so "history"/"high"
+    // never match the `hi` prefix.
+    let lower = trimmed.to_lowercase();
+    GREETING_EN.iter().any(|&pat| {
+        if lower == pat {
+            return true;
+        }
+        if !lower.starts_with(pat) {
+            return false;
+        }
+        let rest = &lower[pat.len()..];
+        rest.is_empty()
+            || rest
+                .chars()
+                .next()
+                .is_some_and(|c| !c.is_ascii_alphanumeric() && c != '_')
+    })
+}
+
+fn narration_has_promise_actor(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    const ACTORS: &[&str] = &[
+        "我",
+        "咱",
+        "让我",
+        "我来",
+        "我会",
+        "我将",
+        "我现在",
+        "i ",
+        "i'll",
+        "i will",
+        "i am going",
+        "i'm going",
+        "let me",
+        "ok i",
+        "okay i",
+    ];
+    ACTORS.iter().any(|a| lower.contains(a))
 }
 
 pub fn is_narration_without_action(text: &str) -> bool {
@@ -382,12 +419,11 @@ pub fn is_narration_without_action(text: &str) -> bool {
     if trimmed.chars().count() > NARRATION_MAX_CHARS {
         return false;
     }
-    // Trailing-colon heuristic: a SHORT reply that ends with "：" or ":"
-    // promises output that follows. The 2026-10-08 session's collapses all
-    // ended this way ("…现在让我重新安装自定义 Widget 到平台：") — pattern
-    // lists chase phrasings, a colon is the structural signature. A real
-    // final answer that short and colon-terminated is vanishingly rare.
-    if trimmed.ends_with('：') || trimmed.ends_with(':') {
+    // Trailing-colon heuristic: ONLY when the short reply also carries a
+    // first-person / promise actor. Bare times or tip lists ending in ":"
+    // must not be labelled "no result".
+    if (trimmed.ends_with('：') || trimmed.ends_with(':')) && narration_has_promise_actor(trimmed)
+    {
         return true;
     }
     let head: String = trimmed.chars().take(PROMISE_HEAD_CHARS).collect();
@@ -1142,6 +1178,22 @@ mod narration_tests {
             "已完成：水印已绘制并通过 vision 验证。"
         ));
     }
+    #[test]
+    fn stage1_greeting_and_colon_adversarial() {
+        assert!(!is_simple_greeting("history of temp"));
+        assert!(!is_simple_greeting("high cpu?"));
+        assert!(!is_simple_greeting("History of the device"));
+        assert!(is_simple_greeting("hi"));
+        assert!(is_simple_greeting("hi!"));
+        assert!(is_simple_greeting("hello"));
+        assert!(is_simple_greeting("你好"));
+        // Colon alone is not narration without a promise actor.
+        assert!(!is_narration_without_action("当前系统时间 10:30:"));
+        assert!(!is_narration_without_action("Tips:"));
+        assert!(is_narration_without_action("好的，我来重新安装组件："));
+        assert!(is_narration_without_action("OK, let me install the widget:"));
+    }
+
 
     /// Live 2026-10-20 regression (verbatim shape): a COMPLETE ~300-char
     /// capability-list answer whose politeness closing contains "我来帮你
