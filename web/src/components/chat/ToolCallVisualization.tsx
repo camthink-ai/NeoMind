@@ -68,7 +68,7 @@ export function RoundContent({ content }: { content: string }) {
   return (
     <div
       data-testid="round-intermediate"
-      className="py-1.5 text-base leading-relaxed text-muted-foreground whitespace-pre-wrap [overflow-wrap:anywhere]"
+      className="py-2 text-base leading-5 text-muted-foreground whitespace-pre-wrap [overflow-wrap:anywhere]"
     >
       {content}
     </div>
@@ -103,19 +103,19 @@ export function ToolCallItem({
   const displayName = getToolDisplayName(toolCall.name, toolCall.arguments)
 
   return (
-    <div className="py-0.5">
+    <div>
       <button
         type="button"
         onClick={() => { if (hasDetails) setIsExpanded(!isExpanded) }}
         aria-expanded={hasDetails ? isExpanded : undefined}
         aria-controls={hasDetails ? detailsId : undefined}
         className={cn(
-          "flex w-full items-center gap-2 rounded text-left transition-colors",
+          "flex w-full items-center gap-2 rounded py-2 text-left transition-colors",
           hasDetails && "hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2"
         )}
         aria-label={hasDetails ? t("toolCall.toggleDetails") : undefined}
       >
-        <span className={cn("min-w-0 truncate text-base", failed ? "text-error" : "text-foreground")}>
+        <span className={cn("min-w-0 truncate text-base leading-5", failed ? "text-error" : "text-foreground")}>
           <span className="mr-2 text-muted-foreground">{t("toolCall.label")}</span>
           {displayName}
         </span>

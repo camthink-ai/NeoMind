@@ -93,7 +93,9 @@ function buildRounds({
   return [...groups.values()].sort((a, b) => a.round - b.round)
 }
 
-/** Compact round marker: prefix on the first row only; later rows share the gutter. */
+/** Compact round marker: prefix on the first row only; later rows share the gutter.
+ *  Match ThinkingBlock / tool / note: text-base + leading-5 + py-2 so the
+ *  label and first content line share one top edge (no mt offset, no h-box). */
 function RoundRow({
   round,
   showLabel,
@@ -108,14 +110,15 @@ function RoundRow({
   return (
     <div className="flex items-start gap-2">
       <span
-        className="mt-1.5 w-7 shrink-0 text-sm font-medium tabular-nums text-muted-foreground"
+        className="w-7 shrink-0 py-2 text-base font-medium leading-5 tabular-nums text-muted-foreground"
         aria-hidden={!showLabel}
+        data-testid={showLabel ? `round-label-${round}` : undefined}
       >
         {showLabel ? (
-          <span className="inline-flex items-center gap-1">
+          <span className="inline-flex items-center gap-1 leading-5">
             R{round}
             {isActive && (
-              <Loader2 className="h-3 w-3 text-warning motion-safe:animate-spin" aria-hidden="true" />
+              <Loader2 className="h-3.5 w-3.5 text-warning motion-safe:animate-spin" aria-hidden="true" />
             )}
           </span>
         ) : null}

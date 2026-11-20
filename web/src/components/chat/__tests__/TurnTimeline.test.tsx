@@ -36,6 +36,11 @@ describe('TurnTimeline', () => {
     fireEvent.click(screen.getByRole('button', { name: /chat:timeline\.title/ }))
     expect(screen.getByText('R1')).toBeTruthy()
     expect(screen.getByText('R2')).toBeTruthy()
+    // Top-align: R gutter and first content row share py-2 + leading-5 (no mt).
+    const r1 = screen.getByTestId('round-label-1')
+    expect(r1.className).toContain('py-2')
+    expect(r1.className).toContain('leading-5')
+    expect(r1.className).not.toContain('mt-')
     // R labels sit beside the first row — not a lone dedicated button row.
     expect(screen.queryByRole('button', { name: /^R1/ })).toBeNull()
     // Thinking stays collapsed by default — body not visible, summary is.

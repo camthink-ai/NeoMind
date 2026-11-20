@@ -64,11 +64,11 @@ export function ThinkingBlock({
           type="button"
           className={cn(
             "w-full flex items-center gap-2 text-left transition-colors hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2",
-            inline ? "py-1.5 gap-2" : "py-2.5 gap-3"
+            inline ? "items-center gap-2 py-2" : "py-2.5 gap-3"
           )}
         >
           {inline ? (
-            <span className="min-w-0 truncate text-base text-muted-foreground">
+            <span className="min-w-0 truncate text-base leading-5 text-muted-foreground">
               {t("thinking.inlineTitle")}
               {!isStreaming && (
                 <>
@@ -80,7 +80,7 @@ export function ThinkingBlock({
               )}
               {isStreaming && (
                 <span className="ml-2 inline-flex items-center gap-1.5">
-                  <Loader2 className="h-3 w-3 motion-safe:animate-spin" aria-hidden="true" />
+                  <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
                   {t("thinking.thinking")}
                 </span>
               )}
