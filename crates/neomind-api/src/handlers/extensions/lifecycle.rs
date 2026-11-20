@@ -138,15 +138,42 @@ pub async fn get_extension_handler(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<ExtensionDto> {
-    // Use unified service to get both in-process and isolated extensions
-    let info = state
+    // Prefer live runtime; fall back to stored Failed/stopped records so
+    // list→get stays consistent (Failed extensions must not 404).
+    if let Some(info) = state.extensions.runtime.get(&id).await {
+        return ok(extension_info_to_dto(&info, &state.extensions.store));
+    }
+
+    let record = state
         .extensions
-        .runtime
-        .get(&id)
-        .await
+        .store
+        .load_all()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|r| r.id == id && !r.uninstalled)
         .ok_or_else(|| ErrorResponse::not_found(format!("Extension {}", id)))?;
 
-    ok(extension_info_to_dto(&info, &state.extensions.store))
+    ok(ExtensionDto {
+        id: record.id.clone(),
+        name: record.name,
+        version: record.version,
+        description: record.description,
+        author: record.author,
+        state: "Failed".to_string(),
+        file_path: Some(record.file_path),
+        loaded_at: None,
+        health_status: record.health_status,
+        last_error: record.last_error,
+        last_error_at: record.last_error_at,
+        consecutive_crashes: 0,
+        last_crash_reason: None,
+        commands: Vec::new(),
+        metrics: Vec::new(),
+        config_parameters: None,
+        enabled: record.enabled,
+        ai_enabled: record.ai_enabled,
+        disabled_commands: record.disabled_commands,
+    })
 }
 
 /// GET /api/extensions/types

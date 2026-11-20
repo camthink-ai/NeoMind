@@ -36,10 +36,11 @@ pub async fn list_rules(client: &ApiClient) -> Result<CliResponse> {
             json!({
                 "id": r.get("id").and_then(|v| v.as_str()).unwrap_or(r.get("rule_id").and_then(|v| v.as_str()).unwrap_or("?")),
                 "name": r.get("name").and_then(|v| v.as_str()).unwrap_or("(unnamed)"),
-                "enabled": r.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+                "enabled": r.get("enabled").cloned().unwrap_or(serde_json::Value::Null),
                 "trigger_type": trigger_type,
-                "trigger_count": r.get("trigger_count").and_then(|v| v.as_u64()).unwrap_or(0),
-                "last_triggered": r.get("last_triggered").and_then(|v| v.as_str()).unwrap_or("-"),
+                "trigger_count": r.get("trigger_count").cloned().unwrap_or(serde_json::Value::Null),
+                "last_triggered": r.get("last_triggered").cloned().unwrap_or(serde_json::Value::Null),
+                "last_error": r.get("last_error").cloned().unwrap_or(serde_json::Value::Null),
             })
         })
         .collect();

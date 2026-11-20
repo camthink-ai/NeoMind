@@ -191,6 +191,17 @@ struct AgentDto {
     /// one telemetry read.
     #[serde(skip_serializing_if = "Option::is_none")]
     latest_output_state: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Last error message when status is Error (additive, nullable).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_message: Option<String>,
+    /// Bound LLM backend id when set (additive).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    llm_backend_id: Option<String>,
+    /// Schedule type string for list honesty (additive).
+    schedule_type: String,
+    /// Notify config when present (additive).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    notify: Option<neomind_storage::AgentNotify>,
 }
 
 /// One published field, as the detail view needs it.
@@ -698,6 +709,10 @@ impl From<AiAgent> for AgentDto {
             }),
             latest_output: None,
             latest_output_state: None,
+            error_message: agent.error_message,
+            llm_backend_id: agent.llm_backend_id,
+            schedule_type: schedule_type_to_string(&agent.schedule.schedule_type).to_string(),
+            notify: agent.notify,
         }
     }
 }

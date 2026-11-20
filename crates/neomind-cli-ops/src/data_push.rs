@@ -54,8 +54,10 @@ pub async fn list_targets(client: &ApiClient) -> Result<CliResponse> {
             json!({
                 "id": t.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
                 "name": t.get("name").and_then(|v| v.as_str()).unwrap_or("(unnamed)"),
-                "target_type": t.get("target_type").or_else(|| t.get("type")).and_then(|v| v.as_str()).unwrap_or("unknown"),
-                "enabled": t.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
+                "target_type": t.get("target_type").or_else(|| t.get("type")).cloned().unwrap_or(serde_json::Value::Null),
+                "enabled": t.get("enabled").cloned().unwrap_or(serde_json::Value::Null),
+                "last_error": t.get("last_error").cloned().unwrap_or(serde_json::Value::Null),
+                "last_executed": t.get("last_executed").or_else(|| t.get("updated_at")).cloned().unwrap_or(serde_json::Value::Null),
             })
         })
         .collect();
@@ -193,9 +195,14 @@ pub async fn update_target(
     if let Some(e) = enabled {
         body["enabled"] = json!(e);
     }
-    // Source filter. only_changes only takes effect together with --sources,
-    // because data_filter is replaced as a whole (we can't patch one field
-    // without knowing the existing patterns from the server side).
+    // Source filter. only_changes without --sources used to be silently dropped.
+    if only_changes.is_some() && sources.is_none() {
+        return Ok(CliResponse::error_with_suggestion(
+            "--only-changes requires --sources (data_filter is replaced as a whole)",
+            "MISSING_SOURCES",
+            "Pass both flags, e.g. --sources 'device:temp:' --only-changes",
+        ));
+    }
     if let Some(src) = sources {
         body["data_filter"] = json!({
             "source_patterns": parse_source_patterns(src),
@@ -316,5 +323,30 @@ mod tests {
         lift_top_level_fields(&mut config, &mut body);
         assert!(body.as_object().unwrap().is_empty());
         assert_eq!(config["url"], "https://example.com");
+    }
+}
+
+#[cfg(test)]
+mod honesty_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn only_changes_without_sources_errors() {
+        let client = crate::ApiClient::with_base_url("http://127.0.0.1:9/api");
+        let out = update_target(
+            &client,
+            "t1",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+        )
+        .await
+        .unwrap();
+        assert!(!out.success);
+        assert_eq!(out.code.as_deref(), Some("MISSING_SOURCES"));
     }
 }

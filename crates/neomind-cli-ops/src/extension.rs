@@ -41,12 +41,12 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
                 .and_then(|v| v.as_str())
                 .or_else(|| e.get("state").and_then(|v| v.as_str()))
                 .unwrap_or("unknown");
-            let enabled = e.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            // Missing enabled/ai_enabled must stay null — never optimistic true.
+            let enabled = e.get("enabled").cloned().unwrap_or(serde_json::Value::Null);
             let ai_enabled = e
                 .get("ai_enabled")
-                .and_then(|v| v.as_bool())
-                // Pre-split APIs only exposed `enabled` as the AI switch.
-                .unwrap_or(enabled);
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
             let status_l = status.to_ascii_lowercase();
             let running = e
                 .get("running")
@@ -67,6 +67,11 @@ pub async fn list_extensions(client: &ApiClient) -> Result<CliResponse> {
                 "running": running,
                 "enabled": enabled,
                 "ai_enabled": ai_enabled,
+                "health_status": e.get("health_status").cloned().unwrap_or(serde_json::Value::Null),
+                "last_error": e.get("last_error").cloned().unwrap_or(serde_json::Value::Null),
+                "last_crash_reason": e.get("last_crash_reason").cloned().unwrap_or(serde_json::Value::Null),
+                "consecutive_crashes": e.get("consecutive_crashes").cloned().unwrap_or(json!(0)),
+                "disabled_commands": e.get("disabled_commands").cloned().unwrap_or(json!([])),
                 "description": e.get("description").and_then(|v| v.as_str()).unwrap_or(""),
             })
         })
@@ -214,7 +219,7 @@ pub async fn uninstall_extension(client: &ApiClient, id: &str) -> Result<CliResp
 /// Reload an extension (restart from file)
 pub async fn reload_extension(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let data = client
-        .post_raw(&format!("/extensions/{}/reload", id))
+        .post_raw(&format!("/extensions/{}/reload", encode_segment(id)))
         .await?;
     Ok(CliResponse::success(data, "Extension reloaded"))
 }
@@ -640,7 +645,7 @@ fn load_invoke_params(
 
 /// Get extension configuration
 pub async fn get_extension_config(client: &ApiClient, id: &str) -> Result<CliResponse> {
-    let data = client.get(&format!("/extensions/{}/config", id)).await?;
+    let data = client.get(&format!("/extensions/{}/config", encode_segment(id))).await?;
     Ok(CliResponse::success(data, "Extension config retrieved"))
 }
 
@@ -651,7 +656,7 @@ pub async fn update_extension_config(
     config: serde_json::Value,
 ) -> Result<CliResponse> {
     let data = client
-        .put(&format!("/extensions/{}/config", id), &config)
+        .put(&format!("/extensions/{}/config", encode_segment(id)), &config)
         .await?;
     Ok(CliResponse::success(data, "Extension config updated"))
 }
@@ -798,6 +803,49 @@ mod market_install_verdict_tests {
             .expect_err("inner success:false must be intercepted")
             .to_string();
         assert!(err.contains("not found"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn list_extensions_keeps_null_enabled_and_exposes_failure_fields() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let body = json!({
+                "success": true,
+                "data": [
+                    {
+                        "id": "broken",
+                        "name": "Broken",
+                        "version": "1.0.0",
+                        "status": "Failed",
+                        "last_error": "dlopen failed",
+                        "last_crash_reason": "segfault",
+                        "consecutive_crashes": 3,
+                        "disabled_commands": ["x"],
+                        "ai_enabled": false,
+                        "health_status": "error"
+                    }
+                ]
+            }).to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(), body
+            );
+            socket.write_all(resp.as_bytes()).await.unwrap();
+        });
+        let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
+        let out = super::list_extensions(&client).await.unwrap();
+        let item = &out.data.as_ref().unwrap()["extensions"][0];
+        assert!(item["enabled"].is_null(), "missing enabled must stay null, got {:?}", item["enabled"]);
+        assert_eq!(item["ai_enabled"], false);
+        assert_eq!(item["last_error"], "dlopen failed");
+        assert_eq!(item["consecutive_crashes"], 3);
+        assert_eq!(item["disabled_commands"], json!(["x"]));
+        server.await.unwrap();
     }
 
     #[tokio::test]

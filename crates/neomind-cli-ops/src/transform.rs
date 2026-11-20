@@ -23,8 +23,11 @@ pub async fn list_transforms(client: &ApiClient) -> Result<CliResponse> {
             json!({
                 "id": t.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
                 "name": t.get("name").and_then(|v| v.as_str()).unwrap_or("(unnamed)"),
-                "scope": t.get("scope"),
-                "output_prefix": t.get("output_prefix").and_then(|v| v.as_str()).unwrap_or(""),
+                "scope": t.get("scope").cloned().unwrap_or(serde_json::Value::Null),
+                "output_prefix": t.get("output_prefix").cloned().unwrap_or(serde_json::Value::Null),
+                "enabled": t.get("enabled").cloned().unwrap_or(serde_json::Value::Null),
+                "execution_count": t.get("execution_count").cloned().unwrap_or(serde_json::Value::Null),
+                "last_executed": t.get("last_executed").cloned().unwrap_or(serde_json::Value::Null),
             })
         })
         .collect();

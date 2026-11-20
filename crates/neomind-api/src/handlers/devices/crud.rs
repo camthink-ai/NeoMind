@@ -1045,14 +1045,25 @@ pub async fn get_device_health_handler(
     let device_status = state.devices.service.get_device_status(&device_id).await;
     let effective_timeout = state.devices.service.effective_offline_timeout(&device_id);
     let now = chrono::Utc::now().timestamp();
-    let seconds_since_last_seen = now - device_status.last_seen;
+    // last_seen==0 means never reported — do not invent ~56 years of age.
+    let (last_seen, seconds_since_last_seen) = if device_status.last_seen <= 0 {
+        (serde_json::Value::Null, serde_json::Value::Null)
+    } else {
+        (
+            json!(device_status.last_seen),
+            json!(now - device_status.last_seen),
+        )
+    };
 
     // Determine health status using proportional thresholds relative to effective_timeout
-    let (health, message) = if device_status.is_connected_within(effective_timeout) {
+    let (health, message) = if device_status.last_seen <= 0 {
+        ("unknown", "Device has never reported telemetry")
+    } else if device_status.is_connected_within(effective_timeout) {
         let timeout = effective_timeout as i64;
-        if seconds_since_last_seen < timeout / 3 {
+        let age = now - device_status.last_seen;
+        if age < timeout / 3 {
             ("healthy", "Device is connected and actively reporting")
-        } else if seconds_since_last_seen < (timeout * 2) / 3 {
+        } else if age < (timeout * 2) / 3 {
             ("stale", "Device is connected but hasn't reported recently")
         } else {
             (
@@ -1075,7 +1086,7 @@ pub async fn get_device_health_handler(
             AdapterConnectionStatus::Reconnecting => "reconnecting",
             AdapterConnectionStatus::Error => "error",
         },
-        "last_seen": device_status.last_seen,
+        "last_seen": last_seen,
         "seconds_since_last_seen": seconds_since_last_seen,
     }))
 }

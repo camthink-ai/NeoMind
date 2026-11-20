@@ -35,24 +35,38 @@ pub async fn list_devices(
 
     // Extract device array from API response
     let devices = extract_device_array(&data);
-    let total = devices.len();
+    let returned = devices.len();
+    // Prefer server pagination.total — never pretend returned==total when capped.
+    let total = data
+        .get("pagination")
+        .and_then(|p| p.get("total"))
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(returned);
+    let truncated = returned < total;
 
-    if total == 0 {
+    if total == 0 && returned == 0 {
         return Ok(CliResponse::success(
-            json!({"summary": {"total": 0, "online": 0, "offline": 0, "type_count": 0}, "types": [], "ungrouped": []}),
+            json!({
+                "summary": {
+                    "total": 0,
+                    "returned": 0,
+                    "truncated": false,
+                    "enrichment_skipped": false,
+                    "online": 0,
+                    "offline": 0,
+                    "type_count": 0
+                },
+                "types": [],
+                "ungrouped": []
+            }),
             "No devices found",
         ));
     }
 
-    // Count online/offline
-    let online_count = devices
-        .iter()
-        .filter(|d| {
-            d.get("status").and_then(|v| v.as_str()) == Some("online")
-                || d.get("online").and_then(|v| v.as_bool()) == Some(true)
-        })
-        .count();
-    let offline_count = total - online_count;
+    // Single online口径: status == "online" (same as per-type group counts).
+    let online_count = devices.iter().filter(|d| device_is_online(d)).count();
+    let offline_count = returned.saturating_sub(online_count);
 
     // Group by device_type
     let mut typed_groups: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
@@ -76,6 +90,8 @@ pub async fn list_devices(
         }
     }
 
+    let enrichment_skipped = returned > MAX_DEVICES_FOR_ENRICHMENT;
+
     // Optional compact output: counts only, no per-device payload.
     if summary {
         let type_count = typed_groups.len() + usize::from(!ungrouped_devices.is_empty());
@@ -83,18 +99,21 @@ pub async fn list_devices(
             json!({
                 "summary": {
                     "total": total,
+                    "returned": returned,
+                    "truncated": truncated,
+                    "enrichment_skipped": enrichment_skipped,
                     "online": online_count,
                     "offline": offline_count,
                     "type_count": type_count,
                 },
                 "note": "summary only; run without --summary for device IDs and details",
             }),
-            format!("{total} devices ({online_count} online, {offline_count} offline)"),
+            format!("{total} devices ({online_count} online on this page of {returned})"),
         ));
     }
 
     // Enrich with example metrics if within budget
-    let enrich = total <= MAX_DEVICES_FOR_ENRICHMENT;
+    let enrich = !enrichment_skipped;
 
     // Build type groups
     let mut types_response = Vec::new();
@@ -106,7 +125,7 @@ pub async fn list_devices(
                 // Pick first online device as example
                 let example = devs
                     .iter()
-                    .find(|d| d.get("status").and_then(|v| v.as_str()) == Some("online"))
+                    .find(|d| device_is_online(d))
                     .or_else(|| devs.first())?;
                 let id = extract_device_id(example)?;
                 Some((type_name.clone(), id))
@@ -117,10 +136,7 @@ pub async fn list_devices(
         let example_results = fetch_examples(client, &example_ids).await;
 
         for (type_name, devs) in &typed_groups {
-            let group_online = devs
-                .iter()
-                .filter(|d| d.get("status").and_then(|v| v.as_str()) == Some("online"))
-                .count();
+            let group_online = devs.iter().filter(|d| device_is_online(d)).count();
 
             let mut type_entry = json!({
                 "type": type_name,
@@ -149,10 +165,7 @@ pub async fn list_devices(
     } else {
         // Too many devices — skip enrichment, just return groups
         for (type_name, devs) in &typed_groups {
-            let group_online = devs
-                .iter()
-                .filter(|d| d.get("status").and_then(|v| v.as_str()) == Some("online"))
-                .count();
+            let group_online = devs.iter().filter(|d| device_is_online(d)).count();
             types_response.push(json!({
                 "type": type_name,
                 "metric_fields": [],
@@ -163,27 +176,18 @@ pub async fn list_devices(
         }
     }
 
-    // Build ungrouped entries
+    // Build ungrouped entries (same 4-state fields as typed list)
     let ungrouped_response: Vec<serde_json::Value> = ungrouped_devices
         .iter()
-        .map(|d| {
-            let id = extract_device_id(d).unwrap_or_default();
-            let name = d.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let dev_status = d
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            json!({
-                "id": id,
-                "name": name,
-                "status": dev_status,
-            })
-        })
+        .map(compact_device_entry)
         .collect();
 
-    let response = json!({
+    let mut response = json!({
         "summary": {
             "total": total,
+            "returned": returned,
+            "truncated": truncated,
+            "enrichment_skipped": enrichment_skipped,
             "online": online_count,
             "offline": offline_count,
             "type_count": typed_groups.len(),
@@ -191,8 +195,42 @@ pub async fn list_devices(
         "types": types_response,
         "ungrouped": ungrouped_response,
     });
+    if truncated {
+        response["skipped_reason"] = json!(format!(
+            "page returned {returned} of {total}; raise --limit or page via API"
+        ));
+    }
+    if enrichment_skipped {
+        response["enrichment_note"] = json!(format!(
+            "metric_fields skipped for >{MAX_DEVICES_FOR_ENRICHMENT} devices on this page; use device get <id>"
+        ));
+    }
 
     Ok(CliResponse::success(response, "Devices listed"))
+}
+
+/// Unified online check — must match per-type `group_online` counting.
+fn device_is_online(d: &serde_json::Value) -> bool {
+    d.get("status").and_then(|v| v.as_str()) == Some("online")
+}
+
+/// Compact list entry with 4-state connection fields (additive).
+fn compact_device_entry(d: &serde_json::Value) -> serde_json::Value {
+    let id = extract_device_id(d).unwrap_or_default();
+    let name = d.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    let dev_status = d
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    json!({
+        "id": id,
+        "name": name,
+        "status": dev_status,
+        "online": d.get("online").cloned().unwrap_or(serde_json::Value::Null),
+        "transport_connected": d.get("transport_connected").cloned().unwrap_or(serde_json::Value::Null),
+        "last_seen": d.get("last_seen").cloned().unwrap_or(serde_json::Value::Null),
+        "effective_offline_timeout_secs": d.get("effective_offline_timeout_secs").cloned().unwrap_or(serde_json::Value::Null),
+    })
 }
 
 /// Fetch example metrics for multiple devices sequentially.
@@ -565,19 +603,7 @@ fn build_device_list(devs: &[serde_json::Value]) -> serde_json::Value {
     let list: Vec<serde_json::Value> = devs
         .iter()
         .take(MAX_DEVICES_PER_TYPE)
-        .map(|d| {
-            let id = extract_device_id(d).unwrap_or_default();
-            let name = d.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let dev_status = d
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            json!({
-                "id": id,
-                "name": name,
-                "status": dev_status,
-            })
-        })
+        .map(compact_device_entry)
         .collect();
 
     let mut result = json!({ "list": list });
@@ -2024,6 +2050,65 @@ mod tests {
         assert!(parse_time_range_to_timestamp("0h", now).is_none());
         assert!(parse_time_range_to_timestamp("-1h", now).is_none());
         assert!(parse_time_range_to_timestamp("30", now).is_none());
+    }
+
+    #[test]
+    fn device_is_online_uses_status_only() {
+        assert!(device_is_online(&json!({"status": "online", "online": false})));
+        assert!(!device_is_online(&json!({"status": "offline", "online": true})));
+        assert!(!device_is_online(&json!({"online": true})));
+    }
+
+    #[test]
+    fn compact_device_entry_exposes_four_state_fields() {
+        let entry = compact_device_entry(&json!({
+            "id": "d1",
+            "name": "Cam",
+            "status": "online",
+            "online": true,
+            "transport_connected": true,
+            "last_seen": null,
+            "effective_offline_timeout_secs": 300
+        }));
+        assert_eq!(entry["transport_connected"], true);
+        assert!(entry["last_seen"].is_null());
+        assert_eq!(entry["effective_offline_timeout_secs"], 300);
+    }
+
+    #[tokio::test]
+    async fn list_devices_reports_pagination_total_and_truncation() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let body = json!({
+                "success": true,
+                "data": {
+                    "devices": [
+                        {"id":"d1","name":"A","status":"online","device_type":"cam","online":true,"transport_connected":true,"last_seen":null,"effective_offline_timeout_secs":60}
+                    ],
+                    "count": 1,
+                    "pagination": {"page":1,"limit":100,"total":150,"total_pages":2}
+                }
+            }).to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(), body
+            );
+            socket.write_all(resp.as_bytes()).await.unwrap();
+        });
+        let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
+        let out = list_devices(&client, None, None, true).await.unwrap();
+        assert!(out.success);
+        let s = &out.data.as_ref().unwrap()["summary"];
+        assert_eq!(s["total"], 150);
+        assert_eq!(s["returned"], 1);
+        assert_eq!(s["truncated"], true);
+        assert_eq!(s["online"], 1);
+        server.await.unwrap();
     }
 
     #[tokio::test]

@@ -72,16 +72,32 @@ pub async fn list_agents(client: &ApiClient) -> Result<CliResponse> {
     let summary: Vec<serde_json::Value> = agents
         .iter()
         .map(|a| {
+            // No optimistic defaults — missing fields stay null / absent.
+            let schedule_type = a
+                .get("schedule")
+                .and_then(|s| s.get("schedule_type"))
+                .cloned()
+                .or_else(|| a.get("schedule_type").cloned())
+                .unwrap_or(serde_json::Value::Null);
+            let last_error = a
+                .get("last_error")
+                .cloned()
+                .or_else(|| a.get("error_message").cloned())
+                .unwrap_or(serde_json::Value::Null);
             json!({
                 "id": a.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
                 "name": a.get("name").and_then(|v| v.as_str()).unwrap_or("(unnamed)"),
                 "status": a.get("status").and_then(|v| v.as_str()).unwrap_or("unknown"),
-                "execution_mode": a.get("execution_mode").and_then(|v| v.as_str()).unwrap_or("focused"),
-                "schedule_type": a.get("schedule").and_then(|s| s.get("schedule_type")).and_then(|v| v.as_str()).unwrap_or("event"),
-                "execution_count": a.get("execution_count").and_then(|v| v.as_u64()).unwrap_or(0),
-                "success_count": a.get("success_count").and_then(|v| v.as_u64()).unwrap_or(0),
-                "error_count": a.get("error_count").and_then(|v| v.as_u64()).unwrap_or(0),
-                "avg_duration_ms": a.get("avg_duration_ms").and_then(|v| v.as_u64()).unwrap_or(0),
+                "execution_mode": a.get("execution_mode").cloned().unwrap_or(serde_json::Value::Null),
+                "schedule_type": schedule_type,
+                "llm_backend_id": a.get("llm_backend_id").cloned().unwrap_or(serde_json::Value::Null),
+                "notify": a.get("notify").cloned().unwrap_or(serde_json::Value::Null),
+                "last_error": last_error,
+                "last_execution_at": a.get("last_execution_at").cloned().unwrap_or(serde_json::Value::Null),
+                "execution_count": a.get("execution_count").cloned().unwrap_or(serde_json::Value::Null),
+                "success_count": a.get("success_count").cloned().unwrap_or(serde_json::Value::Null),
+                "error_count": a.get("error_count").cloned().unwrap_or(serde_json::Value::Null),
+                "avg_duration_ms": a.get("avg_duration_ms").cloned().unwrap_or(serde_json::Value::Null),
             })
         })
         .collect();
@@ -378,6 +394,13 @@ pub async fn update_agent(
     }
     if let Some(prompt) = user_prompt {
         body["user_prompt"] = json!(prompt);
+    }
+    if schedule_config.is_some() && schedule_type.is_none() {
+        return Ok(CliResponse::error_with_suggestion(
+            "--schedule-config requires --schedule-type (interval|cron|event|manual)",
+            "MISSING_SCHEDULE_TYPE",
+            "Pass both flags together, e.g. --schedule-type interval --schedule-config 300",
+        ));
     }
     if let Some(st) = schedule_type {
         let mut schedule = json!({"schedule_type": st});
