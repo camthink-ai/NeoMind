@@ -135,14 +135,15 @@ export function ToolCallItem({
           </span>
         )}
         <div className="flex-1" />
+        {/* Status icons share the trailing cluster with the chevron (vertically centered). */}
         {status === "running" && (
-          <Loader2 className="h-4 w-4 shrink-0 text-warning motion-safe:animate-spin" aria-hidden="true" />
+          <Loader2 className="h-4 w-4 shrink-0 self-center text-warning motion-safe:animate-spin" aria-hidden="true" />
         )}
-        {failed && <AlertCircle className="h-4 w-4 shrink-0 text-error" aria-hidden="true" />}
+        {failed && <AlertCircle className="h-4 w-4 shrink-0 self-center text-error" aria-hidden="true" />}
         {hasDetails && (
           <ChevronDown
             className={cn(
-              "h-4 w-4 shrink-0 text-current transition-transform duration-normal",
+              "h-4 w-4 shrink-0 self-center text-current transition-transform duration-normal",
               isExpanded && "rotate-180"
             )}
             aria-hidden="true"

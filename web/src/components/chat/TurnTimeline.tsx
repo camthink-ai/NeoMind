@@ -94,34 +94,25 @@ function buildRounds({
 }
 
 /** Compact round marker: prefix on the first row only; later rows share the gutter.
- *  Match ThinkingBlock / tool / note: text-base + leading-5 + py-2 so the
- *  label and first content line share one top edge (no mt offset, no h-box). */
+ *  Vertically center Rn with the content row (items-center). Live status
+ *  spinners live on the thinking/tool rows — never jammed beside Rn. */
 function RoundRow({
   round,
   showLabel,
-  isActive,
   children,
 }: {
   round: number
   showLabel: boolean
-  isActive?: boolean
   children: ReactNode
 }) {
   return (
-    <div className="flex items-start gap-2">
+    <div className="flex items-center gap-2">
       <span
-        className="w-7 shrink-0 py-2 text-base font-medium leading-5 tabular-nums text-muted-foreground"
+        className="flex w-7 shrink-0 items-center self-stretch text-base font-medium leading-5 tabular-nums text-muted-foreground"
         aria-hidden={!showLabel}
         data-testid={showLabel ? `round-label-${round}` : undefined}
       >
-        {showLabel ? (
-          <span className="inline-flex items-center gap-1 leading-5">
-            R{round}
-            {isActive && (
-              <Loader2 className="h-3.5 w-3.5 text-warning motion-safe:animate-spin" aria-hidden="true" />
-            )}
-          </span>
-        ) : null}
+        {showLabel ? `R${round}` : null}
       </span>
       <div className="min-w-0 flex-1">{children}</div>
     </div>
@@ -206,6 +197,8 @@ export function TurnTimeline({
                   thinking={group.thinking}
                   inline
                   defaultExpanded={false}
+                  // Spin on the thinking row itself while this round has no tools yet.
+                  isStreaming={isActive && group.calls.length === 0}
                 />
               )
             }
@@ -239,7 +232,6 @@ export function TurnTimeline({
                     key={idx}
                     round={group.round}
                     showLabel={idx === 0}
-                    isActive={isActive && idx === 0}
                   >
                     {row}
                   </RoundRow>

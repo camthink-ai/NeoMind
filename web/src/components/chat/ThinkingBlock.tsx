@@ -78,12 +78,6 @@ export function ThinkingBlock({
                   </span>
                 </>
               )}
-              {isStreaming && (
-                <span className="ml-2 inline-flex items-center gap-1.5">
-                  <Loader2 className="h-3.5 w-3.5 motion-safe:animate-spin" aria-hidden="true" />
-                  {t("thinking.thinking")}
-                </span>
-              )}
             </span>
           ) : (
             <>
@@ -113,6 +107,14 @@ export function ThinkingBlock({
           )}
 
           {inline && <div className="flex-1" />}
+
+          {/* Live status sits on the right with the chevron — never beside Rn. */}
+          {inline && isStreaming && (
+            <span className="inline-flex shrink-0 items-center gap-1.5 text-base leading-5 text-muted-foreground">
+              <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
+              {t("thinking.thinking")}
+            </span>
+          )}
 
           <ChevronDown
             className={cn(
