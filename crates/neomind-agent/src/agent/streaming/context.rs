@@ -526,9 +526,8 @@ pub async fn estimate_post_summary_context_usage(
     let mut history = history.to_vec();
     let drained = crate::agent::apply_chat_history_depth(&mut history);
     let up_to = crate::agent::adjust_summary_index_after_drain(summary_up_to_index, drained);
-    crate::agent::strip_stale_images(&mut history);
-
     let max_context = llm.max_context_length().await;
+    crate::agent::strip_stale_images(&mut history, Some(max_context));
     let (system_prompt_tokens, tool_tokens) = llm.estimate_prompt_breakdown().await;
     let overhead = system_prompt_tokens + tool_tokens;
     // Keep the same response reserve the live stream path uses
@@ -580,7 +579,9 @@ impl TurnContext {
         let mut messages = messages.to_vec();
         let drained = crate::agent::apply_chat_history_depth(&mut messages);
         let up_to = crate::agent::adjust_summary_index_after_drain(self.up_to, drained);
-        crate::agent::strip_stale_images(&mut messages);
+        // Budget is history-only; treat small budgets like ≤16K windows.
+        let max_ctx_hint = if budget <= 8_000 { Some(8_192) } else { None };
+        crate::agent::strip_stale_images(&mut messages, max_ctx_hint);
         build_context_window_with_summary_marked(&messages, budget, self.summary.as_deref(), up_to)
     }
 }

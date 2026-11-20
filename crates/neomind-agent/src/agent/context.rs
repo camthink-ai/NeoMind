@@ -206,8 +206,17 @@ pub(crate) fn adjust_summary_index_after_drain(
     summary_up_to.and_then(|i| i.checked_sub(drained as u64))
 }
 
-/// How many of the most recent image-bearing user messages keep their images.
-const KEEP_IMAGES_ON_RECENT_USER_MSGS: usize = 2;
+/// Default keep count when max_context is unknown / large.
+const KEEP_IMAGES_ON_RECENT_USER_MSGS_DEFAULT: usize = 2;
+
+/// Dynamic image-history budget: ≤16K windows keep 1 recent image-bearing
+/// user message; larger windows keep 2 (Stage-1 toolTokens must stay intact).
+pub(crate) fn keep_images_on_recent_user_msgs(max_context: Option<usize>) -> usize {
+    match max_context {
+        Some(m) if m <= 16_000 => 1,
+        _ => KEEP_IMAGES_ON_RECENT_USER_MSGS_DEFAULT,
+    }
+}
 
 /// Phrases where the model PROMISES a tool action in words. Matched against
 /// a text-only (no tool call) LLM round to detect the "narration collapse":
@@ -524,7 +533,7 @@ pub fn narration_nudge_prompt(language_hint: &str) -> &'static str {
 }
 
 /// Strip images from every user message older than the most recent
-/// [`KEEP_IMAGES_ON_RECENT_USER_MSGS`] image-bearing ones, leaving a short
+/// [`keep_images_on_recent_user_msgs`] image-bearing ones, leaving a short
 /// note in the text so the model knows an image was there.
 ///
 /// History images are re-sent to the LLM on EVERY turn, and each costs
@@ -533,7 +542,8 @@ pub fn narration_nudge_prompt(language_hint: &str) -> &'static str {
 /// (while keeping an explicit marker) keeps the prompt within what the token
 /// budget math promised. The current turn's images are not in history yet —
 /// both streaming paths push them after the window is built.
-pub(crate) fn strip_stale_images(history: &mut [AgentMessage]) {
+pub(crate) fn strip_stale_images(history: &mut [AgentMessage], max_context: Option<usize>) {
+    let keep = keep_images_on_recent_user_msgs(max_context);
     let mut kept_with_images = 0usize;
     for msg in history.iter_mut().rev() {
         if msg.role != "user" {
@@ -544,7 +554,7 @@ pub(crate) fn strip_stale_images(history: &mut [AgentMessage]) {
             _ => continue,
         };
         kept_with_images += 1;
-        if kept_with_images <= KEEP_IMAGES_ON_RECENT_USER_MSGS {
+        if kept_with_images <= keep {
             // Hydrate persisted file references to data URLs — the LLM needs
             // actual image bytes, not an /api/images/ path. Restored sessions
             // hold references; active ones already hold data URLs (no-op).
@@ -1069,7 +1079,7 @@ mod depth_and_image_tests {
                 m
             },
         ];
-        strip_stale_images(&mut history);
+        strip_stale_images(&mut history, Some(32_768));
         // Most recent two image-bearing user messages (idx 3, 4) keep images.
         assert_eq!(history[3].images.as_ref().unwrap().len(), 1);
         assert_eq!(history[4].images.as_ref().unwrap().len(), 2);
@@ -1080,6 +1090,33 @@ mod depth_and_image_tests {
         assert!(c.contains("1 image(s) omitted"), "marker appended: {c}");
         // Non-user messages untouched.
         assert!(history[0].images.is_none());
+    }
+
+    #[test]
+    fn strip_stale_images_keeps_one_on_8k_window() {
+        let mut history = vec![
+            {
+                let mut m = AgentMessage::user("oldest");
+                m.images = Some(vec![img()]);
+                m
+            },
+            {
+                let mut m = AgentMessage::user("middle");
+                m.images = Some(vec![img()]);
+                m
+            },
+            {
+                let mut m = AgentMessage::user("recent");
+                m.images = Some(vec![img()]);
+                m
+            },
+        ];
+        strip_stale_images(&mut history, Some(8_192));
+        assert!(history[0].images.is_none());
+        assert!(history[1].images.is_none());
+        assert_eq!(history[2].images.as_ref().unwrap().len(), 1);
+        assert_eq!(keep_images_on_recent_user_msgs(Some(16_000)), 1);
+        assert_eq!(keep_images_on_recent_user_msgs(Some(16_001)), 2);
     }
 }
 

@@ -856,49 +856,29 @@ impl Agent {
     }
 }
 impl Agent {
-    /// Generate base prompt (static parts: system_prompt + tools).
-    /// This avoids rebuilding tool descriptions on every request.
+    /// Generate base prompt aligned with the streaming slim path.
+    ///
+    /// Tools are already published via the function-calling schema — do NOT
+    /// re-embed full tool descriptions here (that duplicated ~10k chars into
+    /// the non-stream `system_prompt`). Keep a name-only index so allowlist
+    /// sync tests and operators can still see which tools are visible.
     fn generate_base_prompt(&self) -> String {
         let mut prompt = String::from(self.config.system_prompt.trim());
 
-        prompt.push_str("\n\n## Available Tools (Quick Reference)\n\n");
-
-        // allowed_tool_defs() filters out disabled tools and applies the
-        // per-session allowlist so the text prompt stays in sync with the
-        // function-calling schema.
         let defs = self.allowed_tool_defs();
-        let extension_defs: Vec<_> = defs.iter().filter(|d| d.name.contains(':')).collect();
+        if !defs.is_empty() {
+            prompt.push_str("
 
-        for def in defs.iter().filter(|d| !d.name.contains(':')) {
-            prompt.push_str(&format!("**{}**: {}\n", def.name, def.description));
+## Available Tools
+");
+            prompt.push_str(
+                "Tools are available via function calling (schemas are not repeated here). Names: ",
+            );
+            let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+            prompt.push_str(&names.join(", "));
+            prompt.push_str(".
+");
         }
-
-        if !extension_defs.is_empty() {
-            prompt.push_str("\n### Extension Tools\n");
-            prompt.push_str("These tools are provided by installed extensions. Use them when users ask about related functionality.\n\n");
-            for def in &extension_defs {
-                prompt.push_str(&format!("**{}**: {}\n", def.name, def.description));
-                if let Some(params) = def.parameters.get("properties") {
-                    prompt.push_str("  Parameters:\n");
-                    if let Some(obj) = params.as_object() {
-                        for (pname, pschema) in obj {
-                            let desc = pschema
-                                .get("description")
-                                .and_then(|d| d.as_str())
-                                .unwrap_or("");
-                            prompt.push_str(&format!("    - `{}`: {}\n", pname, desc));
-                        }
-                    }
-                }
-                prompt.push('\n');
-            }
-        }
-
-        prompt.push_str("## Usage Guide\n");
-        prompt.push_str(
-            "- Use `shell` tool with `neomind` CLI commands for all platform operations\n",
-        );
-        prompt.push_str("- Multiple tool calls can be executed in parallel for faster response\n");
 
         prompt
     }

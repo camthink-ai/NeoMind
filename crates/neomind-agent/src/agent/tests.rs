@@ -121,10 +121,14 @@ async fn allowed_tools_filters_definitions_but_keeps_interaction_tools() {
         "out-of-profile tool must be filtered"
     );
 
-    // Text quick-reference prompt stays in sync with the schema
+    // Name-only tool index stays in sync with the schema (no full descriptions).
     let prompt = agent.generate_dynamic_system_prompt().await;
-    assert!(prompt.contains("**shell**"));
-    assert!(!prompt.contains("**list_rules**"));
+    assert!(prompt.contains("shell"), "allowlisted name must appear: {prompt}");
+    assert!(!prompt.contains("list_rules"), "out-of-profile name must not appear: {prompt}");
+    assert!(
+        !prompt.contains("## Available Tools (Quick Reference)"),
+        "legacy full tool-description dump must stay gone"
+    );
 }
 
 #[tokio::test]

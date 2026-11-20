@@ -199,11 +199,12 @@ pub(super) async fn prepare_turn_history_and_budget(
     let summary_up_to_index =
         crate::agent::adjust_summary_index_after_drain(summary_up_to_index, drained);
 
-    // [image budget] history images are re-sent every turn; keep only recent ones.
-    crate::agent::strip_stale_images(&mut history_messages);
-
     // === DYNAMIC CONTEXT WINDOW: Get model's actual capacity ===
     let max_context = llm_interface.max_context_length().await;
+
+    // [image budget] history images are re-sent every turn; keep only recent ones
+    // (≤16K windows keep 1; larger keep 2).
+    crate::agent::strip_stale_images(&mut history_messages, Some(max_context));
     let prompt_overhead = llm_interface.estimate_prompt_overhead_tokens().await;
     let effective_max = effective_history_budget(max_context, prompt_overhead);
 

@@ -377,7 +377,7 @@ export const createFrontendComponentSlice: StateCreator<
         error?: string
       }>('/frontend-components/updates')
 
-      // Backend returns 200 with { error: "network_error" } on failure.
+      // Marketplace network failures are HTTP 502 ErrorResponse (fetchAPI throws).
       if (res.error) return
 
       const map: Record<string, { current: string; latest: string }> = {}

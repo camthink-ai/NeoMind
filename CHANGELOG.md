@@ -40,6 +40,11 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - `system info` advertised MQTT attach tutorials, forged connected counts, and swallowed upstream errors → aggregates real stats/health/llm/extensions/mqtt/network with `degraded`/`errors` (S1-3).
 - Intent heuristics false-fired on `address`/`已安装`/`安装路径`/`history`/`Tips:` → English word boundaries, Chinese aspect/noun exclusions, wider negation, greeting/colon fixes (S1-4).
 - `dashboard update-component` usage tips elided required `<ID>`/`--component-id`, and `dashboard get` hid grid facts inside write tutorials → full required-arg tips, Usage-first help, structured `data.grid`, resize shell example (S1-5).
+- Read-only CLI successes no longer attach write-leading `suggestion`/`Next: call` tutorials; empty/truncated/error recovery tips remain; quoted `--params`/`--body` tips prefer structured `{command,params}` (S2-1).
+- Device/extension/agent/rule/transform/push lists expose honest totals, 4-state fields, crash/error/disabled flags without optimistic `enabled` defaults; Failed extensions `get` no longer 404; never-seen device health returns null `last_seen` (S2-2).
+- `neomind health` / `system health` / `system stats` run in-process via API JSON; `logs --since` filters RFC3339 lines instead of ignoring the flag (S2-3).
+- Fourteen admin rejection sites return HTTP 403; `AgentDefaultsRequest` is partial `Option` PUT; frontend-component marketplace network errors return HTTP 502 ErrorResponse (S2-4).
+- Non-stream system prompt stops re-embedding full tool descriptions; ≤16K contexts keep 1 recent history image, >16K keep 2 (S2-5).
 
 ### Fixed — CT-Prov / BLE provision
 - Auth-enabled embedded broker resolve no longer leaves username/password empty — mint on `resolve_only` and write them in `config.set` (empty-omit for auth-off / blank external fields).
@@ -52,6 +57,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 ### Test
 - Anti-drift tests for `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skills, and `capability.rs`; E4 multi-target partial-failure `SystemGoalStatus` injection tests; `GET /api/v1/operations` auth + in-process CLI dispatch tests; `operation get` `Unknown` → terminal reconciliation tests; `ToolCallEnd`, KV-tail time, single-copy skill, multimodal `drive_react_stream`, and BLE provision tests.
 - Stage 1 gates: builtin toolTokens ≤3200 / `image_edit` ≤450; `device` time-range multi-unit parse; `system info` truthful/degraded mocks; 40+ intent adversarial cases; `update-component` usage_hint required-arg shape + `dashboard` grid summary.
+- Stage 2 gates: RO success `suggestion.is_none()`; device pagination/truncation honesty; health in-process JSON; 8K image-history keep=1; admin Forbidden mapping.
 
 ---
 
