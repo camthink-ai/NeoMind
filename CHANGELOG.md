@@ -35,6 +35,11 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - E4 `SystemGoalStatus` receipts kept superseded preflight `Rejected` rows after lock-free retries → fold Rejected when the same business identity later reaches a real outcome (stops false `partial_failure` after successful retry).
 - Turn-end `incomplete_action_note` fired on read-only asks that only mentioned negated mutations ("不要修改配置") → action detection ignores negated verbs while still catching mixed "create …, don't modify …" requests.
 - Clap `usage_hint`, device-control recovery copy, and message-channel 422 hints still pushed quote-fragile `--set`/`--components`/`--config` strings first → prefer Chat/shell structured `params` as the primary retry example.
+- Built-in tool schemas bloated `toolTokens` (~8k est) and JSON punctuation was over-counted → flatten `image_edit`, slim tool prose, JSON-aware tool-definition estimate, and hide unused `vision`/`image_edit` on small windows (S1-1).
+- Hard CLI/API mismatches: `widget market-install` sent `id` instead of `component_id`, `llm list` `_tags` read wrong capability keys, `device history --time-range` silently fell back to 24h, `connector list` missed `brokers` fields, bad JSON configs were silently wrapped → fixed with hard errors and honest docs (S1-2).
+- `system info` advertised MQTT attach tutorials, forged connected counts, and swallowed upstream errors → aggregates real stats/health/llm/extensions/mqtt/network with `degraded`/`errors` (S1-3).
+- Intent heuristics false-fired on `address`/`已安装`/`安装路径`/`history`/`Tips:` → English word boundaries, Chinese aspect/noun exclusions, wider negation, greeting/colon fixes (S1-4).
+- `dashboard update-component` usage tips elided required `<ID>`/`--component-id`, and `dashboard get` hid grid facts inside write tutorials → full required-arg tips, Usage-first help, structured `data.grid`, resize shell example (S1-5).
 
 ### Fixed — CT-Prov / BLE provision
 - Auth-enabled embedded broker resolve no longer leaves username/password empty — mint on `resolve_only` and write them in `config.set` (empty-omit for auth-off / blank external fields).
@@ -46,6 +51,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 
 ### Test
 - Anti-drift tests for `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skills, and `capability.rs`; E4 multi-target partial-failure `SystemGoalStatus` injection tests; `GET /api/v1/operations` auth + in-process CLI dispatch tests; `operation get` `Unknown` → terminal reconciliation tests; `ToolCallEnd`, KV-tail time, single-copy skill, multimodal `drive_react_stream`, and BLE provision tests.
+- Stage 1 gates: builtin toolTokens ≤3200 / `image_edit` ≤450; `device` time-range multi-unit parse; `system info` truthful/degraded mocks; 40+ intent adversarial cases; `update-component` usage_hint required-arg shape + `dashboard` grid summary.
 
 ---
 

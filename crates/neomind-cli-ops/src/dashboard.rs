@@ -145,16 +145,26 @@ pub async fn list_dashboards(client: &ApiClient) -> Result<CliResponse> {
 
 /// Get dashboard by ID (or name — server resolves both).
 pub async fn get_dashboard(client: &ApiClient, id: &str) -> Result<CliResponse> {
-    let data = client.get(&format!("/dashboards/{}", id)).await?;
+    let mut data = client.get(&format!("/dashboards/{}", id)).await?;
     let comps = response_components(&data);
     let (occupied, next_free_y) = grid_summary(&comps);
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert(
+            "grid".to_string(),
+            json!({
+                "columns": 12,
+                "unit": "grid_cells",
+                "occupied_rows": occupied,
+                "next_free_y": next_free_y,
+                "component_count": comps.len(),
+            }),
+        );
+    }
     Ok(CliResponse::success(
         data,
         format!(
-            "Dashboard retrieved — {} components, 12-col grid, occupied rows: {}, next free row: y={} (use next free row only when ADDING widgets; to resize/tweak in place keep current x,y and patch position.w/h via update-component — grid units, not pixels)",
-            comps.len(),
-            occupied,
-            next_free_y
+            "Dashboard retrieved — {} component(s); see data.grid for layout facts",
+            comps.len()
         ),
     ))
 }
@@ -319,4 +329,21 @@ pub async fn share_dashboard(
         .post(&format!("/dashboards/{}/share", id), &body)
         .await?;
     Ok(CliResponse::success(data, "Dashboard shared"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn grid_summary_reports_occupied_and_next_free_y() {
+        let comps = vec![
+            json!({"position":{"x":0,"y":0,"w":4,"h":2}}),
+            json!({"position":{"x":4,"y":2,"w":4,"h":1}}),
+        ];
+        let (occupied, next) = grid_summary(&comps);
+        assert_eq!(occupied, "0-2");
+        assert_eq!(next, 3);
+    }
 }

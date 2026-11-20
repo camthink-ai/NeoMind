@@ -316,13 +316,7 @@ impl ShellTool {
                 .get_subcommands_mut()
                 .find(|c| c.get_name() == sub || c.get_all_aliases().any(|a| a == sub))
             {
-                let body: String = sub_cmd
-                    .render_help()
-                    .to_string()
-                    .lines()
-                    .take(28)
-                    .collect::<Vec<_>>()
-                    .join("\n");
+                let body = Self::prefer_usage_sections(&sub_cmd.render_help().to_string(), 28);
                 if !body.trim().is_empty() {
                     let mut hint = format!(
                         "[Reference — `neomind {} {}` — {}]:\n{}",
@@ -338,13 +332,7 @@ impl ShellTool {
         }
 
         // Fallback: bare domain help (lists available subcommands).
-        let body: String = domain_cmd
-            .render_help()
-            .to_string()
-            .lines()
-            .take(28)
-            .collect::<Vec<_>>()
-            .join("\n");
+        let body = Self::prefer_usage_sections(&domain_cmd.render_help().to_string(), 28);
         if body.trim().is_empty() {
             return None;
         }
@@ -359,6 +347,110 @@ impl ShellTool {
         Some(hint)
     }
 
+    /// Prefer Usage/Arguments/Options sections when truncating clap help so
+    /// required flags are not pushed out by long prose doc comments.
+    fn prefer_usage_sections(help: &str, max_lines: usize) -> String {
+        let lines: Vec<&str> = help.lines().collect();
+        if lines.len() <= max_lines {
+            return lines.join("\n");
+        }
+        let mut selected: Vec<&str> = Vec::new();
+        let mut in_priority = false;
+        for line in &lines {
+            let trimmed = line.trim();
+            if trimmed == "Usage:" || trimmed == "Arguments:" || trimmed == "Options:" {
+                in_priority = true;
+                selected.push(line);
+                continue;
+            }
+            if in_priority {
+                if !trimmed.is_empty()
+                    && !line.starts_with(' ')
+                    && !line.starts_with('\t')
+                    && trimmed.ends_with(':')
+                    && trimmed != "Usage:"
+                    && trimmed != "Arguments:"
+                    && trimmed != "Options:"
+                {
+                    in_priority = false;
+                    continue;
+                }
+                selected.push(line);
+            }
+        }
+        if selected.is_empty() {
+            return lines.into_iter().take(max_lines).collect::<Vec<_>>().join("\n");
+        }
+        let mut out: Vec<&str> = Vec::new();
+        for line in lines.iter().take(4) {
+            if !out.contains(line) {
+                out.push(line);
+            }
+        }
+        for line in selected {
+            if !out.contains(&line) {
+                out.push(line);
+            }
+            if out.len() >= max_lines {
+                break;
+            }
+        }
+        out.into_iter().take(max_lines).collect::<Vec<_>>().join("\n")
+    }
+
+    /// Build `domain sub <ID> --flag <NAME>` from clap required positionals
+    /// and required non-JSON flags. The primary JSON flag is omitted because
+    /// Chat should put that payload in shell `params`.
+    fn clap_required_command_template(domain: &str, sub: &str, json_flag: &str) -> String {
+        use clap::CommandFactory;
+        let mut root = neomind_cli_ops::dispatch::commands::Args::command();
+        root.build();
+        let Some(domain_cmd) = root
+            .get_subcommands_mut()
+            .find(|c| c.get_name() == domain || c.get_all_aliases().any(|a| a == domain))
+        else {
+            return format!("{domain} {sub}");
+        };
+        let Some(sub_cmd) = domain_cmd
+            .get_subcommands_mut()
+            .find(|c| c.get_name() == sub || c.get_all_aliases().any(|a| a == sub))
+        else {
+            return format!("{domain} {sub}");
+        };
+
+        let json_long = json_flag.trim_start_matches('-');
+        let mut parts = vec![domain.to_string(), sub.to_string()];
+        for arg in sub_cmd.get_arguments() {
+            if arg.get_long().is_some_and(|l| l == json_long) || arg.get_id().as_str() == json_long
+            {
+                continue;
+            }
+            let required = arg.is_required_set() || arg.is_positional();
+            if !required {
+                continue;
+            }
+            if arg.is_positional() {
+                let name = arg
+                    .get_value_names()
+                    .and_then(|v| v.first())
+                    .map(|s| s.as_str())
+                    .unwrap_or(arg.get_id().as_str())
+                    .to_ascii_uppercase();
+                parts.push(format!("<{name}>"));
+            } else if let Some(long) = arg.get_long() {
+                let name = arg
+                    .get_value_names()
+                    .and_then(|v| v.first())
+                    .map(|s| s.as_str())
+                    .unwrap_or(long)
+                    .to_ascii_uppercase()
+                    .replace('-', "_");
+                parts.push(format!("--{long} <{name}>"));
+            }
+        }
+        parts.join(" ")
+    }
+
     /// One-line Chat/shell-tool tip prepended onto clap `usage_hint` when the
     /// failing command has a primary JSON flag — steers Spark/small models
     /// toward structured `params` instead of quote-fragile CLI strings.
@@ -370,11 +462,12 @@ impl ShellTool {
             neomind_cli_ops::json_arg::ExpectedJsonKind::Object => "JSON object",
             neomind_cli_ops::json_arg::ExpectedJsonKind::Array => "JSON array",
         };
+        let cmd_tail = Self::clap_required_command_template(domain, sub, spec.flag);
         Some(format!(
             "Preferred from Chat/shell tool: put the {kind} in shell `params` (maps to {}). \
              Keep `command` free of quoted {} strings. Example shape: \
-             {{\"command\":\"neomind {} {} …\", \"params\": <{kind}>}}.",
-            spec.flag, spec.flag, domain, sub
+             {{\"command\":\"neomind {}\", \"params\": <{kind}>}}.",
+            spec.flag, spec.flag, cmd_tail
         ))
     }
 
@@ -4294,8 +4387,14 @@ mod p0_2_envelope_help_session_tests {
         assert!(
             hint.contains("Preferred from Chat/shell tool")
                 && hint.contains("shell `params`")
-                && hint.contains("--set"),
-            "JSON-bearing command usage_hint must steer toward structured params: {hint}"
+                && hint.contains("--set")
+                && hint.contains("<ID>")
+                && hint.contains("--component-id"),
+            "JSON-bearing command usage_hint must include required args (no ellipsis): {hint}"
+        );
+        assert!(
+            !hint.contains('…') && !hint.contains("..."),
+            "usage_hint must not elide required args with ellipsis: {hint}"
         );
         assert!(
             out.data["domain_index"]
