@@ -61,6 +61,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - BLE provision display name is now editable and shown in the discovered device list.
 
 ### Fixed — devices
+- Device downlink image params are capability-gated by name: `url`/`display_url`/`image_url`/`src`/`href` become `{NEOMIND_SERVER_URL}/api/images/...` (never data-URL; unset advertise leaves the relative ref); other image params still embed data-URLs — Chat/tool-to-tool keep relative refs (NM-314).
 - EK410 `render_text` description/help documents width-based auto-wrap + scale shrink instead of a hard 10-line cap.
 
 ### Fixed — chat / web
@@ -76,6 +77,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - NM-309: parallel `mutate_dashboard` append regression; invented `--params` recovery tips; JSON parse readability/batch hints; skill overview+section thrash hard-gate.
 - NM-310: TurnTimeline / ThinkingBlock / toolCallUtils vitest (33).
 - NM-314: `materialize_internal_image_refs_in_value` resolves `/api/images/` + strips image-field data-URIs; missing refs fail closed; HTTP prepare→execute and ExtensionTool claim-then-materialize paths covered.
+- NM-314: device outbound `url` + `NEOMIND_SERVER_URL` → absolute HTTP; without advertise stays relative; `image` still data-URL.
 
 ---
 

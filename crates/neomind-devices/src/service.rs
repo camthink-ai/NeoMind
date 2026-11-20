@@ -42,6 +42,26 @@ pub type ExtensionCommandRouterFn = Arc<
         + Sync,
 >;
 
+/// How a command param should carry a platform image to the device (NM-314).
+///
+/// Gated by **param name** (device-type schema signal), not by guessing a
+/// hostname from the operator's browser:
+/// - URL-shaped (`url`, `display_url`, …): device HTTP-fetches — absolute
+///   `NEOMIND_SERVER_URL` + `/api/images/...` (never coerce to data-URL).
+/// - Image / base64-shaped (default): embed `data:<mime>;base64,...`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImageOutboundForm {
+    AbsoluteHttp,
+    DataUrl,
+}
+
+fn image_outbound_form(param_name: &str) -> ImageOutboundForm {
+    match param_name {
+        "url" | "display_url" | "image_url" | "src" | "href" => ImageOutboundForm::AbsoluteHttp,
+        _ => ImageOutboundForm::DataUrl,
+    }
+}
+
 // Import storage types for command history persistence
 use neomind_storage::device_registry::{
     CommandHistoryRecord as StorageCommandRecord, CommandStatus as StorageCommandStatus,
@@ -2311,13 +2331,12 @@ impl DeviceService {
             );
         }
 
-        // Resolve any `/api/images/` internal URLs in the merged params to
-        // base64 data URLs before rendering. Devices are external targets and
-        // cannot read hostless internal paths, so an unresolved `/api/images/`
-        // string would arrive as an unusable value. Mirrors the data-push
-        // outbound fix (scheduler.rs::resolve_image_urls_in_value).
-        let data_dir = std::env::var("NEOMIND_DATA_DIR").unwrap_or_else(|_| "data".to_string());
-        Self::resolve_command_image_urls(&mut merged, std::path::Path::new(&data_dir));
+        // Resolve platform image handles at the **device outbound** boundary
+        // only (Chat / tool-to-tool keep relative `/api/images/`). NM-314:
+        // URL-shaped params → absolute via NEOMIND_SERVER_URL; image/base64
+        // params → data-URL. Mirrors data-push outbound for the base64 path.
+        let data_dir = neomind_core::paths::data_dir();
+        Self::resolve_command_image_urls(&mut merged, data_dir.as_path());
 
         // Delegate to the structured JSON-aware renderer. See
         // `payload_template` module docs for why string substitution
@@ -2331,22 +2350,44 @@ impl DeviceService {
 
     // ========== Data Querying ==========
 
-    /// Resolve `/api/images/` internal URLs in command params to base64 data URLs.
+    /// Externally-reachable API origin for device HTTP pulls.
     ///
-    /// Devices are external targets (separate MQTT client / HTTP endpoint) and
-    /// cannot resolve a hostless `/api/images/` path. Walk every string param and,
-    /// if it is an internal image URL, replace it with a self-contained
-    /// `data:<mime>;base64,...` string via the shared helper (same symlink/size/
-    /// magic guards as `GET /api/images/`). Unresolvable values (missing file, too
-    /// large, non-image) are left untouched so the device surfaces its own error
-    /// rather than receiving an empty value.
+    /// Only `NEOMIND_SERVER_URL` (same advertise knob as webhooks) — never the
+    /// current browser Host header (MQTT downlink is not tied to a page load).
+    fn advertise_server_base_url() -> Option<String> {
+        std::env::var("NEOMIND_SERVER_URL")
+            .ok()
+            .map(|u| u.trim().trim_end_matches('/').to_string())
+            .filter(|u| !u.is_empty())
+    }
+
+    /// Resolve `/api/images/` handles in command params for device downlink.
+    ///
+    /// - URL-capable params → `{NEOMIND_SERVER_URL}/api/images/...` when the
+    ///   advertise URL is set; otherwise leave the relative ref (do **not**
+    ///   convert to data-URL — e.g. EK410 `display_url` cannot use base64).
+    /// - Other image params → data-URL via [`resolve_internal_image_to_data_url`].
+    /// - Missing / unreadable files: leave the original string so the device
+    ///   surfaces its own error.
     fn resolve_command_image_urls(
         params: &mut HashMap<String, MetricValue>,
         data_dir: &std::path::Path,
     ) {
-        for value in params.values_mut() {
-            if let MetricValue::String(s) = value {
-                if s.starts_with("/api/images/") {
+        let advertise = Self::advertise_server_base_url();
+        for (key, value) in params.iter_mut() {
+            let MetricValue::String(s) = value else {
+                continue;
+            };
+            if !s.starts_with("/api/images/") {
+                continue;
+            }
+            match image_outbound_form(key) {
+                ImageOutboundForm::AbsoluteHttp => {
+                    if let Some(ref base) = advertise {
+                        *s = format!("{base}{s}");
+                    }
+                }
+                ImageOutboundForm::DataUrl => {
                     if let Some(data_url) =
                         crate::image_storage::resolve_internal_image_to_data_url(s, data_dir)
                     {
@@ -3392,9 +3433,7 @@ mod tests {
 
     #[test]
     fn test_resolve_command_image_urls_resolves_api_images() {
-        // A command param carrying an /api/images/ internal URL must be resolved
-        // to a base64 data URL before rendering — devices are external targets
-        // and can't read hostless internal paths. Mirrors the data-push fix.
+        // Image/base64-shaped params → data-URL (device embeds bytes).
         let temp =
             std::env::temp_dir().join(format!("neomind_test_cmd_img_{}", std::process::id()));
         let images_dir = temp.join("images").join("dev").join("overlay");
@@ -3420,7 +3459,6 @@ mod tests {
         };
         assert!(img.starts_with("data:image/png;base64,"), "got: {img}");
         assert!(!img.contains("/api/images/"), "got: {img}");
-        // Non-image params are left untouched.
         match &params["label"] {
             MetricValue::String(s) => assert_eq!(s, "hi"),
             other => panic!("label should be untouched, got {other:?}"),
@@ -3448,6 +3486,61 @@ mod tests {
             }
             other => panic!("should fall back to original URL, got {other:?}"),
         }
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_resolve_command_url_param_advertise_gating() {
+        // Serial: both branches touch process-global NEOMIND_SERVER_URL.
+        struct EnvGuard(Option<String>);
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(v) => std::env::set_var("NEOMIND_SERVER_URL", v),
+                    None => std::env::remove_var("NEOMIND_SERVER_URL"),
+                }
+            }
+        }
+        let _guard = EnvGuard(std::env::var("NEOMIND_SERVER_URL").ok());
+
+        let temp =
+            std::env::temp_dir().join(format!("neomind_test_cmd_abs_{}", std::process::id()));
+        let images = temp.join("images").join("cam").join("frame");
+        std::fs::create_dir_all(&images).unwrap();
+        let jpg = [0xFFu8, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        std::fs::write(images.join("1.jpg"), jpg).unwrap();
+        let rel = "/api/images/cam/frame/1.jpg".to_string();
+
+        // With advertise → absolute HTTP for `url`; data-URL for `image`.
+        std::env::set_var("NEOMIND_SERVER_URL", "https://edge.example.com/");
+        let mut params = HashMap::new();
+        params.insert("url".to_string(), MetricValue::String(rel.clone()));
+        params.insert("image".to_string(), MetricValue::String(rel.clone()));
+        DeviceService::resolve_command_image_urls(&mut params, &temp);
+        match &params["url"] {
+            MetricValue::String(s) => {
+                assert_eq!(s, "https://edge.example.com/api/images/cam/frame/1.jpg");
+                assert!(!s.starts_with("data:"), "url must not become data-URL");
+            }
+            other => panic!("url should be string, got {other:?}"),
+        }
+        match &params["image"] {
+            MetricValue::String(s) => {
+                assert!(s.starts_with("data:image/jpeg;base64,"), "got: {s}");
+            }
+            other => panic!("image should be data-URL, got {other:?}"),
+        }
+
+        // Without advertise → URL params stay relative (never coerced to data-URL).
+        std::env::remove_var("NEOMIND_SERVER_URL");
+        let mut params2 = HashMap::new();
+        params2.insert("url".to_string(), MetricValue::String(rel.clone()));
+        DeviceService::resolve_command_image_urls(&mut params2, &temp);
+        match &params2["url"] {
+            MetricValue::String(s) => assert_eq!(s, &rel),
+            other => panic!("expected relative left as-is, got {other:?}"),
+        }
+
         let _ = std::fs::remove_dir_all(&temp);
     }
 
