@@ -555,6 +555,11 @@ pub struct LlmInterface {
     /// Last prompt token count from the most recent stream response.
     /// Updated in-band when the stream completes.
     last_prompt_tokens: Arc<tokio::sync::Mutex<Option<u32>>>,
+    /// Last *raw* (uncalibrated) full-prompt estimate paired with the next
+    /// measured `prompt_eval` observation (S3-3 EWMA calibration).
+    last_raw_prompt_estimate: Arc<tokio::sync::Mutex<Option<usize>>>,
+    /// Per backend/model EWMA correction factors for prompt token estimates.
+    prompt_calibration: Arc<tokio::sync::RwLock<crate::agent::token_calibration::PromptTokenCalibration>>,
     /// Set when the last context build had to drop history messages. Consumed
     /// at turn end so summarization triggers on ACTUAL truncation instead of
     /// a percentage of the total window — with a large system prompt/tool
@@ -712,6 +717,10 @@ impl LlmInterface {
             backend_defaults: Arc::new(RwLock::new(None)),
             temperature_override: Arc::new(RwLock::new(None)),
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
+            last_raw_prompt_estimate: Arc::new(tokio::sync::Mutex::new(None)),
+            prompt_calibration: Arc::new(tokio::sync::RwLock::new(
+                crate::agent::token_calibration::PromptTokenCalibration::new(),
+            )),
             history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             history_window_dropped_latest_feedback: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
@@ -756,6 +765,10 @@ impl LlmInterface {
             backend_defaults: Arc::new(RwLock::new(None)),
             temperature_override: Arc::new(RwLock::new(None)),
             last_prompt_tokens: Arc::new(tokio::sync::Mutex::new(None)),
+            last_raw_prompt_estimate: Arc::new(tokio::sync::Mutex::new(None)),
+            prompt_calibration: Arc::new(tokio::sync::RwLock::new(
+                crate::agent::token_calibration::PromptTokenCalibration::new(),
+            )),
             history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             history_window_dropped_latest_feedback: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
@@ -796,6 +809,67 @@ impl LlmInterface {
 
     pub async fn take_last_prompt_tokens(&self) -> Option<u32> {
         self.last_prompt_tokens.lock().await.take()
+    }
+
+    /// Remember the raw (uncalibrated) prompt estimate for the next measured
+    /// `prompt_eval` observation (S3-3).
+    pub async fn note_raw_prompt_estimate(&self, estimated: usize) {
+        *self.last_raw_prompt_estimate.lock().await = Some(estimated);
+    }
+
+    async fn calibration_key_now(&self) -> String {
+        let backend = self.bound_backend_id().await;
+        let model = self.model.read().await.clone();
+        crate::agent::token_calibration::calibration_key(backend.as_deref(), model.as_deref())
+    }
+
+    /// Current EWMA calibration factor for the active backend/model.
+    pub async fn prompt_calibration_factor(&self) -> f64 {
+        let key = self.calibration_key_now().await;
+        self.prompt_calibration.read().await.factor(&key)
+    }
+
+    /// Fold a measured `prompt_eval` into the EWMA factor (does not touch
+    /// `last_prompt_tokens` — stream paths own that meter).
+    pub async fn observe_prompt_calibration(&self, measured: u32) {
+        if !neomind_core::plausible_prompt_token_meter(measured) {
+            return;
+        }
+        let estimated = self.last_raw_prompt_estimate.lock().await.take();
+        let Some(estimated) = estimated.filter(|e| *e > 0) else {
+            return;
+        };
+        let key = self.calibration_key_now().await;
+        let factor = self.prompt_calibration.write().await.observe(
+            &key,
+            measured as f64,
+            estimated as f64,
+        );
+        tracing::debug!(
+            %key,
+            measured,
+            estimated,
+            factor,
+            "Updated prompt-token EWMA calibration"
+        );
+    }
+
+    /// Record a measured prompt token count and update EWMA calibration.
+    pub async fn record_measured_prompt_tokens(&self, measured: u32) {
+        *self.last_prompt_tokens.lock().await = Some(measured);
+        self.observe_prompt_calibration(measured).await;
+    }
+
+    /// Calibrated ContextUsage breakdown that never exceeds measured total.
+    pub async fn calibrated_context_breakdown(
+        &self,
+        measured_prompt: u32,
+        has_user_images: bool,
+    ) -> (usize, usize) {
+        let (sys, tools) = self
+            .estimate_prompt_breakdown_for_turn(has_user_images)
+            .await;
+        crate::agent::token_calibration::fit_breakdown_to_measured(sys, tools, measured_prompt)
     }
 
     /// Whether the last context build dropped history messages. Taking it
@@ -1229,7 +1303,7 @@ impl LlmInterface {
     pub async fn estimate_prompt_breakdown_for_turn(&self, has_user_images: bool) -> (usize, usize) {
         // System prompt: build it and measure
         let system_prompt = self.build_system_prompt_with_tools(None).await;
-        let prompt_tokens = crate::agent::tokenizer::estimate_tokens(&system_prompt);
+        let raw_prompt_tokens = crate::agent::tokenizer::estimate_tokens(&system_prompt);
 
         // Resolve profile *before* taking the tool-definitions lock so we never
         // nest max_context / VLM probes under that read guard.
@@ -1239,7 +1313,7 @@ impl LlmInterface {
 
         // Tool definitions: serialize the *exposed* API JSON shape and measure.
         let tools = self.tool_definitions.read().await;
-        let tools_tokens = if tools.is_empty() {
+        let raw_tools_tokens: usize = if tools.is_empty() {
             0
         } else {
             tools
@@ -1265,8 +1339,15 @@ impl LlmInterface {
                 })
                 .sum()
         };
+        drop(tools);
 
-        (prompt_tokens, tools_tokens)
+        // Apply EWMA calibration (defaults to 1.0 — no MiniCPM unlock regression
+        // until real prompt_eval observations arrive).
+        let factor = self.prompt_calibration_factor().await;
+        (
+            crate::agent::token_calibration::apply_calibration(raw_prompt_tokens, factor),
+            crate::agent::token_calibration::apply_calibration(raw_tools_tokens, factor),
+        )
     }
 
     /// Check if the current LLM backend supports multimodal (vision) input.
@@ -2951,26 +3032,25 @@ impl LlmInterface {
             "LlmInterface chat_stream_internal"
         );
 
+        // Size the prompt once: feeds S3-3 EWMA calibration (raw estimate) and
+        // the large-prompt thinking-disable guard.
+        let estimated_tokens = crate::agent::tokenizer::estimate_prompt_tokens_with_image_cost(
+            history.unwrap_or(&[]),
+            &system_prompt,
+            &user_message,
+            // Price images by the backend's REAL window: on an 8–16K
+            // model a 1024/image estimate under-counts 2K-token vision
+            // payloads 2×, exactly where two images eat a quarter of a
+            // budget the guard believes is still roomy.
+            crate::agent::tokenizer::image_token_estimate(self.max_context_length().await),
+        );
+        self.note_raw_prompt_estimate(estimated_tokens).await;
+
         // Safety: auto-disable thinking for very large prompts.
         // Small thinking models (2B) with large prompts (20k+ tokens) tend to
         // consume all num_predict tokens on thinking alone, producing no content.
         // Observed: qwen3.5:2b with prompt_eval=32259, eval=32768, content=0.
         let (thinking_enabled, thinking_effort) = if thinking_enabled == Some(true) {
-            // Size the prompt with the same estimator the budget math uses, so the
-            // guard reflects real token density — not a bytes*0.8 approximation
-            // that over-counted English (~3×) and tripped the guard far too
-            // eagerly on text-heavy prompts.
-            let estimated_tokens = crate::agent::tokenizer::estimate_prompt_tokens_with_image_cost(
-                history.unwrap_or(&[]),
-                &system_prompt,
-                &user_message,
-                // Price images by the backend's REAL window: on an 8–16K
-                // model a 1024/image estimate under-counts 2K-token vision
-                // payloads 2×, exactly where two images eat a quarter of a
-                // budget the guard believes is still roomy.
-                crate::agent::tokenizer::image_token_estimate(self.max_context_length().await),
-            );
-
             if estimated_tokens > long_prompt_thinking_threshold(self.max_context_length().await) {
                 tracing::info!(
                     estimated_tokens,

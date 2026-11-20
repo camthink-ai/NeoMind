@@ -177,6 +177,7 @@ struct MarketInstallRequest {
 
 #[derive(Debug, Deserialize)]
 struct ExternalBrokerRequest {
+    #[allow(dead_code)]
     name: String,
     broker: String,
 }

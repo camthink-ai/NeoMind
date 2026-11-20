@@ -1477,8 +1477,14 @@ pub(super) fn drive_react_stream(
                     // Invalid (0/MAX) meters stay on last_prompt_tokens for End,
                     // but must not paint the context ring as a real bill.
                     if neomind_core::plausible_prompt_token_meter(prompt_tokens) {
-                        let (system_prompt_tokens, tool_tokens) =
-                            llm_interface.estimate_prompt_breakdown().await;
+                        // S3-3: fold measured prompt_eval into EWMA, then emit a
+                        // calibrated breakdown that never exceeds measured total.
+                        llm_interface
+                            .observe_prompt_calibration(prompt_tokens)
+                            .await;
+                        let (system_prompt_tokens, tool_tokens) = llm_interface
+                            .calibrated_context_breakdown(prompt_tokens, false)
+                            .await;
                         yield AgentEvent::ContextUsage {
                             prompt_tokens,
                             system_prompt_tokens,
@@ -3472,8 +3478,11 @@ pub(super) fn drive_react_stream(
             let prompt_tokens = llm_interface.take_last_prompt_tokens().await;
             let usage = match prompt_tokens {
                 Some(pt) => {
+                    // Calibration may already have consumed the paired raw
+                    // estimate at ContextUsage time — observe is a no-op then.
+                    llm_interface.observe_prompt_calibration(pt).await;
                     let (system_tokens, tool_tokens) =
-                        llm_interface.estimate_prompt_breakdown().await;
+                        llm_interface.calibrated_context_breakdown(pt, false).await;
                     Some((pt, system_tokens, tool_tokens))
                 }
                 None => None,

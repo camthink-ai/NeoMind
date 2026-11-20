@@ -45,6 +45,8 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - `neomind health` / `system health` / `system stats` run in-process via API JSON; `logs --since` filters RFC3339 lines instead of ignoring the flag (S2-3).
 - Fourteen admin rejection sites return HTTP 403; `AgentDefaultsRequest` is partial `Option` PUT; frontend-component marketplace network errors return HTTP 502 ErrorResponse (S2-4).
 - Non-stream system prompt stops re-embedding full tool descriptions; ≤16K contexts keep 1 recent history image, >16K keep 2 (S2-5).
+- Small context windows use a Light/Balanced/Standard tool exposure profile so 8K first-round `toolTokens` stay under 1800 without deleting runtime tools (S3-2).
+- Prompt-token estimates track measured `prompt_eval` via per-backend/model EWMA factors clamped to `[0.65, 1.35]`, improving history budget and ContextUsage consistency without external tokenizers (S3-3).
 
 ### Fixed — CT-Prov / BLE provision
 - Auth-enabled embedded broker resolve no longer leaves username/password empty — mint on `resolve_only` and write them in `config.set` (empty-omit for auth-off / blank external fields).
@@ -58,6 +60,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Anti-drift tests for `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skills, and `capability.rs`; E4 multi-target partial-failure `SystemGoalStatus` injection tests; `GET /api/v1/operations` auth + in-process CLI dispatch tests; `operation get` `Unknown` → terminal reconciliation tests; `ToolCallEnd`, KV-tail time, single-copy skill, multimodal `drive_react_stream`, and BLE provision tests.
 - Stage 1 gates: builtin toolTokens ≤3200 / `image_edit` ≤450; `device` time-range multi-unit parse; `system info` truthful/degraded mocks; 40+ intent adversarial cases; `update-component` usage_hint required-arg shape + `dashboard` grid summary.
 - Stage 2 gates: RO success `suggestion.is_none()`; device pagination/truncation honesty; health in-process JSON; 8K image-history keep=1; admin Forbidden mapping.
+- Stage 3 gates: `cli_api_contract` fixture suite for 15-domain CLI↔API DTO shapes (S3-1); Light/Balanced/Standard tool-profile selection + Light `toolTokens` <1800 (S3-2); prompt-token EWMA clamp/update math (S3-3).
 
 ---
 
