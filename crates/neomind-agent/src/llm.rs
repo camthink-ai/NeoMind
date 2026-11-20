@@ -1215,20 +1215,43 @@ impl LlmInterface {
     }
 
     /// Per-part prompt overhead: (system prompt tokens, tool-definition tokens).
+    ///
+    /// Tool tokens follow the **first-round Light/Balanced/Standard profile**
+    /// for the active `max_context` (no user images), matching what a pure-text
+    /// turn would expose. Image turns may add `image_edit` on top — that is
+    /// accounted when [`Self::build_request_tools_input`] runs for the request.
     pub async fn estimate_prompt_breakdown(&self) -> (usize, usize) {
+        self.estimate_prompt_breakdown_for_turn(false).await
+    }
+
+    /// Like [`Self::estimate_prompt_breakdown`], but applies the turn's image
+    /// flag so ContextUsage / history budget match the schemas actually sent.
+    pub async fn estimate_prompt_breakdown_for_turn(&self, has_user_images: bool) -> (usize, usize) {
         // System prompt: build it and measure
         let system_prompt = self.build_system_prompt_with_tools(None).await;
         let prompt_tokens = crate::agent::tokenizer::estimate_tokens(&system_prompt);
 
-        // Tool definitions: serialize to the actual API JSON shape and measure.
-        // (The old per-field estimate undercounted JSON syntax tokens, notably
-        // for large descriptions like the shell tool's ~3KB.)
+        // Resolve profile *before* taking the tool-definitions lock so we never
+        // nest max_context / VLM probes under that read guard.
+        let max_context = self.max_context_length().await;
+        let vlm_available = self.any_vlm_available().await;
+        let profile = crate::agent::tool_profile::select_tool_profile(max_context);
+
+        // Tool definitions: serialize the *exposed* API JSON shape and measure.
         let tools = self.tool_definitions.read().await;
         let tools_tokens = if tools.is_empty() {
             0
         } else {
             tools
                 .iter()
+                .filter(|t| {
+                    crate::agent::tool_profile::tool_exposed_in_profile(
+                        &t.name,
+                        profile,
+                        has_user_images,
+                        vlm_available,
+                    )
+                })
                 .map(|t| {
                     let json = serde_json::json!({
                         "type": "function",
@@ -1596,12 +1619,11 @@ impl LlmInterface {
     /// and dynamically exposing `_new_operation` only on tools that have a
     /// terminal write operation in `TaskState`.
     ///
-    /// Adaptive gates (Stage 1 harness):
-    /// - `vision` is omitted when the user message already carries images
-    ///   (model sees them inline) OR when no VLM/companion is configured.
-    /// - `image_edit` is omitted on small windows (`max_context <= 16384`)
-    ///   when the turn has no images — pure-text IoT chats do not pay its
-    ///   schema cost.
+    /// Adaptive gates (Stage 1 + S3-2 Dynamic Tool Profile):
+    /// - Profile from `max_context`: Light (≤16K) / Balanced (<32K) / Standard.
+    /// - Light defers `image_edit` (unless the turn has images) and `file_edit`.
+    /// - `vision` is omitted when images are already inline OR no VLM exists.
+    /// - Tools stay registered; only request exposure is gated.
     async fn build_request_tools_input(
         &self,
         attach_tools: bool,
@@ -1616,21 +1638,20 @@ impl LlmInterface {
             return None;
         }
         let max_context = self.max_context_length().await;
-        let hide_image_edit = !has_user_images && max_context <= 16_384;
-        let hide_vision = has_user_images || !self.any_vlm_available().await;
+        let vlm_available = self.any_vlm_available().await;
+        let profile = crate::agent::tool_profile::select_tool_profile(max_context);
         let mut available: Vec<_> = tools
             .iter()
             .filter(|t| {
                 if exclude_skill && t.name == "skill" {
                     return false;
                 }
-                if hide_vision && t.name == "vision" {
-                    return false;
-                }
-                if hide_image_edit && t.name == "image_edit" {
-                    return false;
-                }
-                true
+                crate::agent::tool_profile::tool_exposed_in_profile(
+                    &t.name,
+                    profile,
+                    has_user_images,
+                    vlm_available,
+                )
             })
             .cloned()
             .collect();

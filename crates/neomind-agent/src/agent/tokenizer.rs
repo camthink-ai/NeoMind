@@ -644,4 +644,65 @@ mod tests {
             "10 builtin tools regressed to {total_tokens} tokens (budget <= 3200 so 8K models stay usable)"
         );
     }
+
+    /// S3-2: Light profile (≤16K / 8K) must keep first-round toolTokens under
+    /// 1800 by deferring `image_edit` + `file_edit` exposure.
+    #[test]
+    fn light_profile_tool_tokens_under_1800() {
+        use crate::agent::tool_profile::{select_tool_profile, tool_exposed_in_profile, ToolProfile};
+        use crate::skills::SkillRegistry;
+        use crate::toolkit::{
+            skill_tool::SkillTool, shell::ShellTool, FileEditTool, FileReadTool, FileWriteTool,
+            ImageEditTool, MemoryTool, ShellConfig, Tool, VisionConfig, VisionTool, WebFetchTool,
+            WebSearchTool,
+        };
+        use crate::llm_backends::LlmBackendInstanceManager;
+        use neomind_storage::{LlmBackendStore, MarkdownMemoryStore};
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+
+        assert_eq!(select_tool_profile(8_192), ToolProfile::Light);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let skill_reg = Arc::new(RwLock::new(SkillRegistry::load_all(None)));
+        let llm_mgr = Arc::new(LlmBackendInstanceManager::new(
+            LlmBackendStore::open(dir.path().join("backends.redb")).expect("backend store"),
+        ));
+        let mem_store = Arc::new(RwLock::new(MarkdownMemoryStore::new(
+            dir.path().join("mem_light_profile"),
+        )));
+
+        let tools: Vec<Box<dyn Tool>> = vec![
+            Box::new(ShellTool::new(ShellConfig::default())),
+            Box::new(SkillTool::new(skill_reg)),
+            Box::new(MemoryTool::new(mem_store)),
+            Box::new(VisionTool::new(VisionConfig::default(), llm_mgr)),
+            Box::new(ImageEditTool::new(dir.path().to_path_buf())),
+            Box::new(WebSearchTool::new()),
+            Box::new(WebFetchTool::new()),
+            Box::new(FileReadTool::new(dir.path().to_path_buf())),
+            Box::new(FileWriteTool::new(dir.path().to_path_buf())),
+            Box::new(FileEditTool::new(dir.path().to_path_buf())),
+        ];
+
+        let mut light_tokens = 0usize;
+        for t in &tools {
+            if !tool_exposed_in_profile(t.name(), ToolProfile::Light, false, true) {
+                continue;
+            }
+            let payload = serde_json::json!({
+                "type": "function",
+                "function": {
+                    "name": t.name(),
+                    "description": t.description(),
+                    "parameters": t.parameters(),
+                }
+            });
+            light_tokens += estimate_json_schema_tokens(&payload.to_string());
+        }
+        assert!(
+            light_tokens < 1_800,
+            "Light profile first-round toolTokens={light_tokens} (aim <1800 for 8K models)"
+        );
+    }
 }

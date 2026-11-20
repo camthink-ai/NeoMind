@@ -30,6 +30,7 @@ pub mod streaming;
 pub mod task_continuity;
 pub mod tokenizer;
 pub mod tool_parser;
+pub mod tool_profile;
 pub mod types;
 
 use std::collections::HashMap;
