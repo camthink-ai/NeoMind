@@ -249,7 +249,7 @@ export function ChatMessages({
           <div
             key={message.id || `msg-${idx}`}
             data-testid={message.role === "assistant" ? "assistant-message" : message.role === "user" ? "user-message" : undefined}
-            className={`group flex min-w-0 gap-2 sm:gap-3 animate-fade-in-up ${message.role === "user" ? "justify-end" : "justify-start"}`}
+            className={`group flex min-w-0 gap-2 sm:gap-3 ${message.role === "user" ? "justify-end" : "justify-start"}`}
           >
             {/* User bubbles hug their content (right-aligned). Assistant
                 messages span the FULL column: the thinking/tool cards inside
@@ -260,7 +260,7 @@ export function ChatMessages({
             <div
               className={
                 message.role === "user"
-                  ? "order-1 min-w-0 max-w-[85%] sm:max-w-[80%]"
+                  ? "order-1 min-w-0 max-w-[88%] sm:max-w-[76%]"
                   : "w-full min-w-0"
               }
             >
@@ -344,9 +344,9 @@ export function ChatMessages({
                             <MarkdownMessage content={displayContent} variant="assistant" isStreaming={isCurrentlyStreaming} />
                           ) : isCurrentlyStreaming ? (
                             <div className="flex items-center gap-1 py-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '0ms' }} />
-                              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '150ms' }} />
-                              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '300ms' }} />
+                              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 motion-safe:animate-pulse" style={{ animationDelay: '0ms' }} />
+                              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 motion-safe:animate-pulse" style={{ animationDelay: '150ms' }} />
+                              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground opacity-40 motion-safe:animate-pulse" style={{ animationDelay: '300ms' }} />
                             </div>
                           ) : null}
                         </>
@@ -368,9 +368,9 @@ export function ChatMessages({
                         ) : isCurrentlyStreaming ? (
                           <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
                             <span className="flex items-center gap-1">
-                              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '0ms' }} />
-                              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '150ms' }} />
-                              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground opacity-40 animate-bounce" style={{ animationDelay: '300ms' }} />
+                              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground opacity-40 motion-safe:animate-pulse" style={{ animationDelay: '0ms' }} />
+                              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground opacity-40 motion-safe:animate-pulse" style={{ animationDelay: '150ms' }} />
+                              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground opacity-40 motion-safe:animate-pulse" style={{ animationDelay: '300ms' }} />
                             </span>
                             {streamingPlaceholder && <span>{streamingPlaceholder}</span>}
                           </div>

@@ -64,6 +64,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 
 ### Fixed — chat / web
 - Chat「执行过程」expanded panel: compact R1/Rn prefixes beside the first row (not lone label lines; vertically centered with the row), live Loader2 on the content trailing cluster (not the Rn gutter), scannable tool rows prefer audit `description`, thinking collapses as `思考 · N 字`, inter-round notes show muted inline (not disclosure), and device-delivery subtitle only when structured `delivery`/`delivery_note` exists (NM-310).
+- Streaming assistant markdown drops the blinking caret rehype inject; waiting dots use `motion-safe:animate-pulse`; message enter fade removed; user bubble max-width and composer dock horizontal padding tightened.
 
 ### Test
 - Anti-drift tests for `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skills, and `capability.rs`; E4 multi-target partial-failure `SystemGoalStatus` injection tests; `GET /api/v1/operations` auth + in-process CLI dispatch tests; `operation get` `Unknown` → terminal reconciliation tests; `ToolCallEnd`, KV-tail time, single-copy skill, multimodal `drive_react_stream`, and BLE provision tests.

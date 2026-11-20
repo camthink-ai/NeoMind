@@ -62,29 +62,10 @@ describe('MarkdownMessage', () => {
     expect(prose?.className).toContain('prose-td:border-border')
   })
 
-  it('renders the streaming caret inline after the newest character', () => {
-    const { container, rerender } = render(
-      <MarkdownMessage content={'# 标题\n\n回答段落'} isStreaming />
-    )
-    const caret = container.querySelector('.animate-blink')
-    expect(caret).toBeTruthy()
-    // The caret must live INSIDE the last block (the paragraph, not the
-    // heading), directly after its text — a caret placed as a sibling of
-    // the markdown tree drops to a line below the last block element.
-    const paragraphs = container.querySelectorAll('p')
-    const lastP = paragraphs[paragraphs.length - 1]
-    expect(lastP.contains(caret!)).toBe(true)
-    expect(caret?.previousSibling?.nodeType).toBe(Node.TEXT_NODE)
-    rerender(<MarkdownMessage content={'# 标题\n\n回答段落'} />)
-    expect(container.querySelector('.animate-blink')).toBeNull()
-  })
-
-  it('keeps the streaming caret inside a code block, after the last code line', () => {
-    const { container } = render(
-      <MarkdownMessage content={'```js\nconst x = 1'} isStreaming />
-    )
-    const caret = container.querySelector('.animate-blink')
-    expect(caret).toBeTruthy()
-    expect(container.querySelector('pre')?.contains(caret!)).toBe(true)
+  it("keeps streamed prose and code free of a visual caret", () => {
+    const { container } = render(<MarkdownMessage content={"Answer\n\n```txt\nresult\n```"} isStreaming />)
+    expect(container.querySelector("p")?.textContent).toBe("Answer")
+    expect(container.querySelector("pre code")?.textContent?.trim()).toBe("result")
+    expect(container.querySelector(".animate-blink")).toBeNull()
   })
 })

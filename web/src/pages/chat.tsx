@@ -1692,7 +1692,7 @@ export function ChatPage() {
         {!isWelcomeMode && !noLlmContent && (
         <div
           className={cn(
-            "chat-composer-dock overflow-visible border-0 px-3 pt-3 sm:px-4 sm:pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pt-3",
+            "chat-composer-dock overflow-visible border-0 px-4 pt-3 sm:pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pt-3",
             isDesktop ? "relative shrink-0" : "absolute inset-x-0 bottom-0 z-20",
           )}
         >

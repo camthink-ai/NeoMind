@@ -17,68 +17,8 @@ interface MarkdownMessageProps {
   content: string
   className?: string
   variant?: 'user' | 'assistant'
-  /** Renders a blinking caret right after the newest character while
-   * streaming; part of the memo key. */
   isStreaming?: boolean
 }
-
-/* ------------------------------------------------------------------ *
- * Streaming caret
- *
- * A caret rendered as a sibling AFTER the ReactMarkdown output lands on
- * its own line below the last block element (p / ul / pre / table are all
- * block-level). Modern streaming chat UIs (ChatGPT, Vercel's Streamdown)
- * instead attach the caret to the tail of the last content, so it follows
- * the newest character as it wraps across lines. Streamdown does it with a
- * ::after on the last child; we inject a real inline node at the DEEPEST
- * last position of the hast tree via this rehype plugin, which also keeps
- * the caret inline inside code blocks, tables and lists where a wrapper
- * ::after would land below the block.
- * ------------------------------------------------------------------ */
-
-const STREAMING_CARET_TAG = 'streaming-caret'
-
-const StreamingCaret = () => (
-  <span
-    aria-hidden="true"
-    className="ml-0.5 inline-block h-[1em] w-[2px] animate-blink bg-current align-text-bottom"
-  />
-)
-
-/** Minimal hast shape the caret walk needs (avoids importing hast types). */
-interface HastNode {
-  type?: string
-  tagName?: string
-  properties?: Record<string, unknown>
-  children?: HastNode[]
-}
-
-/**
- * Append an inline <streaming-caret> element after the newest character:
- * walk down the last-child chain while it still holds content (text nodes
- * and void elements like img/hr end the walk) and append the caret inside
- * that deepest container.
- */
-function rehypeStreamingCaret() {
-  return (tree: HastNode) => {
-    let node = tree
-    while (node.children?.length) {
-      const last = node.children[node.children.length - 1]
-      if (last.type === 'element' && last.children?.length) {
-        node = last
-      } else {
-        break
-      }
-    }
-    node.children?.push({
-      type: 'element',
-      tagName: STREAMING_CARET_TAG,
-      properties: {}, // required — react-markdown's url-transform reads it
-      children: [],
-    })
-  }
-}
-
 /**
  * Remove duplicated content when the same text appears twice in one message
  * (e.g. model repetition or backend sending same chunk twice).
@@ -203,8 +143,6 @@ function CodeBlock({ children, className: _className, ...props }: React.Componen
 
 // Static component overrides — hoisted to module scope to avoid re-allocating
 // a new object (and new closure functions) on every render / streaming chunk.
-// Includes the custom <streaming-caret> node injected by rehypeStreamingCaret
-// (custom tag, hence the cast to Components).
 const MARKDOWN_COMPONENTS = {
   pre: ({ node: _node, className, children, ...props }) => (
     <CodeBlock className={className} {...(props as any)}>
@@ -273,7 +211,6 @@ const MARKDOWN_COMPONENTS = {
       </table>
     </div>
   ),
-  [STREAMING_CARET_TAG]: StreamingCaret,
 } as Components
 
 /**
@@ -334,15 +271,12 @@ export const MarkdownMessage = React.memo<MarkdownMessageProps>(
           // Removed max height limit - messages now fully expand
         )}
         data-variant={variant}
+        data-streaming={isStreaming || undefined}
       >
         <ErrorBoundary resetKey={displayContent}>
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
-            rehypePlugins={
-              isStreaming
-                ? [[rehypeHighlight, { detect: true, ignoreMissing: true }], rehypeStreamingCaret]
-                : [[rehypeHighlight, { detect: true, ignoreMissing: true }]]
-            }
+            rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
             components={MARKDOWN_COMPONENTS}
           >
             {displayContent}
