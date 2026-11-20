@@ -25,8 +25,8 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Mechanical anti-drift unit scanners locking `DomainCommandContract`, `PRIMARY_JSON_SPECS`, `DOMAIN_INDEX`, builtin skill examples, and `capability.rs` fail-closed classification against the live `Args::command()` clap tree (P2-3, P2-1).
 
 ### Fixed — harness / agent / CLI / API
-- Spark / text-only primary chat: uploaded images stayed on disk but follow-up turns lost tool-usable context → session album (`img_N` → `/api/images/…` + captions) injects into the system prompt; NM-231 strip annotates durable handles before hydrate; companion captions persist on message images; delegation copy tells the model to pass paths to vision/OCR instead of “images are not accessible”; multimodal stream path no longer double-calls MiniCPM.
-- CLI-only / HTTP `extension invoke` and direct extension tools forwarded hostless `/api/images/...` refs into the child process (unreachable externally) → host materializes refs to raw base64 **after** PreparedInvoke claim and **before** IPC (`materialize_internal_image_refs_in_value`); mint/fingerprint keep the short reference (NM-314).
+- Spark / text-only primary chat: uploaded images stayed on disk but follow-up turns lost tool-usable context → session album (`img_N` → `/api/images/…` + captions) injects into the system prompt with a **bounded** recent-entry block (paths + user text + captions; older rows omitted); NM-231 strip annotates durable handles before hydrate; companion captions persist on message images; delegation copy tells the model to pass paths to vision/OCR instead of “images are not accessible”; multimodal stream path no longer double-calls MiniCPM.
+- CLI-only / HTTP `extension invoke` and direct extension tools forwarded hostless `/api/images/...` refs into the child process (unreachable externally) → host materializes refs to raw base64 **only on declared image input params** (`image`/`images`/`image_base64`/…) **after** PreparedInvoke claim and **before** IPC; prose fields (`prompt`/`notes`) that equal a path stay untouched; mint/fingerprint keep the short reference (NM-314).
 - Structured shell `params` rejected JSON arrays on `dashboard add-components`/`remove-components`/`create`/`update`, mapped `transform create` to non-existent `--input`, and omitted `message channel-update` → `params` now accepts both object and array validated per command contract with unified `{command, params}` examples (P0-1).
 - Multi-layer `ApiResponse`/`CliResponse` nesting, HTTP 200 business failures, process-global `INDEX_INJECTED`, and subprocess `--help` concatenated onto JSON `stdout` → `ApiClient` unwraps envelopes and fails on nested `"success": false`, help renders in-process into a separate `usage_hint` field, and domain index state is session-scoped (P0-2, P1-5).
 - `extension logs`/`config`/`validate` and `push logs` triggered mutating write-gates, host-meta tokens downgraded read-only classification, and pre-submission syntax/400 errors locked into `PreferKnown` → read-only allow-list completed, host-meta stripped before classify, and pre-submission rejections settle as `OperationStatus::Rejected` without locking retry (P0-3).
@@ -53,8 +53,8 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Shell `extension invoke` with illegal / quote-stripped `--params` silently skipped PreparedInvoke mint and later reported case-c "PreparedInvoke missing" → attach now WARNs + surfaces structured-`params` guidance; bind distinguishes never-minted vs canonicalize-stripped tickets; bare `--params {"k":"v"}` keeps JSON string quotes so small models can mint (NM-302).
 - Parallel `dashboard add-components` / `remove-components` / `update-component` / `update` used lock-free RMW and silently dropped sibling writes → mutate inside one redb write transaction; API rejects ephemeral component `data`/`label` keys and points to `data_source` (NM-309).
 - Invented CLI `--params` on commands whose primary JSON flag is `--components`/`--set`/`--ids`/`--body`/`--config`/`--input` only showed clap noise → shell recovery points at structured `params` + the real flag (NM-309).
-- `parse_json_arg` failures were bare serde messages → snippet + brace/batch hints ("add only 1–2 components") for large arrays (NM-309).
-- Skill section thrashing after overview stayed soft-`already_present` only → hard-gate further NEW sections once overview + 2 sections are loaded; dashboard skill/clap examples go structured-first with batching + no ephemeral `data` (NM-242 / NM-309).
+- `parse_json_arg` failures were bare serde messages → line+col `Near:` snippet + brace/batch hints ("add only 1–2 components") for large arrays (NM-309).
+- Skill section thrashing after overview stayed soft-`already_present` only → per-section dedupe; first loads of different sections after overview still return full chapters; further NEW sections hard-gate **without** falsely claiming `already_present` (NM-242 / NM-309).
 
 ### Fixed — CT-Prov / BLE provision
 - Auth-enabled embedded broker resolve no longer leaves username/password empty — mint on `resolve_only` and write them in `config.set` (empty-omit for auth-off / blank external fields).
@@ -62,7 +62,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - BLE provision display name is now editable and shown in the discovered device list.
 
 ### Fixed — devices
-- Device downlink image params are capability-gated by name: `url`/`display_url`/`image_url`/`src`/`href` become `{NEOMIND_SERVER_URL}/api/images/...` (never data-URL; unset advertise leaves the relative ref); other image params still embed data-URLs — Chat/tool-to-tool keep relative refs (NM-314).
+- Device downlink image params are capability-gated by name: `url`/`display_url`/`image_url`/`src`/`href` become `{NEOMIND_SERVER_URL}/api/images/...` (never data-URL; unset advertise **hard-fails** with an actionable `NEOMIND_SERVER_URL` error instead of silently sending a relative path); other image params still embed data-URLs — Chat/tool-to-tool keep relative refs (NM-314).
 - EK410 `render_text` description/help documents width-based auto-wrap + scale shrink instead of a hard 10-line cap.
 
 ### Fixed — chat / web
@@ -78,9 +78,9 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - NM-302 PreparedInvoke params gates: bare `--params {"city":"xiamen"}` tokenize/mint, illegal `{city:xiamen}` attach `HOST_ATTACH_ERROR` + structured-params tip, structured `params` mint→restore→bind, bind never-minted vs case-c wording.
 - NM-309: parallel `mutate_dashboard` append regression; invented `--params` recovery tips; JSON parse readability/batch hints; skill overview+section thrash hard-gate.
 - NM-310 / NM-316: TurnTimeline / ThinkingBlock / toolCallUtils vitest (34).
-- NM-314: `materialize_internal_image_refs_in_value` resolves `/api/images/` + strips image-field data-URIs; missing refs fail closed; HTTP prepare→execute and ExtensionTool claim-then-materialize paths covered.
-- NM-314: device outbound `url` + `NEOMIND_SERVER_URL` → absolute HTTP; without advertise stays relative; `image` still data-URL.
-- Chat session album / NM-231 strip: `session_album` build/format/resolve + durable-path annotate-before-hydrate + text-only `messages_to_api` path fold-in (llama.cpp + OpenAI).
+- NM-314: `materialize_internal_image_refs_in_value` resolves `/api/images/` only on declared image keys + strips image-field data-URIs; prose path strings untouched; missing refs fail closed; HTTP prepare→execute and ExtensionTool claim-then-materialize paths covered.
+- NM-314: device outbound `url` + `NEOMIND_SERVER_URL` → absolute HTTP; without advertise hard-fails; `image` still data-URL.
+- Chat session album / NM-231 strip: `session_album` build/format/resolve + bounded album prompt block + durable-path annotate-before-hydrate + text-only `messages_to_api` path fold-in (llama.cpp + OpenAI).
 
 ---
 

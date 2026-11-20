@@ -368,9 +368,7 @@ const PROMISE_HEAD_CHARS: usize = 80;
 /// a greeting requests no action, so a promise-shaped model reply to one is
 /// small-model chatter, not a stalled turn (do NOT label it).
 pub fn is_simple_greeting(text: &str) -> bool {
-    const GREETING_CJK: [&str; 7] = [
-        "你好", "您好", "嗨", "在吗", "早上好", "下午好", "晚上好",
-    ];
+    const GREETING_CJK: [&str; 7] = ["你好", "您好", "嗨", "在吗", "早上好", "下午好", "晚上好"];
     const GREETING_EN: [&str; 2] = ["hi", "hello"];
     let trimmed = text.trim();
     if trimmed.chars().count() >= 20 {
@@ -1146,10 +1144,7 @@ mod depth_and_image_tests {
             "album-aware handle expected: {c}"
         );
         // Path still on the image field (hydrate failed → left as reference).
-        assert_eq!(
-            history[0].images.as_ref().unwrap()[0].data.as_str(),
-            path
-        );
+        assert_eq!(history[0].images.as_ref().unwrap()[0].data.as_str(), path);
     }
 
     #[test]
@@ -1290,9 +1285,10 @@ mod narration_tests {
         assert!(!is_narration_without_action("当前系统时间 10:30:"));
         assert!(!is_narration_without_action("Tips:"));
         assert!(is_narration_without_action("好的，我来重新安装组件："));
-        assert!(is_narration_without_action("OK, let me install the widget:"));
+        assert!(is_narration_without_action(
+            "OK, let me install the widget:"
+        ));
     }
-
 
     /// Live 2026-10-20 regression (verbatim shape): a COMPLETE ~300-char
     /// capability-list answer whose politeness closing contains "我来帮你

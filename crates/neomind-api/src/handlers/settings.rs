@@ -1044,28 +1044,21 @@ mod s2_4_tests {
         let state = ServerState::new_for_testing().await;
         let user = non_admin_session();
 
-        let e1 = create_backup_handler(
-            State(state.clone()),
-            axum::extract::Extension(user.clone()),
-        )
-        .await
-        .expect_err("create_backup must reject non-admin");
+        let e1 =
+            create_backup_handler(State(state.clone()), axum::extract::Extension(user.clone()))
+                .await
+                .expect_err("create_backup must reject non-admin");
         assert_eq!(e1.status, StatusCode::FORBIDDEN);
 
-        let e2 = list_backups_handler(
-            State(state.clone()),
-            axum::extract::Extension(user.clone()),
-        )
-        .await
-        .expect_err("list_backups must reject non-admin");
+        let e2 = list_backups_handler(State(state.clone()), axum::extract::Extension(user.clone()))
+            .await
+            .expect_err("list_backups must reject non-admin");
         assert_eq!(e2.status, StatusCode::FORBIDDEN);
 
-        let e3 = get_market_source_handler(
-            State(state.clone()),
-            axum::extract::Extension(user.clone()),
-        )
-        .await
-        .expect_err("get_market_source must reject non-admin");
+        let e3 =
+            get_market_source_handler(State(state.clone()), axum::extract::Extension(user.clone()))
+                .await
+                .expect_err("get_market_source must reject non-admin");
         assert_eq!(e3.status, StatusCode::FORBIDDEN);
 
         let e4 = update_market_source_handler(
@@ -1079,12 +1072,10 @@ mod s2_4_tests {
         .expect_err("update_market_source must reject non-admin");
         assert_eq!(e4.status, StatusCode::FORBIDDEN);
 
-        let e5 = get_llm_sources_handler(
-            State(state.clone()),
-            axum::extract::Extension(user.clone()),
-        )
-        .await
-        .expect_err("get_llm_sources must reject non-admin");
+        let e5 =
+            get_llm_sources_handler(State(state.clone()), axum::extract::Extension(user.clone()))
+                .await
+                .expect_err("get_llm_sources must reject non-admin");
         assert_eq!(e5.status, StatusCode::FORBIDDEN);
 
         let e6 = update_llm_sources_handler(

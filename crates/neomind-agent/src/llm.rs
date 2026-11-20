@@ -571,7 +571,8 @@ pub struct LlmInterface {
     /// measured `prompt_eval` observation (S3-3 EWMA calibration).
     last_raw_prompt_estimate: Arc<tokio::sync::Mutex<Option<usize>>>,
     /// Per backend/model EWMA correction factors for prompt token estimates.
-    prompt_calibration: Arc<tokio::sync::RwLock<crate::agent::token_calibration::PromptTokenCalibration>>,
+    prompt_calibration:
+        Arc<tokio::sync::RwLock<crate::agent::token_calibration::PromptTokenCalibration>>,
     /// Set when the last context build had to drop history messages. Consumed
     /// at turn end so summarization triggers on ACTUAL truncation instead of
     /// a percentage of the total window — with a large system prompt/tool
@@ -901,11 +902,11 @@ impl LlmInterface {
             return;
         };
         let key = self.calibration_key_now().await;
-        let factor = self.prompt_calibration.write().await.observe(
-            &key,
-            measured as f64,
-            estimated as f64,
-        );
+        let factor =
+            self.prompt_calibration
+                .write()
+                .await
+                .observe(&key, measured as f64, estimated as f64);
         tracing::debug!(
             %key,
             measured,
@@ -1429,7 +1430,10 @@ impl LlmInterface {
 
     /// Like [`Self::estimate_prompt_breakdown`], but applies the turn's image
     /// flag so ContextUsage / history budget match the schemas actually sent.
-    pub async fn estimate_prompt_breakdown_for_turn(&self, has_user_images: bool) -> (usize, usize) {
+    pub async fn estimate_prompt_breakdown_for_turn(
+        &self,
+        has_user_images: bool,
+    ) -> (usize, usize) {
         // System prompt: build it and measure
         let system_prompt = self.build_system_prompt_with_tools(None).await;
         let raw_prompt_tokens = crate::agent::tokenizer::estimate_tokens(&system_prompt);
@@ -2977,11 +2981,8 @@ impl LlmInterface {
             .build_request_tools_input(attach_tools, false, has_user_images)
             .await;
 
-        let raw_prompt_est = Self::estimate_raw_prompt_tokens_with_tools(
-            &messages,
-            tools_input.as_deref(),
-            max_ctx,
-        );
+        let raw_prompt_est =
+            Self::estimate_raw_prompt_tokens_with_tools(&messages, tools_input.as_deref(), max_ctx);
         self.note_raw_prompt_estimate(raw_prompt_est).await;
 
         self.observe_send_boundary(
@@ -3349,11 +3350,8 @@ impl LlmInterface {
             .build_request_tools_input(attach_tools, exclude_skill, false)
             .await;
 
-        let raw_prompt_est = Self::estimate_raw_prompt_tokens_with_tools(
-            &messages,
-            tools_input.as_deref(),
-            max_ctx,
-        );
+        let raw_prompt_est =
+            Self::estimate_raw_prompt_tokens_with_tools(&messages, tools_input.as_deref(), max_ctx);
         self.note_raw_prompt_estimate(raw_prompt_est).await;
 
         self.observe_send_boundary(

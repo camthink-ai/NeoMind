@@ -139,14 +139,22 @@ fn find_action_verb(haystack: &str, needle: &str) -> Option<usize> {
 /// Chinese completed-aspect / interrogative prefixes that demote a verb to
 /// a status description ("已安装", "是否启用", "有没有绑定").
 const ZH_COMPLETED_PREFIXES: &[&str] = &[
-    "已经", "已", "曾", "是否", "有没有", "有无", "能否", "可否", "是不是",
+    "已经",
+    "已",
+    "曾",
+    "是否",
+    "有没有",
+    "有无",
+    "能否",
+    "可否",
+    "是不是",
 ];
 
 /// Noun/compound suffixes that turn a verb into a noun phrase
 /// ("安装路径", "更新日志", "创建时间", "控制面板").
 const ZH_NOUN_SUFFIXES: &[&str] = &[
-    "路径", "日志", "时间", "状态", "列表", "链接", "按钮", "面板", "说明",
-    "记录", "历史", "信息", "详情", "名称", "方式", "方法",
+    "路径", "日志", "时间", "状态", "列表", "链接", "按钮", "面板", "说明", "记录", "历史", "信息",
+    "详情", "名称", "方式", "方法",
 ];
 
 /// Clause punctuation that terminates lookback for Chinese completed-aspect
@@ -266,8 +274,16 @@ pub(crate) fn user_message_requires_action(msg: &str) -> bool {
     // Extra interrogative / hypothetical English shapes that often wrap a
     // past-looking verb ("is the extension installed?", "what if I delete…").
     const EXTRA_QUESTION_PREFIXES: &[&str] = &[
-        "is the ", "is it ", "are the ", "are there ", "did it ", "did you ",
-        "what if ", "what happens if ", "would it ", "can i safely ",
+        "is the ",
+        "is it ",
+        "are the ",
+        "are there ",
+        "did it ",
+        "did you ",
+        "what if ",
+        "what happens if ",
+        "would it ",
+        "can i safely ",
     ];
     if EXTRA_QUESTION_PREFIXES
         .iter()
@@ -277,7 +293,8 @@ pub(crate) fn user_message_requires_action(msg: &str) -> bool {
         return false;
     }
     verb_hits.into_iter().any(|(pos, verb)| {
-        !action_verb_is_negated(&msg_lower, pos) && !chinese_verb_is_non_action(&msg_lower, verb, pos)
+        !action_verb_is_negated(&msg_lower, pos)
+            && !chinese_verb_is_non_action(&msg_lower, verb, pos)
     })
 }
 
@@ -665,7 +682,10 @@ pub(crate) fn extract_action_parts(msg: &str) -> (&'static str, &'static str) {
     // Action candidates in table-priority order (= the old chain order).
     let candidates: Vec<&str> = ACTION_CLASSES
         .iter()
-        .filter(|(_, kws, _)| kws.iter().any(|k| find_action_verb(&msg_lower, k).is_some()))
+        .filter(|(_, kws, _)| {
+            kws.iter()
+                .any(|k| find_action_verb(&msg_lower, k).is_some())
+        })
         .map(|(class, _, _)| *class)
         .collect();
 
@@ -1279,15 +1299,21 @@ mod tests {
         assert!(!user_message_requires_action("Show device IP address"));
         assert!(!user_message_requires_action("check padding on the widget"));
         assert!(!user_message_requires_action("additional sensors online?"));
-        assert!(!user_message_requires_action("sender name for notifications"));
+        assert!(!user_message_requires_action(
+            "sender name for notifications"
+        ));
         assert!(!user_message_requires_action("startup sequence looks fine"));
         assert!(!user_message_requires_action("service restart history"));
         assert!(!user_message_requires_action("stopwatch reading now"));
         assert!(!user_message_requires_action("list created rules"));
-        assert!(!user_message_requires_action("show the creator of this agent"));
+        assert!(!user_message_requires_action(
+            "show the creator of this agent"
+        ));
         assert!(!user_message_requires_action("updated_at field value"));
         assert!(!user_message_requires_action("controller firmware version"));
-        assert!(!user_message_requires_action("shared dashboard link please"));
+        assert!(!user_message_requires_action(
+            "shared dashboard link please"
+        ));
         assert!(!user_message_requires_action("list installed extensions"));
         assert!(!user_message_requires_action("show created rules"));
         assert!(!user_message_requires_action("check enabled agents"));
@@ -1317,9 +1343,7 @@ mod tests {
         assert!(!user_message_requires_action("扩展安装说明在哪"));
 
         // Long-distance / expanded negation
-        assert!(!user_message_requires_action(
-            "不要对任何仪表盘做修改"
-        ));
+        assert!(!user_message_requires_action("不要对任何仪表盘做修改"));
         assert!(!user_message_requires_action(
             "只读查询配置，未修改任何内容"
         ));
@@ -1335,7 +1359,9 @@ mod tests {
 
         // Still true write requests
         assert!(user_message_requires_action("create a new device"));
-        assert!(user_message_requires_action("add a widget to the dashboard"));
+        assert!(user_message_requires_action(
+            "add a widget to the dashboard"
+        ));
         assert!(user_message_requires_action("start the connector now"));
         assert!(user_message_requires_action("安装 weather 扩展"));
         assert!(user_message_requires_action("删除这条规则"));

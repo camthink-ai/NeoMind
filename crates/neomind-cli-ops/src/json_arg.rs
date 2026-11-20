@@ -27,7 +27,9 @@ pub fn parse_json_arg(raw: &str) -> Result<Value> {
                             "{}",
                             format_json_parse_error(
                                 &retried,
-                                &format!("invalid JSON after quote normalize: {e2} (original: {e})")
+                                &format!(
+                                    "invalid JSON after quote normalize: {e2} (original: {e})"
+                                )
                             )
                         )
                     });
@@ -48,9 +50,9 @@ pub fn format_json_parse_error(raw: &str, serde_msg: &str) -> String {
         format!("invalid JSON: {serde_msg}")
     };
 
-    // Snippet around the reported column when present (`… at line 1 column N`).
-    if let Some(col) = parse_serde_column(serde_msg) {
-        let snippet = json_error_snippet(trimmed, col);
+    // Snippet around the reported line+column when present (`… at line L column C`).
+    if let Some((line, col)) = parse_serde_line_col(serde_msg) {
+        let snippet = json_error_snippet(trimmed, line, col);
         if !snippet.is_empty() {
             out.push_str("\nNear: ");
             out.push_str(&snippet);
@@ -82,19 +84,61 @@ pub fn format_json_parse_error(raw: &str, serde_msg: &str) -> String {
     out
 }
 
-fn parse_serde_column(msg: &str) -> Option<usize> {
-    let marker = "column ";
-    let idx = msg.rfind(marker)?;
-    let rest = &msg[idx + marker.len()..];
-    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    digits.parse().ok()
+/// Parse `(line, column)` from serde messages like `… at line 2 column 14`.
+fn parse_serde_line_col(msg: &str) -> Option<(usize, usize)> {
+    let line_marker = "line ";
+    let col_marker = "column ";
+    let line_idx = msg.rfind(line_marker)?;
+    let after_line = &msg[line_idx + line_marker.len()..];
+    let line_digits: String = after_line
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let line: usize = line_digits.parse().ok()?;
+    let col_idx = after_line.find(col_marker)?;
+    let after_col = &after_line[col_idx + col_marker.len()..];
+    let col_digits: String = after_col
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let col: usize = col_digits.parse().ok()?;
+    Some((line, col))
 }
 
-fn json_error_snippet(raw: &str, column_1based: usize) -> String {
-    if raw.is_empty() || column_1based == 0 {
+/// Byte offset for 1-based `(line, column)` in `raw` (UTF-8 safe via char steps on the line).
+fn offset_for_line_col(raw: &str, line_1based: usize, column_1based: usize) -> Option<usize> {
+    if line_1based == 0 || column_1based == 0 {
+        return None;
+    }
+    let mut byte = 0usize;
+    for (i, line) in raw.split_inclusive('\n').enumerate() {
+        if i + 1 == line_1based {
+            let mut chars = 0usize;
+            for (ci, _) in line.char_indices() {
+                chars += 1;
+                if chars == column_1based {
+                    return Some(byte + ci);
+                }
+            }
+            // Past end of line → clamp to line end (before trailing `\n` if any).
+            let end = if line.ends_with('\n') {
+                line.len().saturating_sub(1)
+            } else {
+                line.len()
+            };
+            return Some(byte + end);
+        }
+        byte += line.len();
+    }
+    None
+}
+
+fn json_error_snippet(raw: &str, line_1based: usize, column_1based: usize) -> String {
+    if raw.is_empty() {
         return String::new();
     }
-    let focus = column_1based.saturating_sub(1).min(raw.len());
+    let focus = offset_for_line_col(raw, line_1based, column_1based).unwrap_or(0);
+    let focus = focus.min(raw.len());
     let start = focus.saturating_sub(24);
     let end = (focus + 24).min(raw.len());
     // Stay on char boundaries.
@@ -372,8 +416,25 @@ mod tests {
             r#"[{"a":1},{"b":2}]"#,
             "key must be a string at line 1 column 10",
         );
-        assert!(msg.contains("closing `}`") || msg.contains("closing }"), "{msg}");
+        assert!(
+            msg.contains("closing `}`") || msg.contains("closing }"),
+            "{msg}"
+        );
         assert!(msg.contains("Near:"), "{msg}");
+    }
+
+    #[test]
+    fn near_snippet_uses_line_and_column_not_absolute_column() {
+        let raw = "{\n  \"a\": 1,\n  oops\n}";
+        let msg = format_json_parse_error(raw, "expected `:` at line 3 column 3");
+        assert!(msg.contains("Near:"), "{msg}");
+        // Column 3 on line 3 is near `oops`, not byte offset 3 at the start.
+        assert!(
+            msg.contains("oops"),
+            "snippet must resolve line+col to the failing line, got: {msg}"
+        );
+        assert_eq!(parse_serde_line_col("x at line 3 column 3"), Some((3, 3)));
+        assert_eq!(offset_for_line_col(raw, 3, 3), Some(14)); // after "{\n  \"a\": 1,\n  "
     }
 
     #[test]

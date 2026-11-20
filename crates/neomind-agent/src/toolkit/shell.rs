@@ -380,7 +380,11 @@ impl ShellTool {
             }
         }
         if selected.is_empty() {
-            return lines.into_iter().take(max_lines).collect::<Vec<_>>().join("\n");
+            return lines
+                .into_iter()
+                .take(max_lines)
+                .collect::<Vec<_>>()
+                .join("\n");
         }
         let mut out: Vec<&str> = Vec::new();
         for line in lines.iter().take(4) {
@@ -396,7 +400,10 @@ impl ShellTool {
                 break;
             }
         }
-        out.into_iter().take(max_lines).collect::<Vec<_>>().join("\n")
+        out.into_iter()
+            .take(max_lines)
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Build `domain sub <ID> --flag <NAME>` from clap required positionals
@@ -455,7 +462,10 @@ impl ShellTool {
     /// One-line Chat/shell-tool tip prepended onto clap `usage_hint` when the
     /// failing command has a primary JSON flag — steers Spark/small models
     /// toward structured `params` instead of quote-fragile CLI strings.
-    pub(crate) fn structured_params_retry_tip(domain: &str, subcommand: Option<&str>) -> Option<String> {
+    pub(crate) fn structured_params_retry_tip(
+        domain: &str,
+        subcommand: Option<&str>,
+    ) -> Option<String> {
         let sub = subcommand?;
         let argv = vec!["neomind".to_string(), domain.to_string(), sub.to_string()];
         let spec = neomind_cli_ops::json_arg::primary_json_spec(&argv)?;
@@ -1916,13 +1926,7 @@ pub(crate) fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<S
 fn is_primary_json_cli_flag(tok: &str) -> bool {
     matches!(
         tok,
-        "--params"
-            | "--set"
-            | "--body"
-            | "--components"
-            | "--ids"
-            | "--config"
-            | "--input"
+        "--params" | "--set" | "--body" | "--components" | "--ids" | "--config" | "--input"
     )
 }
 
@@ -2097,7 +2101,6 @@ fn find_safe_truncation_point(s: &str, max_bytes: usize) -> usize {
     }
     pos
 }
-
 
 /// When the model invents CLI `--params` on a command whose primary JSON flag
 /// is something else (`--components`, `--set`, `--ids`, `--body`, `--config`,
@@ -2708,7 +2711,10 @@ mod tests {
         )
         .expect("tip required");
         assert!(hint.contains("does not take CLI `--params`"), "{hint}");
-        assert!(hint.contains("--components") || hint.contains("params=[...]"), "{hint}");
+        assert!(
+            hint.contains("--components") || hint.contains("params=[...]"),
+            "{hint}"
+        );
         assert!(hint.contains("shell"), "{hint}");
     }
 
@@ -2734,7 +2740,6 @@ mod tests {
         )
         .is_none());
     }
-
 
     #[test]
     fn control_hint_does_not_shadow_id_or_other_error_contracts() {
@@ -4341,7 +4346,9 @@ mod nm247_structured_params_tests {
                 .and_then(|v| v.as_str()),
             Some(op.as_str())
         );
-        assert!(args.get(crate::agent::task_continuity::HOST_ATTACH_ERROR_ARG).is_none());
+        assert!(args
+            .get(crate::agent::task_continuity::HOST_ATTACH_ERROR_ARG)
+            .is_none());
         invalidate_instance_capability(id);
     }
 
@@ -4358,8 +4365,7 @@ mod nm247_structured_params_tests {
         let op = cap
             .prepared_operation_id
             .expect("structured params must mint");
-        let mut canon =
-            crate::agent::task_continuity::canonicalize_tool_arguments("shell", &args);
+        let mut canon = crate::agent::task_continuity::canonicalize_tool_arguments("shell", &args);
         assert!(canon
             .get(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG)
             .is_none());

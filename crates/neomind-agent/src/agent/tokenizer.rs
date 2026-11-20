@@ -585,13 +585,13 @@ mod tests {
 
     #[test]
     fn builtin_tool_definitions_fit_within_8k_budget() {
+        use crate::llm_backends::LlmBackendInstanceManager;
         use crate::skills::SkillRegistry;
         use crate::toolkit::{
-            skill_tool::SkillTool, shell::ShellTool, FileEditTool, FileReadTool, FileWriteTool,
+            shell::ShellTool, skill_tool::SkillTool, FileEditTool, FileReadTool, FileWriteTool,
             ImageEditTool, MemoryTool, ShellConfig, Tool, VisionConfig, VisionTool, WebFetchTool,
             WebSearchTool,
         };
-        use crate::llm_backends::LlmBackendInstanceManager;
         use neomind_storage::{LlmBackendStore, MarkdownMemoryStore};
         use std::sync::Arc;
         use tokio::sync::RwLock;
@@ -649,14 +649,16 @@ mod tests {
     /// 1800 by deferring `image_edit` + `file_edit` exposure.
     #[test]
     fn light_profile_tool_tokens_under_1800() {
-        use crate::agent::tool_profile::{select_tool_profile, tool_exposed_in_profile, ToolProfile};
+        use crate::agent::tool_profile::{
+            select_tool_profile, tool_exposed_in_profile, ToolProfile,
+        };
+        use crate::llm_backends::LlmBackendInstanceManager;
         use crate::skills::SkillRegistry;
         use crate::toolkit::{
-            skill_tool::SkillTool, shell::ShellTool, FileEditTool, FileReadTool, FileWriteTool,
+            shell::ShellTool, skill_tool::SkillTool, FileEditTool, FileReadTool, FileWriteTool,
             ImageEditTool, MemoryTool, ShellConfig, Tool, VisionConfig, VisionTool, WebFetchTool,
             WebSearchTool,
         };
-        use crate::llm_backends::LlmBackendInstanceManager;
         use neomind_storage::{LlmBackendStore, MarkdownMemoryStore};
         use std::sync::Arc;
         use tokio::sync::RwLock;

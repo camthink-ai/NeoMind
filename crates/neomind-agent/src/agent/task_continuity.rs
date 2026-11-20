@@ -4718,19 +4718,14 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
         Ok(a) => a,
         Err(e) => {
             let tip = crate::toolkit::shell::extension_invoke_params_retry_tip();
-            let msg = format!(
-                "could not tokenize extension invoke command ({e}) — {tip}"
-            );
+            let msg = format!("could not tokenize extension invoke command ({e}) — {tip}");
             tracing::warn!(
                 error = %e,
                 stage = "attach_classify",
                 "{msg}"
             );
             if let Some(obj) = arguments.as_object_mut() {
-                obj.insert(
-                    HOST_ATTACH_ERROR_ARG.into(),
-                    serde_json::Value::String(msg),
-                );
+                obj.insert(HOST_ATTACH_ERROR_ARG.into(), serde_json::Value::String(msg));
             }
             return ToolCapability::mutating_unknown_sensitive();
         }
@@ -4742,9 +4737,7 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
             // classify_shell_capability with no ticket and no WARN — Shell bind
             // then reported a misleading case-c "PreparedInvoke missing".
             let tip = crate::toolkit::shell::extension_invoke_params_retry_tip();
-            let msg = format!(
-                "could not parse invoke params — {tip}"
-            );
+            let msg = format!("could not parse invoke params — {tip}");
             tracing::warn!(
                 command = %cmd,
                 stage = "attach_classify",
@@ -4752,10 +4745,7 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
                 "extension invoke attach could not resolve business params — no PreparedInvoke ticket minted"
             );
             if let Some(obj) = arguments.as_object_mut() {
-                obj.insert(
-                    HOST_ATTACH_ERROR_ARG.into(),
-                    serde_json::Value::String(msg),
-                );
+                obj.insert(HOST_ATTACH_ERROR_ARG.into(), serde_json::Value::String(msg));
             }
             return ToolCapability::mutating_unknown_sensitive();
         }

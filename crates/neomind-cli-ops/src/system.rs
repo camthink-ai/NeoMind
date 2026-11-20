@@ -13,15 +13,7 @@ use serde_json::{json, Map, Value};
 /// - `/mqtt/status` + `/mqtt/broker-config`: embedded broker state, truthful connected MQTT client count, external brokers
 /// - `/system/network-info`: server IP, canonical server URL & source, LAN reachability, WiFi SSID
 pub async fn system_info(client: &ApiClient) -> Result<CliResponse> {
-    let (
-        stats_res,
-        ready_res,
-        llm_res,
-        ext_res,
-        mqtt_res,
-        broker_cfg_res,
-        net_res,
-    ) = tokio::join!(
+    let (stats_res, ready_res, llm_res, ext_res, mqtt_res, broker_cfg_res, net_res) = tokio::join!(
         client.get("/stats/system"),
         client.get("/health/ready"),
         client.get("/llm-backends?include_vlm=true"),
@@ -215,10 +207,12 @@ pub async fn system_info(client: &ApiClient) -> Result<CliResponse> {
         let failed = list
             .iter()
             .filter(|e| {
-                e.get("state")
+                e.get("state").and_then(|v| v.as_str()).is_some_and(|s| {
+                    s.eq_ignore_ascii_case("failed") || s.eq_ignore_ascii_case("error")
+                }) || e
+                    .get("last_error")
                     .and_then(|v| v.as_str())
-                    .is_some_and(|s| s.eq_ignore_ascii_case("failed") || s.eq_ignore_ascii_case("error"))
-                    || e.get("last_error").and_then(|v| v.as_str()).is_some_and(|s| !s.is_empty())
+                    .is_some_and(|s| !s.is_empty())
             })
             .count();
         let ai_visible = list
@@ -357,10 +351,8 @@ pub async fn system_stats(client: &ApiClient) -> Result<CliResponse> {
 
 /// Top-level `neomind health` aggregate: readiness + compact stats/version.
 pub async fn health_check(client: &ApiClient) -> Result<CliResponse> {
-    let (ready_res, stats_res) = tokio::join!(
-        client.get("/health/ready"),
-        client.get("/stats/system"),
-    );
+    let (ready_res, stats_res) =
+        tokio::join!(client.get("/health/ready"), client.get("/stats/system"),);
     let mut errors = Map::new();
     let ready = match ready_res {
         Ok(v) => Some(v),
@@ -377,11 +369,24 @@ pub async fn health_check(client: &ApiClient) -> Result<CliResponse> {
         }
     };
     if ready.is_none() && stats.is_none() {
-        anyhow::bail!("health check failed: {}", errors.values().cloned().collect::<Vec<_>>().into_iter().map(|v| v.as_str().unwrap_or("?").to_string()).collect::<Vec<_>>().join("; "));
+        anyhow::bail!(
+            "health check failed: {}",
+            errors
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|v| v.as_str().unwrap_or("?").to_string())
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
     }
     let ready_flag = ready
         .as_ref()
-        .and_then(|r| r.get("ready").or_else(|| r.get("data").and_then(|d| d.get("ready"))))
+        .and_then(|r| {
+            r.get("ready")
+                .or_else(|| r.get("data").and_then(|d| d.get("ready")))
+        })
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let version = stats.as_ref().and_then(|s| {
@@ -409,7 +414,6 @@ pub async fn health_check(client: &ApiClient) -> Result<CliResponse> {
         },
     ))
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -643,5 +647,4 @@ mod tests {
         assert_eq!(data["ready"], json!(true));
         assert_eq!(data["degraded"], json!(false));
     }
-
 }

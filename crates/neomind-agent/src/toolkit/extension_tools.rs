@@ -437,7 +437,8 @@ impl Tool for ExtensionTool {
         // from a single source of truth.
         let result = tokio::time::timeout(crate::toolkit::timeouts::extension_invoke(), async {
             let ext = self.extension.read().await;
-            ext.execute_command(&self.command.name, &for_extension).await
+            ext.execute_command(&self.command.name, &for_extension)
+                .await
         })
         .await;
 

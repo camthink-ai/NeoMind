@@ -870,17 +870,21 @@ impl Agent {
 
         let defs = self.allowed_tool_defs();
         if !defs.is_empty() {
-            prompt.push_str("
+            prompt.push_str(
+                "
 
 ## Available Tools
-");
+",
+            );
             prompt.push_str(
                 "Tools are available via function calling (schemas are not repeated here). Names: ",
             );
             let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
             prompt.push_str(&names.join(", "));
-            prompt.push_str(".
-");
+            prompt.push_str(
+                ".
+",
+            );
         }
 
         prompt

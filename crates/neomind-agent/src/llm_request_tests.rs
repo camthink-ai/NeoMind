@@ -1230,7 +1230,15 @@ async fn minicpm_8k_multiturn_keeps_light_profile_tools_on_turn_2() {
     // and leaves comfortable history room (>800 tokens, tool overhead <1800).
     let system_prompt = iface.build_system_prompt_with_tools(None).await;
     let budget = iface
-        .compute_history_budget_breakdown(8_192, &system_prompt, "查看系统状态", 2, true, false, false)
+        .compute_history_budget_breakdown(
+            8_192,
+            &system_prompt,
+            "查看系统状态",
+            2,
+            true,
+            false,
+            false,
+        )
         .await;
     let (_sys_est, tools_est) = iface.estimate_prompt_breakdown_for_turn(false).await;
     assert_eq!(
@@ -1276,7 +1284,10 @@ async fn minicpm_8k_multiturn_keeps_light_profile_tools_on_turn_2() {
         .collect();
     assert!(names.contains(&"shell"), "expected shell in {:?}", names);
     assert!(names.contains(&"vision"), "expected vision in {:?}", names);
-    assert!(!names.contains(&"image_edit"), "image_edit deferred on text turn");
+    assert!(
+        !names.contains(&"image_edit"),
+        "image_edit deferred on text turn"
+    );
     assert!(!names.contains(&"file_edit"), "file_edit deferred on Light");
     assert!(!names.contains(&"web_fetch"), "web_fetch deferred on Light");
 }

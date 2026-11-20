@@ -12,7 +12,9 @@
 //!     cargo test -p neomind-cli-ops --test cli_api_contract
 
 use neomind_cli_ops::dispatch::commands::{ApiKeyCommand, DataCommand};
-use neomind_cli_ops::dispatch::handlers::{run_api_key_cmd_with_context, run_data_cmd_with_context};
+use neomind_cli_ops::dispatch::handlers::{
+    run_api_key_cmd_with_context, run_data_cmd_with_context,
+};
 use neomind_cli_ops::dispatch::DispatchContext;
 use neomind_cli_ops::types::CliResponse;
 use neomind_cli_ops::{
@@ -89,10 +91,7 @@ fn mock_api(
                         };
                         (first.trim().to_string(), body)
                     };
-                    requests.push(CapturedRequest {
-                        line: first,
-                        body,
-                    });
+                    requests.push(CapturedRequest { line: first, body });
                     let (status, body) = responses
                         .pop_front()
                         .unwrap_or((200, r#"{"success":true,"data":{}}"#));
@@ -198,8 +197,10 @@ struct CreateBackendRequest {
 
 #[tokio::test]
 async fn widget_market_install_body_uses_component_id_not_id() {
-    let (client, stop, thread) =
-        mock_api(vec![(200, leak(envelope(json!({ "installed": true, "id": "chart-line" }))))]);
+    let (client, stop, thread) = mock_api(vec![(
+        200,
+        leak(envelope(json!({ "installed": true, "id": "chart-line" }))),
+    )]);
     let resp = widget::install_widget_market(&client, "chart-line", Some("1.0.0"))
         .await
         .expect("install");
@@ -342,7 +343,9 @@ async fn connector_list_reads_brokers_not_connectors_key() {
 async fn connector_create_body_uses_broker_field() {
     let (client, stop, thread) = mock_api(vec![(
         200,
-        leak(envelope(json!({ "broker": { "id": "b1", "connected": false } }))),
+        leak(envelope(
+            json!({ "broker": { "id": "b1", "connected": false } }),
+        )),
     )]);
     let _ = connector::create_connector(
         &client,

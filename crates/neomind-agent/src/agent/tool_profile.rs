@@ -79,9 +79,7 @@ where
     let profile = select_tool_profile(max_context);
     tools
         .into_iter()
-        .filter(|t| {
-            tool_exposed_in_profile(name_of(t), profile, has_user_images, vlm_available)
-        })
+        .filter(|t| tool_exposed_in_profile(name_of(t), profile, has_user_images, vlm_available))
         .collect()
 }
 

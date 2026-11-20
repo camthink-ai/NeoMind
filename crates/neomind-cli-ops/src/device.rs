@@ -177,10 +177,8 @@ pub async fn list_devices(
     }
 
     // Build ungrouped entries (same 4-state fields as typed list)
-    let ungrouped_response: Vec<serde_json::Value> = ungrouped_devices
-        .iter()
-        .map(compact_device_entry)
-        .collect();
+    let ungrouped_response: Vec<serde_json::Value> =
+        ungrouped_devices.iter().map(compact_device_entry).collect();
 
     let mut response = json!({
         "summary": {
@@ -2035,12 +2033,30 @@ mod tests {
     #[test]
     fn parse_time_range_accepts_multi_char_units() {
         let now = 1_700_000_000_i64;
-        assert_eq!(parse_time_range_to_timestamp("30min", now), Some(now - 30 * 60));
-        assert_eq!(parse_time_range_to_timestamp("2hr", now), Some(now - 2 * 3600));
-        assert_eq!(parse_time_range_to_timestamp("7days", now), Some(now - 7 * 86400));
-        assert_eq!(parse_time_range_to_timestamp("1wk", now), Some(now - 7 * 86400));
-        assert_eq!(parse_time_range_to_timestamp("1mo", now), Some(now - 30 * 86400));
-        assert_eq!(parse_time_range_to_timestamp("24h", now), Some(now - 24 * 3600));
+        assert_eq!(
+            parse_time_range_to_timestamp("30min", now),
+            Some(now - 30 * 60)
+        );
+        assert_eq!(
+            parse_time_range_to_timestamp("2hr", now),
+            Some(now - 2 * 3600)
+        );
+        assert_eq!(
+            parse_time_range_to_timestamp("7days", now),
+            Some(now - 7 * 86400)
+        );
+        assert_eq!(
+            parse_time_range_to_timestamp("1wk", now),
+            Some(now - 7 * 86400)
+        );
+        assert_eq!(
+            parse_time_range_to_timestamp("1mo", now),
+            Some(now - 30 * 86400)
+        );
+        assert_eq!(
+            parse_time_range_to_timestamp("24h", now),
+            Some(now - 24 * 3600)
+        );
     }
 
     #[test]
@@ -2054,8 +2070,12 @@ mod tests {
 
     #[test]
     fn device_is_online_uses_status_only() {
-        assert!(device_is_online(&json!({"status": "online", "online": false})));
-        assert!(!device_is_online(&json!({"status": "offline", "online": true})));
+        assert!(device_is_online(
+            &json!({"status": "online", "online": false})
+        ));
+        assert!(!device_is_online(
+            &json!({"status": "offline", "online": true})
+        ));
         assert!(!device_is_online(&json!({"online": true})));
     }
 

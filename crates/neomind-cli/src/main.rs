@@ -1016,7 +1016,6 @@ fn matches_since(line: &str, cutoff: Option<chrono::DateTime<chrono::Utc>>) -> b
     }
 }
 
-
 /// Run extension management commands.
 async fn run_extension_cmd(
     cmd: ExtensionCommand,
@@ -1906,7 +1905,10 @@ mod since_tests {
     #[test]
     fn parse_relative_duration_supports_all_units_including_months() {
         let now = 1_700_000_000i64;
-        assert_eq!(parse_relative_duration_to_cutoff("30s", now), Some(now - 30));
+        assert_eq!(
+            parse_relative_duration_to_cutoff("30s", now),
+            Some(now - 30)
+        );
         assert_eq!(
             parse_relative_duration_to_cutoff("15min", now),
             Some(now - 15 * 60)

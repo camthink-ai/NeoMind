@@ -69,8 +69,8 @@ fn preserved_broker_update(response: &serde_json::Value, id: &str) -> Result<ser
 pub async fn list_connectors(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/brokers").await?;
 
-    let connectors = extract_list_array(&data, "brokers")
-        .or_else(|| extract_list_array(&data, "connectors"));
+    let connectors =
+        extract_list_array(&data, "brokers").or_else(|| extract_list_array(&data, "connectors"));
 
     let Some(connectors) = connectors else {
         return Ok(CliResponse::success(data, "Connectors listed"));

@@ -2410,12 +2410,12 @@ mod tests {
             SessionMessageImage {
                 data: "data:image/png;base64,iVBORw0KG...".to_string(),
                 mime_type: Some("image/png".to_string()),
-                            caption: None,
+                caption: None,
             },
             SessionMessageImage {
                 data: "data:image/jpeg;base64,/9j/4AAQ...".to_string(),
                 mime_type: Some("image/jpeg".to_string()),
-                            caption: None,
+                caption: None,
             },
         ];
 

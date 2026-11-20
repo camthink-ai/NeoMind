@@ -795,10 +795,8 @@ mod tests {
     #[test]
     fn parallel_mutate_appends_do_not_drop_components() {
         let store = create_temp_store();
-        let mut dashboard = Dashboard::new(
-            "Race Board".to_string(),
-            DashboardLayout::default_layout(),
-        );
+        let mut dashboard =
+            Dashboard::new("Race Board".to_string(), DashboardLayout::default_layout());
         dashboard.id = "race-dash".to_string();
         store.save(&dashboard).unwrap();
 

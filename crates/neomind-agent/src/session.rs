@@ -625,12 +625,7 @@ async fn delegate_images_to_companion(message: &str, images: &[String]) -> Optio
             .and_then(|p| p.as_deref())
             .map(|p| format!(" path={p}"))
             .unwrap_or_default();
-        combined.push_str(&format!(
-            "[Image {}{}] {}\n",
-            i + 1,
-            path_note,
-            d
-        ));
+        combined.push_str(&format!("[Image {}{}] {}\n", i + 1, path_note, d));
     }
     tracing::info!(
         companion = %companion.id,
@@ -651,8 +646,7 @@ async fn apply_image_delegation(
     // Paths are re-derived idempotently (content-hash) when accepting the
     // user message; captions must stage here for history persistence.
     let _paths = delegation.paths;
-    llm.set_image_delegation_captions(delegation.captions)
-        .await;
+    llm.set_image_delegation_captions(delegation.captions).await;
     llm.set_image_delegation_prompt(delegation.prompt).await;
 }
 
@@ -2642,7 +2636,6 @@ Assistant: {ar}\n"
         self.process_message_multimodal(session_id, message, images)
             .await
     }
-
 
     /// Process a multimodal message (text + images) with streaming response and optional backend override.
     pub async fn process_message_multimodal_with_backend_stream(

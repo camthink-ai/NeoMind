@@ -502,7 +502,11 @@ mod lifecycle_fallback_tests {
         disabled.enabled = false;
         disabled.auto_start = true;
         disabled.last_error = None;
-        state.extensions.store.save(&disabled).expect("save disabled");
+        state
+            .extensions
+            .store
+            .save(&disabled)
+            .expect("save disabled");
 
         let mut failed = sample_record("ext-failed-test");
         failed.enabled = true;
@@ -511,27 +515,23 @@ mod lifecycle_fallback_tests {
         failed.health_status = "error".to_string();
         state.extensions.store.save(&failed).expect("save failed");
 
-        let got_disabled = get_extension_handler(
-            State(state.clone()),
-            Path("ext-disabled-test".to_string()),
-        )
-        .await
-        .expect("disabled extension should not 404")
-        .0
-        .data
-        .expect("dto");
+        let got_disabled =
+            get_extension_handler(State(state.clone()), Path("ext-disabled-test".to_string()))
+                .await
+                .expect("disabled extension should not 404")
+                .0
+                .data
+                .expect("dto");
         assert_eq!(got_disabled.state, "Stopped");
         assert!(!got_disabled.enabled);
 
-        let got_failed = get_extension_handler(
-            State(state.clone()),
-            Path("ext-failed-test".to_string()),
-        )
-        .await
-        .expect("failed extension should not 404")
-        .0
-        .data
-        .expect("dto");
+        let got_failed =
+            get_extension_handler(State(state.clone()), Path("ext-failed-test".to_string()))
+                .await
+                .expect("failed extension should not 404")
+                .0
+                .data
+                .expect("dto");
         assert_eq!(got_failed.state, "Failed");
         assert_eq!(got_failed.last_error.as_deref(), Some("abi mismatch"));
     }

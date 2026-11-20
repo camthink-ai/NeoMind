@@ -645,7 +645,9 @@ fn load_invoke_params(
 
 /// Get extension configuration
 pub async fn get_extension_config(client: &ApiClient, id: &str) -> Result<CliResponse> {
-    let data = client.get(&format!("/extensions/{}/config", encode_segment(id))).await?;
+    let data = client
+        .get(&format!("/extensions/{}/config", encode_segment(id)))
+        .await?;
     Ok(CliResponse::success(data, "Extension config retrieved"))
 }
 
@@ -656,7 +658,10 @@ pub async fn update_extension_config(
     config: serde_json::Value,
 ) -> Result<CliResponse> {
     let data = client
-        .put(&format!("/extensions/{}/config", encode_segment(id)), &config)
+        .put(
+            &format!("/extensions/{}/config", encode_segment(id)),
+            &config,
+        )
         .await?;
     Ok(CliResponse::success(data, "Extension config updated"))
 }
@@ -830,7 +835,8 @@ mod market_install_verdict_tests {
                         "health_status": "error"
                     }
                 ]
-            }).to_string();
+            })
+            .to_string();
             let resp = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                 body.len(), body
@@ -840,7 +846,11 @@ mod market_install_verdict_tests {
         let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
         let out = super::list_extensions(&client).await.unwrap();
         let item = &out.data.as_ref().unwrap()["extensions"][0];
-        assert!(item["enabled"].is_null(), "missing enabled must stay null, got {:?}", item["enabled"]);
+        assert!(
+            item["enabled"].is_null(),
+            "missing enabled must stay null, got {:?}",
+            item["enabled"]
+        );
         assert_eq!(item["ai_enabled"], false);
         assert_eq!(item["last_error"], "dlopen failed");
         assert_eq!(item["consecutive_crashes"], 3);
@@ -927,7 +937,9 @@ mod market_install_verdict_tests {
         });
 
         let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
-        let out = super::list_extension_commands(&client, "weather").await.unwrap();
+        let out = super::list_extension_commands(&client, "weather")
+            .await
+            .unwrap();
         assert!(out.success);
         assert!(
             out.suggestion.is_none(),

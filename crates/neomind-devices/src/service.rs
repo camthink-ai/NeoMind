@@ -2336,7 +2336,7 @@ impl DeviceService {
         // URL-shaped params → absolute via NEOMIND_SERVER_URL; image/base64
         // params → data-URL. Mirrors data-push outbound for the base64 path.
         let data_dir = neomind_core::paths::data_dir();
-        Self::resolve_command_image_urls(&mut merged, data_dir.as_path());
+        Self::resolve_command_image_urls(&mut merged, data_dir.as_path())?;
 
         // Delegate to the structured JSON-aware renderer. See
         // `payload_template` module docs for why string substitution
@@ -2363,16 +2363,17 @@ impl DeviceService {
 
     /// Resolve `/api/images/` handles in command params for device downlink.
     ///
-    /// - URL-capable params → `{NEOMIND_SERVER_URL}/api/images/...` when the
-    ///   advertise URL is set; otherwise leave the relative ref (do **not**
-    ///   convert to data-URL — e.g. EK410 `display_url` cannot use base64).
+    /// - URL-capable params (`url` / `display_url` / …) →
+    ///   `{NEOMIND_SERVER_URL}/api/images/...`. If advertise is unset, **hard
+    ///   fail** with an actionable error — never silently send a relative path
+    ///   the device cannot fetch.
     /// - Other image params → data-URL via [`resolve_internal_image_to_data_url`].
-    /// - Missing / unreadable files: leave the original string so the device
-    ///   surfaces its own error.
+    /// - Missing / unreadable files on the data-URL path: leave the original
+    ///   string so the device surfaces its own error.
     fn resolve_command_image_urls(
         params: &mut HashMap<String, MetricValue>,
         data_dir: &std::path::Path,
-    ) {
+    ) -> Result<(), DeviceError> {
         let advertise = Self::advertise_server_base_url();
         for (key, value) in params.iter_mut() {
             let MetricValue::String(s) = value else {
@@ -2383,9 +2384,15 @@ impl DeviceService {
             }
             match image_outbound_form(key) {
                 ImageOutboundForm::AbsoluteHttp => {
-                    if let Some(ref base) = advertise {
-                        *s = format!("{base}{s}");
-                    }
+                    let Some(ref base) = advertise else {
+                        return Err(DeviceError::InvalidParameter(format!(
+                            "Param `{key}` needs an absolute HTTP URL for device fetch, but \
+                             NEOMIND_SERVER_URL is unset. Set it to this host's externally \
+                             reachable origin (e.g. https://edge.example.com) so `{s}` can be \
+                             advertised; do not send a relative /api/images/ path to the device."
+                        )));
+                    };
+                    *s = format!("{base}{s}");
                 }
                 ImageOutboundForm::DataUrl => {
                     if let Some(data_url) =
@@ -2396,6 +2403,7 @@ impl DeviceService {
                 }
             }
         }
+        Ok(())
     }
 
     /// Query telemetry data for a device metric
@@ -3451,7 +3459,7 @@ mod tests {
         );
         params.insert("label".to_string(), MetricValue::String("hi".to_string()));
 
-        DeviceService::resolve_command_image_urls(&mut params, &temp);
+        DeviceService::resolve_command_image_urls(&mut params, &temp).unwrap();
 
         let img = match &params["image"] {
             MetricValue::String(s) => s.clone(),
@@ -3479,7 +3487,7 @@ mod tests {
             "image".to_string(),
             MetricValue::String("/api/images/nope/overlay/0.png".to_string()),
         );
-        DeviceService::resolve_command_image_urls(&mut params, &temp);
+        DeviceService::resolve_command_image_urls(&mut params, &temp).unwrap();
         match &params["image"] {
             MetricValue::String(s) => {
                 assert_eq!(s, "/api/images/nope/overlay/0.png")
@@ -3516,7 +3524,7 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("url".to_string(), MetricValue::String(rel.clone()));
         params.insert("image".to_string(), MetricValue::String(rel.clone()));
-        DeviceService::resolve_command_image_urls(&mut params, &temp);
+        DeviceService::resolve_command_image_urls(&mut params, &temp).unwrap();
         match &params["url"] {
             MetricValue::String(s) => {
                 assert_eq!(s, "https://edge.example.com/api/images/cam/frame/1.jpg");
@@ -3531,14 +3539,19 @@ mod tests {
             other => panic!("image should be data-URL, got {other:?}"),
         }
 
-        // Without advertise → URL params stay relative (never coerced to data-URL).
+        // Without advertise → hard fail for AbsoluteHttp params (never silent relative).
         std::env::remove_var("NEOMIND_SERVER_URL");
         let mut params2 = HashMap::new();
-        params2.insert("url".to_string(), MetricValue::String(rel.clone()));
-        DeviceService::resolve_command_image_urls(&mut params2, &temp);
-        match &params2["url"] {
-            MetricValue::String(s) => assert_eq!(s, &rel),
-            other => panic!("expected relative left as-is, got {other:?}"),
+        params2.insert("display_url".to_string(), MetricValue::String(rel.clone()));
+        let err = DeviceService::resolve_command_image_urls(&mut params2, &temp).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("NEOMIND_SERVER_URL") && msg.contains("display_url"),
+            "expected actionable advertise error, got: {msg}"
+        );
+        match &params2["display_url"] {
+            MetricValue::String(s) => assert_eq!(s, &rel, "must not mutate on failure"),
+            other => panic!("expected relative left as-is on error, got {other:?}"),
         }
 
         let _ = std::fs::remove_dir_all(&temp);

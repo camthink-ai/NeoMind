@@ -14,7 +14,7 @@ fn test_agent_message_with_images() {
     let images = vec![AgentMessageImage {
         data: "data:image/png;base64,iVBORw0KGgo...".to_string(),
         mime_type: Some("image/png".to_string()),
-            caption: None,
+        caption: None,
     }];
 
     let msg = AgentMessage::user_with_images("What color is this image?", images);
@@ -32,7 +32,7 @@ fn test_agent_message_to_core_multimodal() {
     let images = vec![AgentMessageImage {
         data: "data:image/png;base64,iVBORw0KGgo...".to_string(),
         mime_type: Some("image/png".to_string()),
-            caption: None,
+        caption: None,
     }];
 
     let msg = AgentMessage::user_with_images("Describe this image", images);
@@ -113,13 +113,13 @@ fn test_multiple_images_preserved() {
         AgentMessageImage {
             data: "data:image/png;base64,AAAA...".to_string(),
             mime_type: Some("image/png".to_string()),
-                caption: None,
-    },
+            caption: None,
+        },
         AgentMessageImage {
             data: "data:image/jpeg;base64,BBBB...".to_string(),
             mime_type: Some("image/jpeg".to_string()),
-                caption: None,
-    },
+            caption: None,
+        },
     ];
 
     let msg = AgentMessage::user_with_images("Compare these two images", images);
@@ -158,8 +158,8 @@ fn test_message_image_data_url_parsing() {
         let images = vec![AgentMessageImage {
             data: data_url.to_string(),
             mime_type: None, // Will be parsed from data URL
-                caption: None,
-    }];
+            caption: None,
+        }];
 
         let msg = AgentMessage::user_with_images("Test", images);
         let core_msg = msg.to_core();

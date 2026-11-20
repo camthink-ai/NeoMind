@@ -83,8 +83,7 @@ impl TurnLoadedSkills {
             // Exact repeat → soft already_present path, not hard gate.
             return false;
         }
-        self.overview_loaded(id)
-            && self.section_load_count(id) >= Self::MAX_SECTIONS_AFTER_OVERVIEW
+        self.overview_loaded(id) && self.section_load_count(id) >= Self::MAX_SECTIONS_AFTER_OVERVIEW
     }
 
     /// Clear all cached load entries for `id` (called after `update`/`delete`
@@ -645,9 +644,10 @@ impl Tool for SkillTool {
                             section = ?section,
                             "skill_load_hard_gated"
                         );
+                        // Hard-gate is about thrash budget, not dedupe — do NOT
+                        // claim `already_present` for a section that was never loaded.
                         let mut compact = serde_json::json!({
                             "id": skill.metadata.id,
-                            "already_present": true,
                             "hard_gated": true,
                             "hint": "Overview already in context and enough reference sections were loaded — run the next CLI command now (e.g. `neomind dashboard get` / `add-components`). Do not thrash skill sections."
                         });
@@ -1752,7 +1752,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(gated.data["already_present"], true);
+        assert!(gated.data.get("already_present").is_none());
         assert_eq!(gated.data["hard_gated"], true);
         assert!(gated.data.get("guide").is_none());
         assert!(

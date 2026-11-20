@@ -7,10 +7,16 @@ use std::collections::HashMap;
 
 use super::types::{AgentMessage, AgentMessageImage};
 
-/// Default caption rows kept in the prompt album block (Spark-class windows).
-pub const ALBUM_CAPTION_KEEP_DEFAULT: usize = 8;
-/// Tighter caption keep for ≤16K context windows.
-pub const ALBUM_CAPTION_KEEP_SMALL: usize = 4;
+/// Default album rows kept in the prompt block (Spark-class windows).
+/// Caps the entire block (paths + optional user text + captions), not captions alone.
+pub const ALBUM_ENTRY_KEEP_DEFAULT: usize = 8;
+/// Tighter album keep for ≤16K context windows.
+pub const ALBUM_ENTRY_KEEP_SMALL: usize = 4;
+
+/// Backward-compatible aliases for caption-window naming.
+pub const ALBUM_CAPTION_KEEP_DEFAULT: usize = ALBUM_ENTRY_KEEP_DEFAULT;
+/// See [`ALBUM_ENTRY_KEEP_SMALL`].
+pub const ALBUM_CAPTION_KEEP_SMALL: usize = ALBUM_ENTRY_KEEP_SMALL;
 
 /// One durable chat/session image, numbered in first-seen order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -119,10 +125,7 @@ pub fn build_session_album(messages: &[AgentMessage]) -> Vec<SessionImageEntry> 
 
 /// Look up album index for a durable path.
 pub fn album_index_for_path(album: &[SessionImageEntry], path: &str) -> Option<u32> {
-    album
-        .iter()
-        .find(|e| e.path == path)
-        .map(|e| e.index)
+    album.iter().find(|e| e.path == path).map(|e| e.index)
 }
 
 /// Resolve `img_N` / bare path to a durable `/api/images/…` handle.
@@ -146,14 +149,18 @@ pub fn latest_album_entry(album: &[SessionImageEntry]) -> Option<&SessionImageEn
     album.last()
 }
 
-fn caption_keep_for_context(max_context: Option<usize>) -> usize {
+fn album_entry_keep_for_context(max_context: Option<usize>) -> usize {
     match max_context {
-        Some(m) if m <= 16_384 => ALBUM_CAPTION_KEEP_SMALL,
-        _ => ALBUM_CAPTION_KEEP_DEFAULT,
+        Some(m) if m <= 16_384 => ALBUM_ENTRY_KEEP_SMALL,
+        _ => ALBUM_ENTRY_KEEP_DEFAULT,
     }
 }
 
 /// Prompt block injected into the system prompt (relative paths only).
+///
+/// Budgets the **entire** album block: only the most recent `keep` entries are
+/// listed (path + optional ≤80-char user text + caption). Older images remain
+/// addressable as `img_N` / path if the model already saw them earlier in the turn.
 pub fn format_album_prompt_block(
     album: &[SessionImageEntry],
     max_context: Option<usize>,
@@ -161,24 +168,28 @@ pub fn format_album_prompt_block(
     if album.is_empty() {
         return None;
     }
-    let keep_captions = caption_keep_for_context(max_context);
-    let start_full = album.len().saturating_sub(keep_captions);
+    let keep = album_entry_keep_for_context(max_context);
+    let start = album.len().saturating_sub(keep);
+    let omitted = start;
     let mut out = String::from(
         "## Session images (durable refs — pass these paths to vision / OCR / image_edit)\n\
          Pixels may be omitted on text-only models; paths remain valid. Do not invent absolute HTTP URLs.\n",
     );
-    for (i, entry) in album.iter().enumerate() {
+    if omitted > 0 {
+        out.push_str(&format!(
+            "({omitted} earlier image(s) omitted from this block; prefer recent img_N below.)\n"
+        ));
+    }
+    for entry in &album[start..] {
         let src = entry
             .source_user_text
             .as_deref()
             .map(|s| format!(" — \"{s}\""))
             .unwrap_or_default();
         out.push_str(&format!("- img_{}: {}{}\n", entry.index, entry.path, src));
-        if i >= start_full {
-            if let Some(cap) = entry.caption.as_ref().filter(|c| !c.trim().is_empty()) {
-                let clipped: String = cap.chars().take(120).collect();
-                out.push_str(&format!("  caption: {clipped}\n"));
-            }
+        if let Some(cap) = entry.caption.as_ref().filter(|c| !c.trim().is_empty()) {
+            let clipped: String = cap.chars().take(120).collect();
+            out.push_str(&format!("  caption: {clipped}\n"));
         }
     }
     Some(out)
@@ -270,6 +281,28 @@ mod tests {
         assert!(block.contains("caption: a beige meter"));
         assert!(!block.contains("http://"));
         assert!(!block.contains("https://"));
+    }
+
+    #[test]
+    fn format_block_budgets_entire_album_not_just_captions() {
+        let history: Vec<_> = (1..=12)
+            .map(|i| {
+                msg_with(
+                    &format!("/api/images/chat-{i:02}.jpg"),
+                    Some("cap"),
+                    &format!("user text for image {i}"),
+                )
+            })
+            .collect();
+        let album = build_session_album(&history);
+        assert_eq!(album.len(), 12);
+        let block = format_album_prompt_block(&album, Some(8_192)).unwrap();
+        assert!(block.contains("earlier image(s) omitted"));
+        assert!(!block.contains("img_1:"), "{block}");
+        assert!(block.contains("img_12:"));
+        // Small window keep = 4 → only img_9..img_12 entry lines.
+        let entry_lines = block.lines().filter(|l| l.starts_with("- img_")).count();
+        assert_eq!(entry_lines, 4, "{block}");
     }
 
     #[test]
