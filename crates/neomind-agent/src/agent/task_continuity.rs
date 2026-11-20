@@ -430,6 +430,15 @@ pub const PREPARED_OPERATION_ARG: &str = "_prepared_operation_id";
 /// Not model-visible: stripped before history / prompt persistence.
 pub const HOST_PREPARED_OPERATION_ARG: &str = "_host_prepared_operation_id";
 
+/// Host-only attach failure reason (NM-302): when `extension invoke` cannot
+/// resolve business params at classify, Shell must surface this tip instead of
+/// a misleading "PreparedInvoke missing (case-c)" bind error.
+pub const HOST_ATTACH_ERROR_ARG: &str = "_host_attach_error";
+
+/// Host-only marker: classify minted a ticket that execute canonicalize
+/// dropped without restore (NM-247 case-c diagnostics for Shell bind).
+pub const HOST_TICKET_STRIPPED_ARG: &str = "_host_ticket_stripped";
+
 /// One-shot user grant to begin a new same-args Operation after Unknown.
 ///
 /// Bound to the **confirmed** prior Unknown Operation, its business write
@@ -4442,6 +4451,8 @@ fn already_canonical_shell_args(arguments: &serde_json::Value) -> bool {
             || k == NEW_OPERATION_ARG
             || k == HOST_PREPARED_OPERATION_ARG
             || k == PREPARED_OPERATION_ARG
+            || k == HOST_ATTACH_ERROR_ARG
+            || k == HOST_TICKET_STRIPPED_ARG
     })
 }
 
@@ -4464,10 +4475,13 @@ pub fn canonicalize_tool_arguments(
 ) -> serde_json::Value {
     let mut cleaned = arguments.clone();
     strip_new_operation_flag(&mut cleaned);
-    // Host ticket is dispatch-internal — never part of business fingerprint.
+    // Host ticket / attach diagnostics are dispatch-internal — never part of
+    // business fingerprint.
     if let Some(obj) = cleaned.as_object_mut() {
         obj.remove(HOST_PREPARED_OPERATION_ARG);
         obj.remove(PREPARED_OPERATION_ARG);
+        obj.remove(HOST_ATTACH_ERROR_ARG);
+        obj.remove(HOST_TICKET_STRIPPED_ARG);
     }
     let real = crate::tools::resolve_tool_name(tool_name);
     if real == "shell" && tool_name != "shell" {
@@ -4495,7 +4509,12 @@ pub fn restore_host_prepared_carriage(
     let Some(dst) = canonicalized.as_object_mut() else {
         return;
     };
-    for key in [HOST_PREPARED_OPERATION_ARG, PREPARED_OPERATION_ARG] {
+    for key in [
+        HOST_PREPARED_OPERATION_ARG,
+        PREPARED_OPERATION_ARG,
+        HOST_ATTACH_ERROR_ARG,
+        HOST_TICKET_STRIPPED_ARG,
+    ] {
         if let Some(v) = src.get(key) {
             if !v.is_null() {
                 dst.insert(key.to_string(), v.clone());
@@ -4510,6 +4529,8 @@ pub fn strip_host_prepared_from_arguments(arguments: &mut serde_json::Value) {
     if let Some(obj) = arguments.as_object_mut() {
         obj.remove(HOST_PREPARED_OPERATION_ARG);
         obj.remove(PREPARED_OPERATION_ARG);
+        obj.remove(HOST_ATTACH_ERROR_ARG);
+        obj.remove(HOST_TICKET_STRIPPED_ARG);
         if let Some(cmd) = obj.get("command").and_then(|v| v.as_str()) {
             if let Some(stripped) = strip_prepared_id_from_shell_command(cmd) {
                 obj.insert("command".into(), serde_json::Value::String(stripped));
@@ -4695,11 +4716,49 @@ fn attach_shell_prepared_invoke(arguments: &mut serde_json::Value) -> ToolCapabi
     // for remint (compat execute path may still claim it if host field absent).
     let argv = match crate::toolkit::shell::tokenize_neomind_command(cmd.trim()) {
         Ok(a) => a,
-        Err(_) => return ToolCapability::mutating_unknown_sensitive(),
+        Err(e) => {
+            let tip = crate::toolkit::shell::extension_invoke_params_retry_tip();
+            let msg = format!(
+                "could not tokenize extension invoke command ({e}) — {tip}"
+            );
+            tracing::warn!(
+                error = %e,
+                stage = "attach_classify",
+                "{msg}"
+            );
+            if let Some(obj) = arguments.as_object_mut() {
+                obj.insert(
+                    HOST_ATTACH_ERROR_ARG.into(),
+                    serde_json::Value::String(msg),
+                );
+            }
+            return ToolCapability::mutating_unknown_sensitive();
+        }
     };
     let (ext_id, command, raw) = match resolve_extension_invoke_business(arguments, &argv) {
         Some(v) => v,
-        None => return crate::toolkit::shell::classify_shell_capability(&cmd),
+        None => {
+            // NM-302: illegal / unquoted --params used to fall through to
+            // classify_shell_capability with no ticket and no WARN — Shell bind
+            // then reported a misleading case-c "PreparedInvoke missing".
+            let tip = crate::toolkit::shell::extension_invoke_params_retry_tip();
+            let msg = format!(
+                "could not parse invoke params — {tip}"
+            );
+            tracing::warn!(
+                command = %cmd,
+                stage = "attach_classify",
+                tip = %tip,
+                "extension invoke attach could not resolve business params — no PreparedInvoke ticket minted"
+            );
+            if let Some(obj) = arguments.as_object_mut() {
+                obj.insert(
+                    HOST_ATTACH_ERROR_ARG.into(),
+                    serde_json::Value::String(msg),
+                );
+            }
+            return ToolCapability::mutating_unknown_sensitive();
+        }
     };
     let bind = neomind_core::extension::classify_and_bind_chat_invoke(&ext_id, &command, &raw);
     if let Some(op_id) = bind.prepared_operation_id.clone() {

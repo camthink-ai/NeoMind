@@ -107,6 +107,12 @@ pub(crate) async fn execute_with_retry_impl(
                 stage = "execute_canonicalize",
                 "host PreparedInvoke ticket dropped after canonicalize — not restored"
             );
+            if let Some(obj) = exec_args.as_object_mut() {
+                obj.insert(
+                    crate::agent::task_continuity::HOST_TICKET_STRIPPED_ARG.into(),
+                    serde_json::Value::Bool(true),
+                );
+            }
         } else {
             tracing::debug!(
                 tool = %name,

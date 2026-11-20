@@ -455,7 +455,7 @@ impl ShellTool {
     /// One-line Chat/shell-tool tip prepended onto clap `usage_hint` when the
     /// failing command has a primary JSON flag — steers Spark/small models
     /// toward structured `params` instead of quote-fragile CLI strings.
-    fn structured_params_retry_tip(domain: &str, subcommand: Option<&str>) -> Option<String> {
+    pub(crate) fn structured_params_retry_tip(domain: &str, subcommand: Option<&str>) -> Option<String> {
         let sub = subcommand?;
         let argv = vec!["neomind".to_string(), domain.to_string(), sub.to_string()];
         let spec = neomind_cli_ops::json_arg::primary_json_spec(&argv)?;
@@ -1461,6 +1461,10 @@ pub(crate) fn bind_extension_invoke_prepared_token(
 
     let host = neomind_cli_ops::dispatch::peek_extension_invoke_host_context();
     let host_op = host.as_ref().and_then(|h| h.prepared_operation_id.clone());
+    let ticket_stripped = host
+        .as_ref()
+        .map(|h| h.ticket_stripped_without_restore)
+        .unwrap_or(false);
     let host_params = host.and_then(|h| h.structured_params);
 
     let Some(op_id) = host_op else {
@@ -1474,21 +1478,47 @@ pub(crate) fn bind_extension_invoke_prepared_token(
                     ExtensionCommand::Invoke {
                         extension_id,
                         command,
+                        params,
                         ..
                     },
             } => {
-                tracing::warn!(
-                    extension_id = %extension_id,
-                    command = %command,
-                    stage = "shell_bind",
-                    "PreparedInvoke missing at Shell bind — host context had no ticket \
-                     (likely stripped at execute canonicalize without restore)"
-                );
-                Err(format!(
-                    "PreparedInvoke missing for '{extension_id}/{command}' — not executed; \
-                     resubmit the business call (command + params). Do not invent \
-                     prepared-operation tickets."
-                ))
+                let tip = extension_invoke_params_retry_tip();
+                let params_unparseable = match params.as_deref() {
+                    Some(s) => serde_json::from_str::<serde_json::Value>(s).is_err(),
+                    None => false,
+                };
+                if params_unparseable {
+                    tracing::warn!(
+                        extension_id = %extension_id,
+                        command = %command,
+                        stage = "shell_bind",
+                        "PreparedInvoke missing — invoke --params is not valid JSON"
+                    );
+                    return Err(format!(
+                        "could not parse invoke params for '{extension_id}/{command}' — {tip}"
+                    ));
+                }
+                if ticket_stripped {
+                    tracing::warn!(
+                        extension_id = %extension_id,
+                        command = %command,
+                        stage = "shell_bind",
+                        "PreparedInvoke missing at Shell bind — host ticket was present then                          stripped at execute canonicalize without restore"
+                    );
+                    Err(format!(
+                        "PreparedInvoke missing for '{extension_id}/{command}' — not executed;                          host ticket was stripped at execute canonicalize without restore.                          Resubmit the business call (command + params). Do not invent                          prepared-operation tickets."
+                    ))
+                } else {
+                    tracing::warn!(
+                        extension_id = %extension_id,
+                        command = %command,
+                        stage = "shell_bind",
+                        "PreparedInvoke missing at Shell bind — host context had no ticket                          (never minted at classify)"
+                    );
+                    Err(format!(
+                        "PreparedInvoke missing for '{extension_id}/{command}' — not executed;                          no ticket was minted at classify. Resubmit the business call                          (prefer shell `params` object). Do not invent prepared-operation tickets. {tip}"
+                    ))
+                }
             }
             _ => Ok(argv),
         };
@@ -1633,16 +1663,21 @@ fn extension_invoke_host_context_from_args(
             None
         }
     });
+    let stripped = args
+        .get(crate::agent::task_continuity::HOST_TICKET_STRIPPED_ARG)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     // Prepared ticket only applies to extension invoke; structured JSON applies
     // to any primary-JSON-flag command.
     let is_invoke = cmd.contains("extension invoke") || cmd.contains("extension  invoke");
-    if ticket.is_none() && structured.is_none() {
+    if ticket.is_none() && structured.is_none() && !(stripped && is_invoke) {
         return None;
     }
     Some(neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
         // Drop ticket for non-invoke — never leak into unrelated domains.
         prepared_operation_id: if is_invoke { ticket } else { None },
         structured_params: structured,
+        ticket_stripped_without_restore: stripped && is_invoke,
     })
 }
 
@@ -1798,6 +1833,10 @@ fn classify_extension_transport_error(msg: &str) -> String {
 ///
 /// Rejects shell constructs (`|<>$\``) outside quotes so compound / piped
 /// lines are not mis-parsed as CLI argv.
+///
+/// NM-302: after a primary JSON flag (`--params`/`--set`/…), a bare `{…}` /
+/// `[…]` value keeps internal `"` as JSON string literals (Spark/small models
+/// often omit the outer quotes around the JSON object).
 pub(crate) fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<String>, String> {
     // Shell-construct guard: a pipe / redirection / command-substitution char
     // OUTSIDE quotes means this is a real shell command line, not a pure
@@ -1849,6 +1888,16 @@ pub(crate) fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<S
             c if c.is_whitespace() && !in_single && !in_double => {
                 if !current.is_empty() {
                     tokens.push(std::mem::take(&mut current));
+                    // After a primary JSON flag, consume a bare `{…}` / `[…]`
+                    // blob with internal quotes preserved as literals.
+                    if is_primary_json_cli_flag(tokens.last().map(String::as_str).unwrap_or("")) {
+                        while matches!(chars.peek(), Some(ch) if ch.is_whitespace()) {
+                            chars.next();
+                        }
+                        if matches!(chars.peek(), Some('{' | '[')) {
+                            tokens.push(take_json_value_blob(&mut chars)?);
+                        }
+                    }
                 }
             }
             _ => current.push(c),
@@ -1864,6 +1913,71 @@ pub(crate) fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<S
     Ok(tokens)
 }
 
+fn is_primary_json_cli_flag(tok: &str) -> bool {
+    matches!(
+        tok,
+        "--params"
+            | "--set"
+            | "--body"
+            | "--components"
+            | "--ids"
+            | "--config"
+            | "--input"
+    )
+}
+
+/// Consume one JSON object/array token starting at `{` or `[`, preserving
+/// internal `"` as string literals (depth-aware; respects JSON escapes).
+fn take_json_value_blob(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+) -> std::result::Result<String, String> {
+    let Some(start) = chars.next() else {
+        return Err("expected JSON value".into());
+    };
+    if start != '{' && start != '[' {
+        return Err("expected JSON object or array".into());
+    }
+    let mut out = String::from(start);
+    let mut depth: i32 = 1;
+    let mut in_string = false;
+    let mut escape = false;
+    while let Some(&c) = chars.peek() {
+        chars.next();
+        out.push(c);
+        if in_string {
+            if escape {
+                escape = false;
+            } else if c == '\\' {
+                escape = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' | '[' => depth += 1,
+            '}' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(out);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err("unbalanced JSON value after primary JSON flag".into())
+}
+
+/// Preferred Chat/shell tip when extension invoke `--params` cannot be parsed.
+pub(crate) fn extension_invoke_params_retry_tip() -> String {
+    ShellTool::structured_params_retry_tip("extension", Some("invoke")).unwrap_or_else(|| {
+        "use shell `params` object or quoted --params '{\"city\":\"…\"}'. \
+         Example shape: {\"command\":\"neomind extension invoke <id> <command>\", \
+         \"params\":{\"city\":\"Xiamen\"}}"
+            .to_string()
+    })
+}
 /// Build the stderr text for a clap parse failure.
 ///
 /// clap's own `Display` already prefixes `error: ...`, so the wrapper adds
@@ -2384,6 +2498,15 @@ Quick reference (`neomind <domain> --help` or `skill` for full syntax):
             return Err(ToolError::InvalidArguments(
                 "command cannot be empty".into(),
             ));
+        }
+
+        // NM-302: classify-time attach failure (e.g. illegal --params) — surface
+        // the tip before PreparedInvoke bind so models are not told case-c.
+        if let Some(msg) = args
+            .get(crate::agent::task_continuity::HOST_ATTACH_ERROR_ARG)
+            .and_then(|v| v.as_str())
+        {
+            return Err(ToolError::InvalidArguments(msg.to_string()));
         }
 
         // NM-247: structured params adapter — object XOR --params/--params-file.
@@ -3098,6 +3221,35 @@ mod dispatch_edge_tests {
         // CJK passes through as ordinary argument characters.
         let toks = tokenize_neomind_command("rule create --name 温湿度告警").unwrap();
         assert_eq!(toks, ["rule", "create", "--name", "温湿度告警"]);
+    }
+    /// NM-302: bare `--params {"city":"xiamen"}` must keep JSON string quotes
+    /// (tokenizer used to strip them → `{city:xiamen}` → silent no-mint).
+    #[test]
+    fn tokenizer_preserves_quotes_inside_bare_params_json() {
+        let toks = tokenize_neomind_command(
+            r#"neomind extension invoke weather-forecast-v2 get_weather --params {"city":"xiamen"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            toks.last().map(String::as_str),
+            Some(r#"{"city":"xiamen"}"#),
+            "bare --params JSON must keep internal quotes: {toks:?}"
+        );
+        serde_json::from_str::<serde_json::Value>(toks.last().unwrap())
+            .expect("tokenized --params must be legal JSON");
+    }
+
+    #[test]
+    fn tokenizer_preserves_quotes_inside_bare_set_json() {
+        let toks = tokenize_neomind_command(
+            r#"neomind dashboard update-component d1 --component-id c1 --set {"position":{"w":2}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            toks.last().map(String::as_str),
+            Some(r#"{"position":{"w":2}}"#),
+            "{toks:?}"
+        );
     }
 
     /// NM-254 + P0-1: `device get` `shell_example` is a structured
@@ -3977,6 +4129,7 @@ mod nm247_structured_params_tests {
             neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
                 prepared_operation_id: Some(op),
                 structured_params: Some(params),
+                ..Default::default()
             },
             async {
                 bind_extension_invoke_prepared_token(argv).expect("host ticket must bind");
@@ -4006,6 +4159,7 @@ mod nm247_structured_params_tests {
             neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
                 prepared_operation_id: Some(op),
                 structured_params: Some(params),
+                ..Default::default()
             },
             async {
                 bind_extension_invoke_prepared_token(argv).expect("host wins over invented token");
@@ -4050,6 +4204,7 @@ mod nm247_structured_params_tests {
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
                 structured_params: Some(params),
+                ..Default::default()
             },
             async {
                 bind_extension_invoke_prepared_token(argv)
@@ -4063,6 +4218,95 @@ mod nm247_structured_params_tests {
             err.contains("already claimed") || err.contains("consumed"),
             "ticket must be claimed exactly once: {err}"
         );
+        invalidate_instance_capability(id);
+    }
+
+    /// NM-302: illegal unquoted-style params that stay non-JSON after tokenize
+    /// must attach-fail observably (HOST_ATTACH_ERROR), not silent no-ticket.
+    #[test]
+    fn attach_illegal_params_sets_host_attach_error_not_silent() {
+        let mut args = json!({
+            "command": "neomind extension invoke weather-forecast-v2 get_weather --params {city:xiamen}"
+        });
+        let cap = crate::agent::task_continuity::attach_chat_prepared_invoke("shell", &mut args);
+        assert!(
+            cap.prepared_operation_id.is_none(),
+            "illegal params must not mint a ticket: {cap:?}"
+        );
+        let err = args
+            .get(crate::agent::task_continuity::HOST_ATTACH_ERROR_ARG)
+            .and_then(|v| v.as_str())
+            .expect("attach must record HOST_ATTACH_ERROR_ARG");
+        assert!(
+            err.contains("could not parse invoke params"),
+            "attach error must be params guidance: {err}"
+        );
+        assert!(
+            err.contains("params") || err.contains("Preferred"),
+            "must prefer structured params tip: {err}"
+        );
+    }
+
+    /// NM-302 P1: bare `--params {"city":"xiamen"}` tokenizes to legal JSON → mint.
+    #[test]
+    fn attach_bare_params_json_mints_ticket() {
+        let id = "weather-nm302-bare-params";
+        publish(id);
+        let mut args = json!({
+            "command": format!(
+                "neomind extension invoke {id} get_weather --params {{\"city\":\"xiamen\"}}"
+            )
+        });
+        let cap = crate::agent::task_continuity::attach_chat_prepared_invoke("shell", &mut args);
+        let op = cap
+            .prepared_operation_id
+            .expect("bare quoted-inside JSON must mint");
+        assert_eq!(
+            args.get(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG)
+                .and_then(|v| v.as_str()),
+            Some(op.as_str())
+        );
+        assert!(args.get(crate::agent::task_continuity::HOST_ATTACH_ERROR_ARG).is_none());
+        invalidate_instance_capability(id);
+    }
+
+    /// NM-302: structured shell `params` mints → canonicalize strip → restore → bind.
+    #[tokio::test]
+    async fn attach_structured_params_mint_restore_bind() {
+        let id = "weather-nm302-structured";
+        publish(id);
+        let mut args = json!({
+            "command": format!("neomind extension invoke {id} get_weather"),
+            "params": {"city": "xiamen"}
+        });
+        let cap = crate::agent::task_continuity::attach_chat_prepared_invoke("shell", &mut args);
+        let op = cap
+            .prepared_operation_id
+            .expect("structured params must mint");
+        let mut canon =
+            crate::agent::task_continuity::canonicalize_tool_arguments("shell", &args);
+        assert!(canon
+            .get(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG)
+            .is_none());
+        crate::agent::task_continuity::restore_host_prepared_carriage(&args, &mut canon);
+        assert_eq!(
+            canon
+                .get(crate::agent::task_continuity::HOST_PREPARED_OPERATION_ARG)
+                .and_then(|v| v.as_str()),
+            Some(op.as_str())
+        );
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "invoke".into(),
+            id.into(),
+            "get_weather".into(),
+        ];
+        let ctx = extension_invoke_host_context_from_args(&canon).expect("host ctx");
+        neomind_cli_ops::dispatch::with_extension_invoke_host_context(ctx, async {
+            bind_extension_invoke_prepared_token(argv).expect("restored ticket must bind");
+        })
+        .await;
         invalidate_instance_capability(id);
     }
 
@@ -4151,6 +4395,7 @@ mod prepared_invoke_bind_tests {
             neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
                 prepared_operation_id: Some(op),
                 structured_params: Some(params.clone()),
+                ..Default::default()
             },
             async { bind_extension_invoke_prepared_token(argv) },
         )
@@ -4189,7 +4434,42 @@ mod prepared_invoke_bind_tests {
             err.contains("missing") || err.contains("unbound"),
             "must not FIFO-claim without token: {err}"
         );
+        assert!(
+            err.contains("never minted") || err.contains("no ticket was minted"),
+            "never-minted path must not claim case-c strip: {err}"
+        );
+        assert!(
+            !err.contains("stripped at execute canonicalize"),
+            "case-c restore wording must not appear when ticket was never present: {err}"
+        );
         invalidate_instance_capability(id);
+    }
+
+    /// NM-302: illegal --params at bind → params tip, not case-c wording.
+    #[test]
+    fn shell_bind_illegal_params_reports_parse_tip_not_case_c() {
+        let argv = vec![
+            "neomind".into(),
+            "extension".into(),
+            "invoke".into(),
+            "weather-forecast-v2".into(),
+            "get_weather".into(),
+            "--params".into(),
+            "{city:xiamen}".into(),
+        ];
+        let err = bind_extension_invoke_prepared_token(argv).unwrap_err();
+        assert!(
+            err.contains("could not parse invoke params") || err.contains("parse"),
+            "illegal params must surface parse guidance: {err}"
+        );
+        assert!(
+            !err.contains("stripped at execute canonicalize"),
+            "must not blame case-c when params are illegal: {err}"
+        );
+        assert!(
+            err.contains("params") || err.contains("Preferred"),
+            "must include structured-params tip: {err}"
+        );
     }
 
     /// B5: argv `--prepared-operation-id` without host context is ignored and
@@ -4259,6 +4539,7 @@ mod prepared_invoke_bind_tests {
             neomind_cli_ops::dispatch::ExtensionInvokeHostContext {
                 prepared_operation_id: Some(a_id.clone()),
                 structured_params: Some(params),
+                ..Default::default()
             },
             async { bind_extension_invoke_prepared_token(argv) },
         )

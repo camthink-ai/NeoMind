@@ -33,7 +33,7 @@ Verify extension status and actual command/metric results. Load installation, co
 | `neomind extension get <id>` | Show one extension's info (alias: `info`) |
 | `neomind extension commands --search "<task>"` | Rank AI-visible commands for a task (≤3; purpose + required params) |
 | `neomind extension commands <id>` | Machine-readable command schemas + invoke examples |
-| `neomind extension invoke <id> <command> --params '{...}'` | Run a command (honors AI enable / disabled_commands / ai_exposed) |
+| shell `{command:"neomind extension invoke <id> <command>", params:{…}}` | Run a command (prefer structured `params`; quoted `--params '{…}'` is CLI fallback) |
 | `neomind extension status <id>` | Extension health/status |
 | `neomind extension logs <id>` | Extension logs (debug crashes/errors) |
 | `neomind extension config <id>` | Get/set extension configuration |
@@ -63,7 +63,8 @@ Install, configure, diagnose (status/logs), and invoke installed extensions — 
 3. **Always `validate` a local `.nep` before `install`** — `neomind extension validate <path.nep>`.
 4. **RUN the command yourself and report the output** — don't just tell the user to run it.
 5. After install/reload, check health with `neomind extension status <id>`; debug with `neomind extension logs <id>`.
-6. **Marketplace install is ALWAYS exactly three commands, run each ONCE:**
+6. **Prefer structured shell `params` for invoke** — `{"command":"neomind extension invoke <id> <cmd>", "params":{…}}`. Avoid raw JSON inside the command string.
+7. **Marketplace install is ALWAYS exactly three commands, run each ONCE:**
    1. `neomind extension market-list <用户要的东西>` — pick the exact `id`
    2. `neomind extension market-install <id>`
    3. `neomind extension list` — confirm it appears; report success to the user
@@ -77,7 +78,7 @@ Install, configure, diagnose (status/logs), and invoke installed extensions — 
 | `neomind extension get <id>` | Show one extension's info (alias: `info`) |
 | `neomind extension commands --search "<task>"` | Rank AI-visible commands for a task |
 | `neomind extension commands <id>` | Command schemas + invoke examples |
-| `neomind extension invoke <id> <command> --params '{...}'` | Run a command |
+| shell `{command:"neomind extension invoke <id> <command>", params:{…}}` | Run a command (prefer structured `params`) |
 | `neomind extension status <id>` | Extension health/status |
 | `neomind extension logs <id>` | Extension logs (debug crashes/errors) |
 | `neomind extension config <id>` | Get/set extension configuration |
@@ -96,6 +97,7 @@ Install, configure, diagnose (status/logs), and invoke installed extensions — 
 neomind extension list
 neomind extension commands --search "weather in Xiamen"
 neomind extension commands weather-forecast-v2
+# Prefer structured shell params: {"command":"neomind extension invoke weather-forecast-v2 get_weather","params":{"city":"Xiamen"}}
 neomind extension invoke weather-forecast-v2 get_weather --params '{"city":"Xiamen"}'
 neomind extension market-list weather     # compact, filtered
 neomind extension market-install weather-forecast   # install the EXACT id shown

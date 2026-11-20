@@ -22,6 +22,10 @@ pub struct ExtensionInvokeHostContext {
     pub prepared_operation_id: Option<String>,
     /// Parsed JSON object from the shell tool `params` field.
     pub structured_params: Option<Value>,
+    /// True when classify minted a ticket that execute canonicalize dropped
+    /// without restore (NM-247 case-c). Bind uses this only for diagnostics —
+    /// never invents a ticket.
+    pub ticket_stripped_without_restore: bool,
 }
 
 tokio::task_local! {
@@ -60,6 +64,7 @@ mod tests {
             ExtensionInvokeHostContext {
                 prepared_operation_id: Some("op_a".into()),
                 structured_params: Some(json!({"city": "A"})),
+                ..Default::default()
             },
             async {
                 peek_extension_invoke_host_context()
@@ -71,6 +76,7 @@ mod tests {
             ExtensionInvokeHostContext {
                 prepared_operation_id: Some("op_b".into()),
                 structured_params: Some(json!({"city": "B"})),
+                ..Default::default()
             },
             async {
                 peek_extension_invoke_host_context()
@@ -90,6 +96,7 @@ mod tests {
             ExtensionInvokeHostContext {
                 prepared_operation_id: Some("op_test".into()),
                 structured_params: Some(json!({"city": "Xiamen"})),
+                ..Default::default()
             },
             async {
                 let peek = peek_extension_invoke_host_context().expect("installed");
