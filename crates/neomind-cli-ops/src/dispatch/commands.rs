@@ -216,12 +216,12 @@ pub enum Command {
     },
     /// Data source discovery.
     ///
-    /// Example: `neomind data sources list`
+    /// Example: `neomind data list`
     Data {
         #[command(subcommand)]
         data_cmd: DataCommand,
     },
-    /// Data connector management (MQTT, webhook, HTTP, etc.).
+    /// Data connector management (external MQTT brokers).
     Connector {
         #[command(subcommand)]
         connector_cmd: ConnectorCommand,
@@ -2384,7 +2384,7 @@ pub enum DataCommand {
     /// dashboard / push bindings. This is the authoritative discovery entry
     /// before binding anything — don't guess DataSourceId strings.
     ///
-    /// Example: `neomind data sources list --source-type device`
+    /// Example: `neomind data list --source-type device`
     List {
         /// Filter by source type: device | extension | transform | system.
         #[arg(long)]
@@ -2509,7 +2509,7 @@ pub enum OperationCommand {
     },
 }
 
-/// Data connector subcommands (MQTT, webhook, HTTP, etc.).
+/// Data connector subcommands (external MQTT brokers only).
 #[derive(Subcommand, Debug)]
 pub enum ConnectorCommand {
     /// List all data connectors.

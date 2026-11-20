@@ -69,7 +69,8 @@ fn preserved_broker_update(response: &serde_json::Value, id: &str) -> Result<ser
 pub async fn list_connectors(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/brokers").await?;
 
-    let connectors = extract_list_array(&data, "connectors");
+    let connectors = extract_list_array(&data, "brokers")
+        .or_else(|| extract_list_array(&data, "connectors"));
 
     let Some(connectors) = connectors else {
         return Ok(CliResponse::success(data, "Connectors listed"));
@@ -79,13 +80,24 @@ pub async fn list_connectors(client: &ApiClient) -> Result<CliResponse> {
     let summary: Vec<serde_json::Value> = connectors
         .iter()
         .map(|c| {
+            let connected = c.get("connected").and_then(|v| v.as_bool());
+            let enabled = c.get("enabled").and_then(|v| v.as_bool());
+            let status = match (connected, enabled) {
+                (Some(true), _) => "connected",
+                (Some(false), Some(false)) => "disabled",
+                (Some(false), _) => "disconnected",
+                (None, Some(false)) => "disabled",
+                _ => "unknown",
+            };
             json!({
                 "id": c.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
                 "name": c.get("name").and_then(|v| v.as_str()).unwrap_or("(unnamed)"),
                 "connector_type": c.get("connector_type").or_else(|| c.get("type")).and_then(|v| v.as_str()).unwrap_or("mqtt"),
-                "host": c.get("host").and_then(|v| v.as_str()).unwrap_or("?"),
+                "broker": c.get("broker").or_else(|| c.get("host")).and_then(|v| v.as_str()).unwrap_or("?"),
                 "port": c.get("port").and_then(|v| v.as_u64()).unwrap_or(0),
-                "status": c.get("status").and_then(|v| v.as_str()).unwrap_or("unknown"),
+                "connected": connected,
+                "enabled": enabled,
+                "status": status,
             })
         })
         .collect();
@@ -171,16 +183,21 @@ pub async fn create_connector(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    let name = name.to_string();
+    let tip_id = data
+        .get("broker")
+        .and_then(|b| b.get("id"))
+        .and_then(|v| v.as_str())
+        .or_else(|| data.get("id").and_then(|v| v.as_str()))
+        .unwrap_or("<id>");
     let msg = if connected {
         format!(
             "{} connector created and connected. Verify anytime: neomind connector test {}",
-            type_label, name
+            type_label, tip_id
         )
     } else {
         format!(
             "{} connector created (connection pending or failed). Next: neomind connector test {}",
-            type_label, name
+            type_label, tip_id
         )
     };
 

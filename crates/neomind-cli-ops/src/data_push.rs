@@ -177,8 +177,16 @@ pub async fn update_target(
         // Parse config; lift any mistakenly-nested top-level fields out so they
         // take effect instead of being silently swallowed by the webhook/mqtt
         // config parser.
-        let mut cfg_val: serde_json::Value =
-            crate::json_arg::parse_json_arg(c).unwrap_or_else(|_| json!({"url": c}));
+        let mut cfg_val: serde_json::Value = match crate::json_arg::parse_json_arg(c) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(CliResponse::error_with_suggestion(
+                    format!("Invalid --config JSON: {}", e),
+                    "INVALID_JSON",
+                    r#"Pass a JSON object, e.g. --config {"url":"https://example.com/webhook"}."#,
+                ));
+            }
+        };
         lift_top_level_fields(&mut cfg_val, &mut body);
         body["config"] = cfg_val;
     }

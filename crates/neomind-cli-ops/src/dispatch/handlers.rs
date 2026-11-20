@@ -83,9 +83,16 @@ pub async fn run_extension_cmd_with_context(
         ExtensionCommand::Reload { id } => crate::extension::reload_extension(&client, &id).await?,
         ExtensionCommand::Config { id, set } => match set {
             Some(json_str) => {
-                let config = crate::json_arg::parse_json_arg(&json_str)
-                    .unwrap_or_else(|_| serde_json::json!(json_str));
-                crate::extension::update_extension_config(&client, &id, config).await?
+                match crate::json_arg::parse_json_arg(&json_str) {
+                    Ok(config) => {
+                        crate::extension::update_extension_config(&client, &id, config).await?
+                    }
+                    Err(e) => crate::types::CliResponse::error_with_suggestion(
+                        format!("Invalid --set JSON: {}", e),
+                        "INVALID_JSON",
+                        r#"Pass a JSON object, e.g. --set {"key":"value"}."#,
+                    ),
+                }
             }
             None => crate::extension::get_extension_config(&client, &id).await?,
         },

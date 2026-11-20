@@ -207,7 +207,16 @@ pub async fn create_channel(
 
 /// Update a channel's configuration
 pub async fn update_channel(client: &ApiClient, name: &str, config: &str) -> Result<CliResponse> {
-    let config_value = crate::json_arg::parse_json_arg(config).unwrap_or_else(|_| json!(config));
+    let config_value = match crate::json_arg::parse_json_arg(config) {
+        Ok(v) => v,
+        Err(e) => {
+            return Ok(CliResponse::error_with_suggestion(
+                format!("Invalid channel config JSON: {}", e),
+                "INVALID_JSON",
+                r#"Pass a JSON object for --config, e.g. --config {"url":"https://example.com/hook"}."#,
+            ));
+        }
+    };
     let body = json!({ "config": config_value });
     let data = client
         .put(&format!("/messages/channels/{}", name), &body)

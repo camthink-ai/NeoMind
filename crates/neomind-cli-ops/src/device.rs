@@ -710,7 +710,16 @@ pub async fn get_telemetry_history(
     // Parse --time-range (e.g., "1h", "24h", "7d", "30d") to Unix seconds and set start
     if let Some(tr) = time_range {
         let end = chrono::Utc::now().timestamp();
-        let start = parse_time_range_to_timestamp(tr, end).unwrap_or(end - 86400);
+        let Some(start) = parse_time_range_to_timestamp(tr, end) else {
+            return Ok(CliResponse::error_with_suggestion(
+                format!(
+                    "Invalid --time-range '{}': expected forms like 30m, 30min, 2h, 2hr, 7d, 1w, 1wk, 1mo",
+                    tr
+                ),
+                "INVALID_TIME_RANGE",
+                "Use a positive number plus unit: s/m|min/h|hr/d|day/w|wk/mo|month (e.g. --time-range 30min).",
+            ));
+        };
         params.push(format!("start={}", start));
         params.push(format!("end={}", end));
     }
@@ -1003,24 +1012,30 @@ fn format_ts(ts_s: i64) -> String {
 
 /// Parse a human-readable time range string (e.g., "1h", "24h", "7d", "30d") to a start timestamp.
 fn parse_time_range_to_timestamp(range: &str, now_ts: i64) -> Option<i64> {
-    let range = range.trim();
+    let range = range.trim().to_ascii_lowercase();
     if range.is_empty() {
         return None;
     }
-    // Extract number suffix: last char(s)
-    let num_end = range.len()
-        - range
-            .chars()
-            .last()
-            .map_or(0, |c| if c.is_ascii_alphabetic() { 1 } else { 0 });
-    let num: i64 = range[..num_end].parse().ok()?;
-    let unit = &range[num_end..];
+    // Split numeric prefix from alphabetic unit suffix ("30min", "7days", "1mo").
+    let split = range
+        .char_indices()
+        .find(|(_, c)| c.is_ascii_alphabetic())
+        .map(|(i, _)| i)
+        .unwrap_or(range.len());
+    let (num_str, unit) = range.split_at(split);
+    if num_str.is_empty() || unit.is_empty() {
+        return None;
+    }
+    let num: i64 = num_str.parse().ok()?;
+    if num <= 0 {
+        return None;
+    }
     let secs = match unit {
-        "s" => num,
-        "m" | "min" | "mins" => num * 60,
-        "h" | "hr" | "hrs" => num * 3600,
+        "s" | "sec" | "secs" | "second" | "seconds" => num,
+        "m" | "min" | "mins" | "minute" | "minutes" => num * 60,
+        "h" | "hr" | "hrs" | "hour" | "hours" => num * 3600,
         "d" | "day" | "days" => num * 86400,
-        "w" | "wk" | "wks" => num * 7 * 86400,
+        "w" | "wk" | "wks" | "week" | "weeks" => num * 7 * 86400,
         "mo" | "month" | "months" => num * 30 * 86400,
         _ => return None,
     };
@@ -1983,5 +1998,25 @@ mod tests {
         assert_eq!(summary["telemetry_point_total"], 2);
         assert_eq!(summary["truncated"], false);
         assert_eq!(summary["latest_value"], url);
+    }
+
+    #[test]
+    fn parse_time_range_accepts_multi_char_units() {
+        let now = 1_700_000_000_i64;
+        assert_eq!(parse_time_range_to_timestamp("30min", now), Some(now - 30 * 60));
+        assert_eq!(parse_time_range_to_timestamp("2hr", now), Some(now - 2 * 3600));
+        assert_eq!(parse_time_range_to_timestamp("7days", now), Some(now - 7 * 86400));
+        assert_eq!(parse_time_range_to_timestamp("1wk", now), Some(now - 7 * 86400));
+        assert_eq!(parse_time_range_to_timestamp("1mo", now), Some(now - 30 * 86400));
+        assert_eq!(parse_time_range_to_timestamp("24h", now), Some(now - 24 * 3600));
+    }
+
+    #[test]
+    fn parse_time_range_rejects_invalid() {
+        let now = 1_700_000_000_i64;
+        assert!(parse_time_range_to_timestamp("bogus", now).is_none());
+        assert!(parse_time_range_to_timestamp("0h", now).is_none());
+        assert!(parse_time_range_to_timestamp("-1h", now).is_none());
+        assert!(parse_time_range_to_timestamp("30", now).is_none());
     }
 }

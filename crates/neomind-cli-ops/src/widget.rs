@@ -382,6 +382,32 @@ fn get_icon_for_type(widget_type: &str) -> &'static str {
 /// `neomind_core::dashboard::BUILTIN_WIDGET_TYPES`, mirrored from
 /// `Renderers.tsx::builtInTypes`). Full manifest for an installed widget
 /// is available via `neomind widget get <id>`.
+
+/// Resolve a widget `name` that may be a plain string or an i18n object
+/// (`{"en":"...","zh":"..."}`). Prefer `en`, then `zh`, then any string value.
+fn display_i18n_name(name: &serde_json::Value) -> String {
+    if let Some(s) = name.as_str() {
+        return s.to_string();
+    }
+    if let Some(obj) = name.as_object() {
+        for key in ["en", "zh", "zh-CN", "zh_CN"] {
+            if let Some(s) = obj.get(key).and_then(|v| v.as_str()) {
+                if !s.is_empty() {
+                    return s.to_string();
+                }
+            }
+        }
+        for v in obj.values() {
+            if let Some(s) = v.as_str() {
+                if !s.is_empty() {
+                    return s.to_string();
+                }
+            }
+        }
+    }
+    "(unnamed)".to_string()
+}
+
 pub async fn list_widgets(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/frontend-components").await?;
 
@@ -397,8 +423,8 @@ pub async fn list_widgets(client: &ApiClient) -> Result<CliResponse> {
         .map(|w| {
             json!({
                 "id": w.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
-                "name": w.get("name").and_then(|v| v.as_str()).unwrap_or("(unnamed)"),
-                "widget_type": w.get("widget_type").or_else(|| w.get("type")).and_then(|v| v.as_str()).unwrap_or("unknown"),
+                "name": w.get("name").map(display_i18n_name).unwrap_or_else(|| "(unnamed)".to_string()),
+                "category": w.get("category").and_then(|v| v.as_str()).unwrap_or("unknown"),
                 "version": w.get("version").and_then(|v| v.as_str()).unwrap_or("?"),
             })
         })
@@ -638,7 +664,7 @@ pub async fn install_widget_market(
     version: Option<&str>,
 ) -> Result<CliResponse> {
     let mut body = json!({
-        "id": widget_id,
+        "component_id": widget_id,
     });
     if let Some(v) = version {
         body["version"] = json!(v);

@@ -5,7 +5,7 @@ use serde_json::json;
 
 /// List configured LLM backends
 pub async fn list_backends(client: &ApiClient) -> Result<CliResponse> {
-    let mut data = client.get("/llm-backends").await?;
+    let mut data = client.get("/llm-backends?include_vlm=true").await?;
 
     // Add capability tags to each backend for easy scanning
     if let Some(backends) = data.get_mut("backends").and_then(|b| b.as_array_mut()) {
@@ -21,35 +21,28 @@ pub async fn list_backends(client: &ApiClient) -> Result<CliResponse> {
             }
             if let Some(caps) = backend.get("capabilities") {
                 if caps
-                    .get("multimodal")
+                    .get("supports_multimodal")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
                 {
                     tags.push("multimodal".to_string());
                 }
                 if caps
-                    .get("supports_images")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false)
-                {
-                    tags.push("vision".to_string());
-                }
-                if caps
-                    .get("function_calling")
+                    .get("supports_tools")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
                 {
                     tags.push("tool-use".to_string());
                 }
                 if caps
-                    .get("thinking_display")
+                    .get("supports_thinking")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
                 {
                     tags.push("thinking".to_string());
                 }
                 if caps
-                    .get("streaming")
+                    .get("supports_streaming")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false)
                 {
@@ -58,6 +51,7 @@ pub async fn list_backends(client: &ApiClient) -> Result<CliResponse> {
                 if let Some(ctx) = caps.get("max_context").and_then(|v| v.as_u64()) {
                     if ctx > 0 {
                         tags.push(format!("ctx:{:.0}k", ctx as f64 / 1024.0));
+                        backend["max_context"] = json!(ctx);
                     }
                 }
             }
