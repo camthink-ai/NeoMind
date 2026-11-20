@@ -105,7 +105,7 @@ const DOMAIN_INDEX: &str = r#"
 - llm: list get models create update delete activate test
 - settings: timezone set-timezone timezones retention set-retention cleanup
 - operation: list get (inspect persisted write-operation ledger status by operation_id; check whether an unknown/timed-out operation succeeded or failed)
-- system: info
+- system: info health stats
 - api-key: create list delete
 Deliberately not available here (do not try them): serve prompt chat logs health list-models
 check-update upgrade uninstall login logout whoami user config data — the first group only runs as a
