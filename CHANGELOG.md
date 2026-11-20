@@ -48,6 +48,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Small context windows use a Light/Balanced/Standard tool exposure profile keeping 8K first-round `toolTokens` under 1800 while keeping `vision` reachable on `Light` when VLM is available and no images are inline (S3-2).
 - `compute_history_budget` summed all unfiltered tools with legacy `estimate_tokens`, inflating 8K tool overhead into `ZeroBudget` and stripping all tools on Turn ≥ 2 → shares profile-filtered `estimate_json_schema_tokens` (Light/Balanced/Standard) and EWMA calibration with prompt overhead so 8K multi-turn keeps exposed tools.
 - Prompt-token estimates include attached `tools_input` schemas on both text and multimodal stream paths, pass real `has_user_images` to breakdown calibration, and track measured `prompt_eval` via per-backend/model EWMA factors clamped to `[0.65, 1.35]` (S3-3).
+- Shell `extension invoke` with illegal / quote-stripped `--params` silently skipped PreparedInvoke mint and later reported case-c "PreparedInvoke missing" → attach now WARNs + surfaces structured-`params` guidance; bind distinguishes never-minted vs canonicalize-stripped tickets; bare `--params {"k":"v"}` keeps JSON string quotes so small models can mint (NM-302).
 
 ### Fixed — CT-Prov / BLE provision
 - Auth-enabled embedded broker resolve no longer leaves username/password empty — mint on `resolve_only` and write them in `config.set` (empty-omit for auth-off / blank external fields).
@@ -62,6 +63,7 @@ Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neom
 - Stage 1 gates: builtin toolTokens ≤3200 / `image_edit` ≤450; `device` time-range multi-unit parse; `system info` truthful/degraded mocks + 10 offline Webhook device `mqtt/status` & `stats/system` tests; 40+ intent adversarial cases including multi-hit CJK and clause punctuation; `update-component` usage_hint required-arg shape + `dashboard` grid summary.
 - Stage 2 gates: RO success `suggestion.is_none()`; device pagination/truncation honesty + never-seen `last_seen` null health; extension fallback `"Stopped"` vs `"Failed"`; health in-process JSON + `logs --since` duration/RFC3339 tests; `16_384` image-history boundary; 14 admin Forbidden (403) handler tests + `AgentDefaultsRequest` partial PUT + `market_list_handler` 502 test.
 - Stage 3 gates: `cli_api_contract` fixture suite covering 15 domains including `auth`/`data`/`api-key` and wrapped `/mqtt/status` & `/mqtt/broker-config` (S3-1); Light/Balanced/Standard tool-profile + `Light` `vision` reachability + Light `toolTokens` <1800 + 8K multi-turn history-budget & Turn-2 wire-capture tests (`compute_history_budget_8k_uses_light_profile_and_avoids_zero_budget`, `minicpm_8k_multiturn_keeps_light_profile_tools_on_turn_2`) (S3-2); prompt-token EWMA clamp/update math + tool-inclusive calibration regression test (S3-3).
+- NM-302 PreparedInvoke params gates: bare `--params {"city":"xiamen"}` tokenize/mint, illegal `{city:xiamen}` attach `HOST_ATTACH_ERROR` + structured-params tip, structured `params` mint→restore→bind, bind never-minted vs case-c wording.
 
 ---
 
