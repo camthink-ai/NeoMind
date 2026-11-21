@@ -345,15 +345,18 @@ const ACTION_PROMISE_PATTERNS: &[&str] = &[
     "i'm going to try",
     "i'm going to fetch",
     "i'm going to get",
-    // 2026-11-21 tip overnight deep-memory-transform: foreshadow-only turns
-    // used list/read/delete/disable shapes the table missed — NM-250 continue
-    // never fired, so response_contains / transform_count soft-asserted.
+    // 2026-11-21 tip overnight + T1.3 retest deep-memory-transform: foreshadow
+    // turns used list/read/delete/disable/re-enable/test/query/add shapes the
+    // table missed — NM-250 continue never fired, soft-asserts failed.
     "i will list",
     "i'll list",
     "let me list",
     "i will read",
     "i'll read",
     "let me read",
+    "i will re-read",
+    "i'll re-read",
+    "let me re-read",
     "i will delete",
     "i'll delete",
     "let me delete",
@@ -363,11 +366,28 @@ const ACTION_PROMISE_PATTERNS: &[&str] = &[
     "i will enable",
     "i'll enable",
     "let me enable",
+    "i will re-enable",
+    "i'll re-enable",
+    "let me re-enable",
+    "i will test",
+    "i'll test",
+    "let me test",
+    "i will query",
+    "i'll query",
+    "let me query",
+    "i will add",
+    "i'll add",
+    "let me add",
     "i'm going to list",
     "i'm going to read",
+    "i'm going to re-read",
     "i'm going to delete",
     "i'm going to disable",
     "i'm going to enable",
+    "i'm going to re-enable",
+    "i'm going to test",
+    "i'm going to query",
+    "i'm going to add",
     "我来列出",
     "我将列出",
     "我会列出",
@@ -388,6 +408,22 @@ const ACTION_PROMISE_PATTERNS: &[&str] = &[
     "我将启用",
     "我会启用",
     "让我启用",
+    "我来重新启用",
+    "我将重新启用",
+    "我会重新启用",
+    "让我重新启用",
+    "我来测试",
+    "我将测试",
+    "我会测试",
+    "让我测试",
+    "我来查询",
+    "我将查询",
+    "我会查询",
+    "让我查询",
+    "我来添加",
+    "我将添加",
+    "我会添加",
+    "让我添加",
 ];
 
 /// Max narration length eligible for the nudge — a long, complete analysis
@@ -1275,8 +1311,8 @@ mod narration_tests {
         assert!(is_narration_without_action("我将尝试拉取天气预报。"));
     }
 
-    /// 2026-11-21 tip overnight deep-memory-transform: tool-free foreshadows
-    /// that the prior table missed — verbatim assistant_message strings.
+    /// 2026-11-21 tip overnight + T1.3 retest: tool-free foreshadows the prior
+    /// table missed — verbatim assistant_message strings from failing turns.
     #[test]
     fn detects_list_read_delete_disable_foreshadow_variants() {
         assert!(is_narration_without_action(
@@ -1292,6 +1328,9 @@ mod narration_tests {
             "I'll read c2f's current details to confirm its state."
         ));
         assert!(is_narration_without_action(
+            "I'll re-read c2f's current status and code to confirm the final state."
+        ));
+        assert!(is_narration_without_action(
             "I'll delete c2f and verify the result."
         ));
         assert!(is_narration_without_action(
@@ -1300,8 +1339,25 @@ mod narration_tests {
         assert!(is_narration_without_action(
             "I'll disable transform c2f."
         ));
+        assert!(is_narration_without_action(
+            "I'll re-enable the transform."
+        ));
+        assert!(is_narration_without_action("I'll re-enable c2f."));
+        assert!(is_narration_without_action(
+            "I'll re-enable transform c2f."
+        ));
+        assert!(is_narration_without_action(
+            "I'll test the transform code with input 25 using the test-code command."
+        ));
+        assert!(is_narration_without_action(
+            "I'll query the transform details and its execution records in parallel."
+        ));
+        assert!(is_narration_without_action(
+            "I'll add the note to c2f via its update path (description field)."
+        ));
         assert!(is_narration_without_action("让我列出 c2f 的输出指标。"));
         assert!(is_narration_without_action("我来删除这个 transform。"));
+        assert!(is_narration_without_action("让我重新启用 c2f。"));
     }
 
     /// The exact promise-only replies from the 2026-10-19 incident session

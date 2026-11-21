@@ -476,6 +476,6 @@ neomind agent delete <ID>   # required when the user asked to remove it — do n
 | Agent not running on schedule | Status is `paused` or wrong schedule config | Run `agent get <ID>` to check status and schedule, then `agent control <ID> active` if paused |
 | Control fails | Invalid status value | Only `active` and `paused` are valid |
 | Focused mode error | No resources bound (default mode) | Add `--device-ids` / `--resources`, **or** `--execution-mode free` |
-| `unexpected argument '--input'` on invoke | Input is positional | `neomind agent invoke <ID> "your prompt"` — not `--input` |
+| `unexpected argument '--input'` / `'--prompt'` on invoke | Input is positional | `neomind agent invoke <ID> "your prompt"` — not `--input` / `--prompt` (those flags are create/update only) |
 | Execution shows error | LLM or tool failure | Check `agent conversation <ID>` for details |
 | Bad LLM responses | Wrong model/backend | Run `neomind llm list` for available backends, update with `agent update <ID> --llm-backend <backend>` |

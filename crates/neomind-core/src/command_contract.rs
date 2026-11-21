@@ -599,7 +599,7 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
             command: "neomind agent invoke agent-001 \"Check sensors now\"",
             params_json: None,
         },
-        guidance: "Invoke with positional `<ID>` and optional positional input string — never `--input`. If it returns `Executing`, poll `agent latest-execution <ID>`.",
+        guidance: "Invoke with positional `<ID>` and optional positional input string — never `--input` or `--prompt` (create/update flags). If it returns `Executing`, poll `agent latest-execution <ID>`.",
     },
     DomainCommandContract {
         domain: "agent",
