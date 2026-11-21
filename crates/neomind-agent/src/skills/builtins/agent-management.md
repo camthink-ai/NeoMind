@@ -10,7 +10,7 @@ origin: builtin
 priority: 85
 token_budget: 10000
 triggers:
-  keywords: [agent, 代理, AI代理, agent create, 创建代理, agent control, schedule, cron, interval, manual, 监控, agent invoke, 调用代理, agent memory, 代理记忆, agent execution, 代理执行, 定时任务, scheduled task, agent schedule, agent update, 按需, 手动执行, job, jobs, ai job, AI job, AI任务, AI 任务, ai task, AI task, AI 任务, task, 巡检, 巡检任务, 盯盘, 盯着, 帮我盯, 帮我盯着, 定时检查, 定期检查, 例行检查, 自动检查, 每天检查, 定时跑, 跑个任务, 建个任务, 每天自动, 定期执行, keep an eye, check regularly, watch for, run daily, recurring task, set up a job, make a task, create a task, is it ok, is it okay, 正常吗, 现在怎样, 当前状态, latest execution, 最新结论, query conclusion]
+  keywords: [agent, 代理, AI代理, agent create, 创建代理, agent control, schedule, cron, interval, manual, 监控, agent invoke, 调用代理, agent memory, 代理记忆, agent execution, 代理执行, 定时任务, scheduled task, agent schedule, agent update, 按需, 手动执行, job, jobs, ai job, AI job, AI任务, AI 任务, ai task, AI task, AI 任务, task, 巡检, 巡检任务, 盯盘, 盯着, 帮我盯, 帮我盯着, 定时检查, 定期检查, 例行检查, 自动检查, 每天检查, 定时跑, 跑个任务, 建个任务, 每天自动, 定期执行, keep an eye, check regularly, watch for, run daily, recurring task, set up a job, make a task, create a task, is it ok, is it okay, ok right now, okay right now, 还好吗, 还好么, 正常吗, 正常不, 怎么样了, 现在怎样, 当前状态, cold room, 冷库, latest execution, 最新结论, query conclusion]
   tool_target:
     - tool: agent
       actions: [list, get, create, update, delete, control, invoke, memory, executions, latest-execution, conversation, send-message]
@@ -20,7 +20,7 @@ anti_triggers:
 
 # agent-management
 
-**Status / "is it OK right now" questions** about something an agent already watches: `neomind agent list` → match by name → `neomind agent latest-execution <ID>` (or `query_conclusion` with the agent name). Do **not** invent a reading from an empty `device list` / system-info, and do **not** `agent invoke` unless the user asked for a fresh recheck.
+**Status / "is it OK right now" questions** about something an agent already watches: `neomind agent list` → match by name → `neomind agent latest-execution <ID>` (via shell). Do **not** invent a reading from an empty `device list` / system-info, and do **not** `agent invoke` unless the user asked for a fresh recheck.
 Read an existing conclusion with neomind agent latest-execution <ID> before starting a new run. Resolve names with agent list/get; use the intended agent, not a guessed ID.
 Use neomind agent invoke <ID> [input] for an explicitly requested fresh execution. Input requirements depend on the agent's task and bindings. Executing means the existing run continues; query its result instead of invoking again.
 Choose focused for one-pass analysis, free for tool-driven tasks, structured for schema-validated output. Structured agents require actual bound input; do not substitute memory for missing telemetry.

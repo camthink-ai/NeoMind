@@ -61,6 +61,10 @@ pub enum GuardKind {
     /// the default chat policy can recover without flipping the full suite on.
     /// Prior rounds in the same turn may already have used tools.
     ForeshadowContinue,
+    /// Status question about a watched thing answered without reading
+    /// `agent latest-execution` (device/system detour). Independent of
+    /// `behavioral_guards` — same policy class as foreshadow continue.
+    AgentConclusionRedirect,
 }
 
 impl GuardKind {
@@ -83,8 +87,24 @@ impl GuardKind {
             GuardKind::GuardsDisabled => "guards_disabled",
             GuardKind::BehavioralGuardsOff => "behavioral_guards_off",
             GuardKind::ForeshadowContinue => "foreshadow_continue",
+            GuardKind::AgentConclusionRedirect => "agent_conclusion_redirect",
         }
     }
+}
+
+/// One bounded continue when a status question never read an agent conclusion.
+pub fn should_redirect_agent_conclusion(
+    already_sent: bool,
+    no_execution_requested: bool,
+    iteration_budget_left: bool,
+    wall_clock_left: bool,
+    redirect_applicable: bool,
+) -> bool {
+    redirect_applicable
+        && !already_sent
+        && !no_execution_requested
+        && iteration_budget_left
+        && wall_clock_left
 }
 
 /// What a guard did.
@@ -711,6 +731,25 @@ mod tests {
             foreshadow_no_result_note("What's the weather today?"),
             "No result obtained this turn."
         );
+    }
+
+    #[test]
+    fn agent_conclusion_redirect_gate() {
+        assert!(should_redirect_agent_conclusion(
+            false, false, true, true, true
+        ));
+        assert!(!should_redirect_agent_conclusion(
+            true, false, true, true, true
+        ));
+        assert!(!should_redirect_agent_conclusion(
+            false, true, true, true, true
+        ));
+        assert!(!should_redirect_agent_conclusion(
+            false, false, false, true, true
+        ));
+        assert!(!should_redirect_agent_conclusion(
+            false, false, true, true, false
+        ));
     }
 
     /// P1-3: `already_present: true` repeat loads must still count toward

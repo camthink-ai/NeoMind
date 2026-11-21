@@ -1217,6 +1217,151 @@ pub(crate) fn promise_tracker_step(
     }
 }
 
+/// Phrases that mark "is the watched thing OK right now?" status questions.
+/// Deliberately tied to the agent-query-conclusion-first eval wording and
+/// close cousins — not a generic "status" detector (that would hijack
+/// device/health checks).
+const AGENT_STATUS_QUESTION_MARKERS: &[&str] = &[
+    // Chinese (eval: 「冷库现在还好吗?」)
+    "还好吗",
+    "还好么",
+    "还好嘛",
+    "正常吗",
+    "正常不",
+    "怎么样了",
+    "现在怎样",
+    "当前状态",
+    "现在如何",
+    // English (eval: "Is the cold room OK right now?")
+    "ok right now",
+    "okay right now",
+    "ok now",
+    "okay now",
+    "how's the",
+    "how is the",
+    "how're the",
+    "current status",
+    "still ok",
+    "still okay",
+];
+
+/// Explicit recheck asks — status redirect must NOT block a fresh invoke.
+const AGENT_STATUS_RECHECK_MARKERS: &[&str] = &[
+    "重新检查",
+    "再查一次",
+    "再跑一次",
+    "重新跑",
+    "recheck",
+    "check again",
+    "run again",
+    "invoke",
+    "fresh look",
+    "fresh run",
+];
+
+/// True when the user is asking whether something an agent already watches
+/// is OK / what its current state is — not requesting a new mutation.
+pub(crate) fn looks_like_agent_status_question(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    if AGENT_STATUS_RECHECK_MARKERS
+        .iter()
+        .any(|m| lower.contains(&m.to_lowercase()))
+    {
+        return false;
+    }
+    if AGENT_STATUS_QUESTION_MARKERS
+        .iter()
+        .any(|m| lower.contains(&m.to_lowercase()))
+    {
+        return true;
+    }
+    // "Is the cold room OK?" / "Is fridge-1 okay?" — "is … ok/okay" with a
+    // short gap; reject instructional "how is X created".
+    if let Some(is_at) = lower.find("is ") {
+        let after = &lower[is_at + 3..];
+        if let Some(ok_at) = after.find(" ok").or_else(|| after.find(" okay")) {
+            // Bound the gap so "is it possible to create … ok?" does not match.
+            if ok_at <= 48 && !after[..ok_at].contains('?') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// True when any shell command already read an agent conclusion / execution.
+pub(crate) fn has_agent_conclusion_read(commands: &[&str]) -> bool {
+    commands.iter().any(|c| {
+        let l = c.to_lowercase();
+        l.contains("agent latest-execution")
+            || l.contains("agent executions")
+            // Legacy rehydrated chat tool name (removed from model surface;
+            // still counts if an old session replays it).
+            || l.contains("query_conclusion")
+    })
+}
+
+/// Mid-turn / turn-end redirect: status question about a watched thing, but
+/// the model never read `agent latest-execution` (typical detour: empty
+/// `device list` / `system info` → fabricated "all good").
+///
+/// Independent of `behavioral_guards` — same policy class as NM-250
+/// foreshadow continue (default chat must recover without flipping the
+/// full coercion suite). Returns `None` when the ask is not a status
+/// question or a conclusion was already read.
+pub(crate) fn build_agent_conclusion_redirect(
+    user_message: &str,
+    executed_commands: &[&str],
+) -> Option<String> {
+    if !looks_like_agent_status_question(user_message) {
+        return None;
+    }
+    if crate::agent::user_requested_no_execution(user_message) {
+        return None;
+    }
+    if has_agent_conclusion_read(executed_commands) {
+        return None;
+    }
+
+    let executed_summary = if executed_commands.is_empty() {
+        "(no prior commands)".to_string()
+    } else {
+        executed_commands
+            .iter()
+            .map(|s| format!("- {s}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let zh = crate::agent::text_prefers_chinese(user_message);
+    let msg = if zh {
+        format!(
+            "⚠️ 用户在问「某个已有 agent 盯着的东西现在还好吗」。\
+             你还没有读取任何 agent 结论。不要用空的 `device list` / `system info` / health 编造状态。\n\n\
+             已执行:\n{executed_summary}\n\n\
+             现在必须用 shell 依次执行：\n\
+             1) `neomind agent list` — 按名称匹配相关 agent\n\
+             2) `neomind agent latest-execution <ID>` — 读取最近一次结论（若尚无执行记录，如实说明）\n\
+             不要 `agent invoke`，除非用户明确要求重新检查。\n\
+             不要输出最终回答。现在输出 tool call。"
+        )
+    } else {
+        format!(
+            "⚠️ The user asked whether something an agent already watches is OK right now. \
+             You have NOT read any agent conclusion yet. Do NOT invent a reading from an empty \
+             `device list` / `system info` / health.\n\n\
+             Previously executed:\n{executed_summary}\n\n\
+             You MUST run via shell, in order:\n\
+             1) `neomind agent list` — match the agent by name\n\
+             2) `neomind agent latest-execution <ID>` — read the latest conclusion \
+             (or state clearly it has not run yet)\n\
+             Do NOT `agent invoke` unless the user asked for a fresh recheck.\n\
+             Do NOT output a final answer. OUTPUT A TOOL CALL NOW."
+        )
+    };
+    Some(msg)
+}
+
 /// The mid-turn directive for a repeatedly promised, never executed
 /// command. Advisory in tone and actionable: re-run the exact command the
 /// model itself stated, or name what is missing — never a bare "do it".
@@ -2575,5 +2720,44 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn agent_status_question_matches_eval_wording() {
+        assert!(looks_like_agent_status_question("冷库现在还好吗?"));
+        assert!(looks_like_agent_status_question(
+            "Is the cold room OK right now?"
+        ));
+        assert!(looks_like_agent_status_question("Is fridge-1 okay?"));
+        assert!(!looks_like_agent_status_question("列出所有设备"));
+        assert!(!looks_like_agent_status_question("How do I create a device?"));
+        assert!(!looks_like_agent_status_question(
+            "重新检查一下冷库还好吗"
+        ));
+    }
+
+    #[test]
+    fn agent_conclusion_redirect_fires_on_device_list_detour() {
+        let zh = build_agent_conclusion_redirect(
+            "冷库现在还好吗?",
+            &["neomind device list"],
+        )
+        .expect("zh status + device list must redirect");
+        assert!(zh.contains("latest-execution"), "{zh}");
+        assert!(zh.contains("agent list"), "{zh}");
+
+        let en = build_agent_conclusion_redirect(
+            "Is the cold room OK right now?",
+            &["neomind system info", "neomind device list"],
+        )
+        .expect("en status + detour must redirect");
+        assert!(en.contains("latest-execution"), "{en}");
+
+        assert!(build_agent_conclusion_redirect(
+            "Is the cold room OK right now?",
+            &["neomind agent latest-execution coldroom-watch"],
+        )
+        .is_none());
+        assert!(build_agent_conclusion_redirect("列出所有设备", &[]).is_none());
     }
 }

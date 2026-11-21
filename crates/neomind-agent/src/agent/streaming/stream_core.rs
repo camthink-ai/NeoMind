@@ -14,7 +14,9 @@ use super::{next_chunk_or_timeout, next_chunk_or_timeout_or_interrupt, StreamWai
 
 use super::context::ToolExecutionResult;
 use super::dedup::deduplicate_tool_results;
-use super::intent::{all_tools_were_read_only, build_list_only_dead_end_prompt};
+use super::intent::{
+    all_tools_were_read_only, build_agent_conclusion_redirect, build_list_only_dead_end_prompt,
+};
 use super::resolve::resolve_cached_arguments;
 use super::result_format::format_tool_results;
 use super::sanitize::sanitize_tool_result_for_prompt;
@@ -650,6 +652,10 @@ pub(super) fn drive_react_stream(
             // opt-in behavioural path accounting stays unchanged.
             let mut foreshadow_continues = 0usize;
             const FORESHADOW_CONTINUE_MAX: usize = 1;
+            // Agent status question answered without `latest-execution` —
+            // one bounded redirect (same policy class as foreshadow).
+            let mut agent_conclusion_redirect_sent = false;
+            let mut agent_conclusion_redirect_pending: Option<String> = None;
             // Cleaned narration from the round that triggered the nudge —
             // the restore source when the nudged round degenerates (see the
             // post-nudge degenerate guard near the final save). Always the
@@ -806,6 +812,9 @@ pub(super) fn drive_react_stream(
                         // Stated-intent mismatch: same principle — a pointed
                         // directive replaces the generic round prompt.
                         directive
+                    } else if let Some(redirect) = agent_conclusion_redirect_pending.take() {
+                        // Status-question → latest-execution redirect.
+                        redirect
                     } else if recently_executed.is_empty() {
                         format!(
                             "Round {} of processing. Call ALL needed tools in ONE batch using JSON array format. Give the final response if no more tools needed.",
@@ -831,6 +840,17 @@ pub(super) fn drive_react_stream(
                         // At most once per turn (see list_only_dead_end_injected).
                         let commands_ref: Vec<&str> = recently_executed_commands.iter().map(|s| s.as_str()).collect();
 
+                        // Agent status → latest-execution redirect (default
+                        // policy; independent of behavioral_guards). Prefer
+                        // this over generic continuation when applicable.
+                        let conclusion_redirect_msg = if guards_disabled
+                            || agent_conclusion_redirect_sent
+                        {
+                            None
+                        } else {
+                            build_agent_conclusion_redirect(&user_message, &commands_ref)
+                        };
+
                         let dead_end_msg = if guards_disabled
                             || !behavioral_guards
                             || list_only_dead_end_injected
@@ -845,7 +865,20 @@ pub(super) fn drive_react_stream(
                             )
                         };
 
-                        if let Some(dead_end_msg) = dead_end_msg {
+                        if let Some(redirect) = conclusion_redirect_msg {
+                            agent_conclusion_redirect_sent = true;
+                            guard_ledger.record(
+                                super::guard::GuardKind::AgentConclusionRedirect,
+                                super::guard::GuardOutcome::Fired,
+                                tool_iteration_count + 1,
+                                "status_without_conclusion",
+                            );
+                            tracing::info!(
+                                round = tool_iteration_count + 1,
+                                "Agent status question without conclusion read — mid-turn redirect"
+                            );
+                            redirect
+                        } else if let Some(dead_end_msg) = dead_end_msg {
                             list_only_dead_end_injected = true;
                             guard_ledger.record(
                                 super::guard::GuardKind::ListOnlyCoercion,
@@ -2947,6 +2980,57 @@ pub(super) fn drive_react_stream(
                         );
                     let nudge_allowed =
                         behavioral_nudge_allowed || foreshadow_continue_allowed;
+
+                    // Agent status → latest-execution: model answered without
+                    // reading a conclusion (zero tools, or ignored mid-turn
+                    // redirect). One bounded continue under default policy.
+                    let cmds_for_redirect: Vec<&str> =
+                        recently_executed_commands.iter().map(|s| s.as_str()).collect();
+                    let redirect_prompt = if guards_disabled {
+                        None
+                    } else {
+                        build_agent_conclusion_redirect(&user_message, &cmds_for_redirect)
+                    };
+                    let conclusion_redirect_allowed =
+                        super::guard::should_redirect_agent_conclusion(
+                            agent_conclusion_redirect_sent,
+                            no_execution_requested,
+                            iteration_budget_left,
+                            wall_clock_left,
+                            redirect_prompt.is_some(),
+                        );
+                    if conclusion_redirect_allowed {
+                        if let Some(redirect) = redirect_prompt {
+                            agent_conclusion_redirect_sent = true;
+                            guard_ledger.record(
+                                super::guard::GuardKind::AgentConclusionRedirect,
+                                super::guard::GuardOutcome::Fired,
+                                tool_iteration_count + 1,
+                                "status_answer_without_conclusion",
+                            );
+                            tracing::info!(
+                                round = tool_iteration_count + 1,
+                                chars = raw_response.chars().count(),
+                                "Agent status answer without conclusion — bounded redirect once"
+                            );
+                            yield AgentEvent::progress(
+                                "Retrying — agent conclusion not read yet...".to_string(),
+                                "executing",
+                                0,
+                            );
+                            let said = remove_tool_calls_from_response(&raw_response);
+                            nudge_saved_narration = Some(said.clone());
+                            internal_state
+                                .write()
+                                .await
+                                .push_message(AgentMessage::assistant(&said));
+                            tool_iteration_count += 1;
+                            agent_conclusion_redirect_pending = Some(redirect);
+                            yield AgentEvent::IntermediateEnd;
+                            continue 'multi_round_loop;
+                        }
+                    }
+
                     if !nudge_allowed && is_narration_reply {
                         let (kind, outcome, reason) = if guards_disabled {
                             (
