@@ -202,7 +202,7 @@ fn strip_unpaired_edge_quotes(s: &str) -> String {
 
 pub use neomind_core::command_contract::{
     core_domain_contracts, domain_action_from_argv, domain_token_index,
-    find_domain_command_contract, find_domain_command_contract_for_argv,
+    find_domain_command_contract, find_domain_command_contract_for_argv, strip_global_cli_flags,
     strip_leading_global_cli_flags, DomainCommandContract, DomainCommandSideEffect,
     ExpectedJsonKind, PrimaryJsonSpec,
 };
@@ -490,6 +490,29 @@ mod tests {
         let raw = "\u{201C}{\"a\":1}\u{201D}";
         let v = parse_json_arg(raw).unwrap();
         assert_eq!(v, json!({"a": 1}));
+    }
+
+    #[test]
+    fn mid_argv_global_json_still_resolves_extension_config_primary() {
+        let argv = vec![
+            "neomind".to_string(),
+            "extension".to_string(),
+            "--json".to_string(),
+            "config".to_string(),
+            "weather".to_string(),
+        ];
+        let spec = primary_json_spec(&argv).expect("mid-argv --json must not hide config");
+        assert_eq!(spec.flag, "--set");
+
+        // With params injected, classify must be Mutating (not bare-config RO).
+        use crate::dispatch::capability::{classify_argv, CliSideEffect};
+        let mut with_set = argv.clone();
+        with_set.push("--set".to_string());
+        with_set.push(r#"{"k":1}"#.to_string());
+        assert_eq!(
+            classify_argv(&with_set).expect("classify"),
+            CliSideEffect::Mutating
+        );
     }
 
     #[test]

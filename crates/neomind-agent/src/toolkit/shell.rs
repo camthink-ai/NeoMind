@@ -327,6 +327,15 @@ impl ShellTool {
                         hint.push('\n');
                         hint.push_str(&tip);
                     }
+                    if let Some(contract) =
+                        neomind_cli_ops::json_arg::find_domain_command_contract(domain, sub)
+                    {
+                        hint.push('\n');
+                        hint.push_str(&format!(
+                            "[Contract — neomind {} {}]: {}",
+                            domain, sub, contract.guidance
+                        ));
+                    }
                     return Some(hint);
                 }
             }
@@ -834,41 +843,55 @@ impl ShellTool {
                 // concatenated onto `stdout` or `stderr`). Preserve exit_code 2
                 // so Phase 1's pre-submission rejection classifier matches.
                 let usage_hint = {
-                    let domain_idx =
-                        neomind_cli_ops::json_arg::domain_token_index(&argv).unwrap_or(1);
-                    argv.get(domain_idx).and_then(|domain| {
-                        let subcommand = argv
-                            .get(domain_idx + 1)
-                            .map(String::as_str)
-                            .filter(|s| !s.starts_with('-'));
-                        // Prefer in-process clap help (full flags, no ellipsis).
-                        // Fall back to DomainCommandContract when clap help is
-                        // unavailable for that domain/action.
+                    // Prefer domain_action_from_argv so globals between
+                    // domain/action (`neomind extension --json config …`) still
+                    // resolve the real subcommand for clap help + contract.
+                    if let Some((domain, action)) =
+                        neomind_cli_ops::json_arg::domain_action_from_argv(&argv)
+                    {
                         Self::in_process_domain_help(
-                            domain.as_str(),
-                            subcommand,
+                            domain,
+                            Some(action),
                             "retry with the exact one",
                         )
                         .or_else(|| {
-                            subcommand.and_then(|action| {
-                                neomind_cli_ops::json_arg::find_domain_command_contract(
-                                    domain.as_str(),
-                                    action,
-                                )
+                            neomind_cli_ops::json_arg::find_domain_command_contract(domain, action)
                                 .map(|c| c.format_hint())
+                        })
+                    } else {
+                        let domain_idx =
+                            neomind_cli_ops::json_arg::domain_token_index(&argv).unwrap_or(1);
+                        argv.get(domain_idx).and_then(|domain| {
+                            let subcommand = argv
+                                .get(domain_idx + 1)
+                                .map(String::as_str)
+                                .filter(|s| !s.starts_with('-'));
+                            Self::in_process_domain_help(
+                                domain.as_str(),
+                                subcommand,
+                                "retry with the exact one",
+                            )
+                            .or_else(|| {
+                                subcommand.and_then(|action| {
+                                    neomind_cli_ops::json_arg::find_domain_command_contract(
+                                        domain.as_str(),
+                                        action,
+                                    )
+                                    .map(|c| c.format_hint())
+                                })
+                            })
+                            .or_else(|| {
+                                if domain_index.is_none() {
+                                    Some(format!(
+                                        "Unknown domain `{}`. Valid domains: device, agent, rule, dashboard, connector, extension, transform, widget, message, push, llm, settings, system, api-key.",
+                                        domain
+                                    ))
+                                } else {
+                                    None
+                                }
                             })
                         })
-                        .or_else(|| {
-                            if domain_index.is_none() {
-                                Some(format!(
-                                    "Unknown domain `{}`. Valid domains: device, agent, rule, dashboard, connector, extension, transform, widget, message, push, llm, settings, system, api-key.",
-                                    domain
-                                ))
-                            } else {
-                                None
-                            }
-                        })
-                    })
+                    }
                 };
                 Some(CommandOutput {
                     exit_code: Some(2),
@@ -2195,6 +2218,7 @@ fn stderr_has_server_guidance(stderr: &str) -> bool {
 fn is_targeted_parse_hint(hint: &str) -> bool {
     hint.starts_with("ID is a positional argument")
         || hint.starts_with("Device-defined command parameters")
+        || hint.contains("does not take CLI `--params`")
 }
 
 impl ShellTool {
@@ -2364,13 +2388,10 @@ impl ShellTool {
                     Some(format!(
                         "Run 'neomind {domain} list' (or get/status) to discover valid IDs, then retry."
                     ))
-                } else if is_validation {
-                    contract_hint().or_else(|| {
-                        Some(format!(
-                            "Run 'neomind {domain} --help' for the exact actions and flags."
-                        ))
-                    })
                 } else {
+                    // Validation and other clap failures share the same
+                    // contract-first recovery (missing-required still needs
+                    // the DomainCommandContract red-lines).
                     contract_hint().or_else(|| {
                         Some(format!(
                             "Run 'neomind {domain} --help' for the exact actions and flags."
@@ -4702,6 +4723,43 @@ mod p0_2_envelope_help_session_tests {
 
         // Unknown top-level domain returns None (no subprocess spawn).
         assert!(ShellTool::in_process_domain_help("no-such-domain", None, "note").is_none());
+    }
+
+    #[tokio::test]
+    async fn parse_error_usage_hint_includes_contract_guidance() {
+        let tool = ShellTool::new(enabled_shell_config());
+        let out = tool
+            .execute(json!({
+                "command": "neomind settings set-retention --days 7"
+            }))
+            .await
+            .unwrap();
+        assert_eq!(out.data["exit_code"], 2);
+        let hint = out.data["usage_hint"].as_str().unwrap_or("");
+        assert!(
+            hint.contains("[Contract — neomind settings set-retention]")
+                || hint.to_lowercase().contains("not --days"),
+            "contract red-line must appear in usage_hint: {hint}"
+        );
+    }
+
+    #[tokio::test]
+    async fn parse_error_suggestion_keeps_misplaced_params_tip() {
+        let tool = ShellTool::new(enabled_shell_config());
+        let out = tool
+            .execute(json!({
+                "command": "neomind dashboard add-components d1 --params '[]'"
+            }))
+            .await
+            .unwrap();
+        assert_eq!(out.data["exit_code"], 2);
+        // usage_hint is present (clap help) — suggestion must still carry the tip.
+        assert!(out.data.get("usage_hint").is_some());
+        let suggestion = out.data["suggestion"].as_str().unwrap_or("");
+        assert!(
+            suggestion.contains("does not take CLI `--params`"),
+            "misplaced --params tip must survive has_usage_hint gate: {suggestion}"
+        );
     }
 
     #[tokio::test]

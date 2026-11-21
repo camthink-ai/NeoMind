@@ -1929,6 +1929,7 @@ impl TaskState {
         let argv = crate::toolkit::shell::tokenize_neomind_command(cmd.trim())
             .unwrap_or_else(|_| cmd.split_whitespace().map(str::to_string).collect());
         let argv = crate::toolkit::shell::strip_host_meta_from_argv(argv);
+        let argv = neomind_cli_ops::json_arg::strip_global_cli_flags(&argv);
         if argv.first().map(String::as_str) != Some("neomind")
             || argv.get(1).map(String::as_str) != Some("operation")
             || argv.get(2).map(String::as_str) != Some("get")
@@ -4163,6 +4164,7 @@ pub fn extract_operation_domain_action(
             let argv = crate::toolkit::shell::tokenize_neomind_command(cmd.trim())
                 .unwrap_or_else(|_| cmd.split_whitespace().map(str::to_string).collect());
             let argv = crate::toolkit::shell::strip_host_meta_from_argv(argv);
+            let argv = neomind_cli_ops::json_arg::strip_global_cli_flags(&argv);
             if argv.first().map(String::as_str) == Some("neomind") {
                 let domain = argv.get(1).cloned();
                 let action = argv.get(2).cloned();
@@ -4219,6 +4221,7 @@ pub fn extract_operation_target(arguments: &serde_json::Value) -> Option<String>
         let argv = crate::toolkit::shell::tokenize_neomind_command(cmd.trim())
             .unwrap_or_else(|_| parts.iter().map(|s| (*s).to_string()).collect());
         let argv = crate::toolkit::shell::strip_host_meta_from_argv(argv);
+        let argv = neomind_cli_ops::json_arg::strip_global_cli_flags(&argv);
         if argv.first().map(String::as_str) == Some("neomind") && argv.len() >= 4 {
             let domain = argv[1].as_str();
             let action = argv[2].as_str();
@@ -5729,6 +5732,24 @@ pub fn looks_like_status_poll(call_fingerprint: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extract_domain_action_skips_global_cli_flags() {
+        let args = serde_json::json!({
+            "command": "neomind --json rule create --name x"
+        });
+        assert_eq!(
+            extract_operation_domain_action("shell", &args),
+            (Some("rule".to_string()), Some("create".to_string()))
+        );
+        let mid = serde_json::json!({
+            "command": "neomind extension --json config weather"
+        });
+        assert_eq!(
+            extract_operation_domain_action("shell", &mid),
+            (Some("extension".to_string()), Some("config".to_string()))
+        );
+    }
 
     #[test]
     fn correct_overwrites_goal_and_clears_next() {

@@ -963,6 +963,26 @@ pub fn find_domain_command_contract(
         .find(|c| c.domain == domain && c.action == action)
 }
 
+/// How many argv tokens a global CLI flag occupies at `i` (`1` or `2`).
+///
+/// Recognizes `-v`/`--verbose`, `--json`, `--format <v>`, and `--format=<v>`
+/// at any position after `neomind` (clap `global = true`).
+fn global_cli_flag_span(argv: &[String], i: usize) -> Option<usize> {
+    let a = argv.get(i)?.as_str();
+    match a {
+        "-v" | "--verbose" | "--json" => Some(1),
+        "--format" => {
+            if i + 1 < argv.len() && !argv[i + 1].starts_with('-') {
+                Some(2)
+            } else {
+                Some(1)
+            }
+        }
+        a if a.starts_with("--format=") => Some(1),
+        _ => None,
+    }
+}
+
 /// Index of the domain token after skipping leading global CLI flags.
 ///
 /// Clap accepts `-v`/`--verbose`, `--json`, `--format <v>`, and `--format=<v>`
@@ -975,49 +995,71 @@ pub fn domain_token_index(argv: &[String]) -> Option<usize> {
     }
     let mut i = 1usize;
     while i < argv.len() {
-        let a = argv[i].as_str();
-        match a {
-            "-v" | "--verbose" | "--json" => i += 1,
-            "--format" => {
-                i += 1;
-                if i < argv.len() && !argv[i].starts_with('-') {
-                    i += 1; // consume format value
-                }
-            }
-            a if a.starts_with("--format=") => i += 1,
-            _ => break,
+        match global_cli_flag_span(argv, i) {
+            Some(skip) => i += skip,
+            None => break,
         }
     }
     Some(i)
 }
 
-/// `(domain, action)` after skipping leading global flags.
+/// `(domain, action)` after skipping global flags anywhere before either token.
+///
+/// Handles both `neomind --json extension config …` and
+/// `neomind extension --json config …` (globals between domain and action).
 /// Returns `None` when argv is too short or not a `neomind` command.
 pub fn domain_action_from_argv(argv: &[String]) -> Option<(&str, &str)> {
-    let i = domain_token_index(argv)?;
+    if argv.first().map(String::as_str) != Some("neomind") {
+        return None;
+    }
+    let mut i = 1usize;
+    while i < argv.len() {
+        match global_cli_flag_span(argv, i) {
+            Some(skip) => i += skip,
+            None => break,
+        }
+    }
     let domain = argv.get(i)?.as_str();
     if domain.starts_with('-') {
         return None;
     }
-    let action = argv.get(i + 1)?.as_str();
+    i += 1;
+    while i < argv.len() {
+        match global_cli_flag_span(argv, i) {
+            Some(skip) => i += skip,
+            None => break,
+        }
+    }
+    let action = argv.get(i)?.as_str();
     if action.starts_with('-') {
         return None;
     }
     Some((domain, action))
 }
 
-/// Rebuild argv as `["neomind", <domain>, <action>, …]` with leading globals removed.
-pub fn strip_leading_global_cli_flags(argv: &[String]) -> Vec<String> {
+/// Rebuild argv as `["neomind", <domain>, <action>, …]` with global flags
+/// removed from any position (`-v`/`--json`/`--format` …).
+pub fn strip_global_cli_flags(argv: &[String]) -> Vec<String> {
     if argv.first().map(String::as_str) != Some("neomind") {
         return argv.to_vec();
     }
-    let Some(i) = domain_token_index(argv) else {
-        return argv.to_vec();
-    };
-    let mut out = Vec::with_capacity(1 + argv.len().saturating_sub(i));
+    let mut out = Vec::with_capacity(argv.len());
     out.push("neomind".to_string());
-    out.extend(argv[i..].iter().cloned());
+    let mut i = 1usize;
+    while i < argv.len() {
+        if let Some(skip) = global_cli_flag_span(argv, i) {
+            i += skip;
+            continue;
+        }
+        out.push(argv[i].clone());
+        i += 1;
+    }
     out
+}
+
+/// Rebuild argv with leading globals removed (alias of [`strip_global_cli_flags`]).
+pub fn strip_leading_global_cli_flags(argv: &[String]) -> Vec<String> {
+    strip_global_cli_flags(argv)
 }
 
 /// Look up a core [`DomainCommandContract`] for a tokenized `neomind <domain> <action> ...` argv.
@@ -1137,7 +1179,46 @@ mod tests {
             domain_action_from_argv(&argv(&["neomind", "--format=json", "transform", "list"])),
             Some(("transform", "list"))
         );
-        let stripped = strip_leading_global_cli_flags(&argv(&[
+        // Globals between domain and action (clap `global = true`).
+        assert_eq!(
+            domain_action_from_argv(&argv(&[
+                "neomind",
+                "extension",
+                "--json",
+                "config",
+                "weather"
+            ])),
+            Some(("extension", "config"))
+        );
+        assert_eq!(
+            domain_action_from_argv(&argv(&[
+                "neomind",
+                "extension",
+                "--format",
+                "json",
+                "-v",
+                "config",
+                "weather"
+            ])),
+            Some(("extension", "config"))
+        );
+        let stripped = strip_global_cli_flags(&argv(&[
+            "neomind",
+            "extension",
+            "--json",
+            "config",
+            "weather",
+        ]));
+        assert_eq!(
+            stripped,
+            vec![
+                "neomind".to_string(),
+                "extension".to_string(),
+                "config".to_string(),
+                "weather".to_string()
+            ]
+        );
+        let stripped_leading = strip_leading_global_cli_flags(&argv(&[
             "neomind",
             "--json",
             "extension",
@@ -1145,7 +1226,7 @@ mod tests {
             "weather",
         ]));
         assert_eq!(
-            stripped,
+            stripped_leading,
             vec![
                 "neomind".to_string(),
                 "extension".to_string(),

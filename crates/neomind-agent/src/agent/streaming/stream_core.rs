@@ -15,8 +15,8 @@ use super::{next_chunk_or_timeout, next_chunk_or_timeout_or_interrupt, StreamWai
 use super::context::ToolExecutionResult;
 use super::dedup::deduplicate_tool_results;
 use super::intent::{
-    all_tools_were_read_only, build_agent_conclusion_redirect, build_device_onboarding_redirect,
-    build_list_only_dead_end_prompt,
+    all_tools_were_read_only, build_agent_conclusion_redirect_with_results,
+    build_device_onboarding_redirect, build_list_only_dead_end_prompt,
 };
 use super::resolve::resolve_cached_arguments;
 use super::result_format::format_tool_results;
@@ -689,9 +689,14 @@ pub(super) fn drive_react_stream(
             // Chat policy: labels only (see StreamSafeguards::behavioral_guards).
             let behavioral_guards = safeguards.behavioral_guards;
             // True while processing the round launched by the narration
-            // nudge — its output is held to stricter JSON-array suspicion
-            // (see might_be_json_start) and degenerate results are restored.
+            // nudge — owns DegenerateSuppressed / NarrationNudgeOutcome /
+            // DegenerateRestore bookkeeping only (not redirect rounds).
             let mut round_is_nudge = false;
+            // True when this round was ordered to emit a tool-call JSON
+            // array (narration nudge OR agent/device redirect). Controls
+            // the leading-`[` hold-back buffer independently of nudge
+            // restore bookkeeping.
+            let mut round_forces_tool_array_guard = false;
 
             // === STATED-INTENT MISMATCH GUARD (once per turn) ===
             // The model's own narrated command promises vs what actually
@@ -807,11 +812,11 @@ pub(super) fn drive_react_stream(
                     let recently_executed: Vec<&str> = recently_executed_tools.iter().map(|s| s.as_str()).collect();
                     drop(state_guard);
 
-                    // A nudge/redirect round's model output is held to stricter
-                    // JSON-array suspicion (see might_be_json_start below):
-                    // the model was ORDERED to emit a tool-call array, so a
-                    // bare `[` opening is suspect from the first byte.
-                    round_is_nudge = narration_nudge_pending.is_some()
+                    // Narration-nudge bookkeeping is separate from the tool-
+                    // array `[` hold-back (redirects must not pollute
+                    // DegenerateRestore / NarrationNudgeOutcome).
+                    round_is_nudge = narration_nudge_pending.is_some();
+                    round_forces_tool_array_guard = round_is_nudge
                         || agent_conclusion_redirect_pending.is_some()
                         || device_onboarding_redirect_pending.is_some();
                     let forced_continues_used = foreshadow_continues
@@ -903,7 +908,11 @@ pub(super) fn drive_react_stream(
                         {
                             None
                         } else {
-                            build_agent_conclusion_redirect(&user_message, &commands_ref)
+                            build_agent_conclusion_redirect_with_results(
+                                &user_message,
+                                &commands_ref,
+                                &all_round_tool_results,
+                            )
                         };
 
                         let onboarding_redirect_msg = if guards_disabled
@@ -931,6 +940,10 @@ pub(super) fn drive_react_stream(
 
                         if let Some(redirect) = conclusion_redirect_msg {
                             agent_conclusion_redirect_sent = true;
+                            // Mid-turn redirect is decided after the round
+                            // flags above — enable the `[` buffer for this
+                            // round so the forced tool-call array is held.
+                            round_forces_tool_array_guard = true;
                             guard_ledger.record(
                                 super::guard::GuardKind::AgentConclusionRedirect,
                                 super::guard::GuardOutcome::Fired,
@@ -944,6 +957,7 @@ pub(super) fn drive_react_stream(
                             format!("{redirect}{failure_guard}{action_exit_guard}")
                         } else if let Some(redirect) = onboarding_redirect_msg {
                             device_onboarding_redirects += 1;
+                            round_forces_tool_array_guard = true;
                             guard_ledger.record(
                                 super::guard::GuardKind::DeviceOnboardingRedirect,
                                 super::guard::GuardOutcome::Fired,
@@ -1474,10 +1488,11 @@ pub(super) fn drive_react_stream(
                                         || buffer.ends_with("```json")
                                         || (buffer.contains("[{\"name") && !buffer.contains("]}"))
                                         || (buffer.contains("{\"name\"") && !buffer.contains("}]}"))
-                                        // Nudge round: the model was ordered to answer with
-                                        // a JSON array — a leading `[` is suspicious even
-                                        // before anything else arrives.
-                                        || (round_is_nudge && buffer.trim_start().starts_with('['));
+                                        // Nudge/redirect round: the model was ordered to
+                                        // answer with a JSON array — a leading `[` is
+                                        // suspicious even before anything else arrives.
+                                        || (round_forces_tool_array_guard
+                                            && buffer.trim_start().starts_with('['));
 
                                     if might_be_json_start {
                                         // Don't yield yet — wait for more chunks to determine
@@ -1488,7 +1503,9 @@ pub(super) fn drive_react_stream(
                                             if let Some(p) = buffer.rfind("[{") { pos = pos.min(p); }
                                             if let Some(p) = buffer.rfind("{\"") { pos = pos.min(p); }
                                             if let Some(p) = buffer.rfind("```") { pos = pos.min(p); }
-                                            if round_is_nudge && buffer.trim_start().starts_with('[') {
+                                            if round_forces_tool_array_guard
+                                                && buffer.trim_start().starts_with('[')
+                                            {
                                                 if let Some(p) = buffer.find('[') { pos = pos.min(p); }
                                             }
                                             pos
@@ -1629,6 +1646,10 @@ pub(super) fn drive_react_stream(
                             tool_iteration_count + 1,
                             "tool_call_in_nudge_round",
                         );
+                        // Clear restore source once the nudge produced real
+                        // tool calls — a later degenerate round must not
+                        // resurrect the pre-nudge promise as the final reply.
+                        nudge_saved_narration = None;
                     }
                     tracing::debug!("Starting tool execution round {}", tool_iteration_count + 1);
 
@@ -3036,7 +3057,11 @@ pub(super) fn drive_react_stream(
                     {
                         None
                     } else {
-                        build_agent_conclusion_redirect(&user_message, &cmds_for_redirect)
+                        build_agent_conclusion_redirect_with_results(
+                            &user_message,
+                            &cmds_for_redirect,
+                            &all_round_tool_results,
+                        )
                     };
                     let conclusion_redirect_allowed =
                         super::guard::should_redirect_agent_conclusion(

@@ -1579,6 +1579,45 @@ pub(crate) fn has_agent_conclusion_read(commands: &[&str]) -> bool {
     })
 }
 
+/// True when a shell command already ran `neomind agent list`.
+pub(crate) fn has_agent_list_command(commands: &[&str]) -> bool {
+    commands.iter().any(|c| {
+        let l = c.to_lowercase();
+        l.contains("agent list")
+    })
+}
+
+/// True when a tool result looks like an empty `agent list` payload.
+pub(crate) fn agent_list_result_looks_empty(result: &str) -> bool {
+    let compact: String = result.chars().filter(|c| !c.is_whitespace()).collect();
+    let lower = compact.to_lowercase();
+    lower.contains("\"agents\":[]")
+        || lower.contains("\"total\":0")
+        || lower.contains("'agents':[]")
+}
+
+/// True when `agent list` already returned an empty roster (0 agents).
+pub(crate) fn saw_empty_agent_list(
+    executed_commands: &[&str],
+    tool_results: &[(String, String)],
+) -> bool {
+    if !has_agent_list_command(executed_commands) {
+        return false;
+    }
+    tool_results
+        .iter()
+        .any(|(_name, res)| agent_list_result_looks_empty(res))
+}
+
+/// Test helper: redirect without tool-result context (empty results).
+#[cfg(test)]
+pub(crate) fn build_agent_conclusion_redirect(
+    user_message: &str,
+    executed_commands: &[&str],
+) -> Option<String> {
+    build_agent_conclusion_redirect_with_results(user_message, executed_commands, &[])
+}
+
 /// Mid-turn / turn-end redirect: status question about a watched thing, but
 /// the model never read `agent latest-execution` (typical detour: empty
 /// `device list` / `system info` → fabricated "all good").
@@ -1586,10 +1625,12 @@ pub(crate) fn has_agent_conclusion_read(commands: &[&str]) -> bool {
 /// Independent of `behavioral_guards` — same policy class as NM-250
 /// foreshadow continue (default chat must recover without flipping the
 /// full coercion suite). Returns `None` when the ask is not a status
-/// question or a conclusion was already read.
-pub(crate) fn build_agent_conclusion_redirect(
+/// question, a conclusion was already read, or `agent list` already
+/// returned an empty roster (nothing to `latest-execution`).
+pub(crate) fn build_agent_conclusion_redirect_with_results(
     user_message: &str,
     executed_commands: &[&str],
+    tool_results: &[(String, String)],
 ) -> Option<String> {
     if !looks_like_agent_status_question(user_message) {
         return None;
@@ -1598,6 +1639,9 @@ pub(crate) fn build_agent_conclusion_redirect(
         return None;
     }
     if has_agent_conclusion_read(executed_commands) {
+        return None;
+    }
+    if saw_empty_agent_list(executed_commands, tool_results) {
         return None;
     }
 
@@ -3108,5 +3152,28 @@ mod tests {
             &["neomind extension status weather-forecast"],
         )
         .is_none());
+    }
+
+    #[test]
+    fn empty_agent_list_exempts_conclusion_redirect() {
+        let cmds = ["neomind agent list"];
+        let empty = [(
+            "shell".to_string(),
+            r#"{"success":true,"data":{"total":0,"agents":[]}}"#.to_string(),
+        )];
+        assert!(
+            build_agent_conclusion_redirect_with_results("冷库现在还好吗?", &cmds, &empty,)
+                .is_none()
+        );
+
+        // Non-empty list without latest-execution still redirects.
+        let populated = [(
+            "shell".to_string(),
+            r#"{"success":true,"data":{"total":1,"agents":[{"id":"a1"}]}}"#.to_string(),
+        )];
+        assert!(
+            build_agent_conclusion_redirect_with_results("冷库现在还好吗?", &cmds, &populated,)
+                .is_some()
+        );
     }
 }
