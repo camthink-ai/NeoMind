@@ -174,6 +174,7 @@ mod structured;
 mod tool_loop;
 mod tool_prompt;
 pub(crate) mod tool_result; // pub(crate): hallucinated_tool_hint reused by chat streaming path
+mod vision_path;
 
 // Re-export public types
 pub(crate) use analyzer::AnalysisResult;
@@ -583,19 +584,38 @@ impl AgentExecutor {
         let (mut filtered_tools, mut tool_name_map) =
             Self::filter_tools(&registry, &agent.tool_config);
 
-        // When the LLM already supports vision AND images are embedded in the
-        // multimodal user message, remove the `vision` tool to prevent redundant
-        // calls.  The LLM sees the images directly — calling a separate VLM
-        // wastes a round, passes truncated data (the LLM can only reference a
-        // tiny preview in tool arguments), and may hit rate limits.
-        let has_images_in_data = data_collected.iter().any(|d| {
-            d.values
-                .get("_is_image")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        });
+        // Honest vision path (T4 Dongpingshan false-success):
+        // - Multimodal primary + embeddable images → strip `vision`, rewrite
+        //   standing guidance so the model does not hunt for a missing tool.
+        // - Images present but neither multimodal nor vision tool → refuse
+        //   Completed / high-confidence false success.
+        let has_embeddable_images = vision_path::has_embeddable_image(data_collected);
         let llm_supports_vision = llm_runtime.capabilities().supports_images;
-        if has_images_in_data && llm_supports_vision {
+        let vision_tool_available = filtered_tools.iter().any(|t| t.name == "vision")
+            || tool_name_map.values().any(|n| n == "vision");
+        let vision_exec_path = vision_path::resolve_vision_execution_path(
+            has_embeddable_images,
+            llm_supports_vision,
+            vision_tool_available,
+        );
+
+        if matches!(
+            vision_exec_path,
+            vision_path::VisionExecutionPath::Unavailable
+        ) {
+            tracing::error!(
+                agent_id = %agent.id,
+                has_embeddable_images,
+                llm_supports_vision,
+                vision_tool_available,
+                "Vision required but unavailable — refusing false-success Completed"
+            );
+            return Err(NeoMindError::Llm(
+                vision_path::vision_unavailable_error().to_string(),
+            ));
+        }
+
+        if vision_path::should_exclude_vision_tool(vision_exec_path) {
             let before = filtered_tools.len();
             let vision_names = ["vision"];
             filtered_tools.retain(|t| !vision_names.contains(&t.name.as_str()));
@@ -633,6 +653,7 @@ impl AgentExecutor {
             invocation_input,
             &tool_config,
             knowledge_content.as_ref(),
+            vision_exec_path,
         );
         let mut messages = tool_prompt::build_tool_messages(&system_prompt, data_collected);
 
@@ -724,6 +745,25 @@ impl AgentExecutor {
 
         let (decision_process, execution_result) =
             tool_result::build_tool_result(agent, data_collected, loop_output);
+
+        // Safety net: images were on this run but the conclusion admits vision
+        // analysis never happened ("Vision tool not available", etc.). That is
+        // product false-success — do not leave Completed + high confidence.
+        // Returning Err marks ExecutionStatus::Failed and increments failure
+        // stats (journal + successful_executions stay aligned).
+        if has_embeddable_images
+            && vision_path::conclusion_admits_vision_failure(&decision_process.conclusion)
+        {
+            tracing::warn!(
+                agent_id = %agent.id,
+                vision_path = ?vision_exec_path,
+                "Conclusion admits vision failure — refusing Completed/false-success"
+            );
+            return Err(NeoMindError::Llm(format!(
+                "Vision analysis failed: {}",
+                truncate_to(&decision_process.conclusion, 200)
+            )));
+        }
 
         Ok((decision_process, execution_result))
     }
