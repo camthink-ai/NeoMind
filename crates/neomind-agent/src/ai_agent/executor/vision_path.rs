@@ -113,6 +113,11 @@ const VISION_FAILURE_MARKERS: &[&str] = &[
     "vision 工具不可用",
     "vision工具不可用",
     "无法调用 vision",
+    // T4 Dongpingshan / operator ZH wording
+    "视觉不可用",
+    "视觉工具不可用",
+    "视觉工具不存在",
+    "无法使用视觉",
 ];
 
 /// True when the conclusion text admits vision analysis failed / was missing.
@@ -207,6 +212,10 @@ mod tests {
             "VISION TOOL NOT AVAILABLE",
             "无法使用 vision 分析图像",
             "vision 工具不可用",
+            "视觉不可用，无法分析 NE301PIR-200366 图像",
+            "视觉工具不可用",
+            "视觉工具不存在，改用 skill load skill=\"vision\" 失败",
+            "无法使用视觉分析当前帧",
         ];
         for text in positives {
             assert!(
@@ -218,6 +227,8 @@ mod tests {
             "Image shows two people at a table; no gambling detected.",
             "Analyzed the attached frame directly; scene is empty road.",
             "Used shell to send a judgment notification.",
+            "画面为空旷走廊，未见赌博行为。",
+            "直接分析了附带图像：道路空旷。",
             "",
         ];
         for text in negatives {

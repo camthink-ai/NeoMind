@@ -2738,3 +2738,189 @@ async fn text_llm_keeps_vision_tool_path() {
         er.actions_executed
     );
 }
+
+/// T4 Dongpingshan: free-mode ZH gambling prompt still demands vision after
+/// multimodal strip — standing rewrite must follow the Task and forbid the tool.
+#[tokio::test]
+async fn dongpingshan_free_mode_prompt_rewrite_after_vision_strip() {
+    let rt = MockLlmRuntime::new(vec![MockResponse::text(
+        "画面为空旷走廊与灌木，未见人员赌博行为。",
+    )])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_handle = rt.clone();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    // Mirrors operator prompt shape: demand vision tool + judgment notify.
+    agent.name = "东坪山-200366-赌博行为监测".into();
+    agent.user_prompt =
+        "收到设备 image_data 后，用 vision 工具分析图像；仅当有人且疑似赌博时再 neomind message send 告警"
+            .into();
+    agent.execution_mode = ExecutionMode::Free;
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool));
+    registry.register(Arc::new(StubVisionTool));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (dp, er) = executor
+        .execute_with_tools(
+            &agent,
+            &[embeddable_image_data()],
+            rt_dyn,
+            "exec-dongpingshan-rewrite",
+            None,
+        )
+        .await
+        .expect("honest inline analysis must Complete");
+
+    assert!(er.success_rate >= 1.0);
+    assert!(
+        dp.conclusion.contains("未见") || dp.conclusion.contains("走廊"),
+        "conclusion: {}",
+        dp.conclusion
+    );
+
+    let dump = rt_handle.captured_messages()[0].to_string();
+    let task_pos = dump
+        .find("用 vision 工具分析图像")
+        .expect("original task must remain");
+    let rewrite_pos = dump
+        .find("Do NOT call a `vision` tool")
+        .expect("inline rewrite must be injected");
+    assert!(
+        rewrite_pos > task_pos,
+        "rewrite must follow Task so it overrides the agent prompt"
+    );
+    assert!(
+        dump.contains("## Vision Path (IMPORTANT)"),
+        "standing Vision Path section required: {dump}"
+    );
+    assert!(
+        dump.contains("attached as multimodal content"),
+        "Free resource note must say images are inline: {dump}"
+    );
+}
+
+/// T4: ZH honest multimodal analysis → Completed (not false-fail).
+#[tokio::test]
+async fn dongpingshan_honest_zh_image_analysis_completes() {
+    let rt = MockLlmRuntime::new(vec![MockResponse::text(
+        "直接分析了附带图像：帐篷与车辆，无赌博迹象。未调用 vision 工具。",
+    )])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "用 vision 工具分析东坪山摄像头图像".into();
+    agent.execution_mode = ExecutionMode::Free;
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(StubVisionTool));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (dp, er) = executor
+        .execute_with_tools(
+            &agent,
+            &[embeddable_image_data()],
+            rt_dyn,
+            "exec-dongpingshan-honest-zh",
+            None,
+        )
+        .await
+        .expect("honest ZH analysis must Complete");
+
+    assert!(er.success_rate >= 1.0);
+    assert!(
+        !super::vision_path::conclusion_admits_vision_failure(&dp.conclusion),
+        "honest analysis must not trip failure markers: {}",
+        dp.conclusion
+    );
+    assert!(dp.conclusion.contains("无赌博"));
+}
+
+/// T4 table: ZH/EN conclusions that admit vision failure must Fail, not Completed.
+#[tokio::test]
+async fn dongpingshan_vision_failure_conclusions_table_fail() {
+    let cases = [
+        "Vision tool not available for NE301PIR-200366…",
+        "视觉不可用，无法分析图像。",
+        "Vision extension not installed… skill load skill=\"vision\"",
+        "Available domains: device, message, extension; cannot use vision.",
+        "视觉工具不可用，改找 extension 失败。",
+    ];
+
+    for (i, conclusion) in cases.iter().enumerate() {
+        let rt = MockLlmRuntime::new(vec![MockResponse::text((*conclusion).to_string())])
+            .with_function_calling()
+            .with_supports_images();
+        let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+        let (mut executor, mut agent, _) = build_harness().await;
+        agent.user_prompt = "用 vision 工具分析图像，疑似赌博再告警".into();
+        agent.execution_mode = ExecutionMode::Free;
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(StubVisionTool));
+        executor.set_tool_registry(Arc::new(registry));
+        executor.set_llm_runtime(rt_dyn.clone()).await;
+
+        let err = executor
+            .execute_with_tools(
+                &agent,
+                &[embeddable_image_data()],
+                rt_dyn,
+                &format!("exec-dongpingshan-fail-{i}"),
+                None,
+            )
+            .await
+            .expect_err(&format!(
+                "conclusion must Fail (not Completed): {conclusion}"
+            ));
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Vision analysis failed"),
+            "case {i} ({conclusion}) → {msg}"
+        );
+    }
+}
+
+/// T4: text-only LLM + bound camera image + no vision tool → Unavailable Err
+/// (ZH gambling agent wording; must not Complete).
+#[tokio::test]
+async fn dongpingshan_text_llm_no_vision_tool_unavailable() {
+    let rt = MockLlmRuntime::new(vec![MockResponse::text(
+        "should never run — vision path unavailable",
+    )])
+    .with_function_calling();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.name = "东坪山-20035E-赌博行为监测".into();
+    agent.user_prompt = "用 vision 工具分析 image_data".into();
+    agent.execution_mode = ExecutionMode::Free;
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool)); // deliberately no vision
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let err = executor
+        .execute_with_tools(
+            &agent,
+            &[embeddable_image_data()],
+            rt_dyn,
+            "exec-dongpingshan-unavailable",
+            None,
+        )
+        .await
+        .expect_err("text LLM without vision tool must Unavailable");
+    assert!(
+        err.to_string().contains("Vision required but unavailable"),
+        "got: {err}"
+    );
+}
