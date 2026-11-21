@@ -15,7 +15,8 @@ use super::{next_chunk_or_timeout, next_chunk_or_timeout_or_interrupt, StreamWai
 use super::context::ToolExecutionResult;
 use super::dedup::deduplicate_tool_results;
 use super::intent::{
-    all_tools_were_read_only, build_agent_conclusion_redirect, build_list_only_dead_end_prompt,
+    all_tools_were_read_only, build_agent_conclusion_redirect, build_device_onboarding_redirect,
+    build_list_only_dead_end_prompt,
 };
 use super::resolve::resolve_cached_arguments;
 use super::result_format::format_tool_results;
@@ -656,6 +657,9 @@ pub(super) fn drive_react_stream(
             // one bounded redirect (same policy class as foreshadow).
             let mut agent_conclusion_redirect_sent = false;
             let mut agent_conclusion_redirect_pending: Option<String> = None;
+            // Guided MQTT onboarding without `device create`.
+            let mut device_onboarding_redirect_sent = false;
+            let mut device_onboarding_redirect_pending: Option<String> = None;
             // Cleaned narration from the round that triggered the nudge —
             // the restore source when the nudged round degenerates (see the
             // post-nudge degenerate guard near the final save). Always the
@@ -815,6 +819,8 @@ pub(super) fn drive_react_stream(
                     } else if let Some(redirect) = agent_conclusion_redirect_pending.take() {
                         // Status-question → latest-execution redirect.
                         redirect
+                    } else if let Some(redirect) = device_onboarding_redirect_pending.take() {
+                        redirect
                     } else if recently_executed.is_empty() {
                         format!(
                             "Round {} of processing. Call ALL needed tools in ONE batch using JSON array format. Give the final response if no more tools needed.",
@@ -851,6 +857,14 @@ pub(super) fn drive_react_stream(
                             build_agent_conclusion_redirect(&user_message, &commands_ref)
                         };
 
+                        let onboarding_redirect_msg = if guards_disabled
+                            || device_onboarding_redirect_sent
+                        {
+                            None
+                        } else {
+                            build_device_onboarding_redirect(&user_message, &commands_ref)
+                        };
+
                         let dead_end_msg = if guards_disabled
                             || !behavioral_guards
                             || list_only_dead_end_injected
@@ -876,6 +890,19 @@ pub(super) fn drive_react_stream(
                             tracing::info!(
                                 round = tool_iteration_count + 1,
                                 "Agent status question without conclusion read — mid-turn redirect"
+                            );
+                            redirect
+                        } else if let Some(redirect) = onboarding_redirect_msg {
+                            device_onboarding_redirect_sent = true;
+                            guard_ledger.record(
+                                super::guard::GuardKind::DeviceOnboardingRedirect,
+                                super::guard::GuardOutcome::Fired,
+                                tool_iteration_count + 1,
+                                "onboarding_without_create",
+                            );
+                            tracing::info!(
+                                round = tool_iteration_count + 1,
+                                "Guided device onboarding without create — mid-turn redirect"
                             );
                             redirect
                         } else if let Some(dead_end_msg) = dead_end_msg {
@@ -3026,6 +3053,51 @@ pub(super) fn drive_react_stream(
                                 .push_message(AgentMessage::assistant(&said));
                             tool_iteration_count += 1;
                             agent_conclusion_redirect_pending = Some(redirect);
+                            yield AgentEvent::IntermediateEnd;
+                            continue 'multi_round_loop;
+                        }
+                    }
+
+                    let onboarding_prompt = if guards_disabled {
+                        None
+                    } else {
+                        build_device_onboarding_redirect(&user_message, &cmds_for_redirect)
+                    };
+                    let onboarding_redirect_allowed =
+                        super::guard::should_redirect_device_onboarding(
+                            device_onboarding_redirect_sent,
+                            no_execution_requested,
+                            iteration_budget_left,
+                            wall_clock_left,
+                            onboarding_prompt.is_some(),
+                        );
+                    if onboarding_redirect_allowed {
+                        if let Some(redirect) = onboarding_prompt {
+                            device_onboarding_redirect_sent = true;
+                            guard_ledger.record(
+                                super::guard::GuardKind::DeviceOnboardingRedirect,
+                                super::guard::GuardOutcome::Fired,
+                                tool_iteration_count + 1,
+                                "onboarding_answer_without_create",
+                            );
+                            tracing::info!(
+                                round = tool_iteration_count + 1,
+                                chars = raw_response.chars().count(),
+                                "Guided onboarding answer without create — bounded redirect once"
+                            );
+                            yield AgentEvent::progress(
+                                "Retrying — device not created yet...".to_string(),
+                                "executing",
+                                0,
+                            );
+                            let said = remove_tool_calls_from_response(&raw_response);
+                            nudge_saved_narration = Some(said.clone());
+                            internal_state
+                                .write()
+                                .await
+                                .push_message(AgentMessage::assistant(&said));
+                            tool_iteration_count += 1;
+                            device_onboarding_redirect_pending = Some(redirect);
                             yield AgentEvent::IntermediateEnd;
                             continue 'multi_round_loop;
                         }

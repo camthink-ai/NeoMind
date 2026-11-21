@@ -35,6 +35,7 @@ const ACTION_VERBS: &[&str] = &[
     "替换",
     "绑定",
     "巡检",
+    "接入",
     // English
     "create",
     "delete",
@@ -56,6 +57,8 @@ const ACTION_VERBS: &[&str] = &[
     "add",
     "replace",
     "bind",
+    "connect",
+    "onboard",
 ];
 
 /// Instructional-question shapes ("如何创建设备？", "how do I create a
@@ -558,7 +561,15 @@ pub(crate) fn extract_action_hint(msg: &str) -> String {
 ///   hyphen-token of its name equals one of these (`add-components` → add,
 ///   `write-metric` → write/send, `channel-create` → create).
 const ACTION_CLASSES: &[(&str, &[&str], &[&str])] = &[
-    ("create", &["创建", "create", "新建"], &["create"]),
+    // 接入/connect/onboard: guided MQTT onboarding asks (eval
+    // guided-mqtt-onboarding) are create-class — without them,
+    // skill-exit / incomplete-action stay silent and Spark stalls on
+    // skill ↔ list without ever `device create`.
+    (
+        "create",
+        &["创建", "create", "新建", "接入", "connect", "onboard"],
+        &["create"],
+    ),
     ("delete", &["删除", "delete", "移除"], &["delete", "remove"]),
     (
         "control",
@@ -646,7 +657,7 @@ const DOMAIN_KEYWORDS: &[(&str, &[&str])] = &[
     ("widget", &["组件", "widget", "小部件"]),
     ("extension", &["扩展", "extension", "插件"]),
     ("message", &["消息", "message", "通知", "通道", "channel"]),
-    ("device", &["设备", "device", "sensor"]),
+    ("device", &["设备", "device", "sensor", "传感器"]),
 ];
 
 /// Every domain whose keywords occur in the message, in DOMAIN_KEYWORDS
@@ -1215,6 +1226,125 @@ pub(crate) fn promise_tracker_step(
             *rounds = 1;
         }
     }
+}
+
+/// Guided MQTT / sensor onboarding asks (eval guided-mqtt-onboarding).
+const DEVICE_ONBOARDING_MARKERS: &[&str] = &[
+    // Chinese
+    "接入",
+    "连接设备",
+    "连接传感器",
+    "配置传感器",
+    "带我走",
+    // English
+    "connect my",
+    "connect a",
+    "onboard",
+    "walk me through",
+    "guide me through",
+    "setting it up",
+    "set it up",
+];
+
+/// True when the user wants guided device onboarding (MQTT/sensor connect),
+/// not a one-off status/query.
+pub(crate) fn looks_like_guided_device_onboarding(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    if crate::agent::user_requested_no_execution(msg) {
+        return false;
+    }
+    // Instructional "how do I connect…" stays explanation-only.
+    if INSTRUCTIONAL_QUESTION_PATTERNS
+        .iter()
+        .any(|p| lower.contains(&p.to_lowercase()))
+    {
+        return false;
+    }
+    DEVICE_ONBOARDING_MARKERS
+        .iter()
+        .any(|m| lower.contains(&m.to_lowercase()))
+}
+
+/// True when a device was already created this turn.
+pub(crate) fn has_device_create(commands: &[&str]) -> bool {
+    commands.iter().any(|c| {
+        let l = c.to_lowercase();
+        l.contains("device create")
+    })
+}
+
+/// Mid-turn / turn-end redirect: guided MQTT onboarding without `device create`.
+/// Same policy class as agent-conclusion redirect (default chat, independent
+/// of `behavioral_guards`).
+pub(crate) fn build_device_onboarding_redirect(
+    user_message: &str,
+    executed_commands: &[&str],
+) -> Option<String> {
+    if !looks_like_guided_device_onboarding(user_message) {
+        return None;
+    }
+    if has_device_create(executed_commands) {
+        return None;
+    }
+
+    let executed_summary = if executed_commands.is_empty() {
+        "(no prior commands)".to_string()
+    } else {
+        executed_commands
+            .iter()
+            .map(|s| format!("- {s}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let has_types = executed_commands.iter().any(|c| {
+        let l = c.to_lowercase();
+        l.contains("device types")
+    });
+
+    let zh = crate::agent::text_prefers_chinese(user_message);
+    let msg = if zh {
+        let next = if has_types {
+            "你已看过设备类型。现在必须用 shell 执行：\n\
+             `neomind device create --name <名称> --device-type <类型> --adapter-type mqtt`\n\
+             然后给出 MQTT broker/topic 连接信息。不要再反复 load skill / 列 connector。"
+                .to_string()
+        } else {
+            "现在必须用 shell 依次执行：\n\
+             1) `neomind device types list` — 发现可用类型\n\
+             2) `neomind device create --name <名称> --device-type <类型> --adapter-type mqtt`\n\
+             然后给出 MQTT broker/topic。不要走 connector create（嵌入式 broker 用 device create）。\
+             不要再反复 load skill。"
+                .to_string()
+        };
+        format!(
+            "⚠️ 用户要引导式 MQTT 设备接入，但你还没有 `device create`。\n\n\
+             已执行:\n{executed_summary}\n\n\
+             {next}\n\
+             不要输出最终回答。现在输出 tool call。"
+        )
+    } else {
+        let next = if has_types {
+            "You already listed device types. You MUST run via shell:\n\
+             `neomind device create --name <name> --device-type <type> --adapter-type mqtt`\n\
+             then give MQTT broker/topic connection info. Do NOT keep loading skills or listing connectors."
+                .to_string()
+        } else {
+            "You MUST run via shell, in order:\n\
+             1) `neomind device types list` — discover templates\n\
+             2) `neomind device create --name <name> --device-type <type> --adapter-type mqtt`\n\
+             then give MQTT broker/topic. Do NOT use connector create (embedded broker uses device create).\n\
+             Do NOT keep loading skills."
+                .to_string()
+        };
+        format!(
+            "⚠️ The user asked for guided MQTT device onboarding, but you have NOT run `device create` yet.\n\n\
+             Previously executed:\n{executed_summary}\n\n\
+             {next}\n\
+             Do NOT output a final answer. OUTPUT A TOOL CALL NOW."
+        )
+    };
+    Some(msg)
 }
 
 /// Phrases that mark "is the watched thing OK right now?" status questions.
@@ -2734,6 +2864,26 @@ mod tests {
         assert!(!looks_like_agent_status_question(
             "重新检查一下冷库还好吗"
         ));
+    }
+
+    #[test]
+    fn guided_mqtt_onboarding_requires_create_action() {
+        let en = "I want to connect my temperature sensor to NeoMind over MQTT. Can you guide me through setting it up?";
+        assert!(user_message_requires_action(en));
+        assert!(looks_like_guided_device_onboarding(en));
+        assert_eq!(extract_action_hint(en), "neomind device create");
+        let zh = "我想把我的温度传感器通过 MQTT 接入 NeoMind。你能引导我配置吗？";
+        assert!(user_message_requires_action(zh));
+        assert!(looks_like_guided_device_onboarding(zh));
+        assert_eq!(extract_action_hint(zh), "neomind device create");
+        assert!(build_device_onboarding_redirect(en, &["neomind device types list"])
+            .unwrap()
+            .contains("device create"));
+        assert!(build_device_onboarding_redirect(
+            en,
+            &["neomind device create --name t --device-type temp_sensor --adapter-type mqtt"]
+        )
+        .is_none());
     }
 
     #[test]

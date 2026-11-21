@@ -65,6 +65,9 @@ pub enum GuardKind {
     /// `agent latest-execution` (device/system detour). Independent of
     /// `behavioral_guards` — same policy class as foreshadow continue.
     AgentConclusionRedirect,
+    /// Guided MQTT onboarding without `device create` (skill/list thrash).
+    /// Independent of `behavioral_guards`.
+    DeviceOnboardingRedirect,
 }
 
 impl GuardKind {
@@ -88,6 +91,7 @@ impl GuardKind {
             GuardKind::BehavioralGuardsOff => "behavioral_guards_off",
             GuardKind::ForeshadowContinue => "foreshadow_continue",
             GuardKind::AgentConclusionRedirect => "agent_conclusion_redirect",
+            GuardKind::DeviceOnboardingRedirect => "device_onboarding_redirect",
         }
     }
 }
@@ -105,6 +109,23 @@ pub fn should_redirect_agent_conclusion(
         && !no_execution_requested
         && iteration_budget_left
         && wall_clock_left
+}
+
+/// One bounded continue when guided onboarding never ran `device create`.
+pub fn should_redirect_device_onboarding(
+    already_sent: bool,
+    no_execution_requested: bool,
+    iteration_budget_left: bool,
+    wall_clock_left: bool,
+    redirect_applicable: bool,
+) -> bool {
+    should_redirect_agent_conclusion(
+        already_sent,
+        no_execution_requested,
+        iteration_budget_left,
+        wall_clock_left,
+        redirect_applicable,
+    )
 }
 
 /// What a guard did.

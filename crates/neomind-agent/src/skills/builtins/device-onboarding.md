@@ -22,6 +22,7 @@ anti_triggers:
 
 # device-onboarding
 
+**Guided MQTT sensor onboarding** ("help me connect my sensor"): `neomind device types list` → `neomind device create --name … --device-type … --adapter-type mqtt` → give broker/topic from `neomind system info`. Do **not** stall on skill reloads or `connector create` for the embedded broker.
 Determine the requested protocol and target; ask only for missing connection information. Inspect existing devices/types before creating anything.
 MQTT: discovery creates a candidate, not an approved device. Shared topics may carry multiple JSON identities. Preserve explicit bindings and configured identity fields; do not reject topics based on guessed uplink/downlink words. Approval and association use the real device identity.
 Webhook: create with the webhook adapter, then obtain its ingest URL. A saved configuration does not prove data is arriving.
