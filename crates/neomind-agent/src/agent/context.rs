@@ -345,6 +345,49 @@ const ACTION_PROMISE_PATTERNS: &[&str] = &[
     "i'm going to try",
     "i'm going to fetch",
     "i'm going to get",
+    // 2026-11-21 tip overnight deep-memory-transform: foreshadow-only turns
+    // used list/read/delete/disable shapes the table missed — NM-250 continue
+    // never fired, so response_contains / transform_count soft-asserted.
+    "i will list",
+    "i'll list",
+    "let me list",
+    "i will read",
+    "i'll read",
+    "let me read",
+    "i will delete",
+    "i'll delete",
+    "let me delete",
+    "i will disable",
+    "i'll disable",
+    "let me disable",
+    "i will enable",
+    "i'll enable",
+    "let me enable",
+    "i'm going to list",
+    "i'm going to read",
+    "i'm going to delete",
+    "i'm going to disable",
+    "i'm going to enable",
+    "我来列出",
+    "我将列出",
+    "我会列出",
+    "让我列出",
+    "我来读取",
+    "我将读取",
+    "我会读取",
+    "让我读取",
+    "我来删除",
+    "我将删除",
+    "我会删除",
+    "让我删除",
+    "我来禁用",
+    "我将禁用",
+    "我会禁用",
+    "让我禁用",
+    "我来启用",
+    "我将启用",
+    "我会启用",
+    "让我启用",
 ];
 
 /// Max narration length eligible for the nudge — a long, complete analysis
@@ -1230,6 +1273,35 @@ mod narration_tests {
         ));
         assert!(is_narration_without_action("我会查询一下当前天气。"));
         assert!(is_narration_without_action("我将尝试拉取天气预报。"));
+    }
+
+    /// 2026-11-21 tip overnight deep-memory-transform: tool-free foreshadows
+    /// that the prior table missed — verbatim assistant_message strings.
+    #[test]
+    fn detects_list_read_delete_disable_foreshadow_variants() {
+        assert!(is_narration_without_action(
+            "I'll list the transform's output metrics."
+        ));
+        assert!(is_narration_without_action(
+            "I'll list c2f's metrics and output."
+        ));
+        assert!(is_narration_without_action(
+            "I'll list the transform's virtual metrics."
+        ));
+        assert!(is_narration_without_action(
+            "I'll read c2f's current details to confirm its state."
+        ));
+        assert!(is_narration_without_action(
+            "I'll delete c2f and verify the result."
+        ));
+        assert!(is_narration_without_action(
+            "I'll delete transform c2f."
+        ));
+        assert!(is_narration_without_action(
+            "I'll disable transform c2f."
+        ));
+        assert!(is_narration_without_action("让我列出 c2f 的输出指标。"));
+        assert!(is_narration_without_action("我来删除这个 transform。"));
     }
 
     /// The exact promise-only replies from the 2026-10-19 incident session
