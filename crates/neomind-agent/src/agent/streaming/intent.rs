@@ -794,6 +794,70 @@ pub(crate) fn canonical_tool_call_fingerprint(
     canonical_tool_call_fingerprint_from_canonical(real.as_str(), &canonical)
 }
 
+/// Fingerprint for the per-turn consecutive-failure circuit breaker.
+///
+/// Same as [`canonical_tool_call_fingerprint`] except shell
+/// `neomind transform create|update` drops `--code`/`-c` so a model that
+/// keeps rewriting JS while leaving a bad `--scope` (NM-322 overnight
+/// `sr-clear-transform[zh]` wedge) still accumulates strikes. Write-gate
+/// PreferKnown fingerprints stay full-argv — only the failure breaker
+/// collapses code churn.
+pub(crate) fn failure_circuit_fingerprint(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> String {
+    let canonical =
+        crate::agent::task_continuity::canonicalize_tool_arguments(tool_name, arguments);
+    let real = crate::tools::resolve_tool_name(tool_name);
+    if real.as_str() == "shell" {
+        if let Some(cmd) = canonical.get("command").and_then(|v| v.as_str()) {
+            if let Some(stripped) = strip_transform_code_flag_for_failure_circuit(cmd) {
+                let mut adjusted = canonical.clone();
+                if let Some(obj) = adjusted.as_object_mut() {
+                    obj.insert("command".into(), serde_json::Value::String(stripped));
+                }
+                return canonical_tool_call_fingerprint_from_canonical(
+                    real.as_str(),
+                    &adjusted,
+                );
+            }
+        }
+    }
+    canonical_tool_call_fingerprint_from_canonical(real.as_str(), &canonical)
+}
+
+/// Drop `--code` / `-c` (and their values) from `neomind transform create|update`
+/// argv so failure-circuit strikes ignore JS rewrites. Returns `None` when the
+/// command is not that family (caller keeps the original fingerprint).
+fn strip_transform_code_flag_for_failure_circuit(cmd: &str) -> Option<String> {
+    let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(cmd.trim()) else {
+        return None;
+    };
+    if argv.len() < 3 || argv[0] != "neomind" || argv[1] != "transform" {
+        return None;
+    }
+    if argv[2] != "create" && argv[2] != "update" {
+        return None;
+    }
+    let mut out = Vec::with_capacity(argv.len());
+    let mut i = 0;
+    while i < argv.len() {
+        let a = argv[i].as_str();
+        if a == "--code" || a == "-c" {
+            i += 2; // skip flag + value (best-effort; missing value still advances past flag)
+            continue;
+        }
+        if let Some(rest) = a.strip_prefix("--code=") {
+            let _ = rest;
+            i += 1;
+            continue;
+        }
+        out.push(argv[i].clone());
+        i += 1;
+    }
+    Some(out.join(" "))
+}
+
 fn canonical_tool_call_fingerprint_from_canonical(
     real_tool_name: &str,
     canonical: &serde_json::Value,
@@ -1801,6 +1865,49 @@ mod tests {
             &["neomind dashboard get d1", "neomind widget list"],
             &[]
         ));
+    }
+
+    #[test]
+    fn failure_circuit_collapses_transform_code_churn_keeps_scope() {
+        // Overnight wedge: model rewrote --code while leaving --scope device.
+        let a = serde_json::json!({
+            "command": "neomind transform create --name batt --scope device --code \"return input.battery * 100\""
+        });
+        let b = serde_json::json!({
+            "command": "neomind transform create --name batt --scope device --code \"function f(input){ return input.battery * 100; }\""
+        });
+        let c = serde_json::json!({
+            "command": "neomind transform create --name batt --scope device:sensor-001 --code \"return input.battery * 100\""
+        });
+        assert_eq!(
+            failure_circuit_fingerprint("shell", &a),
+            failure_circuit_fingerprint("shell", &b),
+            "code-only churn must share one failure-circuit key"
+        );
+        assert_ne!(
+            failure_circuit_fingerprint("shell", &a),
+            failure_circuit_fingerprint("shell", &c),
+            "scope change must be a different failure-circuit key"
+        );
+        // PreferKnown / canonical fingerprint still distinguishes code.
+        assert_ne!(
+            canonical_tool_call_fingerprint("shell", &a),
+            canonical_tool_call_fingerprint("shell", &b),
+        );
+    }
+
+    #[test]
+    fn strip_transform_code_flag_only_for_create_update() {
+        assert!(strip_transform_code_flag_for_failure_circuit(
+            "neomind transform list"
+        )
+        .is_none());
+        let stripped = strip_transform_code_flag_for_failure_circuit(
+            "neomind transform create --name x --scope global --code \"return 1\"",
+        )
+        .expect("create");
+        assert!(!stripped.contains("--code"), "{stripped}");
+        assert!(stripped.contains("--scope global"), "{stripped}");
     }
 
     /// The mutation-pattern audit (against the full live CLI surface):

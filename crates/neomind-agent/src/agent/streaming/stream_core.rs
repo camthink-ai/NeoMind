@@ -1688,6 +1688,11 @@ pub(super) fn drive_react_stream(
                             let real_name = crate::tools::resolve_tool_name(&name);
                             let canonical_sig =
                                 super::intent::canonical_tool_call_fingerprint(&name, &arguments);
+                            // Failure breaker may collapse transform --code churn
+                            // (see failure_circuit_fingerprint); PreferKnown /
+                            // reuse / progress tracking keep full canonical_sig.
+                            let failure_sig =
+                                super::intent::failure_circuit_fingerprint(&name, &arguments);
 
                             // Layer 1a: identical-call reuse for deterministic tools.
                             // Checked before the write gate so a same-turn
@@ -1760,7 +1765,7 @@ pub(super) fn drive_react_stream(
                                         );
                                 if !ledger_authoritative_non_exec {
                                     if let Some((failures, last_err)) =
-                                        failed_map.lock().unwrap().get(&canonical_sig).cloned()
+                                        failed_map.lock().unwrap().get(&failure_sig).cloned()
                                     {
                                         if let Some(msg) = loop_break_message(failures, &last_err) {
                                             drop(state);
@@ -1864,9 +1869,9 @@ pub(super) fn drive_react_stream(
                                 }
                             } else {
                                 // Read-only call: apply consecutive real-failure
-                                // circuit breaker on the same canonical fingerprint.
+                                // circuit breaker on the failure-circuit fingerprint.
                                 if let Some((failures, last_err)) =
-                                    failed_map.lock().unwrap().get(&canonical_sig).cloned()
+                                    failed_map.lock().unwrap().get(&failure_sig).cloned()
                                 {
                                     if let Some(msg) = loop_break_message(failures, &last_err) {
                                         tracing::warn!(
@@ -1907,8 +1912,8 @@ pub(super) fn drive_react_stream(
                             )
                             .await;
 
-                            // Strike bookkeeping on canonical fingerprint: real failures
-                            // accumulate; a success clears the strikes.
+                            // Strike bookkeeping on failure-circuit fingerprint:
+                            // real failures accumulate; a success clears strikes.
                             {
                                 let failed_now: Option<String> = match &result {
                                     Ok(out)
@@ -1916,7 +1921,7 @@ pub(super) fn drive_react_stream(
                                             &real_name, out,
                                         ) =>
                                     {
-                                        failed_map.lock().unwrap().remove(&canonical_sig);
+                                        failed_map.lock().unwrap().remove(&failure_sig);
                                         None
                                     }
                                     Ok(out) => Some(
@@ -1937,7 +1942,7 @@ pub(super) fn drive_react_stream(
                                 if let Some(err) = failed_now {
                                     let mut m = failed_map.lock().unwrap();
                                     let entry = m
-                                        .entry(canonical_sig.clone())
+                                        .entry(failure_sig.clone())
                                         .or_insert((0, String::new()));
                                     entry.0 += 1;
                                     entry.1 = err;
