@@ -101,23 +101,25 @@ fn parse_transform_scope(scope: &str) -> Result<serde_json::Value, String> {
     if s.eq_ignore_ascii_case("global") {
         return Ok(json!("global"));
     }
-    if let Some(rest) = s.strip_prefix("device_type:") {
-        if rest.is_empty() {
-            return Err(
-                "Invalid --scope `device_type:` (missing type). Example: --scope device_type:ne101_camera."
-                    .to_string(),
-            );
+    if let Some((prefix, rest)) = s.split_once(':') {
+        if prefix.eq_ignore_ascii_case("device_type") {
+            if rest.is_empty() {
+                return Err(
+                    "Invalid --scope `device_type:` (missing type). Example: --scope device_type:ne101_camera."
+                        .to_string(),
+                );
+            }
+            return Ok(json!({ "device_type": rest }));
         }
-        return Ok(json!({ "device_type": rest }));
-    }
-    if let Some(rest) = s.strip_prefix("device:") {
-        if rest.is_empty() {
-            return Err(
-                "Invalid --scope `device:` (missing device id). Example: --scope device:sensor-001."
-                    .to_string(),
-            );
+        if prefix.eq_ignore_ascii_case("device") {
+            if rest.is_empty() {
+                return Err(
+                    "Invalid --scope `device:` (missing device id). Example: --scope device:sensor-001."
+                        .to_string(),
+                );
+            }
+            return Ok(json!({ "device": rest }));
         }
-        return Ok(json!({ "device": rest }));
     }
     // Overnight wedge: `--scope device` / `--scope device_type` with no id.
     if s.eq_ignore_ascii_case("device") || s.eq_ignore_ascii_case("device_type") {
@@ -307,6 +309,15 @@ mod tests {
         assert_eq!(
             parse_transform_scope("device_type:ne101_camera").unwrap(),
             json!({ "device_type": "ne101_camera" })
+        );
+        // Prefix case is ignored; id casing is preserved.
+        assert_eq!(
+            parse_transform_scope("Device:sensor-001").unwrap(),
+            json!({ "device": "sensor-001" })
+        );
+        assert_eq!(
+            parse_transform_scope("DEVICE_TYPE:Ne101_Camera").unwrap(),
+            json!({ "device_type": "Ne101_Camera" })
         );
     }
 

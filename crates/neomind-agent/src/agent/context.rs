@@ -501,16 +501,26 @@ fn narration_has_promise_actor(text: &str) -> bool {
 }
 
 fn english_promise_pattern_hits(lower: &str, pattern: &str) -> bool {
-    // ASCII patterns need a trailing word boundary so "let me add" does not
-    // match "Let me address…" / "I'll list" does not match "I'll listen…".
-    let Some(idx) = lower.find(pattern) else {
-        return false;
-    };
-    let end = idx + pattern.len();
-    match lower.as_bytes().get(end) {
-        None => true,
-        Some(b) => !b.is_ascii_alphanumeric() && *b != b'_',
-    }
+    // ASCII patterns need leading + trailing word boundaries so "let me add"
+    // does not match "Let me address…" / "I'll list" does not match
+    // "I'll listen…". Scan every hit — a false-friend earlier in the head
+    // must not hide a later real promise ("Let me address that — let me add…").
+    lower.match_indices(pattern).any(|(idx, _)| {
+        let start_ok = if idx == 0 {
+            true
+        } else {
+            let b = lower.as_bytes()[idx - 1];
+            !b.is_ascii_alphanumeric() && b != b'_'
+        };
+        if !start_ok {
+            return false;
+        }
+        let end = idx + pattern.len();
+        match lower.as_bytes().get(end) {
+            None => true,
+            Some(b) => !b.is_ascii_alphanumeric() && *b != b'_',
+        }
+    })
 }
 
 pub fn is_narration_without_action(text: &str) -> bool {
@@ -1314,6 +1324,13 @@ mod narration_tests {
         ));
         assert!(is_narration_without_action(
             "I'm going to run the command now."
+        ));
+        // False-friend earlier must not hide a later real promise.
+        assert!(is_narration_without_action(
+            "Let me address that — let me add the rule."
+        ));
+        assert!(!is_narration_without_action(
+            "Let me address the customer concern carefully."
         ));
     }
 

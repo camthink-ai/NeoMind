@@ -2780,6 +2780,53 @@ mod rule_threshold_hyphen_tests {
             other => panic!("expected Rule::Update, got {other:?}"),
         }
     }
+
+    #[test]
+    fn write_metric_accepts_negative_value() {
+        use super::DeviceCommand;
+        let args = Args::try_parse_from([
+            "neomind",
+            "device",
+            "write-metric",
+            "fridge-1",
+            "--metric",
+            "temp_c",
+            "--value",
+            "-20",
+        ])
+        .expect("negative --value must parse");
+        match args.command {
+            Command::Device {
+                device_cmd:
+                    DeviceCommand::WriteMetric {
+                        id, metric, value, ..
+                    },
+            } => {
+                assert_eq!(id, "fridge-1");
+                assert_eq!(metric, "temp_c");
+                assert_eq!(value, "-20");
+            }
+            other => panic!("expected Device::WriteMetric, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn threshold_help_flag_is_display_help_not_float_parse_error() {
+        let err =
+            Args::try_parse_from(["neomind", "rule", "update", "r1", "--threshold", "--help"])
+                .expect_err("--threshold --help must not parse --help as f64");
+        let rendered = err.to_string();
+        assert!(
+            rendered.to_lowercase().contains("help")
+                || matches!(
+                    err.kind(),
+                    clap::error::ErrorKind::DisplayHelp
+                        | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                ),
+            "expected DisplayHelp-style error, got kind={:?} msg={rendered}",
+            err.kind()
+        );
+    }
 }
 
 #[cfg(test)]

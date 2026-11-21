@@ -410,7 +410,7 @@ pub fn run() {
         });
 }
 
-/// Application setup function
+// Application setup function
 // ============================================================================
 // LAN access policy (desktop hardening, server deployments unaffected)
 // ============================================================================
@@ -831,7 +831,7 @@ mod cli_dispatch {
         };
         let tokenized: Vec<String> = argv[1..].to_vec();
         let argv_full = std::iter::once("neomind".to_string())
-            .chain(tokenized.into_iter())
+            .chain(tokenized)
             .collect::<Vec<_>>();
         match rt.block_on(neomind_cli_ops::dispatch::dispatch(&argv_full)) {
             Ok(resp) => {
