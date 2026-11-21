@@ -212,12 +212,23 @@ impl AgentExecutor {
             &agent.memory.knowledge_files,
             llm.max_context_length(),
         );
+        // Legacy Focused path has no vision tool — images are either inline
+        // multimodal parts or unavailable. Mirror execute_with_tools semantics
+        // so standing guidance stays honest.
+        let legacy_vision_path = if has_valid_images {
+            super::vision_path::VisionExecutionPath::InlineMultimodal
+        } else if !image_parts.is_empty() {
+            super::vision_path::VisionExecutionPath::Unavailable
+        } else {
+            super::vision_path::VisionExecutionPath::None
+        };
         let system_prompt = super::tool_prompt::build_tool_system_prompt(
             agent,
             data,
             None,
             &config,
             knowledge_content.as_ref(),
+            legacy_vision_path,
         );
 
         // Build user message with data summary

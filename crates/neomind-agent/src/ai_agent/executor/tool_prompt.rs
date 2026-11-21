@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 use super::{
     build_history_context, format_timestamp, get_time_context, resolve_role, truncate_to,
+    vision_path::{self, VisionExecutionPath},
     HistoryConfig, ToolLoopConfig,
 };
 
@@ -23,12 +24,17 @@ use super::{
 ///
 /// `knowledge_content`: pre-fetched knowledge file contents for inline
 /// injection, avoiding the need to waste a tool-call round reading them.
+///
+/// `vision_path`: when `InlineMultimodal`, standing guidance is rewritten so
+/// the model analyzes attached images directly instead of hunting for a
+/// stripped `vision` tool (Dongpingshan false-success).
 pub(crate) fn build_tool_system_prompt(
     agent: &AiAgent,
     data_collected: &[DataCollected],
     invocation_input: Option<&super::super::AgentInput>,
     config: &ToolLoopConfig,
     knowledge_content: Option<&HashMap<String, String>>,
+    vision_path: VisionExecutionPath,
 ) -> String {
     let time_ctx = get_time_context();
 
@@ -110,9 +116,15 @@ nothing.\n\n"
 
     // ── Merged resource + data section (eliminates redundancy) ──
     let resource_data_section = if config.is_focused_plus {
-        build_focused_resource_section(agent, data_collected)
+        build_focused_resource_section(agent, data_collected, vision_path)
     } else {
-        build_free_resource_section(agent, data_collected)
+        build_free_resource_section(agent, data_collected, vision_path)
+    };
+
+    let vision_guidance = if vision_path::should_inject_inline_vision_guidance(vision_path) {
+        vision_path::multimodal_inline_vision_guidance().to_string()
+    } else {
+        String::new()
     };
 
     // ── Context: User Messages → Knowledge Files → Journal ──
@@ -238,12 +250,13 @@ nothing.\n\n"
     let identity = resolve_role(agent, &default_identity);
 
     format!(
-        "{}\n\n{}\nTime: {}\nTask: {}\n{}{}\n{}\n{}\n{}\n\n{}{}\n",
+        "{}\n\n{}\nTime: {}\nTask: {}\n{}{}{}\n{}\n{}\n{}\n\n{}{}\n",
         preamble,
         identity,
         time_ctx,
         agent.user_prompt,
         event_callout,
+        vision_guidance,
         history_section,
         resource_data_section,
         invocation_section,
@@ -258,6 +271,7 @@ nothing.\n\n"
 pub(crate) fn build_focused_resource_section(
     agent: &AiAgent,
     data_collected: &[DataCollected],
+    vision_path: VisionExecutionPath,
 ) -> String {
     let now_ts = chrono::Utc::now().timestamp();
 
@@ -372,8 +386,9 @@ pub(crate) fn build_focused_resource_section(
     // Note image sources for context (images are already embedded in user message)
     if !image_sources.is_empty() {
         section.push_str(&format!(
-            "\n**Images**: {} (included in message)\n",
-            image_sources.join(", ")
+            "\n**Images**: {} ({})\n",
+            image_sources.join(", "),
+            image_visibility_note(vision_path)
         ));
     }
 
@@ -381,11 +396,25 @@ pub(crate) fn build_focused_resource_section(
     section
 }
 
+fn image_visibility_note(vision_path: VisionExecutionPath) -> &'static str {
+    match vision_path {
+        VisionExecutionPath::InlineMultimodal => {
+            "attached as multimodal content — analyze directly; do not call vision tool"
+        }
+        VisionExecutionPath::ViaVisionTool => {
+            "pass URL / cached ref to the vision tool for analysis"
+        }
+        VisionExecutionPath::Unavailable => "present but no vision path available",
+        VisionExecutionPath::None => "included in message",
+    }
+}
+
 /// Build merged resource + data section for Free mode.
 /// Resource list + JSON data dump in one section.
 pub(crate) fn build_free_resource_section(
     agent: &AiAgent,
     data_collected: &[DataCollected],
+    vision_path: VisionExecutionPath,
 ) -> String {
     let now_ts = chrono::Utc::now().timestamp();
     let mut section = String::from("\n## Resources & Data\n");
@@ -461,6 +490,27 @@ pub(crate) fn build_free_resource_section(
         );
     } else {
         section.push_str(&format!("\nData:\n{}\n", data_text.join("\n")));
+    }
+
+    // Free mode previously omitted image sources entirely (filtered from
+    // data_text), so multimodal agents only saw the pixels with no standing
+    // note — and agent prompts that said "use vision tool" won by default.
+    let image_sources: Vec<&str> = data_collected
+        .iter()
+        .filter(|d| {
+            d.values
+                .get("_is_image")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
+        .map(|d| d.source.as_str())
+        .collect();
+    if !image_sources.is_empty() {
+        section.push_str(&format!(
+            "\n**Images**: {} ({})\n",
+            image_sources.join(", "),
+            image_visibility_note(vision_path)
+        ));
     }
 
     section
@@ -591,7 +641,144 @@ pub(crate) fn build_tool_messages(
 mod tests {
     use super::*;
     use base64::Engine;
-    use neomind_storage::DataCollected;
+    use neomind_storage::{
+        AgentMemory, AgentSchedule, AgentStats, AgentStatus, AiAgent, ExecutionJournal,
+        ExecutionMode, ScheduleType,
+    };
+
+    fn minimal_agent(prompt: &str) -> AiAgent {
+        let now = 0_i64;
+        AiAgent {
+            id: "prompt-test-agent".into(),
+            name: "PromptTest".into(),
+            description: None,
+            user_prompt: prompt.into(),
+            llm_backend_id: None,
+            parsed_intent: None,
+            resources: vec![],
+            schedule: AgentSchedule {
+                schedule_type: ScheduleType::Manual,
+                interval_seconds: None,
+                cron_expression: None,
+                timezone: None,
+                event_filter: None,
+            },
+            status: AgentStatus::Active,
+            priority: 128,
+            created_at: now,
+            updated_at: now,
+            last_execution_at: None,
+            stats: AgentStats {
+                total_executions: 0,
+                successful_executions: 0,
+                failed_executions: 0,
+                avg_duration_ms: 0,
+                last_duration_ms: None,
+            },
+            memory: AgentMemory {
+                journal: ExecutionJournal::default(),
+                knowledge_files: vec![],
+                updated_at: now,
+            },
+            conversation_history: vec![],
+            user_messages: vec![],
+            conversation_summary: None,
+            context_window_size: 5,
+            tool_config: None,
+            execution_mode: ExecutionMode::Free,
+            error_message: None,
+            system_prompt: None,
+            max_retries: 0,
+            consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
+            memory_mode: None,
+            notify: None,
+            enable_tool_chaining: false,
+            max_chain_depth: 3,
+            max_tokens_per_run: None,
+        }
+    }
+
+    fn image_dc() -> DataCollected {
+        DataCollected {
+            source: "device:cam:image_data".into(),
+            data_type: "image".into(),
+            values: serde_json::json!({
+                "_is_image": true,
+                "image_base64": "aGVsbG8=",
+                "image_mime_type": "image/jpeg",
+            }),
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn inline_multimodal_prompt_rewrites_vision_guidance() {
+        let agent = minimal_agent("用 vision 工具分析图像，发现赌博再告警");
+        let cfg = ToolLoopConfig::free();
+        let prompt = build_tool_system_prompt(
+            &agent,
+            &[image_dc()],
+            None,
+            &cfg,
+            None,
+            VisionExecutionPath::InlineMultimodal,
+        );
+        assert!(
+            prompt.contains("Do NOT call a `vision` tool"),
+            "must rewrite standing guidance: {prompt}"
+        );
+        assert!(
+            prompt.contains("attached as multimodal content"),
+            "free resource section must note inline images: {prompt}"
+        );
+        assert!(
+            prompt.contains("用 vision 工具分析图像"),
+            "original task text stays (override follows it)"
+        );
+        // Override must appear after the task so it wins.
+        let task_pos = prompt.find("用 vision 工具分析图像").expect("task");
+        let override_pos = prompt
+            .find("Do NOT call a `vision` tool")
+            .expect("override");
+        assert!(
+            override_pos > task_pos,
+            "inline guidance must follow the task definition"
+        );
+    }
+
+    #[test]
+    fn via_vision_tool_prompt_keeps_tool_path() {
+        let agent = minimal_agent("analyze the frame");
+        let cfg = ToolLoopConfig::free();
+        let prompt = build_tool_system_prompt(
+            &agent,
+            &[image_dc()],
+            None,
+            &cfg,
+            None,
+            VisionExecutionPath::ViaVisionTool,
+        );
+        assert!(
+            !prompt.contains("Do NOT call a `vision` tool"),
+            "must not forbid vision when the tool is the path"
+        );
+        assert!(
+            prompt.contains("pass URL / cached ref to the vision tool"),
+            "must point at the vision tool: {prompt}"
+        );
+    }
+
+    #[test]
+    fn no_image_prompt_skips_vision_override() {
+        let agent = minimal_agent("check temperature");
+        let cfg = ToolLoopConfig::free();
+        let prompt =
+            build_tool_system_prompt(&agent, &[], None, &cfg, None, VisionExecutionPath::None);
+        assert!(!prompt.contains("## Vision Path (IMPORTANT)"));
+        assert!(!prompt.contains("**Images**:"));
+    }
 
     /// `bound_image_data_url` must turn a collected device image (base64 form)
     /// into a `data:image/<mime>;base64,<...>` URL whose payload round-trips

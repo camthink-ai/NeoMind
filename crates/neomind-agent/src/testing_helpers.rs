@@ -206,6 +206,10 @@ pub mod mock_llm {
         /// legacy text-only analysis paths under test; tool-loop tests turn
         /// it on so the executor activates tool mode.
         function_calling: bool,
+        /// Advertised via `capabilities().supports_images` / `multimodal`.
+        /// Default false; multimodal agent tests turn it on so the executor
+        /// strips the vision tool and injects inline-vision guidance.
+        supports_images: bool,
     }
 
     struct State {
@@ -237,6 +241,7 @@ pub mod mock_llm {
                     max_context: 4096,
                 })),
                 function_calling: false,
+                supports_images: false,
             }
         }
 
@@ -244,6 +249,13 @@ pub mod mock_llm {
         /// tool-calling path (`capabilities().function_calling`).
         pub fn with_function_calling(mut self) -> Self {
             self.function_calling = true;
+            self
+        }
+
+        /// Advertise multimodal / vision support so scheduled agents strip
+        /// the `vision` tool and inject inline-image guidance.
+        pub fn with_supports_images(mut self) -> Self {
+            self.supports_images = true;
             self
         }
 
@@ -312,15 +324,20 @@ pub mod mock_llm {
         }
 
         fn capabilities(&self) -> BackendCapabilities {
+            let modalities = if self.supports_images {
+                vec!["text".to_string(), "image".to_string()]
+            } else {
+                vec!["text".to_string()]
+            };
             BackendCapabilities {
                 streaming: true,
-                multimodal: false,
+                multimodal: self.supports_images,
                 function_calling: self.function_calling,
                 multiple_models: false,
                 max_context: Some(self.state.lock().unwrap().max_context),
-                modalities: vec!["text".to_string()],
+                modalities,
                 reasoning: Default::default(),
-                supports_images: false,
+                supports_images: self.supports_images,
                 thinking_display: false,
             }
         }
