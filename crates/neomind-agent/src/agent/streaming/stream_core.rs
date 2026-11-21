@@ -658,7 +658,10 @@ pub(super) fn drive_react_stream(
             let mut agent_conclusion_redirect_sent = false;
             let mut agent_conclusion_redirect_pending: Option<String> = None;
             // Guided MQTT onboarding without `device create`.
-            let mut device_onboarding_redirect_sent = false;
+            // Budget 2: Spark sometimes ignores the first redirect and resumes
+            // skill thrash (Day9 zh guided-mqtt residual).
+            let mut device_onboarding_redirects = 0usize;
+            const DEVICE_ONBOARDING_REDIRECT_MAX: usize = 2;
             let mut device_onboarding_redirect_pending: Option<String> = None;
             // Cleaned narration from the round that triggered the nudge —
             // the restore source when the nudged round degenerates (see the
@@ -858,7 +861,7 @@ pub(super) fn drive_react_stream(
                         };
 
                         let onboarding_redirect_msg = if guards_disabled
-                            || device_onboarding_redirect_sent
+                            || device_onboarding_redirects >= DEVICE_ONBOARDING_REDIRECT_MAX
                         {
                             None
                         } else {
@@ -893,7 +896,7 @@ pub(super) fn drive_react_stream(
                             );
                             redirect
                         } else if let Some(redirect) = onboarding_redirect_msg {
-                            device_onboarding_redirect_sent = true;
+                            device_onboarding_redirects += 1;
                             guard_ledger.record(
                                 super::guard::GuardKind::DeviceOnboardingRedirect,
                                 super::guard::GuardOutcome::Fired,
@@ -902,6 +905,7 @@ pub(super) fn drive_react_stream(
                             );
                             tracing::info!(
                                 round = tool_iteration_count + 1,
+                                n = device_onboarding_redirects,
                                 "Guided device onboarding without create — mid-turn redirect"
                             );
                             redirect
@@ -3065,7 +3069,7 @@ pub(super) fn drive_react_stream(
                     };
                     let onboarding_redirect_allowed =
                         super::guard::should_redirect_device_onboarding(
-                            device_onboarding_redirect_sent,
+                            device_onboarding_redirects >= DEVICE_ONBOARDING_REDIRECT_MAX,
                             no_execution_requested,
                             iteration_budget_left,
                             wall_clock_left,
@@ -3073,7 +3077,7 @@ pub(super) fn drive_react_stream(
                         );
                     if onboarding_redirect_allowed {
                         if let Some(redirect) = onboarding_prompt {
-                            device_onboarding_redirect_sent = true;
+                            device_onboarding_redirects += 1;
                             guard_ledger.record(
                                 super::guard::GuardKind::DeviceOnboardingRedirect,
                                 super::guard::GuardOutcome::Fired,

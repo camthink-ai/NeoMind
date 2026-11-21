@@ -771,6 +771,12 @@ mod tests {
         assert!(!should_redirect_agent_conclusion(
             false, false, true, true, false
         ));
+        assert!(should_redirect_device_onboarding(
+            false, false, true, true, true
+        ));
+        assert!(!should_redirect_device_onboarding(
+            true, false, true, true, true
+        ));
     }
 
     /// P1-3: `already_present: true` repeat loads must still count toward
