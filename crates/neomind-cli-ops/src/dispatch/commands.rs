@@ -1305,7 +1305,10 @@ pub enum RuleCommand {
         #[arg(long, required_unless_present = "body")]
         operator: Option<String>,
         /// Threshold value to compare the metric against.
-        #[arg(long, required_unless_present = "body")]
+        /// `allow_hyphen_values`: HACCP frozen rules use `--threshold -18`;
+        /// without this clap treats `-18` as a flag (`unexpected argument '-1'`),
+        /// which wedged Phase1/Day9 `haccp-compliance-deploy[en]` into timeout.
+        #[arg(long, required_unless_present = "body", allow_hyphen_values = true)]
         threshold: Option<f64>,
         /// Notify action message. Supports `{value}` and `{source_id}` placeholders.
         #[arg(long, required_unless_present = "body")]
@@ -1366,7 +1369,8 @@ pub enum RuleCommand {
         #[arg(long)]
         operator: Option<String>,
         /// New threshold value.
-        #[arg(long)]
+        /// See `Create.threshold` — negative values need `allow_hyphen_values`.
+        #[arg(long, allow_hyphen_values = true)]
         threshold: Option<f64>,
         /// New notify message: patches the rule's notify action (keeps its
         /// severity) or appends one when absent; a rule with MULTIPLE notify
@@ -2699,6 +2703,70 @@ pub fn parse_duration(s: &str) -> u64 {
         num.parse::<u64>().unwrap_or(1) * 86400
     } else {
         s.parse::<u64>().unwrap_or(300)
+    }
+}
+
+#[cfg(test)]
+mod rule_threshold_hyphen_tests {
+    //! Day9: `--threshold -18` must parse (frozen HACCP). Clap's default
+    //! treats leading `-` as a new flag → `unexpected argument '-1'`.
+
+    use super::{Args, Command, RuleCommand};
+    use clap::Parser;
+
+    #[test]
+    fn create_accepts_negative_threshold_as_separate_argv() {
+        let args = Args::try_parse_from([
+            "neomind",
+            "rule",
+            "create",
+            "--name",
+            "Frozen Temp Alert",
+            "--trigger-device",
+            "frozen-fridge-1",
+            "--metric",
+            "temp_c",
+            "--operator",
+            "less_than",
+            "--threshold",
+            "-18",
+            "--notify",
+            "Frozen fridge below -18C: {value}",
+        ])
+        .expect("negative --threshold must parse");
+        match args.command {
+            Command::Rule {
+                rule_cmd:
+                    RuleCommand::Create {
+                        threshold: Some(t),
+                        ..
+                    },
+            } => assert!((t - (-18.0)).abs() < f64::EPSILON, "got {t}"),
+            other => panic!("expected Rule::Create, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn update_accepts_negative_threshold_as_separate_argv() {
+        let args = Args::try_parse_from([
+            "neomind",
+            "rule",
+            "update",
+            "rule-001",
+            "--threshold",
+            "-18",
+        ])
+        .expect("negative --threshold on update must parse");
+        match args.command {
+            Command::Rule {
+                rule_cmd:
+                    RuleCommand::Update {
+                        threshold: Some(t),
+                        ..
+                    },
+            } => assert!((t - (-18.0)).abs() < f64::EPSILON, "got {t}"),
+            other => panic!("expected Rule::Update, got {other:?}"),
+        }
     }
 }
 
