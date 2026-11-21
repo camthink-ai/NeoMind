@@ -2333,7 +2333,9 @@ pub enum WidgetCommand {
         #[arg(long, default_value = "custom")]
         widget_type: String,
         /// Output directory (defaults to widget ID).
-        #[arg(long)]
+        /// Short `-o` matches the help example and `extension create -o`
+        /// (Day9 overnight `widget-full-lifecycle` rejected bare `-o` 4×).
+        #[arg(short, long)]
         output: Option<String>,
         /// Scaffold AND install in one step — register the widget immediately
         /// after scaffolding, no separate `widget install` needed.
@@ -2477,7 +2479,18 @@ pub enum SettingsCommand {
     /// Example: `neomind settings set-retention --enabled --interval-hours 1 --default-retention 168`
     SetRetention {
         /// Enable or disable automatic retention cleanup.
-        #[arg(long)]
+        /// Accepts bare `--enabled` (true) and `--enabled=true|false` /
+        /// `--enabled true|false` — models habitually pass `=true`; clap's
+        /// default flag form rejected it (`unexpected value 'true'`) and
+        /// burned Day9 overnight `settings-retention`.
+        #[arg(
+            long,
+            num_args = 0..=1,
+            default_missing_value = "true",
+            default_value_t = false,
+            action = clap::ArgAction::Set,
+            value_parser = clap::builder::BoolishValueParser::new()
+        )]
         enabled: bool,
         /// Cleanup interval in hours (must be greater than 0).
         #[arg(long)]
@@ -2766,6 +2779,100 @@ mod rule_threshold_hyphen_tests {
                     },
             } => assert!((t - (-18.0)).abs() < f64::EPSILON, "got {t}"),
             other => panic!("expected Rule::Update, got {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod day9_rejected_args_contract_tests {
+    //! Day9 D3: clear CLI contract gaps behind overnight `rejected_args`
+    //! (not pure model noise).
+
+    use super::{Args, Command, SettingsCommand, WidgetCommand};
+    use clap::Parser;
+
+    #[test]
+    fn widget_create_accepts_short_output_flag() {
+        let args = Args::try_parse_from([
+            "neomind",
+            "widget",
+            "create",
+            "Eval Widget",
+            "--widget-type",
+            "custom",
+            "-o",
+            "/tmp/eval-widget-src",
+        ])
+        .expect("widget create -o must parse (help example + extension create parity)");
+        match args.command {
+            Command::Widget {
+                widget_cmd:
+                    WidgetCommand::Create {
+                        output: Some(path),
+                        ..
+                    },
+            } => assert_eq!(path, "/tmp/eval-widget-src"),
+            other => panic!("expected Widget::Create, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn settings_set_retention_accepts_enabled_equals_true() {
+        for argv in [
+            &[
+                "neomind",
+                "settings",
+                "set-retention",
+                "--enabled=true",
+                "--interval-hours",
+                "1",
+                "--default-retention",
+                "168",
+            ][..],
+            &[
+                "neomind",
+                "settings",
+                "set-retention",
+                "--enabled",
+                "true",
+                "--interval-hours",
+                "1",
+            ][..],
+            &[
+                "neomind",
+                "settings",
+                "set-retention",
+                "--enabled",
+                "--interval-hours",
+                "1",
+            ][..],
+            &[
+                "neomind",
+                "settings",
+                "set-retention",
+                "--enabled=false",
+                "--interval-hours",
+                "1",
+            ][..],
+        ] {
+            let args = Args::try_parse_from(argv.iter().copied()).unwrap_or_else(|e| {
+                panic!("expected set-retention enabled forms to parse for {argv:?}: {e}")
+            });
+            match args.command {
+                Command::Settings {
+                    settings_cmd:
+                        SettingsCommand::SetRetention {
+                            enabled,
+                            interval_hours,
+                            ..
+                        },
+                } => {
+                    assert_eq!(interval_hours, 1, "argv={argv:?}");
+                    let expect_enabled = !argv.iter().any(|a| *a == "--enabled=false");
+                    assert_eq!(enabled, expect_enabled, "argv={argv:?}");
+                }
+                other => panic!("expected Settings::SetRetention, got {other:?}"),
+            }
         }
     }
 }
