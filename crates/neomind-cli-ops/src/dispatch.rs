@@ -114,6 +114,38 @@ pub async fn dispatch(argv: &[String]) -> Result<CliResponse, DispatchError> {
     dispatch_with_context(argv, &DispatchContext::default()).await
 }
 
+/// Resolve the output format clap would apply for `argv` (global `--json` /
+/// `--format`), falling back to `NEOMIND_JSON=1` then Human. Used by desktop
+/// in-process CLI so `--json` is honored the same way as the binary.
+pub fn output_format_for_argv(argv: &[String]) -> OutputFormat {
+    match Args::try_parse_from(argv.iter()) {
+        Ok(parsed) => {
+            if parsed.json || parsed.format.as_deref() == Some("json") {
+                OutputFormat::Json
+            } else if parsed.format.as_deref() == Some("text") {
+                OutputFormat::Human
+            } else if std::env::var("NEOMIND_JSON")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
+                OutputFormat::Json
+            } else {
+                OutputFormat::Human
+            }
+        }
+        Err(_) => {
+            if std::env::var("NEOMIND_JSON")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+            {
+                OutputFormat::Json
+            } else {
+                OutputFormat::Human
+            }
+        }
+    }
+}
+
 /// Dispatch a tokenized `neomind` command in-process with an explicit
 /// [`DispatchContext`].
 ///

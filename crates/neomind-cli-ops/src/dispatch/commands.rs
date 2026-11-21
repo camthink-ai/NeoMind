@@ -926,7 +926,8 @@ pub enum DeviceCommand {
         #[arg(long)]
         metric: String,
         /// Value (number, string, or "true"/"false").
-        #[arg(long)]
+        /// `allow_negative_numbers`: frozen-chain HACCP writes use `--value -20`.
+        #[arg(long, allow_negative_numbers = true)]
         value: String,
         /// Timestamp in milliseconds (defaults to now).
         #[arg(long)]
@@ -1305,10 +1306,10 @@ pub enum RuleCommand {
         #[arg(long, required_unless_present = "body")]
         operator: Option<String>,
         /// Threshold value to compare the metric against.
-        /// `allow_hyphen_values`: HACCP frozen rules use `--threshold -18`;
-        /// without this clap treats `-18` as a flag (`unexpected argument '-1'`),
-        /// which wedged Phase1/Day9 `haccp-compliance-deploy[en]` into timeout.
-        #[arg(long, required_unless_present = "body", allow_hyphen_values = true)]
+        /// `allow_negative_numbers`: HACCP frozen rules use `--threshold -18`.
+        /// Prefer this over `allow_hyphen_values` so `--threshold --help` still
+        /// shows help instead of trying to parse `"--help"` as f64.
+        #[arg(long, required_unless_present = "body", allow_negative_numbers = true)]
         threshold: Option<f64>,
         /// Notify action message. Supports `{value}` and `{source_id}` placeholders.
         #[arg(long, required_unless_present = "body")]
@@ -1369,8 +1370,8 @@ pub enum RuleCommand {
         #[arg(long)]
         operator: Option<String>,
         /// New threshold value.
-        /// See `Create.threshold` — negative values need `allow_hyphen_values`.
-        #[arg(long, allow_hyphen_values = true)]
+        /// See `Create.threshold` — negative values need `allow_negative_numbers`.
+        #[arg(long, allow_negative_numbers = true)]
         threshold: Option<f64>,
         /// New notify message: patches the rule's notify action (keeps its
         /// severity) or appends one when absent; a rule with MULTIPLE notify
@@ -2751,8 +2752,7 @@ mod rule_threshold_hyphen_tests {
             Command::Rule {
                 rule_cmd:
                     RuleCommand::Create {
-                        threshold: Some(t),
-                        ..
+                        threshold: Some(t), ..
                     },
             } => assert!((t - (-18.0)).abs() < f64::EPSILON, "got {t}"),
             other => panic!("expected Rule::Create, got {other:?}"),
@@ -2774,8 +2774,7 @@ mod rule_threshold_hyphen_tests {
             Command::Rule {
                 rule_cmd:
                     RuleCommand::Update {
-                        threshold: Some(t),
-                        ..
+                        threshold: Some(t), ..
                     },
             } => assert!((t - (-18.0)).abs() < f64::EPSILON, "got {t}"),
             other => panic!("expected Rule::Update, got {other:?}"),
@@ -2808,8 +2807,7 @@ mod day9_rejected_args_contract_tests {
             Command::Widget {
                 widget_cmd:
                     WidgetCommand::Create {
-                        output: Some(path),
-                        ..
+                        output: Some(path), ..
                     },
             } => assert_eq!(path, "/tmp/eval-widget-src"),
             other => panic!("expected Widget::Create, got {other:?}"),
@@ -2868,7 +2866,7 @@ mod day9_rejected_args_contract_tests {
                         },
                 } => {
                     assert_eq!(interval_hours, 1, "argv={argv:?}");
-                    let expect_enabled = !argv.iter().any(|a| *a == "--enabled=false");
+                    let expect_enabled = !argv.contains(&"--enabled=false");
                     assert_eq!(enabled, expect_enabled, "argv={argv:?}");
                 }
                 other => panic!("expected Settings::SetRetention, got {other:?}"),
@@ -2892,11 +2890,12 @@ mod global_json_flag_tests {
             &["neomind", "device", "list", "--json"][..],
             &["neomind", "rule", "list", "--json"][..],
             &["neomind", "transform", "list", "--json"][..],
-            &["neomind", "device", "history", "fridge-1", "--metric", "temp_c", "--json"][..],
+            &[
+                "neomind", "device", "history", "fridge-1", "--metric", "temp_c", "--json",
+            ][..],
         ] {
-            let args = Args::try_parse_from(argv.iter().copied()).unwrap_or_else(|e| {
-                panic!("expected --json to parse for {argv:?}: {e}")
-            });
+            let args = Args::try_parse_from(argv.iter().copied())
+                .unwrap_or_else(|e| panic!("expected --json to parse for {argv:?}: {e}"));
             assert!(args.json, "argv={argv:?}");
             assert!(args.format.is_none());
         }

@@ -833,27 +833,43 @@ impl ShellTool {
                 // clap `--help` in its own `usage_hint` JSON field (never
                 // concatenated onto `stdout` or `stderr`). Preserve exit_code 2
                 // so Phase 1's pre-submission rejection classifier matches.
-                let usage_hint = argv.get(1).and_then(|domain| {
-                    let subcommand = argv
-                        .get(2)
-                        .map(String::as_str)
-                        .filter(|s| !s.starts_with('-'));
-                    Self::in_process_domain_help(
-                        domain.as_str(),
-                        subcommand,
-                        "retry with the exact one",
-                    )
-                    .or_else(|| {
-                        if domain_index.is_none() {
-                            Some(format!(
-                                "Unknown domain `{}`. Valid domains: device, agent, rule, dashboard, connector, extension, transform, widget, message, push, llm, settings, system, api-key.",
-                                domain
-                            ))
-                        } else {
-                            None
-                        }
+                let usage_hint = {
+                    let domain_idx =
+                        neomind_cli_ops::json_arg::domain_token_index(&argv).unwrap_or(1);
+                    argv.get(domain_idx).and_then(|domain| {
+                        let subcommand = argv
+                            .get(domain_idx + 1)
+                            .map(String::as_str)
+                            .filter(|s| !s.starts_with('-'));
+                        // Prefer in-process clap help (full flags, no ellipsis).
+                        // Fall back to DomainCommandContract when clap help is
+                        // unavailable for that domain/action.
+                        Self::in_process_domain_help(
+                            domain.as_str(),
+                            subcommand,
+                            "retry with the exact one",
+                        )
+                        .or_else(|| {
+                            subcommand.and_then(|action| {
+                                neomind_cli_ops::json_arg::find_domain_command_contract(
+                                    domain.as_str(),
+                                    action,
+                                )
+                                .map(|c| c.format_hint())
+                            })
+                        })
+                        .or_else(|| {
+                            if domain_index.is_none() {
+                                Some(format!(
+                                    "Unknown domain `{}`. Valid domains: device, agent, rule, dashboard, connector, extension, transform, widget, message, push, llm, settings, system, api-key.",
+                                    domain
+                                ))
+                            } else {
+                                None
+                            }
+                        })
                     })
-                });
+                };
                 Some(CommandOutput {
                     exit_code: Some(2),
                     stdout: String::new(),
@@ -2199,8 +2215,8 @@ impl ShellTool {
             return None;
         }
 
-        let domain = argv.get(1).map(String::as_str).unwrap_or("");
-        let action = argv.get(2).map(String::as_str).unwrap_or("");
+        let (domain, action) =
+            neomind_cli_ops::json_arg::domain_action_from_argv(&argv).unwrap_or(("", ""));
         let combined = format!("{} {}", stdout, stderr).to_lowercase();
 
         let is_not_found = combined.contains("not found")
@@ -2230,6 +2246,13 @@ impl ShellTool {
                 || combined.contains("<agent_id>")
                 || combined.contains("<extension_id>"));
 
+        // Prefer DomainCommandContract for validation / unexpected-arg recovery
+        // across all 10 core domains (avoids stale hard-coded agent create tips).
+        let contract_hint = || {
+            neomind_cli_ops::json_arg::find_domain_command_contract(domain, action)
+                .map(|c| c.format_hint())
+        };
+
         // Targeted syntax hints only — never blindly tell the model "ID is
         // positional" on unrelated flag errors, and avoid fighting with
         // clap's in-process `usage_hint` on exit_code 2.
@@ -2253,6 +2276,9 @@ impl ShellTool {
             if let Some(tip) = misplaced_primary_json_flag_tip(domain, action, &argv) {
                 return Some(tip);
             }
+            // Do not stack a DomainCommandContract tip on bare unexpected-arg
+            // errors — clap's in-process `usage_hint` already carries usage.
+            // Contract tips apply on validation / missing-required paths below.
             return None;
         }
 
@@ -2262,11 +2288,9 @@ impl ShellTool {
                     Some("Device or command not found. Run 'neomind device list' to verify the device ID and 'neomind device get <ID>' to inspect supported commands, then call 'neomind device control <ID> <COMMAND>' with shell `params` (COMMAND is positional, not a flag).".to_string())
                 } else if is_not_found {
                     Some("Run 'neomind device list' to see available devices, then retry with a valid ID.".to_string())
-                } else if action == "create" && is_validation {
-                    Some("Required flags: --name, --device-type, --adapter-type (mqtt|webhook). Use 'neomind device types list' to see built-in types.".to_string())
                 } else if action == "control" && is_validation {
                     // Server already returns schema + params_example + "NOT sent".
-                    // Do NOT overwrite that with the generic device subcommand list.
+                    // Do NOT overwrite that with a generic/contract tip.
                     if combined.contains("hint:")
                         || combined.contains("params_example")
                         || combined.contains("not sent")
@@ -2284,6 +2308,10 @@ impl ShellTool {
                 } else if (action == "history" || action == "latest") && combined.contains("metric")
                 {
                     Some("Don't guess metric names. 'neomind device list' shows devices only — it carries no field names. Use 'neomind device get <ID>' for one device's actual metric fields, or 'neomind device types list' for a type's metric_fields.".to_string())
+                } else if is_validation {
+                    contract_hint().or_else(|| {
+                        Some("Available actions: list, get, create, update, delete, latest, history, control, write-metric, webhook-url, types, drafts. ID is positional: neomind device <action> <ID> [flags].".to_string())
+                    })
                 } else {
                     Some("Available actions: list, get, create, update, delete, latest, history, control, write-metric, webhook-url, types, drafts. ID is positional: neomind device <action> <ID> [flags].".to_string())
                 }
@@ -2291,18 +2319,12 @@ impl ShellTool {
             "dashboard" => {
                 if is_not_found {
                     Some("Run 'neomind dashboard list' to see available dashboards.".to_string())
-                } else if action == "create" && is_validation {
-                    Some("Required field: --name. Example: neomind dashboard create --name \"My Dashboard\"".to_string())
-                } else if action == "update" {
+                } else if action == "update" && !is_validation {
                     Some("update --components full-replaces the widget array and requires --replace-all. For ONE widget use shell with command=\"neomind dashboard update-component <ID> --component-id <CID>\" and params={...} (deep-merge patch); to add widgets use add-components with params=[...]; to remove use remove-components with params=[\"<CID>\"].".to_string())
                 } else if is_validation {
-                    if let Some(contract) =
-                        neomind_cli_ops::json_arg::find_domain_command_contract(domain, action)
-                    {
-                        Some(contract.format_hint())
-                    } else {
+                    contract_hint().or_else(|| {
                         Some("Available actions: list, get, create, update, add-components, update-component, remove-components, delete, share.".to_string())
-                    }
+                    })
                 } else {
                     Some("Available actions: list, get, create, update, add-components, update-component, remove-components, delete, share.".to_string())
                 }
@@ -2310,20 +2332,15 @@ impl ShellTool {
             "rule" => {
                 if is_not_found {
                     Some("Run 'neomind rule list' to see available rules.".to_string())
-                } else if action == "create"
-                    && (is_validation || combined.contains("json") || combined.contains("parse"))
-                {
-                    Some("Rule JSON format: {\"name\":\"...\",\"condition\":{\"condition_type\":\"comparison\",\"source\":\"device:SENSOR_ID:METRIC\",\"operator\":\"greater_than\",\"threshold\":30},\"actions\":[{\"type\":\"notify\",\"message\":\"Alert\",\"severity\":\"critical\"}]}. BEFORE creating: run `neomind device list` to discover real device IDs and metric_fields per type. NEVER guess device IDs or metric names.".to_string())
                 } else if action == "enable" || action == "disable" {
                     Some("Run 'neomind rule list' to find the rule ID, then 'neomind rule <enable|disable> <ID>'.".to_string())
-                } else if is_validation {
-                    if let Some(contract) =
-                        neomind_cli_ops::json_arg::find_domain_command_contract(domain, action)
-                    {
-                        Some(contract.format_hint())
-                    } else {
+                } else if is_validation
+                    || (action == "create"
+                        && (combined.contains("json") || combined.contains("parse")))
+                {
+                    contract_hint().or_else(|| {
                         Some("Available actions: list, get, create, update, delete, enable, disable, test, history".to_string())
-                    }
+                    })
                 } else {
                     Some("Available actions: list, get, create, update, delete, enable, disable, test, history".to_string())
                 }
@@ -2331,74 +2348,43 @@ impl ShellTool {
             "agent" => {
                 if is_not_found {
                     Some("Run 'neomind agent list' to see available agents.".to_string())
-                } else if action == "create" && is_validation {
-                    Some("Required fields: --name, --prompt, --schedule-type (event|interval|cron|manual). Example: neomind agent create --name \"monitor\" --prompt \"Check devices\" --schedule-type event. Never invent device IDs or metric names: run 'neomind device list' for real IDs, then 'neomind device get <ID>' for that device's metric fields. A structured agent with no bound source refuses to run.".to_string())
                 } else if action == "control" && is_validation {
                     Some("Status is positional: neomind agent control <ID> <active|paused>. Example: neomind agent control abc123 active".to_string())
                 } else if is_validation {
-                    if let Some(contract) =
-                        neomind_cli_ops::json_arg::find_domain_command_contract(domain, action)
-                    {
-                        Some(contract.format_hint())
-                    } else {
+                    // Prefer contract (includes --execution-mode free / --every).
+                    contract_hint().or_else(|| {
                         Some("Available actions: list, get, create, update, delete, control, invoke, memory, executions, latest-execution, conversation, send-message".to_string())
-                    }
+                    })
                 } else {
                     Some("Available actions: list, get, create, update, delete, control, invoke, memory, executions, latest-execution, conversation, send-message".to_string())
                 }
             }
-            "extension" => {
+            "extension" | "transform" | "widget" | "message" | "settings" | "connector" => {
                 if is_not_found {
-                    Some("Overview: 'neomind extension list'. Concrete task: 'neomind extension commands --search \"<task>\"' then paste hit shell_example. Known id: 'neomind extension commands <ID>'.".to_string())
-                } else if action == "install" && is_validation {
-                    Some("Provide the extension zip file path. Use 'neomind extension market-list' to browse marketplace.".to_string())
-                } else if action == "config" {
-                    Some("Usage: `neomind extension config <ID>` to view, or shell with command=\"neomind extension config <ID>\" and params={\"key\":\"value\"} to update.".to_string())
-                } else if action == "commands" || action == "invoke" {
-                    Some("Concrete task: neomind extension commands --search \"<task>\" (use shell_example). Overview: extension list — do not search \"extension capabilities\". Reuse known on follow-up.".to_string())
+                    Some(format!(
+                        "Run 'neomind {domain} list' (or get/status) to discover valid IDs, then retry."
+                    ))
+                } else if is_validation {
+                    contract_hint().or_else(|| {
+                        Some(format!(
+                            "Run 'neomind {domain} --help' for the exact actions and flags."
+                        ))
+                    })
                 } else {
-                    Some("Available actions: list, get, commands, invoke, status, logs, config, install, uninstall, reload, create, build, market-list, market-install, validate".to_string())
-                }
-            }
-            "transform" => {
-                if is_not_found {
-                    Some("Run 'neomind transform list' to see available transforms.".to_string())
-                } else if action == "create" && is_validation {
-                    Some("Required flags: --name, --scope (global|device_type:X|device:ID), --code (JavaScript; the input value is bound to `input`). Example: neomind transform create --name \"celsius\" --code \"return input * 1.8 + 32\" --scope global".to_string())
-                } else {
-                    Some("Available actions: list, get, create, update, enable, disable, delete, test-code, metrics, data-sources, executions".to_string())
-                }
-            }
-            "widget" => {
-                if is_not_found {
-                    Some(
-                        "Run 'neomind widget list' to see available widgets (built-in + custom)."
-                            .to_string(),
-                    )
-                } else if action == "create" && is_validation {
-                    Some("Valid widget types: chart, gauge, stat, table, image, custom. Example: neomind widget create \"My Chart\" --widget-type chart".to_string())
-                } else if action == "install" && is_validation {
-                    Some("Provide a widget directory (containing manifest.json + bundle.js) or a .zip file. Use DATA-RELATIVE paths (no leading data/): neomind widget install frontend-components/my-widget — absolute ~/Library/Application Support/... paths contain a space and need quotes".to_string())
-                } else {
-                    Some("Available actions: list, get, create, install, uninstall, market-list, market-install".to_string())
-                }
-            }
-            "message" => {
-                if is_not_found {
-                    Some("Run 'neomind message list' to see all messages.".to_string())
-                } else if action == "send" && is_validation {
-                    Some("Required fields: --title, --body, --severity (info|warning|critical|emergency). Example: neomind message send --title \"Alert\" --body \"High temp\" --severity warning".to_string())
-                } else if action == "channel-update" {
-                    Some("Usage: shell with command=\"neomind message channel-update --name <N>\" and params={\"min_severity\":\"warning\"} (or --config '<JSON>'). To filter by source type: params={\"source_types\":[\"device\"]}. channel-create uses --name flag; channel-delete/channel-test take name as positional arg.".to_string())
-                } else {
-                    Some("Available actions: list, get, send, read, delete, channel-list, channel-get, channel-types, channel-type-schema, channel-create, channel-update, channel-delete, channel-test.".to_string())
+                    contract_hint().or_else(|| {
+                        Some(format!(
+                            "Run 'neomind {domain} --help' for the exact actions and flags."
+                        ))
+                    })
                 }
             }
             "llm" => {
                 if is_not_found {
                     Some("Run 'neomind llm list' to see configured backends.".to_string())
-                } else if action == "create" && is_validation {
-                    Some("Required fields: --name, --type (ollama|llamacpp|openai|anthropic), --endpoint, --model. Example: neomind llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3.5:4b".to_string())
+                } else if is_validation {
+                    contract_hint().or_else(|| {
+                        Some("Available actions: list, get, models, create, update, delete, activate, test. Example: neomind llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3.5:4b".to_string())
+                    })
                 } else {
                     Some("Available actions: list, get, models, create, update, delete, activate, test. Example: neomind llm create --name local --type ollama --endpoint http://localhost:11434 --model qwen3.5:4b".to_string())
                 }

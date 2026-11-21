@@ -500,6 +500,19 @@ fn narration_has_promise_actor(text: &str) -> bool {
     ACTORS.iter().any(|a| lower.contains(a))
 }
 
+fn english_promise_pattern_hits(lower: &str, pattern: &str) -> bool {
+    // ASCII patterns need a trailing word boundary so "let me add" does not
+    // match "Let me address…" / "I'll list" does not match "I'll listen…".
+    let Some(idx) = lower.find(pattern) else {
+        return false;
+    };
+    let end = idx + pattern.len();
+    match lower.as_bytes().get(end) {
+        None => true,
+        Some(b) => !b.is_ascii_alphanumeric() && *b != b'_',
+    }
+}
+
 pub fn is_narration_without_action(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.chars().count() > NARRATION_MAX_CHARS {
@@ -512,9 +525,29 @@ pub fn is_narration_without_action(text: &str) -> bool {
     {
         return true;
     }
+    // Complete list summaries after a successful tool round: first line may
+    // still open with "I'll list…" / "我来列出…" but the body already has
+    // bullet items — do not foreshadow-continue those.
+    if trimmed.contains('\n')
+        && (trimmed.contains("\n- ")
+            || trimmed.contains("\n* ")
+            || trimmed
+                .lines()
+                .skip(1)
+                .any(|l| l.trim().starts_with(|c: char| c.is_ascii_digit())))
+        && trimmed.chars().count() > 40
+    {
+        return false;
+    }
     let head: String = trimmed.chars().take(PROMISE_HEAD_CHARS).collect();
     let lower = head.to_lowercase();
-    ACTION_PROMISE_PATTERNS.iter().any(|p| lower.contains(p))
+    ACTION_PROMISE_PATTERNS.iter().any(|p| {
+        if p.is_ascii() {
+            english_promise_pattern_hits(&lower, p)
+        } else {
+            lower.contains(*p)
+        }
+    })
 }
 
 /// True when `text` contains Chinese text — the language selector for
@@ -1333,19 +1366,11 @@ mod narration_tests {
         assert!(is_narration_without_action(
             "I'll delete c2f and verify the result."
         ));
-        assert!(is_narration_without_action(
-            "I'll delete transform c2f."
-        ));
-        assert!(is_narration_without_action(
-            "I'll disable transform c2f."
-        ));
-        assert!(is_narration_without_action(
-            "I'll re-enable the transform."
-        ));
+        assert!(is_narration_without_action("I'll delete transform c2f."));
+        assert!(is_narration_without_action("I'll disable transform c2f."));
+        assert!(is_narration_without_action("I'll re-enable the transform."));
         assert!(is_narration_without_action("I'll re-enable c2f."));
-        assert!(is_narration_without_action(
-            "I'll re-enable transform c2f."
-        ));
+        assert!(is_narration_without_action("I'll re-enable transform c2f."));
         assert!(is_narration_without_action(
             "I'll test the transform code with input 25 using the test-code command."
         ));
@@ -1358,6 +1383,26 @@ mod narration_tests {
         assert!(is_narration_without_action("让我列出 c2f 的输出指标。"));
         assert!(is_narration_without_action("我来删除这个 transform。"));
         assert!(is_narration_without_action("让我重新启用 c2f。"));
+
+        // Negatives: English prefix word-boundary + completed list summaries.
+        assert!(!is_narration_without_action(
+            "Let me address your question about the transform scope."
+        ));
+        assert!(!is_narration_without_action(
+            "I'll address both issues in order."
+        ));
+        assert!(!is_narration_without_action(
+            "Let me listen to the next event."
+        ));
+        assert!(!is_narration_without_action(
+            "I'll readily confirm the state."
+        ));
+        let list_summary =
+            "我来列出当前已注册的 3 台设备：\n- sensor-a\n- sensor-b\n- pump-1\n以上是完整列表。";
+        assert!(
+            !is_narration_without_action(list_summary),
+            "complete list body must not foreshadow-continue"
+        );
     }
 
     /// The exact promise-only replies from the 2026-10-19 incident session

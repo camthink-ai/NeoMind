@@ -315,7 +315,10 @@ mod tests {
         // Positive: overnight failure mode must be caught before API.
         let err = parse_transform_scope("device").unwrap_err();
         assert!(err.contains("Bare `device`"), "{err}");
-        assert!(err.contains("device:sensor-001") || err.contains("device:<"), "{err}");
+        assert!(
+            err.contains("device:sensor-001") || err.contains("device:<"),
+            "{err}"
+        );
 
         let err2 = parse_transform_scope("device_type").unwrap_err();
         assert!(err2.contains("Bare `device_type`"), "{err2}");
@@ -323,11 +326,15 @@ mod tests {
 
     #[test]
     fn parse_scope_rejects_empty_suffix_and_unknown() {
-        assert!(parse_transform_scope("device:").unwrap_err().contains("missing"));
+        assert!(parse_transform_scope("device:")
+            .unwrap_err()
+            .contains("missing"));
         assert!(parse_transform_scope("device_type:")
             .unwrap_err()
             .contains("missing"));
-        assert!(parse_transform_scope("fleet").unwrap_err().contains("Expected"));
+        assert!(parse_transform_scope("fleet")
+            .unwrap_err()
+            .contains("Expected"));
         assert!(parse_transform_scope("").unwrap_err().contains("empty"));
     }
 }

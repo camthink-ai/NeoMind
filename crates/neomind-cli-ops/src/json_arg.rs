@@ -201,15 +201,17 @@ fn strip_unpaired_edge_quotes(s: &str) -> String {
 }
 
 pub use neomind_core::command_contract::{
-    core_domain_contracts, find_domain_command_contract, find_domain_command_contract_for_argv,
-    DomainCommandContract, DomainCommandSideEffect, ExpectedJsonKind, PrimaryJsonSpec,
+    core_domain_contracts, domain_action_from_argv, domain_token_index,
+    find_domain_command_contract, find_domain_command_contract_for_argv,
+    strip_leading_global_cli_flags, DomainCommandContract, DomainCommandSideEffect,
+    ExpectedJsonKind, PrimaryJsonSpec,
 };
 
 /// Canonical `(domain, action) -> PrimaryJsonSpec` table shared by structured
 /// shell `params` validation/injection and cross-check unit tests against clap.
 ///
-/// For the 4 core business domains (Device / Rule / Dashboard / Agent), entries
-/// stay locked to [`neomind_core::command_contract::CORE_DOMAIN_CONTRACTS`] via
+/// For the 10 core business domains, entries stay locked to
+/// [`neomind_core::command_contract::CORE_DOMAIN_CONTRACTS`] via
 /// `primary_json_spec` and anti-drift unit tests.
 pub const PRIMARY_JSON_SPECS: &[(&str, &str, PrimaryJsonSpec)] = &[
     (
@@ -363,14 +365,10 @@ pub const PRIMARY_JSON_SPECS: &[(&str, &str, PrimaryJsonSpec)] = &[
 /// the registered core business domains, falling back to [`PRIMARY_JSON_SPECS`]
 /// for other CLI domains. Callers still XOR against an existing flag in `argv`.
 pub fn primary_json_spec(argv: &[String]) -> Option<PrimaryJsonSpec> {
-    if argv.len() < 3 || argv[0] != "neomind" {
-        return None;
-    }
     if let Some(contract) = find_domain_command_contract_for_argv(argv) {
         return contract.primary_json;
     }
-    let domain = argv[1].as_str();
-    let action = argv[2].as_str();
+    let (domain, action) = neomind_core::command_contract::domain_action_from_argv(argv)?;
     PRIMARY_JSON_SPECS
         .iter()
         .find(|(d, a, _)| *d == domain && *a == action)

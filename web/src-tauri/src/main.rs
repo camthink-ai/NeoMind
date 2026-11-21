@@ -835,11 +835,9 @@ mod cli_dispatch {
             .collect::<Vec<_>>();
         match rt.block_on(neomind_cli_ops::dispatch::dispatch(&argv_full)) {
             Ok(resp) => {
-                let fmt = if std::env::var("NEOMIND_JSON").map(|v| v == "1").unwrap_or(false) {
-                    neomind_cli_ops::types::OutputFormat::Json
-                } else {
-                    neomind_cli_ops::types::OutputFormat::Human
-                };
+                // Honor global `--json` / `--format` the same as the CLI binary
+                // (env `NEOMIND_JSON=1` remains a fallback inside the helper).
+                let fmt = neomind_cli_ops::dispatch::output_format_for_argv(&argv_full);
                 // format_output is pure — printing is the caller's job (the
                 // old print-inside-format double-printed for callers that
                 // print the return, like this one).
