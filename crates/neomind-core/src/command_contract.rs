@@ -603,6 +603,22 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
     },
     DomainCommandContract {
         domain: "agent",
+        action: "latest-execution",
+        side_effect: DomainCommandSideEffect::ReadOnly,
+        primary_json: None,
+        key_params: &[DomainParamSummary {
+            name: "<id>",
+            required: true,
+            summary: "Agent ID (positional; discover via `agent list` by name)",
+        }],
+        shell_example: DomainShellExample {
+            command: "neomind agent latest-execution agent-001",
+            params_json: None,
+        },
+        guidance: "For \"is X OK / current state of what an agent watches\": `agent list` then `latest-execution <ID>` — do not invoke for a status question. Prefer this over empty device inventory when a matching agent exists.",
+    },
+    DomainCommandContract {
+        domain: "agent",
         action: "delete",
         side_effect: DomainCommandSideEffect::Mutating,
         primary_json: None,
