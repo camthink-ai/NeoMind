@@ -2524,8 +2524,8 @@ mod tests {
         assert_eq!(ToolResultCache::make_key("shell", &mut_struct), fp_struct);
     }
 
-    /// P2-1 anti-drift check: every `DomainCommandContract` across Device, Rule,
-    /// Dashboard, and Agent must stay aligned with `derive_tool_capability_resolved`,
+    /// P2-1 anti-drift check: every `DomainCommandContract` across the ten core
+    /// domains must stay aligned with `derive_tool_capability_resolved`,
     /// `mutating_write_fingerprint`, and structured-vs-flag canonical equivalence.
     #[test]
     fn core_domain_contracts_align_with_agent_capability_and_fingerprints() {

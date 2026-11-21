@@ -1,8 +1,10 @@
 //! Lightweight domain command contract registry for core NeoMind business domains.
 //!
-//! Covers key mutating/execution commands across the four core business domains
-//! (**Device**, **Rule**, **Dashboard**, **Agent**) without imposing heavy
-//! abstractions on simple CRUD commands (e.g. `settings timezone`).
+//! Covers key mutating/execution (and a few high-frequency read) commands across
+//! ten business domains: **Device**, **Rule**, **Dashboard**, **Agent**,
+//! **Widget**, **Extension**, **Settings**, **Connector**, **Message**,
+//! **Transform**. Expanded from the original four (Device/Rule/Dashboard/Agent)
+//! after NM-322 overnight rejected_args hotspots (v1.3.2 T1.2).
 //!
 //! Acts as the single source of truth shared across:
 //! - `neomind-cli-ops` (`json_arg::PRIMARY_JSON_SPECS`, `capability`, discovery hints)
@@ -216,7 +218,8 @@ impl DomainCommandContract {
 }
 
 /// Canonical registry of core business domain command contracts across
-/// Device, Rule, Dashboard, and Agent.
+/// Device, Rule, Dashboard, Agent, Widget, Extension, Settings, Connector,
+/// Message, and Transform.
 pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
     // === Device ===
     DomainCommandContract {
@@ -598,6 +601,324 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
         },
         guidance: "Invoke an agent immediately by positional `<ID>` (with optional input string); if it returns `Executing`, check `agent latest-execution <ID>`.",
     },
+    // === Widget ===
+    DomainCommandContract {
+        domain: "widget",
+        action: "create",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: None,
+        key_params: &[
+            DomainParamSummary {
+                name: "<name>",
+                required: true,
+                summary: "Widget display name (positional — NOT `--name`)",
+            },
+            DomainParamSummary {
+                name: "--widget-type",
+                required: false,
+                summary: "chart | gauge | stat | table | image | custom (default custom)",
+            },
+            DomainParamSummary {
+                name: "--output",
+                required: false,
+                summary: "Output directory for scaffolded files",
+            },
+            DomainParamSummary {
+                name: "--install",
+                required: false,
+                summary: "Scaffold and register in one step (skips separate `widget install`)",
+            },
+        ],
+        shell_example: DomainShellExample {
+            command: "neomind widget create \"Battery Gauge\" --widget-type gauge --install",
+            params_json: None,
+        },
+        guidance: "Pass the widget name as a positional argument (not `--name`); use `--widget-type` + optional `--install` to scaffold and register.",
+    },
+    DomainCommandContract {
+        domain: "widget",
+        action: "install",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: None,
+        key_params: &[
+            DomainParamSummary {
+                name: "<file>",
+                required: true,
+                summary: "Path to scaffolded widget directory or .zip (positional)",
+            },
+        ],
+        shell_example: DomainShellExample {
+            command: "neomind widget install ./battery-gauge",
+            params_json: None,
+        },
+        guidance: "Install from a directory produced by `widget create` (manifest.json + bundle.js) or a .zip; quote paths that contain spaces.",
+    },
+    // === Extension ===
+    DomainCommandContract {
+        domain: "extension",
+        action: "status",
+        side_effect: DomainCommandSideEffect::ReadOnly,
+        primary_json: None,
+        key_params: &[DomainParamSummary {
+            name: "<id>",
+            required: true,
+            summary: "Extension ID (positional; discover via `extension list`)",
+        }],
+        shell_example: DomainShellExample {
+            command: "neomind extension status weather-forecast",
+            params_json: None,
+        },
+        guidance: "Pass the extension ID positionally (`extension status <ID>`); do not invent flags. Discover IDs with `extension list` first.",
+    },
+    DomainCommandContract {
+        domain: "extension",
+        action: "logs",
+        side_effect: DomainCommandSideEffect::ReadOnly,
+        primary_json: None,
+        key_params: &[
+            DomainParamSummary {
+                name: "<id>",
+                required: true,
+                summary: "Extension ID (positional)",
+            },
+            DomainParamSummary {
+                name: "--lines",
+                required: false,
+                summary: "Max log lines to return",
+            },
+        ],
+        shell_example: DomainShellExample {
+            command: "neomind extension logs weather-forecast",
+            params_json: None,
+        },
+        guidance: "Pass the extension ID positionally (`extension logs <ID>`); optional `--lines N`.",
+    },
+    DomainCommandContract {
+        domain: "extension",
+        action: "install",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: None,
+        key_params: &[DomainParamSummary {
+            name: "<file>",
+            required: true,
+            summary: "Path to `.nep` package (positional)",
+        }],
+        shell_example: DomainShellExample {
+            command: "neomind extension install ./weather-forecast.nep",
+            params_json: None,
+        },
+        guidance: "Install from a local `.nep` path; marketplace installs use `extension market-install <id>` instead.",
+    },
+    // === Settings ===
+    DomainCommandContract {
+        domain: "settings",
+        action: "set-retention",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: None,
+        key_params: &[
+            DomainParamSummary {
+                name: "--interval-hours",
+                required: true,
+                summary: "Cleanup interval in hours (> 0)",
+            },
+            DomainParamSummary {
+                name: "--enabled",
+                required: false,
+                summary: "Flag to enable automatic cleanup (omit to leave disabled)",
+            },
+            DomainParamSummary {
+                name: "--default-retention",
+                required: false,
+                summary: "Telemetry retention limit in hours",
+            },
+            DomainParamSummary {
+                name: "--image-retention",
+                required: false,
+                summary: "Image retention limit in hours",
+            },
+        ],
+        shell_example: DomainShellExample {
+            command: "neomind settings set-retention --enabled --interval-hours 24 --default-retention 168",
+            params_json: None,
+        },
+        guidance: "Required `--interval-hours`; use flag `--enabled` (not `--days` / invented flags). Inspect current values with `settings retention` first.",
+    },
+    DomainCommandContract {
+        domain: "settings",
+        action: "retention",
+        side_effect: DomainCommandSideEffect::ReadOnly,
+        primary_json: None,
+        key_params: &[],
+        shell_example: DomainShellExample {
+            command: "neomind settings retention",
+            params_json: None,
+        },
+        guidance: "Read-only: returns current retention config. Change with `settings set-retention`.",
+    },
+    DomainCommandContract {
+        domain: "settings",
+        action: "cleanup",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: None,
+        key_params: &[],
+        shell_example: DomainShellExample {
+            command: "neomind settings cleanup",
+            params_json: None,
+        },
+        guidance: "Trigger an immediate retention cleanup; review limits with `settings retention` first.",
+    },
+    // === Connector ===
+    DomainCommandContract {
+        domain: "connector",
+        action: "create",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: None,
+        key_params: &[
+            DomainParamSummary {
+                name: "--name",
+                required: true,
+                summary: "Connector display name",
+            },
+            DomainParamSummary {
+                name: "--host",
+                required: true,
+                summary: "Broker hostname or IP",
+            },
+            DomainParamSummary {
+                name: "--port",
+                required: false,
+                summary: "Broker port (default 1883)",
+            },
+            DomainParamSummary {
+                name: "--connector-type",
+                required: false,
+                summary: "Connector type (mqtt only today; default mqtt)",
+            },
+            DomainParamSummary {
+                name: "--topics",
+                required: false,
+                summary: "Comma-separated MQTT topic subscriptions",
+            },
+        ],
+        shell_example: DomainShellExample {
+            command: "neomind connector create --name \"Factory MQTT\" --host 192.168.1.100 --port 1883 --topics \"sensor/#\"",
+            params_json: None,
+        },
+        guidance: "Required `--name` and `--host`; optional `--port` / `--topics` / `--tls` / `--connector-type` (default mqtt). Outbound data targets use `push`, notification channels use `message`.",
+    },
+    DomainCommandContract {
+        domain: "connector",
+        action: "enable",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: None,
+        key_params: &[DomainParamSummary {
+            name: "<id>",
+            required: true,
+            summary: "Connector ID (positional; discover via `connector list`)",
+        }],
+        shell_example: DomainShellExample {
+            command: "neomind connector enable connector-001",
+            params_json: None,
+        },
+        guidance: "Pass the connector ID positionally (`connector enable <ID>`); create first if none exist.",
+    },
+    // === Message ===
+    DomainCommandContract {
+        domain: "message",
+        action: "channel-create",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: Some(PrimaryJsonSpec {
+            flag: "--config",
+            kind: ExpectedJsonKind::Object,
+        }),
+        key_params: &[
+            DomainParamSummary {
+                name: "--name",
+                required: true,
+                summary: "Unique channel name",
+            },
+            DomainParamSummary {
+                name: "--channel-type",
+                required: true,
+                summary: "Channel type (`--type` alias); discover via `message channel-types`",
+            },
+            DomainParamSummary {
+                name: "--config",
+                required: false,
+                summary: "Type-specific config object (prefer shell `params: {...}`)",
+            },
+            DomainParamSummary {
+                name: "--param",
+                required: false,
+                summary: "Repeatable `key=value` config fields (merged over `--config`)",
+            },
+        ],
+        shell_example: DomainShellExample {
+            command: "neomind message channel-create --name alerts --channel-type webhook",
+            params_json: Some(r#"{"url":"https://example.com/webhook"}"#),
+        },
+        guidance: "Required `--name` + `--channel-type` (alias `--type`); pass type config via shell `params` (maps to `--config`). Discover schema with `message channel-type-schema <TYPE>`.",
+    },
+    // === Transform ===
+    DomainCommandContract {
+        domain: "transform",
+        action: "create",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: None,
+        key_params: &[
+            DomainParamSummary {
+                name: "--name",
+                required: true,
+                summary: "Transform name",
+            },
+            DomainParamSummary {
+                name: "--scope",
+                required: true,
+                summary: "`global` | `device:<id>` | `device_type:<type>` — never bare `device`",
+            },
+            DomainParamSummary {
+                name: "--code",
+                required: true,
+                summary: "JavaScript body; value bound to `input` (e.g. `return input.battery * 100`)",
+            },
+            DomainParamSummary {
+                name: "--output-prefix",
+                required: false,
+                summary: "Prefix for virtual metrics",
+            },
+        ],
+        shell_example: DomainShellExample {
+            command: "neomind transform create --name batt100 --scope device:sensor-001 --code \"return input.battery * 100\" --output-prefix thousands",
+            params_json: None,
+        },
+        guidance: "Required `--name`, `--scope` (`global` / `device:<id>` / `device_type:<type>` — never bare `device`), and `--code`. Fix scope before rewriting code.",
+    },
+    DomainCommandContract {
+        domain: "transform",
+        action: "test-code",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: Some(PrimaryJsonSpec {
+            flag: "--input",
+            kind: ExpectedJsonKind::Object,
+        }),
+        key_params: &[
+            DomainParamSummary {
+                name: "--code",
+                required: true,
+                summary: "JavaScript body to evaluate",
+            },
+            DomainParamSummary {
+                name: "--input",
+                required: true,
+                summary: "Sample input object (prefer shell `params: {...}`)",
+            },
+        ],
+        shell_example: DomainShellExample {
+            command: "neomind transform test-code --code \"return input.battery * 100\"",
+            params_json: Some(r#"{"battery":75}"#),
+        },
+        guidance: "Requires `--code` and `--input` (shell `params` maps to `--input`). Do not pass a transform ID as a positional — `test-code` is offline against sample input.",
+    },
 ];
 
 /// Look up a core [`DomainCommandContract`] by `(domain, action)`.
@@ -630,8 +951,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn core_contracts_cover_four_business_domains() {
-        let required = [
+    fn core_contracts_cover_ten_business_domains() {
+        let required_mutating = [
             ("device", "control"),
             ("rule", "create"),
             ("rule", "update"),
@@ -644,8 +965,23 @@ mod tests {
             ("agent", "create"),
             ("agent", "update"),
             ("agent", "invoke"),
+            ("widget", "create"),
+            ("widget", "install"),
+            ("extension", "install"),
+            ("settings", "set-retention"),
+            ("settings", "cleanup"),
+            ("connector", "create"),
+            ("connector", "enable"),
+            ("message", "channel-create"),
+            ("transform", "create"),
+            ("transform", "test-code"),
         ];
-        for (domain, action) in required {
+        let required_readonly = [
+            ("extension", "status"),
+            ("extension", "logs"),
+            ("settings", "retention"),
+        ];
+        for (domain, action) in required_mutating {
             let c = find_domain_command_contract(domain, action)
                 .unwrap_or_else(|| panic!("missing contract for `{domain} {action}`"));
             assert_eq!(c.side_effect, DomainCommandSideEffect::Mutating);
@@ -657,6 +993,28 @@ mod tests {
                 });
             }
         }
+        for (domain, action) in required_readonly {
+            let c = find_domain_command_contract(domain, action)
+                .unwrap_or_else(|| panic!("missing contract for `{domain} {action}`"));
+            assert_eq!(c.side_effect, DomainCommandSideEffect::ReadOnly);
+        }
+        let domains: std::collections::HashSet<&str> =
+            CORE_DOMAIN_CONTRACTS.iter().map(|c| c.domain).collect();
+        for d in [
+            "device",
+            "rule",
+            "dashboard",
+            "agent",
+            "widget",
+            "extension",
+            "settings",
+            "connector",
+            "message",
+            "transform",
+        ] {
+            assert!(domains.contains(d), "missing domain `{d}` in contracts");
+        }
+        assert_eq!(domains.len(), 10, "expected exactly 10 domains, got {domains:?}");
     }
 
     #[test]

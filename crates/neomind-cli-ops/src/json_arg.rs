@@ -360,8 +360,8 @@ pub const PRIMARY_JSON_SPECS: &[(&str, &str, PrimaryJsonSpec)] = &[
 
 /// Primary JSON flag + expected container kind for a `neomind …` argv.
 /// Consults [`neomind_core::command_contract::CORE_DOMAIN_CONTRACTS`] first for
-/// the 4 core business domains, falling back to [`PRIMARY_JSON_SPECS`] for other
-/// CLI domains. Callers still XOR against an existing flag in `argv`.
+/// the registered core business domains, falling back to [`PRIMARY_JSON_SPECS`]
+/// for other CLI domains. Callers still XOR against an existing flag in `argv`.
 pub fn primary_json_spec(argv: &[String]) -> Option<PrimaryJsonSpec> {
     if argv.len() < 3 || argv[0] != "neomind" {
         return None;
@@ -606,7 +606,7 @@ mod tests {
     }
 
     /// P2-1 anti-drift check: every registered `DomainCommandContract` across
-    /// Device / Rule / Dashboard / Agent must match:
+    /// the ten core domains must match:
     /// 1) real `Args::command()` clap subcommands and flags (including `key_params` flags)
     /// 2) `PRIMARY_JSON_SPECS` and `primary_json_spec()`
     /// 3) its own `shell_example` passes `validate_primary_json` and parses via clap
