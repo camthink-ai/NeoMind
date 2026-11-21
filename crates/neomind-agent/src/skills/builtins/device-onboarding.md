@@ -1,10 +1,10 @@
 ---
 id: device-onboarding
-summary: Connect, register, and verify telemetry arrival for devices (MQTT/webhook/BLE); send device control commands.
-not_for: [reading current values (use the CLI directly), dashboard display (dashboard-management), threshold alerts (rule-management)]
-name: Device Onboarding & Connection Guide
+summary: Register devices and verify telemetry arrival (MQTT/webhook/BLE); send device control commands.
+not_for: [reading current values (use the CLI directly), dashboard display (dashboard-management), threshold alerts (rule-management), external brokers (connector-management)]
+name: Device Onboarding Guide
 aliases: [device, onboarding]
-description: Use when the user wants to onboard, connect, or configure an IoT device, OR send a control command to a device (stop, start, set speed, alarm, reboot). Covers device provisioning, MQTT/Webhook/BLE connection, getting broker addresses, and controlling devices — even if they don't explicitly say "device" or "control" (e.g. "shut down the pump", "把泵停掉", "set the fan speed", "停下来"). Also covers virtual/simulated devices — create a device then feed it data with `neomind device write-metric` (adapter-independent, the device goes online immediately) or via its webhook URL with curl ('建个虚拟设备', 'create a virtual device', '模拟数据'). Includes 设备接入/连接/配置/控制/停机/调速/命令下发.
+description: Use when the user wants to onboard or configure an IoT device, OR send a control command to a device (stop, start, set speed, alarm, reboot). Covers device provisioning, MQTT/Webhook/BLE adapters, endpoint/topic setup, and controlling devices — even if they don't explicitly say "device" or "control" (e.g. "shut down the pump", "把泵停掉", "set the fan speed", "停下来"). Also covers virtual/simulated devices — create a device then feed it data with `neomind device write-metric` (adapter-independent, the device goes online immediately) or via its webhook URL with curl ('建个虚拟设备', 'create a virtual device', '模拟数据'). Includes 设备接入/连接/配置/控制/停机/调速/命令下发.
 category: device
 origin: builtin
 priority: 90
@@ -17,12 +17,12 @@ triggers:
     - tool: device
       actions: [create, list, get, types, control, drafts, webhook-url, update, delete, history, write-metric]
 anti_triggers:
-  keywords: [rule, 规则, agent, 代理, dashboard, 仪表盘, transform, 转换]
+  keywords: [rule, 规则, agent, 代理, dashboard, 仪表盘, transform, 转换, external broker, remote broker, mqtt broker, connect broker, 外部 broker, 远程 mqtt]
 ---
 
 # device-onboarding
 
-**Guided MQTT sensor onboarding** ("help me connect my sensor"): `neomind device types list` → `neomind device create --name … --device-type … --adapter-type mqtt` → give broker/topic from `neomind system info`. Do **not** stall on skill reloads or `connector create` for the embedded broker.
+**Guided sensor setup**: `neomind device types list` → `neomind device create --name … --device-type … --adapter-type mqtt` → report endpoint/topic from `neomind system info`.
 Determine the requested protocol and target; ask only for missing connection information. Inspect existing devices/types before creating anything.
 MQTT: discovery creates a candidate, not an approved device. Shared topics may carry multiple JSON identities. Preserve explicit bindings and configured identity fields; do not reject topics based on guessed uplink/downlink words. Approval and association use the real device identity.
 Webhook: create with the webhook adapter, then obtain its ingest URL. A saved configuration does not prove data is arriving.

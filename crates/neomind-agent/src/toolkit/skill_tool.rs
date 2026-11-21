@@ -396,7 +396,7 @@ impl Tool for SkillTool {
         // PURPOSE CATALOG: one line per skill matching frontmatter `summary`
         // (pinned by `description_catalog_matches_frontmatter_summaries`).
         r#"Load workflow guides on demand (skip for plain CRUD/reads or `--help`). Pick an id/alias below for `load` in one call; use `search` only when unsure:
-- device-onboarding (device): Connect, register, and verify telemetry arrival for devices (MQTT/webhook/BLE); send device control commands.
+- device-onboarding (device): Register devices and verify telemetry arrival (MQTT/webhook/BLE); send device control commands.
 - connector-management (connector): Configure and diagnose external broker connections.
 - data-push-management (push): Push platform data out to external systems (webhook/mqtt).
 - rule-management (rule): Create, modify, and diagnose condition-triggered automation rules.

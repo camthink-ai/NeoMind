@@ -661,8 +661,12 @@ pub(super) fn drive_react_stream(
             // Budget 2: Spark sometimes ignores the first redirect and resumes
             // skill thrash (Day9 zh guided-mqtt residual).
             let mut device_onboarding_redirects = 0usize;
-            const DEVICE_ONBOARDING_REDIRECT_MAX: usize = 2;
+            // Default chat: one bounded onboarding redirect (was 2; cross-domain
+            // hijack risk). Shared with foreshadow/nudge via FORCED_CONTINUE_MAX.
+            const DEVICE_ONBOARDING_REDIRECT_MAX: usize = 1;
             let mut device_onboarding_redirect_pending: Option<String> = None;
+            // Shared budget across redirect + foreshadow + narration nudge.
+            const FORCED_CONTINUE_MAX: usize = 2;
             // Cleaned narration from the round that triggered the nudge —
             // the restore source when the nudged round degenerates (see the
             // post-nudge degenerate guard near the final save). Always the
@@ -803,11 +807,17 @@ pub(super) fn drive_react_stream(
                     let recently_executed: Vec<&str> = recently_executed_tools.iter().map(|s| s.as_str()).collect();
                     drop(state_guard);
 
-                    // A nudge round's model output is held to stricter
+                    // A nudge/redirect round's model output is held to stricter
                     // JSON-array suspicion (see might_be_json_start below):
                     // the model was ORDERED to emit a tool-call array, so a
                     // bare `[` opening is suspect from the first byte.
-                    round_is_nudge = narration_nudge_pending.is_some();
+                    round_is_nudge = narration_nudge_pending.is_some()
+                        || agent_conclusion_redirect_pending.is_some()
+                        || device_onboarding_redirect_pending.is_some();
+                    let forced_continues_used = foreshadow_continues
+                        + narration_nudges
+                        + device_onboarding_redirects
+                        + usize::from(agent_conclusion_redirect_sent);
                     let context_msg = if guide_recovery_this_round {
                         super::guard::guide_recovery_directive().to_string()
                     } else if let Some(nudge) = narration_nudge_pending.take() {
@@ -849,11 +859,47 @@ pub(super) fn drive_react_stream(
                         // At most once per turn (see list_only_dead_end_injected).
                         let commands_ref: Vec<&str> = recently_executed_commands.iter().map(|s| s.as_str()).collect();
 
+                        // Streak bookkeeping always runs — redirects must not
+                        // skip consecutive_read_only_rounds / failure_guard.
+                        let cmds: Vec<&str> =
+                            recently_executed_commands.iter().map(|s| s.as_str()).collect();
+                        let round_was_read_only =
+                            all_tools_were_read_only(&cmds, &all_round_tool_results);
+                        if list_only_dead_end_injected {
+                            if round_was_read_only {
+                                post_dead_end_read_only_rounds += 1;
+                            } else {
+                                post_dead_end_read_only_rounds = 0;
+                            }
+                        } else if round_was_read_only {
+                            consecutive_read_only_rounds += 1;
+                        } else {
+                            consecutive_read_only_rounds = 0;
+                        }
+                        let goal_fact_block = {
+                            let state_guard = internal_state.read().await;
+                            state_guard
+                                .task_state
+                                .build_summary_goal_status_fact_block(
+                                    current_turn_id,
+                                    any_failed_tool_call,
+                                )
+                        };
+                        let failure_guard = match goal_fact_block {
+                            Some(block) => format!("\n\n{block}"),
+                            None => String::new(),
+                        };
+                        let action_exit_guard = match skill_action_exit_hint_pending.take() {
+                            Some(hint) => format!("\n\n{}", hint),
+                            None => String::new(),
+                        };
+
                         // Agent status → latest-execution redirect (default
                         // policy; independent of behavioral_guards). Prefer
                         // this over generic continuation when applicable.
                         let conclusion_redirect_msg = if guards_disabled
                             || agent_conclusion_redirect_sent
+                            || forced_continues_used >= FORCED_CONTINUE_MAX
                         {
                             None
                         } else {
@@ -862,6 +908,7 @@ pub(super) fn drive_react_stream(
 
                         let onboarding_redirect_msg = if guards_disabled
                             || device_onboarding_redirects >= DEVICE_ONBOARDING_REDIRECT_MAX
+                            || forced_continues_used >= FORCED_CONTINUE_MAX
                         {
                             None
                         } else {
@@ -894,7 +941,7 @@ pub(super) fn drive_react_stream(
                                 round = tool_iteration_count + 1,
                                 "Agent status question without conclusion read — mid-turn redirect"
                             );
-                            redirect
+                            format!("{redirect}{failure_guard}{action_exit_guard}")
                         } else if let Some(redirect) = onboarding_redirect_msg {
                             device_onboarding_redirects += 1;
                             guard_ledger.record(
@@ -908,7 +955,7 @@ pub(super) fn drive_react_stream(
                                 n = device_onboarding_redirects,
                                 "Guided device onboarding without create — mid-turn redirect"
                             );
-                            redirect
+                            format!("{redirect}{failure_guard}{action_exit_guard}")
                         } else if let Some(dead_end_msg) = dead_end_msg {
                             list_only_dead_end_injected = true;
                             guard_ledger.record(
@@ -937,46 +984,6 @@ pub(super) fn drive_react_stream(
                             );
                             "You have now listed the relevant CLI surface more than once but the user's action is still not performed. Do NOT call any more list/help/query tools. Either execute the actual action command now with the concrete arguments, or — only if a required value is genuinely missing — ask the user for exactly that value and end your turn.".to_string()
                         } else {
-                            // Streak bookkeeping: consecutive all-read-only
-                            // rounds feed BOTH the act-now directive above
-                            // (post-injection) and the first-injection
-                            // repetition gate (pre-injection — see the
-                            // coercion evidence gates in intent.rs).
-                            let cmds: Vec<&str> =
-                                recently_executed_commands.iter().map(|s| s.as_str()).collect();
-                            let round_was_read_only =
-                                all_tools_were_read_only(&cmds, &all_round_tool_results);
-                            if list_only_dead_end_injected {
-                                if round_was_read_only {
-                                    post_dead_end_read_only_rounds += 1;
-                                } else {
-                                    post_dead_end_read_only_rounds = 0;
-                                }
-                            } else if round_was_read_only {
-                                consecutive_read_only_rounds += 1;
-                            } else {
-                                consecutive_read_only_rounds = 0;
-                            }
-                            // Anti-hallucination guard + E4 structured SystemGoalStatus
-                            // hard-fact block (with per-target receipts) when any failure,
-                            // partial failure, unknown operation, or Incomplete goal exists.
-                            let goal_fact_block = {
-                                let state_guard = internal_state.read().await;
-                                state_guard
-                                    .task_state
-                                    .build_summary_goal_status_fact_block(
-                                        current_turn_id,
-                                        any_failed_tool_call,
-                                    )
-                            };
-                            let failure_guard = match goal_fact_block {
-                                Some(block) => format!("\n\n{block}"),
-                                None => String::new(),
-                            };
-                            let action_exit_guard = match skill_action_exit_hint_pending.take() {
-                                Some(hint) => format!("\n\n{}", hint),
-                                None => String::new(),
-                            };
                             format!(
                                 "Round {} of processing.\n\n\
                                 Previously executed tools (results are in context above):\n{}\n\n\
@@ -2999,8 +3006,15 @@ pub(super) fn drive_react_stream(
                             iteration_budget_left,
                             wall_clock_left,
                         );
+                    let turn_end_forced_used = foreshadow_continues
+                        + narration_nudges
+                        + device_onboarding_redirects
+                        + usize::from(agent_conclusion_redirect_sent);
+                    let shared_continue_budget_left =
+                        turn_end_forced_used < FORCED_CONTINUE_MAX;
                     let foreshadow_continue_allowed = !behavioral_guards
                         && !guards_disabled
+                        && shared_continue_budget_left
                         && super::guard::should_foreshadow_continue(
                             is_narration_reply,
                             foreshadow_continues < FORESHADOW_CONTINUE_MAX,
@@ -3009,15 +3023,17 @@ pub(super) fn drive_react_stream(
                             iteration_budget_left,
                             wall_clock_left,
                         );
-                    let nudge_allowed =
-                        behavioral_nudge_allowed || foreshadow_continue_allowed;
+                    let nudge_allowed = shared_continue_budget_left
+                        && (behavioral_nudge_allowed || foreshadow_continue_allowed);
 
                     // Agent status → latest-execution: model answered without
                     // reading a conclusion (zero tools, or ignored mid-turn
                     // redirect). One bounded continue under default policy.
                     let cmds_for_redirect: Vec<&str> =
                         recently_executed_commands.iter().map(|s| s.as_str()).collect();
-                    let redirect_prompt = if guards_disabled {
+                    let redirect_prompt = if guards_disabled
+                        || turn_end_forced_used >= FORCED_CONTINUE_MAX
+                    {
                         None
                     } else {
                         build_agent_conclusion_redirect(&user_message, &cmds_for_redirect)
@@ -3050,7 +3066,8 @@ pub(super) fn drive_react_stream(
                                 0,
                             );
                             let said = remove_tool_calls_from_response(&raw_response);
-                            nudge_saved_narration = Some(said.clone());
+                            // Do NOT overwrite nudge_saved_narration — redirects
+                            // must not pollute DegenerateRestore's restore source.
                             internal_state
                                 .write()
                                 .await
@@ -3062,7 +3079,9 @@ pub(super) fn drive_react_stream(
                         }
                     }
 
-                    let onboarding_prompt = if guards_disabled {
+                    let onboarding_prompt = if guards_disabled
+                        || turn_end_forced_used >= FORCED_CONTINUE_MAX
+                    {
                         None
                     } else {
                         build_device_onboarding_redirect(&user_message, &cmds_for_redirect)
@@ -3095,7 +3114,7 @@ pub(super) fn drive_react_stream(
                                 0,
                             );
                             let said = remove_tool_calls_from_response(&raw_response);
-                            nudge_saved_narration = Some(said.clone());
+                            // Do NOT overwrite nudge_saved_narration (see above).
                             internal_state
                                 .write()
                                 .await

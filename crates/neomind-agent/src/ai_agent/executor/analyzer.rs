@@ -187,22 +187,30 @@ impl AgentExecutor {
             has_valid_images,
             "[DIAG] legacy analyzer vision decision"
         );
-        if !image_parts.is_empty() && !llm_supports_vision {
-            // Event-agent running blind: images are present but the configured
-            // LLM can't see them. Elevated to error so monitoring catches a
-            // misconfigured camera-event agent — the chat path rejects this
-            // outright (session.rs: "select a vision-capable model"), but the
-            // event-agent path degrades. The analysis still runs text-only to
-            // avoid breaking existing flows; the prompt below surfaces the
-            // limitation into the output.
+        // Legacy Focused path has no vision tool — images are either inline
+        // multimodal parts or unavailable. Mirror execute_with_tools: Unavailable
+        // must refuse Completed/false-success (do not blind-run text-only).
+        let legacy_vision_path = if has_valid_images {
+            super::vision_path::VisionExecutionPath::InlineMultimodal
+        } else if !image_parts.is_empty() {
+            super::vision_path::VisionExecutionPath::Unavailable
+        } else {
+            super::vision_path::VisionExecutionPath::None
+        };
+        if matches!(
+            legacy_vision_path,
+            super::vision_path::VisionExecutionPath::Unavailable
+        ) {
             tracing::error!(
                 agent_id = %agent.id,
                 model_name = %llm.model_name(),
                 image_count = image_parts.len(),
-                "Vision misconfiguration: camera event agent received images but the active \
-                 LLM does not support vision — analyzing text-only. Configure a vision-capable \
-                 backend (or set a multimodal override) for this agent to actually see images."
+                sources = ?image_sources_info,
+                "Vision required but unavailable on Legacy Focused path — refusing Completed"
             );
+            return Err(NeoMindError::Llm(
+                super::vision_path::vision_unavailable_error().to_string(),
+            ));
         }
 
         // Build system prompt using the shared builder (no tools, no invocation)
@@ -212,16 +220,6 @@ impl AgentExecutor {
             &agent.memory.knowledge_files,
             llm.max_context_length(),
         );
-        // Legacy Focused path has no vision tool — images are either inline
-        // multimodal parts or unavailable. Mirror execute_with_tools semantics
-        // so standing guidance stays honest.
-        let legacy_vision_path = if has_valid_images {
-            super::vision_path::VisionExecutionPath::InlineMultimodal
-        } else if !image_parts.is_empty() {
-            super::vision_path::VisionExecutionPath::Unavailable
-        } else {
-            super::vision_path::VisionExecutionPath::None
-        };
         let system_prompt = super::tool_prompt::build_tool_system_prompt(
             agent,
             data,
@@ -233,39 +231,11 @@ impl AgentExecutor {
 
         // Build user message with data summary
         let data_lines = build_compact_data_summary(data);
-        let image_info = if !image_sources_info.is_empty() && !has_valid_images {
-            format!(
-                "\n\n[Image data unavailable — LLM does not support vision: {}]",
-                image_sources_info.join(", ")
-            )
-        } else {
-            String::new()
-        };
-
-        // User message instructing plain-text output. When running blind
-        // (images present but the model can't see them), ask the LLM to
-        // surface that limitation in its findings so a reader of the output
-        // knows the images weren't analyzed — instead of a confident
-        // text-only conclusion. No forced prepend, so downstream consumers
-        // parsing the findings aren't broken.
-        let blind = !image_info.is_empty();
-        let user_msg_text = if blind {
-            format!(
-                "{}{}\n\nAnalyze the data above and provide your findings as plain text. \
-                 Note: the image capture(s) could not be analyzed because the configured \
-                 model lacks vision — mention this limitation in your findings, then proceed \
-                 with text-only analysis. Include your conclusion at the end.",
-                data_lines.join("\n"),
-                image_info,
-            )
-        } else {
-            format!(
-                "{}{}\n\nAnalyze the data above and provide your findings as plain text. \
-                 Include your conclusion at the end.",
-                data_lines.join("\n"),
-                image_info,
-            )
-        };
+        let user_msg_text = format!(
+            "{}\n\nAnalyze the data above and provide your findings as plain text. \
+             Include your conclusion at the end.",
+            data_lines.join("\n"),
+        );
 
         // Build multimodal messages if images present
         let messages = if has_valid_images {
@@ -383,6 +353,19 @@ impl AgentExecutor {
         } else {
             text.clone()
         };
+
+        if matches!(
+            legacy_vision_path,
+            super::vision_path::VisionExecutionPath::InlineMultimodal
+        ) && super::vision_path::conclusion_admits_vision_failure_for_path(
+            &conclusion,
+            legacy_vision_path,
+        ) {
+            return Err(NeoMindError::Llm(format!(
+                "Vision analysis failed: {}",
+                truncate_to(&conclusion, 200)
+            )));
+        }
         let reasoning_steps = vec![ReasoningStep {
             step_number: 1,
             description: truncate_to(&text, 400),

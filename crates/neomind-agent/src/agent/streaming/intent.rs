@@ -827,10 +827,7 @@ pub(crate) fn failure_circuit_fingerprint(
                 if let Some(obj) = adjusted.as_object_mut() {
                     obj.insert("command".into(), serde_json::Value::String(stripped));
                 }
-                return canonical_tool_call_fingerprint_from_canonical(
-                    real.as_str(),
-                    &adjusted,
-                );
+                return canonical_tool_call_fingerprint_from_canonical(real.as_str(), &adjusted);
             }
         }
     }
@@ -844,10 +841,8 @@ fn strip_transform_code_flag_for_failure_circuit(cmd: &str) -> Option<String> {
     let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(cmd.trim()) else {
         return None;
     };
-    if argv.len() < 3 || argv[0] != "neomind" || argv[1] != "transform" {
-        return None;
-    }
-    if argv[2] != "create" && argv[2] != "update" {
+    let (domain, action) = neomind_cli_ops::json_arg::domain_action_from_argv(&argv)?;
+    if domain != "transform" || (action != "create" && action != "update") {
         return None;
     }
     let mut out = Vec::with_capacity(argv.len());
@@ -858,15 +853,15 @@ fn strip_transform_code_flag_for_failure_circuit(cmd: &str) -> Option<String> {
             i += 2; // skip flag + value (best-effort; missing value still advances past flag)
             continue;
         }
-        if let Some(rest) = a.strip_prefix("--code=") {
-            let _ = rest;
+        if a.starts_with("--code=") || a.starts_with("-c=") {
             i += 1;
             continue;
         }
         out.push(argv[i].clone());
         i += 1;
     }
-    Some(out.join(" "))
+    // Stable token serialization (preserve multi-word arg boundaries).
+    Some(serde_json::to_string(&out).unwrap_or_else(|_| out.join(" ")))
 }
 
 fn canonical_tool_call_fingerprint_from_canonical(
@@ -1075,12 +1070,20 @@ fn pattern_action_class(pattern: &str) -> Option<&'static str> {
 
 /// The `neomind <domain>` token of a command, when present.
 fn command_domain(cmd: &str) -> Option<String> {
-    let mut toks = cmd.split_whitespace();
-    let first = toks.next()?;
-    if !first.ends_with("neomind") {
-        return None;
-    }
-    toks.next().map(str::to_lowercase)
+    let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(cmd.trim()) else {
+        // Fallback: whitespace split for non-quoted simple commands.
+        let mut toks = cmd.split_whitespace();
+        let first = toks.next()?;
+        if !first.ends_with("neomind") {
+            return None;
+        }
+        let rest: Vec<String> = std::iter::once("neomind".to_string())
+            .chain(toks.map(str::to_string))
+            .collect();
+        return neomind_cli_ops::json_arg::domain_action_from_argv(&rest)
+            .map(|(d, _)| d.to_lowercase());
+    };
+    neomind_cli_ops::json_arg::domain_action_from_argv(&argv).map(|(d, _)| d.to_lowercase())
 }
 
 /// Did this SUCCESSFUL mutation command DELIVER the requested
@@ -1228,26 +1231,66 @@ pub(crate) fn promise_tracker_step(
     }
 }
 
-/// Guided MQTT / sensor onboarding asks (eval guided-mqtt-onboarding).
-const DEVICE_ONBOARDING_MARKERS: &[&str] = &[
-    // Chinese
-    "接入",
+/// Strong guided-device markers (device noun already implied).
+const DEVICE_ONBOARDING_STRONG_MARKERS: &[&str] = &[
     "连接设备",
     "连接传感器",
     "配置传感器",
-    "带我走",
-    // English
     "connect my",
-    "connect a",
     "onboard",
+];
+
+/// Vague markers — only fire when a device/sensor noun co-occurs.
+const DEVICE_ONBOARDING_VAGUE_MARKERS: &[&str] = &[
+    "接入",
+    "带我走",
+    "connect a",
     "walk me through",
     "guide me through",
     "setting it up",
     "set it up",
 ];
 
+const DEVICE_ONBOARDING_NOUNS: &[&str] = &[
+    "device",
+    "sensor",
+    "设备",
+    "传感器",
+    "mqtt",
+    "温度计",
+    "摄像头",
+];
+
+/// Explicit non-device domains / external-broker phrasing — never hijack these.
+const DEVICE_ONBOARDING_EXCLUSIONS: &[&str] = &[
+    "connector",
+    "external broker",
+    "remote broker",
+    "外部 broker",
+    "外部 mqtt",
+    "远程 mqtt",
+    "远程broker",
+    "webhook",
+    "钉钉",
+    "slack",
+    "通知渠道",
+    "channel",
+    "deepseek",
+    "大模型",
+    "llm",
+    "extension",
+    "扩展",
+    "rule",
+    "规则",
+    "dashboard",
+    "仪表盘",
+    "widget",
+    "transform",
+    "push",
+];
+
 /// True when the user wants guided device onboarding (MQTT/sensor connect),
-/// not a one-off status/query.
+/// not a one-off status/query or a cross-domain "connect/onboard" ask.
 pub(crate) fn looks_like_guided_device_onboarding(msg: &str) -> bool {
     let lower = msg.to_lowercase();
     if crate::agent::user_requested_no_execution(msg) {
@@ -1260,9 +1303,32 @@ pub(crate) fn looks_like_guided_device_onboarding(msg: &str) -> bool {
     {
         return false;
     }
-    DEVICE_ONBOARDING_MARKERS
+    if DEVICE_ONBOARDING_EXCLUSIONS
         .iter()
-        .any(|m| lower.contains(&m.to_lowercase()))
+        .any(|e| lower.contains(&e.to_lowercase()))
+    {
+        return false;
+    }
+    // Domain gate: when any domain keyword matched, device must be among them.
+    let domains = matched_domains(msg);
+    if !domains.is_empty() && !domains.contains(&"device") {
+        return false;
+    }
+    let strong = DEVICE_ONBOARDING_STRONG_MARKERS
+        .iter()
+        .any(|m| lower.contains(&m.to_lowercase()));
+    if strong {
+        return true;
+    }
+    let vague = DEVICE_ONBOARDING_VAGUE_MARKERS
+        .iter()
+        .any(|m| lower.contains(&m.to_lowercase()));
+    if !vague {
+        return false;
+    }
+    DEVICE_ONBOARDING_NOUNS
+        .iter()
+        .any(|n| lower.contains(&n.to_lowercase()))
 }
 
 /// True when a device was already created this turn.
@@ -1285,6 +1351,15 @@ pub(crate) fn build_device_onboarding_redirect(
     }
     if has_device_create(executed_commands) {
         return None;
+    }
+    // Another domain already mutated successfully — do not force device create.
+    if executed_commands.iter().any(|c| is_mutation_command(c)) {
+        let has_non_device_mutation = executed_commands.iter().any(|c| {
+            is_mutation_command(c) && command_domain(c).map(|d| d != "device").unwrap_or(false)
+        });
+        if has_non_device_mutation {
+            return None;
+        }
     }
 
     let executed_summary = if executed_commands.is_empty() {
@@ -1350,7 +1425,7 @@ pub(crate) fn build_device_onboarding_redirect(
 /// Phrases that mark "is the watched thing OK right now?" status questions.
 /// Deliberately tied to the agent-query-conclusion-first eval wording and
 /// close cousins — not a generic "status" detector (that would hijack
-/// device/health checks).
+/// device/health/extension checks).
 const AGENT_STATUS_QUESTION_MARKERS: &[&str] = &[
     // Chinese (eval: 「冷库现在还好吗?」)
     "还好吗",
@@ -1360,7 +1435,6 @@ const AGENT_STATUS_QUESTION_MARKERS: &[&str] = &[
     "正常不",
     "怎么样了",
     "现在怎样",
-    "当前状态",
     "现在如何",
     // English (eval: "Is the cold room OK right now?")
     "ok right now",
@@ -1370,9 +1444,28 @@ const AGENT_STATUS_QUESTION_MARKERS: &[&str] = &[
     "how's the",
     "how is the",
     "how're the",
-    "current status",
     "still ok",
     "still okay",
+];
+
+/// Explicit non-agent domains — status questions about these must not redirect.
+const AGENT_STATUS_EXCLUSIONS: &[&str] = &[
+    "extension",
+    "扩展",
+    "connector",
+    "settings",
+    "设置",
+    "rule",
+    "规则",
+    "dashboard",
+    "仪表盘",
+    "widget",
+    "transform",
+    "message",
+    "通知",
+    "system",
+    "系统服务",
+    "系统信息",
 ];
 
 /// Explicit recheck asks — status redirect must NOT block a fresh invoke.
@@ -1389,6 +1482,23 @@ const AGENT_STATUS_RECHECK_MARKERS: &[&str] = &[
     "fresh run",
 ];
 
+fn ascii_word_boundary_at(s: &str, idx: usize) -> bool {
+    if idx == 0 {
+        return true;
+    }
+    let Some(b) = s.as_bytes().get(idx.saturating_sub(1)) else {
+        return true;
+    };
+    !b.is_ascii_alphanumeric() && *b != b'_'
+}
+
+fn ascii_word_ends_at(s: &str, end: usize) -> bool {
+    match s.as_bytes().get(end) {
+        None => true,
+        Some(b) => !b.is_ascii_alphanumeric() && *b != b'_',
+    }
+}
+
 /// True when the user is asking whether something an agent already watches
 /// is OK / what its current state is — not requesting a new mutation.
 pub(crate) fn looks_like_agent_status_question(msg: &str) -> bool {
@@ -1399,6 +1509,19 @@ pub(crate) fn looks_like_agent_status_question(msg: &str) -> bool {
     {
         return false;
     }
+    if AGENT_STATUS_EXCLUSIONS
+        .iter()
+        .any(|e| lower.contains(&e.to_lowercase()))
+    {
+        return false;
+    }
+    // When a concrete non-agent domain keyword matched, this is not an
+    // agent-conclusion ask (e.g. "传感器 … 正常吗" → device get).
+    // Bare "冷库还好吗" matches no DOMAIN_KEYWORDS and still qualifies.
+    let domains = matched_domains(msg);
+    if !domains.is_empty() && !domains.contains(&"agent") {
+        return false;
+    }
     if AGENT_STATUS_QUESTION_MARKERS
         .iter()
         .any(|m| lower.contains(&m.to_lowercase()))
@@ -1406,15 +1529,40 @@ pub(crate) fn looks_like_agent_status_question(msg: &str) -> bool {
         return true;
     }
     // "Is the cold room OK?" / "Is fridge-1 okay?" — "is … ok/okay" with a
-    // short gap; reject instructional "how is X created".
-    if let Some(is_at) = lower.find("is ") {
-        let after = &lower[is_at + 3..];
-        if let Some(ok_at) = after.find(" ok").or_else(|| after.find(" okay")) {
-            // Bound the gap so "is it possible to create … ok?" does not match.
-            if ok_at <= 48 && !after[..ok_at].contains('?') {
-                return true;
+    // short gap and full ASCII word boundaries (avoid "This "/"his "/"redis ").
+    let mut search = lower.as_str();
+    let mut base = 0usize;
+    while let Some(rel) = search.find("is ") {
+        let is_at = base + rel;
+        if ascii_word_boundary_at(&lower, is_at) {
+            let after = &lower[is_at + 3..];
+            for (ok_word, ok_len) in [("ok", 2usize), ("okay", 4usize)] {
+                let mut asearch = after;
+                let mut a_base = 0usize;
+                while let Some(a_rel) = asearch.find(ok_word) {
+                    let ok_at = a_base + a_rel;
+                    // Require a space (or start) before ok, and a boundary after.
+                    let preceded_ok = ok_at == 0
+                        || after
+                            .as_bytes()
+                            .get(ok_at.saturating_sub(1))
+                            .is_some_and(|b| b.is_ascii_whitespace());
+                    if preceded_ok
+                        && ascii_word_ends_at(after, ok_at + ok_len)
+                        && ok_at <= 48
+                        && !after[..ok_at].contains('?')
+                    {
+                        return true;
+                    }
+                    let next = ok_at + ok_len;
+                    a_base = next;
+                    asearch = &after[next..];
+                }
             }
         }
+        let next = is_at + 3;
+        base = next;
+        search = &lower[next..];
     }
     false
 }
@@ -2173,16 +2321,23 @@ mod tests {
 
     #[test]
     fn strip_transform_code_flag_only_for_create_update() {
-        assert!(strip_transform_code_flag_for_failure_circuit(
-            "neomind transform list"
-        )
-        .is_none());
+        assert!(strip_transform_code_flag_for_failure_circuit("neomind transform list").is_none());
         let stripped = strip_transform_code_flag_for_failure_circuit(
             "neomind transform create --name x --scope global --code \"return 1\"",
         )
         .expect("create");
         assert!(!stripped.contains("--code"), "{stripped}");
-        assert!(stripped.contains("--scope global"), "{stripped}");
+        // Fingerprint may be JSON-serialized argv (preserves multi-word args).
+        assert!(
+            stripped.contains("--scope") && stripped.contains("global"),
+            "{stripped}"
+        );
+        let stripped_eq = strip_transform_code_flag_for_failure_circuit(
+            "neomind transform create --name x --scope global -c=\"return 1\"",
+        )
+        .expect("-c= form");
+        assert!(!stripped_eq.contains("-c="), "{stripped_eq}");
+        assert!(!stripped_eq.contains("return 1"), "{stripped_eq}");
     }
 
     /// The mutation-pattern audit (against the full live CLI surface):
@@ -2860,9 +3015,24 @@ mod tests {
         ));
         assert!(looks_like_agent_status_question("Is fridge-1 okay?"));
         assert!(!looks_like_agent_status_question("列出所有设备"));
-        assert!(!looks_like_agent_status_question("How do I create a device?"));
         assert!(!looks_like_agent_status_question(
-            "重新检查一下冷库还好吗"
+            "How do I create a device?"
+        ));
+        assert!(!looks_like_agent_status_question("重新检查一下冷库还好吗"));
+        // Cross-domain negatives (must not hijack)
+        assert!(!looks_like_agent_status_question(
+            "查询 weather-forecast 扩展的当前状态"
+        ));
+        assert!(!looks_like_agent_status_question(
+            "What is the current status of connector mqtt-1?"
+        ));
+        assert!(!looks_like_agent_status_question(
+            "传感器 sensor-001 当前状态正常吗？"
+        ));
+        assert!(!looks_like_agent_status_question("系统服务现在正常吗？"));
+        // "is" word-boundary: "This … ok" must not match
+        assert!(!looks_like_agent_status_question(
+            "This dashboard layout looks ok, add a gauge widget"
         ));
     }
 
@@ -2876,9 +3046,11 @@ mod tests {
         assert!(user_message_requires_action(zh));
         assert!(looks_like_guided_device_onboarding(zh));
         assert_eq!(extract_action_hint(zh), "neomind device create");
-        assert!(build_device_onboarding_redirect(en, &["neomind device types list"])
-            .unwrap()
-            .contains("device create"));
+        assert!(
+            build_device_onboarding_redirect(en, &["neomind device types list"])
+                .unwrap()
+                .contains("device create")
+        );
         assert!(build_device_onboarding_redirect(
             en,
             &["neomind device create --name t --device-type temp_sensor --adapter-type mqtt"]
@@ -2887,12 +3059,34 @@ mod tests {
     }
 
     #[test]
-    fn agent_conclusion_redirect_fires_on_device_list_detour() {
-        let zh = build_agent_conclusion_redirect(
-            "冷库现在还好吗?",
-            &["neomind device list"],
+    fn guided_device_onboarding_rejects_cross_domain_connect() {
+        assert!(!looks_like_guided_device_onboarding(
+            "帮我把外部 MQTT Broker 192.168.1.50 接入系统"
+        ));
+        assert!(!looks_like_guided_device_onboarding(
+            "帮我接入钉钉 webhook 通知渠道"
+        ));
+        assert!(!looks_like_guided_device_onboarding(
+            "Connect a webhook channel to Slack"
+        ));
+        assert!(!looks_like_guided_device_onboarding(
+            "帮我接入 DeepSeek 大模型"
+        ));
+        assert!(!looks_like_guided_device_onboarding(
+            "Can you walk me through creating a temperature alert rule and set it up?"
+        ));
+        // Mutation exemption: connector create already succeeded
+        assert!(build_device_onboarding_redirect(
+            "I want to connect my temperature sensor to NeoMind over MQTT. Can you guide me through setting it up?",
+            &["neomind connector create --name ext --host 1.2.3.4"],
         )
-        .expect("zh status + device list must redirect");
+        .is_none());
+    }
+
+    #[test]
+    fn agent_conclusion_redirect_fires_on_device_list_detour() {
+        let zh = build_agent_conclusion_redirect("冷库现在还好吗?", &["neomind device list"])
+            .expect("zh status + device list must redirect");
         assert!(zh.contains("latest-execution"), "{zh}");
         assert!(zh.contains("agent list"), "{zh}");
 
@@ -2909,5 +3103,10 @@ mod tests {
         )
         .is_none());
         assert!(build_agent_conclusion_redirect("列出所有设备", &[]).is_none());
+        assert!(build_agent_conclusion_redirect(
+            "查询 weather-forecast 扩展的当前状态",
+            &["neomind extension status weather-forecast"],
+        )
+        .is_none());
     }
 }

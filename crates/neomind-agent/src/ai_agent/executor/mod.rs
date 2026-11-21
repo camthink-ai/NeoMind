@@ -749,16 +749,30 @@ impl AgentExecutor {
         // Safety net: images were on this run but the conclusion admits vision
         // analysis never happened ("Vision tool not available", etc.). That is
         // product false-success — do not leave Completed + high confidence.
-        // Returning Err marks ExecutionStatus::Failed and increments failure
-        // stats (journal + successful_executions stay aligned).
+        // When tools already ran (e.g. message send), keep actions_executed in
+        // the result and mark success_rate=0 so stats/journal stay aligned
+        // without erasing the side-effect audit.
         if has_embeddable_images
-            && vision_path::conclusion_admits_vision_failure(&decision_process.conclusion)
+            && vision_path::conclusion_admits_vision_failure_for_path(
+                &decision_process.conclusion,
+                vision_exec_path,
+            )
         {
             tracing::warn!(
                 agent_id = %agent.id,
                 vision_path = ?vision_exec_path,
+                actions = execution_result.actions_executed.len(),
                 "Conclusion admits vision failure — refusing Completed/false-success"
             );
+            if !execution_result.actions_executed.is_empty() {
+                let mut er = execution_result;
+                er.success_rate = 0.0;
+                er.summary = format!(
+                    "Vision analysis failed: {}",
+                    truncate_to(&decision_process.conclusion, 200)
+                );
+                return Ok((decision_process, er));
+            }
             return Err(NeoMindError::Llm(format!(
                 "Vision analysis failed: {}",
                 truncate_to(&decision_process.conclusion, 200)
@@ -1077,29 +1091,46 @@ impl AgentExecutor {
         // Build execution record
         let record = match execution_result {
             Ok((decision_process, result)) => {
-                // Update stats
+                // Align stats with journal / business success: empty-event
+                // skips and action failures write journal success=false via
+                // success_rate < 1.0 — they must not still increment
+                // successful_executions.
+                let business_ok = result.success_rate >= 1.0;
                 if let Err(e) = self
                     .store
-                    .update_agent_stats(&agent_id, true, duration_ms)
+                    .update_agent_stats(&agent_id, business_ok, duration_ms)
                     .await
                 {
                     tracing::error!(
                         agent_id = %agent_id,
                         error = %e,
-                        "Failed to update agent stats after successful execution"
+                        "Failed to update agent stats after execution"
                     );
                 }
+
+                let (status, error) = if business_ok {
+                    (ExecutionStatus::Completed, None)
+                } else {
+                    (
+                        ExecutionStatus::Failed,
+                        Some(format!(
+                            "Execution completed with business failure (success_rate={:.2}): {}",
+                            result.success_rate,
+                            truncate_to(&result.summary, 200)
+                        )),
+                    )
+                };
 
                 AgentExecutionRecord {
                     id: execution_id.clone(),
                     agent_id: agent_id.clone(),
                     timestamp,
                     trigger_type: trigger_type.clone(),
-                    status: ExecutionStatus::Completed,
+                    status,
                     decision_process,
                     result: Some(result),
                     duration_ms,
-                    error: None,
+                    error,
                 }
             }
             Err(e) => {

@@ -521,7 +521,7 @@ pub(crate) fn build_free_resource_section(
 /// `build_tool_messages` (multimodal vision part) and `bound_image_data_url`
 /// (cache seed for image-aware tool auto-inject), so the two paths can never
 /// diverge on how device images are normalized.
-fn clean_collected_image_base64(d: &DataCollected) -> Option<(String, String)> {
+pub(super) fn clean_collected_image_base64(d: &DataCollected) -> Option<(String, String)> {
     let base64 = d.values.get("image_base64")?.as_str()?;
     if base64.is_empty() {
         return None;

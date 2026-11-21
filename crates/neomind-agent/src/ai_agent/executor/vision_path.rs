@@ -64,30 +64,24 @@ fn collected_image_is_embeddable(d: &DataCollected) -> bool {
             return true;
         }
     }
-    let Some(base64) = d.values.get("image_base64").and_then(|v| v.as_str()) else {
-        return false;
-    };
-    if base64.is_empty() {
-        return false;
-    }
-    let cleaned: String = base64
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '+' || *c == '/' || *c == '=')
-        .collect();
-    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &cleaned).is_ok()
+    // Reuse the same Base64 normalizer as tool_prompt (URL-safe + padding).
+    super::tool_prompt::clean_collected_image_base64(d).is_some()
 }
 
 /// Standing guidance injected when the vision tool is stripped because the
 /// primary model already sees images. Placed after the task definition so it
 /// overrides agent prompts that still say "use the vision tool".
+///
+/// Wording deliberately avoids blacklisted failure markers so small VLMs do
+/// not echo them into the conclusion and trip the false-success guard.
 pub(crate) fn multimodal_inline_vision_guidance() -> &'static str {
     "\
 ## Vision Path (IMPORTANT)
 Bound camera / device image(s) are already attached as multimodal content in this turn.
 Your primary model can see them directly — analyze what is in the image(s) yourself.
-Do NOT call a `vision` tool, load a vision skill, search for a vision extension, or claim \
-\"Vision tool not available\". There is no separate vision tool on this run by design.
+Do NOT call a `vision` tool, load a vision skill, or search for a vision extension.
+Analyze the attached image(s) directly and state only your visual findings — do not \
+mention tool availability in your conclusion.
 Write findings from the attached image(s). If an image is unclear, say so honestly.\n"
 }
 
@@ -100,32 +94,102 @@ or enable the vision tool — refusing Completed/false-success."
 
 /// Patterns that mean the model admitted it could not analyze images.
 /// Table-driven: keep Chinese + English field wording from T4 Dongpingshan.
+/// Prefer "vision tool" / "vision capability" phrasing over bare "vision not
+/// available" (which false-positives on "night vision not available").
 const VISION_FAILURE_MARKERS: &[&str] = &[
     "vision tool not available",
     "vision extension not installed",
     "cannot use vision",
     "vision tool unavailable",
     "no vision tool",
-    "vision is not available",
-    "vision not available",
+    "vision capability not available",
+    "vision capability unavailable",
     "无法使用 vision",
     "没有 vision 工具",
     "vision 工具不可用",
     "vision工具不可用",
     "无法调用 vision",
     // T4 Dongpingshan / operator ZH wording
-    "视觉不可用",
     "视觉工具不可用",
     "视觉工具不存在",
     "无法使用视觉",
+    // Night-sensitive — guarded by prefix check below
+    "视觉不可用",
+    "vision is not available",
+    "vision not available",
 ];
+
+/// Honest inline analysis evidence — when present on an InlineMultimodal run,
+/// incidental "no vision tool" explanations must not trip the failure guard.
+const INLINE_VISION_SUCCESS_EVIDENCE: &[&str] = &[
+    "直接分析",
+    "附带图像",
+    "附带画面",
+    "内联",
+    "attached image",
+    "attached frame",
+    "attached images",
+    "analyzed the attached",
+    "analyzed attached",
+    "inline",
+];
+
+fn marker_hit_is_night_vision_false_positive(lower: &str, marker: &str) -> bool {
+    // Bare "vision not available" / "视觉不可用" must not fire on night/IR wording.
+    let night_sensitive = marker == "vision not available"
+        || marker == "vision is not available"
+        || marker == "视觉不可用";
+    if !night_sensitive {
+        return false;
+    }
+    let Some(idx) = lower.find(marker) else {
+        return false;
+    };
+    let before = &lower[..idx];
+    let prefixes = [
+        "night ",
+        "ir ",
+        "infrared ",
+        "low-light ",
+        "low light ",
+        "夜视",
+        "红外",
+        "夜间",
+    ];
+    prefixes.iter().any(|p| before.ends_with(p))
+}
 
 /// True when the conclusion text admits vision analysis failed / was missing.
 pub(crate) fn conclusion_admits_vision_failure(text: &str) -> bool {
+    conclusion_admits_vision_failure_for_path(text, VisionExecutionPath::None)
+}
+
+/// Path-aware variant used by the executor after the tool loop.
+///
+/// When `path` is InlineMultimodal and the conclusion also contains positive
+/// inline-analysis evidence, incidental "no vision tool" explanations are
+/// treated as commentary rather than failure (Prompt-Echo Trap).
+pub(crate) fn conclusion_admits_vision_failure_for_path(
+    text: &str,
+    path: VisionExecutionPath,
+) -> bool {
     let lower = text.to_lowercase();
-    VISION_FAILURE_MARKERS
-        .iter()
-        .any(|m| lower.contains(&m.to_lowercase()))
+    let hit = VISION_FAILURE_MARKERS.iter().any(|m| {
+        let m_lower = m.to_lowercase();
+        lower.contains(&m_lower) && !marker_hit_is_night_vision_false_positive(&lower, &m_lower)
+    });
+    if !hit {
+        return false;
+    }
+    if matches!(path, VisionExecutionPath::InlineMultimodal) {
+        let has_evidence = INLINE_VISION_SUCCESS_EVIDENCE
+            .iter()
+            .any(|e| lower.contains(&e.to_lowercase()));
+        if has_evidence {
+            return false;
+        }
+    }
+    true
 }
 
 /// Whether this path requires rewriting standing guidance away from the
@@ -199,8 +263,11 @@ mod tests {
     fn inline_guidance_forbids_separate_vision_tool() {
         let g = multimodal_inline_vision_guidance();
         assert!(g.contains("Do NOT call a `vision` tool"));
+        assert!(g.contains("do not mention tool availability"));
         assert!(g.contains("multimodal"));
-        assert!(g.contains("Vision tool not available"));
+        // Must NOT teach blacklisted failure phrases for small models to echo.
+        assert!(!g.to_lowercase().contains("vision tool not available"));
+        assert!(!g.to_lowercase().contains("no vision tool"));
     }
 
     #[test]
@@ -212,10 +279,10 @@ mod tests {
             "VISION TOOL NOT AVAILABLE",
             "无法使用 vision 分析图像",
             "vision 工具不可用",
-            "视觉不可用，无法分析 NE301PIR-200366 图像",
             "视觉工具不可用",
             "视觉工具不存在，改用 skill load skill=\"vision\" 失败",
             "无法使用视觉分析当前帧",
+            "视觉不可用，无法分析 NE301PIR-200366 图像",
         ];
         for text in positives {
             assert!(
@@ -229,6 +296,8 @@ mod tests {
             "Used shell to send a judgment notification.",
             "画面为空旷走廊，未见赌博行为。",
             "直接分析了附带图像：道路空旷。",
+            "Night vision not available — frame is pitch dark, no person seen",
+            "红外夜视故障导致夜间视觉不可用，画面全黑",
             "",
         ];
         for text in negatives {
@@ -240,10 +309,32 @@ mod tests {
     }
 
     #[test]
+    fn inline_path_echo_of_no_vision_tool_with_evidence_is_ok() {
+        let echo = "当前环境没有 vision 工具，已直接分析内联图像：走廊空旷，无赌博行为。";
+        assert!(
+            !conclusion_admits_vision_failure_for_path(echo, VisionExecutionPath::InlineMultimodal),
+            "inline evidence must suppress prompt-echo false fail"
+        );
+        assert!(
+            conclusion_admits_vision_failure_for_path(echo, VisionExecutionPath::ViaVisionTool),
+            "without inline path, same text is still a failure admission"
+        );
+        let bare = "没有 vision 工具，无法分析。";
+        assert!(conclusion_admits_vision_failure_for_path(
+            bare,
+            VisionExecutionPath::InlineMultimodal
+        ));
+    }
+
+    #[test]
     fn embeddable_image_positive_and_negative() {
         // Valid tiny JPEG-ish base64 of "hello"
         let ok = image_dc("aGVsbG8=");
         assert!(has_embeddable_image(&[ok]));
+
+        // URL-safe / unpadded base64 must match tool_prompt normalization.
+        let url_safe = image_dc("aGVsbG8");
+        assert!(has_embeddable_image(&[url_safe]));
 
         let url = DataCollected {
             source: "device:cam:image_data".into(),
