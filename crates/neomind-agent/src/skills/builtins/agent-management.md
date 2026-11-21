@@ -113,7 +113,7 @@ For a cron schedule, the expression does not encode a timezone. If the user spec
 | `structured` | ONE constrained inference; schema-validated fields published as `ai:{id}:{field}` data sources | Meter reading, QC verdicts, anything that feeds a dashboard/rule |
 
 Focused/free tasks may operate without bindings when appropriate. Structured mode requires actual bound input.
-Structure of the task decides the mode; when in doubt, omit `--execution-mode`.
+Default `--execution-mode` is **focused** — creating without `--device-ids` / `--resources` fails with `FOCUSED_REQUIRES_RESOURCES`. For create→invoke→delete or unbound investigation, pass `--execution-mode free` (or bind devices and keep focused).
 
 ### Output Contract (structured & reasoning agents)
 
@@ -459,11 +459,12 @@ neomind agent control <ID> active
 ### Full Lifecycle
 
 ```bash
-neomind agent create --name 'Health Check' --prompt 'Check all devices' --every 10m
+neomind agent create --name 'Health Check' --prompt 'Check all devices' \
+  --every 10m --execution-mode free
 # ... agent starts immediately, check results ...
+neomind agent invoke <ID> "run once now"
 neomind agent latest-execution <ID>
-neomind agent control <ID> paused    # Stop when done
-neomind agent delete <ID>                      # Remove when no longer needed
+neomind agent delete <ID>   # required when the user asked to remove it — do not leave leftovers
 ```
 
 ## Common Errors & Solutions
@@ -474,6 +475,7 @@ neomind agent delete <ID>                      # Remove when no longer needed
 | Create fails | Missing `--name` or `--prompt` | Both are required flags |
 | Agent not running on schedule | Status is `paused` or wrong schedule config | Run `agent get <ID>` to check status and schedule, then `agent control <ID> active` if paused |
 | Control fails | Invalid status value | Only `active` and `paused` are valid |
-| Focused mode error | No resources bound | Add `--device-ids` or `--resources` |
+| Focused mode error | No resources bound (default mode) | Add `--device-ids` / `--resources`, **or** `--execution-mode free` |
+| `unexpected argument '--input'` on invoke | Input is positional | `neomind agent invoke <ID> "your prompt"` — not `--input` |
 | Execution shows error | LLM or tool failure | Check `agent conversation <ID>` for details |
 | Bad LLM responses | Wrong model/backend | Run `neomind llm list` for available backends, update with `agent update <ID> --llm-backend <backend>` |

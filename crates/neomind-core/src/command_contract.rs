@@ -540,10 +540,10 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
             },
         ],
         shell_example: DomainShellExample {
-            command: "neomind agent create --name \"Sensor Monitor\" --prompt \"Check sensor anomalies\" --schedule-type manual",
+            command: "neomind agent create --name \"Sensor Monitor\" --prompt \"Check sensor anomalies\" --every 10m --execution-mode free",
             params_json: None,
         },
-        guidance: "Provide `--name`, `--prompt`, and schedule (`--schedule-type` + `--schedule-config` or `--every`); discover real device IDs before binding resources.",
+        guidance: "Required `--name` + `--prompt` + schedule (`--every 10m` or `--schedule-type interval --schedule-config \"600\"` seconds). Default execution-mode is focused and needs `--device-ids`/`--resources`; for unbound create→invoke→delete use `--execution-mode free`. Prefer `--every` over inventing JSON schedule-config objects.",
     },
     DomainCommandContract {
         domain: "agent",
@@ -596,10 +596,26 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
             },
         ],
         shell_example: DomainShellExample {
-            command: "neomind agent invoke agent-001",
+            command: "neomind agent invoke agent-001 \"Check sensors now\"",
             params_json: None,
         },
-        guidance: "Invoke an agent immediately by positional `<ID>` (with optional input string); if it returns `Executing`, check `agent latest-execution <ID>`.",
+        guidance: "Invoke with positional `<ID>` and optional positional input string — never `--input`. If it returns `Executing`, poll `agent latest-execution <ID>`.",
+    },
+    DomainCommandContract {
+        domain: "agent",
+        action: "delete",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: None,
+        key_params: &[DomainParamSummary {
+            name: "<id>",
+            required: true,
+            summary: "Agent ID (positional; discover via `agent list`)",
+        }],
+        shell_example: DomainShellExample {
+            command: "neomind agent delete agent-001",
+            params_json: None,
+        },
+        guidance: "When the user asks to create→run→delete, finish with `agent delete <ID>` (and delete every duplicate create if you minted more than one).",
     },
     // === Widget ===
     DomainCommandContract {
@@ -965,6 +981,7 @@ mod tests {
             ("agent", "create"),
             ("agent", "update"),
             ("agent", "invoke"),
+            ("agent", "delete"),
             ("widget", "create"),
             ("widget", "install"),
             ("extension", "install"),

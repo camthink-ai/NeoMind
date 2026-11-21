@@ -306,7 +306,9 @@ pub async fn create_agent(
         return Ok(CliResponse::error_with_suggestion(
             "Focused mode requires --resources or --device-ids to bind at least one resource.",
             "FOCUSED_REQUIRES_RESOURCES",
-            "Example: --device-ids device-001,device-002  (binds the focused agent to those devices; or pass --resources with a JSON array)",
+            "Either bind devices (`--device-ids sensor-001` or `--resources '[…]'`) OR switch \
+             off focused with `--execution-mode free` (multi-round) / `manual` schedule for \
+             create→invoke→delete lifecycles. Default execution-mode is focused.",
         ));
     }
 
