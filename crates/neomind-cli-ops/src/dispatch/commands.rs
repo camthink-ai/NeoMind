@@ -34,6 +34,14 @@ pub struct Args {
     /// (`dashboard list --format=json`, `widget list --format=json`).
     #[arg(long, global = true, value_parser = ["json", "text"])]
     pub format: Option<String>,
+
+    /// Alias for `--format json`. Models (and many CLIs) reach for bare
+    /// `--json` on list/get/history; rejecting it burned Phase1 overnight
+    /// `haccp-compliance-deploy` (12× on one timed-out en trial alone) and
+    /// 28 failed tool calls across the tip suite. Global so every
+    /// subcommand accepts it the same way `--format` does.
+    #[arg(long, global = true, action = clap::ArgAction::SetTrue)]
+    pub json: bool,
 }
 
 /// Available commands.
@@ -2691,6 +2699,50 @@ pub fn parse_duration(s: &str) -> u64 {
         num.parse::<u64>().unwrap_or(1) * 86400
     } else {
         s.parse::<u64>().unwrap_or(300)
+    }
+}
+
+#[cfg(test)]
+mod global_json_flag_tests {
+    //! Day9 overnight: bare `--json` was rejected while `--format json` was
+    //! already global — `haccp-compliance-deploy` timed out after 12×
+    //! `device|rule|transform list --json` failures on one en trial.
+
+    use super::Args;
+    use clap::Parser;
+
+    #[test]
+    fn bare_json_flag_parses_on_list_commands() {
+        for argv in [
+            &["neomind", "device", "list", "--json"][..],
+            &["neomind", "rule", "list", "--json"][..],
+            &["neomind", "transform", "list", "--json"][..],
+            &["neomind", "device", "history", "fridge-1", "--metric", "temp_c", "--json"][..],
+        ] {
+            let args = Args::try_parse_from(argv.iter().copied()).unwrap_or_else(|e| {
+                panic!("expected --json to parse for {argv:?}: {e}")
+            });
+            assert!(args.json, "argv={argv:?}");
+            assert!(args.format.is_none());
+        }
+    }
+
+    #[test]
+    fn format_json_still_parses() {
+        let args = Args::try_parse_from(["neomind", "device", "list", "--format", "json"]).unwrap();
+        assert!(!args.json);
+        assert_eq!(args.format.as_deref(), Some("json"));
+    }
+
+    #[test]
+    fn bare_json_and_format_text_both_visible_to_dispatch() {
+        // clap accepts both; dispatch prefers --json → Json when format is text
+        // only if json is set — this just asserts parse succeeds.
+        let args =
+            Args::try_parse_from(["neomind", "device", "list", "--json", "--format", "text"])
+                .unwrap();
+        assert!(args.json);
+        assert_eq!(args.format.as_deref(), Some("text"));
     }
 }
 

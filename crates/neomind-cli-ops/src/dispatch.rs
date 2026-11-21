@@ -167,20 +167,20 @@ pub async fn dispatch_with_context(
         }
     };
 
-    // Respect explicit `--format json|text` when the caller did not pin one.
+    // Respect explicit `--json` / `--format json|text` when the caller did
+    // not pin a format. `--json` is a SetTrue alias for format=json (Day9
+    // haccp timeout: models burn rounds on rejected bare `--json`).
     let effective_ctx = if ctx.output_format.is_none() {
-        match parsed.format.as_deref() {
-            Some("json") => {
-                let mut c = ctx.clone();
-                c.output_format = Some(OutputFormat::Json);
-                c
-            }
-            Some("text") => {
-                let mut c = ctx.clone();
-                c.output_format = Some(OutputFormat::Human);
-                c
-            }
-            _ => ctx.clone(),
+        if parsed.json || parsed.format.as_deref() == Some("json") {
+            let mut c = ctx.clone();
+            c.output_format = Some(OutputFormat::Json);
+            c
+        } else if parsed.format.as_deref() == Some("text") {
+            let mut c = ctx.clone();
+            c.output_format = Some(OutputFormat::Human);
+            c
+        } else {
+            ctx.clone()
         }
     } else {
         ctx.clone()

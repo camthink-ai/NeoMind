@@ -44,10 +44,12 @@ async fn main() -> Result<()> {
     let dispatch_ctx = neomind_cli_ops::dispatch::DispatchContext {
         api_base: std::env::var("NEOMIND_API_BASE").ok(),
         api_key: std::env::var("NEOMIND_API_KEY").ok(),
-        output_format: match args.format.as_deref() {
-            Some("json") => Some(neomind_cli_ops::types::OutputFormat::Json),
-            Some("text") => Some(neomind_cli_ops::types::OutputFormat::Human),
-            _ => None,
+        output_format: if args.json || args.format.as_deref() == Some("json") {
+            Some(neomind_cli_ops::types::OutputFormat::Json)
+        } else if args.format.as_deref() == Some("text") {
+            Some(neomind_cli_ops::types::OutputFormat::Human)
+        } else {
+            None
         },
     };
 
