@@ -2924,3 +2924,200 @@ async fn dongpingshan_text_llm_no_vision_tool_unavailable() {
         "got: {err}"
     );
 }
+
+// ── R2-P0-1: success_rate self-heal / all-fail / empty-event skip ──────────
+
+/// Soft-fail then succeed: ToolOutput{success:false} then success.
+struct ConditionalEchoTool;
+
+#[async_trait]
+impl Tool for ConditionalEchoTool {
+    fn name(&self) -> &str {
+        "echo"
+    }
+    fn description(&self) -> &str {
+        "echo that fails when msg starts with FAIL"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": { "msg": { "type": "string" } },
+            "required": ["msg"]
+        })
+    }
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+        let msg = args.get("msg").and_then(|v| v.as_str()).unwrap_or("");
+        if msg.starts_with("FAIL") {
+            Ok(ToolOutput::error(format!("echo failed: {msg}")))
+        } else {
+            Ok(ToolOutput::success(format!("echo: {msg}")))
+        }
+    }
+}
+
+/// Round 1 tool fails, Round 2 succeeds → Completed + successful_executions==1.
+#[tokio::test]
+async fn self_heal_partial_success_rate_is_completed() {
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.execution_mode = ExecutionMode::Free;
+    agent.parsed_intent = Some(neomind_storage::ParsedIntent {
+        intent_type: neomind_storage::IntentType::Monitoring,
+        target_metrics: vec![],
+        conditions: vec![],
+        actions: vec![],
+        confidence: 0.9,
+    });
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(ConditionalEchoTool));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.store().save_agent(&agent).await.expect("seed");
+
+    let rt: Arc<dyn LlmRuntime> = Arc::new(
+        MockLlmRuntime::new(vec![
+            MockResponse::tool_call("echo", serde_json::json!({ "msg": "FAIL first" })),
+            MockResponse::tool_call("echo", serde_json::json!({ "msg": "ok second" })),
+            MockResponse::text("recovered after self-heal"),
+        ])
+        .with_function_calling(),
+    );
+    executor.set_llm_runtime(rt).await;
+
+    let record = executor
+        .execute_agent(agent.clone(), None, None)
+        .await
+        .expect("run");
+    assert_eq!(record.status, neomind_storage::ExecutionStatus::Completed);
+    assert!(record.error.is_none());
+    let rate = record
+        .result
+        .as_ref()
+        .map(|r| r.success_rate)
+        .unwrap_or(0.0);
+    assert!(
+        rate > 0.0 && rate < 1.0,
+        "expected partial success_rate, got {rate}"
+    );
+
+    let stored = executor
+        .store()
+        .get_agent(&agent.id)
+        .await
+        .expect("get")
+        .expect("exists");
+    assert_eq!(stored.stats.successful_executions, 1);
+    assert_eq!(stored.stats.failed_executions, 0);
+    assert_eq!(stored.consecutive_failures, 0);
+}
+
+/// All tools fail → Failed + failed_executions==1 + no output_contract publish.
+#[tokio::test]
+async fn all_tools_failed_is_business_failure_without_output_contract() {
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.execution_mode = ExecutionMode::Free;
+    agent.parsed_intent = Some(neomind_storage::ParsedIntent {
+        intent_type: neomind_storage::IntentType::Monitoring,
+        target_metrics: vec![],
+        conditions: vec![],
+        actions: vec![],
+        confidence: 0.9,
+    });
+    agent.output_schema = Some(vec![neomind_storage::OperatorField {
+        name: "status".into(),
+        field_type: neomind_storage::OperatorFieldType::Enum(vec!["ok".into(), "bad".into()]),
+        unit: None,
+        description: None,
+    }]);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(ConditionalEchoTool));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.store().save_agent(&agent).await.expect("seed");
+
+    let rt: Arc<dyn LlmRuntime> = Arc::new(
+        MockLlmRuntime::new(vec![
+            MockResponse::tool_call("echo", serde_json::json!({ "msg": "FAIL only" })),
+            MockResponse::text(r#"{"status":"ok"}"#),
+        ])
+        .with_function_calling(),
+    );
+    executor.set_llm_runtime(rt).await;
+
+    let record = executor
+        .execute_agent(agent.clone(), None, None)
+        .await
+        .expect("run");
+    assert_eq!(record.status, neomind_storage::ExecutionStatus::Failed);
+    assert!(record.error.is_some());
+    assert!(
+        !record
+            .decision_process
+            .decisions
+            .iter()
+            .any(|d| d.decision_type == "output_contract"),
+        "failed run must not publish output_contract"
+    );
+    let stored = executor
+        .store()
+        .get_agent(&agent.id)
+        .await
+        .expect("get")
+        .expect("exists");
+    assert_eq!(stored.stats.failed_executions, 1);
+    assert_eq!(stored.stats.successful_executions, 0);
+}
+
+/// Empty-event image extraction skip → Completed, no stats bump, no breaker.
+#[tokio::test]
+async fn empty_event_skip_does_not_trip_breaker_or_stats() {
+    let (executor, mut agent, _) = build_harness().await;
+    agent.execution_mode = ExecutionMode::Free;
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.consecutive_failures = 1; // pre-existing strike must stay
+    agent.parsed_intent = Some(neomind_storage::ParsedIntent {
+        intent_type: neomind_storage::IntentType::Monitoring,
+        target_metrics: vec![],
+        conditions: vec![],
+        actions: vec![],
+        confidence: 0.9,
+    });
+    executor.store().save_agent(&agent).await.expect("seed");
+
+    // Image-named field with non-image value → extraction fails → empty skip.
+    let event = super::context::EventTriggerData {
+        source: super::context::DataSourceRef {
+            source_type: "device".into(),
+            source_id: "cam-1".into(),
+            field: "image_data".into(),
+        },
+        value: neomind_core::event::MetricValue::Float(1.0),
+        timestamp: 0,
+    };
+
+    let record = executor
+        .execute_agent(agent.clone(), Some(event), None)
+        .await
+        .expect("skip returns Ok record");
+    assert_eq!(record.status, neomind_storage::ExecutionStatus::Completed);
+    assert!(record.error.is_none());
+    assert!(
+        record
+            .result
+            .as_ref()
+            .is_some_and(|r| r.summary.starts_with("Skipped:")),
+        "expected skip summary, got {:?}",
+        record.result.as_ref().map(|r| &r.summary)
+    );
+
+    let stored = executor
+        .store()
+        .get_agent(&agent.id)
+        .await
+        .expect("get")
+        .expect("exists");
+    assert_eq!(stored.stats.successful_executions, 0);
+    assert_eq!(stored.stats.failed_executions, 0);
+    assert_eq!(
+        stored.consecutive_failures, 1,
+        "skip must not increment or reset breaker strikes"
+    );
+    assert_eq!(stored.status, AgentStatus::Active);
+}

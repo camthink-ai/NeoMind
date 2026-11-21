@@ -119,19 +119,32 @@ const VISION_FAILURE_MARKERS: &[&str] = &[
     "vision not available",
 ];
 
-/// Honest inline analysis evidence — when present on an InlineMultimodal run,
-/// incidental "no vision tool" explanations must not trip the failure guard.
+/// Explicit "did not analyze the image" phrases — always failure admissions,
+/// never suppressed by inline success evidence.
+const INLINE_VISION_NEGATION_PHRASES: &[&str] = &[
+    "无法分析",
+    "不能分析",
+    "未能分析",
+    "无法查看",
+    "无法识别",
+    "cannot analyze",
+    "unable to analyze",
+    "could not analyze",
+    "failed to analyze",
+    "can't analyze",
+];
+
+/// Honest inline analysis evidence — completed-action phrases only.
+/// Bare nouns like "attached image" / "inline" are excluded so failure
+/// admissions such as "无法分析附带图像" still trip the guard.
 const INLINE_VISION_SUCCESS_EVIDENCE: &[&str] = &[
-    "直接分析",
-    "附带图像",
-    "附带画面",
-    "内联",
-    "attached image",
-    "attached frame",
-    "attached images",
+    "已直接分析",
+    "直接分析了",
+    "已分析附带",
+    "已查看附带",
     "analyzed the attached",
     "analyzed attached",
-    "inline",
+    "inspected the attached",
 ];
 
 fn marker_hit_is_night_vision_false_positive(lower: &str, marker: &str) -> bool {
@@ -142,24 +155,36 @@ fn marker_hit_is_night_vision_false_positive(lower: &str, marker: &str) -> bool 
     if !night_sensitive {
         return false;
     }
-    let Some(idx) = lower.find(marker) else {
-        return false;
-    };
-    let before = &lower[..idx];
     let prefixes = [
         "night ",
+        "night-",
         "ir ",
+        "ir-",
         "infrared ",
+        "infrared-",
+        "thermal ",
         "low-light ",
         "low light ",
         "夜视",
         "红外",
         "夜间",
     ];
-    prefixes.iter().any(|p| before.ends_with(p))
+    // Every hit of the marker must be night/IR-prefixed; a later bare
+    // "vision not available" still counts as a real failure admission.
+    let m_lower = marker.to_lowercase();
+    let mut any = false;
+    for (idx, _) in lower.match_indices(&m_lower) {
+        any = true;
+        let before = &lower[..idx];
+        if !prefixes.iter().any(|p| before.ends_with(p)) {
+            return false;
+        }
+    }
+    any
 }
 
 /// True when the conclusion text admits vision analysis failed / was missing.
+#[cfg(test)]
 pub(crate) fn conclusion_admits_vision_failure(text: &str) -> bool {
     conclusion_admits_vision_failure_for_path(text, VisionExecutionPath::None)
 }
@@ -168,12 +193,19 @@ pub(crate) fn conclusion_admits_vision_failure(text: &str) -> bool {
 ///
 /// When `path` is InlineMultimodal and the conclusion also contains positive
 /// inline-analysis evidence, incidental "no vision tool" explanations are
-/// treated as commentary rather than failure (Prompt-Echo Trap).
+/// treated as commentary rather than failure (Prompt-Echo Trap) — unless an
+/// explicit negation phrase is present.
 pub(crate) fn conclusion_admits_vision_failure_for_path(
     text: &str,
     path: VisionExecutionPath,
 ) -> bool {
     let lower = text.to_lowercase();
+    if INLINE_VISION_NEGATION_PHRASES
+        .iter()
+        .any(|p| lower.contains(&p.to_lowercase()))
+    {
+        return true;
+    }
     let hit = VISION_FAILURE_MARKERS.iter().any(|m| {
         let m_lower = m.to_lowercase();
         lower.contains(&m_lower) && !marker_hit_is_night_vision_false_positive(&lower, &m_lower)
@@ -310,7 +342,7 @@ mod tests {
 
     #[test]
     fn inline_path_echo_of_no_vision_tool_with_evidence_is_ok() {
-        let echo = "当前环境没有 vision 工具，已直接分析内联图像：走廊空旷，无赌博行为。";
+        let echo = "当前环境没有 vision 工具，已直接分析附带图像：走廊空旷，无赌博行为。";
         assert!(
             !conclusion_admits_vision_failure_for_path(echo, VisionExecutionPath::InlineMultimodal),
             "inline evidence must suppress prompt-echo false fail"
@@ -323,6 +355,40 @@ mod tests {
         assert!(conclusion_admits_vision_failure_for_path(
             bare,
             VisionExecutionPath::InlineMultimodal
+        ));
+    }
+
+    #[test]
+    fn inline_bare_noun_with_negation_still_admits_failure() {
+        let cases = [
+            "Vision tool not available to analyze the attached image.",
+            "没有 vision 工具，无法分析附带图像。",
+            "Cannot use vision (inline image unavailable).",
+            "无法分析附带画面，视觉工具不可用。",
+        ];
+        for text in cases {
+            assert!(
+                conclusion_admits_vision_failure_for_path(
+                    text,
+                    VisionExecutionPath::InlineMultimodal
+                ),
+                "negation / bare-noun must admit failure: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn night_vision_prefix_checks_all_marker_hits() {
+        // First hit is night-prefixed; later bare marker must still admit failure.
+        assert!(conclusion_admits_vision_failure(
+            "红外视觉不可用，且当前视觉不可用无法分析"
+        ));
+        // Hyphenated night-/ir- prefixes must not false-positive.
+        assert!(!conclusion_admits_vision_failure(
+            "Night-vision not available — frame is pitch dark"
+        ));
+        assert!(!conclusion_admits_vision_failure(
+            "IR-vision not available on this camera"
         ));
     }
 

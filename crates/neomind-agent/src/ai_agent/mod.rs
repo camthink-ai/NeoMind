@@ -309,27 +309,42 @@ impl AiAgentManager {
         // transient network failures, contradicting the scheduler path.
         let error_msg = result.as_ref().err().map(|e| e.to_string());
         match &result {
-            Ok(record) if record.error.is_none() => {
-                // A manual task idles as Completed (not Active): it has no
-                // standing duty and the scheduler must not pick it up.
-                // Manual invoke always works — Completed is a ready-state,
-                // not terminal.
-                let new_status = if agent.schedule.schedule_type == ScheduleType::Manual {
-                    AgentStatus::Completed
+            Ok(_record) => {
+                if agent.schedule.schedule_type == ScheduleType::Manual {
+                    // Manual agents idle as Completed (not Active), including
+                    // after a non-breaker business failure — otherwise the
+                    // executor's Active write sticks and reload_active_agents
+                    // would pick them up on restart. Only a tripped breaker
+                    // (store status Error) stays demoted.
+                    let demoted = self
+                        .executor
+                        .store()
+                        .get_agent(agent_id)
+                        .await?
+                        .is_some_and(|a| a.status == AgentStatus::Error);
+                    if !demoted {
+                        self.executor
+                            .store()
+                            .update_agent_status(agent_id, AgentStatus::Completed, None)
+                            .await?;
+                    } else {
+                        tracing::debug!(
+                            agent_id = %agent_id,
+                            "manual run tripped breaker — keeping Error"
+                        );
+                    }
+                } else if _record.error.is_none() {
+                    self.executor
+                        .store()
+                        .update_agent_status(agent_id, AgentStatus::Active, None)
+                        .await?;
                 } else {
-                    AgentStatus::Active
-                };
-                self.executor
-                    .store()
-                    .update_agent_status(agent_id, new_status, None)
-                    .await?;
-            }
-            Ok(_) => {
-                // Failed run — the executor's own status verdict stands.
-                tracing::debug!(
-                    agent_id = %agent_id,
-                    "manual run failed — keeping the executor's status verdict"
-                );
+                    // Failed run — the executor's own status verdict stands.
+                    tracing::debug!(
+                        agent_id = %agent_id,
+                        "manual run failed — keeping the executor's status verdict"
+                    );
+                }
             }
             Err(e) => {
                 let transient = e.to_string().contains("already executing")

@@ -1091,24 +1091,28 @@ impl AgentExecutor {
         // Build execution record
         let record = match execution_result {
             Ok((decision_process, result)) => {
-                // Align stats with journal / business success: empty-event
-                // skips and action failures write journal success=false via
-                // success_rate < 1.0 — they must not still increment
-                // successful_executions.
-                let business_ok = result.success_rate >= 1.0;
-                if let Err(e) = self
-                    .store
-                    .update_agent_stats(&agent_id, business_ok, duration_ms)
-                    .await
-                {
-                    tracing::error!(
-                        agent_id = %agent_id,
-                        error = %e,
-                        "Failed to update agent stats after execution"
-                    );
+                // Tool-loop business success: empty tools OR any successful
+                // tool call → Completed. All tools failed (rate==0) or an
+                // explicit vision reject (rate forced to 0) → Failed.
+                // Empty-event skips are Completed for retry/breaker purposes
+                // but do not bump successful_executions (or failed).
+                let is_skip = is_empty_event_skip(&result);
+                let business_ok = execution_business_ok(&result);
+                if !is_skip {
+                    if let Err(e) = self
+                        .store
+                        .update_agent_stats(&agent_id, business_ok, duration_ms)
+                        .await
+                    {
+                        tracing::error!(
+                            agent_id = %agent_id,
+                            error = %e,
+                            "Failed to update agent stats after execution"
+                        );
+                    }
                 }
 
-                let (status, error) = if business_ok {
+                let (status, error) = if is_skip || business_ok {
                     (ExecutionStatus::Completed, None)
                 } else {
                     (
@@ -1246,7 +1250,13 @@ impl AgentExecutor {
             .map(|c| c.consecutive_failure_threshold as u32)
             .unwrap_or(3);
 
-        let new_status = if record.status == ExecutionStatus::Completed {
+        let is_event_skip = record.result.as_ref().is_some_and(is_empty_event_skip);
+
+        let new_status = if is_event_skip {
+            // Empty-event skip is not a success and not a breaker strike —
+            // leave consecutive_failures untouched and stay Active.
+            neomind_storage::AgentStatus::Active
+        } else if record.status == ExecutionStatus::Completed {
             // Unconditional reset: the passed-in agent object can be stale
             // (event cache, manual re-invoke), so comparing its count would
             // skip resets. One cheap write per successful run.
@@ -1636,9 +1646,10 @@ impl AgentExecutor {
                 )
                 .await;
 
-                // Update memory with Free mode results
-                // Reflect partial failures: mark as failed when success_rate < 1.0
-                let overall_success = execution_result.success_rate >= 1.0;
+                // Update memory with Free mode results.
+                // Self-heal runs (0 < success_rate < 1) count as business success;
+                // only all-tools-failed / vision-reject (rate == 0 with actions) fail.
+                let overall_success = execution_business_ok(&execution_result);
                 self.finalize_execution_memory(
                     &agent,
                     &decision_process.decisions,
@@ -1655,21 +1666,22 @@ impl AgentExecutor {
                     "[TOOL-CALLING] Returning direct results — skipped Focused JSON post-processing"
                 );
 
-                // M2-2: an output contract on a reasoning agent publishes this
-                // run's conclusion as data sources. Best-effort by design — the
-                // run already succeeded, so a failed extraction costs fields,
-                // never the run. Bound first: the borrow must end before the push.
-                let published = self
-                    .apply_output_contract(&agent, &execution_id, &decision_process.conclusion)
-                    .await;
-                if let Some(field_count) = published {
-                    decision_process.decisions.push(Decision {
-                        decision_type: "output_contract".to_string(),
-                        description: format!("Published {} schema field(s)", field_count),
-                        action: format!("ai:{}:* → {}", agent.id, field_count),
-                        rationale: "Output contract applied to the run's conclusion".to_string(),
-                        expected_outcome: "Fields available as ai:* data sources".to_string(),
-                    });
+                // M2-2: publish output-contract fields only on business success
+                // so a rejected / all-failed conclusion never lands in ai:*.
+                if overall_success {
+                    let published = self
+                        .apply_output_contract(&agent, &execution_id, &decision_process.conclusion)
+                        .await;
+                    if let Some(field_count) = published {
+                        decision_process.decisions.push(Decision {
+                            decision_type: "output_contract".to_string(),
+                            description: format!("Published {} schema field(s)", field_count),
+                            action: format!("ai:{}:* → {}", agent.id, field_count),
+                            rationale: "Output contract applied to the run's conclusion"
+                                .to_string(),
+                            expected_outcome: "Fields available as ai:* data sources".to_string(),
+                        });
+                    }
                 }
 
                 Ok((*decision_process, *execution_result))
@@ -1810,19 +1822,22 @@ impl AgentExecutor {
                 // No truncation — preserve full LLM output for quality
                 let summary_for_result = conclusion.clone();
 
-                // M2-2: the output contract, same best-effort step as the Free
-                // branch — recorded as a decision so it shows in the timeline.
-                let published = self
-                    .apply_output_contract(&agent, &execution_id, &conclusion)
-                    .await;
-                if let Some(field_count) = published {
-                    decisions.push(Decision {
-                        decision_type: "output_contract".to_string(),
-                        description: format!("Published {} schema field(s)", field_count),
-                        action: format!("ai:{}:* → {}", agent.id, field_count),
-                        rationale: "Output contract applied to the run's conclusion".to_string(),
-                        expected_outcome: "Fields available as ai:* data sources".to_string(),
-                    });
+                // M2-2: publish only when focused actions succeeded — a failed
+                // conclusion must not land in ai:* telemetry.
+                if focused_success {
+                    let published = self
+                        .apply_output_contract(&agent, &execution_id, &conclusion)
+                        .await;
+                    if let Some(field_count) = published {
+                        decisions.push(Decision {
+                            decision_type: "output_contract".to_string(),
+                            description: format!("Published {} schema field(s)", field_count),
+                            action: format!("ai:{}:* → {}", agent.id, field_count),
+                            rationale: "Output contract applied to the run's conclusion"
+                                .to_string(),
+                            expected_outcome: "Fields available as ai:* data sources".to_string(),
+                        });
+                    }
                 }
 
                 let decision_process = DecisionProcess {
@@ -1998,6 +2013,26 @@ pub(super) fn classify_tool_call_text(text: &str) -> ToolCallTextClassification 
         has_orphan_closing_tags,
         cleaned_text,
     }
+}
+
+/// Empty-event skip marker (`Skipped: event data extraction failed`).
+/// Not a business success and not a breaker / event-retry failure.
+pub(crate) fn is_empty_event_skip(result: &StorageExecutionResult) -> bool {
+    let lower = result.summary.to_lowercase();
+    result.summary.starts_with("Skipped:") || lower.contains("event data extraction failed")
+}
+
+/// Tool-loop / run business success for stats + Completed vs Failed.
+///
+/// - Empty-event skip → false (caller must not bump successful_executions)
+/// - No tools called → true
+/// - Any successful tool (`success_rate > 0`) → true (self-heal OK)
+/// - All tools failed or vision reject (`success_rate == 0` with actions) → false
+pub(crate) fn execution_business_ok(result: &StorageExecutionResult) -> bool {
+    if is_empty_event_skip(result) {
+        return false;
+    }
+    result.actions_executed.is_empty() || result.success_rate > 0.0
 }
 
 /// Heuristic: detect transient (retryable) failures from the error message.

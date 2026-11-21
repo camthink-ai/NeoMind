@@ -663,6 +663,39 @@ impl AgentExecutor {
                             );
                             return Ok(());
                         }
+                        // Empty-event skips are Completed in execute_agent; if a
+                        // Failed record still carries the skip marker, do not
+                        // 5s×N replay / breaker-storm it.
+                        if record
+                            .result
+                            .as_ref()
+                            .is_some_and(super::is_empty_event_skip)
+                        {
+                            tracing::info!(
+                                agent_id = %agent_id,
+                                execution_id = %record.id,
+                                "Event trigger empty-data skip — not retrying"
+                            );
+                            return Ok(());
+                        }
+                        // Vision reject / partial business failure after a
+                        // successful message send / device control must not be
+                        // replayed — that would duplicate side effects.
+                        if record
+                            .result
+                            .as_ref()
+                            .is_some_and(|r| r.actions_executed.iter().any(|a| a.success))
+                        {
+                            tracing::warn!(
+                                agent_id = %agent_id,
+                                execution_id = %record.id,
+                                "Event-triggered execution Failed after successful side effects — not retrying"
+                            );
+                            return Err(crate::error::NeoMindError::Llm(format!(
+                                "event-triggered execution failed after successful side effects (execution_id={})",
+                                record.id
+                            )));
+                        }
                         if attempt <= retries {
                             tracing::warn!(
                                 agent_id = %agent_id,
