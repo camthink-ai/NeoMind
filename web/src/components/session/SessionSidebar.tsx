@@ -613,36 +613,46 @@ export function SessionSidebar({
       </div>
 
       <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
-        <div className="space-y-0.5 overflow-x-hidden px-2 pb-24">
+        <div className="space-y-0.5 overflow-x-hidden px-2 pb-28">
           {renderSessionList(true)}
         </div>
       </ScrollArea>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-[env(safe-area-inset-bottom,0px)] pt-8">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-[env(safe-area-inset-bottom,0px)]">
         <div
           data-testid="session-drawer-userbar"
-          className="pointer-events-auto flex min-h-14 w-full items-center gap-3 border-0 bg-surface-glass px-4 py-2.5 shadow-none backdrop-blur-xl"
+          className="pointer-events-auto w-full border-0 shadow-none backdrop-blur-xl"
+          style={{
+            // Soften the list→footer split: transparent at the top, denser below,
+            // with blur masked the same way so the edge does not read as a line.
+            background:
+              'linear-gradient(to top, color-mix(in srgb, var(--background) 88%, transparent) 0%, color-mix(in srgb, var(--background) 42%, transparent) 48%, transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to top, black 52%, transparent 100%)',
+            maskImage: 'linear-gradient(to top, black 52%, transparent 100%)',
+          }}
         >
-          <Avatar className="h-9 w-9 shrink-0 rounded-full">
-            <AvatarFallback className="bg-primary text-xs font-semibold text-primary-foreground">
-              {workspaceAvatarLabel}
-            </AvatarFallback>
-          </Avatar>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-            {user?.username ?? 'NeoMind'}
-          </span>
-          <button
-            type="button"
-            data-testid="session-drawer-workspace"
-            onClick={() => goWorkspace('/system')}
-            className="flex max-w-[48%] shrink-0 items-center gap-1 rounded-lg px-1.5 py-2 text-left transition-colors active:bg-muted"
-            aria-label={t('system.moreEntries')}
-          >
-            <span className="truncate text-sm text-muted-foreground">
-              {t('system.moreEntries')}
+          <div className="flex min-h-14 items-center gap-3 px-4 pb-2.5 pt-10">
+            <Avatar className="h-9 w-9 shrink-0 rounded-full">
+              <AvatarFallback className="bg-primary text-xs font-semibold text-primary-foreground">
+                {workspaceAvatarLabel}
+              </AvatarFallback>
+            </Avatar>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+              {user?.username ?? 'NeoMind'}
             </span>
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          </button>
+            <button
+              type="button"
+              data-testid="session-drawer-workspace"
+              onClick={() => goWorkspace('/system')}
+              className="flex max-w-[48%] shrink-0 items-center gap-1 rounded-lg px-1.5 py-2 text-left transition-colors active:bg-muted"
+              aria-label={t('system.moreEntries')}
+            >
+              <span className="truncate text-sm text-muted-foreground">
+                {t('system.moreEntries')}
+              </span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            </button>
+          </div>
         </div>
       </div>
     </>
