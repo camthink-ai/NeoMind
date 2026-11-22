@@ -807,12 +807,13 @@ pub(crate) fn canonical_tool_call_fingerprint(
 
 /// Fingerprint for the per-turn consecutive-failure circuit breaker.
 ///
-/// Same as [`canonical_tool_call_fingerprint`] except shell
-/// `neomind transform create|update` drops `--code`/`-c` so a model that
-/// keeps rewriting JS while leaving a bad `--scope` (NM-322 overnight
-/// `sr-clear-transform[zh]` wedge) still accumulates strikes. Write-gate
-/// PreferKnown fingerprints stay full-argv — only the failure breaker
-/// collapses code churn.
+/// Same as [`canonical_tool_call_fingerprint`] except shell commands drop
+/// high-churn JSON payload flags so models that rewrite the payload while
+/// leaving a bad scaffold still accumulate failure-circuit strikes:
+/// - `transform create|update`: drop `--code`/`-c` (NM-322 `sr-clear-transform`)
+/// - `dashboard create|update|add-components`: drop `--components` (Stage-3
+///   `haccp-compliance-deploy` timed out rewriting dashboard component JSON)
+/// Write-gate PreferKnown fingerprints stay full-argv.
 pub(crate) fn failure_circuit_fingerprint(
     tool_name: &str,
     arguments: &serde_json::Value,
@@ -822,7 +823,7 @@ pub(crate) fn failure_circuit_fingerprint(
     let real = crate::tools::resolve_tool_name(tool_name);
     if real.as_str() == "shell" {
         if let Some(cmd) = canonical.get("command").and_then(|v| v.as_str()) {
-            if let Some(stripped) = strip_transform_code_flag_for_failure_circuit(cmd) {
+            if let Some(stripped) = strip_churn_flags_for_failure_circuit(cmd) {
                 let mut adjusted = canonical.clone();
                 if let Some(obj) = adjusted.as_object_mut() {
                     obj.insert("command".into(), serde_json::Value::String(stripped));
@@ -834,27 +835,37 @@ pub(crate) fn failure_circuit_fingerprint(
     canonical_tool_call_fingerprint_from_canonical(real.as_str(), &canonical)
 }
 
-/// Drop `--code` / `-c` (and their values) from `neomind transform create|update`
-/// argv so failure-circuit strikes ignore JS rewrites. Returns `None` when the
-/// command is not that family (caller keeps the original fingerprint).
-fn strip_transform_code_flag_for_failure_circuit(cmd: &str) -> Option<String> {
+/// Drop high-churn payload flags from known wedge families. Returns `None`
+/// when the command is not in those families (caller keeps the original fp).
+fn strip_churn_flags_for_failure_circuit(cmd: &str) -> Option<String> {
     let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(cmd.trim()) else {
         return None;
     };
     let (domain, action) = neomind_cli_ops::json_arg::domain_action_from_argv(&argv)?;
-    if domain != "transform" || (action != "create" && action != "update") {
-        return None;
-    }
+    let flags: &[&str] = match (domain, action) {
+        ("transform", "create" | "update") => &["--code", "-c"],
+        ("dashboard", "create" | "update" | "add-components") => &["--components"],
+        _ => return None,
+    };
     let mut out = Vec::with_capacity(argv.len());
     let mut i = 0;
     while i < argv.len() {
         let a = argv[i].as_str();
-        if a == "--code" || a == "-c" {
-            i += 2; // skip flag + value (best-effort; missing value still advances past flag)
-            continue;
+        let mut skip = false;
+        for flag in flags {
+            if a == *flag {
+                i += 2; // skip flag + value (best-effort)
+                skip = true;
+                break;
+            }
+            let eq_prefix = format!("{flag}=");
+            if a.starts_with(&eq_prefix) {
+                i += 1;
+                skip = true;
+                break;
+            }
         }
-        if a.starts_with("--code=") || a.starts_with("-c=") {
-            i += 1;
+        if skip {
             continue;
         }
         out.push(argv[i].clone());
@@ -862,6 +873,12 @@ fn strip_transform_code_flag_for_failure_circuit(cmd: &str) -> Option<String> {
     }
     // Stable token serialization (preserve multi-word arg boundaries).
     Some(serde_json::to_string(&out).unwrap_or_else(|_| out.join(" ")))
+}
+
+/// Back-compat alias used by older unit tests / call sites.
+fn strip_transform_code_flag_for_failure_circuit(cmd: &str) -> Option<String> {
+    strip_churn_flags_for_failure_circuit(cmd)
+        .filter(|_| cmd.contains("transform create") || cmd.contains("transform update"))
 }
 
 fn canonical_tool_call_fingerprint_from_canonical(
@@ -2382,6 +2399,41 @@ mod tests {
         .expect("-c= form");
         assert!(!stripped_eq.contains("-c="), "{stripped_eq}");
         assert!(!stripped_eq.contains("return 1"), "{stripped_eq}");
+    }
+
+    #[test]
+    fn failure_circuit_collapses_dashboard_components_churn() {
+        // Stage-3 overnight: haccp-compliance-deploy[en] timed out rewriting
+        // --components JSON on the same dashboard create / add-components.
+        let a = serde_json::json!({
+            "command": "neomind dashboard create --name \"HACCP Dashboard\" --components '[{\"type_id\":\"metric-card\",\"display_name\":\"Frozen\"}]'"
+        });
+        let b = serde_json::json!({
+            "command": "neomind dashboard create --name \"HACCP Dashboard\" --components '[{\"type_id\":\"metric-card\",\"display_name\":\"Dairy\"}]'"
+        });
+        let c = serde_json::json!({
+            "command": "neomind dashboard create --name \"Other Board\" --components '[{\"type_id\":\"metric-card\",\"display_name\":\"Frozen\"}]'"
+        });
+        assert_eq!(
+            failure_circuit_fingerprint("shell", &a),
+            failure_circuit_fingerprint("shell", &b),
+            "components-only churn must share one failure-circuit key"
+        );
+        assert_ne!(
+            failure_circuit_fingerprint("shell", &a),
+            failure_circuit_fingerprint("shell", &c),
+            "dashboard name change must be a different failure-circuit key"
+        );
+        let add_a = serde_json::json!({
+            "command": "neomind dashboard add-components dash-1 --components '[{\"id\":\"a\"}]'"
+        });
+        let add_b = serde_json::json!({
+            "command": "neomind dashboard add-components dash-1 --components '[{\"id\":\"b\"}]'"
+        });
+        assert_eq!(
+            failure_circuit_fingerprint("shell", &add_a),
+            failure_circuit_fingerprint("shell", &add_b),
+        );
     }
 
     /// The mutation-pattern audit (against the full live CLI surface):

@@ -589,20 +589,21 @@ pub enum ExtensionCommand {
     /// Get extension health status.
     ///
     /// Shows process status, uptime, last error, and resource usage.
+    /// Omit `<ID>` to list installed extensions with status (same as a compact
+    /// `extension list`) — useful when the agent forgot to pass an id.
     /// Example: `neomind extension status weather-forecast`
     Status {
-        /// Extension ID.
-        #[arg(required = true)]
-        id: String,
+        /// Extension ID (optional — omit to list all with status).
+        id: Option<String>,
     },
     /// Get extension logs.
     ///
     /// Retrieves recent log output from the extension's isolated process.
+    /// Omit `<ID>` to list installed extensions and a tip to pick one.
     /// Example: `neomind extension logs weather-forecast --lines 50`
     Logs {
-        /// Extension ID.
-        #[arg(required = true)]
-        id: String,
+        /// Extension ID (optional — omit to list ids first).
+        id: Option<String>,
         /// Number of log lines to show.
         #[arg(short, long)]
         lines: Option<usize>,
@@ -3007,6 +3008,58 @@ mod rule_update_id_flag_tests {
     fn both_forms_conflict_and_neither_fails() {
         assert!(parse(&["rule", "update", "rule-001", "--id", "other", "--body", "{}"]).is_err());
         assert!(parse(&["rule", "update", "--body", "{}"]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod extension_status_logs_optional_id_tests {
+    //! Stage-3 closeout: bare `extension status` / `extension logs` must parse
+    //! (list-all / tip path) instead of clap missing_required.
+
+    use super::{Args, Command, ExtensionCommand};
+    use clap::Parser;
+
+    fn parse(argv: &str) -> Command {
+        Args::try_parse_from(["neomind"].into_iter().chain(argv.split_whitespace()))
+            .unwrap_or_else(|e| panic!("parse `{argv}`: {e}"))
+            .command
+    }
+
+    #[test]
+    fn extension_status_parses_without_id() {
+        let Command::Extension { extension_cmd } = parse("extension status") else {
+            panic!("expected Extension");
+        };
+        match extension_cmd {
+            ExtensionCommand::Status { id: None } => {}
+            other => panic!("expected Status {{ id: None }}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extension_status_parses_with_id() {
+        let Command::Extension { extension_cmd } = parse("extension status weather-forecast")
+        else {
+            panic!("expected Extension");
+        };
+        match extension_cmd {
+            ExtensionCommand::Status { id: Some(id) } => assert_eq!(id, "weather-forecast"),
+            other => panic!("expected Status with id, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extension_logs_parses_without_id() {
+        let Command::Extension { extension_cmd } = parse("extension logs") else {
+            panic!("expected Extension");
+        };
+        match extension_cmd {
+            ExtensionCommand::Logs {
+                id: None,
+                lines: None,
+            } => {}
+            other => panic!("expected Logs {{ id: None }}, got {other:?}"),
+        }
     }
 }
 

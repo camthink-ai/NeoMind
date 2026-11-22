@@ -64,12 +64,22 @@ pub async fn run_extension_cmd_with_context(
             yes: _,
             offline: false,
         } => crate::extension::uninstall_extension(&client, &id).await?,
-        ExtensionCommand::Status { id } => {
-            crate::extension::get_extension_status(&client, &id).await?
-        }
-        ExtensionCommand::Logs { id, lines } => {
-            crate::extension::get_extension_logs(&client, &id, lines).await?
-        }
+        ExtensionCommand::Status { id } => match id {
+            Some(id) => crate::extension::get_extension_status(&client, &id).await?,
+            // Bare `extension status` — list with health fields instead of clap
+            // missing_required (Stage-3 overnight: extension-status-diagnose ×3).
+            None => crate::extension::list_extensions(&client).await?,
+        },
+        ExtensionCommand::Logs { id, lines } => match id {
+            Some(id) => crate::extension::get_extension_logs(&client, &id, lines).await?,
+            None => {
+                let mut resp = crate::extension::list_extensions(&client).await?;
+                resp = resp.with_suggestion(
+                    "Pass an extension ID: `neomind extension logs <ID> [--lines N]`. Discover IDs with `neomind extension list` or `neomind extension status`.",
+                );
+                resp
+            }
+        },
         ExtensionCommand::MarketInstall {
             extension_id,
             version,

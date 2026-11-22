@@ -693,14 +693,14 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
         primary_json: None,
         key_params: &[DomainParamSummary {
             name: "<id>",
-            required: true,
-            summary: "Extension ID (positional; discover via `extension list`)",
+            required: false,
+            summary: "Extension ID (positional; omit to list all with status)",
         }],
         shell_example: DomainShellExample {
             command: "neomind extension status weather-forecast",
             params_json: None,
         },
-        guidance: "Pass the extension ID positionally (`extension status <ID>`); do not invent flags. Discover IDs with `extension list` first.",
+        guidance: "Prefer `extension status <ID>` (positional). Omitting `<ID>` lists installed extensions with status — then call again with the target id. Do not invent flags.",
     },
     DomainCommandContract {
         domain: "extension",
@@ -710,8 +710,8 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
         key_params: &[
             DomainParamSummary {
                 name: "<id>",
-                required: true,
-                summary: "Extension ID (positional)",
+                required: false,
+                summary: "Extension ID (positional; omit to list ids first)",
             },
             DomainParamSummary {
                 name: "--lines",
@@ -723,7 +723,7 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
             command: "neomind extension logs weather-forecast",
             params_json: None,
         },
-        guidance: "Pass the extension ID positionally (`extension logs <ID>`); optional `--lines N`.",
+        guidance: "Prefer `extension logs <ID> [--lines N]`. Omitting `<ID>` lists installed extensions and tips the next call — then pass the id.",
     },
     DomainCommandContract {
         domain: "extension",
