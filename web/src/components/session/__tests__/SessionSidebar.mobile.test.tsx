@@ -61,17 +61,19 @@ describe('SessionSidebar mobile workspace drawer', () => {
     expect(screen.getByText('温室巡检')).toBeTruthy()
     expect(screen.getByTestId('session-drawer-shortcut-devices')).toBeTruthy()
     expect(screen.getByTestId('session-drawer-shortcut-agents')).toBeTruthy()
-    expect(screen.getByTestId('session-drawer-shortcut-automation')).toBeTruthy()
-    expect(screen.getByTestId('session-drawer-shortcut-data')).toBeTruthy()
-    expect(screen.getByTestId('session-drawer-shortcut-extensions')).toBeTruthy()
+    expect(screen.getByTestId('session-drawer-shortcut-dashboard')).toBeTruthy()
+    expect(screen.getByTestId('session-drawer-shortcut-messages')).toBeTruthy()
+    expect(screen.queryByTestId('session-drawer-shortcut-automation')).toBeNull()
+    expect(screen.queryByTestId('session-drawer-shortcut-data')).toBeNull()
+    expect(screen.queryByTestId('session-drawer-shortcut-extensions')).toBeNull()
+    // Original four tiles keep Lucide icons.
+    for (const id of ['devices', 'agents', 'dashboard', 'messages']) {
+      expect(screen.getByTestId(`session-drawer-shortcut-${id}`).querySelectorAll('svg').length).toBe(1)
+    }
     const workspace = screen.getByTestId('session-drawer-workspace')
     expect(workspace).toBeTruthy()
     // Text + chevron only — no leading icon.
     expect(workspace.querySelectorAll('svg').length).toBe(1)
-    // Quick-entry tiles are text-only (no Lucide icons).
-    for (const id of ['devices', 'agents', 'dashboard', 'messages', 'automation', 'data', 'extensions']) {
-      expect(screen.getByTestId(`session-drawer-shortcut-${id}`).querySelectorAll('svg').length).toBe(0)
-    }
     expect(screen.getByTestId('session-drawer-new-chat')).toBeTruthy()
     expect(screen.getByPlaceholderText(/search|搜索/i)).toBeTruthy()
   })

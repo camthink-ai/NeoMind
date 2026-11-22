@@ -28,6 +28,10 @@ import {
   Check,
   Loader2,
   ChevronRight,
+  Cpu,
+  Bot,
+  LayoutDashboard,
+  Bell,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -503,17 +507,13 @@ export function SessionSidebar({
     navigate(path)
   }
 
-  // Mirror primary nav destinations missing from the first row (chat is the
-  // current surface; Settings stays on the System hub / rail footer).
-  // Text-only tiles — no leading icons (user request).
+  // Original four quick entries with Lucide icons. Extra destinations stay
+  // on the System hub via the icon-free All destinations row below.
   const workspaceShortcuts = [
-    { id: 'devices', path: '/devices', labelKey: 'nav.devices' },
-    { id: 'agents', path: '/agents', labelKey: 'nav.agents' },
-    { id: 'dashboard', path: '/visual-dashboard', labelKey: 'nav.visual-dashboard' },
-    { id: 'messages', path: '/messages', labelKey: 'nav.messages' },
-    { id: 'automation', path: '/automation', labelKey: 'nav.automation' },
-    { id: 'data', path: '/data', labelKey: 'nav.data' },
-    { id: 'extensions', path: '/extensions', labelKey: 'nav.extensions' },
+    { id: 'devices', path: '/devices', icon: Cpu, labelKey: 'nav.devices' },
+    { id: 'agents', path: '/agents', icon: Bot, labelKey: 'nav.agents' },
+    { id: 'dashboard', path: '/visual-dashboard', icon: LayoutDashboard, labelKey: 'nav.visual-dashboard' },
+    { id: 'messages', path: '/messages', icon: Bell, labelKey: 'nav.messages' },
   ] as const
 
   // IMPORTANT: keep these as JSX values, not inner components. Defining
@@ -585,15 +585,16 @@ export function SessionSidebar({
       <div className="px-5 pb-4">
         <div className="overflow-hidden rounded-2xl bg-muted-50">
           <div className="grid grid-cols-4">
-            {workspaceShortcuts.map(({ id, path, labelKey }) => (
+            {workspaceShortcuts.map(({ id, path, icon: Icon, labelKey }) => (
               <button
                 key={id}
                 type="button"
                 data-testid={`session-drawer-shortcut-${id}`}
                 onClick={() => goWorkspace(path)}
-                className="flex min-h-11 items-center justify-center bg-transparent px-1.5 py-2.5 text-center transition-colors active:bg-muted"
+                className="flex min-h-[4.25rem] flex-col items-center justify-center gap-1.5 bg-transparent px-1 py-2.5 text-center transition-colors active:bg-muted"
               >
-                <span className="max-w-full truncate text-[0.6875rem] leading-tight text-foreground">
+                <Icon className="h-5 w-5 text-foreground" strokeWidth={1.8} aria-hidden="true" />
+                <span className="max-w-full truncate text-[0.6875rem] leading-tight text-muted-foreground">
                   {t(labelKey)}
                 </span>
               </button>
