@@ -38,6 +38,12 @@ export interface MobilePageHeaderProps {
    * sticky bar — DESIGN_SPEC: opaque navigation avoids WebKit paint flashes.
    */
   scrim?: boolean
+  /**
+   * Sticky glass fade (System / workspaces hub): linear transparent gradient
+   * + masked backdrop blur so content scrolls under without a hard split.
+   * Ignored when `scrim` is set.
+   */
+  glassFade?: boolean
   className?: string
 }
 
@@ -48,6 +54,7 @@ export function MobilePageHeader({
   leftExtra,
   titleAlign = "start",
   scrim = false,
+  glassFade = false,
   className,
 }: MobilePageHeaderProps) {
   const isMobile = useIsMobile()
@@ -64,27 +71,10 @@ export function MobilePageHeader({
 
   const hasLeading = Boolean(menu || leftExtra || showSystemBack)
   const centered = titleAlign === "center"
+  const useGlassFade = glassFade && !scrim
 
-  return (
-    <div
-      className={cn(
-        "safe-top z-30 px-4",
-        // Opaque sticky is the default chrome contract. Scrim = light fade mask
-        // so conversation can read through while titles stay legible.
-        scrim ? "relative" : "sticky top-0 bg-background",
-        centered ? "grid grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center gap-2" : "flex items-center gap-2",
-        className,
-      )}
-      style={{
-        height: 'calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))',
-        ...(scrim
-          ? {
-              backgroundImage:
-                'linear-gradient(to bottom, var(--background) 0%, color-mix(in srgb, var(--background) 70%, transparent) 45%, transparent 100%)',
-            }
-          : {}),
-      }}
-    >
+  const titleRow = (
+    <>
       {/* Local navigation (menu, back) — plain ghost by default; callers may
           wrap leftExtra in their own glass chip (Chat). */}
       <div className="flex min-w-0 shrink-0 items-center justify-self-start">
@@ -131,6 +121,57 @@ export function MobilePageHeader({
       )}>
         {actions}
       </div>
+    </>
+  )
+
+  return (
+    <div
+      data-testid={useGlassFade ? "mobile-page-header-glass-fade" : undefined}
+      className={cn(
+        "safe-top z-30 px-4",
+        // Opaque sticky is the default chrome contract. Scrim = chat overlay.
+        // glassFade = System hub fade+blur (content scrolls underneath).
+        scrim
+          ? "relative"
+          : useGlassFade
+            ? "sticky top-0 flex flex-col border-0 shadow-none backdrop-blur-xl"
+            : "sticky top-0 bg-background",
+        !useGlassFade && (centered
+          ? "grid grid-cols-[2.5rem_minmax(0,1fr)_2.5rem] items-center gap-2"
+          : "flex items-center gap-2"),
+        className,
+      )}
+      style={{
+        height: useGlassFade
+          ? 'calc(4rem + 2.5rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))'
+          : 'calc(4rem + env(safe-area-inset-top, 0px) + var(--titlebar-inset, 0px))',
+        ...(scrim
+          ? {
+              backgroundImage:
+                'linear-gradient(to bottom, var(--background) 0%, color-mix(in srgb, var(--background) 70%, transparent) 45%, transparent 100%)',
+            }
+          : useGlassFade
+            ? {
+                background:
+                  'linear-gradient(to bottom, color-mix(in srgb, var(--background) 88%, transparent) 0%, color-mix(in srgb, var(--background) 42%, transparent) 48%, transparent 100%)',
+                WebkitMaskImage: 'linear-gradient(to bottom, black 52%, transparent 100%)',
+                maskImage: 'linear-gradient(to bottom, black 52%, transparent 100%)',
+              }
+            : {}),
+      }}
+    >
+      {useGlassFade ? (
+        <div
+          className={cn(
+            "flex h-16 w-full min-w-0 shrink-0 items-center gap-2",
+            centered && "grid grid-cols-[2.5rem_minmax(0,1fr)_2.5rem]",
+          )}
+        >
+          {titleRow}
+        </div>
+      ) : (
+        titleRow
+      )}
     </div>
   )
 }
