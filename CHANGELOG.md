@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.2] - 2026-11-22 — Agent/CLI reliability, vision false-success, upgrade gate
+
+Post-`v1.3.1` tip on `cursor/v132-t1-timeout-e490`: DomainCommandContract 10-domain expansion, NM-331 multimodal vision false-success refusal, onboarding/redirect/status steering, Stage-3 closeout CLI optional ids + dashboard failure-circuit, review P0/P1 clearances, SoftAP UI stays cut. Product version **1.3.2** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged).
+
+### Upgrade notes
+- `neomind extension status` / `logs` accept a missing `<id>` (list / tip) instead of clap `missing_required` — agents that probe extensions bare no longer burn rejected_args.
+- Multimodal / MiniCPM agents that echo "Vision tool not available" (or peer false-success markers) while image evidence is present are refused as failures (NM-331) — no more Completed journals laundering vision misses.
+- SoftAP Add Device tab remains hidden (`CT_PROV_SOFTAP_UI_ENABLED=false`); BLE + Manual/Auto stay the shipping paths.
+- In-place data-dir upgrade from 1.3.1 tip binary → 1.3.2 tip verified via `work/v1.3.2/verify-upgrade.sh` (STRICT_DATA_DIR, private ports).
+
+### Added
+- `DomainCommandContract` expanded to **10** business domains (aligned clap / PRIMARY_JSON_SPECS / capability / intent write fingerprints).
+- `work/v1.3.2/verify-upgrade.sh` for Gate G6 in-place upgrade acceptance (isolated data dir + seed round-trip).
+
+### Fixed — agent / vision
+- NM-331: refuse multimodal vision false-success when conclusion markers claim vision unavailable despite embeddable image evidence; Dongpingshan cases added.
+- Status questions steered to `latest-execution` first; unbound create steered away from focused default; list/read/delete foreshadows covered for NM-250 continue; guided MQTT onboarding forced to `device create`; second onboarding redirect after ignore allowed.
+- Review P0: BM25, redirects, vision markers; review P1: vision evidence, shell contracts, argv globals; R2-P0 success_rate self-heal / empty-event / vision dead-code; R2-P1/P2/Nit clearances (promise bounds, scope case, tauri clippy).
+
+### Fixed — CLI / intent
+- Global `--json` accepted as `--format json` alias; `widget -o` and `set-retention --enabled=true`; hyphen values on rule `--threshold`; bare `transform --scope` rejected to stop create wedges; `invoke --prompt` banned with foreshadow cover.
+- Stage-3 closeout: optional `extension status|logs` id; dashboard `create|update|add-components` `--components` collapsed in failure-circuit fingerprint (same class as transform `--code` churn) to kill 600s rewrite timeouts.
+
+### Fixed — frontend / desktop
+- SoftAP UI flag stays `false` (Scope Cut B); contrast AA + vitest green on tip.
+- Desktop/tauri clippy + promise-bound R2 leftovers cleared.
+
+### Test
+- NM-331 vision_path + Dongpingshan false-success cases; Stage-3 closeout unit tests for optional extension id + dashboard failure-circuit collapse.
+- Stage 4 blindspots archived (ctx AB 8K/32K ZeroBudget=0; advertise/devices/vision units); Stage 5 G6: IoT crate tests 0-fail + upgrade VERIFY PASS + SoftAP/contrast/vitest.
+- `python3 scripts/extract_changelog.py --version 1.3.2 --check` gates this section.
+
 ## [1.3.1] - 2026-11-20 — Full-stack Agent/CLI/API harness optimization, BLE provision fixes
 
 Post-`v1.3.0` release: full-stack harness hardening across `neomind-core`, `neomind-storage`, `neomind-api`, `neomind-cli-ops`, `neomind-cli`, and `neomind-agent` (P0/P1/P2), plus CT-Prov BLE credential/external-broker/display-name fixes, EK410 wrap copy, and Chat「执行过程」panel UX (NM-310). Product version is **1.3.1** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged). `v1.3.0` stays at `8579edbb`.
