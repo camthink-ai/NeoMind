@@ -402,9 +402,9 @@ pub fn merge_rule_create_name_into_body(body: &str, name: Option<&str>) -> Resul
     };
     let mut value = crate::json_arg::parse_json_arg(body)
         .map_err(|e| anyhow::anyhow!("Invalid JSON in --body: {e}"))?;
-    let obj = value.as_object_mut().ok_or_else(|| {
-        anyhow::anyhow!("--body must be a JSON object when used with --name")
-    })?;
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("--body must be a JSON object when used with --name"))?;
     match obj.get("name").and_then(|v| v.as_str()) {
         None => {
             obj.insert("name".into(), json!(name));

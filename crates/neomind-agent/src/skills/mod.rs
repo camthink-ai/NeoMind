@@ -25,9 +25,7 @@ pub mod types;
 
 // Re-export main types
 pub use matcher::match_skills;
-pub use registry::{
-    create_shared_registry, is_safe_skill_id, SharedSkillRegistry, SkillRegistry,
-};
+pub use registry::{create_shared_registry, is_safe_skill_id, SharedSkillRegistry, SkillRegistry};
 pub use types::{Skill, SkillCategory, TokenBudgetConfig};
 
 /// Eval-only no-skill mode (guidance round 3, three-way comparison): when

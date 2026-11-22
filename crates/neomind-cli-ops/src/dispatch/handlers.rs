@@ -577,9 +577,7 @@ pub async fn run_rule_cmd_with_context(
             cooldown,
         } => {
             let json_body = match body {
-                Some(b) => {
-                    crate::rule::merge_rule_create_name_into_body(&b, name.as_deref())?
-                }
+                Some(b) => crate::rule::merge_rule_create_name_into_body(&b, name.as_deref())?,
                 None => {
                     let Some(name) = name else {
                         anyhow::bail!("--name is required on the flag fast path (or use --body)");
