@@ -31,8 +31,7 @@ import {
   Bot,
   LayoutDashboard,
   Bell,
-  LayoutGrid,
-  Settings,
+  ChevronRight,
 } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -80,7 +79,6 @@ export function SessionSidebar({
   const updateSessionTitle = useStore((s) => s.updateSessionTitle)
   const loadMoreSessions = useStore((s) => s.loadMoreSessions)
   const user = useStore((s) => s.user)
-  const openSettings = useStore((s) => s.openSettings)
 
   // Use URL sessionId for active highlight, not store sessionId.
   // This ensures no session is highlighted in welcome mode (/chat without sessionId).
@@ -511,8 +509,7 @@ export function SessionSidebar({
     navigate(path)
   }
 
-  // Flat ChatGPT/Gemini-style destination rows (no card chrome). Full hub
-  // is the trailing "All destinations" row → /system.
+  // Top four icon tiles; All destinations lives on the avatar bar (right).
   const workspaceShortcuts = [
     { id: 'devices', path: '/devices', icon: Cpu, labelKey: 'nav.devices' },
     { id: 'agents', path: '/agents', icon: Bot, labelKey: 'nav.agents' },
@@ -572,12 +569,7 @@ export function SessionSidebar({
     ? user.username.slice(0, 2).toUpperCase()
     : 'NM'
 
-  const openDrawerSettings = () => {
-    onClose()
-    openSettings()
-  }
-
-  // Mobile: title+close → flat destinations → recent list → floating glass Settings.
+  // Mobile: title+close → 4 icon tiles → recent → full-width glass avatar bar.
   const mobileDrawerContent = (
     <>
       <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-2">
@@ -595,39 +587,24 @@ export function SessionSidebar({
         </Button>
       </div>
 
-      <nav className="px-2 pb-2" aria-label={t('system.openWorkspace')}>
-        <ul className="space-y-0.5">
+      <div className="px-2 pb-3" aria-label={t('system.openWorkspace')}>
+        <div className="grid grid-cols-4">
           {workspaceShortcuts.map(({ id, path, icon: Icon, labelKey }) => (
-            <li key={id}>
-              <button
-                type="button"
-                data-testid={`session-drawer-shortcut-${id}`}
-                onClick={() => goWorkspace(path)}
-                className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors active:bg-muted"
-              >
-                <Icon className="h-[1.125rem] w-[1.125rem] shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
-                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                  {t(labelKey)}
-                </span>
-              </button>
-            </li>
-          ))}
-          <li>
             <button
+              key={id}
               type="button"
-              data-testid="session-drawer-workspace"
-              onClick={() => goWorkspace('/system')}
-              className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors active:bg-muted"
-              aria-label={t('system.moreEntries')}
+              data-testid={`session-drawer-shortcut-${id}`}
+              onClick={() => goWorkspace(path)}
+              className="flex min-h-[4.25rem] flex-col items-center justify-center gap-1.5 rounded-xl px-1 py-2.5 text-center transition-colors active:bg-muted"
             >
-              <LayoutGrid className="h-[1.125rem] w-[1.125rem] shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate text-sm text-foreground">
-                {t('system.moreEntries')}
+              <Icon className="h-5 w-5 text-foreground" strokeWidth={1.75} aria-hidden="true" />
+              <span className="max-w-full truncate text-[0.6875rem] leading-tight text-muted-foreground">
+                {t(labelKey)}
               </span>
             </button>
-          </li>
-        </ul>
-      </nav>
+          ))}
+        </div>
+      </div>
 
       <div className="px-5 pb-1.5 pt-1">
         <h3 className="text-sm font-medium text-muted-foreground">
@@ -641,30 +618,32 @@ export function SessionSidebar({
         </div>
       </ScrollArea>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-6">
-        <button
-          type="button"
-          data-testid="session-drawer-settings"
-          onClick={openDrawerSettings}
-          className="pointer-events-auto flex min-h-12 w-full items-center gap-3 rounded-2xl border border-glass-border bg-surface-glass px-3 py-2.5 text-left shadow-sm backdrop-blur-xl transition-colors active:bg-muted"
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-[env(safe-area-inset-bottom,0px)] pt-8">
+        <div
+          data-testid="session-drawer-userbar"
+          className="pointer-events-auto flex min-h-14 w-full items-center gap-3 border-t border-glass-border bg-surface-glass px-4 py-2.5 shadow-[0_-1px_2px_oklch(0_0_0/4%),0_-2px_8px_-2px_oklch(0_0_0/8%)] backdrop-blur-xl"
         >
           <Avatar className="h-9 w-9 shrink-0 rounded-full">
             <AvatarFallback className="bg-muted text-xs font-semibold text-foreground">
               {workspaceAvatarLabel}
             </AvatarFallback>
           </Avatar>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm font-medium text-foreground">
-              {user?.username ?? t('nav.settings')}
-            </span>
-            {user ? (
-              <span className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
-                <Settings className="h-3 w-3 shrink-0" aria-hidden="true" strokeWidth={1.75} />
-                {t('nav.settings')}
-              </span>
-            ) : null}
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+            {user?.username ?? 'NeoMind'}
           </span>
-        </button>
+          <button
+            type="button"
+            data-testid="session-drawer-workspace"
+            onClick={() => goWorkspace('/system')}
+            className="flex max-w-[48%] shrink-0 items-center gap-1 rounded-lg px-1.5 py-2 text-left transition-colors active:bg-muted"
+            aria-label={t('system.moreEntries')}
+          >
+            <span className="truncate text-sm text-muted-foreground">
+              {t('system.moreEntries')}
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </>
   )
