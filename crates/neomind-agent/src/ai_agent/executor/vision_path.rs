@@ -119,8 +119,11 @@ const VISION_FAILURE_MARKERS: &[&str] = &[
     "vision not available",
 ];
 
-/// Explicit "did not analyze the image" phrases — always failure admissions,
-/// never suppressed by inline success evidence.
+/// Explicit "did not analyze the image" phrases — used only to veto
+/// [`INLINE_VISION_SUCCESS_EVIDENCE`] when a [`VISION_FAILURE_MARKERS`] hit
+/// is already present. Must NOT short-circuit alone: night / black / blur
+/// frames often say "无法识别" / "unable to analyze" while honestly reporting
+/// what the camera shows (NM-331 over-block).
 const INLINE_VISION_NEGATION_PHRASES: &[&str] = &[
     "无法分析",
     "不能分析",
@@ -194,18 +197,12 @@ pub(crate) fn conclusion_admits_vision_failure(text: &str) -> bool {
 /// When `path` is InlineMultimodal and the conclusion also contains positive
 /// inline-analysis evidence, incidental "no vision tool" explanations are
 /// treated as commentary rather than failure (Prompt-Echo Trap) — unless an
-/// explicit negation phrase is present.
+/// explicit negation phrase is present alongside a failure marker.
 pub(crate) fn conclusion_admits_vision_failure_for_path(
     text: &str,
     path: VisionExecutionPath,
 ) -> bool {
     let lower = text.to_lowercase();
-    if INLINE_VISION_NEGATION_PHRASES
-        .iter()
-        .any(|p| lower.contains(&p.to_lowercase()))
-    {
-        return true;
-    }
     let hit = VISION_FAILURE_MARKERS.iter().any(|m| {
         let m_lower = m.to_lowercase();
         lower.contains(&m_lower) && !marker_hit_is_night_vision_false_positive(&lower, &m_lower)
@@ -218,7 +215,13 @@ pub(crate) fn conclusion_admits_vision_failure_for_path(
             .iter()
             .any(|e| lower.contains(&e.to_lowercase()));
         if has_evidence {
-            return false;
+            let has_negation = INLINE_VISION_NEGATION_PHRASES
+                .iter()
+                .any(|p| lower.contains(&p.to_lowercase()));
+            // Negation vetoes the evidence exemption; alone it never admits.
+            if !has_negation {
+                return false;
+            }
         }
     }
     true
@@ -390,6 +393,43 @@ mod tests {
         assert!(!conclusion_admits_vision_failure(
             "IR-vision not available on this camera"
         ));
+    }
+
+    #[test]
+    fn honest_dark_or_blur_report_is_not_vision_failure() {
+        // Negation alone (no VISION_FAILURE_MARKERS) must not trip NM-331.
+        let honest = [
+            "画面过暗，无法识别是否有人",
+            "Night-vision not available — pitch dark, unable to analyze",
+            "画面模糊，无法查看细节，未见赌博行为",
+        ];
+        for text in honest {
+            assert!(
+                !conclusion_admits_vision_failure(text),
+                "honest dark/blur report must not admit vision failure: {text}"
+            );
+            assert!(
+                !conclusion_admits_vision_failure_for_path(
+                    text,
+                    VisionExecutionPath::InlineMultimodal
+                ),
+                "inline path must also spare honest dark/blur report: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn nm331_tool_missing_admissions_still_fail() {
+        let cases = [
+            "没有 vision 工具，无法分析附带图像",
+            "Vision tool not available to analyze the attached image",
+        ];
+        for text in cases {
+            assert!(
+                conclusion_admits_vision_failure(text),
+                "NM-331 zero-regression: {text}"
+            );
+        }
     }
 
     #[test]

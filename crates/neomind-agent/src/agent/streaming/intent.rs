@@ -813,6 +813,7 @@ pub(crate) fn canonical_tool_call_fingerprint(
 /// - `transform create|update`: drop `--code`/`-c` (NM-322 `sr-clear-transform`)
 /// - `dashboard create|update|add-components`: drop `--components` (Stage-3
 ///   `haccp-compliance-deploy` timed out rewriting dashboard component JSON)
+///
 /// Write-gate PreferKnown fingerprints stay full-argv.
 pub(crate) fn failure_circuit_fingerprint(
     tool_name: &str,
@@ -1607,11 +1608,11 @@ pub(crate) fn has_agent_list_command(commands: &[&str]) -> bool {
 
 /// True when a tool result looks like an empty `agent list` payload.
 pub(crate) fn agent_list_result_looks_empty(result: &str) -> bool {
+    // Match agents array only — bare `"total":0` is shared by device/list and
+    // other domains and must not poison the empty-roster exemption.
     let compact: String = result.chars().filter(|c| !c.is_whitespace()).collect();
     let lower = compact.to_lowercase();
-    lower.contains("\"agents\":[]")
-        || lower.contains("\"total\":0")
-        || lower.contains("'agents':[]")
+    lower.contains("\"agents\":[]") || lower.contains("'agents':[]")
 }
 
 /// True when `agent list` already returned an empty roster (0 agents).
@@ -3227,6 +3228,26 @@ mod tests {
         assert!(
             build_agent_conclusion_redirect_with_results("冷库现在还好吗?", &cmds, &populated,)
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn device_list_total_zero_does_not_poison_empty_agent_list() {
+        let cmds = ["neomind device list", "neomind agent list"];
+        let mixed = [
+            (
+                "shell".to_string(),
+                r#"{"success":true,"data":{"total":0,"devices":[]}}"#.to_string(),
+            ),
+            (
+                "shell".to_string(),
+                r#"{"success":true,"data":{"total":1,"agents":[{"id":"a1"}]}}"#.to_string(),
+            ),
+        ];
+        assert!(
+            build_agent_conclusion_redirect_with_results("冷库现在还好吗?", &cmds, &mixed,)
+                .is_some(),
+            "device list total:0 must not skip agent_conclusion_redirect"
         );
     }
 }

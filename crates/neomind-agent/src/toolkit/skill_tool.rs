@@ -151,13 +151,9 @@ impl SkillTool {
         }
     }
 
-    /// Validate a skill ID contains only safe characters.
+    /// Validate a skill ID contains only safe characters (shared with registry).
     fn is_safe_id(id: &str) -> bool {
-        !id.is_empty()
-            && id.len() <= 128
-            && id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        skills::is_safe_skill_id(id)
     }
 
     /// Score a skill against a query string, returning the per-signal
@@ -410,7 +406,8 @@ impl Tool for SkillTool {
 - widget-development (widget-dev): Write custom widget code.
 - llm-management (llm): Add and configure LLM backends.
 - settings-management (settings): Read and change system settings.
-- system-info (system): Read system diagnostics (resources, network, storage)."#
+- system-info (system): Read system diagnostics (resources, network, storage).
+Create/update need YAML frontmatter (id+name); id is ASCII letters/digits/-/_ only (put Chinese in name). Manage via this tool or Web UI — there is no neomind skill CLI."#
     }
 
     fn parameters(&self) -> Value {
@@ -419,7 +416,7 @@ impl Tool for SkillTool {
                 "action": {
                     "type": "string",
                     "enum": ["search", "load", "create", "update", "delete"],
-                    "description": "Skill action (load or search for reading)."
+                    "description": "Skill action: search|load|create|update|delete."
                 },
                 "id": {
                     "type": "string",
@@ -439,7 +436,7 @@ impl Tool for SkillTool {
                 },
                 "content": {
                     "type": "string",
-                    "description": "Full YAML+Markdown content (create/update)."
+                    "description": "Full YAML+Markdown (create/update). Frontmatter needs id/name; id ASCII letters/digits/-/_ only (Chinese in name). No neomind skill CLI."
                 }
             }),
             vec!["action".to_string()],
@@ -728,7 +725,11 @@ impl Tool for SkillTool {
                             "id": skill.metadata.id,
                             "name": skill.metadata.name,
                             "category": format!("{:?}", skill.metadata.category).to_lowercase(),
-                            "message": format!("Skill '{}' created successfully", id),
+                            "message": format!(
+                                "Skill '{}' created successfully. Manage skills via this tool or Web UI (no neomind skill CLI).",
+                                id
+                            ),
+                            "hint": "Manage skills via this tool or Web UI (no neomind skill CLI).",
                         })))
                     }
                     Err(e) => Ok(ToolOutput::error(format!("Failed to create skill. Check YAML frontmatter format and try again. Error: {}", e))),

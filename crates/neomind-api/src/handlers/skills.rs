@@ -35,24 +35,9 @@ fn default_page_size() -> u32 {
     20
 }
 
-/// Validate a skill ID contains only safe characters (prevents path traversal).
-fn is_safe_skill_id(id: &str) -> bool {
-    !id.is_empty()
-        && id.len() <= 128
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
 /// Helper: persist a skill to disk ATOMICALLY (temp file + rename, shared
 /// implementation with the skill tool — no half-written skill files).
 fn persist_skill(data_dir: &std::path::Path, id: &str, content: &str) -> Result<(), String> {
-    if !is_safe_skill_id(id) {
-        return Err(format!(
-            "Invalid skill ID '{}': must contain only alphanumeric, hyphens, underscores",
-            id
-        ));
-    }
     neomind_agent::skills::registry::persist_skill_file(data_dir, id, content)
 }
 

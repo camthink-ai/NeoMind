@@ -213,6 +213,10 @@ impl SkillRegistry {
     pub fn add_user_skill(&mut self, content: &str) -> Result<String, String> {
         let mut skill = parser::parse_skill(content).map_err(|e| format!("Parse error: {}", e))?;
 
+        if !is_safe_skill_id(&skill.metadata.id) {
+            return Err(invalid_skill_id_message(&skill.metadata.id));
+        }
+
         if let Some(existing) = self.skills.get(&skill.metadata.id) {
             let kind = if existing.metadata.origin == SkillOrigin::Builtin {
                 "a builtin skill (read-only)"
@@ -237,6 +241,9 @@ impl SkillRegistry {
     /// tool/API entry points): a builtin shadow-overwrite would persist to
     /// disk and mask builtin content shipped with future upgrades.
     pub fn update_user_skill(&mut self, id: &str, content: &str) -> Result<(), String> {
+        if !is_safe_skill_id(id) {
+            return Err(invalid_skill_id_message(id));
+        }
         let existing = self
             .skills
             .get(id)
@@ -311,6 +318,15 @@ pub fn is_safe_skill_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Actionable English error for illegal skill ids (Chinese etc. belong in
+/// `name`/`description`, not `id`).
+pub fn invalid_skill_id_message(id: &str) -> String {
+    format!(
+        "Invalid skill id '{}': use ASCII letters, digits, '-' or '_' only (e.g. weather); put Chinese in name/description, not id.",
+        id
+    )
+}
+
 /// Atomically persist a user skill file under `<data_dir>/skills/<id>.md`.
 ///
 /// Write-to-temp + rename: an interrupted save never leaves a half-written
@@ -320,7 +336,7 @@ pub fn is_safe_skill_id(id: &str) -> bool {
 /// removes.
 pub fn persist_skill_file(data_dir: &Path, id: &str, content: &str) -> Result<(), String> {
     if !is_safe_skill_id(id) {
-        return Err(format!("Invalid skill ID '{}'", id));
+        return Err(invalid_skill_id_message(id));
     }
     let dir = data_dir.join("skills");
     std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create skills dir: {}", e))?;
@@ -337,7 +353,7 @@ pub fn persist_skill_file(data_dir: &Path, id: &str, content: &str) -> Result<()
 /// Remove a user skill file (Ok when the file is already absent).
 pub fn remove_skill_file(data_dir: &Path, id: &str) -> Result<(), String> {
     if !is_safe_skill_id(id) {
-        return Err(format!("Invalid skill ID '{}'", id));
+        return Err(invalid_skill_id_message(id));
     }
     let path = data_dir.join("skills").join(format!("{}.md", id));
     if path.exists() {
@@ -408,6 +424,19 @@ mod tests {
         let updated = test_skill_content("to-update", "Updated");
         registry.update_user_skill("to-update", &updated).unwrap();
         assert_eq!(registry.get("to-update").unwrap().metadata.name, "Updated");
+    }
+
+    #[test]
+    fn add_user_skill_rejects_non_ascii_id_early() {
+        let mut registry = SkillRegistry::new();
+        let content = "---\nid: 天气\nname: Weather\ncategory: rule\npriority: 80\n\
+             triggers:\n  keywords: [weather]\n---\n\n# Weather\n";
+        let err = registry.add_user_skill(content).unwrap_err();
+        assert!(
+            err.contains("ASCII") && err.contains("天气"),
+            "expected actionable ASCII id error, got: {err}"
+        );
+        assert!(registry.get("天气").is_none());
     }
 }
 

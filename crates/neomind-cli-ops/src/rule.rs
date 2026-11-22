@@ -391,6 +391,34 @@ pub async fn update_rule_fast(
     update_rule(client, id, &body_str).await
 }
 
+/// Merge optional `--name` into a `--body` JSON object for `rule create`.
+///
+/// Models frequently emit `neomind rule create --name "X" --body '{...}'`.
+/// If the JSON lacks `name`, insert it; if it already matches, accept; if it
+/// conflicts, return a clear error (do not silently overwrite).
+pub fn merge_rule_create_name_into_body(body: &str, name: Option<&str>) -> Result<String> {
+    let Some(name) = name else {
+        return Ok(body.to_string());
+    };
+    let mut value = crate::json_arg::parse_json_arg(body)
+        .map_err(|e| anyhow::anyhow!("Invalid JSON in --body: {e}"))?;
+    let obj = value.as_object_mut().ok_or_else(|| {
+        anyhow::anyhow!("--body must be a JSON object when used with --name")
+    })?;
+    match obj.get("name").and_then(|v| v.as_str()) {
+        None => {
+            obj.insert("name".into(), json!(name));
+        }
+        Some(existing) if existing == name => {}
+        Some(existing) => {
+            anyhow::bail!(
+                "--name '{name}' conflicts with body name '{existing}'; omit one or make them match"
+            );
+        }
+    }
+    Ok(value.to_string())
+}
+
 /// Create a new rule via JSON body.
 ///
 /// Accepts a raw JSON string that is forwarded to the API.
@@ -751,5 +779,30 @@ mod tests {
         let mut args = fast_args();
         args.cooldown = Some(60_000);
         assert_eq!(build_rule_body(&args).unwrap()["cooldown"], 60_000);
+    }
+
+    #[test]
+    fn merge_name_into_body_inserts_when_missing() {
+        let body = r#"{"condition":{"condition_type":"comparison","source":"device:s1:temp","operator":"greater_than","threshold":30},"actions":[{"type":"notify","message":"hot"}]}"#;
+        let merged = merge_rule_create_name_into_body(body, Some("High Temp")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(v["name"], "High Temp");
+    }
+
+    #[test]
+    fn merge_name_into_body_allows_matching_name() {
+        let body = r#"{"name":"High Temp","actions":[]}"#;
+        let merged = merge_rule_create_name_into_body(body, Some("High Temp")).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(v["name"], "High Temp");
+    }
+
+    #[test]
+    fn merge_name_into_body_rejects_conflict() {
+        let body = r#"{"name":"A","actions":[]}"#;
+        let err = merge_rule_create_name_into_body(body, Some("B"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("conflicts"), "{err}");
     }
 }

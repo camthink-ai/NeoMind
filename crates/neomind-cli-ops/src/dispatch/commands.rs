@@ -1280,11 +1280,13 @@ pub enum RuleCommand {
         /// Required fields: name, condition (optional for schedule/manual), actions.
         /// Conditions: {"condition_type":"comparison","source":"device:sensor1:temp","operator":"greater_than","threshold":30}
         /// Actions: [{"type":"notify","message":"Too hot","severity":"critical"}]
+        // `--name` is intentionally NOT in conflicts_with_all: models often emit
+        // `rule create --name X --body '{...}'`. Handler merges/validates name.
         #[arg(
             short,
             long,
             conflicts_with_all = [
-                "name", "trigger_device", "source", "metric", "operator", "threshold", "notify",
+                "trigger_device", "source", "metric", "operator", "threshold", "notify",
                 "severity", "cooldown"
             ]
         )]
@@ -2757,6 +2759,34 @@ mod rule_threshold_hyphen_tests {
                     },
             } => assert!((t - (-18.0)).abs() < f64::EPSILON, "got {t}"),
             other => panic!("expected Rule::Create, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_accepts_name_together_with_body() {
+        let args = Args::try_parse_from([
+            "neomind",
+            "rule",
+            "create",
+            "--name",
+            "High Temp",
+            "--body",
+            r#"{"condition":{"condition_type":"comparison","source":"device:s1:temp","operator":"greater_than","threshold":30},"actions":[{"type":"notify","message":"hot"}]}"#,
+        ])
+        .expect("--name + --body must not be mutually exclusive");
+        match args.command {
+            Command::Rule {
+                rule_cmd:
+                    RuleCommand::Create {
+                        name: Some(n),
+                        body: Some(b),
+                        ..
+                    },
+            } => {
+                assert_eq!(n, "High Temp");
+                assert!(b.contains("condition"));
+            }
+            other => panic!("expected Rule::Create with name+body, got {other:?}"),
         }
     }
 
