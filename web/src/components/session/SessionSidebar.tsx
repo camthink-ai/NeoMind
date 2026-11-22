@@ -97,6 +97,8 @@ export function SessionSidebar({
   const scrollViewportRef = useRef<HTMLDivElement>(null)
   const savedScrollTop = useRef<number>(0)
   const drawerRef = useRef<HTMLDivElement>(null)
+  /** True while this drawer owns a history.pushState entry for system-back. */
+  const historyPushedRef = useRef(false)
 
   // Close-time focus handoff: if focus is still inside the (now hidden)
   // drawer, return it to the opener (chat hamburger) — otherwise typed keys
@@ -110,6 +112,36 @@ export function SessionSidebar({
       else (document.activeElement as HTMLElement | null)?.blur()
     }
   }, [open])
+
+  // Mobile system-back: opening pushes a history entry; Back closes the
+  // panel instead of leaving the chat session. UI close pops that entry.
+  useEffect(() => {
+    if (isDesktop) return
+    const onPopState = () => {
+      if (!historyPushedRef.current) return
+      historyPushedRef.current = false
+      onClose()
+    }
+    window.addEventListener("popstate", onPopState)
+    return () => window.removeEventListener("popstate", onPopState)
+  }, [isDesktop, onClose])
+
+  useEffect(() => {
+    if (isDesktop) return
+    if (open) {
+      if (!historyPushedRef.current) {
+        history.pushState({ nmSessionDrawer: true }, "")
+        historyPushedRef.current = true
+      }
+      return
+    }
+    if (historyPushedRef.current) {
+      historyPushedRef.current = false
+      if ((history.state as { nmSessionDrawer?: boolean } | null)?.nmSessionDrawer) {
+        history.back()
+      }
+    }
+  }, [open, isDesktop])
 
   // Save scroll position before re-render caused by session switch
   useEffect(() => {
@@ -695,20 +727,22 @@ export function SessionSidebar({
         />
       )}
 
-      {/* Wide workspace drawer — nearly full-bleed with a thin chat peek so
-          the panel reads as app chrome, not a narrow chat-history strip.
-          `inert` when closed: the offscreen panel is aria-hidden but its
-          search input / shortcut buttons stayed keyboard-focusable, and
-          focus could remain inside the hidden panel after close (typed
-          input landing in the invisible search field). */}
+      {/* Fullscreen mobile workspace — covers the visible viewport (keyboard-
+          aware via --app-height / --visual-viewport-offset-top). Desktop keeps
+          the fixed sidebar above. `inert` when closed so focus cannot land in
+          the offscreen search field. */}
       <div
         id="session-workspace-drawer"
         ref={drawerRef}
         className={cn(
-          "fixed top-0 left-0 z-50 flex h-full w-[min(28rem,calc(100vw-2.75rem))] flex-col border-r border-border bg-background shadow-xl lg:hidden",
+          "fixed inset-x-0 z-50 flex w-full flex-col bg-background lg:hidden",
           "safe-top transform transition-transform duration-slow ease-out",
           open ? "translate-x-0" : "-translate-x-full",
         )}
+        style={{
+          top: "var(--visual-viewport-offset-top, 0px)",
+          height: "var(--app-height, 100dvh)",
+        }}
         data-testid="session-workspace-drawer"
         aria-hidden={!open}
         {...(!open ? ({ inert: '' } as Record<string, string>) : {})}

@@ -55,16 +55,17 @@ import {
 
 const MENTION_TYPE_META: Record<
   MentionType,
-  { icon: typeof Cpu; badge: string }
+  { icon: typeof Cpu }
 > = {
-  device: { icon: Cpu, badge: "bg-accent-cyan-light text-accent-cyan" },
-  rule: { icon: Zap, badge: "bg-accent-orange-light text-accent-orange" },
-  transform: { icon: GitBranch, badge: "bg-accent-purple-light text-accent-purple" },
-  agent: { icon: Bot, badge: "bg-accent-emerald-light text-accent-emerald" },
+  device: { icon: Cpu },
+  rule: { icon: Zap },
+  transform: { icon: GitBranch },
+  agent: { icon: Bot },
 }
 
-/** One model row inside the selector menu. Two lines only: the name, then
- *  provider, model id, and capabilities on a single meta line. */
+/** Shared model row for desktop dropdown + mobile sheet.
+ *  Left check slot, name first, provider/model secondary, low-contrast
+ *  capability chips. Selected chrome lives on the parent row (bg-muted). */
 function ModelOptionBody({
   backend,
   active,
@@ -77,46 +78,60 @@ function ModelOptionBody({
     defaultValue: backend.backend_type,
   })
   const capabilities = [
-    backend.capabilities?.supports_multimodal
-      ? t("chat:capability.vision", { defaultValue: "Vision" })
-      : null,
     backend.capabilities?.supports_tools
       ? t("chat:capability.tools", { defaultValue: "Tools" })
+      : null,
+    backend.capabilities?.supports_multimodal
+      ? t("chat:capability.vision", { defaultValue: "Vision" })
       : null,
     backend.capabilities?.supports_thinking
       ? t("chat:capability.thinking", { defaultValue: "Thinking" })
       : null,
   ].filter((label): label is string => Boolean(label))
-  const meta = [provider, backend.model, ...capabilities].filter(Boolean).join(" · ")
+  const source = [provider, backend.model].filter(Boolean).join(" · ")
 
   return (
     <>
-      <span className="mt-1.5 flex h-1.5 w-1.5 shrink-0" aria-hidden="true">
-        {backend.healthy != null && (
-          <span
-            title={backend.healthy ? t("common:online") : t("common:offline")}
-            className={cn(
-              "h-1.5 w-1.5 rounded-full",
-              backend.healthy ? "bg-success" : "bg-error",
-            )}
-          />
-        )}
+      <span
+        className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center"
+        aria-hidden="true"
+      >
+        {active ? <Check className="h-4 w-4 text-foreground" /> : null}
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2">
-          <span
-            className={cn(
-              "min-w-0 flex-1 truncate text-sm leading-5 text-foreground",
-              active && "font-medium",
-            )}
-          >
-            {backend.name || backend.model}
-          </span>
-          {active && (
-            <Check className="h-4 w-4 shrink-0 text-foreground" aria-hidden="true" />
+      {backend.healthy != null && (
+        <span
+          title={backend.healthy ? t("common:online") : t("common:offline")}
+          className={cn(
+            "mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full",
+            backend.healthy ? "bg-success" : "bg-error",
           )}
+          aria-hidden="true"
+        />
+      )}
+      <span className="min-w-0 flex-1">
+        <span
+          className={cn(
+            "block truncate text-sm leading-5 text-foreground",
+            active && "font-medium",
+          )}
+        >
+          {backend.name || backend.model}
         </span>
-        <span className="mt-0.5 block truncate text-mini text-muted-foreground">{meta}</span>
+        <span className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          {source && (
+            <span className="min-w-0 truncate text-mini text-muted-foreground">
+              {source}
+            </span>
+          )}
+          {capabilities.map((label) => (
+            <span
+              key={label}
+              className="shrink-0 rounded-md bg-muted-30 px-1.5 py-px text-mini text-muted-foreground"
+            >
+              {label}
+            </span>
+          ))}
+        </span>
       </span>
     </>
   )
@@ -840,6 +855,12 @@ export function ChatComposer({
               const meta = MENTION_TYPE_META[opt.type]
               const TypeIcon = meta.icon
               const active = i === mentionActive
+              const typeLabel = t(`chat:mention.${opt.type}`, opt.type)
+              const disambiguation = [
+                opt.duplicateName ? opt.shortId || opt.id.slice(0, 8) : null,
+                opt.hint || null,
+                !opt.duplicateName && !opt.hint ? opt.shortId || opt.id.slice(0, 8) : null,
+              ].filter(Boolean)
               return (
                 <button
                   key={mentionKey(opt.type, opt.id)}
@@ -847,12 +868,7 @@ export function ChatComposer({
                   type="button"
                   role="option"
                   aria-selected={active}
-                  aria-label={[
-                    t(`chat:mention.${opt.type}`, opt.type),
-                    opt.label,
-                    opt.duplicateName ? opt.shortId || opt.id.slice(0, 8) : "",
-                    opt.hint || "",
-                  ]
+                  aria-label={[typeLabel, opt.label, ...disambiguation]
                     .filter(Boolean)
                     .join(" ")}
                   onMouseEnter={() => {
@@ -872,32 +888,27 @@ export function ChatComposer({
                   }}
                   className={cn(
                     "flex w-full items-start gap-2.5 px-3 text-left text-sm transition-colors",
-                    isMobile ? "min-h-12 py-3" : "py-2.5",
+                    isMobile ? "min-h-11 py-2.5" : "py-2",
                     active ? "bg-muted" : "hover:bg-muted-30",
                   )}
                 >
-                  <span
-                    className={cn(
-                      "mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-nano font-medium",
-                      meta.badge,
-                    )}
-                  >
-                    <TypeIcon className="h-3 w-3" aria-hidden="true" />
-                    {t(`chat:mention.${opt.type}`, opt.type)}
-                  </span>
+                  <TypeIcon
+                    className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                    aria-hidden="true"
+                  />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-foreground">{opt.label}</span>
-                    {(opt.duplicateName || opt.hint) && (
-                      <span className="mt-0.5 block truncate text-mini text-muted-foreground">
-                        {[opt.shortId || opt.id.slice(0, 8), opt.hint].filter(Boolean).join(" · ")}
-                      </span>
-                    )}
-                  </span>
-                  {!opt.duplicateName && !opt.hint && (
-                    <span className="max-w-32 shrink-0 truncate text-mini text-muted-foreground">
-                      {opt.shortId || opt.id}
+                    <span className="block truncate font-medium text-foreground">
+                      {opt.label}
                     </span>
-                  )}
+                    <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-mini text-muted-foreground">
+                      <span className="shrink-0">{typeLabel}</span>
+                      {disambiguation.length > 0 && (
+                        <span className="min-w-0 truncate">
+                          · {disambiguation.join(" · ")}
+                        </span>
+                      )}
+                    </span>
+                  </span>
                 </button>
               )
             })}
@@ -1246,7 +1257,7 @@ export function ChatComposer({
                             setModelSheetOpen(false)
                           }}
                           className={cn(
-                            "flex w-full items-start gap-2.5 rounded-xl px-3 py-2 text-left transition-colors",
+                            "flex min-h-11 w-full items-start gap-2.5 rounded-xl px-3 py-2.5 text-left transition-colors",
                             active ? "bg-muted" : "active:bg-muted-30",
                           )}
                         >

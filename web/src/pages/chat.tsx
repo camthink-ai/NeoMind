@@ -1692,6 +1692,8 @@ export function ChatPage() {
         {!isWelcomeMode && !noLlmContent && (
         <div
           className={cn(
+            // Bottom pad for mobile lives in index.css (.chat-composer-dock +
+            // body.keyboard-open override). Desktop keeps the in-flow safe pad.
             "chat-composer-dock overflow-visible border-0 px-4 pt-3 sm:pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pt-3",
             isDesktop ? "relative shrink-0" : "absolute inset-x-0 bottom-0 z-20",
           )}

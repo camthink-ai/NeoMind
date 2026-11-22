@@ -55,7 +55,8 @@ describe('SessionSidebar mobile workspace drawer', () => {
     )
 
     const drawer = screen.getByTestId('session-workspace-drawer')
-    expect(drawer.className).toContain('w-[min(28rem,calc(100vw-2.75rem))]')
+    expect(drawer.className).toContain('w-full')
+    expect(drawer.style.height).toContain('--app-height')
     expect(screen.getByText('NeoMind')).toBeTruthy()
     expect(screen.getByText('温室巡检')).toBeTruthy()
     expect(screen.getByTestId('session-drawer-shortcut-devices')).toBeTruthy()
