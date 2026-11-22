@@ -577,7 +577,7 @@ export function SessionSidebar({
     openSettings()
   }
 
-  // Mobile: title+close → flat destinations → recent (+/search) → avatar Settings.
+  // Mobile: title+close → flat destinations → recent list → floating glass Settings.
   const mobileDrawerContent = (
     <>
       <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-2">
@@ -629,51 +629,24 @@ export function SessionSidebar({
         </ul>
       </nav>
 
-      <div className="flex items-center gap-2 px-4 pb-1.5 pt-1">
-        <h3 className="min-w-0 flex-1 text-sm font-medium text-muted-foreground">
+      <div className="px-5 pb-1.5 pt-1">
+        <h3 className="text-sm font-medium text-muted-foreground">
           {t('session.recent')}
         </h3>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={handleNewSession}
-          disabled={isCreating}
-          className="h-9 w-9 shrink-0 rounded-full sm:h-9 sm:w-9"
-          aria-label={t('session.newChat')}
-          data-testid="session-drawer-new-chat"
-        >
-          <Plus className="h-4 w-4" strokeWidth={2} />
-        </Button>
-      </div>
-
-      <div className="px-3 pb-2">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            ref={searchInputRef}
-            type="text"
-            placeholder={t('session.search')}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 rounded-lg border-transparent bg-transparent pl-9 text-sm shadow-none focus-visible:border-border focus-visible:bg-muted-50"
-            data-testid="session-drawer-search"
-          />
-        </div>
       </div>
 
       <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
-        <div className="space-y-0.5 overflow-x-hidden px-2 pb-3">
+        <div className="space-y-0.5 overflow-x-hidden px-2 pb-24">
           {renderSessionList(true)}
         </div>
       </ScrollArea>
 
-      <div className="shrink-0 border-t border-border px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-6">
         <button
           type="button"
           data-testid="session-drawer-settings"
           onClick={openDrawerSettings}
-          className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors active:bg-muted"
+          className="pointer-events-auto flex min-h-12 w-full items-center gap-3 rounded-2xl border border-glass-border bg-surface-glass px-3 py-2.5 text-left shadow-sm backdrop-blur-xl transition-colors active:bg-muted"
         >
           <Avatar className="h-9 w-9 shrink-0 rounded-full">
             <AvatarFallback className="bg-muted text-xs font-semibold text-foreground">
@@ -770,7 +743,7 @@ export function SessionSidebar({
         id="session-workspace-drawer"
         ref={drawerRef}
         className={cn(
-          "fixed inset-x-0 z-50 flex w-full flex-col bg-background lg:hidden",
+          "relative fixed inset-x-0 z-50 flex w-full flex-col overflow-hidden bg-background lg:hidden",
           "safe-top transform transition-transform duration-slow ease-out",
           open ? "translate-x-0" : "-translate-x-full",
         )}

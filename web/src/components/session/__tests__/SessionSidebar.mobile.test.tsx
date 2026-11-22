@@ -1,4 +1,4 @@
-/// Mobile workspace drawer — flat destinations, recent +/search, avatar Settings footer.
+/// Mobile workspace drawer — flat destinations, recent list, floating glass Settings.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -50,7 +50,7 @@ describe('SessionSidebar mobile workspace drawer', () => {
     } as never)
   })
 
-  it('renders flat destinations, recent new-chat, and avatar Settings footer', () => {
+  it('renders flat destinations and floating avatar Settings (no search/new)', () => {
     const onClose = vi.fn()
     render(
       <MemoryRouter>
@@ -72,10 +72,13 @@ describe('SessionSidebar mobile workspace drawer', () => {
       expect(screen.getByTestId(`session-drawer-shortcut-${id}`).querySelectorAll('svg').length).toBe(1)
     }
     expect(screen.getByTestId('session-drawer-workspace')).toBeTruthy()
-    expect(screen.getByTestId('session-drawer-new-chat')).toBeTruthy()
-    expect(screen.getByTestId('session-drawer-search')).toBeTruthy()
-    expect(screen.getByTestId('session-drawer-settings')).toBeTruthy()
-    expect(screen.getByTestId('session-drawer-settings').textContent).toMatch(/uiadmin/)
+    expect(screen.queryByTestId('session-drawer-new-chat')).toBeNull()
+    expect(screen.queryByTestId('session-drawer-search')).toBeNull()
+    const settings = screen.getByTestId('session-drawer-settings')
+    expect(settings).toBeTruthy()
+    expect(settings.textContent).toMatch(/uiadmin/)
+    expect(settings.className).toMatch(/backdrop-blur|bg-surface-glass|glass/)
+    expect(settings.className).not.toMatch(/border-t/)
   })
 
   it('navigates from a top shortcut after closing the drawer', () => {
@@ -115,24 +118,5 @@ describe('SessionSidebar mobile workspace drawer', () => {
     fireEvent.click(screen.getByTestId('session-drawer-settings'))
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(openSettingsMock).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps the search input mounted across successive edits (no remount)', () => {
-    const onClose = vi.fn()
-    render(
-      <MemoryRouter>
-        <SessionSidebar open onClose={onClose} isDesktop={false} />
-      </MemoryRouter>,
-    )
-
-    const input = screen.getByTestId('session-drawer-search') as HTMLInputElement
-    fireEvent.change(input, { target: { value: '温' } })
-    expect(screen.getByTestId('session-drawer-search')).toBe(input)
-    fireEvent.change(input, { target: { value: '温室' } })
-    expect(screen.getByTestId('session-drawer-search')).toBe(input)
-    expect(input.value).toBe('温室')
-    fireEvent.change(input, { target: { value: '温' } })
-    expect(screen.getByTestId('session-drawer-search')).toBe(input)
-    expect(input.value).toBe('温')
   })
 })
