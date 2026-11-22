@@ -90,9 +90,9 @@ export default function SystemPage() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <MobilePageHeader title={t("common:system.pageTitle")} glassFade />
+      <MobilePageHeader title={t("common:system.pageTitle")} />
       <div className="flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto w-full max-w-2xl px-5 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] pt-1">
+        <div className="mx-auto w-full max-w-2xl px-5 pb-[calc(6rem+env(safe-area-inset-bottom,0px))] pt-4">
           <button
             type="button"
             onClick={() => setInstanceManagerOpen(true)}
