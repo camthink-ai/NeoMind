@@ -570,55 +570,61 @@ export function SessionSidebar({
     </>
   )
 
-  // Mobile: avatar workspace header, four quick tiles, recent chats, bottom bar.
+  // Mobile: close chrome → one workspace card (identity row + 4 tiles) → chats.
   const mobileDrawerContent = (
     <>
-      <div className="flex items-center gap-2 px-4 pb-3 pt-2">
-        <button
-          type="button"
-          data-testid="session-drawer-workspace"
-          onClick={() => goWorkspace('/system')}
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl px-1 py-1.5 text-left transition-colors active:bg-muted"
-          aria-label={`${t('system.pageTitle')} — ${t('system.moreEntries')}`}
-        >
-          <Avatar className="h-11 w-11 shrink-0 rounded-xl">
-            <AvatarFallback className="bg-primary text-sm font-semibold text-primary-foreground">
-              {workspaceAvatarLabel}
-            </AvatarFallback>
-          </Avatar>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-base font-semibold tracking-[-0.02em] text-foreground">
-              {t('system.pageTitle')}
-            </span>
-            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-              {t('system.moreEntries')}
-            </span>
-          </span>
-          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        </button>
+      <div className="flex items-center justify-between gap-3 px-5 pb-3 pt-1.5">
+        <p className="min-w-0 truncate text-lg font-semibold tracking-[-0.03em] text-foreground">
+          NeoMind
+        </p>
         <Button
           variant="ghost"
           size="icon"
           onClick={onClose}
-          className="h-10 w-10 shrink-0 rounded-full sm:h-10 sm:w-10"
+          className="h-10 w-10 shrink-0 rounded-full border border-glass-border bg-surface-glass shadow-sm backdrop-blur-xl hover:border-glass-border-hover hover:bg-muted sm:h-10 sm:w-10"
           aria-label={t('close')}
         >
           <X className="h-4 w-4" />
         </Button>
       </div>
 
-      <div className="px-5 pb-4">
-        <div className="overflow-hidden rounded-2xl bg-muted-50">
-          <div className="grid grid-cols-4">
+      <div className="px-5 pb-5">
+        <div className="overflow-hidden rounded-2xl border border-border bg-muted-50">
+          <button
+            type="button"
+            data-testid="session-drawer-workspace"
+            onClick={() => goWorkspace('/system')}
+            className="flex min-h-14 w-full items-center gap-3 px-3.5 py-3 text-left transition-colors active:bg-muted"
+            aria-label={`${t('system.pageTitle')} — ${t('system.moreEntries')}`}
+          >
+            <Avatar className="h-10 w-10 shrink-0 rounded-xl ring-1 ring-border">
+              <AvatarFallback className="rounded-xl bg-background text-xs font-semibold tracking-wide text-foreground">
+                {workspaceAvatarLabel}
+              </AvatarFallback>
+            </Avatar>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-semibold leading-5 text-foreground">
+                {t('system.pageTitle')}
+              </span>
+              <span className="mt-0.5 block truncate text-xs leading-4 text-muted-foreground">
+                {t('system.moreEntries')}
+              </span>
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </button>
+
+          <div className="mx-3.5 h-px bg-border" aria-hidden="true" />
+
+          <div className="grid grid-cols-4 gap-0 px-1.5 pb-1.5 pt-1">
             {workspaceShortcuts.map(({ id, path, icon: Icon, labelKey }) => (
               <button
                 key={id}
                 type="button"
                 data-testid={`session-drawer-shortcut-${id}`}
                 onClick={() => goWorkspace(path)}
-                className="flex min-h-[4.25rem] flex-col items-center justify-center gap-1.5 bg-transparent px-1 py-2.5 text-center transition-colors active:bg-muted"
+                className="flex min-h-[4.5rem] flex-col items-center justify-center gap-1.5 rounded-xl bg-transparent px-1 py-2.5 text-center transition-colors active:bg-muted"
               >
-                <Icon className="h-5 w-5 text-foreground" strokeWidth={1.8} aria-hidden="true" />
+                <Icon className="h-5 w-5 text-foreground" strokeWidth={1.75} aria-hidden="true" />
                 <span className="max-w-full truncate text-[0.6875rem] leading-tight text-muted-foreground">
                   {t(labelKey)}
                 </span>
@@ -629,7 +635,7 @@ export function SessionSidebar({
       </div>
 
       <div className="px-5 pb-2">
-        <h3 className="text-base font-medium text-muted-foreground">
+        <h3 className="text-sm font-medium text-muted-foreground">
           {t('session.recent')}
         </h3>
       </div>
