@@ -60,6 +60,10 @@ describe('SessionSidebar mobile workspace drawer', () => {
     expect(drawer.style.height).toContain('--app-height')
     expect(screen.getByText('NeoMind')).toBeTruthy()
     expect(screen.getByText('温室巡检')).toBeTruthy()
+    const topbar = screen.getByTestId('session-drawer-topbar')
+    expect(topbar.className).toMatch(/backdrop-blur/)
+    expect(topbar.style.background).toMatch(/linear-gradient/i)
+    expect(topbar.style.maskImage || topbar.style.webkitMaskImage).toMatch(/linear-gradient/i)
     for (const id of ['devices', 'agents', 'dashboard', 'messages']) {
       const tile = screen.getByTestId(`session-drawer-shortcut-${id}`)
       expect(tile.querySelectorAll('svg').length).toBe(1)
