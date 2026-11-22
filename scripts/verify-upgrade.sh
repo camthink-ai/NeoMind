@@ -380,52 +380,62 @@ verify_after_upgrade() {
     echo "FAIL: no session_id in expect"; FAIL=1
   fi
 
-  # Seed-6 post-upgrade re-read: battery metric OR transform / operations ledger.
+  # Seed-6 post-upgrade re-read: device current_values / telemetry / transform.
   WRITE_OK=0
-  METRIC_BODY=$(api GET "/devices/upgrade-sensor-001/metrics?metric=values.battery" || true)
-  echo "$METRIC_BODY" >"$OUT_DIR/verify-seed6-metric.json"
-  if python3 - "$OUT_DIR/verify-seed6-metric.json" <<'PY'
+  if python3 - "$OUT_DIR/verify-device.json" <<'PY'
 import json, sys
 p = sys.argv[1]
-try:
-    d = json.load(open(p))
-except Exception as e:
-    print(f"metric parse fail: {e}")
-    sys.exit(1)
+d = json.load(open(p))
 if isinstance(d.get("data"), dict):
     d = d["data"]
-# Accept several shapes: value / values.battery / latest.value
-cands = []
-if isinstance(d, dict):
-    cands.append(d.get("value"))
-    vals = d.get("values")
-    if isinstance(vals, dict):
-        cands.append(vals.get("battery"))
-    latest = d.get("latest")
-    if isinstance(latest, dict):
-        cands.append(latest.get("value"))
-    # nested list of points
-    points = d.get("points") or d.get("data")
-    if isinstance(points, list) and points:
-        last = points[-1]
-        if isinstance(last, dict):
-            cands.append(last.get("value"))
-        elif isinstance(last, (int, float)):
-            cands.append(last)
-for c in cands:
-    if c is None:
-        continue
-    try:
-        if float(c) == 88.0:
-            print(f"OK: seed-6 battery re-read value={c}")
-            sys.exit(0)
-    except (TypeError, ValueError):
-        pass
-print(f"metric body missing battery==88: {d!r}"[:500])
+cv = d.get("current_values") or {}
+val = cv.get("values.battery")
+try:
+    if float(val) == 88.0:
+        print(f"OK: seed-6 battery re-read current_values={val}")
+        sys.exit(0)
+except (TypeError, ValueError):
+    pass
+print(f"device current_values missing battery==88: {cv!r}")
 sys.exit(1)
 PY
   then
     WRITE_OK=1
+  fi
+
+  if (( WRITE_OK == 0 )); then
+    TELE=$(api GET "/devices/upgrade-sensor-001/telemetry?metric=values.battery&hours=720&limit=5" || true)
+    echo "$TELE" >"$OUT_DIR/verify-seed6-telemetry.json"
+    if python3 - "$OUT_DIR/verify-seed6-telemetry.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+if isinstance(d.get("data"), dict):
+    d = d["data"]
+points = d.get("points") or d.get("data") or d.get("series") or []
+if isinstance(d.get("metrics"), dict):
+    points = d["metrics"].get("values.battery") or points
+cands = []
+if isinstance(points, list):
+    for pt in points:
+        if isinstance(pt, dict):
+            cands.append(pt.get("value"))
+        elif isinstance(pt, (int, float)):
+            cands.append(pt)
+elif isinstance(points, dict):
+    cands.append(points.get("value"))
+for c in cands:
+    try:
+        if float(c) == 88.0:
+            print(f"OK: seed-6 battery re-read telemetry value={c}")
+            sys.exit(0)
+    except (TypeError, ValueError):
+        pass
+print("telemetry missing battery==88")
+sys.exit(1)
+PY
+    then
+      WRITE_OK=1
+    fi
   fi
 
   if (( WRITE_OK == 0 )); then
@@ -438,16 +448,7 @@ PY
   fi
 
   if (( WRITE_OK == 0 )); then
-    OPS=$(api GET /v1/operations || true)
-    echo "$OPS" >"$OUT_DIR/verify-seed6-operations.json"
-    if echo "$OPS" | grep -qiE 'upgrade-sensor-001|values\.battery|upgrade-write'; then
-      echo "OK: seed-6 operations ledger re-read"
-      WRITE_OK=1
-    fi
-  fi
-
-  if (( WRITE_OK == 0 )); then
-    echo "FAIL: seed-6 write not re-readable after upgrade (metric/transform/operations)"
+    echo "FAIL: seed-6 write not re-readable after upgrade (device/telemetry/transform)"
     FAIL=1
   fi
 
