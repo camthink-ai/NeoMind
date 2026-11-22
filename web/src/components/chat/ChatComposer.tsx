@@ -789,16 +789,14 @@ export function ChatComposer({
     <>
       <div
         className={cn(
-          "flex shrink-0 flex-wrap gap-1.5 border-b border-border",
-          isMobile ? "px-4 py-2.5" : "px-3 py-2.5",
+          "flex shrink-0 flex-wrap gap-1 border-b border-border",
+          isMobile ? "px-3 py-2" : "px-2.5 py-2",
         )}
         role="tablist"
         aria-label={t("chat:mention.filterTypes", "按类型筛选")}
       >
         {(["all", "device", "rule", "transform", "agent"] as const).map((tab) => {
           const selected = mentionTypeFilter === tab
-          const meta = tab === "all" ? null : MENTION_TYPE_META[tab]
-          const Icon = meta?.icon
           return (
             <button
               key={tab}
@@ -806,15 +804,16 @@ export function ChatComposer({
               role="tab"
               aria-selected={selected}
               className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-nano transition-colors",
+                // Text-only chips: tighter, uniform height; selected = muted
+                // block (no icon clutter). Filter behavior unchanged.
+                "inline-flex h-7 items-center rounded-md px-2 text-nano transition-colors",
                 selected
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted-30 text-muted-foreground hover:bg-muted hover:text-foreground",
+                  ? "bg-muted font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-muted-30 hover:text-foreground",
               )}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => setMentionTypeFilter(tab)}
             >
-              {Icon && <Icon className="h-3 w-3" aria-hidden="true" />}
               {tab === "all"
                 ? t("chat:mention.filterAll", "全部")
                 : t(`chat:mention.${tab}`, tab)}

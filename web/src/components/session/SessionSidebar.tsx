@@ -604,7 +604,10 @@ export function SessionSidebar({
             type="button"
             data-testid="session-drawer-workspace"
             onClick={() => goWorkspace('/system')}
-            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors active:bg-muted"
+            // Match the optical left edge of the Devices icon in the 4-col
+            // grid (centered h-5 icon in col 1 ≈ calc(12.5% - 0.625rem)).
+            // No leading icon; chevron stays on the right.
+            className="flex w-full items-center gap-2 border-t border-border py-3 text-left transition-colors active:bg-muted pl-[max(0.625rem,calc(12.5%-0.625rem))] pr-3"
           >
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-foreground">
