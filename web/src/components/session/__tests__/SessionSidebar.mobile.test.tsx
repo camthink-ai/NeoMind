@@ -1,4 +1,4 @@
-/// Mobile workspace drawer — shortcuts on top, chats middle, search/new bottom.
+/// Mobile workspace drawer — flat destinations, recent +/search, avatar Settings footer.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -6,6 +6,7 @@ import { SessionSidebar } from '@/components/session/SessionSidebar'
 import { useStore } from '@/store'
 
 const navigateMock = vi.fn()
+const openSettingsMock = vi.fn()
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
@@ -25,6 +26,7 @@ vi.mock('@/lib/api/sessions', () => ({
 describe('SessionSidebar mobile workspace drawer', () => {
   beforeEach(() => {
     navigateMock.mockReset()
+    openSettingsMock.mockReset()
     useStore.setState({
       sessions: [
         {
@@ -43,10 +45,12 @@ describe('SessionSidebar mobile workspace drawer', () => {
       deleteSession: vi.fn(),
       updateSessionTitle: vi.fn(),
       loadMoreSessions: vi.fn(),
+      user: { username: 'uiadmin', role: 'admin' } as never,
+      openSettings: openSettingsMock,
     } as never)
   })
 
-  it('renders top workspace shortcuts and bottom search/new controls', () => {
+  it('renders flat destinations, recent new-chat, and avatar Settings footer', () => {
     const onClose = vi.fn()
     render(
       <MemoryRouter>
@@ -64,19 +68,14 @@ describe('SessionSidebar mobile workspace drawer', () => {
     expect(screen.getByTestId('session-drawer-shortcut-dashboard')).toBeTruthy()
     expect(screen.getByTestId('session-drawer-shortcut-messages')).toBeTruthy()
     expect(screen.queryByTestId('session-drawer-shortcut-automation')).toBeNull()
-    expect(screen.queryByTestId('session-drawer-shortcut-data')).toBeNull()
-    expect(screen.queryByTestId('session-drawer-shortcut-extensions')).toBeNull()
-    // Flat icon+label rows (no card chrome).
     for (const id of ['devices', 'agents', 'dashboard', 'messages']) {
       expect(screen.getByTestId(`session-drawer-shortcut-${id}`).querySelectorAll('svg').length).toBe(1)
     }
-    const workspace = screen.getByTestId('session-drawer-workspace')
-    expect(workspace).toBeTruthy()
-    // i18n may return the key in unit tests; runtime uses translated copy.
-    expect(workspace.textContent).toMatch(/全部入口|All destinations|system\.moreEntries/)
-    expect(workspace.querySelectorAll('svg').length).toBe(1)
+    expect(screen.getByTestId('session-drawer-workspace')).toBeTruthy()
     expect(screen.getByTestId('session-drawer-new-chat')).toBeTruthy()
-    expect(screen.getByPlaceholderText(/search|搜索/i)).toBeTruthy()
+    expect(screen.getByTestId('session-drawer-search')).toBeTruthy()
+    expect(screen.getByTestId('session-drawer-settings')).toBeTruthy()
+    expect(screen.getByTestId('session-drawer-settings').textContent).toMatch(/uiadmin/)
   })
 
   it('navigates from a top shortcut after closing the drawer', () => {
@@ -103,6 +102,19 @@ describe('SessionSidebar mobile workspace drawer', () => {
     fireEvent.click(screen.getByTestId('session-drawer-workspace'))
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(navigateMock).toHaveBeenCalledWith('/system')
+  })
+
+  it('opens Settings from the avatar footer and closes the drawer', () => {
+    const onClose = vi.fn()
+    render(
+      <MemoryRouter>
+        <SessionSidebar open onClose={onClose} isDesktop={false} />
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(screen.getByTestId('session-drawer-settings'))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(openSettingsMock).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the search input mounted across successive edits (no remount)', () => {

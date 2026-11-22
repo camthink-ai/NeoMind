@@ -32,7 +32,9 @@ import {
   LayoutDashboard,
   Bell,
   LayoutGrid,
+  Settings,
 } from "lucide-react"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -77,6 +79,8 @@ export function SessionSidebar({
   const deleteSession = useStore((s) => s.deleteSession)
   const updateSessionTitle = useStore((s) => s.updateSessionTitle)
   const loadMoreSessions = useStore((s) => s.loadMoreSessions)
+  const user = useStore((s) => s.user)
+  const openSettings = useStore((s) => s.openSettings)
 
   // Use URL sessionId for active highlight, not store sessionId.
   // This ensures no session is highlighted in welcome mode (/chat without sessionId).
@@ -564,7 +568,16 @@ export function SessionSidebar({
     </>
   )
 
-  // Mobile: title+close → flat destination rows → recent chats (no cards).
+  const workspaceAvatarLabel = user?.username
+    ? user.username.slice(0, 2).toUpperCase()
+    : 'NM'
+
+  const openDrawerSettings = () => {
+    onClose()
+    openSettings()
+  }
+
+  // Mobile: title+close → flat destinations → recent (+/search) → avatar Settings.
   const mobileDrawerContent = (
     <>
       <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-2">
@@ -582,7 +595,7 @@ export function SessionSidebar({
         </Button>
       </div>
 
-      <nav className="px-2 pb-3" aria-label={t('system.openWorkspace')}>
+      <nav className="px-2 pb-2" aria-label={t('system.openWorkspace')}>
         <ul className="space-y-0.5">
           {workspaceShortcuts.map(({ id, path, icon: Icon, labelKey }) => (
             <li key={id}>
@@ -616,10 +629,37 @@ export function SessionSidebar({
         </ul>
       </nav>
 
-      <div className="px-5 pb-1.5 pt-1">
-        <h3 className="text-sm font-medium text-muted-foreground">
+      <div className="flex items-center gap-2 px-4 pb-1.5 pt-1">
+        <h3 className="min-w-0 flex-1 text-sm font-medium text-muted-foreground">
           {t('session.recent')}
         </h3>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={handleNewSession}
+          disabled={isCreating}
+          className="h-9 w-9 shrink-0 rounded-full sm:h-9 sm:w-9"
+          aria-label={t('session.newChat')}
+          data-testid="session-drawer-new-chat"
+        >
+          <Plus className="h-4 w-4" strokeWidth={2} />
+        </Button>
+      </div>
+
+      <div className="px-3 pb-2">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            ref={searchInputRef}
+            type="text"
+            placeholder={t('session.search')}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="h-9 rounded-lg border-transparent bg-transparent pl-9 text-sm shadow-none focus-visible:border-border focus-visible:bg-muted-50"
+            data-testid="session-drawer-search"
+          />
+        </div>
       </div>
 
       <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
@@ -628,32 +668,30 @@ export function SessionSidebar({
         </div>
       </ScrollArea>
 
-      <div className="shrink-0 border-t border-border px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-3">
-        <div className="flex h-11 items-stretch gap-2">
-          <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              ref={searchInputRef}
-              type="text"
-              placeholder={t('session.search')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-11 rounded-2xl border-border bg-muted-50 pl-9 text-sm sm:h-11"
-              data-testid="session-drawer-search"
-            />
-          </div>
-          <Button
-            type="button"
-            onClick={handleNewSession}
-            disabled={isCreating}
-            size="icon"
-            className="h-11 w-11 shrink-0 rounded-2xl sm:h-11 sm:w-11"
-            aria-label={t('session.newChat')}
-            data-testid="session-drawer-new-chat"
-          >
-            <Plus className="h-4 w-4" strokeWidth={2.25} />
-          </Button>
-        </div>
+      <div className="shrink-0 border-t border-border px-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2">
+        <button
+          type="button"
+          data-testid="session-drawer-settings"
+          onClick={openDrawerSettings}
+          className="flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors active:bg-muted"
+        >
+          <Avatar className="h-9 w-9 shrink-0 rounded-full">
+            <AvatarFallback className="bg-muted text-xs font-semibold text-foreground">
+              {workspaceAvatarLabel}
+            </AvatarFallback>
+          </Avatar>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium text-foreground">
+              {user?.username ?? t('nav.settings')}
+            </span>
+            {user ? (
+              <span className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
+                <Settings className="h-3 w-3 shrink-0" aria-hidden="true" strokeWidth={1.75} />
+                {t('nav.settings')}
+              </span>
+            ) : null}
+          </span>
+        </button>
       </div>
     </>
   )
