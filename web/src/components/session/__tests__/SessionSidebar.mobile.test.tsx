@@ -57,7 +57,6 @@ describe('SessionSidebar mobile workspace drawer', () => {
     const drawer = screen.getByTestId('session-workspace-drawer')
     expect(drawer.className).toContain('w-full')
     expect(drawer.style.height).toContain('--app-height')
-    expect(screen.getByText('NeoMind')).toBeTruthy()
     expect(screen.getByText('温室巡检')).toBeTruthy()
     expect(screen.getByTestId('session-drawer-shortcut-devices')).toBeTruthy()
     expect(screen.getByTestId('session-drawer-shortcut-agents')).toBeTruthy()
@@ -72,7 +71,8 @@ describe('SessionSidebar mobile workspace drawer', () => {
     }
     const workspace = screen.getByTestId('session-drawer-workspace')
     expect(workspace).toBeTruthy()
-    // Text + chevron only — no leading icon.
+    // Avatar header absorbs All destinations (initials/NM + title + chevron).
+    expect(workspace.textContent).toMatch(/NM|Workspace|工作台|全部入口|All destinations/)
     expect(workspace.querySelectorAll('svg').length).toBe(1)
     expect(screen.getByTestId('session-drawer-new-chat')).toBeTruthy()
     expect(screen.getByPlaceholderText(/search|搜索/i)).toBeTruthy()
@@ -91,7 +91,7 @@ describe('SessionSidebar mobile workspace drawer', () => {
     expect(navigateMock).toHaveBeenCalledWith('/devices')
   })
 
-  it('opens the full workspace hub from the more-entries row', () => {
+  it('opens the full workspace hub from the avatar header', () => {
     const onClose = vi.fn()
     render(
       <MemoryRouter>

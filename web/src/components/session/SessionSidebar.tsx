@@ -33,6 +33,7 @@ import {
   LayoutDashboard,
   Bell,
 } from "lucide-react"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -77,6 +78,7 @@ export function SessionSidebar({
   const deleteSession = useStore((s) => s.deleteSession)
   const updateSessionTitle = useStore((s) => s.updateSessionTitle)
   const loadMoreSessions = useStore((s) => s.loadMoreSessions)
+  const user = useStore((s) => s.user)
 
   // Use URL sessionId for active highlight, not store sessionId.
   // This ensures no session is highlighted in welcome mode (/chat without sessionId).
@@ -507,14 +509,18 @@ export function SessionSidebar({
     navigate(path)
   }
 
-  // Original four quick entries with Lucide icons. Extra destinations stay
-  // on the System hub via the icon-free All destinations row below.
+  // Original four quick entries with Lucide icons. Full destination list
+  // lives on System hub — opened from the avatar header row above the tiles.
   const workspaceShortcuts = [
     { id: 'devices', path: '/devices', icon: Cpu, labelKey: 'nav.devices' },
     { id: 'agents', path: '/agents', icon: Bot, labelKey: 'nav.agents' },
     { id: 'dashboard', path: '/visual-dashboard', icon: LayoutDashboard, labelKey: 'nav.visual-dashboard' },
     { id: 'messages', path: '/messages', icon: Bell, labelKey: 'nav.messages' },
   ] as const
+
+  const workspaceAvatarLabel = user?.username
+    ? user.username.slice(0, 2).toUpperCase()
+    : 'NM'
 
   // IMPORTANT: keep these as JSX values, not inner components. Defining
   // MobileDrawerContent/DesktopContent as nested function components remounts
@@ -564,13 +570,32 @@ export function SessionSidebar({
     </>
   )
 
-  // Mobile: one borderless workspace card on top, recent chats, compact bottom bar.
+  // Mobile: avatar workspace header, four quick tiles, recent chats, bottom bar.
   const mobileDrawerContent = (
     <>
-      <div className="flex items-center justify-between gap-3 px-5 pb-3 pt-2">
-        <h2 className="min-w-0 truncate text-xl font-semibold tracking-[-0.03em] text-foreground">
-          NeoMind
-        </h2>
+      <div className="flex items-center gap-2 px-4 pb-3 pt-2">
+        <button
+          type="button"
+          data-testid="session-drawer-workspace"
+          onClick={() => goWorkspace('/system')}
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl px-1 py-1.5 text-left transition-colors active:bg-muted"
+          aria-label={`${t('system.pageTitle')} — ${t('system.moreEntries')}`}
+        >
+          <Avatar className="h-11 w-11 shrink-0 rounded-xl">
+            <AvatarFallback className="bg-primary text-sm font-semibold text-primary-foreground">
+              {workspaceAvatarLabel}
+            </AvatarFallback>
+          </Avatar>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-base font-semibold tracking-[-0.02em] text-foreground">
+              {t('system.pageTitle')}
+            </span>
+            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+              {t('system.moreEntries')}
+            </span>
+          </span>
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        </button>
         <Button
           variant="ghost"
           size="icon"
@@ -600,25 +625,6 @@ export function SessionSidebar({
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            data-testid="session-drawer-workspace"
-            onClick={() => goWorkspace('/system')}
-            // Sit under the Devices *column* (12.5% = col center), not the
-            // icon's outer left — flush-to-icon read as too far left.
-            // No leading icon; chevron stays on the right.
-            className="flex w-full items-center gap-2 border-t border-border py-3 text-left transition-colors active:bg-muted pl-[12.5%] pr-3"
-          >
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-foreground">
-                {t('system.moreEntries')}
-              </span>
-              <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                {t('system.pageTitle')}
-              </span>
-            </span>
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          </button>
         </div>
       </div>
 
