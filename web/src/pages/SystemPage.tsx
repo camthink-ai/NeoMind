@@ -46,7 +46,10 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mt-7 first:mt-0">
       <h2 className="mb-2 ml-1 text-xs font-medium text-muted-foreground">{title}</h2>
-      <div className="glass overflow-hidden rounded-2xl p-1">{children}</div>
+      {/* Solid surface — avoid `.glass` blur near the bottom capsule (white halo). */}
+      <div className="overflow-hidden rounded-2xl border border-border bg-background p-1">
+        {children}
+      </div>
     </section>
   )
 }
@@ -96,7 +99,7 @@ export default function SystemPage() {
           <button
             type="button"
             onClick={() => setInstanceManagerOpen(true)}
-            className="glass flex min-h-20 w-full items-center rounded-2xl px-4 py-4 text-left transition-transform active:scale-[0.99]"
+            className="flex min-h-20 w-full items-center rounded-2xl border border-border bg-background px-4 py-4 text-left transition-transform active:scale-[0.99]"
           >
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-2 text-base font-semibold text-foreground">

@@ -6,7 +6,7 @@
 
 import { getPortalRoot } from '@/lib/portal'
 import { handleWindowDragMouseDown } from "@/lib/windowDrag"
-import { useState, useEffect, useRef, useMemo, type CSSProperties } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { useTranslation } from "react-i18next"
 import { useNavigate, useParams } from "react-router-dom"
 import { useStore } from "@/store"
@@ -569,14 +569,7 @@ export function SessionSidebar({
     ? user.username.slice(0, 2).toUpperCase()
     : 'NM'
 
-  // Soften list→footer split with a paint-only fade (no backdrop-blur /
-  // mask — those halo on open/close and can tint sibling bottom chrome).
-  const fadeBottom: CSSProperties = {
-    background:
-      'linear-gradient(to top, var(--background) 0%, color-mix(in srgb, var(--background) 78%, transparent) 55%, transparent 100%)',
-  }
-
-  // Mobile: title+close → 4 icon tiles → recent → glass avatar bar.
+  // Mobile: title+close → 4 icon tiles → recent → solid avatar bar (no fade/blur).
   const mobileDrawerContent = (
     <>
       <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-2">
@@ -620,39 +613,36 @@ export function SessionSidebar({
       </div>
 
       <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
-        <div className="space-y-0.5 overflow-x-hidden px-2 pb-28">
+        <div className="space-y-0.5 overflow-x-hidden px-2 pb-3">
           {renderSessionList(true)}
         </div>
       </ScrollArea>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-[env(safe-area-inset-bottom,0px)]">
-        <div
-          data-testid="session-drawer-userbar"
-          className="pointer-events-auto w-full border-0 bg-transparent shadow-none"
-          style={fadeBottom}
-        >
-          <div className="flex min-h-14 items-center gap-3 px-4 pb-2.5 pt-10">
-            <Avatar className="h-9 w-9 shrink-0 rounded-full">
-              <AvatarFallback className="bg-primary text-xs font-semibold text-primary-foreground">
-                {workspaceAvatarLabel}
-              </AvatarFallback>
-            </Avatar>
-            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-              {user?.username ?? 'NeoMind'}
+      <div
+        data-testid="session-drawer-userbar"
+        className="shrink-0 border-0 bg-background px-4 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] pt-2 shadow-none"
+      >
+        <div className="flex min-h-14 items-center gap-3">
+          <Avatar className="h-9 w-9 shrink-0 rounded-full">
+            <AvatarFallback className="bg-primary text-xs font-semibold text-primary-foreground">
+              {workspaceAvatarLabel}
+            </AvatarFallback>
+          </Avatar>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+            {user?.username ?? 'NeoMind'}
+          </span>
+          <button
+            type="button"
+            data-testid="session-drawer-workspace"
+            onClick={() => goWorkspace('/system')}
+            className="flex max-w-[48%] shrink-0 items-center gap-1 rounded-lg px-1.5 py-2 text-left transition-colors active:bg-muted"
+            aria-label={t('system.moreEntries')}
+          >
+            <span className="truncate text-sm text-muted-foreground">
+              {t('system.moreEntries')}
             </span>
-            <button
-              type="button"
-              data-testid="session-drawer-workspace"
-              onClick={() => goWorkspace('/system')}
-              className="flex max-w-[48%] shrink-0 items-center gap-1 rounded-lg px-1.5 py-2 text-left transition-colors active:bg-muted"
-              aria-label={t('system.moreEntries')}
-            >
-              <span className="truncate text-sm text-muted-foreground">
-                {t('system.moreEntries')}
-              </span>
-              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            </button>
-          </div>
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          </button>
         </div>
       </div>
     </>
