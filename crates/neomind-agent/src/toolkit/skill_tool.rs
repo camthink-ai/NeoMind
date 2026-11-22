@@ -406,8 +406,7 @@ impl Tool for SkillTool {
 - widget-development (widget-dev): Write custom widget code.
 - llm-management (llm): Add and configure LLM backends.
 - settings-management (settings): Read and change system settings.
-- system-info (system): Read system diagnostics (resources, network, storage).
-Create/update need YAML frontmatter (id+name); id is ASCII letters/digits/-/_ only (put Chinese in name). Manage via this tool or Web UI — there is no neomind skill CLI."#
+- system-info (system): Read system diagnostics (resources, network, storage)."#
     }
 
     fn parameters(&self) -> Value {
@@ -416,7 +415,7 @@ Create/update need YAML frontmatter (id+name); id is ASCII letters/digits/-/_ on
                 "action": {
                     "type": "string",
                     "enum": ["search", "load", "create", "update", "delete"],
-                    "description": "Skill action: search|load|create|update|delete."
+                    "description": "Skill action (search/load/create/update/delete)."
                 },
                 "id": {
                     "type": "string",
@@ -436,7 +435,7 @@ Create/update need YAML frontmatter (id+name); id is ASCII letters/digits/-/_ on
                 },
                 "content": {
                     "type": "string",
-                    "description": "Full YAML+Markdown (create/update). Frontmatter needs id/name; id ASCII letters/digits/-/_ only (Chinese in name). No neomind skill CLI."
+                    "description": "YAML+Markdown create/update; ASCII id (A-Za-z0-9_-); no neomind skill CLI."
                 }
             }),
             vec!["action".to_string()],
