@@ -38,6 +38,8 @@ Post-`v1.3.1`: DomainCommandContract 10-domain expansion, multimodal vision fals
 ### Fixed — frontend / desktop
 - SoftAP UI flag stays `false`; contrast AA + vitest green on tip.
 - Desktop/tauri clippy leftovers cleared.
+- Chat overlay: model picker and `@` mention popover stay above the composer; mobile fullscreen workspace no longer clips the bottom; composer auto-grows with keyboard-safe bottom padding.
+- Drawer / System strip bottom fade overlays removed so content is not soft-masked at the edge.
 
 ### Test
 - Vision path honest dark/blur negatives + NM-331 tool-missing positives; optional extension id + dashboard failure-circuit collapse; rule `--name`+`--body` merge; skill Chinese-id early reject; empty-agent-list poison guard.
