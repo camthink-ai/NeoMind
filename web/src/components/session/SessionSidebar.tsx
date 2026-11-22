@@ -28,11 +28,13 @@ import {
   Check,
   Loader2,
   ChevronRight,
-  Compass,
   Cpu,
   Bot,
   LayoutDashboard,
   Bell,
+  Workflow,
+  Database,
+  Puzzle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -508,11 +510,16 @@ export function SessionSidebar({
     navigate(path)
   }
 
+  // Mirror primary nav destinations missing from the first row (chat is the
+  // current surface; Settings stays on the System hub / rail footer).
   const workspaceShortcuts = [
     { id: 'devices', path: '/devices', icon: Cpu, labelKey: 'nav.devices' },
     { id: 'agents', path: '/agents', icon: Bot, labelKey: 'nav.agents' },
     { id: 'dashboard', path: '/visual-dashboard', icon: LayoutDashboard, labelKey: 'nav.visual-dashboard' },
     { id: 'messages', path: '/messages', icon: Bell, labelKey: 'nav.messages' },
+    { id: 'automation', path: '/automation', icon: Workflow, labelKey: 'nav.automation' },
+    { id: 'data', path: '/data', icon: Database, labelKey: 'nav.data' },
+    { id: 'extensions', path: '/extensions', icon: Puzzle, labelKey: 'nav.extensions' },
   ] as const
 
   // IMPORTANT: keep these as JSX values, not inner components. Defining
@@ -605,7 +612,6 @@ export function SessionSidebar({
             onClick={() => goWorkspace('/system')}
             className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors active:bg-muted"
           >
-            <Compass className="h-5 w-5 shrink-0 text-foreground" strokeWidth={1.8} aria-hidden="true" />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium text-foreground">
                 {t('system.moreEntries')}
