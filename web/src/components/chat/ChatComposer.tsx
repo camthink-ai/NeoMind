@@ -1002,8 +1002,10 @@ export function ChatComposer({
             }
           }}
           className={cn(
+            // Keep ~3–4 option rows visible so the menu does not crowd the
+            // composer (esp. mobile + soft keyboard). Long lists still scroll.
             "absolute bottom-full left-0 right-0 z-[200] mb-2 flex flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-lg",
-            isMobile ? "max-h-[min(60dvh,24rem)]" : "max-h-80",
+            isMobile ? "max-h-[min(34dvh,12rem)]" : "max-h-52",
           )}
         >
           {isMobile && (

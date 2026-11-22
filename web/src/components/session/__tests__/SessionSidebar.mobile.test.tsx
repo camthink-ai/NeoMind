@@ -68,6 +68,10 @@ describe('SessionSidebar mobile workspace drawer', () => {
     expect(workspace).toBeTruthy()
     // Text + chevron only — no leading icon.
     expect(workspace.querySelectorAll('svg').length).toBe(1)
+    // Quick-entry tiles are text-only (no Lucide icons).
+    for (const id of ['devices', 'agents', 'dashboard', 'messages', 'automation', 'data', 'extensions']) {
+      expect(screen.getByTestId(`session-drawer-shortcut-${id}`).querySelectorAll('svg').length).toBe(0)
+    }
     expect(screen.getByTestId('session-drawer-new-chat')).toBeTruthy()
     expect(screen.getByPlaceholderText(/search|搜索/i)).toBeTruthy()
   })
