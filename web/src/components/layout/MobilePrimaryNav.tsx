@@ -35,10 +35,9 @@ export function MobilePrimaryNav() {
   return (
     <nav
       aria-label={t("common:nav.mobilePrimary")}
-      className="mobile-primary-nav fixed left-1/2 z-40 w-52 -translate-x-1/2 overflow-hidden rounded-[1.65rem] border border-border shadow-lg backdrop-blur-xl transition-[opacity,transform] duration-200"
+      className="mobile-primary-nav fixed left-1/2 z-40 w-52 -translate-x-1/2 overflow-hidden rounded-[1.65rem] border border-border bg-background shadow-none transition-[opacity,transform] duration-200"
       style={{
         bottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))",
-        backgroundColor: "color-mix(in srgb, var(--chrome) 94%, transparent)",
       }}
     >
       {/* h-[3.75rem] + p-1.5 keeps each segment ≥44px tall (DESIGN_SPEC touch floor). */}

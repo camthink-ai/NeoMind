@@ -569,13 +569,11 @@ export function SessionSidebar({
     ? user.username.slice(0, 2).toUpperCase()
     : 'NM'
 
-  // Soften list→footer split: denser at the bottom, transparent toward content,
-  // with blur masked the same way so the edge does not read as a line.
-  const glassFadeBottom: CSSProperties = {
+  // Soften list→footer split with a paint-only fade (no backdrop-blur /
+  // mask — those halo on open/close and can tint sibling bottom chrome).
+  const fadeBottom: CSSProperties = {
     background:
-      'linear-gradient(to top, color-mix(in srgb, var(--background) 88%, transparent) 0%, color-mix(in srgb, var(--background) 42%, transparent) 48%, transparent 100%)',
-    WebkitMaskImage: 'linear-gradient(to top, black 52%, transparent 100%)',
-    maskImage: 'linear-gradient(to top, black 52%, transparent 100%)',
+      'linear-gradient(to top, var(--background) 0%, color-mix(in srgb, var(--background) 78%, transparent) 55%, transparent 100%)',
   }
 
   // Mobile: title+close → 4 icon tiles → recent → glass avatar bar.
@@ -630,8 +628,8 @@ export function SessionSidebar({
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 pb-[env(safe-area-inset-bottom,0px)]">
         <div
           data-testid="session-drawer-userbar"
-          className="pointer-events-auto w-full border-0 shadow-none backdrop-blur-xl"
-          style={glassFadeBottom}
+          className="pointer-events-auto w-full border-0 bg-transparent shadow-none"
+          style={fadeBottom}
         >
           <div className="flex min-h-14 items-center gap-3 px-4 pb-2.5 pt-10">
             <Avatar className="h-9 w-9 shrink-0 rounded-full">

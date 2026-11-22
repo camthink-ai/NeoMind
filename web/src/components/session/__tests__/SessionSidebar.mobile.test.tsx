@@ -72,10 +72,10 @@ describe('SessionSidebar mobile workspace drawer', () => {
     expect(screen.queryByTestId('session-drawer-settings')).toBeNull()
 
     const bar = screen.getByTestId('session-drawer-userbar')
-    expect(bar.className).toMatch(/backdrop-blur/)
+    expect(bar.className).not.toMatch(/backdrop-blur/)
     expect(bar.className).not.toMatch(/border-t/)
     expect(bar.style.background).toMatch(/linear-gradient/i)
-    expect(bar.style.maskImage || bar.style.webkitMaskImage).toMatch(/linear-gradient/i)
+    expect(bar.style.maskImage || bar.style.webkitMaskImage || '').toBe('')
     expect(bar.textContent).toMatch(/uiadmin/)
     expect(bar.textContent).not.toMatch(/Settings|设置|nav\.settings/)
     expect(bar.querySelector('[class*="bg-primary"]')).toBeTruthy()
