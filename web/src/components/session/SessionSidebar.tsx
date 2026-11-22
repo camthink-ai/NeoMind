@@ -27,13 +27,12 @@ import {
   Pencil,
   Check,
   Loader2,
-  ChevronRight,
   Cpu,
   Bot,
   LayoutDashboard,
   Bell,
+  LayoutGrid,
 } from "lucide-react"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -78,7 +77,6 @@ export function SessionSidebar({
   const deleteSession = useStore((s) => s.deleteSession)
   const updateSessionTitle = useStore((s) => s.updateSessionTitle)
   const loadMoreSessions = useStore((s) => s.loadMoreSessions)
-  const user = useStore((s) => s.user)
 
   // Use URL sessionId for active highlight, not store sessionId.
   // This ensures no session is highlighted in welcome mode (/chat without sessionId).
@@ -509,18 +507,14 @@ export function SessionSidebar({
     navigate(path)
   }
 
-  // Original four quick entries with Lucide icons. Full destination list
-  // lives on System hub — opened from the avatar header row above the tiles.
+  // Flat ChatGPT/Gemini-style destination rows (no card chrome). Full hub
+  // is the trailing "All destinations" row → /system.
   const workspaceShortcuts = [
     { id: 'devices', path: '/devices', icon: Cpu, labelKey: 'nav.devices' },
     { id: 'agents', path: '/agents', icon: Bot, labelKey: 'nav.agents' },
     { id: 'dashboard', path: '/visual-dashboard', icon: LayoutDashboard, labelKey: 'nav.visual-dashboard' },
     { id: 'messages', path: '/messages', icon: Bell, labelKey: 'nav.messages' },
   ] as const
-
-  const workspaceAvatarLabel = user?.username
-    ? user.username.slice(0, 2).toUpperCase()
-    : 'NM'
 
   // IMPORTANT: keep these as JSX values, not inner components. Defining
   // MobileDrawerContent/DesktopContent as nested function components remounts
@@ -570,78 +564,66 @@ export function SessionSidebar({
     </>
   )
 
-  // Mobile: close chrome → one workspace card (identity row + 4 tiles) → chats.
+  // Mobile: title+close → flat destination rows → recent chats (no cards).
   const mobileDrawerContent = (
     <>
-      <div className="flex items-center justify-between gap-3 px-5 pb-3 pt-1.5">
-        <p className="min-w-0 truncate text-lg font-semibold tracking-[-0.03em] text-foreground">
+      <div className="flex items-center justify-between gap-3 px-4 pb-2 pt-2">
+        <h2 className="min-w-0 truncate text-lg font-semibold tracking-[-0.03em] text-foreground">
           NeoMind
-        </p>
+        </h2>
         <Button
           variant="ghost"
           size="icon"
           onClick={onClose}
-          className="h-10 w-10 shrink-0 rounded-full border border-glass-border bg-surface-glass shadow-sm backdrop-blur-xl hover:border-glass-border-hover hover:bg-muted sm:h-10 sm:w-10"
+          className="h-10 w-10 shrink-0 rounded-full sm:h-10 sm:w-10"
           aria-label={t('close')}
         >
           <X className="h-4 w-4" />
         </Button>
       </div>
 
-      <div className="px-5 pb-5">
-        <div className="overflow-hidden rounded-2xl border border-border bg-muted-50">
-          <button
-            type="button"
-            data-testid="session-drawer-workspace"
-            onClick={() => goWorkspace('/system')}
-            className="flex min-h-14 w-full items-center gap-3 px-3.5 py-3 text-left transition-colors active:bg-muted"
-            aria-label={`${t('system.pageTitle')} — ${t('system.moreEntries')}`}
-          >
-            <Avatar className="h-10 w-10 shrink-0 rounded-xl ring-1 ring-border">
-              <AvatarFallback className="rounded-xl bg-background text-xs font-semibold tracking-wide text-foreground">
-                {workspaceAvatarLabel}
-              </AvatarFallback>
-            </Avatar>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-semibold leading-5 text-foreground">
-                {t('system.pageTitle')}
-              </span>
-              <span className="mt-0.5 block truncate text-xs leading-4 text-muted-foreground">
-                {t('system.moreEntries')}
-              </span>
-            </span>
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          </button>
-
-          <div className="mx-3.5 h-px bg-border" aria-hidden="true" />
-
-          <div className="grid grid-cols-4 gap-0 px-1.5 pb-1.5 pt-1">
-            {workspaceShortcuts.map(({ id, path, icon: Icon, labelKey }) => (
+      <nav className="px-2 pb-3" aria-label={t('system.openWorkspace')}>
+        <ul className="space-y-0.5">
+          {workspaceShortcuts.map(({ id, path, icon: Icon, labelKey }) => (
+            <li key={id}>
               <button
-                key={id}
                 type="button"
                 data-testid={`session-drawer-shortcut-${id}`}
                 onClick={() => goWorkspace(path)}
-                className="flex min-h-[4.5rem] flex-col items-center justify-center gap-1.5 rounded-xl bg-transparent px-1 py-2.5 text-center transition-colors active:bg-muted"
+                className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors active:bg-muted"
               >
-                <Icon className="h-5 w-5 text-foreground" strokeWidth={1.75} aria-hidden="true" />
-                <span className="max-w-full truncate text-[0.6875rem] leading-tight text-muted-foreground">
+                <Icon className="h-[1.125rem] w-[1.125rem] shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate text-sm text-foreground">
                   {t(labelKey)}
                 </span>
               </button>
-            ))}
-          </div>
-        </div>
-      </div>
+            </li>
+          ))}
+          <li>
+            <button
+              type="button"
+              data-testid="session-drawer-workspace"
+              onClick={() => goWorkspace('/system')}
+              className="flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors active:bg-muted"
+              aria-label={t('system.moreEntries')}
+            >
+              <LayoutGrid className="h-[1.125rem] w-[1.125rem] shrink-0 text-muted-foreground" strokeWidth={1.75} aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate text-sm text-foreground">
+                {t('system.moreEntries')}
+              </span>
+            </button>
+          </li>
+        </ul>
+      </nav>
 
-      <div className="px-5 pb-2">
+      <div className="px-5 pb-1.5 pt-1">
         <h3 className="text-sm font-medium text-muted-foreground">
           {t('session.recent')}
         </h3>
       </div>
 
       <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
-        <div className="space-y-1 overflow-x-hidden px-3 pb-3">
+        <div className="space-y-0.5 overflow-x-hidden px-2 pb-3">
           {renderSessionList(true)}
         </div>
       </ScrollArea>

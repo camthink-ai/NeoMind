@@ -66,14 +66,14 @@ describe('SessionSidebar mobile workspace drawer', () => {
     expect(screen.queryByTestId('session-drawer-shortcut-automation')).toBeNull()
     expect(screen.queryByTestId('session-drawer-shortcut-data')).toBeNull()
     expect(screen.queryByTestId('session-drawer-shortcut-extensions')).toBeNull()
-    // Original four tiles keep Lucide icons.
+    // Flat icon+label rows (no card chrome).
     for (const id of ['devices', 'agents', 'dashboard', 'messages']) {
       expect(screen.getByTestId(`session-drawer-shortcut-${id}`).querySelectorAll('svg').length).toBe(1)
     }
     const workspace = screen.getByTestId('session-drawer-workspace')
     expect(workspace).toBeTruthy()
-    // Avatar header absorbs All destinations (initials/NM + title + chevron).
-    expect(workspace.textContent).toMatch(/NM|Workspace|工作台|全部入口|All destinations/)
+    // i18n may return the key in unit tests; runtime uses translated copy.
+    expect(workspace.textContent).toMatch(/全部入口|All destinations|system\.moreEntries/)
     expect(workspace.querySelectorAll('svg').length).toBe(1)
     expect(screen.getByTestId('session-drawer-new-chat')).toBeTruthy()
     expect(screen.getByPlaceholderText(/search|搜索/i)).toBeTruthy()
@@ -92,7 +92,7 @@ describe('SessionSidebar mobile workspace drawer', () => {
     expect(navigateMock).toHaveBeenCalledWith('/devices')
   })
 
-  it('opens the full workspace hub from the avatar header', () => {
+  it('opens the full workspace hub from the All destinations row', () => {
     const onClose = vi.fn()
     render(
       <MemoryRouter>
