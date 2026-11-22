@@ -276,6 +276,27 @@ export function ChatComposer({
   const canMention = !!onReferencesChange
   const canAttach = !!onAttachmentsChange
   const inputDisabled = disabled || isStreaming
+
+  // Auto-grow: desktop always; mobile while expanded (collapsed stays one row).
+  // Cap ~4–6 lines then the field scrolls internally (TipTap host / textarea).
+  const growMinHeight = isMobile ? 44 : minHeight
+  const growMaxHeight = isMobile
+    ? (mobileExpanded ? maxHeight : growMinHeight)
+    : maxHeight
+
+  const syncTextareaHeight = () => {
+    const el = activeTextareaRef.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${Math.max(growMinHeight, Math.min(el.scrollHeight, growMaxHeight))}px`
+  }
+
+  useEffect(() => {
+    if (canMention) return
+    syncTextareaHeight()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- grow bounds + value
+  }, [value, growMinHeight, growMaxHeight, mobileExpanded, canMention])
+
   // IME composition (Chinese/Japanese input): intermediate text must not
   // open the picker — only post-composition changes count.
   const isComposing = useRef(false)
@@ -1061,8 +1082,8 @@ export function ChatComposer({
             contentNodes={contentNodes}
             placeholder={isStreaming && streamingPlaceholder ? streamingPlaceholder : placeholder}
             disabled={inputDisabled}
-            minHeight={isMobile ? 44 : minHeight}
-            maxHeight={maxHeight}
+            minHeight={growMinHeight}
+            maxHeight={growMaxHeight}
             listboxId="chat-mention-listbox"
             mentionOpen={mentionQuery !== null}
             invalidRefs={invalidRefs}
@@ -1124,15 +1145,15 @@ export function ChatComposer({
               isMobile && !mobileExpanded && "min-w-0 flex-1 px-2 py-3",
               "placeholder:text-muted-foreground",
               "cursor-text caret-foreground focus:outline-none",
-              "max-h-[100px] scroll-mb-32",
+              "scroll-mb-32",
               "disabled:opacity-60"
             )}
-            style={{ minHeight: `${isMobile ? 44 : minHeight}px` }}
-            onInput={(e) => {
-              const target = e.target as HTMLTextAreaElement
-              target.style.height = "auto"
-              target.style.height = Math.max(minHeight, Math.min(target.scrollHeight, maxHeight)) + "px"
+            style={{
+              minHeight: `${growMinHeight}px`,
+              maxHeight: `${growMaxHeight}px`,
+              overflowY: "auto",
             }}
+            onInput={() => syncTextareaHeight()}
           />
         )}
 

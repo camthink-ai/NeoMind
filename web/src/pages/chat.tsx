@@ -1386,7 +1386,9 @@ export function ChatPage() {
       onCompact={sessionId ? handleCompact : undefined}
       onClearContext={sessionId ? handleClearContext : undefined}
       compacting={isCompacting}
-      maxHeight={isDesktop ? 160 : 100}
+      // Desktop ~8 lines (160); mobile ~6 lines at leading-5 (120) then
+      // internal scroll. Same auto-grow path in ChatComposer / TipTap.
+      maxHeight={isDesktop ? 160 : 120}
       // One resting height everywhere — welcome vs conversation used to
       // differ (72/56 vs 44), and the box visibly jumped the moment the
       // first reply landed (the context ring appearing at the same time
