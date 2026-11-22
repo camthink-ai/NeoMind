@@ -1582,11 +1582,11 @@ html {
   }
 
   /* Soft keyboard already owns the lower inset. Drop safe-area + the large
-     resting pad so the composer sits just above the keyboard with a thin
-     visual gap. Restored when body.keyboard-open is cleared by
+     resting pad so the composer sits just above the keyboard with a hairline
+     gap (2px). Restored when body.keyboard-open is cleared by
      useVisualViewport (not by input-focus alone). */
   body.keyboard-open .chat-composer-dock {
-    padding-bottom: 0.5rem;
+    padding-bottom: 2px;
   }
 
   .message-bubble-user .prose,
