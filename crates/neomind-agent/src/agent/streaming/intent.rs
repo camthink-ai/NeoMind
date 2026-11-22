@@ -875,7 +875,8 @@ fn strip_churn_flags_for_failure_circuit(cmd: &str) -> Option<String> {
     Some(serde_json::to_string(&out).unwrap_or_else(|_| out.join(" ")))
 }
 
-/// Back-compat alias used by older unit tests / call sites.
+/// Back-compat alias used by unit tests.
+#[cfg(test)]
 fn strip_transform_code_flag_for_failure_circuit(cmd: &str) -> Option<String> {
     strip_churn_flags_for_failure_circuit(cmd)
         .filter(|_| cmd.contains("transform create") || cmd.contains("transform update"))
