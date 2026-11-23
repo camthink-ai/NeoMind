@@ -11,6 +11,36 @@ use neomind_core::{
 /// Marker for a trusted conversation summary inserted by the context builder.
 pub(crate) const CONVERSATION_SUMMARY_PREFIX: &str = "[Summary of previous conversation]\n";
 
+/// Internal hard-budget lineage stamp (`feedback_src=<index>`). Kept on
+/// in-window `AgentMessage` tool bodies for survive-checks; stripped in
+/// [`AgentMessage::to_core`] so the LLM never sees trailing non-JSON.
+pub(crate) const FEEDBACK_SRC_MARKER: &str = "feedback_src=";
+
+pub(crate) fn feedback_src_marker(src_index: usize) -> String {
+    format!("{FEEDBACK_SRC_MARKER}{src_index}")
+}
+
+pub(crate) fn stamp_feedback_src(body: &str, src_index: usize) -> String {
+    let marker = feedback_src_marker(src_index);
+    if body.contains(&marker) {
+        return body.to_string();
+    }
+    format!("{body}\n{marker}")
+}
+
+/// Remove a trailing `\nfeedback_src=<digits>` lineage line (internal only).
+pub(crate) fn strip_feedback_src_lineage(body: &str) -> &str {
+    if let Some(idx) = body.rfind('\n') {
+        let last = body[idx + 1..].trim_end();
+        if let Some(num) = last.strip_prefix(FEEDBACK_SRC_MARKER) {
+            if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+                return &body[..idx];
+            }
+        }
+    }
+    body
+}
+
 /// Agent event emitted during streaming processing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -820,12 +850,15 @@ impl AgentMessage {
             }
             "system" => Message::system(self.content.as_ref()),
             "tool" => {
-                // Tool result messages - include which tool was called
+                // Tool result messages - include which tool was called.
+                // Strip hard-budget lineage stamps so structured JSON results
+                // stay parseable for the model (and request-shape tests).
+                let body = strip_feedback_src_lineage(self.content.as_ref());
                 if let Some(ref tool_name) = self.tool_call_name {
-                    let tool_content = format!("[Tool: {} returned]\n{}", tool_name, self.content);
+                    let tool_content = format!("[Tool: {tool_name} returned]\n{body}");
                     Message::user(&tool_content)
                 } else {
-                    Message::user(self.content.as_ref())
+                    Message::user(body)
                 }
             }
             _ => Message::user(self.content.as_ref()),

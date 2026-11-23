@@ -1,4 +1,4 @@
-use super::super::types::AgentMessage;
+use super::super::types::{feedback_src_marker, stamp_feedback_src, AgentMessage};
 use crate::agent::streaming::{CompactionConfig, MessagePriority};
 
 /// Result of a single tool execution with metadata
@@ -170,23 +170,6 @@ fn agent_group_is_complete_tool_interaction(group: &[AgentMessage]) -> bool {
     let has_tool = group.iter().any(|m| m.role == "tool");
     let has_assistant = group.iter().any(|m| m.role == "assistant");
     has_tool && has_assistant
-}
-
-/// Stable lineage marker stamped into honesty-compressed copies of the
-/// latest tool result so survive-checks cannot confuse an older same-named
-/// tool (e.g. earlier `shell`) with the newest call.
-const FEEDBACK_SRC_MARKER: &str = "feedback_src=";
-
-fn feedback_src_marker(src_index: usize) -> String {
-    format!("{FEEDBACK_SRC_MARKER}{src_index}")
-}
-
-fn stamp_feedback_src(body: &str, src_index: usize) -> String {
-    let marker = feedback_src_marker(src_index);
-    if body.contains(&marker) {
-        return body.to_string();
-    }
-    format!("{body}\n{marker}")
 }
 
 /// Latest complete tool result plus its absolute index in `messages`.
@@ -1417,7 +1400,7 @@ mod tests {
             roomy.messages.iter().any(|m| {
                 m.role == "tool"
                     && m.content.contains(latest_tool)
-                    && m.content.contains(FEEDBACK_SRC_MARKER)
+                    && m.content.contains(crate::agent::types::FEEDBACK_SRC_MARKER)
             }),
             "roomy window must keep lineage-stamped latest tool"
         );
