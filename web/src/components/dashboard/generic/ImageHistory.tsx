@@ -222,7 +222,12 @@ function srcFingerprint(src: string): string {
   return `${src.length}:${src.charCodeAt(0)}:${src.slice(-32)}`
 }
 
-function normalizeDataSourceForImages(
+/**
+ * Force image-history telemetry semantics onto a data source.
+ * Always clears `timeWindow` so persisted `last_1hour` cannot shrink a
+ * widget configured for 48h/120h (PIR boards store both).
+ */
+export function normalizeDataSourceForImages(
   ds: DataSource | undefined,
   limit: number = 200,
   timeRange: number = 48,
@@ -297,44 +302,19 @@ export const ImageHistory = memo(function ImageHistory({
   const { t } = useTranslation('dashboardComponents')
   const sizeConfig = dashboardComponentSize[size]
 
-  // Two-phase loading: quick (3 images, 1h) for fast first paint, then full history
-  const quickSource = useMemo(
-    () => normalizeDataSourceForImages(dataSource, 3, 1),
-    [dataSource],
-  )
-  const fullSource = useMemo(
+  // Single fetch with the widget's configured limit/timeRange.
+  // A prior two-phase load (quick: limit=3 / 1h → full) left PIR boards
+  // stuck on ~2 frames whenever devices were quiet for >1h: parent
+  // dataSource identity churn reset phase to "quick", and the 1h window
+  // only held a couple of captures (T4: 200366 last_1h total=2 vs 48h=897).
+  const activeSource = useMemo(
     () => normalizeDataSourceForImages(dataSource, limit, timeRange),
     [dataSource, limit, timeRange],
   )
 
-  const [phase, setPhase] = useState<'quick' | 'full'>('quick')
-  const activeSource = phase === 'full' ? fullSource : quickSource
-
-  // Preserve quick-phase data across phase transition to avoid flash
-  const lastDataRef = useRef<unknown>(null)
-
-  // Reset phase when data source changes (new source should start with quick phase)
-  useEffect(() => {
-    setPhase('quick')
-    lastDataRef.current = null
-  }, [dataSource])
-
   const { data, loading, lastUpdate: dataSourceLastUpdate } = useDataSource(activeSource, {
-    fallback: phase === 'full' && lastDataRef.current != null ? lastDataRef.current : propImages,
+    fallback: propImages,
   })
-
-  // Track last valid data for phase transitions
-  useEffect(() => {
-    if (data != null) lastDataRef.current = data
-  }, [data])
-
-  // Transition from quick to full after initial data arrives
-  useEffect(() => {
-    if (phase === 'quick' && dataSourceLastUpdate) {
-      const timer = setTimeout(() => setPhase('full'), 200)
-      return () => clearTimeout(timer)
-    }
-  }, [phase, dataSourceLastUpdate])
 
   // Transform data to images — uses shared cached normalizeImageUrl
   const images = useMemo(

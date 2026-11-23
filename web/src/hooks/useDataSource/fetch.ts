@@ -114,6 +114,33 @@ const extractTimestamp = (point: unknown): number => {
 
 const telemetryInflight = new Map<string, Promise<{ data: number[]; raw?: unknown[]; success: boolean }>>()
 
+/**
+ * Decide what image raw points to store in the telemetry cache.
+ * URL/path frames are cheap — keep the full page. Huge base64 payloads
+ * truncate to the newest 5 to bound memory.
+ */
+export function selectImageRawForCache(rawPoints: unknown[]): unknown[] {
+  if (rawPoints.length <= 5) return rawPoints
+  const looksHeavy = rawPoints.some((p) => {
+    if (typeof p === 'string') {
+      return p.length > 2000 && !p.startsWith('http') && !p.startsWith('/api/')
+    }
+    if (p && typeof p === 'object') {
+      const v = (p as Record<string, unknown>).value ?? (p as Record<string, unknown>).v
+      if (typeof v !== 'string') return false
+      if (v.startsWith('data:image/') && v.length > 8000) return true
+      return (
+        v.length > 2000 &&
+        !v.startsWith('http') &&
+        !v.startsWith('/api/') &&
+        !v.startsWith('data:image/')
+      )
+    }
+    return false
+  })
+  return looksHeavy ? rawPoints.slice(-5) : rawPoints
+}
+
 export async function fetchHistoricalTelemetry(
   deviceId: string,
   metricId: string,
@@ -296,13 +323,8 @@ export async function fetchHistoricalTelemetry(
           }) : undefined
         }
 
-        // For image sources, only cache the last 5 raw items to avoid
-        // holding 30-50MB of base64 data in memory. Switching back to the
-        // dashboard will instantly show the latest 5 images from cache while
-        // the full history loads in the background.
-        const rawToCache = isImgMetric && rawPoints && rawPoints.length > 5
-          ? rawPoints.slice(-5)
-          : rawPoints
+        const rawToCache =
+          isImgMetric && rawPoints ? selectImageRawForCache(rawPoints) : rawPoints
         telemetryCache.set(cacheKey, { data: values, raw: rawToCache }, { cachedAt: Date.now() })
         return { data: values, raw: rawPoints, success: true }
       }
