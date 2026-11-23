@@ -9,18 +9,15 @@
 //! first real delivery. Ordinary (`Always` / `Failure`) notify agents keep
 //! their previous contract unchanged.
 //!
-//! ## Auth source (protocol parse — not substring / lexicon)
-//! Authorization parses a **finished this-event verdict line** from the
-//! latest non-empty assistant message. Accepted whole-line forms:
+//! ## Auth source (last-line Verdict protocol — not substring / lexicon)
+//! Authorization reads **only the last non-empty line** of the latest
+//! assistant message. That line must **exactly** match one of:
 //! `Verdict: criteria met` / `Verdict: criteria not met` /
-//! `Verdict: insufficient evidence` (optional `Judgment:` prefix; optional
-//! bold markers; or the bare label alone on its own line).
-//!
-//! Explanatory prose that merely *mentions* a label — e.g. "whether the
-//! criteria met label applies", questions, progress, policy IF-THEN, or
-//! pending send title/body — does **not** grant delivery. Missing/invalid
-//! protocol → deny. Prior-event conclusions must not interfere (latest
-//! assistant message only).
+//! `Verdict: insufficient evidence` (case-insensitive; optional trailing
+//! period). Backtick-wrapped examples, bare labels, mid-message protocol
+//! lines, and explanatory prose that mentions a label do **not** grant
+//! delivery. Missing/invalid protocol → deny. Prior-event conclusions must
+//! not interfere (latest assistant message only).
 
 use neomind_core::message::{Message, MessageRole};
 use neomind_storage::{AiAgent, NotifyOn};
@@ -116,62 +113,29 @@ pub(crate) fn judgment_verdict_from_messages(messages: &[Message]) -> JudgmentVe
     classify_judgment(&judgment_context_from_messages(messages))
 }
 
-/// Classify text by **whole-line verdict protocol** only.
+/// Classify text from the **last non-empty line** via exact `Verdict:` protocol.
 ///
-/// Substring mentions inside explanatory sentences never authorize — e.g.
-/// `"I have not yet determined whether the criteria met label applies."`
-/// yields [`JudgmentVerdict::Unknown`].
+/// Mid-message examples (including backtick-wrapped prompt samples) and
+/// explanatory mentions never authorize.
 pub(crate) fn classify_judgment(text: &str) -> JudgmentVerdict {
-    let mut saw_met = false;
-    let mut saw_not_met = false;
-    let mut saw_insufficient = false;
-
-    for line in text.lines() {
-        match parse_verdict_line(line) {
-            Some(JudgmentVerdict::InsufficientEvidence) => saw_insufficient = true,
-            Some(JudgmentVerdict::CriteriaNotMet) => saw_not_met = true,
-            Some(JudgmentVerdict::CriteriaMet) => saw_met = true,
-            Some(JudgmentVerdict::Unknown) | None => {}
-        }
-    }
-
-    // Honesty priority when multiple protocol lines appear in one message.
-    if saw_insufficient {
-        JudgmentVerdict::InsufficientEvidence
-    } else if saw_not_met {
-        JudgmentVerdict::CriteriaNotMet
-    } else if saw_met {
-        JudgmentVerdict::CriteriaMet
-    } else {
-        JudgmentVerdict::Unknown
-    }
+    let Some(last) = text.lines().rev().find(|l| !l.trim().is_empty()) else {
+        return JudgmentVerdict::Unknown;
+    };
+    parse_verdict_line(last).unwrap_or(JudgmentVerdict::Unknown)
 }
 
-/// Exact whole-line protocol parse. Returns `None` when the line is prose.
+/// Exact last-line protocol. No backtick stripping; no bare labels.
 fn parse_verdict_line(line: &str) -> Option<JudgmentVerdict> {
     let mut t = line.trim();
     if t.is_empty() {
         return None;
     }
-    // Optional markdown bold / backticks around the whole line.
-    while t.starts_with("**") && t.ends_with("**") && t.len() >= 4 {
-        t = t[2..t.len() - 2].trim();
-    }
-    if t.starts_with('`') && t.ends_with('`') && t.len() >= 2 {
-        t = t[1..t.len() - 1].trim();
-    }
-    // Trailing sentence punctuation on an otherwise exact protocol line.
+    // Trailing sentence punctuation only — do not strip backticks/bold
+    // (quoted examples must not authorize).
     t = t.trim_end_matches(['.', '。', '!', '！']);
     let lower = t.to_ascii_lowercase();
-    let value = if let Some(rest) = lower.strip_prefix("verdict:") {
-        rest.trim()
-    } else if let Some(rest) = lower.strip_prefix("judgment:") {
-        rest.trim()
-    } else {
-        // Bare label must be the entire line (no surrounding prose).
-        lower.as_str()
-    };
-    match value {
+    let rest = lower.strip_prefix("verdict:")?;
+    match rest.trim() {
         "criteria met" => Some(JudgmentVerdict::CriteriaMet),
         "criteria not met" => Some(JudgmentVerdict::CriteriaNotMet),
         "insufficient evidence" => Some(JudgmentVerdict::InsufficientEvidence),
@@ -306,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn classifies_finished_judgment_protocol_lines_only() {
+    fn classifies_last_line_verdict_protocol_only() {
         assert_eq!(
             classify_judgment("corridor empty.\nVerdict: criteria not met"),
             JudgmentVerdict::CriteriaNotMet
@@ -316,15 +280,21 @@ mod tests {
             JudgmentVerdict::CriteriaMet
         );
         assert_eq!(
-            classify_judgment("画面过暗。\nJudgment: insufficient evidence"),
+            classify_judgment("画面过暗。\nVerdict: insufficient evidence"),
             JudgmentVerdict::InsufficientEvidence
         );
         assert_eq!(
+            classify_judgment("looking around"),
+            JudgmentVerdict::Unknown
+        );
+        // Bare label / bold / backticks never authorize.
+        assert_eq!(classify_judgment("criteria met"), JudgmentVerdict::Unknown);
+        assert_eq!(
             classify_judgment("**criteria met**"),
-            JudgmentVerdict::CriteriaMet
+            JudgmentVerdict::Unknown
         );
         assert_eq!(
-            classify_judgment("looking around"),
+            classify_judgment("`Verdict: criteria met`"),
             JudgmentVerdict::Unknown
         );
         // Lexicon / prose alone never authorizes.
@@ -337,6 +307,13 @@ mod tests {
             classify_judgment("I have not yet determined whether the criteria met label applies."),
             JudgmentVerdict::Unknown
         );
+        // Mid-message quoted example + later prose → last line is not protocol.
+        assert_eq!(
+            classify_judgment(
+                "阳性判定的格式示例如下：\n`Verdict: criteria met`\n本帧还在分析中。"
+            ),
+            JudgmentVerdict::Unknown
+        );
     }
 
     #[test]
@@ -346,23 +323,24 @@ mod tests {
     }
 
     #[test]
-    fn insufficient_wins_over_met_protocol_lines() {
+    fn last_non_empty_line_is_the_only_protocol_position() {
+        // Earlier Verdict lines do not authorize when the last line is prose.
+        assert_eq!(
+            classify_judgment("Verdict: criteria met\n本帧还在分析中。"),
+            JudgmentVerdict::Unknown
+        );
+        // Last protocol line wins.
         assert_eq!(
             classify_judgment("Verdict: criteria met\nVerdict: insufficient evidence"),
             JudgmentVerdict::InsufficientEvidence
         );
-        // Prose that mentions both labels is not a protocol line.
-        assert_eq!(
-            classify_judgment("criteria met but insufficient evidence overall"),
-            JudgmentVerdict::Unknown
-        );
-    }
-
-    #[test]
-    fn not_met_wins_over_met_when_both_protocol_lines_present() {
         assert_eq!(
             classify_judgment("Verdict: criteria met\nVerdict: criteria not met"),
             JudgmentVerdict::CriteriaNotMet
+        );
+        assert_eq!(
+            classify_judgment("criteria met but insufficient evidence overall"),
+            JudgmentVerdict::Unknown
         );
     }
 

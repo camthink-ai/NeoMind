@@ -3388,6 +3388,68 @@ async fn judgment_gate_blocks_title_only_self_approval() {
     );
 }
 
+/// Last-line protocol: mid-message backtick example must not authorize
+/// → FakeNotifySink receives 0.
+#[tokio::test]
+async fn judgment_gate_blocks_mid_message_backtick_verdict_example() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"example\" --body \"still analyzing\""
+            }),
+        )
+        .with_text("阳性判定的格式示例如下：\n`Verdict: criteria met`\n本帧还在分析中。"),
+        MockResponse::text("done"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "仅当有人且疑似赌博时再告警".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (_dp, er) = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
+            rt_dyn,
+            "exec-judgment-mid-message-example",
+            None,
+        )
+        .await
+        .expect("mid-message example Completes with send blocked");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "mid-message backtick Verdict example must not authorize (sink 0)"
+    );
+    assert!(
+        er.actions_executed.iter().any(|a| {
+            !a.success
+                && a.result
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Judgment notify gate")
+        }),
+        "gate must block mid-message example; actions={:?}",
+        er.actions_executed
+    );
+}
+
 /// Protocol parse: explanatory prose mentioning "criteria met" must not
 /// authorize → FakeNotifySink receives 0.
 #[tokio::test]
