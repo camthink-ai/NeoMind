@@ -631,6 +631,27 @@ impl AgentExecutor {
             }
         }
 
+        // A judgment-notify agent decides from the input attached to this run.
+        // Outbound web tools only give a small model somewhere to hunt for
+        // what it thinks is missing: T4's camera agents sent device IDs and
+        // the site name to a search engine 233 times looking for an "image
+        // data path". Off unless the agent's allowlist names them.
+        if judgment_notify::agent_uses_judgment_notify(agent) {
+            let before = filtered_tools.len();
+            filtered_tools
+                .retain(|t| !judgment_notify::judgment_tool_off_by_default(agent, &t.name));
+            tool_name_map
+                .retain(|_, orig| !judgment_notify::judgment_tool_off_by_default(agent, orig));
+            let removed = before - filtered_tools.len();
+            if removed > 0 {
+                tracing::info!(
+                    agent_id = %agent.id,
+                    removed,
+                    "Excluded web tool(s) — judgment-notify agent (name them in the tool allowlist to enable)"
+                );
+            }
+        }
+
         if !tool_name_map.is_empty() {
             tracing::debug!(
                 agent_id = %agent.id,
@@ -638,6 +659,10 @@ impl AgentExecutor {
                 "Sanitized tool names for API compatibility"
             );
         }
+
+        // Knowledge is inlined right below: the task-understanding file must
+        // still carry the agent's current mission when it goes in.
+        self.sync_task_understanding_mission(agent).await;
 
         // Pre-fetch knowledge file content for inline injection.
         // This avoids wasting a tool-call round to read files the agent already

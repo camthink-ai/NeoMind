@@ -139,6 +139,11 @@ pub mod mock_llm {
         /// text/tools. Stored as a `String` (not `LlmError`) so `MockResponse`
         /// stays `Clone` — `LlmError` itself is not `Clone`.
         pub error_msg: Option<String>,
+        /// Append the serialized `tool_calls` to `text`, exactly as every real
+        /// backend does (ollama.rs / openai runtime.rs / llamacpp.rs — no
+        /// separator). Off by default so scripted-text assertions keep their
+        /// shape; turn it on wherever a test must see what production sees.
+        pub append_tool_calls_to_text: bool,
     }
 
     impl MockResponse {
@@ -149,6 +154,7 @@ pub mod mock_llm {
                 thinking: None,
                 tool_calls: vec![],
                 error_msg: None,
+                append_tool_calls_to_text: false,
             }
         }
 
@@ -159,12 +165,20 @@ pub mod mock_llm {
                 thinking: None,
                 tool_calls: vec![serde_json::json!({ "name": name, "arguments": arguments })],
                 error_msg: None,
+                append_tool_calls_to_text: false,
             }
         }
 
         /// Attach assistant text to a tool-call response.
         pub fn with_text(mut self, s: impl Into<String>) -> Self {
             self.text = s.into();
+            self
+        }
+
+        /// Give this tool-call response the text shape of a real backend: the
+        /// serialized tool-call array is appended to the text.
+        pub fn with_backend_text_shape(mut self) -> Self {
+            self.append_tool_calls_to_text = true;
             self
         }
 
@@ -181,6 +195,7 @@ pub mod mock_llm {
                 thinking: None,
                 tool_calls: vec![],
                 error_msg: Some(msg.into()),
+                append_tool_calls_to_text: false,
             }
         }
     }
@@ -219,6 +234,8 @@ pub mod mock_llm {
         msg_counts: Vec<usize>,
         max_context: usize,
         captured_messages: Vec<serde_json::Value>,
+        /// Tool names advertised on each call, in call order.
+        captured_tools: Vec<Vec<String>>,
     }
 
     impl MockLlmRuntime {
@@ -238,6 +255,7 @@ pub mod mock_llm {
                     call_count: 0,
                     msg_counts: Vec::new(),
                     captured_messages: Vec::new(),
+                    captured_tools: Vec::new(),
                     max_context: 4096,
                 })),
                 function_calling: false,
@@ -285,6 +303,12 @@ pub mod mock_llm {
             self.state.lock().unwrap().captured_messages.clone()
         }
 
+        /// Tool names advertised on each call (`LlmInput::tools`), in call
+        /// order — lets a test assert what the model was offered.
+        pub fn captured_tool_names(&self) -> Vec<Vec<String>> {
+            self.state.lock().unwrap().captured_tools.clone()
+        }
+
         /// Pop the next scripted response (or the default), recording the call.
         fn next_response(&self, msg_count: usize) -> MockResponse {
             let mut st = self.state.lock().unwrap();
@@ -295,8 +319,17 @@ pub mod mock_llm {
 
         fn to_output(resp: MockResponse) -> LlmOutput {
             let has_tools = !resp.tool_calls.is_empty();
+            let text = if has_tools && resp.append_tool_calls_to_text {
+                format!(
+                    "{}{}",
+                    resp.text,
+                    serde_json::to_string(&resp.tool_calls).unwrap_or_default()
+                )
+            } else {
+                resp.text
+            };
             LlmOutput {
-                text: resp.text,
+                text,
                 finish_reason: if has_tools {
                     FinishReason::ToolCalls
                 } else {
@@ -348,6 +381,14 @@ pub mod mock_llm {
                 let mut st = self.state.lock().unwrap();
                 st.captured_messages
                     .push(serde_json::to_value(&input.messages).unwrap_or_default());
+                st.captured_tools.push(
+                    input
+                        .tools
+                        .iter()
+                        .flatten()
+                        .map(|tool| tool.name.clone())
+                        .collect(),
+                );
             }
             let resp = self.next_response(msg_count);
             if let Some(msg) = resp.error_msg {
@@ -368,6 +409,14 @@ pub mod mock_llm {
                 let mut st = self.state.lock().unwrap();
                 st.captured_messages
                     .push(serde_json::to_value(&input.messages).unwrap_or_default());
+                st.captured_tools.push(
+                    input
+                        .tools
+                        .iter()
+                        .flatten()
+                        .map(|tool| tool.name.clone())
+                        .collect(),
+                );
             }
             let resp = self.next_response(msg_count);
             if let Some(msg) = resp.error_msg {

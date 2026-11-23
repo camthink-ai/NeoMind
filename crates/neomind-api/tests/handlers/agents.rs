@@ -94,6 +94,155 @@ async fn test_update_agent_keeps_structured_execution_mode() {
     );
 }
 
+/// The task definition is copied into `custom:task-understanding` when the
+/// agent is created, and every run inlines that copy. A prompt edit must
+/// reach the copy too — on T4 "用 vision 工具分析该图片" outlived its prompt
+/// edit by two days because only `user_prompt` was updated.
+#[tokio::test]
+async fn test_update_agent_prompt_resyncs_task_understanding_mission() {
+    const OLD_MISSION: &str = "看一下包装台画面有没有错装漏装";
+    const NEW_MISSION: &str = "NEW_MISSION 直接看附带的图片";
+
+    let state = create_test_server_state().await;
+    let id = create_agent_with(&state, json!({ "execution_mode": "free" })).await;
+    let memory = state.agents.system_memory_store.clone();
+
+    let before = memory
+        .read_agent_custom_file(&id, "task-understanding")
+        .expect("created agents get a task-understanding file");
+    assert_eq!(
+        neomind_storage::task_understanding_mission(&before),
+        Some(OLD_MISSION),
+        "{before}"
+    );
+
+    let edit: UpdateAgentRequest = serde_json::from_value(json!({ "user_prompt": NEW_MISSION }))
+        .expect("valid update fixture");
+    let _ = update_agent(State(state.clone()), Path(id.clone()), Json(edit))
+        .await
+        .expect("a prompt edit must be accepted");
+
+    let after = memory
+        .read_agent_custom_file(&id, "task-understanding")
+        .expect("file still there");
+    assert_eq!(
+        neomind_storage::task_understanding_mission(&after),
+        Some(NEW_MISSION),
+        "the prompt edit must reach the inlined copy: {after}"
+    );
+    // Only the Mission section moves; identity, resources, and whatever the
+    // agent appended stay byte for byte.
+    let strip = |s: &str| s.replace(OLD_MISSION, "").replace(NEW_MISSION, "");
+    assert_eq!(strip(&after), strip(&before), "{after}");
+    // The index entry shown when a file is not inlined follows the edit.
+    let listed = read_back(&state, &id).await;
+    assert_eq!(
+        listed["memory"]["knowledge_files"][0]["description"],
+        format!("Task context: {NEW_MISSION}")
+    );
+}
+
+/// An agent that replaced its own task with a per-run observation (T4's
+/// 200366: "无图像数据路径，需设备日志搜索") gets the mission back on top
+/// the next time its prompt is edited — the observation is kept as a note.
+#[tokio::test]
+async fn test_update_agent_prompt_restores_a_missing_mission() {
+    let state = create_test_server_state().await;
+    let id = create_agent_with(&state, json!({ "execution_mode": "free" })).await;
+    let memory = state.agents.system_memory_store.clone();
+
+    let note = "# NE301PIR-200366 任务理解\n## 图像数据路径\n- 无图像数据路径，需设备日志搜索\n";
+    memory
+        .write_agent_custom_file(&id, "task-understanding", note)
+        .await
+        .expect("the agent overwrote its own file");
+
+    let edit: UpdateAgentRequest =
+        serde_json::from_value(json!({ "user_prompt": "只在工作日告警" })).expect("valid update");
+    let _ = update_agent(State(state.clone()), Path(id.clone()), Json(edit))
+        .await
+        .expect("prompt edit accepted");
+
+    let after = memory
+        .read_agent_custom_file(&id, "task-understanding")
+        .expect("file");
+    assert_eq!(
+        neomind_storage::task_understanding_mission(&after),
+        Some("只在工作日告警"),
+        "{after}"
+    );
+    assert!(
+        after.ends_with(note),
+        "the agent's note is kept below: {after}"
+    );
+}
+
+/// The parsed intent is derived from the prompt once and then cached. After a
+/// prompt edit it has to be re-derived: a stale intent still evaluates its
+/// old conditions into `condition_met` decisions, which run the agent's
+/// bound commands.
+#[tokio::test]
+async fn test_update_agent_prompt_drops_the_cached_parsed_intent() {
+    let state = create_test_server_state().await;
+    let id = create_agent_with(&state, json!({ "execution_mode": "free" })).await;
+    let store = &state.agents.agent_store;
+
+    let mut agent = store
+        .get_agent(&id)
+        .await
+        .expect("read back")
+        .expect("agent");
+    agent.parsed_intent = Some(neomind_storage::ParsedIntent {
+        intent_type: neomind_storage::IntentType::AnomalyDetection,
+        target_metrics: vec!["temperature".into()],
+        conditions: vec!["temperature > 30".into()],
+        actions: vec!["send_alert".into()],
+        confidence: 0.9,
+    });
+    store
+        .save_agent(&agent)
+        .await
+        .expect("seed a cached intent");
+
+    async fn cached_intent(
+        store: &neomind_storage::AgentStore,
+        id: &str,
+    ) -> Option<neomind_storage::ParsedIntent> {
+        store
+            .get_agent(id)
+            .await
+            .expect("read back")
+            .expect("agent")
+            .parsed_intent
+    }
+
+    // An unrelated edit leaves the cache alone.
+    let rename: UpdateAgentRequest =
+        serde_json::from_value(json!({ "name": "包装台质检二号" })).expect("valid update fixture");
+    let _ = update_agent(State(state.clone()), Path(id.clone()), Json(rename))
+        .await
+        .expect("rename accepted");
+    assert!(
+        cached_intent(&state.agents.agent_store, &id)
+            .await
+            .is_some(),
+        "an unrelated edit must not drop the cached intent"
+    );
+
+    // A prompt edit drops it; the next execution re-parses.
+    let edit: UpdateAgentRequest =
+        serde_json::from_value(json!({ "user_prompt": "每天早上汇总产量" })).expect("valid update");
+    let _ = update_agent(State(state.clone()), Path(id.clone()), Json(edit))
+        .await
+        .expect("prompt edit accepted");
+    assert!(
+        cached_intent(&state.agents.agent_store, &id)
+            .await
+            .is_none(),
+        "a prompt edit must drop the cached intent"
+    );
+}
+
 /// `manual` is a first-class schedule type: manual-only, never auto-scheduled,
 /// repeatable via invoke. The editor compiles both the on-demand strategy card
 /// and the "替我查" hire mode to it, so create must accept it.

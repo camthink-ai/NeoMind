@@ -1446,12 +1446,12 @@ async fn init_agent_knowledge_file(state: &crate::server::ServerState, agent: &A
          \n\
          ## Memory Commands\n\
          - Read this file: `memory(action='read', target='custom:task-understanding')`\n\
-         - Update this file: `memory(action='add', target='custom:task-understanding', content='## New Section\\n...')`\n\
-         - Create new knowledge file: `memory(action='create', target='custom:{{name}}', content='...')`\n\
+         - Record new findings in their own file: `memory(action='create', target='custom:{{name}}', content='...')`\n\
          \n\
          ## Notes\n\
          This file was auto-created when the agent was created.\n\
-         The AI should update it as it learns more about the environment and discovers patterns.",
+         The `## Mission` section mirrors the agent's task prompt and is kept in sync with it automatically — never rewrite it.\n\
+         Record what you learn about the environment in separate knowledge files.",
         identity_section,
         agent.user_prompt,
         resources_summary,
@@ -1502,6 +1502,44 @@ async fn init_agent_knowledge_file(state: &crate::server::ServerState, agent: &A
     tracing::info!(
         agent_id = %agent.id,
         "Initialized knowledge file at agent creation"
+    );
+}
+
+/// Re-point the `## Mission` section of `custom:task-understanding` at the
+/// agent's edited task prompt. Runs only after a prompt change, which is
+/// what tells it the old section is stale — lines of the old prompt that
+/// begin with a heading go with it.
+async fn sync_task_understanding_mission(state: &crate::server::ServerState, agent: &AiAgent) {
+    use neomind_storage::{task_understanding_repoint_mission, TASK_UNDERSTANDING_FILE};
+
+    let memory_store = &state.agents.system_memory_store;
+    let content = match memory_store.read_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE) {
+        Ok(content) => content,
+        Err(e) => {
+            tracing::warn!(
+                agent_id = %agent.id,
+                "Failed to read task-understanding after a prompt edit: {}", e
+            );
+            return;
+        }
+    };
+    let synced = task_understanding_repoint_mission(&content, &agent.user_prompt);
+    if synced == content {
+        return;
+    }
+    if let Err(e) = memory_store
+        .write_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE, &synced)
+        .await
+    {
+        tracing::warn!(
+            agent_id = %agent.id,
+            "Failed to re-sync task-understanding after a prompt edit: {}", e
+        );
+        return;
+    }
+    tracing::info!(
+        agent_id = %agent.id,
+        "Task-understanding Mission re-synced to the edited task prompt"
     );
 }
 
@@ -1558,8 +1596,37 @@ pub async fn update_agent(
     if let Some(description) = request.description {
         agent.description = Some(description);
     }
+    let prompt_before = agent.user_prompt.clone();
     if let Some(prompt) = request.user_prompt {
         agent.user_prompt = prompt;
+    }
+    // The task definition lives twice: `user_prompt`, and the `## Mission`
+    // section of `custom:task-understanding` — a verbatim copy that every
+    // run inlines. A prompt edit that skips the copy keeps feeding the model
+    // the OLD mission (T4: "用 vision 工具" outlived its prompt edit by two
+    // days). Refresh the index entry with this save; the file itself is
+    // re-pointed right after.
+    let prompt_changed = agent.user_prompt != prompt_before;
+    if prompt_changed {
+        // The parsed intent is derived from the prompt once and then cached.
+        // A stale one still evaluates its old conditions into `condition_met`
+        // decisions — which run the agent's bound commands — so drop it and
+        // let the next execution re-parse.
+        agent.parsed_intent = None;
+
+        let now = chrono::Utc::now().timestamp();
+        for file in agent
+            .memory
+            .knowledge_files
+            .iter_mut()
+            .filter(|f| f.name == neomind_storage::TASK_UNDERSTANDING_FILE)
+        {
+            file.description = format!(
+                "Task context: {}",
+                agent.user_prompt.chars().take(80).collect::<String>()
+            );
+            file.updated_at = now;
+        }
     }
     if let Some(backend_id) = request.llm_backend_id.clone() {
         // Handle "default" by locking to the current active backend
@@ -1814,6 +1881,14 @@ pub async fn update_agent(
     // Auto-init knowledge file if agent has none (covers legacy agents created before init feature)
     if agent.memory.knowledge_files.is_empty() {
         init_agent_knowledge_file(&state, &agent).await;
+    } else if prompt_changed
+        && agent
+            .memory
+            .knowledge_files
+            .iter()
+            .any(|f| f.name == neomind_storage::TASK_UNDERSTANDING_FILE)
+    {
+        sync_task_understanding_mission(&state, &agent).await;
     }
 
     // Reschedule the agent if schedule changed or if agent is active (interval/cron type)
