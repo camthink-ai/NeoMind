@@ -543,9 +543,26 @@ mod tests {
 
     /// S2-3: `health` runs in-process via API JSON (never NotInProcess /
     /// Tauri subprocess). Without a server it surfaces Api, not NotInProcess.
+    ///
+    /// "Without a server" is arranged, not assumed: the request is pointed at
+    /// a port that was just released. Against the default port the test
+    /// flipped with the developer's environment — a running `neomind serve`
+    /// answered the probe and `unwrap_err` panicked.
     #[tokio::test]
     async fn health_is_in_process_not_subprocess() {
-        let err = dispatch(&argv(&["health"])).await.unwrap_err();
+        let closed_port = {
+            let listener =
+                std::net::TcpListener::bind("127.0.0.1:0").expect("bind an ephemeral port");
+            listener.local_addr().expect("bound address").port()
+            // `listener` drops here: nothing is listening on the port any more.
+        };
+        let ctx = DispatchContext {
+            api_base: Some(format!("http://127.0.0.1:{closed_port}/api")),
+            ..Default::default()
+        };
+        let err = dispatch_with_context(&argv(&["health"]), &ctx)
+            .await
+            .unwrap_err();
         assert!(
             !matches!(err, DispatchError::NotInProcess),
             "health must stay in-process, got {err:?}"
