@@ -219,7 +219,7 @@ export function ToolsPanel({ onPaginationChange, searchQuery = "", sourceFilter 
   return (
     <div className="space-y-4">
       <ResponsiveTable
-        className="table-fixed min-w-[1320px]"
+        className="table-fixed w-full min-w-[1320px]"
         columns={[
           { key: "name", label: t("agents:detail.toolsColumnName", "Tool"), width: "w-[200px]" },
           { key: "description", label: t("agents:detail.toolsColumnDesc", "Description"), width: "w-[240px]" },
