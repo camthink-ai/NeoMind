@@ -68,8 +68,11 @@ Respond in the same language as the task definition and operator messages. Never
 No notification is sent on your behalf — this task decides for itself whether the\n\
 operator needs to hear from it.\n\
 \n\
-Send one yourself when the run found something they would act on, or would want to\n\
-know before the next run:\n\
+State an explicit judgment first: **criteria met**, **criteria not met**, or\n\
+**insufficient evidence**. The host blocks `neomind message send` unless the\n\
+judgment is criteria met — silence is required for the other two.\n\
+\n\
+Send one yourself only when criteria are met and the operator would act on it:\n\
 `neomind message send --title \"<what happened>\" --body \"<the evidence and what it means>\"`\n\
 \n\
 Staying quiet is a correct outcome, and the usual one. A run that checked, found\n\
@@ -308,11 +311,23 @@ pub(crate) fn build_focused_resource_section(
         latest_values.insert(&d.source, (val_str, age));
     }
 
-    if agent.resources.is_empty() && latest_values.is_empty() && device_info_map.is_empty() {
+    // Event-carried images count as input even when resources=[]. Do not claim
+    // "No bound resources / use tools to query" when pixels are already attached.
+    if agent.resources.is_empty()
+        && latest_values.is_empty()
+        && device_info_map.is_empty()
+        && image_sources.is_empty()
+    {
         return "\n## Resources & Data\nNo bound resources. Use tools to query.\n".to_string();
     }
 
     let mut section = String::from("\n## Resources & Data\n");
+    section.push_str(&build_input_status_block_counts(
+        agent,
+        data_collected,
+        &image_sources,
+        latest_values.len(),
+    ));
 
     // Render device summary block
     if !device_info_map.is_empty() {
@@ -419,6 +434,47 @@ pub(crate) fn build_free_resource_section(
     let now_ts = chrono::Utc::now().timestamp();
     let mut section = String::from("\n## Resources & Data\n");
 
+    let image_sources: Vec<&str> = data_collected
+        .iter()
+        .filter(|d| {
+            d.values
+                .get("_is_image")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
+        .map(|d| d.source.as_str())
+        .collect();
+    // Bound-metric observations for Input Status (exclude event/system/memory/images).
+    let bound_obs_count = data_collected
+        .iter()
+        .filter(|d| {
+            if d.source == "system" || d.source == "memory" {
+                return false;
+            }
+            if d.values
+                .get("_is_image")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return false;
+            }
+            if d.values
+                .get("_is_event_data")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                return false;
+            }
+            d.data_type != "device_info" && d.data_type != "input_status"
+        })
+        .count();
+    section.push_str(&build_input_status_block_counts(
+        agent,
+        data_collected,
+        &image_sources,
+        bound_obs_count,
+    ));
+
     if !agent.resources.is_empty() {
         let items: Vec<String> = agent
             .resources
@@ -426,6 +482,8 @@ pub(crate) fn build_free_resource_section(
             .map(|r| format!("- {} ({})", r.name, r.resource_id))
             .collect();
         section.push_str(&format!("Bound: {}\n", items.join(", ")));
+    } else if image_sources.is_empty() {
+        section.push_str("Bound: (none)\n");
     }
 
     let data_text: Vec<String> = data_collected
@@ -438,6 +496,7 @@ pub(crate) fn build_free_resource_section(
             {
                 return false;
             }
+            // Legacy empty-sources placeholder — superseded by Input Status.
             if d.source == "system"
                 && d.values
                     .get("message")
@@ -445,6 +504,10 @@ pub(crate) fn build_free_resource_section(
                     .map(|s| s.contains("No pre-collected data"))
                     .unwrap_or(false)
             {
+                return false;
+            }
+            // input_status is rendered by build_input_status_block_counts already.
+            if d.data_type == "input_status" {
                 return false;
             }
             true
@@ -485,9 +548,12 @@ pub(crate) fn build_free_resource_section(
         .collect();
 
     if data_text.is_empty() {
-        section.push_str(
-            "No pre-collected data. **You MUST use tools to query the data you need!**\n",
-        );
+        if image_sources.is_empty() {
+            section.push_str(
+                "No pre-collected data. **You MUST use tools to query the data you need!**\n",
+            );
+        }
+        // Event image only: Input Status + Images note already explain the turn.
     } else {
         section.push_str(&format!("\nData:\n{}\n", data_text.join("\n")));
     }
@@ -495,16 +561,6 @@ pub(crate) fn build_free_resource_section(
     // Free mode previously omitted image sources entirely (filtered from
     // data_text), so multimodal agents only saw the pixels with no standing
     // note — and agent prompts that said "use vision tool" won by default.
-    let image_sources: Vec<&str> = data_collected
-        .iter()
-        .filter(|d| {
-            d.values
-                .get("_is_image")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        })
-        .map(|d| d.source.as_str())
-        .collect();
     if !image_sources.is_empty() {
         section.push_str(&format!(
             "\n**Images**: {} ({})\n",
@@ -514,6 +570,56 @@ pub(crate) fn build_free_resource_section(
     }
 
     section
+}
+
+/// Separate "event-carried image this turn" from "metrics from bound resources".
+fn build_input_status_block_counts(
+    agent: &AiAgent,
+    data_collected: &[DataCollected],
+    image_sources: &[&str],
+    bound_metric_count: usize,
+) -> String {
+    let event_images: Vec<&str> = data_collected
+        .iter()
+        .filter(|d| super::data_collector::is_event_carried_image(d))
+        .map(|d| d.source.as_str())
+        .collect();
+    let event_line = if event_images.is_empty() {
+        if image_sources.is_empty() {
+            "- Event image this turn: none\n".to_string()
+        } else {
+            format!(
+                "- Event image this turn: none (non-event image sources: {})\n",
+                image_sources.join(", ")
+            )
+        }
+    } else {
+        format!(
+            "- Event image this turn: provided ({})\n",
+            event_images.join(", ")
+        )
+    };
+
+    let bound_line = if agent.resources.is_empty() && bound_metric_count == 0 {
+        "- Bound metrics: none\n".to_string()
+    } else if bound_metric_count == 0 {
+        format!(
+            "- Bound metrics: {} resource(s) configured, no values in window\n",
+            agent.resources.len()
+        )
+    } else {
+        format!("- Bound metrics: {bound_metric_count} value(s) collected\n")
+    };
+
+    // Prefer collector-authored input_status message when present.
+    let status_msg = data_collected
+        .iter()
+        .find(|d| d.data_type == "input_status")
+        .and_then(|d| d.values.get("message").and_then(|v| v.as_str()))
+        .map(|s| format!("- Note: {s}\n"))
+        .unwrap_or_default();
+
+    format!("**Input Status**\n{event_line}{bound_line}{status_msg}")
 }
 
 /// Clean + validate a collected image's base64 payload into standard
@@ -711,6 +817,102 @@ mod tests {
             }),
             timestamp: 0,
         }
+    }
+
+    fn event_image_dc() -> DataCollected {
+        DataCollected {
+            source: "200366:image_data".into(),
+            data_type: "image_data".into(),
+            values: serde_json::json!({
+                "_is_image": true,
+                "_is_event_data": true,
+                "image_base64": "aGVsbG8=",
+                "image_mime_type": "image/jpeg",
+            }),
+            timestamp: 0,
+        }
+    }
+
+    fn input_status_dc() -> DataCollected {
+        DataCollected {
+            source: "system".into(),
+            data_type: "input_status".into(),
+            values: serde_json::json!({
+                "event_image": "provided",
+                "bound_metrics": "none",
+                "message": "Event-carried image provided this turn; no metrics from bound resources."
+            }),
+            timestamp: 0,
+        }
+    }
+
+    #[test]
+    fn event_image_empty_resources_distinguishes_input_status() {
+        let agent = minimal_agent("analyze event frame");
+        assert!(agent.resources.is_empty());
+        let cfg = ToolLoopConfig::free();
+        let data = vec![event_image_dc(), input_status_dc()];
+        let prompt = build_tool_system_prompt(
+            &agent,
+            &data,
+            None,
+            &cfg,
+            None,
+            VisionExecutionPath::InlineMultimodal,
+        );
+        assert!(
+            prompt.contains("**Input Status**"),
+            "must declare Input Status: {prompt}"
+        );
+        assert!(
+            prompt.contains("Event image this turn: provided"),
+            "must say event image provided: {prompt}"
+        );
+        assert!(
+            prompt.contains("Bound metrics: none"),
+            "must say no bound metrics: {prompt}"
+        );
+        assert!(
+            !prompt.contains("NO DATA COLLECTED"),
+            "must not claim NO DATA COLLECTED: {prompt}"
+        );
+        assert!(
+            !prompt.contains("No pre-collected data"),
+            "must not claim no pre-collected data when event image exists: {prompt}"
+        );
+        assert!(
+            !prompt.contains("No bound resources. Use tools to query."),
+            "must not tell model to go query when pixels are attached: {prompt}"
+        );
+
+        let msgs = build_tool_messages(&prompt, &data);
+        let dump = format!("{:?}", msgs);
+        assert!(
+            dump.contains("image") || dump.contains("Image") || dump.contains("base64"),
+            "final model request must carry the image part: {dump}"
+        );
+    }
+
+    #[test]
+    fn focused_event_image_empty_resources_not_empty_early_return() {
+        let agent = minimal_agent("focused camera patrol");
+        let cfg = ToolLoopConfig::focused_plus(&agent);
+        let prompt = build_tool_system_prompt(
+            &agent,
+            &[event_image_dc()],
+            None,
+            &cfg,
+            None,
+            VisionExecutionPath::InlineMultimodal,
+        );
+        assert!(
+            prompt.contains("Event image this turn: provided"),
+            "focused path must surface event image: {prompt}"
+        );
+        assert!(
+            !prompt.contains("No bound resources. Use tools to query."),
+            "focused must not early-return empty when only event image: {prompt}"
+        );
     }
 
     #[test]

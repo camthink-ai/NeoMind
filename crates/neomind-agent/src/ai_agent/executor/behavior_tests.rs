@@ -3065,6 +3065,355 @@ async fn all_tools_failed_is_business_failure_without_output_contract() {
     assert_eq!(stored.stats.successful_executions, 0);
 }
 
+// ---------------------------------------------------------------------------
+// 1.3.3 Task 1 — Change A (event-image input status) + Change B (judgment gate)
+// ---------------------------------------------------------------------------
+
+/// Minimal JPEG SOI + padding so base64 is long enough for extract filters and
+/// still uniquely fingerprintable in the captured multimodal request.
+fn test_jpeg_base64() -> String {
+    use base64::Engine;
+    let mut bytes = vec![0xFFu8, 0xD8, 0xFF, 0xE0]; // JPEG SOI + APP0 start
+    bytes.extend(std::iter::repeat_n(0x5Au8, 2048));
+    bytes.extend_from_slice(&[0xFF, 0xD9]); // EOI
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn event_jpeg_data(b64: &str) -> neomind_storage::DataCollected {
+    neomind_storage::DataCollected {
+        source: "200366:image_data".into(),
+        data_type: "image_data".into(),
+        values: serde_json::json!({
+            "_is_image": true,
+            "_is_event_data": true,
+            "image_base64": b64,
+            "image_mime_type": "image/jpeg",
+        }),
+        timestamp: chrono::Utc::now().timestamp(),
+    }
+}
+
+fn input_status_row() -> neomind_storage::DataCollected {
+    neomind_storage::DataCollected {
+        source: "system".into(),
+        data_type: "input_status".into(),
+        values: serde_json::json!({
+            "event_image": "provided",
+            "bound_metrics": "none",
+            "message": "Event-carried image provided this turn; no metrics from bound resources."
+        }),
+        timestamp: chrono::Utc::now().timestamp(),
+    }
+}
+
+/// Fake `shell` tool that counts `message send` side effects without hitting
+/// the real message API — isolation sink for judgment-notify acceptance.
+struct FakeNotifySink {
+    sends: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for FakeNotifySink {
+    fn name(&self) -> &str {
+        "shell"
+    }
+    fn description(&self) -> &str {
+        "fake shell / notify sink"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": { "command": { "type": "string" } },
+            "required": ["command"]
+        })
+    }
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+        let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        if super::judgment_notify::is_message_send_command(cmd) {
+            self.sends.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(ToolOutput::success("Platform message created"))
+        } else {
+            Ok(ToolOutput::success(format!("ok: {cmd}")))
+        }
+    }
+}
+
+/// Change A: known JPEG + resources=[] → model request carries matching image
+/// and prompt distinguishes event image vs bound metrics (no NO DATA COLLECTED).
+#[tokio::test]
+async fn event_image_empty_resources_reaches_model_with_honest_status() {
+    let jpeg_b64 = test_jpeg_base64();
+    let rt = MockLlmRuntime::new(vec![MockResponse::text(
+        "Attached frame inspected; corridor empty.",
+    )])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_handle = rt.clone();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.resources.clear();
+    agent.user_prompt = "分析事件图像；仅当疑似赌博再告警".into();
+    agent.execution_mode = ExecutionMode::Free;
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let data = vec![event_jpeg_data(&jpeg_b64), input_status_row()];
+    let (_dp, er) = executor
+        .execute_with_tools(&agent, &data, rt_dyn, "exec-event-image-status", None)
+        .await
+        .expect("event-image run must succeed");
+    assert!(er.success_rate >= 1.0);
+
+    let captured = rt_handle.captured_messages();
+    assert!(!captured.is_empty(), "LLM must be called");
+    let dump = captured[0].to_string();
+    assert!(
+        dump.contains(&jpeg_b64) || dump.contains("image/jpeg"),
+        "final model request must include the event JPEG (fingerprint or mime): {}",
+        &dump[..dump.len().min(800)]
+    );
+    assert!(
+        dump.contains("Event image this turn: provided")
+            || dump.contains("event-carried image")
+            || dump.contains("Event-carried image provided"),
+        "prompt must distinguish event image: {}",
+        &dump[..dump.len().min(1200)]
+    );
+    assert!(
+        dump.contains("Bound metrics: none") || dump.contains("no metrics from bound"),
+        "prompt must say bound metrics absent: {}",
+        &dump[..dump.len().min(1200)]
+    );
+    assert!(
+        !dump.contains("NO DATA COLLECTED"),
+        "must not inject NO DATA COLLECTED when event image present"
+    );
+    assert!(
+        !dump.contains("No pre-collected data"),
+        "must not claim no pre-collected data when event image present"
+    );
+}
+
+/// Change B: labeled criteria-not-met → patrol Completes, sink gets 0 sends
+/// even if the model tries `message send`.
+#[tokio::test]
+async fn judgment_gate_blocks_send_when_criteria_not_met() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"告警\" --body \"疑似？\""
+            }),
+        )
+        .with_text("画面为空旷走廊，无赌博行为证据。"),
+        MockResponse::text("巡检完成：无赌博，无需告警。"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "仅当有人且疑似赌博时再 neomind message send".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (_dp, er) = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64())],
+            rt_dyn,
+            "exec-judgment-not-met",
+            None,
+        )
+        .await
+        .expect("patrol must Complete");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "criteria not met must deliver 0 notifications"
+    );
+    assert!(
+        er.actions_executed.iter().any(|a| {
+            !a.success
+                && a.result
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Judgment notify gate")
+        }),
+        "blocked send must surface Judgment notify gate in action result; actions={:?}",
+        er.actions_executed
+    );
+}
+
+/// Change B: labeled criteria-met → sink gets exactly 1 notification.
+#[tokio::test]
+async fn judgment_gate_allows_send_when_criteria_met() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"疑似赌博\" --body \"东坪山有人赌博\""
+            }),
+        )
+        .with_text("有人且疑似赌博，应告警。"),
+        MockResponse::text("已发送告警。"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "仅当有人且疑似赌博时再告警".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (_dp, _er) = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64())],
+            rt_dyn,
+            "exec-judgment-met",
+            None,
+        )
+        .await
+        .expect("criteria-met run must Complete");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "criteria met must deliver exactly 1 notification"
+    );
+}
+
+/// Change B: dark / undecidable → insufficient evidence recorded, 0 alerts.
+#[tokio::test]
+async fn judgment_gate_blocks_insufficient_evidence() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"dark\" --body \"maybe\""
+            }),
+        )
+        .with_text("画面过暗，证据不足，无法判断是否有赌博。"),
+        MockResponse::text("证据不足，本轮不告警。"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "赌博监测".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (dp, _) = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64())],
+            rt_dyn,
+            "exec-judgment-insufficient",
+            None,
+        )
+        .await
+        .expect("insufficient-evidence patrol Completes");
+    assert!(
+        dp.conclusion.contains("证据不足") || dp.conclusion.contains("不告警"),
+        "must record insufficient evidence: {}",
+        dp.conclusion
+    );
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "insufficient evidence must deliver 0 alerts"
+    );
+}
+
+/// Change B: ordinary Always notify keeps old contract (send not gated).
+#[tokio::test]
+async fn always_notify_agent_send_not_gated() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"note\" --body \"无赌博但仍通知\""
+            }),
+        )
+        .with_text("无赌博，但 Always 路径仍可发送。"),
+        MockResponse::text("done"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Always,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let _ = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64())],
+            rt_dyn,
+            "exec-always-ungated",
+            None,
+        )
+        .await
+        .expect("Always notify run");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "Always notify must keep the old send contract"
+    );
+}
+
 /// Empty-event image extraction skip → Completed, no stats bump, no breaker.
 #[tokio::test]
 async fn empty_event_skip_does_not_trip_breaker_or_stats() {

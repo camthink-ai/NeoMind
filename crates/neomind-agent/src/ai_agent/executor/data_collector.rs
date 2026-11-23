@@ -80,8 +80,45 @@ pub(super) fn is_observation(data: &DataCollected) -> bool {
 /// Source name the collector's own placeholder carries.
 const SYSTEM_PLACEHOLDER_SOURCE: &str = "system";
 
+/// Options for bound-source collection when an event already supplies input.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct BoundCollectionOpts {
+    /// Event trigger already carried an embeddable image this turn. Empty
+    /// bound resources must not be phrased as "NO DATA COLLECTED" — the model
+    /// still has visual input (T4 200366: JPEG loaded, then misleading empty
+    /// placeholder 111µs later).
+    pub event_image_provided: bool,
+}
+
+/// True when a collected entry is an event-carried image for this turn.
+pub(crate) fn is_event_carried_image(data: &DataCollected) -> bool {
+    let is_image = data
+        .values
+        .get("_is_image")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let is_event = data
+        .values
+        .get("_is_event_data")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    is_image && is_event
+}
+
 impl AgentExecutor {
     pub(crate) async fn collect_data(&self, agent: &AiAgent) -> AgentResult<Vec<DataCollected>> {
+        self.collect_bound_source_data(agent, BoundCollectionOpts::default())
+            .await
+    }
+
+    /// Collect from bound resources. When `event_image_provided`, an empty
+    /// observation set yields an honest input-status row instead of the
+    /// misleading "NO DATA COLLECTED" placeholder.
+    pub(crate) async fn collect_bound_source_data(
+        &self,
+        agent: &AiAgent,
+        opts: BoundCollectionOpts,
+    ) -> AgentResult<Vec<DataCollected>> {
         let timestamp = chrono::Utc::now().timestamp();
 
         // DEBUG: Log data collection start
@@ -90,6 +127,7 @@ impl AgentExecutor {
             agent_name = %agent.name,
             total_resources = agent.resources.len(),
             has_time_series_storage = self.time_series_storage.is_some(),
+            event_image_provided = opts.event_image_provided,
             "[COLLECT] Starting data collection"
         );
 
@@ -217,21 +255,40 @@ impl AgentExecutor {
             "[COLLECT] Data collection summary"
         );
 
-        // Nothing from the bound sources: say so rather than let the memory
-        // summary stand in for input.
+        // Nothing from the bound sources: say so honestly. When this turn
+        // already carries an event image, that is input — do not claim
+        // "NO DATA COLLECTED" (misleading for free/event vision agents with
+        // resources=[]).
         if observations == 0 {
-            tracing::warn!(
-                agent_id = %agent.id,
-                "[COLLECT] NO DATA COLLECTED from bound sources - adding placeholder"
-            );
-            data.push(DataCollected {
-                source: SYSTEM_PLACEHOLDER_SOURCE.to_string(),
-                data_type: "info".to_string(),
-                values: serde_json::json!({
-                    "message": "No pre-collected data available. Use available tools to query device data as needed, or analyze based on user instructions and historical patterns."
-                }),
-                timestamp,
-            });
+            if opts.event_image_provided {
+                tracing::info!(
+                    agent_id = %agent.id,
+                    "[COLLECT] Event-carried image present; no metrics from bound resources"
+                );
+                data.push(DataCollected {
+                    source: SYSTEM_PLACEHOLDER_SOURCE.to_string(),
+                    data_type: "input_status".to_string(),
+                    values: serde_json::json!({
+                        "event_image": "provided",
+                        "bound_metrics": "none",
+                        "message": "Event-carried image provided this turn; no metrics from bound resources."
+                    }),
+                    timestamp,
+                });
+            } else {
+                tracing::warn!(
+                    agent_id = %agent.id,
+                    "[COLLECT] NO DATA COLLECTED from bound sources - adding placeholder"
+                );
+                data.push(DataCollected {
+                    source: SYSTEM_PLACEHOLDER_SOURCE.to_string(),
+                    data_type: "info".to_string(),
+                    values: serde_json::json!({
+                        "message": "No pre-collected data available. Use available tools to query device data as needed, or analyze based on user instructions and historical patterns."
+                    }),
+                    timestamp,
+                });
+            }
         }
 
         Ok(data)
@@ -1258,8 +1315,18 @@ impl AgentExecutor {
             }
         }
 
-        // Then collect other data from regular sources
-        let regular_data = self.collect_data(agent).await?;
+        // Event image successfully extracted counts as input even when
+        // resources=[] — collect_bound_source_data must not emit the
+        // misleading NO DATA COLLECTED placeholder in that case.
+        let event_image_provided = is_image && (image_url.is_some() || image_base64.is_some());
+        let regular_data = self
+            .collect_bound_source_data(
+                agent,
+                BoundCollectionOpts {
+                    event_image_provided,
+                },
+            )
+            .await?;
 
         // Build the set of source keys already covered by the event data.
         // The event value's image may be expanded into sub-fields (e.g.
@@ -1270,7 +1337,8 @@ impl AgentExecutor {
 
         // Add regular data (excluding duplicates)
         for item in regular_data {
-            // Skip if it's the placeholder guidance from collect_data
+            // Skip the legacy empty-sources placeholder from collect_data —
+            // keep `input_status` (honest event-image / no-metrics row).
             if item.data_type == "info" && item.source == "system" {
                 continue;
             }

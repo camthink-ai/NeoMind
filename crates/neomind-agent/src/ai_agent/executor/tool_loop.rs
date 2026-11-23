@@ -775,15 +775,29 @@ impl AgentExecutor {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, c)| {
-                        if c.name == "shell" {
-                            c.args
-                                .get("command")
-                                .and_then(|v| v.as_str())
-                                .and_then(crate::toolkit::policy::deny_reason)
-                                .map(|r| (i, r))
-                        } else {
-                            None
+                        if c.name != "shell" {
+                            return None;
                         }
+                        let command = c.args.get("command").and_then(|v| v.as_str())?;
+                        // Catastrophic OS / CLI patterns first.
+                        if let Some(r) = crate::toolkit::policy::deny_reason(command) {
+                            return Some((i, r));
+                        }
+                        // Judgment-notify gate: block message send before any
+                        // real delivery when criteria are not met / evidence
+                        // is insufficient / judgment is missing. Keyword scan
+                        // of the final reply is audit-only and cannot unsend.
+                        if let Some(r) = super::judgment_notify::judgment_send_deny_reason(
+                            agent, command, messages,
+                        ) {
+                            tracing::warn!(
+                                agent_id = %agent.id,
+                                reason = %r,
+                                "Judgment notify gate blocked message send"
+                            );
+                            return Some((i, r));
+                        }
+                        None
                     })
                     .collect();
 
@@ -798,14 +812,16 @@ impl AgentExecutor {
                     .map(|(i, c)| (i, c.clone()))
                     .collect();
 
-                // Insert the policy-blocked synthetic errors first.
+                // Insert the policy-blocked / judgment-gated synthetic errors first.
                 for (i, reason) in &blocked {
+                    let msg = if reason.starts_with("Judgment notify gate:") {
+                        reason.clone()
+                    } else {
+                        format!("Blocked by safety policy: {}", reason)
+                    };
                     assembled[*i] = Some(crate::toolkit::ToolResult {
                         name: calls[*i].name.clone(),
-                        result: Err(crate::toolkit::error::ToolError::Execution(format!(
-                            "Blocked by safety policy: {}",
-                            reason
-                        ))),
+                        result: Err(crate::toolkit::error::ToolError::Execution(msg)),
                     });
                 }
 

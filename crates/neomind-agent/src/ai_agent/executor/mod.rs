@@ -167,6 +167,7 @@ mod context;
 mod data_collector;
 mod event_trigger;
 mod intent;
+mod judgment_notify;
 mod llm_runtime;
 mod memory;
 mod response_parser;

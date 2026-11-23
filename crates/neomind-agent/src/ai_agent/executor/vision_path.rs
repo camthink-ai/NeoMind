@@ -77,7 +77,8 @@ fn collected_image_is_embeddable(d: &DataCollected) -> bool {
 pub(crate) fn multimodal_inline_vision_guidance() -> &'static str {
     "\
 ## Vision Path (IMPORTANT)
-Bound camera / device image(s) are already attached as multimodal content in this turn.
+Camera / device image(s) for this turn are already attached as multimodal content \
+(including event-carried frames when resources are unbound).
 Your primary model can see them directly — analyze what is in the image(s) yourself.
 Do NOT call a `vision` tool, load a vision skill, or search for a vision extension.
 Analyze the attached image(s) directly and state only your visual findings — do not \
