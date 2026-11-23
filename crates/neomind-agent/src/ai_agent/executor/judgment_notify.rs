@@ -9,14 +9,16 @@
 //! first real delivery. Ordinary (`Always` / `Failure`) notify agents keep
 //! their previous contract unchanged.
 //!
-//! ## Auth input (must NOT self-approve)
-//! Classification uses **only** the latest non-empty independent assistant
-//! judgment already in the conversation (this event). Pending `message send`
-//! `--title` / `--body` never enter the verdict — merging them lets a title of
-//! "疑似赌博" approve its own send. Prior-event conclusions must not interfere.
-//! Conditional policy restatements ("如果发现赌博，就需要告警") and progress /
-//! intent narration ("我先核对画面是否需要告警") are not a finished judgment
-//! for this frame and must not authorize delivery.
+//! ## Auth source (structural — not lexicon)
+//! Authorization reads a **finished this-event judgment label** from the
+//! latest non-empty assistant message, matching the prompt contract:
+//! `criteria met` / `criteria not met` / `insufficient evidence`.
+//!
+//! Ordinary free text that merely contains alert-need words — questions
+//! ("需要告警吗？"), progress ("我先核对…是否需要告警"), policy IF-THEN
+//! ("如果发现赌博，就需要告警"), or title/body of a pending send — does
+//! **not** grant delivery. Prior-event conclusions must not interfere
+//! (latest assistant message only).
 
 use neomind_core::message::{Message, MessageRole};
 use neomind_storage::{AiAgent, NotifyOn};
@@ -52,9 +54,14 @@ pub(crate) enum JudgmentVerdict {
     CriteriaNotMet,
     /// Cannot decide (dark / blur / missing evidence) — no alert.
     InsufficientEvidence,
-    /// No recognizable judgment yet — refuse send rather than guess.
+    /// No recognizable finished judgment yet — refuse send rather than guess.
     Unknown,
 }
+
+/// Prompt-contract labels for a finished this-event judgment.
+const LABEL_MET: &str = "criteria met";
+const LABEL_NOT_MET: &str = "criteria not met";
+const LABEL_INSUFFICIENT: &str = "insufficient evidence";
 
 /// True when this agent relies on tool-driven notify (`on = judgment`).
 pub(crate) fn agent_uses_judgment_notify(agent: &AiAgent) -> bool {
@@ -94,141 +101,76 @@ pub(crate) fn pending_message_send_command(tool_name: &str, args: &Value) -> Opt
     }
 }
 
-/// Latest non-empty assistant text for this event, with non-verdict sentences
-/// (policy / progress / intent) stripped. Ignores pending send title/body and
-/// older turns.
+/// Latest non-empty assistant text for this event.
+/// Deliberately ignores pending send title/body and older turns.
 pub(crate) fn judgment_context_from_messages(messages: &[Message]) -> String {
-    let raw = messages
+    messages
         .iter()
         .rev()
         .filter(|m| m.role == MessageRole::Assistant)
         .map(|m| m.content.as_text())
         .find(|t| !t.trim().is_empty())
-        .unwrap_or_default();
-    strip_non_verdict_sentences(&raw)
+        .unwrap_or_default()
 }
 
-/// Verdict for the gate: classify only the latest independent assistant
-/// judgment. Older conclusions (e.g. a prior dark / inconclusive event) must
-/// not override or authorize this event's send.
+/// Verdict for the gate: parse a finished judgment label from the latest
+/// independent assistant message only.
 pub(crate) fn judgment_verdict_from_messages(messages: &[Message]) -> JudgmentVerdict {
     classify_judgment(&judgment_context_from_messages(messages))
 }
 
-/// Drop sentences that are not a finished this-event judgment: IF/THEN policy
-/// restatements, and progress / intent narration about checking whether to
-/// alert.
-fn strip_non_verdict_sentences(text: &str) -> String {
-    let mut kept = String::new();
-    for part in text.split_inclusive(['。', '！', '？', '.', '!', '?', '\n']) {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if is_conditional_policy_sentence(trimmed) || is_progress_or_intent_sentence(trimmed) {
-            continue;
-        }
-        kept.push_str(part);
-    }
-    kept
-}
-
-/// Progress / intent: "I'll check whether an alert is needed" — not a verdict.
-fn is_progress_or_intent_sentence(sentence: &str) -> bool {
-    let t = sentence
-        .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '：' | ':' | '（' | '('));
-    let lower = t.to_ascii_lowercase();
-
-    // Interrogative / undecided alert phrasing (contains met-marker substrings).
-    if t.contains("是否需要告警")
-        || t.contains("是否告警")
-        || t.contains("要不要告警")
-        || t.contains("需不需要告警")
-        || lower.contains("whether to alert")
-        || lower.contains("whether an alert is needed")
-        || lower.contains("if an alert is needed")
-        || lower.contains("do i need to alert")
-    {
-        return true;
-    }
-
-    // Explicit progress / intent openers before any finished finding.
-    if t.starts_with("我先")
-        || t.starts_with("先核对")
-        || t.starts_with("先看")
-        || t.starts_with("先检查")
-        || t.starts_with("正在核对")
-        || t.starts_with("正在检查")
-        || t.starts_with("让我")
-        || t.starts_with("我来核对")
-        || t.starts_with("我来检查")
-        || t.starts_with("接下来")
-        || lower.starts_with("i'll check")
-        || lower.starts_with("i will check")
-        || lower.starts_with("let me check")
-        || lower.starts_with("checking whether")
-        || lower.starts_with("checking if")
-    {
-        return true;
-    }
-
-    // "核对…是否…" / "检查…是否需要告警" mid-sentence progress.
-    if (t.contains("核对") || t.contains("检查")) && t.contains("是否") {
-        return true;
-    }
-
-    false
-}
-
-fn is_conditional_policy_sentence(sentence: &str) -> bool {
-    let t = sentence
-        .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '：' | ':' | '（' | '('));
-    let lower = t.to_ascii_lowercase();
-    if t.starts_with("如果")
-        || t.starts_with("假如")
-        || t.starts_with("倘若")
-        || t.starts_with('若')
-        || lower.starts_with("if ")
-        || lower.starts_with("if,")
-        || lower.starts_with("if\t")
-    {
-        return true;
-    }
-    // Labeled policy: "规则：如果发现赌博，就需要告警"
-    if let Some(idx) = t.find("如果") {
-        let after = &t[idx..];
-        if after.contains('就') || after.contains('则') {
-            return true;
-        }
-    }
-    if let Some(idx) = lower.find("if ") {
-        let after = &lower[idx..];
-        if after.contains(" then ") || after.contains(", alert") || after.contains(" alert") {
-            return true;
-        }
-    }
-    false
-}
-
-/// Classify judgment text into a verdict. Prefer insufficient / not-met over
-/// met when both families appear (negation and dark-frame honesty win).
+/// Classify text into a verdict from **finished judgment labels** only.
+///
+/// Free text that merely contains alert-need substrings (questions, progress,
+/// policy) never yields [`JudgmentVerdict::CriteriaMet`]. Open questions are
+/// skipped so `"需要告警吗？"` / `"criteria met?"` cannot authorize.
 pub(crate) fn classify_judgment(text: &str) -> JudgmentVerdict {
-    let cleaned = strip_non_verdict_sentences(text);
-    let lower = cleaned.to_lowercase();
+    let mut saw_met = false;
+    let mut saw_not_met = false;
+    let mut saw_insufficient = false;
 
-    if contains_any(&lower, INSUFFICIENT_EVIDENCE_MARKERS) {
-        return JudgmentVerdict::InsufficientEvidence;
+    for part in text.split_inclusive(['。', '！', '？', '.', '!', '?', '\n']) {
+        let s = part.trim();
+        if s.is_empty() || sentence_is_open_question(s) {
+            continue;
+        }
+        let lower = s.to_ascii_lowercase();
+        // More specific labels before the shorter "criteria met" token.
+        if lower.contains(LABEL_INSUFFICIENT) {
+            saw_insufficient = true;
+        } else if lower.contains(LABEL_NOT_MET) {
+            saw_not_met = true;
+        } else if lower.contains(LABEL_MET) {
+            saw_met = true;
+        }
     }
-    if contains_any(&lower, CRITERIA_NOT_MET_MARKERS) {
-        return JudgmentVerdict::CriteriaNotMet;
+
+    // Honesty priority when multiple finished labels appear in one message.
+    if saw_insufficient {
+        JudgmentVerdict::InsufficientEvidence
+    } else if saw_not_met {
+        JudgmentVerdict::CriteriaNotMet
+    } else if saw_met {
+        JudgmentVerdict::CriteriaMet
+    } else {
+        JudgmentVerdict::Unknown
     }
-    if contains_any(&lower, CRITERIA_MET_MARKERS) {
-        return JudgmentVerdict::CriteriaMet;
-    }
-    JudgmentVerdict::Unknown
 }
 
-/// Only an explicit "criteria met" judgment may deliver a notification.
+/// Open questions are not finished judgments (even if they embed label words).
+fn sentence_is_open_question(sentence: &str) -> bool {
+    let t = sentence.trim();
+    if t.ends_with('？') || t.ends_with('?') {
+        return true;
+    }
+    // Chinese interrogative particles without a period-terminated declaration.
+    if t.contains('吗') || t.contains('呢') {
+        return true;
+    }
+    false
+}
+
+/// Only an explicit finished "criteria met" judgment may deliver a notification.
 pub(crate) fn judgment_allows_send(verdict: JudgmentVerdict) -> bool {
     matches!(verdict, JudgmentVerdict::CriteriaMet)
 }
@@ -288,86 +230,6 @@ pub(crate) fn judgment_send_deny_reason(
     let args = serde_json::json!({ "command": command });
     judgment_deny_for_tool_call(agent, "shell", &args, messages)
 }
-
-fn contains_any(haystack: &str, markers: &[&str]) -> bool {
-    markers.iter().any(|m| haystack.contains(m))
-}
-
-// Markers are lowercase ASCII or CJK as they appear in operator/model text.
-// Family priority is in classify_judgment.
-
-const INSUFFICIENT_EVIDENCE_MARKERS: &[&str] = &[
-    "insufficient evidence",
-    "evidence insufficient",
-    "cannot determine",
-    "unable to determine",
-    "undecidable",
-    "too dark",
-    "too blurry",
-    "image too dark",
-    "cannot see clearly",
-    "unable to see",
-    "证据不足",
-    "无法判断",
-    "无法判定",
-    "无法确认",
-    "看不清",
-    "画面过暗",
-    "光线不足",
-    "图像过暗",
-    "无法看清",
-];
-
-const CRITERIA_NOT_MET_MARKERS: &[&str] = &[
-    "criteria not met",
-    "alert criteria not met",
-    "no gambling",
-    "no evidence of gambling",
-    "no person",
-    "no people",
-    "nobody present",
-    "nothing to report",
-    "no alert needed",
-    "no need to alert",
-    "do not alert",
-    "don't alert",
-    "all clear",
-    "everything normal",
-    "无赌博",
-    "未见赌博",
-    "没有赌博",
-    "未发现赌博",
-    "无人",
-    "未见人员",
-    "没有人员",
-    "无需告警",
-    "不需要告警",
-    "不必告警",
-    "不用告警",
-    "不告警",
-    "一切正常",
-    "未发现异常",
-    "无异常",
-];
-
-const CRITERIA_MET_MARKERS: &[&str] = &[
-    "criteria met",
-    "alert criteria met",
-    "alert warranted",
-    "should alert",
-    "needs alert",
-    "gambling detected",
-    "suspected gambling",
-    "possible gambling",
-    "疑似赌博",
-    "发现赌博",
-    "检测到赌博",
-    "有人且疑似",
-    "应告警",
-    "需要告警",
-    "必须告警",
-    "立即告警",
-];
 
 #[cfg(test)]
 mod tests {
@@ -435,37 +297,49 @@ mod tests {
     }
 
     #[test]
-    fn classifies_criteria_families() {
+    fn classifies_finished_judgment_labels_only() {
         assert_eq!(
-            classify_judgment("画面为空，无赌博行为证据。"),
+            classify_judgment("criteria not met — corridor empty."),
             JudgmentVerdict::CriteriaNotMet
         );
         assert_eq!(
-            classify_judgment("有人且疑似赌博，应告警。"),
+            classify_judgment("有人且疑似赌博。criteria met"),
             JudgmentVerdict::CriteriaMet
         );
         assert_eq!(
-            classify_judgment("画面过暗，证据不足，无法判断。"),
+            classify_judgment("画面过暗。insufficient evidence"),
             JudgmentVerdict::InsufficientEvidence
         );
         assert_eq!(
             classify_judgment("looking around"),
             JudgmentVerdict::Unknown
         );
+        // Lexicon free-text alone never authorizes.
+        assert_eq!(
+            classify_judgment("有人且疑似赌博，应告警。"),
+            JudgmentVerdict::Unknown
+        );
+        assert_eq!(classify_judgment("需要告警"), JudgmentVerdict::Unknown);
     }
 
     #[test]
-    fn insufficient_wins_over_met_wording() {
+    fn question_containing_need_alert_is_not_finished_judgment() {
+        assert_eq!(classify_judgment("需要告警吗？"), JudgmentVerdict::Unknown);
+        assert_eq!(classify_judgment("criteria met?"), JudgmentVerdict::Unknown);
+    }
+
+    #[test]
+    fn insufficient_wins_over_met_label() {
         assert_eq!(
-            classify_judgment("疑似赌博但画面过暗，证据不足"),
+            classify_judgment("criteria met but insufficient evidence overall"),
             JudgmentVerdict::InsufficientEvidence
         );
     }
 
     #[test]
-    fn not_met_wins_over_met_when_both_present() {
+    fn not_met_wins_over_met_when_both_labels_present() {
         assert_eq!(
-            classify_judgment("检查完成：无赌博；勿告警"),
+            classify_judgment("criteria not met; ignore any criteria met noise"),
             JudgmentVerdict::CriteriaNotMet
         );
     }
@@ -496,7 +370,6 @@ mod tests {
     #[test]
     fn pending_title_alone_cannot_self_approve() {
         let agent = agent_with_notify(NotifyOn::Judgment);
-        // No independent judgment — only a self-serving title in the pending send.
         let cmd = r#"neomind message send --title "疑似赌博" --body "告警""#;
         let msgs: Vec<Message> = vec![];
         let blocked = judgment_send_deny_reason(&agent, cmd, &msgs);
@@ -510,7 +383,6 @@ mod tests {
 
     #[test]
     fn policy_conditional_is_not_a_this_event_judgment() {
-        // Acceptance #4: restating the alert rule is not a verdict for this frame.
         assert_eq!(
             classify_judgment("如果发现赌博，就需要告警"),
             JudgmentVerdict::Unknown
@@ -519,21 +391,20 @@ mod tests {
             classify_judgment("规则：如果发现赌博，就需要告警。"),
             JudgmentVerdict::Unknown
         );
-        // Affirmative finding for this frame still classifies as met.
+        // Free-text finding without finished label is still Unknown.
         assert_eq!(
             classify_judgment("有人且疑似赌博，应告警。"),
-            JudgmentVerdict::CriteriaMet
+            JudgmentVerdict::Unknown
         );
-        // Policy + real finding in one message: finding remains after strip.
+        // Policy noise + finished label → met.
         assert_eq!(
-            classify_judgment("规则：如果发现赌博，就需要告警。本帧有人且疑似赌博，应告警。"),
+            classify_judgment("规则：如果发现赌博，就需要告警。本帧有人。criteria met"),
             JudgmentVerdict::CriteriaMet
         );
     }
 
     #[test]
     fn progress_intent_is_not_a_finished_judgment() {
-        // Source-review #3: progress narration must not authorize delivery.
         assert_eq!(
             classify_judgment("我先核对画面是否需要告警"),
             JudgmentVerdict::Unknown
@@ -542,9 +413,8 @@ mod tests {
             classify_judgment("让我检查一下是否需要告警。"),
             JudgmentVerdict::Unknown
         );
-        // Progress then a finished finding in the same turn: finding remains.
         assert_eq!(
-            classify_judgment("我先核对画面是否需要告警。有人且疑似赌博，应告警。"),
+            classify_judgment("我先核对画面是否需要告警。有人且疑似赌博。criteria met"),
             JudgmentVerdict::CriteriaMet
         );
         let agent = agent_with_notify(NotifyOn::Judgment);
@@ -563,10 +433,9 @@ mod tests {
 
     #[test]
     fn prior_inconclusive_must_not_override_this_event_positive() {
-        // Acceptance #5: latest assistant message is this event's judgment.
         let msgs = vec![
-            Message::new(MessageRole::Assistant, "画面过暗，证据不足，无法判断。"),
-            Message::new(MessageRole::Assistant, "有人且疑似赌博，应告警。"),
+            Message::new(MessageRole::Assistant, "画面过暗。insufficient evidence"),
+            Message::new(MessageRole::Assistant, "有人且疑似赌博。criteria met"),
         ];
         assert_eq!(
             judgment_verdict_from_messages(&msgs),
@@ -583,7 +452,7 @@ mod tests {
     #[test]
     fn prior_positive_must_not_authorize_policy_only_send() {
         let msgs = vec![
-            Message::new(MessageRole::Assistant, "有人且疑似赌博，应告警。"),
+            Message::new(MessageRole::Assistant, "有人且疑似赌博。criteria met"),
             Message::new(MessageRole::Assistant, "如果发现赌博，就需要告警"),
         ];
         assert_eq!(
@@ -605,7 +474,10 @@ mod tests {
         let judgment = agent_with_notify(NotifyOn::Judgment);
         let always = agent_with_notify(NotifyOn::Always);
         let cmd = r#"neomind message send --title "x" --body "y""#;
-        let msgs = vec![Message::new(MessageRole::Assistant, "巡检完成：无赌博。")];
+        let msgs = vec![Message::new(
+            MessageRole::Assistant,
+            "巡检完成：无赌博。criteria not met",
+        )];
 
         let blocked = judgment_send_deny_reason(&judgment, cmd, &msgs);
         assert!(
@@ -624,13 +496,25 @@ mod tests {
     #[test]
     fn gate_allows_criteria_met_from_assistant_only() {
         let agent = agent_with_notify(NotifyOn::Judgment);
-        // Title deliberately empty of markers — auth is the assistant judgment.
         let cmd = r#"neomind message send --title "Alert" --body "details""#;
         let msgs = vec![Message::new(
             MessageRole::Assistant,
-            "有人且疑似赌博，应告警。",
+            "有人且疑似赌博。criteria met",
         )];
         assert!(judgment_send_deny_reason(&agent, cmd, &msgs).is_none());
+    }
+
+    #[test]
+    fn question_need_alert_cannot_authorize_send() {
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let cmd = r#"neomind message send --title "x" --body "y""#;
+        let msgs = vec![Message::new(MessageRole::Assistant, "需要告警吗？")];
+        assert!(
+            judgment_send_deny_reason(&agent, cmd, &msgs)
+                .as_ref()
+                .is_some_and(|r| r.contains("no valid judgment")),
+            "open question must not authorize"
+        );
     }
 
     #[test]
@@ -640,8 +524,6 @@ mod tests {
         let direct = serde_json::json!({
             "command": "neomind message send --title \"疑似赌博\" --body \"x\""
         });
-        // After tool_loop rewrite, hallucinated `message` becomes shell with
-        // the same command shape — both must hit judgment_deny_for_tool_call.
         let rewritten = crate::tools::mapper::build_cli_command(
             "message",
             &serde_json::json!({ "title": "疑似赌博", "content": "x" }),
@@ -661,7 +543,6 @@ mod tests {
         assert!(d.is_some() && r.is_some(), "both entry points must deny");
         assert_eq!(d, r, "direct shell and rewritten CLI must share one gate");
 
-        // Inventory stays honest about the two tool-loop paths.
         assert!(JUDGMENT_NOTIFY_ENTRY_POINTS
             .iter()
             .any(|e| e.contains("shell.message_send")));
