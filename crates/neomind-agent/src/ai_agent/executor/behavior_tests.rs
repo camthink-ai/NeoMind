@@ -3388,6 +3388,68 @@ async fn judgment_gate_blocks_title_only_self_approval() {
     );
 }
 
+/// Protocol parse: explanatory prose mentioning "criteria met" must not
+/// authorize → FakeNotifySink receives 0.
+#[tokio::test]
+async fn judgment_gate_blocks_explanatory_criteria_met_mention() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"probe\" --body \"explanatory\""
+            }),
+        )
+        .with_text("I have not yet determined whether the criteria met label applies."),
+        MockResponse::text("done"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "仅当有人且疑似赌博时再告警".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (_dp, er) = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
+            rt_dyn,
+            "exec-judgment-explanatory-mention",
+            None,
+        )
+        .await
+        .expect("explanatory-mention run Completes with send blocked");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "explanatory 'criteria met' mention must not authorize (sink 0)"
+    );
+    assert!(
+        er.actions_executed.iter().any(|a| {
+            !a.success
+                && a.result
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Judgment notify gate")
+        }),
+        "gate must block explanatory mention; actions={:?}",
+        er.actions_executed
+    );
+}
+
 /// Structural auth: open question ("需要告警吗？") is not a finished judgment
 /// → FakeNotifySink receives 0 (lexicon substring must not authorize).
 #[tokio::test]
@@ -3595,7 +3657,7 @@ async fn judgment_gate_allows_positive_after_prior_inconclusive() {
                 "command": "neomind message send --title \"Alert\" --body \"details\""
             }),
         )
-        .with_text("有人且疑似赌博。criteria met"),
+        .with_text("有人且疑似赌博。\nVerdict: criteria met"),
         MockResponse::text("已发送告警。"),
     ])
     .with_function_calling()
@@ -3646,7 +3708,7 @@ async fn judgment_gate_allows_non_gambling_positive_judgment() {
                 "command": "neomind message send --title \"Smoke detected\" --body \"Zone B sensor trip\""
             }),
         )
-        .with_text("Smoke plume confirmed on camera. criteria met — alert warranted."),
+        .with_text("Smoke plume confirmed on camera.\nVerdict: criteria met"),
         MockResponse::text("Alert sent."),
     ])
     .with_function_calling()
@@ -3685,7 +3747,7 @@ async fn judgment_gate_allows_non_gambling_positive_judgment() {
     );
 }
 
-/// Finished this-event `criteria met` label → sink gets exactly 1 notification.
+/// Finished this-event protocol `Verdict: criteria met` → sink gets exactly 1.
 #[tokio::test]
 async fn judgment_gate_allows_send_when_criteria_met() {
     let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -3696,7 +3758,7 @@ async fn judgment_gate_allows_send_when_criteria_met() {
                 "command": "neomind message send --title \"Alert\" --body \"details\""
             }),
         )
-        .with_text("有人且疑似赌博。criteria met"),
+        .with_text("有人且疑似赌博。\nVerdict: criteria met"),
         MockResponse::text("已发送告警。"),
     ])
     .with_function_calling()

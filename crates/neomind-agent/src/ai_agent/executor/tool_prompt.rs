@@ -68,9 +68,14 @@ Respond in the same language as the task definition and operator messages. Never
 No notification is sent on your behalf — this task decides for itself whether the\n\
 operator needs to hear from it.\n\
 \n\
-State an explicit judgment first: **criteria met**, **criteria not met**, or\n\
-**insufficient evidence**. The host blocks `neomind message send` unless the\n\
-judgment is criteria met — silence is required for the other two.\n\
+State a finished judgment as its **own line** in exact protocol form (explanatory\n\
+prose does not authorize send):\n\
+`Verdict: criteria met`\n\
+`Verdict: criteria not met`\n\
+`Verdict: insufficient evidence`\n\
+\n\
+The host blocks `neomind message send` unless a protocol line says criteria met —\n\
+silence is required for the other two (and when no valid Verdict line is present).\n\
 \n\
 Send one yourself only when criteria are met and the operator would act on it:\n\
 `neomind message send --title \"<what happened>\" --body \"<the evidence and what it means>\"`\n\

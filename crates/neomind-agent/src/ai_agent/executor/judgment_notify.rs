@@ -9,16 +9,18 @@
 //! first real delivery. Ordinary (`Always` / `Failure`) notify agents keep
 //! their previous contract unchanged.
 //!
-//! ## Auth source (structural — not lexicon)
-//! Authorization reads a **finished this-event judgment label** from the
-//! latest non-empty assistant message, matching the prompt contract:
-//! `criteria met` / `criteria not met` / `insufficient evidence`.
+//! ## Auth source (protocol parse — not substring / lexicon)
+//! Authorization parses a **finished this-event verdict line** from the
+//! latest non-empty assistant message. Accepted whole-line forms:
+//! `Verdict: criteria met` / `Verdict: criteria not met` /
+//! `Verdict: insufficient evidence` (optional `Judgment:` prefix; optional
+//! bold markers; or the bare label alone on its own line).
 //!
-//! Ordinary free text that merely contains alert-need words — questions
-//! ("需要告警吗？"), progress ("我先核对…是否需要告警"), policy IF-THEN
-//! ("如果发现赌博，就需要告警"), or title/body of a pending send — does
-//! **not** grant delivery. Prior-event conclusions must not interfere
-//! (latest assistant message only).
+//! Explanatory prose that merely *mentions* a label — e.g. "whether the
+//! criteria met label applies", questions, progress, policy IF-THEN, or
+//! pending send title/body — does **not** grant delivery. Missing/invalid
+//! protocol → deny. Prior-event conclusions must not interfere (latest
+//! assistant message only).
 
 use neomind_core::message::{Message, MessageRole};
 use neomind_storage::{AiAgent, NotifyOn};
@@ -57,11 +59,6 @@ pub(crate) enum JudgmentVerdict {
     /// No recognizable finished judgment yet — refuse send rather than guess.
     Unknown,
 }
-
-/// Prompt-contract labels for a finished this-event judgment.
-const LABEL_MET: &str = "criteria met";
-const LABEL_NOT_MET: &str = "criteria not met";
-const LABEL_INSUFFICIENT: &str = "insufficient evidence";
 
 /// True when this agent relies on tool-driven notify (`on = judgment`).
 pub(crate) fn agent_uses_judgment_notify(agent: &AiAgent) -> bool {
@@ -119,33 +116,26 @@ pub(crate) fn judgment_verdict_from_messages(messages: &[Message]) -> JudgmentVe
     classify_judgment(&judgment_context_from_messages(messages))
 }
 
-/// Classify text into a verdict from **finished judgment labels** only.
+/// Classify text by **whole-line verdict protocol** only.
 ///
-/// Free text that merely contains alert-need substrings (questions, progress,
-/// policy) never yields [`JudgmentVerdict::CriteriaMet`]. Open questions are
-/// skipped so `"需要告警吗？"` / `"criteria met?"` cannot authorize.
+/// Substring mentions inside explanatory sentences never authorize — e.g.
+/// `"I have not yet determined whether the criteria met label applies."`
+/// yields [`JudgmentVerdict::Unknown`].
 pub(crate) fn classify_judgment(text: &str) -> JudgmentVerdict {
     let mut saw_met = false;
     let mut saw_not_met = false;
     let mut saw_insufficient = false;
 
-    for part in text.split_inclusive(['。', '！', '？', '.', '!', '?', '\n']) {
-        let s = part.trim();
-        if s.is_empty() || sentence_is_open_question(s) {
-            continue;
-        }
-        let lower = s.to_ascii_lowercase();
-        // More specific labels before the shorter "criteria met" token.
-        if lower.contains(LABEL_INSUFFICIENT) {
-            saw_insufficient = true;
-        } else if lower.contains(LABEL_NOT_MET) {
-            saw_not_met = true;
-        } else if lower.contains(LABEL_MET) {
-            saw_met = true;
+    for line in text.lines() {
+        match parse_verdict_line(line) {
+            Some(JudgmentVerdict::InsufficientEvidence) => saw_insufficient = true,
+            Some(JudgmentVerdict::CriteriaNotMet) => saw_not_met = true,
+            Some(JudgmentVerdict::CriteriaMet) => saw_met = true,
+            Some(JudgmentVerdict::Unknown) | None => {}
         }
     }
 
-    // Honesty priority when multiple finished labels appear in one message.
+    // Honesty priority when multiple protocol lines appear in one message.
     if saw_insufficient {
         JudgmentVerdict::InsufficientEvidence
     } else if saw_not_met {
@@ -157,17 +147,36 @@ pub(crate) fn classify_judgment(text: &str) -> JudgmentVerdict {
     }
 }
 
-/// Open questions are not finished judgments (even if they embed label words).
-fn sentence_is_open_question(sentence: &str) -> bool {
-    let t = sentence.trim();
-    if t.ends_with('？') || t.ends_with('?') {
-        return true;
+/// Exact whole-line protocol parse. Returns `None` when the line is prose.
+fn parse_verdict_line(line: &str) -> Option<JudgmentVerdict> {
+    let mut t = line.trim();
+    if t.is_empty() {
+        return None;
     }
-    // Chinese interrogative particles without a period-terminated declaration.
-    if t.contains('吗') || t.contains('呢') {
-        return true;
+    // Optional markdown bold / backticks around the whole line.
+    while t.starts_with("**") && t.ends_with("**") && t.len() >= 4 {
+        t = t[2..t.len() - 2].trim();
     }
-    false
+    if t.starts_with('`') && t.ends_with('`') && t.len() >= 2 {
+        t = t[1..t.len() - 1].trim();
+    }
+    // Trailing sentence punctuation on an otherwise exact protocol line.
+    t = t.trim_end_matches(['.', '。', '!', '！']);
+    let lower = t.to_ascii_lowercase();
+    let value = if let Some(rest) = lower.strip_prefix("verdict:") {
+        rest.trim()
+    } else if let Some(rest) = lower.strip_prefix("judgment:") {
+        rest.trim()
+    } else {
+        // Bare label must be the entire line (no surrounding prose).
+        lower.as_str()
+    };
+    match value {
+        "criteria met" => Some(JudgmentVerdict::CriteriaMet),
+        "criteria not met" => Some(JudgmentVerdict::CriteriaNotMet),
+        "insufficient evidence" => Some(JudgmentVerdict::InsufficientEvidence),
+        _ => None,
+    }
 }
 
 /// Only an explicit finished "criteria met" judgment may deliver a notification.
@@ -297,29 +306,37 @@ mod tests {
     }
 
     #[test]
-    fn classifies_finished_judgment_labels_only() {
+    fn classifies_finished_judgment_protocol_lines_only() {
         assert_eq!(
-            classify_judgment("criteria not met — corridor empty."),
+            classify_judgment("corridor empty.\nVerdict: criteria not met"),
             JudgmentVerdict::CriteriaNotMet
         );
         assert_eq!(
-            classify_judgment("有人且疑似赌博。criteria met"),
+            classify_judgment("有人且疑似赌博。\nVerdict: criteria met"),
             JudgmentVerdict::CriteriaMet
         );
         assert_eq!(
-            classify_judgment("画面过暗。insufficient evidence"),
+            classify_judgment("画面过暗。\nJudgment: insufficient evidence"),
             JudgmentVerdict::InsufficientEvidence
+        );
+        assert_eq!(
+            classify_judgment("**criteria met**"),
+            JudgmentVerdict::CriteriaMet
         );
         assert_eq!(
             classify_judgment("looking around"),
             JudgmentVerdict::Unknown
         );
-        // Lexicon free-text alone never authorizes.
+        // Lexicon / prose alone never authorizes.
         assert_eq!(
             classify_judgment("有人且疑似赌博，应告警。"),
             JudgmentVerdict::Unknown
         );
         assert_eq!(classify_judgment("需要告警"), JudgmentVerdict::Unknown);
+        assert_eq!(
+            classify_judgment("I have not yet determined whether the criteria met label applies."),
+            JudgmentVerdict::Unknown
+        );
     }
 
     #[test]
@@ -329,17 +346,22 @@ mod tests {
     }
 
     #[test]
-    fn insufficient_wins_over_met_label() {
+    fn insufficient_wins_over_met_protocol_lines() {
+        assert_eq!(
+            classify_judgment("Verdict: criteria met\nVerdict: insufficient evidence"),
+            JudgmentVerdict::InsufficientEvidence
+        );
+        // Prose that mentions both labels is not a protocol line.
         assert_eq!(
             classify_judgment("criteria met but insufficient evidence overall"),
-            JudgmentVerdict::InsufficientEvidence
+            JudgmentVerdict::Unknown
         );
     }
 
     #[test]
-    fn not_met_wins_over_met_when_both_labels_present() {
+    fn not_met_wins_over_met_when_both_protocol_lines_present() {
         assert_eq!(
-            classify_judgment("criteria not met; ignore any criteria met noise"),
+            classify_judgment("Verdict: criteria met\nVerdict: criteria not met"),
             JudgmentVerdict::CriteriaNotMet
         );
     }
@@ -396,9 +418,9 @@ mod tests {
             classify_judgment("有人且疑似赌博，应告警。"),
             JudgmentVerdict::Unknown
         );
-        // Policy noise + finished label → met.
+        // Policy noise + protocol verdict line → met.
         assert_eq!(
-            classify_judgment("规则：如果发现赌博，就需要告警。本帧有人。criteria met"),
+            classify_judgment("规则：如果发现赌博，就需要告警。本帧有人。\nVerdict: criteria met"),
             JudgmentVerdict::CriteriaMet
         );
     }
@@ -414,7 +436,7 @@ mod tests {
             JudgmentVerdict::Unknown
         );
         assert_eq!(
-            classify_judgment("我先核对画面是否需要告警。有人且疑似赌博。criteria met"),
+            classify_judgment("我先核对画面是否需要告警。有人且疑似赌博。\nVerdict: criteria met"),
             JudgmentVerdict::CriteriaMet
         );
         let agent = agent_with_notify(NotifyOn::Judgment);
@@ -434,8 +456,14 @@ mod tests {
     #[test]
     fn prior_inconclusive_must_not_override_this_event_positive() {
         let msgs = vec![
-            Message::new(MessageRole::Assistant, "画面过暗。insufficient evidence"),
-            Message::new(MessageRole::Assistant, "有人且疑似赌博。criteria met"),
+            Message::new(
+                MessageRole::Assistant,
+                "画面过暗。\nVerdict: insufficient evidence",
+            ),
+            Message::new(
+                MessageRole::Assistant,
+                "有人且疑似赌博。\nVerdict: criteria met",
+            ),
         ];
         assert_eq!(
             judgment_verdict_from_messages(&msgs),
@@ -452,7 +480,10 @@ mod tests {
     #[test]
     fn prior_positive_must_not_authorize_policy_only_send() {
         let msgs = vec![
-            Message::new(MessageRole::Assistant, "有人且疑似赌博。criteria met"),
+            Message::new(
+                MessageRole::Assistant,
+                "有人且疑似赌博。\nVerdict: criteria met",
+            ),
             Message::new(MessageRole::Assistant, "如果发现赌博，就需要告警"),
         ];
         assert_eq!(
@@ -476,7 +507,7 @@ mod tests {
         let cmd = r#"neomind message send --title "x" --body "y""#;
         let msgs = vec![Message::new(
             MessageRole::Assistant,
-            "巡检完成：无赌博。criteria not met",
+            "巡检完成：无赌博。\nVerdict: criteria not met",
         )];
 
         let blocked = judgment_send_deny_reason(&judgment, cmd, &msgs);
@@ -499,7 +530,7 @@ mod tests {
         let cmd = r#"neomind message send --title "Alert" --body "details""#;
         let msgs = vec![Message::new(
             MessageRole::Assistant,
-            "有人且疑似赌博。criteria met",
+            "有人且疑似赌博。\nVerdict: criteria met",
         )];
         assert!(judgment_send_deny_reason(&agent, cmd, &msgs).is_none());
     }
@@ -515,6 +546,22 @@ mod tests {
                 .is_some_and(|r| r.contains("no valid judgment")),
             "open question must not authorize"
         );
+    }
+
+    #[test]
+    fn explanatory_mention_of_criteria_met_cannot_authorize_send() {
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let cmd = r#"neomind message send --title "x" --body "y""#;
+        let probe = "I have not yet determined whether the criteria met label applies.";
+        assert_eq!(classify_judgment(probe), JudgmentVerdict::Unknown);
+        let msgs = vec![Message::new(MessageRole::Assistant, probe)];
+        assert!(
+            judgment_send_deny_reason(&agent, cmd, &msgs)
+                .as_ref()
+                .is_some_and(|r| r.contains("no valid judgment")),
+            "explanatory contains() must not authorize"
+        );
+        assert!(!judgment_allows_send(classify_judgment(probe)));
     }
 
     #[test]
