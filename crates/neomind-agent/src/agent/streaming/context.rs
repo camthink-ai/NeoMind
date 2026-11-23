@@ -219,25 +219,55 @@ fn latest_complete_tool_result(messages: &[AgentMessage]) -> Option<&AgentMessag
 /// Whether `selected` still carries the input's **same** latest tool feedback.
 ///
 /// Survives only when:
-/// - the original body is present verbatim, or
-/// - a honesty-compressed/stubbed copy stamped with that call's `feedback_src=<index>`.
+/// - a honesty-compressed/stubbed/reserved copy stamped with that call's
+///   `feedback_src=<index>`, or
+/// - the original body is present verbatim **and** that body is unique among
+///   input tool results (identical JSON from an older call must not count).
 ///
-/// Same tool name alone, or a generic `[truncated` / `[unknown` marker from an
-/// older call, does **not** count.
+/// Same tool name alone, generic `[truncated` / `[unknown`, or a duplicate
+/// earlier body with the same JSON, does **not** count.
 fn agent_latest_tool_feedback_survives(input: &[AgentMessage], selected: &[AgentMessage]) -> bool {
     let Some((src_index, fb)) = latest_complete_tool_result_indexed(input) else {
         return true;
     };
+    let marker = feedback_src_marker(src_index);
     if selected
         .iter()
-        .any(|m| m.role == "tool" && m.content.as_ref() == fb.content.as_ref())
+        .any(|m| m.role == "tool" && m.content.contains(marker.as_str()))
     {
         return true;
     }
-    let marker = feedback_src_marker(src_index);
-    selected
+    let same_body_count = input
         .iter()
-        .any(|m| m.role == "tool" && m.content.contains(marker.as_str()))
+        .filter(|m| m.role == "tool" && m.content.as_ref() == fb.content.as_ref())
+        .count();
+    if same_body_count == 1
+        && selected
+            .iter()
+            .any(|m| m.role == "tool" && m.content.as_ref() == fb.content.as_ref())
+    {
+        return true;
+    }
+    false
+}
+
+/// Stamp every tool body in a reserved latest group with `feedback_src`.
+fn stamp_group_feedback_src(
+    group: Vec<AgentMessage>,
+    feedback_src: Option<usize>,
+) -> Vec<AgentMessage> {
+    let Some(idx) = feedback_src else {
+        return group;
+    };
+    group
+        .into_iter()
+        .map(|mut m| {
+            if m.role == "tool" {
+                m.content = stamp_feedback_src(m.content.as_ref(), idx).into();
+            }
+            m
+        })
+        .collect()
 }
 
 fn log_hard_budget_shares(
@@ -405,12 +435,15 @@ fn auto_recover_keep_latest_feedback(
     let mut used = 0usize;
 
     // Reserve latest complete tool interaction first (compress to fit).
+    // Always lineage-stamp so identical JSON from an older call cannot
+    // false-survive the recover keep-check.
     if let Some(idx) = latest_group_idx {
         let group = &groups[idx];
         let cost: usize = group.iter().map(estimate_message_tokens).sum();
         if cost <= max_tokens {
-            selected[idx] = Some(group.clone());
-            used = cost;
+            let stamped = stamp_group_feedback_src(group.clone(), feedback_src);
+            used = stamped.iter().map(estimate_message_tokens).sum();
+            selected[idx] = Some(stamped);
         } else if let Some(compressed) = compress_agent_tool_group(group, max_tokens, feedback_src)
         {
             used = compressed.iter().map(estimate_message_tokens).sum();
@@ -505,9 +538,10 @@ fn select_window_prefer_latest_feedback(
             .collect();
         let cost: usize = finalized.iter().map(estimate_message_tokens).sum();
         if cost <= max_tokens {
-            kept_message_count += finalized.len();
-            used = cost;
-            selected[idx] = Some(finalized);
+            let stamped = stamp_group_feedback_src(finalized, feedback_src);
+            kept_message_count += stamped.len();
+            used = stamped.iter().map(estimate_message_tokens).sum();
+            selected[idx] = Some(stamped);
         } else if let Some(compressed) =
             compress_agent_tool_group(&groups[idx], max_tokens, feedback_src)
         {
@@ -1175,6 +1209,43 @@ mod tests {
     }
 
     #[test]
+    fn identical_json_older_shell_does_not_count_as_latest_feedback() {
+        // Tip acceptance #3: two shell calls return identical JSON; after trim
+        // only the earlier call remains → latest feedback must be judged lost
+        // so the auto-recover path runs (content equality alone is not identity).
+        let same = r#"{"success":true,"data":{"ok":1,"payload":"same"}}"#;
+        let input = vec![
+            AgentMessage::user("继续"),
+            AgentMessage::assistant("first"),
+            AgentMessage::tool_result("shell", same),
+            AgentMessage::assistant("second"),
+            AgentMessage::tool_result("shell", same),
+        ];
+        let selected_earlier_only = vec![
+            AgentMessage::user("继续"),
+            AgentMessage::assistant("first"),
+            AgentMessage::tool_result("shell", same),
+        ];
+        assert!(
+            !agent_latest_tool_feedback_survives(&input, &selected_earlier_only),
+            "identical JSON from an older shell must not count as latest feedback"
+        );
+        let src = latest_complete_tool_result_indexed(&input)
+            .map(|(i, _)| i)
+            .expect("latest index");
+        let stamped = stamp_feedback_src(same, src);
+        let recovered = vec![
+            AgentMessage::user("继续"),
+            AgentMessage::assistant("second"),
+            AgentMessage::tool_result("shell", stamped),
+        ];
+        assert!(
+            agent_latest_tool_feedback_survives(&input, &recovered),
+            "lineage-stamped copy of the latest identical body must survive"
+        );
+    }
+
+    #[test]
     fn hard_budget_auto_recovers_before_no_tools_on_t4_shaped_history() {
         // Same-budget repro: large older list/get/history results + a small
         // latest tool feedback. Pre-fix outer eviction dropped latest →
@@ -1338,12 +1409,18 @@ mod tests {
             "drop flag must track the latest tool group exactly"
         );
         // Generous budget keeps the latest group → flag must be false.
+        // Reserved latest is lineage-stamped (feedback_src=…) so identical
+        // older JSON cannot false-survive.
         let roomy = ctx.build_marked(&messages, 100_000);
         assert!(!roomy.latest_tool_feedback_dropped);
-        assert!(roomy
-            .messages
-            .iter()
-            .any(|m| m.content.as_ref() == latest_tool));
+        assert!(
+            roomy.messages.iter().any(|m| {
+                m.role == "tool"
+                    && m.content.contains(latest_tool)
+                    && m.content.contains(FEEDBACK_SRC_MARKER)
+            }),
+            "roomy window must keep lineage-stamped latest tool"
+        );
     }
 
     /// P1-3: when history compaction trims an older `skill` tool message,

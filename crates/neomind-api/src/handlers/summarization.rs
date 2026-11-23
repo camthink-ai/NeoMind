@@ -118,17 +118,85 @@ fn extract_user_device_targets(text: &str) -> Vec<String> {
     out
 }
 
+/// Send/display **destinations** from user text (the device being written to).
+///
+/// "把 A 照片发到 B" → only B. Source device A must not inherit write confirmation.
+/// Status queries like "B 显示了吗" fall back to all mentioned ids when no
+/// explicit destination cue is present.
+fn extract_send_destinations(text: &str) -> Vec<String> {
+    const CUES: &[&str] = &[
+        "发送给",
+        "发到",
+        "传到",
+        "显示到",
+        "显示在",
+        "发给",
+        " to ",
+        " onto ",
+    ];
+    let mut dests = Vec::new();
+    let lower = text.to_ascii_lowercase();
+    for cue in CUES {
+        let cue_lower = cue.to_ascii_lowercase();
+        let mut search = lower.as_str();
+        let mut base = 0usize;
+        while let Some(rel) = search.find(&cue_lower) {
+            let abs = base + rel + cue_lower.len();
+            let after = text.get(abs..).unwrap_or("");
+            for id in extract_user_device_targets(after) {
+                if !dests.iter().any(|x| x == &id) {
+                    dests.push(id);
+                }
+            }
+            base = abs;
+            search = lower.get(base..).unwrap_or("");
+        }
+    }
+    if !dests.is_empty() {
+        return dests;
+    }
+    extract_user_device_targets(text)
+}
+
+/// Device id attributed inside a tool body (receipt target), if any.
+fn extract_receipt_device_id(body: &str) -> Option<String> {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+        for key in ["device_id", "id", "device"] {
+            if let Some(id) = v
+                .get("data")
+                .and_then(|d| d.get(key))
+                .and_then(|x| x.as_str())
+                .or_else(|| v.get(key).and_then(|x| x.as_str()))
+            {
+                let id = id.trim();
+                if id.len() >= 4 {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Whether a tool body looks like a mutating write / delivery receipt rather
 /// than a read (list/get/history). Prefer write-ledger signals
 /// (`_operation_resume`, `operation_id` + write/control verbs).
+///
+/// A successful `device get` whose command directory merely *lists*
+/// `render_text` is **not** a write receipt.
 fn looks_like_write_receipt(body: &str) -> bool {
     let lower = body.to_ascii_lowercase();
     if lower.contains("write-metric")
         || lower.contains("_operation_resume")
-        || lower.contains("render_text")
         || lower.contains("write_metric")
     {
         return true;
+    }
+    // Command catalogs / device-get payloads often embed the string
+    // `render_text` as an available command name — never treat that alone
+    // as a send/display receipt.
+    if looks_like_command_catalog(&lower) {
+        return false;
     }
     let has_op = lower.contains("operation_id");
     let write_ish = lower.contains("write")
@@ -136,7 +204,26 @@ fn looks_like_write_receipt(body: &str) -> bool {
         || lower.contains("queued")
         || lower.contains("adapter_accepted")
         || lower.contains("delivery");
-    has_op && write_ish
+    if has_op && write_ish {
+        return true;
+    }
+    // Executed render_text control (has op / acceptance), not a name listing.
+    lower.contains("render_text")
+        && (has_op
+            || lower.contains("adapter_accepted")
+            || lower.contains("queued")
+            || lower.contains("\"command\":\"render_text\""))
+}
+
+fn looks_like_command_catalog(lower: &str) -> bool {
+    let lists_commands = lower.contains("\"commands\"")
+        || lower.contains("command_dir")
+        || lower.contains("\"available_commands\"");
+    lists_commands
+        && !lower.contains("operation_id")
+        && !lower.contains("_operation_resume")
+        && !lower.contains("write-metric")
+        && !lower.contains("write_metric")
 }
 
 fn body_mentions_any_target(body: &str, targets: &[String]) -> bool {
@@ -159,21 +246,23 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
     let mut assistant_lines: Vec<String> = Vec::new();
     let mut tool_lines: Vec<String> = Vec::new();
     let mut tool_names: Vec<String> = Vec::new();
-    // Write status is bound to the user-stated target + write receipts — never
-    // to an arbitrary Success tool_outcome (reads must not claim "platform
-    // accepted write").
-    let mut write_targets: Vec<String> = Vec::new();
+    // Write status is bound to the user-stated **send destination** + write
+    // receipts — never to an arbitrary Success tool_outcome (reads / command
+    // catalogs / source-device writes must not claim "platform accepted write"
+    // for the destination).
+    let mut write_destinations: Vec<String> = Vec::new();
     let mut target_write_success = false;
     let mut target_write_failed = false;
     let mut target_write_unknown = false;
     let mut saw_other_target_write = false;
+    let mut other_write_attrs: Vec<String> = Vec::new();
     for msg in messages {
         match msg.role.as_str() {
             "user" => {
                 user_lines.push(truncate_str(&msg.content, per_message_cap));
-                for t in extract_user_device_targets(&msg.content) {
-                    if !write_targets.iter().any(|x| x == &t) {
-                        write_targets.push(t);
+                for t in extract_send_destinations(&msg.content) {
+                    if !write_destinations.iter().any(|x| x == &t) {
+                        write_destinations.push(t);
                     }
                 }
             }
@@ -199,9 +288,14 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
                     }
                 };
                 let is_write = looks_like_write_receipt(body);
+                let receipt_dev = extract_receipt_device_id(body);
+                let binds_destination = body_mentions_any_target(body, &write_destinations)
+                    || receipt_dev
+                        .as_ref()
+                        .is_some_and(|id| write_destinations.iter().any(|d| d == id));
                 let line = if !is_write {
                     format!("{name}: read {status}")
-                } else if body_mentions_any_target(body, &write_targets) {
+                } else if binds_destination {
                     match outcome {
                         neomind_agent::agent::history_select::ToolOutcomeHonesty::Success => {
                             target_write_success = true;
@@ -218,7 +312,11 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
                     }
                 } else {
                     saw_other_target_write = true;
-                    format!("{name}: write (other target) {status}")
+                    let attr = receipt_dev.as_deref().unwrap_or("unknown");
+                    if !other_write_attrs.iter().any(|x| x == attr) {
+                        other_write_attrs.push(attr.to_string());
+                    }
+                    format!("{name}: write (attributed to {attr}) {status}")
                 };
                 if tool_lines.len() < 12 {
                     tool_lines.push(line);
@@ -262,7 +360,7 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
         }
     }
     out.push_str("\n## 写入/显示状态\n");
-    // Prefer fail/unknown over success when both appear for the target.
+    // Prefer fail/unknown over success when both appear for the destination.
     if target_write_failed {
         out.push_str("- 当前目标 write success=false — 未确认发送/显示；禁止声称已发送\n");
     } else if target_write_unknown {
@@ -272,7 +370,13 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
             "- 当前目标存在结构化 write success=true 回执（平台已接受写入；设备是否已显示需另查状态）\n",
         );
     } else if saw_other_target_write {
-        out.push_str("- 有写入回执但未绑定当前目标设备；未确认发送/显示\n");
+        if !other_write_attrs.is_empty() {
+            out.push_str("- 写回执已归因到 ");
+            out.push_str(&other_write_attrs.join(", "));
+            out.push_str("；目标发送/显示仍未确认\n");
+        } else {
+            out.push_str("- 有写入回执但未绑定当前目标设备；未确认发送/显示\n");
+        }
     } else {
         out.push_str("- 无当前目标的结构化写回执；未确认发送/显示\n");
     }
@@ -1259,12 +1363,68 @@ mod tests {
             other,
         ];
         let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
-        assert!(digest.contains("other target"), "{digest}");
+        assert!(digest.contains("attributed to device-OTHER-99"), "{digest}");
         assert!(
             !digest.contains("平台已接受写入"),
             "other-device write must not accept for current target: {digest}"
         );
-        assert!(digest.contains("未绑定当前目标设备"), "{digest}");
+        assert!(
+            digest.contains("目标发送/显示仍未确认") || digest.contains("未确认发送"),
+            "{digest}"
+        );
+    }
+
+    /// Tip acceptance #1: successful device get whose command directory lists
+    /// `render_text` is not a send receipt — destination stays unconfirmed.
+    #[test]
+    fn fallback_digest_device_get_command_dir_render_text_unconfirmed() {
+        let mut get_b = AgentMessage::assistant("x");
+        get_b.role = "tool".into();
+        get_b.tool_call_name = Some("shell".into());
+        get_b.content = r#"{"success":true,"data":{"id":"20545d67","commands":[{"name":"render_text","params":{"text":"string"}},{"name":"clear"}]}}"#.into();
+        let messages = [
+            AgentMessage::user("查看 20545d67 能发什么"),
+            AgentMessage::assistant("getting device"),
+            get_b,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(digest.contains("read success=true"), "{digest}");
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "command-dir render_text must not confirm send: {digest}"
+        );
+        assert!(
+            digest.contains("未确认发送/显示") || digest.contains("无当前目标的结构化写回执"),
+            "B send status must stay unconfirmed: {digest}"
+        );
+    }
+
+    /// Tip acceptance #2: user wants A's photo on B; only a successful write
+    /// receipt for A exists → attribute to A; B stays unconfirmed.
+    #[test]
+    fn fallback_digest_source_write_receipt_does_not_confirm_destination() {
+        let mut write_a = AgentMessage::assistant("x");
+        write_a.role = "tool".into();
+        write_a.tool_call_name = Some("shell".into());
+        write_a.content = r#"{"success":true,"_operation_resume":true,"operation_id":"op-a1","summary":"write-metric ok","data":{"device_id":"200366"}}"#.into();
+        let messages = [
+            AgentMessage::user("把 200366 照片发到 20545d67 显示"),
+            AgentMessage::assistant("wrote source"),
+            write_a,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(
+            digest.contains("attributed to 200366"),
+            "receipt must attribute to source A: {digest}"
+        );
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "source write must not confirm destination B: {digest}"
+        );
+        assert!(
+            digest.contains("目标发送/显示仍未确认") || digest.contains("未确认发送"),
+            "B must stay unconfirmed: {digest}"
+        );
     }
 
     /// Mixed history (u=user, a=assistant, t=tool):
