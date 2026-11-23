@@ -275,22 +275,38 @@ async fn process_stream_to_channel(
                         // history truncation — the latter is the only signal
                         // that works when prompt/tool overhead makes the 60%
                         // of-window mark unreachable (2026-10-30).
-                        let history_truncated = match state
+                        let (history_truncated, force_budget_recover) = match state
                             .agents
                             .session_manager
                             .get_agent_llm(&session_id)
                             .await
                         {
-                            Some(llm) => llm.take_history_truncated(),
-                            None => false,
+                            Some(llm) => (
+                                llm.take_history_truncated(),
+                                // One auto-recover already failed in-turn: force
+                                // digest even when usage_known=false / meter is 0
+                                // (T4 hard_budget → no_tools follow-ups).
+                                llm.take_hard_budget_auto_recover_exhausted(),
+                            ),
+                            None => (false, false),
                         };
                         // Meter kinds:
                         // - Some(plausible) → bill-first gate
                         // - None (usage omitted) + truncated → still compact
-                        // - Some(0/MAX) → never compact (corrupt ≠ missing)
+                        // - Some(0/MAX) → never compact (corrupt ≠ missing),
+                        //   EXCEPT force_budget_recover after exhausted auto-recover
                         let pt_for_summary: Option<Option<u32>> = match prompt_tokens {
                             Some(pt) if neomind_core::plausible_prompt_token_meter(*pt) => {
                                 Some(Some(*pt))
+                            }
+                            Some(pt) if force_budget_recover => {
+                                tracing::info!(
+                                    session_id = %session_id,
+                                    prompt_tokens = pt,
+                                    truncated = history_truncated,
+                                    "Summarization spawn with unavailable meter after hard-budget recover"
+                                );
+                                Some(None)
                             }
                             Some(pt) => {
                                 tracing::info!(
@@ -301,20 +317,21 @@ async fn process_stream_to_channel(
                                 );
                                 None
                             }
-                            None if history_truncated => Some(None),
+                            None if history_truncated || force_budget_recover => Some(None),
                             None => None,
                         };
                         if let Some(meter) = pt_for_summary {
                             let sum_session_id = session_id.clone();
                             let sum_state = state.clone();
                             let summary_tx = tx.clone();
+                            let force_summarize = force_budget_recover;
                             tokio::spawn(async move {
                                 match crate::handlers::summarization::trigger_summarization(
                                     &sum_session_id,
                                     &sum_state,
                                     meter,
-                                    false,
-                                    history_truncated,
+                                    force_summarize,
+                                    history_truncated || force_summarize,
                                 )
                                 .await
                                 {

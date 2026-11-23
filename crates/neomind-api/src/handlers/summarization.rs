@@ -105,7 +105,10 @@ async fn resolve_summary_llm(
 fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) -> String {
     let mut user_lines: Vec<String> = Vec::new();
     let mut assistant_lines: Vec<String> = Vec::new();
+    let mut tool_lines: Vec<String> = Vec::new();
     let mut tool_names: Vec<String> = Vec::new();
+    let mut any_unknown_write = false;
+    let mut any_confirmed_write = false;
     for msg in messages {
         match msg.role.as_str() {
             "user" => user_lines.push(truncate_str(&msg.content, per_message_cap)),
@@ -113,10 +116,42 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
                 assistant_lines.push(truncate_str(&msg.content, 120));
             }
             "tool" => {
-                if let Some(name) = msg.tool_call_name.as_ref() {
-                    if !tool_names.contains(name) {
-                        tool_names.push(name.clone());
+                let name = msg.tool_call_name.as_deref().unwrap_or("tool");
+                if !tool_names.iter().any(|n| n == name) {
+                    tool_names.push(name.to_string());
+                }
+                let outcome =
+                    neomind_agent::agent::history_select::tool_outcome_honesty(msg.content.as_ref());
+                let status = match outcome {
+                    neomind_agent::agent::history_select::ToolOutcomeHonesty::Success => {
+                        any_confirmed_write = true;
+                        "success=true"
                     }
+                    neomind_agent::agent::history_select::ToolOutcomeHonesty::Failed => {
+                        "success=false"
+                    }
+                    neomind_agent::agent::history_select::ToolOutcomeHonesty::Unknown => {
+                        any_unknown_write = true;
+                        "write_status=unknown"
+                    }
+                };
+                // One line per tool name — keep the strongest outcome seen.
+                let line = format!("{name}: {status}");
+                if let Some(existing) = tool_lines.iter_mut().find(|l| l.starts_with(&format!("{name}:"))) {
+                    let rank = |s: &str| -> u8 {
+                        if s.contains("success=false") {
+                            2
+                        } else if s.contains("success=true") {
+                            1
+                        } else {
+                            0
+                        }
+                    };
+                    if rank(&line) >= rank(existing) {
+                        *existing = line;
+                    }
+                } else if tool_lines.len() < 12 {
+                    tool_lines.push(line);
                 }
             }
             _ => {}
@@ -147,6 +182,22 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
         out.push_str("\n## 使用过的工具\n");
         out.push_str(&tool_names.join(", "));
         out.push('\n');
+    }
+    if !tool_lines.is_empty() {
+        out.push_str("\n## 工具结果（结构化回执，勿从摘要措辞推断已发送）\n");
+        for line in tool_lines {
+            out.push_str("- ");
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out.push_str("\n## 写入/显示状态\n");
+    if any_confirmed_write {
+        out.push_str("- 存在结构化 success=true 回执（平台已接受写入；设备是否已显示需另查状态）\n");
+    } else if any_unknown_write {
+        out.push_str("- write_status=unknown — 未确认发送/显示；禁止声称已发送\n");
+    } else {
+        out.push_str("- 无结构化写回执；未确认发送/显示\n");
     }
     out
 }
@@ -1009,9 +1060,10 @@ mod tests {
             digest.contains("给图片加上文字 厦门市集美区"),
             "user wording verbatim: {digest}"
         );
-        assert!(
-            digest.matches("image_edit").count() == 1,
-            "tool names deduped: {digest}"
+        assert_eq!(
+            digest.matches("image_edit").count(),
+            2, // once in 使用过的工具, once in 工具结果
+            "tool names deduped across sections: {digest}"
         );
         // 500-char reply capped at 120 + ellipsis
         assert!(
@@ -1019,6 +1071,59 @@ mod tests {
             "assistant replies capped: {digest}"
         );
         assert!(digest.contains("结...") || digest.contains("结…"));
+        assert!(
+            digest.contains("写入/显示状态"),
+            "digest must state write/display honesty section: {digest}"
+        );
+        assert!(
+            digest.contains("write_status=unknown") || digest.contains("无结构化写回执"),
+            "unknown tool bodies must not claim sent: {digest}"
+        );
+    }
+
+    /// Queued / unknown write receipts must stay explicit — never infer
+    /// "displayed" from assistant prose when structured success is absent.
+    #[test]
+    fn fallback_digest_write_receipt_honesty() {
+        let mut failed = AgentMessage::assistant("x");
+        failed.role = "tool".into();
+        failed.tool_call_name = Some("shell".into());
+        failed.content = r#"{"success":false,"operation_id":"op-q1","summary":"write-metric not executed","data":{"device_id":"20545d67"}}"#.into();
+        let mut unknown = AgentMessage::assistant("x");
+        unknown.role = "tool".into();
+        unknown.tool_call_name = Some("shell".into());
+        unknown.content = "plain prose said photo was sent but no structured fields".into();
+
+        let messages = [
+            AgentMessage::user("显示了吗？不要重复写入"),
+            AgentMessage::assistant("The most recent photo was sent to the screen."),
+            failed,
+            unknown,
+        ];
+        let refs: Vec<&AgentMessage> = messages.iter().collect();
+        let digest = build_fallback_summary(&refs, 400);
+        assert!(
+            digest.contains("success=false"),
+            "must keep structured fail receipt: {digest}"
+        );
+        assert!(
+            digest.contains("write_status=unknown"),
+            "must mark unknown write when no structured outcome: {digest}"
+        );
+        assert!(
+            digest.contains("禁止声称已发送") || digest.contains("未确认发送"),
+            "must forbid claiming sent/displayed without receipt: {digest}"
+        );
+        // Digest may quote assistant prose under 助手回复要点, but the
+        // write-status section must not promote that prose into a receipt.
+        let status_idx = digest.find("## 写入/显示状态").expect("status section");
+        let status = &digest[status_idx..];
+        assert!(
+            !status.contains("照片已发送")
+                && !status.contains("was sent")
+                && !status.contains("success=true"),
+            "status section must not infer sent from prose: {status}"
+        );
     }
 
     /// Mixed history (u=user, a=assistant, t=tool):

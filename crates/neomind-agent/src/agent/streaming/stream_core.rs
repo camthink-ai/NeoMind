@@ -260,6 +260,9 @@ pub(super) async fn prepare_turn_history_and_budget(
         if built.pressure || built.latest_tool_feedback_dropped {
             llm_interface.mark_history_truncated();
         }
+        if built.auto_recover_attempted && built.latest_tool_feedback_dropped {
+            llm_interface.mark_hard_budget_auto_recover_exhausted();
+        }
         if built.latest_tool_feedback_dropped {
             llm_interface.mark_history_window_dropped_latest_feedback();
         }
@@ -715,6 +718,7 @@ pub(super) fn drive_react_stream(
             // attached to the final assistant message — never merged into
             // the reply text (user feedback 2026-10-10).
             let mut turn_system_notes: Vec<String> = Vec::new();
+            let mut hard_budget_degrade_note_sent = false;
 
             // Every guard decision lands here as a structured event, so a
             // turn can be summarized and guard hit rates aggregated instead
@@ -785,13 +789,20 @@ pub(super) fn drive_react_stream(
 
                     let history_for_llm: Vec<neomind_core::Message> = {
                         // Build context with the same budget-managed context
-                        // builder as the initial call.
+                        // builder as the initial call. Outer builder may
+                        // auto-recover once before marking drop.
                         let (compacted, outer_feedback_dropped) = turn_context.build_for_llm(&state_guard.memory, effective_max, &llm_interface);
                         if outer_feedback_dropped {
                             // Tool-capable request follows: feed the assemble gate so tools
                             // are refused when the newest tool feedback was evicted (the inner
-                            // selector cannot see the loss).
+                            // selector cannot see the loss). At most one user-visible note.
                             llm_interface.mark_history_window_dropped_latest_feedback();
+                            if !hard_budget_degrade_note_sent {
+                                hard_budget_degrade_note_sent = true;
+                                let note = "Context hard-budget could not keep the latest tool feedback after one automatic compress/recover. Tools are paused for this turn so the model cannot act without feedback. Write/send status is unconfirmed unless a prior receipt exists — do not claim displayed/sent. Literal <tool_call> text is not a real call. Compact the session or continue after compression.".to_string();
+                                turn_system_notes.push(note.clone());
+                                yield AgentEvent::system_note(note);
+                            }
                         }
                         compacted.iter().map(|msg| {
                             if !guide_recovery_this_round { return msg.to_core(); }

@@ -25,11 +25,15 @@ pub(crate) fn build_context_window_with_summary(
 }
 
 /// Context-window build outcome. `latest_tool_feedback_dropped` is set when
-/// hard-budget eviction removed the newest complete assistant+tool group.
+/// hard-budget eviction removed the newest complete assistant+tool group
+/// **after** at most one automatic recover attempt.
 pub(crate) struct ContextWindowBuild {
     pub messages: Vec<AgentMessage>,
     pub pressure: bool,
     pub latest_tool_feedback_dropped: bool,
+    /// True when the builder ran one compress/digest reassembly before
+    /// deciding whether to keep or drop latest tool feedback.
+    pub auto_recover_attempted: bool,
 }
 
 pub(crate) fn build_context_window_with_summary_tracked(
@@ -103,8 +107,10 @@ pub(crate) fn build_context_window_with_summary_marked(
         || summary_tokens > max_tokens;
 
     // Build context window from filtered messages
-    let (mut result, latest_tool_feedback_dropped) =
-        build_context_window_with_config_marked(&filtered, history_budget, &config);
+    let built = build_context_window_with_config_build(&filtered, history_budget, &config);
+    let mut result = built.messages;
+    let latest_tool_feedback_dropped = built.latest_tool_feedback_dropped;
+    let auto_recover_attempted = built.auto_recover_attempted;
 
     // Inject summary as a system message at the beginning (after any existing system messages)
     if let Some(summary_text) = summary {
@@ -122,8 +128,9 @@ pub(crate) fn build_context_window_with_summary_marked(
 
     ContextWindowBuild {
         messages: result,
-        pressure,
+        pressure: pressure || auto_recover_attempted,
         latest_tool_feedback_dropped,
+        auto_recover_attempted,
     }
 }
 
@@ -149,64 +156,350 @@ pub fn build_context_window_with_config(
     build_context_window_with_config_marked(messages, max_tokens, config).0
 }
 
+/// Unmarked helper kept for call sites that only need `(messages, dropped)`.
+fn build_context_window_with_config_marked(
+    messages: &[AgentMessage],
+    max_tokens: usize,
+    config: &CompactionConfig,
+) -> (Vec<AgentMessage>, bool) {
+    let built = build_context_window_with_config_build(messages, max_tokens, config);
+    (built.messages, built.latest_tool_feedback_dropped)
+}
+
 fn agent_group_is_complete_tool_interaction(group: &[AgentMessage]) -> bool {
     let has_tool = group.iter().any(|m| m.role == "tool");
     let has_assistant = group.iter().any(|m| m.role == "assistant");
     has_tool && has_assistant
 }
 
-fn latest_complete_tool_fingerprint(messages: &[AgentMessage]) -> Option<String> {
-    let groups = partition_agent_groups(messages);
-    groups
-        .iter()
-        .rev()
-        .find(|g| agent_group_is_complete_tool_interaction(g))
-        .map(|g| {
-            g.iter()
-                .map(|m| format!("{}:{}", m.role, m.content.len()))
-                .collect::<Vec<_>>()
-                .join("|")
-        })
+fn latest_complete_tool_result(messages: &[AgentMessage]) -> Option<&AgentMessage> {
+    // Walk backward: find a tool message whose preceding contiguous tools are
+    // introduced by an assistant (complete interaction).
+    let mut i = messages.len();
+    while i > 0 {
+        let end = i - 1;
+        if messages[end].role != "tool" {
+            i = end;
+            continue;
+        }
+        let mut start = end;
+        while start > 0 && messages[start - 1].role == "tool" {
+            start -= 1;
+        }
+        if start > 0 && messages[start - 1].role == "assistant" {
+            return Some(&messages[end]);
+        }
+        i = start;
+    }
+    None
 }
 
-fn build_context_window_with_config_marked(
+/// Whether `selected` still carries the input's latest complete tool feedback
+/// (exact body or same tool name after honesty compress / stub).
+fn agent_latest_tool_feedback_survives(input: &[AgentMessage], selected: &[AgentMessage]) -> bool {
+    let Some(fb) = latest_complete_tool_result(input) else {
+        return true;
+    };
+    if selected
+        .iter()
+        .any(|m| m.role == "tool" && m.content.as_ref() == fb.content.as_ref())
+    {
+        return true;
+    }
+    let name = fb.tool_call_name.as_deref();
+    let groups = partition_agent_groups(selected);
+    groups.iter().rev().any(|g| {
+        agent_group_is_complete_tool_interaction(g)
+            && g.iter().any(|m| {
+                m.role == "tool"
+                    && (name.is_some_and(|n| m.tool_call_name.as_deref() == Some(n))
+                        || m.content.contains("[truncated")
+                        || m.content.contains("[unknown: need details"))
+            })
+    })
+}
+
+fn log_hard_budget_shares(
+    max_tokens: usize,
+    messages: &[AgentMessage],
+    auto_recover: bool,
+    dropped: bool,
+) {
+    let mut user_tokens = 0usize;
+    let mut tool_tokens = 0usize;
+    let mut assistant_tokens = 0usize;
+    let mut system_tokens = 0usize;
+    let mut latest_tool_tokens = 0usize;
+    if let Some(fb) = latest_complete_tool_result(messages) {
+        latest_tool_tokens = estimate_message_tokens(fb);
+    }
+    for m in messages {
+        let t = estimate_message_tokens(m);
+        match m.role.as_str() {
+            "user" => user_tokens += t,
+            "tool" => tool_tokens += t,
+            "assistant" => assistant_tokens += t,
+            "system" => system_tokens += t,
+            _ => {}
+        }
+    }
+    tracing::info!(
+        category = "context",
+        budget = max_tokens,
+        user_tokens,
+        tool_tokens,
+        assistant_tokens,
+        system_tokens,
+        latest_tool_tokens,
+        auto_recover,
+        dropped,
+        "hard_budget_share"
+    );
+}
+
+/// Compress tool bodies inside a group so it fits `max_tokens` (honesty rules).
+fn compress_agent_tool_group(
+    group: &[AgentMessage],
+    max_tokens: usize,
+) -> Option<Vec<AgentMessage>> {
+    if max_tokens == 0 {
+        return None;
+    }
+    let mut out = group.to_vec();
+    for _ in 0..8 {
+        let cost: usize = out.iter().map(estimate_message_tokens).sum();
+        if cost <= max_tokens {
+            return Some(out);
+        }
+        let Some(idx) = out
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == "tool")
+            .max_by_key(|(_, m)| estimate_message_tokens(m))
+            .map(|(i, _)| i)
+        else {
+            break;
+        };
+        let name = out[idx].tool_call_name.as_deref().unwrap_or("tool");
+        let body = out[idx].content.as_ref();
+        let target_chars = (body.chars().count() / 2).max(120);
+        let compressed =
+            crate::agent::history_select::compress_agent_tool_body(name, body, target_chars);
+        if compressed.as_str() == body {
+            let stub = crate::agent::history_select::stub_agent_tool_body(name, body);
+            if stub.as_str() == body {
+                break;
+            }
+            out[idx].content = stub.into();
+        } else {
+            out[idx].content = compressed.into();
+        }
+    }
+    let cost: usize = out.iter().map(estimate_message_tokens).sum();
+    if cost <= max_tokens {
+        return Some(out);
+    }
+    for msg in &mut out {
+        if msg.role == "tool" {
+            let name = msg.tool_call_name.as_deref().unwrap_or("tool");
+            let stub =
+                crate::agent::history_select::stub_agent_tool_body(name, msg.content.as_ref());
+            msg.content = stub.into();
+        }
+    }
+    let cost: usize = out.iter().map(estimate_message_tokens).sum();
+    (cost <= max_tokens).then_some(out)
+}
+
+/// Digest an older tool/assistant group into a short non-executable stub.
+/// Never claims a write was sent unless structured success is present.
+fn digest_older_group(group: &[AgentMessage]) -> Vec<AgentMessage> {
+    let mut out = Vec::new();
+    for msg in group {
+        match msg.role.as_str() {
+            "user" | "system" => out.push(msg.clone()),
+            "tool" => {
+                let name = msg.tool_call_name.as_deref().unwrap_or("tool");
+                let outcome =
+                    crate::agent::history_select::tool_outcome_honesty(msg.content.as_ref());
+                let status = match outcome {
+                    crate::agent::history_select::ToolOutcomeHonesty::Success => {
+                        "success=true (structured)"
+                    }
+                    crate::agent::history_select::ToolOutcomeHonesty::Failed => {
+                        "success=false (structured)"
+                    }
+                    crate::agent::history_select::ToolOutcomeHonesty::Unknown => {
+                        "write_status=unknown — do not claim sent/displayed"
+                    }
+                };
+                let stub = format!(
+                    "[compacted older tool] Previously called {name}. {status}. Full body omitted for hard budget; do not repeat or replay writes."
+                );
+                out.push(AgentMessage {
+                    content: stub.into(),
+                    ..msg.clone()
+                });
+            }
+            "assistant" => {
+                let preview: String = msg.content.chars().take(80).collect();
+                out.push(AgentMessage {
+                    content: format!("[compacted older assistant] {preview}…").into(),
+                    tool_calls: None,
+                    ..msg.clone()
+                });
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// One automatic recover: reserve latest tool feedback (compress if needed),
+/// digest older bulky groups, keep recent users/system. Does **not** execute
+/// tools or replay writes — pure reassembly of the request window.
+fn auto_recover_keep_latest_feedback(
     messages: &[AgentMessage],
     max_tokens: usize,
+) -> Vec<AgentMessage> {
+    let groups = partition_agent_groups(messages);
+    let latest_idx = groups
+        .iter()
+        .rposition(|g| agent_group_is_complete_tool_interaction(g));
+
+    let mut selected: Vec<Option<Vec<AgentMessage>>> = vec![None; groups.len()];
+    let mut used = 0usize;
+
+    // Reserve latest complete tool interaction first (compress to fit).
+    if let Some(idx) = latest_idx {
+        let group = &groups[idx];
+        let cost: usize = group.iter().map(estimate_message_tokens).sum();
+        if cost <= max_tokens {
+            selected[idx] = Some(group.clone());
+            used = cost;
+        } else if let Some(compressed) = compress_agent_tool_group(group, max_tokens) {
+            used = compressed.iter().map(estimate_message_tokens).sum();
+            selected[idx] = Some(compressed);
+        }
+        // If still cannot reserve → leave empty; caller marks drop.
+    }
+
+    // Keep system + recent user groups next, then digest-fill older tool history.
+    for (i, group) in groups.iter().enumerate().rev() {
+        if selected[i].is_some() {
+            continue;
+        }
+        let is_critical = group.iter().any(|m| m.role == "system" || m.role == "user");
+        let candidate = if is_critical {
+            group.clone()
+        } else {
+            digest_older_group(group)
+        };
+        let cost: usize = candidate.iter().map(estimate_message_tokens).sum();
+        if used + cost <= max_tokens {
+            used += cost;
+            selected[i] = Some(candidate);
+        } else if is_critical {
+            // Users/system: try truncated form.
+            let truncated: Vec<AgentMessage> = candidate
+                .into_iter()
+                .map(|m| {
+                    if estimate_message_tokens(&m) > 200 {
+                        truncate_agent_message(&m, 200)
+                    } else {
+                        m
+                    }
+                })
+                .collect();
+            let cost: usize = truncated.iter().map(estimate_message_tokens).sum();
+            if used + cost <= max_tokens {
+                used += cost;
+                selected[i] = Some(truncated);
+            }
+        }
+    }
+
+    let mut out: Vec<AgentMessage> = selected.into_iter().flatten().flatten().collect();
+    let mut total: usize = out.iter().map(estimate_message_tokens).sum();
+    if total > max_tokens {
+        // Never evict the reserved latest tool group if present — drop older
+        // digested assistant/tool stubs first, then users last.
+        evict_until_fits(&mut out, &mut total, max_tokens, |m| {
+            m.role != "system"
+                && m.role != "user"
+                && !m.content.contains("[unknown: need details")
+                && !m.content.contains("[truncated evidence]")
+                && m.role != "tool"
+        });
+        // If still over, evict digested stubs including non-latest tools.
+        let latest_name =
+            latest_complete_tool_result(messages).and_then(|m| m.tool_call_name.clone());
+        evict_until_fits(&mut out, &mut total, max_tokens, |m| {
+            m.role != "system"
+                && m.role != "user"
+                && !(m.role == "tool"
+                    && latest_name
+                        .as_deref()
+                        .is_some_and(|n| m.tool_call_name.as_deref() == Some(n)))
+        });
+        evict_until_fits(&mut out, &mut total, max_tokens, |m| m.role != "system");
+    }
+    out
+}
+
+fn select_window_prefer_latest_feedback(
+    working: &[AgentMessage],
+    max_tokens: usize,
     config: &CompactionConfig,
-) -> (Vec<AgentMessage>, bool) {
-    // Step 0: STALE cached read-back windows are previewed before the
-    // token estimate (scoped to this round's feature only — ordinary tool
-    // results keep their budget-driven behavior; the newest window stays
-    // intact so multi-window analysis can still synthesize).
-    let preprocessed = super::super::context::preview_stale_cached_windows(messages);
-    let messages = preprocessed.as_slice();
+    total_tokens: usize,
+) -> Vec<AgentMessage> {
+    let groups = partition_agent_groups(working);
+    let latest_idx = groups
+        .iter()
+        .rposition(|g| agent_group_is_complete_tool_interaction(g));
 
-    // Step 1: Calculate total tokens without any further compaction
-    let total_tokens: usize = messages.iter().map(estimate_message_tokens).sum();
-
-    // Step 2: Only compact tool results if we're actually over budget
-    let working = if config.compact_tool_results && total_tokens > max_tokens {
-        compact_tool_results_stream_with_config(messages, config)
-    } else {
-        messages.to_vec()
-    };
-
-    // Select newest groups first so an assistant tool-call and its tool
-    // results are kept or dropped together (never an orphan tool return).
-    let groups = partition_agent_groups(&working);
-    let mut selected_groups: Vec<Vec<AgentMessage>> = Vec::new();
-    let mut current_tokens = 0;
+    let mut selected: Vec<Option<Vec<AgentMessage>>> = vec![None; groups.len()];
+    let mut used = 0usize;
     let mut kept_message_count = 0usize;
 
-    for group in groups.into_iter().rev() {
-        let mut finalized: Vec<AgentMessage> = group
-            .into_iter()
+    // Phase 1: reserve latest complete tool interaction (compress if needed).
+    if let Some(idx) = latest_idx {
+        let finalized: Vec<AgentMessage> = groups[idx]
+            .iter()
             .map(|msg| {
-                let msg_tokens = estimate_message_tokens(&msg);
+                let msg_tokens = estimate_message_tokens(msg);
                 if total_tokens > max_tokens && msg_tokens > config.max_message_length {
-                    truncate_agent_message(&msg, config.max_message_length)
+                    truncate_agent_message(msg, config.max_message_length)
                 } else {
-                    msg
+                    msg.clone()
+                }
+            })
+            .collect();
+        let cost: usize = finalized.iter().map(estimate_message_tokens).sum();
+        if cost <= max_tokens {
+            kept_message_count += finalized.len();
+            used = cost;
+            selected[idx] = Some(finalized);
+        } else if let Some(compressed) = compress_agent_tool_group(&groups[idx], max_tokens) {
+            kept_message_count += compressed.len();
+            used = compressed.iter().map(estimate_message_tokens).sum();
+            selected[idx] = Some(compressed);
+        }
+    }
+
+    // Phase 2: newest-first fill for remaining groups (user/system preferred).
+    for (i, group) in groups.iter().enumerate().rev() {
+        if selected[i].is_some() {
+            continue;
+        }
+        let mut finalized: Vec<AgentMessage> = group
+            .iter()
+            .map(|msg| {
+                let msg_tokens = estimate_message_tokens(msg);
+                if total_tokens > max_tokens && msg_tokens > config.max_message_length {
+                    truncate_agent_message(msg, config.max_message_length)
+                } else {
+                    msg.clone()
                 }
             })
             .collect();
@@ -219,33 +512,33 @@ fn build_context_window_with_config_marked(
         let is_recent = kept_message_count < config.min_recent_messages;
         let should_keep = group_priority >= MessagePriority::User || is_recent;
 
-        if !should_keep && current_tokens + group_tokens > max_tokens {
+        if !should_keep && used + group_tokens > max_tokens {
             continue;
         }
-
-        current_tokens += group_tokens;
+        if used + group_tokens > max_tokens && group_priority < MessagePriority::User {
+            continue;
+        }
+        used += group_tokens;
         kept_message_count += finalized.len();
-        selected_groups.push(std::mem::take(&mut finalized));
+        selected[i] = Some(std::mem::take(&mut finalized));
     }
 
-    selected_groups.reverse();
-    let mut selected_messages: Vec<AgentMessage> = selected_groups.into_iter().flatten().collect();
-
-    let latest_before = latest_complete_tool_fingerprint(&selected_messages);
-
-    // [hard budget] System/user messages bypass the per-message budget check
-    // by design (priority keep) — but on very long sessions the kept set
-    // alone could exceed max_tokens, and the oversized prompt then hard-fails
-    // at the LLM. Enforce the budget by evicting until it fits. System
-    // messages are never evicted (platform prompt). User messages carry the
-    // conversation's exact wording (instructions to reproduce verbatim), so
-    // they are evicted LAST: pass 1 drops older assistant/tool messages,
-    // pass 2 touches user messages only when nothing else remains.
-    //
-    // When eviction removes the newest complete tool interaction, mark it
-    // (warn + pressure) so callers / prompt_capture can see the drop.
+    let mut selected_messages: Vec<AgentMessage> =
+        selected.into_iter().flatten().flatten().collect();
     let mut total: usize = selected_messages.iter().map(estimate_message_tokens).sum();
     if total > max_tokens {
+        // Evict older assistant/tool first; never prefer dropping the reserved
+        // latest tool name while other filler remains.
+        let latest_name =
+            latest_complete_tool_result(working).and_then(|m| m.tool_call_name.clone());
+        evict_until_fits(&mut selected_messages, &mut total, max_tokens, |m| {
+            m.role != "system"
+                && m.role != "user"
+                && !(m.role == "tool"
+                    && latest_name
+                        .as_deref()
+                        .is_some_and(|n| m.tool_call_name.as_deref() == Some(n)))
+        });
         evict_until_fits(&mut selected_messages, &mut total, max_tokens, |m| {
             m.role != "system" && m.role != "user"
         });
@@ -253,21 +546,67 @@ fn build_context_window_with_config_marked(
             m.role != "system"
         });
     }
+    selected_messages
+}
 
-    let latest_after = latest_complete_tool_fingerprint(&selected_messages);
-    let dropped = match (&latest_before, &latest_after) {
-        (Some(before), Some(after)) => before != after,
-        (Some(_), None) => true,
-        _ => false,
+fn build_context_window_with_config_build(
+    messages: &[AgentMessage],
+    max_tokens: usize,
+    config: &CompactionConfig,
+) -> ContextWindowBuild {
+    // Step 0: STALE cached read-back windows are previewed before the
+    // token estimate (scoped to this round's feature only — ordinary tool
+    // results keep their budget-driven behavior; the newest window stays
+    // intact so multi-window analysis can still synthesize).
+    let preprocessed = super::super::context::preview_stale_cached_windows(messages);
+    let input = preprocessed.as_slice();
+
+    // Step 1: Calculate total tokens without any further compaction
+    let total_tokens: usize = input.iter().map(estimate_message_tokens).sum();
+
+    // Step 2: Only compact tool results if we're actually over budget
+    let working = if config.compact_tool_results && total_tokens > max_tokens {
+        compact_tool_results_stream_with_config(input, config)
+    } else {
+        input.to_vec()
     };
+
+    // Prefer reserving the newest complete tool interaction (compress before
+    // drop) so follow-up turns keep the facts needed to continue.
+    let selected_messages =
+        select_window_prefer_latest_feedback(&working, max_tokens, config, total_tokens);
+
+    let mut dropped = !agent_latest_tool_feedback_survives(input, &selected_messages);
+    let mut auto_recover_attempted = false;
+    let mut final_messages = selected_messages;
+
+    // On first loss of critical feedback: one automatic compress/digest
+    // reassembly before no_tools degrade. Never executes tools or replays writes.
     if dropped {
-        tracing::warn!(
-            category = "context",
-            "hard_budget_dropped_latest_tool_feedback"
-        );
+        auto_recover_attempted = true;
+        tracing::info!(category = "context", "hard_budget_auto_recover_attempt");
+        let recovered = auto_recover_keep_latest_feedback(input, max_tokens);
+        if agent_latest_tool_feedback_survives(input, &recovered) {
+            tracing::info!(category = "context", "hard_budget_auto_recover_ok");
+            final_messages = recovered;
+            dropped = false;
+        } else {
+            final_messages = recovered;
+            tracing::warn!(
+                category = "context",
+                "hard_budget_dropped_latest_tool_feedback"
+            );
+        }
     }
 
-    (selected_messages, dropped)
+    log_hard_budget_shares(max_tokens, input, auto_recover_attempted, dropped);
+
+    ContextWindowBuild {
+        messages: final_messages,
+        pressure: total_tokens > max_tokens || auto_recover_attempted,
+        latest_tool_feedback_dropped: dropped,
+        auto_recover_attempted,
+    }
 }
 
 /// Get the priority for an AgentMessage role.
@@ -557,8 +896,8 @@ impl TurnContext {
     }
     /// Build the LLM history window. The returned bool is
     /// [`ContextWindowBuild::latest_tool_feedback_dropped`]: hard-budget
-    /// eviction removed the newest complete tool group. Callers feeding a
-    /// TOOL-CAPABLE request MUST forward it via
+    /// eviction removed the newest complete tool group **after** at most one
+    /// auto-recover. Callers feeding a TOOL-CAPABLE request MUST forward it via
     /// [`crate::llm::LlmInterface::mark_history_window_dropped_latest_feedback`]
     /// so the assemble gate refuses tools — the inner history selector sees
     /// only this already-trimmed window and would vacuously pass. Summary-only
@@ -572,6 +911,9 @@ impl TurnContext {
         let built = self.build_marked(messages, budget);
         if built.pressure || built.latest_tool_feedback_dropped {
             llm.mark_history_truncated();
+        }
+        if built.auto_recover_attempted && built.latest_tool_feedback_dropped {
+            llm.mark_hard_budget_auto_recover_exhausted();
         }
         (built.messages, built.latest_tool_feedback_dropped)
     }
@@ -714,19 +1056,163 @@ mod tests {
         // Tiny budget: soft keep may retain recent groups, hard eviction then
         // drops assistant/tool including possibly the latest complete group.
         let budget = 400usize;
-        let (out, dropped) = build_context_window_with_config_marked(&messages, budget, &config);
-        let has_latest = out.iter().any(|m| m.content.as_ref() == latest_tool);
-        if !has_latest {
+        let built = build_context_window_with_config_build(&messages, budget, &config);
+        let survives = agent_latest_tool_feedback_survives(&messages, &built.messages);
+        assert_eq!(
+            built.latest_tool_feedback_dropped, !survives,
+            "drop flag must track survival after at most one auto-recover"
+        );
+        if !survives {
             assert!(
-                dropped,
-                "when latest tool group is gone, latest_tool_feedback_dropped must be true"
+                built.auto_recover_attempted,
+                "drop must follow one auto-recover attempt"
             );
-        } else {
-            // Budget may still fit the latest group — either outcome is fine
-            // as long as the flag stays honest.
-            assert!(!dropped || has_latest);
         }
-        assert!(out.iter().map(estimate_message_tokens).sum::<usize>() <= budget);
+        assert!(
+            built
+                .messages
+                .iter()
+                .map(estimate_message_tokens)
+                .sum::<usize>()
+                <= budget
+        );
+    }
+
+    #[test]
+    fn hard_budget_auto_recovers_before_no_tools_on_t4_shaped_history() {
+        // Same-budget repro: large older list/get/history results + a small
+        // latest tool feedback. Pre-fix outer eviction dropped latest →
+        // no_tools; post-fix must auto-recover once and keep feedback.
+        let mut messages = vec![AgentMessage::user(
+            "把 device 200366 最近一张照片发送给 device 20545d67 显示",
+        )];
+        for (name, body) in [
+            (
+                "shell",
+                format!("{{\"devices\":[{}]}}", "\"dev\",".repeat(4_000)),
+            ),
+            (
+                "shell",
+                format!(
+                    "{{\"id\":\"200366\",\"history\":[{}]}}",
+                    "\"img\",".repeat(4_000)
+                ),
+            ),
+            (
+                "shell",
+                format!(
+                    "{{\"id\":\"20545d67\",\"type\":\"eink\"}} {}",
+                    "meta,".repeat(2_000)
+                ),
+            ),
+        ] {
+            messages.push(AgentMessage::assistant(format!("calling {name}")));
+            messages.push(AgentMessage::tool_result(name, body));
+        }
+        let latest = r#"{"success":false,"summary":"write-metric not executed","operation_id":"op-t4-1","data":{"device_id":"20545d67"}}"#;
+        messages.push(AgentMessage::assistant("attempt write"));
+        messages.push(AgentMessage::tool_result("shell", latest));
+        messages.push(AgentMessage::user("没有发送 重试一下"));
+
+        let config = CompactionConfig::for_context_size(8_000);
+        // Budget large enough for users + compressed latest, not raw history.
+        let latest_tokens =
+            estimate_message_tokens(messages.iter().rev().find(|m| m.role == "tool").unwrap());
+        let user_tokens: usize = messages
+            .iter()
+            .filter(|m| m.role == "user")
+            .map(estimate_message_tokens)
+            .sum();
+        let budget = (user_tokens + latest_tokens + 800).min(6_000);
+        let built = build_context_window_with_config_build(&messages, budget, &config);
+        assert!(
+            !built.latest_tool_feedback_dropped,
+            "auto-recover must keep latest tool feedback before no_tools degrade"
+        );
+        assert!(
+            agent_latest_tool_feedback_survives(&messages, &built.messages),
+            "final window must carry latest feedback (exact or honesty-compressed)"
+        );
+        let joined: String = built
+            .messages
+            .iter()
+            .map(|m| m.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("20545d67")
+                || joined.contains("op-t4-1")
+                || joined.contains("success=false"),
+            "must prefer write-receipt facts, got: {}",
+            joined.chars().take(500).collect::<String>()
+        );
+        assert!(
+            !joined.contains("photo was sent") && !joined.contains("已发送"),
+            "must not invent sent wording from digest"
+        );
+        assert!(
+            built
+                .messages
+                .iter()
+                .map(estimate_message_tokens)
+                .sum::<usize>()
+                <= budget
+        );
+    }
+
+    #[test]
+    fn hard_budget_auto_recover_still_too_small_stops_without_loop() {
+        // Latest feedback itself cannot fit even after stub → one recover then drop.
+        // Keep a protected user message so the window is non-empty while the
+        // tool group is still too large for a near-zero budget.
+        let huge_latest = format!("{{\"success\":false,\"data\":\"{}\"}}", "X".repeat(50_000));
+        let messages = vec![
+            AgentMessage::user("继续写到屏幕，不要重复写入"),
+            AgentMessage::assistant("latest call with tools"),
+            AgentMessage::tool_result("shell", huge_latest),
+        ];
+        let config = CompactionConfig::for_context_size(8_000);
+        // Smaller than assistant+stub tool group; user may still fit alone.
+        let budget = 40usize;
+        let built = build_context_window_with_config_build(&messages, budget, &config);
+        assert!(
+            built.latest_tool_feedback_dropped,
+            "when stubbed latest still cannot fit, drop after recover"
+        );
+        assert!(
+            built.auto_recover_attempted,
+            "drop path must attempt exactly one auto-recover first"
+        );
+        // Second build must not invent a compress loop — still one attempt max.
+        let again = build_context_window_with_config_build(&messages, budget, &config);
+        assert!(again.auto_recover_attempted);
+        assert!(again.latest_tool_feedback_dropped);
+        assert!(
+            again
+                .messages
+                .iter()
+                .map(estimate_message_tokens)
+                .sum::<usize>()
+                <= budget
+        );
+        // No tool execution / write replay — window is reassembly only.
+        assert!(
+            again.messages.iter().all(|m| m.role != "tool" || {
+                m.content.contains("[truncated")
+                    || m.content.contains("[compacted")
+                    || m.content.contains("[unknown")
+            }) || again.messages.iter().all(|m| m.role != "tool")
+        );
+    }
+
+    #[test]
+    fn short_context_control_skips_extra_summarization() {
+        let messages = vec![AgentMessage::user("hi"), AgentMessage::assistant("hello")];
+        let config = CompactionConfig::for_context_size(8_000);
+        let built = build_context_window_with_config_build(&messages, 8_000, &config);
+        assert!(!built.auto_recover_attempted);
+        assert!(!built.latest_tool_feedback_dropped);
+        assert_eq!(built.messages.len(), 2);
     }
 
     #[test]
@@ -750,12 +1236,9 @@ mod tests {
 
         let ctx = TurnContext::new(None, None);
         let built = ctx.build_marked(&messages, 400);
-        let has_latest = built
-            .messages
-            .iter()
-            .any(|m| m.content.as_ref() == latest_tool);
+        let survives = agent_latest_tool_feedback_survives(&messages, &built.messages);
         assert_eq!(
-            built.latest_tool_feedback_dropped, !has_latest,
+            built.latest_tool_feedback_dropped, !survives,
             "drop flag must track the latest tool group exactly"
         );
         // Generous budget keeps the latest group → flag must be false.

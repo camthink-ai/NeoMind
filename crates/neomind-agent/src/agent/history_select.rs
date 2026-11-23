@@ -426,6 +426,59 @@ fn has_orphan_tool_result(messages: &[Message]) -> bool {
     false
 }
 
+/// Honesty-preserving compress of a native `role=tool` body (AgentMessage path).
+///
+/// Wraps the same needles / unknown-write rules as the inner selector so the
+/// outer hard-budget recover path never invents a "sent" outcome.
+pub(crate) fn compress_agent_tool_body(tool_name: &str, body: &str, max_chars: usize) -> String {
+    let header = format!("[Tool: {tool_name} returned]");
+    let mut msg = Message::user(format!("{header}\n{body}"));
+    // Budget applies to the full headed message; keep at least the header.
+    let headed_cap = max_chars
+        .saturating_add(header.chars().count() + 1)
+        .max(120);
+    compress_tool_result_message(&mut msg, headed_cap);
+    let text = msg.content.as_text();
+    text.strip_prefix(&format!("{header}\n"))
+        .or_else(|| text.strip_prefix(&header))
+        .unwrap_or(text.as_str())
+        .to_string()
+}
+
+/// Last-resort stub for an AgentMessage tool body under outer hard budget.
+pub(crate) fn stub_agent_tool_body(tool_name: &str, body: &str) -> String {
+    let header = format!("[Tool: {tool_name} returned]");
+    let mut msg = Message::user(format!("{header}\n{body}"));
+    stub_tool_result_message(&mut msg);
+    let text = msg.content.as_text();
+    text.strip_prefix(&format!("{header}\n"))
+        .or_else(|| text.strip_prefix(&header))
+        .unwrap_or(text.as_str())
+        .to_string()
+}
+
+/// Structured write / tool outcome for digests — never infer "sent" from prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolOutcomeHonesty {
+    Success,
+    Failed,
+    Unknown,
+}
+
+/// Classify tool-result text for digests / system notes (outer JSON only).
+pub fn tool_outcome_honesty(body: &str) -> ToolOutcomeHonesty {
+    let needles = extract_evidence_needles(body);
+    match evidence_bool(&needles, "success") {
+        Some("true") => ToolOutcomeHonesty::Success,
+        Some("false") => ToolOutcomeHonesty::Failed,
+        _ => match evidence_bool(&needles, "failed") {
+            Some("true") => ToolOutcomeHonesty::Failed,
+            Some("false") => ToolOutcomeHonesty::Success,
+            _ => ToolOutcomeHonesty::Unknown,
+        },
+    }
+}
+
 /// Compress tool-result bodies inside a group so the group fits `max_tokens`.
 /// Preserves tool name lines and evidence needles (device ids, error/status/ACK).
 fn compress_group(group: &[Message], max_tokens: usize) -> Option<Vec<Message>> {
