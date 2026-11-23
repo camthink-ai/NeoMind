@@ -10,10 +10,12 @@
 //! their previous contract unchanged.
 //!
 //! ## Auth input (must NOT self-approve)
-//! Classification uses **only** independent assistant judgment text already
-//! in the conversation. Pending `message send` `--title` / `--body` are the
-//! delivery payload under review — merging them into the verdict lets a title
-//! of "疑似赌博" approve its own send.
+//! Classification uses **only** the latest non-empty independent assistant
+//! judgment already in the conversation (this event). Pending `message send`
+//! `--title` / `--body` never enter the verdict — merging them lets a title of
+//! "疑似赌博" approve its own send. Prior-event conclusions must not interfere.
+//! Conditional policy restatements ("如果发现赌博，就需要告警") are not a
+//! judgment for this frame and must not authorize delivery.
 
 use neomind_core::message::{Message, MessageRole};
 use neomind_storage::{AiAgent, NotifyOn};
@@ -91,25 +93,78 @@ pub(crate) fn pending_message_send_command(tool_name: &str, args: &Value) -> Opt
     }
 }
 
-/// Independent judgment text already produced this turn (assistant messages).
-/// Deliberately ignores any pending send title/body.
+/// Latest non-empty assistant text for this event, with policy conditionals
+/// stripped. Deliberately ignores pending send title/body and older turns.
 pub(crate) fn judgment_context_from_messages(messages: &[Message]) -> String {
-    let mut parts: Vec<String> = messages
+    let raw = messages
         .iter()
         .rev()
         .filter(|m| m.role == MessageRole::Assistant)
-        .take(3)
         .map(|m| m.content.as_text())
-        .filter(|t| !t.trim().is_empty())
-        .collect();
-    parts.reverse();
-    parts.join("\n")
+        .find(|t| !t.trim().is_empty())
+        .unwrap_or_default();
+    strip_policy_conditionals(&raw)
+}
+
+/// Verdict for the gate: classify only the latest independent assistant
+/// judgment. Older conclusions (e.g. a prior dark / inconclusive event) must
+/// not override or authorize this event's send.
+pub(crate) fn judgment_verdict_from_messages(messages: &[Message]) -> JudgmentVerdict {
+    classify_judgment(&judgment_context_from_messages(messages))
+}
+
+/// Drop IF/THEN policy restatements that describe when to alert in general,
+/// not a finding for the current frame.
+fn strip_policy_conditionals(text: &str) -> String {
+    let mut kept = String::new();
+    for part in text.split_inclusive(['。', '！', '？', '.', '!', '?', '\n']) {
+        let trimmed = part.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if is_conditional_policy_sentence(trimmed) {
+            continue;
+        }
+        kept.push_str(part);
+    }
+    kept
+}
+
+fn is_conditional_policy_sentence(sentence: &str) -> bool {
+    let t = sentence
+        .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '：' | ':' | '（' | '('));
+    let lower = t.to_ascii_lowercase();
+    if t.starts_with("如果")
+        || t.starts_with("假如")
+        || t.starts_with("倘若")
+        || t.starts_with('若')
+        || lower.starts_with("if ")
+        || lower.starts_with("if,")
+        || lower.starts_with("if\t")
+    {
+        return true;
+    }
+    // Labeled policy: "规则：如果发现赌博，就需要告警"
+    if let Some(idx) = t.find("如果") {
+        let after = &t[idx..];
+        if after.contains('就') || after.contains('则') {
+            return true;
+        }
+    }
+    if let Some(idx) = lower.find("if ") {
+        let after = &lower[idx..];
+        if after.contains(" then ") || after.contains(", alert") || after.contains(" alert") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Classify judgment text into a verdict. Prefer insufficient / not-met over
 /// met when both families appear (negation and dark-frame honesty win).
 pub(crate) fn classify_judgment(text: &str) -> JudgmentVerdict {
-    let lower = text.to_lowercase();
+    let cleaned = strip_policy_conditionals(text);
+    let lower = cleaned.to_lowercase();
 
     if contains_any(&lower, INSUFFICIENT_EVIDENCE_MARKERS) {
         return JudgmentVerdict::InsufficientEvidence;
@@ -165,8 +220,7 @@ pub(crate) fn judgment_deny_for_tool_call(
         return None;
     }
     let _command = pending_message_send_command(tool_name, args)?;
-    let context = judgment_context_from_messages(messages);
-    let verdict = classify_judgment(&context);
+    let verdict = judgment_verdict_from_messages(messages);
     if judgment_allows_send(verdict) {
         None
     } else {
@@ -401,6 +455,68 @@ mod tests {
                 .as_ref()
                 .is_some_and(|r| r.contains("no valid judgment")),
             "title must not self-approve; got {blocked:?}"
+        );
+    }
+
+    #[test]
+    fn policy_conditional_is_not_a_this_event_judgment() {
+        // Acceptance #4: restating the alert rule is not a verdict for this frame.
+        assert_eq!(
+            classify_judgment("如果发现赌博，就需要告警"),
+            JudgmentVerdict::Unknown
+        );
+        assert_eq!(
+            classify_judgment("规则：如果发现赌博，就需要告警。"),
+            JudgmentVerdict::Unknown
+        );
+        // Affirmative finding for this frame still classifies as met.
+        assert_eq!(
+            classify_judgment("有人且疑似赌博，应告警。"),
+            JudgmentVerdict::CriteriaMet
+        );
+        // Policy + real finding in one message: finding remains after strip.
+        assert_eq!(
+            classify_judgment("规则：如果发现赌博，就需要告警。本帧有人且疑似赌博，应告警。"),
+            JudgmentVerdict::CriteriaMet
+        );
+    }
+
+    #[test]
+    fn prior_inconclusive_must_not_override_this_event_positive() {
+        // Acceptance #5: latest assistant message is this event's judgment.
+        let msgs = vec![
+            Message::new(MessageRole::Assistant, "画面过暗，证据不足，无法判断。"),
+            Message::new(MessageRole::Assistant, "有人且疑似赌博，应告警。"),
+        ];
+        assert_eq!(
+            judgment_verdict_from_messages(&msgs),
+            JudgmentVerdict::CriteriaMet
+        );
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let cmd = r#"neomind message send --title "Alert" --body "details""#;
+        assert!(
+            judgment_send_deny_reason(&agent, cmd, &msgs).is_none(),
+            "prior dark conclusion must not block this event's positive judgment"
+        );
+    }
+
+    #[test]
+    fn prior_positive_must_not_authorize_policy_only_send() {
+        let msgs = vec![
+            Message::new(MessageRole::Assistant, "有人且疑似赌博，应告警。"),
+            Message::new(MessageRole::Assistant, "如果发现赌博，就需要告警"),
+        ];
+        assert_eq!(
+            judgment_verdict_from_messages(&msgs),
+            JudgmentVerdict::Unknown
+        );
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let cmd = r#"neomind message send --title "疑似赌博" --body "x""#;
+        assert!(
+            judgment_send_deny_reason(&agent, cmd, &msgs)
+                .as_ref()
+                .is_some_and(|r| r.contains("no valid judgment")),
+            "prior met + policy-only latest must not authorize send"
         );
     }
 

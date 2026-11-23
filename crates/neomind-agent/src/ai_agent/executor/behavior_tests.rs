@@ -3388,6 +3388,128 @@ async fn judgment_gate_blocks_title_only_self_approval() {
     );
 }
 
+/// Acceptance #4: assistant restates policy ("如果发现赌博，就需要告警") with
+/// no this-event judgment → FakeNotifySink receives 0.
+#[tokio::test]
+async fn judgment_gate_blocks_policy_conditional_without_verdict() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"巡检提醒\" --body \"规则复述\""
+            }),
+        )
+        .with_text("如果发现赌博，就需要告警"),
+        MockResponse::text("done"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "仅当有人且疑似赌博时再告警".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (_dp, er) = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
+            rt_dyn,
+            "exec-judgment-policy-only",
+            None,
+        )
+        .await
+        .expect("policy-only run Completes with send blocked");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "policy conditional without this-event judgment must deliver 0"
+    );
+    assert!(
+        er.actions_executed.iter().any(|a| {
+            !a.success
+                && a.result
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Judgment notify gate")
+        }),
+        "gate must block policy-only send; actions={:?}",
+        er.actions_executed
+    );
+}
+
+/// Acceptance #5: prior event inconclusive (dark); this event has a valid
+/// positive judgment → deliver 1; old conclusion must not interfere.
+#[tokio::test]
+async fn judgment_gate_allows_positive_after_prior_inconclusive() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        // Prior-event style conclusion still present in the transcript.
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind device get cam-1"
+            }),
+        )
+        .with_text("画面过暗，证据不足，无法判断。"),
+        // This event: clear positive judgment + send.
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"Alert\" --body \"details\""
+            }),
+        )
+        .with_text("有人且疑似赌博，应告警。"),
+        MockResponse::text("已发送告警。"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "仅当有人且疑似赌博时再告警".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let _ = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
+            rt_dyn,
+            "exec-judgment-prior-dark-this-met",
+            None,
+        )
+        .await
+        .expect("this-event positive after prior dark must Complete");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "prior inconclusive must not interfere with this event's positive judgment"
+    );
+}
+
 /// Change B: non-gambling task + clear positive judgment → sink 1.
 #[tokio::test]
 async fn judgment_gate_allows_non_gambling_positive_judgment() {
