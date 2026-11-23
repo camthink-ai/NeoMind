@@ -172,9 +172,27 @@ fn agent_group_is_complete_tool_interaction(group: &[AgentMessage]) -> bool {
     has_tool && has_assistant
 }
 
-fn latest_complete_tool_result(messages: &[AgentMessage]) -> Option<&AgentMessage> {
-    // Walk backward: find a tool message whose preceding contiguous tools are
-    // introduced by an assistant (complete interaction).
+/// Stable lineage marker stamped into honesty-compressed copies of the
+/// latest tool result so survive-checks cannot confuse an older same-named
+/// tool (e.g. earlier `shell`) with the newest call.
+const FEEDBACK_SRC_MARKER: &str = "feedback_src=";
+
+fn feedback_src_marker(src_index: usize) -> String {
+    format!("{FEEDBACK_SRC_MARKER}{src_index}")
+}
+
+fn stamp_feedback_src(body: &str, src_index: usize) -> String {
+    let marker = feedback_src_marker(src_index);
+    if body.contains(&marker) {
+        return body.to_string();
+    }
+    format!("{body}\n{marker}")
+}
+
+/// Latest complete tool result plus its absolute index in `messages`.
+fn latest_complete_tool_result_indexed(
+    messages: &[AgentMessage],
+) -> Option<(usize, &AgentMessage)> {
     let mut i = messages.len();
     while i > 0 {
         let end = i - 1;
@@ -187,17 +205,27 @@ fn latest_complete_tool_result(messages: &[AgentMessage]) -> Option<&AgentMessag
             start -= 1;
         }
         if start > 0 && messages[start - 1].role == "assistant" {
-            return Some(&messages[end]);
+            return Some((end, &messages[end]));
         }
         i = start;
     }
     None
 }
 
-/// Whether `selected` still carries the input's latest complete tool feedback
-/// (exact body or same tool name after honesty compress / stub).
+fn latest_complete_tool_result(messages: &[AgentMessage]) -> Option<&AgentMessage> {
+    latest_complete_tool_result_indexed(messages).map(|(_, m)| m)
+}
+
+/// Whether `selected` still carries the input's **same** latest tool feedback.
+///
+/// Survives only when:
+/// - the original body is present verbatim, or
+/// - a honesty-compressed/stubbed copy stamped with that call's `feedback_src=<index>`.
+///
+/// Same tool name alone, or a generic `[truncated` / `[unknown` marker from an
+/// older call, does **not** count.
 fn agent_latest_tool_feedback_survives(input: &[AgentMessage], selected: &[AgentMessage]) -> bool {
-    let Some(fb) = latest_complete_tool_result(input) else {
+    let Some((src_index, fb)) = latest_complete_tool_result_indexed(input) else {
         return true;
     };
     if selected
@@ -206,17 +234,10 @@ fn agent_latest_tool_feedback_survives(input: &[AgentMessage], selected: &[Agent
     {
         return true;
     }
-    let name = fb.tool_call_name.as_deref();
-    let groups = partition_agent_groups(selected);
-    groups.iter().rev().any(|g| {
-        agent_group_is_complete_tool_interaction(g)
-            && g.iter().any(|m| {
-                m.role == "tool"
-                    && (name.is_some_and(|n| m.tool_call_name.as_deref() == Some(n))
-                        || m.content.contains("[truncated")
-                        || m.content.contains("[unknown: need details"))
-            })
-    })
+    let marker = feedback_src_marker(src_index);
+    selected
+        .iter()
+        .any(|m| m.role == "tool" && m.content.contains(marker.as_str()))
 }
 
 fn log_hard_budget_shares(
@@ -258,13 +279,22 @@ fn log_hard_budget_shares(
 }
 
 /// Compress tool bodies inside a group so it fits `max_tokens` (honesty rules).
+/// When `feedback_src` is set, stamp lineage onto every tool body so survive
+/// checks can prove this is a compress of that specific call.
 fn compress_agent_tool_group(
     group: &[AgentMessage],
     max_tokens: usize,
+    feedback_src: Option<usize>,
 ) -> Option<Vec<AgentMessage>> {
     if max_tokens == 0 {
         return None;
     }
+    let stamp = |body: String| -> String {
+        match feedback_src {
+            Some(idx) => stamp_feedback_src(&body, idx),
+            None => body,
+        }
+    };
     let mut out = group.to_vec();
     for _ in 0..8 {
         let cost: usize = out.iter().map(estimate_message_tokens).sum();
@@ -290,9 +320,9 @@ fn compress_agent_tool_group(
             if stub.as_str() == body {
                 break;
             }
-            out[idx].content = stub.into();
+            out[idx].content = stamp(stub).into();
         } else {
-            out[idx].content = compressed.into();
+            out[idx].content = stamp(compressed).into();
         }
     }
     let cost: usize = out.iter().map(estimate_message_tokens).sum();
@@ -304,7 +334,7 @@ fn compress_agent_tool_group(
             let name = msg.tool_call_name.as_deref().unwrap_or("tool");
             let stub =
                 crate::agent::history_select::stub_agent_tool_body(name, msg.content.as_ref());
-            msg.content = stub.into();
+            msg.content = stamp(stub).into();
         }
     }
     let cost: usize = out.iter().map(estimate_message_tokens).sum();
@@ -313,6 +343,8 @@ fn compress_agent_tool_group(
 
 /// Digest an older tool/assistant group into a short non-executable stub.
 /// Never claims a write was sent unless structured success is present.
+/// Does **not** stamp `feedback_src` — older digests must not masquerade as
+/// the latest tool feedback.
 fn digest_older_group(group: &[AgentMessage]) -> Vec<AgentMessage> {
     let mut out = Vec::new();
     for msg in group {
@@ -363,21 +395,24 @@ fn auto_recover_keep_latest_feedback(
     max_tokens: usize,
 ) -> Vec<AgentMessage> {
     let groups = partition_agent_groups(messages);
-    let latest_idx = groups
+    let latest_group_idx = groups
         .iter()
         .rposition(|g| agent_group_is_complete_tool_interaction(g));
+    let feedback_src = latest_complete_tool_result_indexed(messages).map(|(i, _)| i);
+    let src_marker = feedback_src.map(feedback_src_marker);
 
     let mut selected: Vec<Option<Vec<AgentMessage>>> = vec![None; groups.len()];
     let mut used = 0usize;
 
     // Reserve latest complete tool interaction first (compress to fit).
-    if let Some(idx) = latest_idx {
+    if let Some(idx) = latest_group_idx {
         let group = &groups[idx];
         let cost: usize = group.iter().map(estimate_message_tokens).sum();
         if cost <= max_tokens {
             selected[idx] = Some(group.clone());
             used = cost;
-        } else if let Some(compressed) = compress_agent_tool_group(group, max_tokens) {
+        } else if let Some(compressed) = compress_agent_tool_group(group, max_tokens, feedback_src)
+        {
             used = compressed.iter().map(estimate_message_tokens).sum();
             selected[idx] = Some(compressed);
         }
@@ -422,25 +457,14 @@ fn auto_recover_keep_latest_feedback(
     let mut out: Vec<AgentMessage> = selected.into_iter().flatten().flatten().collect();
     let mut total: usize = out.iter().map(estimate_message_tokens).sum();
     if total > max_tokens {
-        // Never evict the reserved latest tool group if present — drop older
-        // digested assistant/tool stubs first, then users last.
+        // Prefer keeping the lineage-stamped latest feedback (not any same-named tool).
+        let protects_latest = |m: &AgentMessage| {
+            src_marker
+                .as_ref()
+                .is_some_and(|mk| m.role == "tool" && m.content.contains(mk.as_str()))
+        };
         evict_until_fits(&mut out, &mut total, max_tokens, |m| {
-            m.role != "system"
-                && m.role != "user"
-                && !m.content.contains("[unknown: need details")
-                && !m.content.contains("[truncated evidence]")
-                && m.role != "tool"
-        });
-        // If still over, evict digested stubs including non-latest tools.
-        let latest_name =
-            latest_complete_tool_result(messages).and_then(|m| m.tool_call_name.clone());
-        evict_until_fits(&mut out, &mut total, max_tokens, |m| {
-            m.role != "system"
-                && m.role != "user"
-                && !(m.role == "tool"
-                    && latest_name
-                        .as_deref()
-                        .is_some_and(|n| m.tool_call_name.as_deref() == Some(n)))
+            m.role != "system" && m.role != "user" && !protects_latest(m)
         });
         evict_until_fits(&mut out, &mut total, max_tokens, |m| m.role != "system");
     }
@@ -452,18 +476,22 @@ fn select_window_prefer_latest_feedback(
     max_tokens: usize,
     config: &CompactionConfig,
     total_tokens: usize,
+    // Absolute index of the latest tool result in the input history
+    // (pre-soft-compact). Used for `feedback_src` lineage stamps.
+    feedback_src: Option<usize>,
 ) -> Vec<AgentMessage> {
     let groups = partition_agent_groups(working);
-    let latest_idx = groups
+    let latest_group_idx = groups
         .iter()
         .rposition(|g| agent_group_is_complete_tool_interaction(g));
+    let src_marker = feedback_src.map(feedback_src_marker);
 
     let mut selected: Vec<Option<Vec<AgentMessage>>> = vec![None; groups.len()];
     let mut used = 0usize;
     let mut kept_message_count = 0usize;
 
     // Phase 1: reserve latest complete tool interaction (compress if needed).
-    if let Some(idx) = latest_idx {
+    if let Some(idx) = latest_group_idx {
         let finalized: Vec<AgentMessage> = groups[idx]
             .iter()
             .map(|msg| {
@@ -480,7 +508,9 @@ fn select_window_prefer_latest_feedback(
             kept_message_count += finalized.len();
             used = cost;
             selected[idx] = Some(finalized);
-        } else if let Some(compressed) = compress_agent_tool_group(&groups[idx], max_tokens) {
+        } else if let Some(compressed) =
+            compress_agent_tool_group(&groups[idx], max_tokens, feedback_src)
+        {
             kept_message_count += compressed.len();
             used = compressed.iter().map(estimate_message_tokens).sum();
             selected[idx] = Some(compressed);
@@ -527,17 +557,19 @@ fn select_window_prefer_latest_feedback(
         selected.into_iter().flatten().flatten().collect();
     let mut total: usize = selected_messages.iter().map(estimate_message_tokens).sum();
     if total > max_tokens {
-        // Evict older assistant/tool first; never prefer dropping the reserved
-        // latest tool name while other filler remains.
-        let latest_name =
-            latest_complete_tool_result(working).and_then(|m| m.tool_call_name.clone());
+        // Evict older assistant/tool first; protect lineage-stamped latest only
+        // (not every same-named tool).
+        let protects_latest = |m: &AgentMessage| {
+            src_marker
+                .as_ref()
+                .is_some_and(|mk| m.role == "tool" && m.content.contains(mk.as_str()))
+                || (feedback_src.is_none()
+                    && m.role == "tool"
+                    && latest_complete_tool_result(working)
+                        .is_some_and(|fb| m.content.as_ref() == fb.content.as_ref()))
+        };
         evict_until_fits(&mut selected_messages, &mut total, max_tokens, |m| {
-            m.role != "system"
-                && m.role != "user"
-                && !(m.role == "tool"
-                    && latest_name
-                        .as_deref()
-                        .is_some_and(|n| m.tool_call_name.as_deref() == Some(n)))
+            m.role != "system" && m.role != "user" && !protects_latest(m)
         });
         evict_until_fits(&mut selected_messages, &mut total, max_tokens, |m| {
             m.role != "system" && m.role != "user"
@@ -572,9 +604,16 @@ fn build_context_window_with_config_build(
     };
 
     // Prefer reserving the newest complete tool interaction (compress before
-    // drop) so follow-up turns keep the facts needed to continue.
-    let selected_messages =
-        select_window_prefer_latest_feedback(&working, max_tokens, config, total_tokens);
+    // drop) so follow-up turns keep the facts needed to continue. Stamp with
+    // the INPUT latest index so survive-checks stay identity-true.
+    let feedback_src = latest_complete_tool_result_indexed(input).map(|(i, _)| i);
+    let selected_messages = select_window_prefer_latest_feedback(
+        &working,
+        max_tokens,
+        config,
+        total_tokens,
+        feedback_src,
+    );
 
     let mut dropped = !agent_latest_tool_feedback_survives(input, &selected_messages);
     let mut auto_recover_attempted = false;
@@ -1075,6 +1114,63 @@ mod tests {
                 .map(estimate_message_tokens)
                 .sum::<usize>()
                 <= budget
+        );
+    }
+
+    #[test]
+    fn older_same_named_shell_does_not_count_as_latest_feedback() {
+        // Counterexample: first shell = read ok, second shell = write fail.
+        // If only the first remains, latest feedback must be reported lost —
+        // same tool name / generic [truncated must not false-survive.
+        let read_ok = r#"{"success":true,"data":{"devices":[{"id":"200366"}]}}"#;
+        let write_fail = r#"{"success":false,"summary":"write-metric not executed","operation_id":"op-write-2","data":{"device_id":"20545d67"}}"#;
+        let input = vec![
+            AgentMessage::user("把 200366 照片发到 20545d67"),
+            AgentMessage::assistant("listing"),
+            AgentMessage::tool_result("shell", read_ok),
+            AgentMessage::assistant("writing"),
+            AgentMessage::tool_result("shell", write_fail),
+        ];
+        // Selected window keeps only the earlier read — mimics hard eviction
+        // that dropped the write result while leaving an older same-named tool.
+        let selected = vec![
+            AgentMessage::user("把 200366 照片发到 20545d67"),
+            AgentMessage::assistant("listing"),
+            AgentMessage::tool_result("shell", read_ok),
+        ];
+        assert!(
+            !agent_latest_tool_feedback_survives(&input, &selected),
+            "older same-named shell must not count as latest write feedback"
+        );
+        // Truncated older body with generic markers still must not survive.
+        let fake_truncated = vec![
+            AgentMessage::user("把 200366 照片发到 20545d67"),
+            AgentMessage::assistant("listing"),
+            AgentMessage::tool_result(
+                "shell",
+                "[Tool result]\n[truncated evidence] success=true\n[truncated]",
+            ),
+        ];
+        assert!(
+            !agent_latest_tool_feedback_survives(&input, &fake_truncated),
+            "generic [truncated of an older call must not count as latest"
+        );
+        // Traceable compress of the SAME write result (stamped) does survive.
+        let src = latest_complete_tool_result_indexed(&input)
+            .map(|(i, _)| i)
+            .expect("latest index");
+        let stamped = stamp_feedback_src(
+            &crate::agent::history_select::stub_agent_tool_body("shell", write_fail),
+            src,
+        );
+        let recovered = vec![
+            AgentMessage::user("把 200366 照片发到 20545d67"),
+            AgentMessage::assistant("writing"),
+            AgentMessage::tool_result("shell", stamped),
+        ];
+        assert!(
+            agent_latest_tool_feedback_survives(&input, &recovered),
+            "lineage-stamped compress of the original latest must survive"
         );
     }
 

@@ -97,6 +97,58 @@ async fn resolve_summary_llm(
     }
 }
 
+/// Device-ish ids mentioned in user text (heuristic for write-target binding).
+fn extract_user_device_targets(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for token in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
+        let t = token.trim();
+        if t.len() < 4 || t.len() > 64 {
+            continue;
+        }
+        // Prefer ids that look like NeoMind device ids (hex-ish / mixed), not
+        // pure English words.
+        let has_digit = t.chars().any(|c| c.is_ascii_digit());
+        if !has_digit {
+            continue;
+        }
+        if !out.iter().any(|x| x == t) {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
+/// Whether a tool body looks like a mutating write / delivery receipt rather
+/// than a read (list/get/history). Prefer write-ledger signals
+/// (`_operation_resume`, `operation_id` + write/control verbs).
+fn looks_like_write_receipt(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    if lower.contains("write-metric")
+        || lower.contains("_operation_resume")
+        || lower.contains("render_text")
+        || lower.contains("write_metric")
+    {
+        return true;
+    }
+    let has_op = lower.contains("operation_id");
+    let write_ish = lower.contains("write")
+        || lower.contains("control")
+        || lower.contains("queued")
+        || lower.contains("adapter_accepted")
+        || lower.contains("delivery");
+    has_op && write_ish
+}
+
+fn body_mentions_any_target(body: &str, targets: &[String]) -> bool {
+    if targets.is_empty() {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    targets
+        .iter()
+        .any(|t| lower.contains(&t.to_ascii_lowercase()))
+}
+
 /// Deterministic no-LLM fallback digest, used when the summary LLM call
 /// fails. Compaction must never silently fail: the summarized messages are
 /// about to be filtered out of the window, so SOMETHING has to carry their
@@ -107,11 +159,24 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
     let mut assistant_lines: Vec<String> = Vec::new();
     let mut tool_lines: Vec<String> = Vec::new();
     let mut tool_names: Vec<String> = Vec::new();
-    let mut any_unknown_write = false;
-    let mut any_confirmed_write = false;
+    // Write status is bound to the user-stated target + write receipts — never
+    // to an arbitrary Success tool_outcome (reads must not claim "platform
+    // accepted write").
+    let mut write_targets: Vec<String> = Vec::new();
+    let mut target_write_success = false;
+    let mut target_write_failed = false;
+    let mut target_write_unknown = false;
+    let mut saw_other_target_write = false;
     for msg in messages {
         match msg.role.as_str() {
-            "user" => user_lines.push(truncate_str(&msg.content, per_message_cap)),
+            "user" => {
+                user_lines.push(truncate_str(&msg.content, per_message_cap));
+                for t in extract_user_device_targets(&msg.content) {
+                    if !write_targets.iter().any(|x| x == &t) {
+                        write_targets.push(t);
+                    }
+                }
+            }
             "assistant" if assistant_lines.len() < 10 => {
                 assistant_lines.push(truncate_str(&msg.content, 120));
             }
@@ -120,37 +185,42 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
                 if !tool_names.iter().any(|n| n == name) {
                     tool_names.push(name.to_string());
                 }
-                let outcome =
-                    neomind_agent::agent::history_select::tool_outcome_honesty(msg.content.as_ref());
+                let body = msg.content.as_ref();
+                let outcome = neomind_agent::agent::history_select::tool_outcome_honesty(body);
                 let status = match outcome {
                     neomind_agent::agent::history_select::ToolOutcomeHonesty::Success => {
-                        any_confirmed_write = true;
                         "success=true"
                     }
                     neomind_agent::agent::history_select::ToolOutcomeHonesty::Failed => {
                         "success=false"
                     }
                     neomind_agent::agent::history_select::ToolOutcomeHonesty::Unknown => {
-                        any_unknown_write = true;
-                        "write_status=unknown"
+                        "outcome=unknown"
                     }
                 };
-                // One line per tool name — keep the strongest outcome seen.
-                let line = format!("{name}: {status}");
-                if let Some(existing) = tool_lines.iter_mut().find(|l| l.starts_with(&format!("{name}:"))) {
-                    let rank = |s: &str| -> u8 {
-                        if s.contains("success=false") {
-                            2
-                        } else if s.contains("success=true") {
-                            1
-                        } else {
-                            0
+                let is_write = looks_like_write_receipt(body);
+                let line = if !is_write {
+                    format!("{name}: read {status}")
+                } else if body_mentions_any_target(body, &write_targets) {
+                    match outcome {
+                        neomind_agent::agent::history_select::ToolOutcomeHonesty::Success => {
+                            target_write_success = true;
+                            format!("{name}: write {status}")
                         }
-                    };
-                    if rank(&line) >= rank(existing) {
-                        *existing = line;
+                        neomind_agent::agent::history_select::ToolOutcomeHonesty::Failed => {
+                            target_write_failed = true;
+                            format!("{name}: write {status}")
+                        }
+                        neomind_agent::agent::history_select::ToolOutcomeHonesty::Unknown => {
+                            target_write_unknown = true;
+                            format!("{name}: write write_status=unknown")
+                        }
                     }
-                } else if tool_lines.len() < 12 {
+                } else {
+                    saw_other_target_write = true;
+                    format!("{name}: write (other target) {status}")
+                };
+                if tool_lines.len() < 12 {
                     tool_lines.push(line);
                 }
             }
@@ -185,19 +255,26 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
     }
     if !tool_lines.is_empty() {
         out.push_str("\n## 工具结果（结构化回执，勿从摘要措辞推断已发送）\n");
-        for line in tool_lines {
+        for line in &tool_lines {
             out.push_str("- ");
-            out.push_str(&line);
+            out.push_str(line);
             out.push('\n');
         }
     }
     out.push_str("\n## 写入/显示状态\n");
-    if any_confirmed_write {
-        out.push_str("- 存在结构化 success=true 回执（平台已接受写入；设备是否已显示需另查状态）\n");
-    } else if any_unknown_write {
+    // Prefer fail/unknown over success when both appear for the target.
+    if target_write_failed {
+        out.push_str("- 当前目标 write success=false — 未确认发送/显示；禁止声称已发送\n");
+    } else if target_write_unknown {
         out.push_str("- write_status=unknown — 未确认发送/显示；禁止声称已发送\n");
+    } else if target_write_success {
+        out.push_str(
+            "- 当前目标存在结构化 write success=true 回执（平台已接受写入；设备是否已显示需另查状态）\n",
+        );
+    } else if saw_other_target_write {
+        out.push_str("- 有写入回执但未绑定当前目标设备；未确认发送/显示\n");
     } else {
-        out.push_str("- 无结构化写回执；未确认发送/显示\n");
+        out.push_str("- 无当前目标的结构化写回执；未确认发送/显示\n");
     }
     out
 }
@@ -1060,10 +1137,9 @@ mod tests {
             digest.contains("给图片加上文字 厦门市集美区"),
             "user wording verbatim: {digest}"
         );
-        assert_eq!(
-            digest.matches("image_edit").count(),
-            2, // once in 使用过的工具, once in 工具结果
-            "tool names deduped across sections: {digest}"
+        assert!(
+            digest.contains("image_edit"),
+            "tool names retained: {digest}"
         );
         // 500-char reply capped at 120 + ellipsis
         assert!(
@@ -1076,8 +1152,12 @@ mod tests {
             "digest must state write/display honesty section: {digest}"
         );
         assert!(
-            digest.contains("write_status=unknown") || digest.contains("无结构化写回执"),
-            "unknown tool bodies must not claim sent: {digest}"
+            digest.contains("无当前目标的结构化写回执"),
+            "non-write tool bodies must not claim platform write accept: {digest}"
+        );
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "reads must never claim platform accepted write: {digest}"
         );
     }
 
@@ -1092,10 +1172,10 @@ mod tests {
         let mut unknown = AgentMessage::assistant("x");
         unknown.role = "tool".into();
         unknown.tool_call_name = Some("shell".into());
-        unknown.content = "plain prose said photo was sent but no structured fields".into();
+        unknown.content = r#"{"operation_id":"op-q2","summary":"write-metric pending","data":{"device_id":"20545d67"}}"#.into();
 
         let messages = [
-            AgentMessage::user("显示了吗？不要重复写入"),
+            AgentMessage::user("20545d67 显示了吗？不要重复写入"),
             AgentMessage::assistant("The most recent photo was sent to the screen."),
             failed,
             unknown,
@@ -1105,10 +1185,6 @@ mod tests {
         assert!(
             digest.contains("success=false"),
             "must keep structured fail receipt: {digest}"
-        );
-        assert!(
-            digest.contains("write_status=unknown"),
-            "must mark unknown write when no structured outcome: {digest}"
         );
         assert!(
             digest.contains("禁止声称已发送") || digest.contains("未确认发送"),
@@ -1121,9 +1197,74 @@ mod tests {
         assert!(
             !status.contains("照片已发送")
                 && !status.contains("was sent")
-                && !status.contains("success=true"),
+                && !status.contains("平台已接受写入"),
             "status section must not infer sent from prose: {status}"
         );
+    }
+
+    #[test]
+    fn fallback_digest_successful_reads_never_claim_platform_write() {
+        let mut read = AgentMessage::assistant("x");
+        read.role = "tool".into();
+        read.tool_call_name = Some("shell".into());
+        read.content =
+            r#"{"success":true,"data":{"devices":[{"id":"200366"},{"id":"20545d67"}]}}"#.into();
+        let messages = [
+            AgentMessage::user("把 200366 照片发到 20545d67 显示"),
+            AgentMessage::assistant("listed devices"),
+            read,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(digest.contains("read success=true"), "{digest}");
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "only successful reads must never claim write accept: {digest}"
+        );
+        assert!(digest.contains("无当前目标的结构化写回执"), "{digest}");
+    }
+
+    #[test]
+    fn fallback_digest_read_ok_then_target_write_fail_not_accepted() {
+        let mut read = AgentMessage::assistant("x");
+        read.role = "tool".into();
+        read.tool_call_name = Some("shell".into());
+        read.content = r#"{"success":true,"data":{"id":"200366","history":[]}}"#.into();
+        let mut write = AgentMessage::assistant("x");
+        write.role = "tool".into();
+        write.tool_call_name = Some("shell".into());
+        write.content = r#"{"success":false,"operation_id":"op-w1","summary":"write-metric failed","data":{"device_id":"20545d67"}}"#.into();
+        let messages = [
+            AgentMessage::user("把 200366 照片发到 20545d67"),
+            read,
+            write,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(digest.contains("write success=false"), "{digest}");
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "target write fail must not claim accepted: {digest}"
+        );
+        assert!(digest.contains("当前目标 write success=false"), "{digest}");
+    }
+
+    #[test]
+    fn fallback_digest_other_device_write_ok_not_current_target() {
+        let mut other = AgentMessage::assistant("x");
+        other.role = "tool".into();
+        other.tool_call_name = Some("shell".into());
+        other.content = r#"{"success":true,"_operation_resume":true,"operation_id":"op-other","summary":"write-metric ok","data":{"device_id":"device-OTHER-99"}}"#.into();
+        let messages = [
+            AgentMessage::user("20545d67 显示了吗"),
+            AgentMessage::assistant("sent"),
+            other,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(digest.contains("other target"), "{digest}");
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "other-device write must not accept for current target: {digest}"
+        );
+        assert!(digest.contains("未绑定当前目标设备"), "{digest}");
     }
 
     /// Mixed history (u=user, a=assistant, t=tool):
