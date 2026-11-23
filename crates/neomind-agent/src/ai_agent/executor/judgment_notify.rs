@@ -19,11 +19,14 @@ use neomind_core::message::{Message, MessageRole};
 use neomind_storage::{AiAgent, NotifyOn};
 use serde_json::Value;
 
-/// Inventory of `notify.on=Judgment` delivery entry points.
+/// Inventory of `notify.on=Judgment` delivery entry points (test-facing).
 ///
 /// Tool-loop paths (1–2) must share [`judgment_deny_for_tool_call`] in
 /// `tool_loop.rs` after CLI-domain → shell rewrite. Machinery paths (3–4)
 /// silence Judgment without the semantic gate (no agent-authored send).
+/// Kept under `cfg(test)` so `-D warnings` lib builds stay clean while the
+/// inventory remains the review checklist for shared-gate coverage.
+#[cfg(test)]
 pub(crate) const JUDGMENT_NOTIFY_ENTRY_POINTS: &[&str] = &[
     // (1) Direct shell: `neomind message send` / bare `message send`
     "tool_loop:shell.message_send",
@@ -171,7 +174,8 @@ pub(crate) fn judgment_deny_for_tool_call(
     }
 }
 
-/// Convenience for tests / call sites that already hold a shell command string.
+/// Convenience for tests that already hold a shell command string.
+#[cfg(test)]
 pub(crate) fn judgment_send_deny_reason(
     agent: &AiAgent,
     command: &str,
