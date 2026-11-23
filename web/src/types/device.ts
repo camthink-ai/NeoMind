@@ -225,6 +225,10 @@ export interface TelemetryDataResponse {
   pagination?: {
     offset: number
     limit: number
+    /**
+     * Points in the window on an offset page. On a cursor page the backend scans
+     * only up to the cursor, so this is the points strictly older than it.
+     */
     total: number
     /** Oldest timestamp on this page; pass as `cursor` for the next page. Null on the last page. */
     next_cursor?: number | null
