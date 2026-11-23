@@ -29,6 +29,7 @@ import { ChevronLeft, Send, Clock, Zap, Settings, Info, ChevronRight, X, Image a
 import { toast } from "@/components/ui/use-toast"
 import { formatTimestamp } from "@/lib/utils/format"
 import { useServerUrl } from "@/lib/server-url"
+import { resolveTelemetryPageTotal } from "@/lib/api/telemetry"
 import type { Device, DeviceType, CommandDefinition, TelemetryDataResponse, DeviceCurrentStateResponse } from "@/types"
 import { isBase64Image, getImageDataUrl } from "./utils"
 import { cn } from "@/lib/utils"
@@ -369,7 +370,10 @@ export function DeviceDetail({
     
   // Pagination info from API response
   const pagination = telemetryData?.pagination
-  const totalCount = pagination?.total ?? currentMetricData.length
+  // Cursor pages report only the points still to come; convert to the
+  // whole-window count the pager needs.
+  const totalCount =
+    resolveTelemetryPageTotal(pagination, currentPage, PAGE_SIZE) ?? currentMetricData.length
   const totalPages = Math.ceil(totalCount / PAGE_SIZE)
   const _hasNextPage = currentPage < totalPages
   const _hasPrevPage = currentPage > 1
@@ -378,8 +382,9 @@ export function DeviceDetail({
   const handlePageChange = async (newPage: number) => {
     if (!selectedMetric) return
     const offset = (newPage - 1) * PAGE_SIZE
-    // Sequential next-page: prefer next_cursor (O(1) seek). Arbitrary jumps
-    // still use storage-side offset (fixed — no more empty pages past 100).
+    // Sequential next-page: prefer next_cursor (bounds the scan to the older
+    // side and stays stable as new points arrive). Arbitrary jumps still use
+    // storage-side offset (fixed — no more empty pages past 100).
     const cursor =
       newPage === currentPage + 1
         ? telemetryData?.pagination?.next_cursor ?? undefined

@@ -13,8 +13,9 @@ pub(crate) const CONVERSATION_SUMMARY_PREFIX: &str = "[Summary of previous conve
 
 /// Internal hard-budget lineage stamp (`feedback_src=<index>`).
 ///
-/// Preferred location: `AgentMessage.tool_call_id` (body stays pristine).
-/// Legacy body-append form is still stripped in [`AgentMessage::to_core`].
+/// Lives on `AgentMessage.tool_call_id` of a tool message in a built request
+/// window — never in the body, which stays byte-identical to what the tool
+/// returned.
 pub(crate) const FEEDBACK_SRC_MARKER: &str = "feedback_src=";
 
 pub(crate) fn feedback_src_marker(src_index: usize) -> String {
@@ -27,28 +28,10 @@ pub(crate) fn stamp_feedback_src_id(msg: &mut AgentMessage, src_index: usize) {
         return;
     }
     msg.tool_call_id = Some(feedback_src_marker(src_index));
-    let clean = strip_feedback_src_lineage(msg.content.as_ref());
-    if clean.len() != msg.content.as_ref().len() {
-        msg.content = clean.to_string().into();
-    }
 }
 
 pub(crate) fn message_carries_feedback_src(msg: &AgentMessage, marker: &str) -> bool {
-    msg.role == "tool"
-        && (msg.tool_call_id.as_deref() == Some(marker) || msg.content.contains(marker))
-}
-
-/// Remove a trailing `\nfeedback_src=<digits>` lineage line (internal only).
-pub(crate) fn strip_feedback_src_lineage(body: &str) -> &str {
-    if let Some(idx) = body.rfind('\n') {
-        let last = body[idx + 1..].trim_end();
-        if let Some(num) = last.strip_prefix(FEEDBACK_SRC_MARKER) {
-            if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
-                return &body[..idx];
-            }
-        }
-    }
-    body
+    msg.role == "tool" && msg.tool_call_id.as_deref() == Some(marker)
 }
 
 /// Agent event emitted during streaming processing.
@@ -834,14 +817,7 @@ impl AgentMessage {
                                 let result_preview = tc
                                     .result
                                     .as_ref()
-                                    .map(|r| {
-                                        if let Some(s) = r.as_str() {
-                                            s.chars().take(120).collect::<String>()
-                                        } else {
-                                            let s = r.to_string();
-                                            s.chars().take(120).collect::<String>()
-                                        }
-                                    })
+                                    .map(tool_result_preview)
                                     .unwrap_or_default();
                                 if result_preview.is_empty() {
                                     format!("the {} tool with {}", tc.name, args_summary)
@@ -861,14 +837,14 @@ impl AgentMessage {
             "system" => Message::system(self.content.as_ref()),
             "tool" => {
                 // Tool result messages - include which tool was called.
-                // Strip hard-budget lineage stamps so structured JSON results
-                // stay parseable for the model (and request-shape tests).
-                let body = strip_feedback_src_lineage(self.content.as_ref());
+                // The body is passed through untouched: a lineage stamp lives
+                // on `tool_call_id` only, so a tool result whose text merely
+                // resembles one is never rewritten.
                 if let Some(ref tool_name) = self.tool_call_name {
-                    let tool_content = format!("[Tool: {tool_name} returned]\n{body}");
+                    let tool_content = format!("[Tool: {tool_name} returned]\n{}", self.content);
                     Message::user(&tool_content)
                 } else {
-                    Message::user(body)
+                    Message::user(self.content.as_ref())
                 }
             }
             _ => Message::user(self.content.as_ref()),
@@ -1060,6 +1036,20 @@ fn find_json_list<'a>(
         })
         .or_else(|| val.get("data").and_then(|v| v.as_array()))
         .or_else(|| val.as_array())
+}
+
+/// The part of a stored tool-call result that reaches the model: its first
+/// 120 characters, as rendered by [`AgentMessage::to_core`].
+///
+/// The full body travels in the paired `role=tool` message. The token
+/// estimate must price exactly this much of the stored copy — no more (a
+/// 310K-char result priced in full read a 28K-token history as 180K and
+/// cost the turn its tools), no less.
+pub fn tool_result_preview(result: &Value) -> String {
+    match result.as_str() {
+        Some(s) => s.chars().take(120).collect(),
+        None => result.to_string().chars().take(120).collect(),
+    }
 }
 
 /// Summarize tool call arguments into a concise string.

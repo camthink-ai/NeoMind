@@ -6,9 +6,9 @@ cursor:
 # T4 最近一次对话暴露的问题
 
 **采样：** 2026-11-23 ~13:00–13:07 Asia/Shanghai  
-**主机：** `ubuntu@43.132.189.162`（BatchMode SSH，只读；未 restart / 未改配置 / 未触碰 Mac `:29375`/`:29385`/`:18788`）  
+**主机：** T4 现场设备（BatchMode SSH，只读；未 restart / 未改配置 / 未触碰 Mac `:29375`/`:29385`/`:18788`）  
 **版本：** NeoMind **1.3.2**；Chat 模型本会话为 **SparkX2.6-1.7B** `@:29375`（`n_ctx=65536`）  
-**摘录：** [`internal/t4-latest-chat-ebc333d4-excerpt.json`](../internal/t4-latest-chat-ebc333d4-excerpt.json)  
+**摘录：** `internal/t4-latest-chat-ebc333d4-excerpt.json`（本地文件，未入库）  
 **关联计划：** [`vision-agent-fix-plan.md`](vision-agent-fix-plan.md)
 
 ---

@@ -11,7 +11,10 @@
 //!
 //! ## Auth source (last-line Verdict protocol — not substring / lexicon)
 //! Authorization reads **only the last non-empty line** of the latest
-//! assistant message. That line must **exactly** match one of:
+//! assistant message, with the tool-call payload removed first (every
+//! backend appends the native tool-call array to the response text, so the
+//! raw last line is the serialized call, never the verdict). That line must
+//! **exactly** match one of:
 //! `Verdict: criteria met` / `Verdict: criteria not met` /
 //! `Verdict: insufficient evidence` (case-insensitive; optional trailing
 //! period). Backtick-wrapped examples, bare labels, mid-message protocol
@@ -65,19 +68,64 @@ pub(crate) fn agent_uses_judgment_notify(agent: &AiAgent) -> bool {
     )
 }
 
+/// Outbound web tools a judgment-notify agent does not get by default.
+///
+/// Its verdict comes from the input attached to the run. A web search only
+/// gives a small model somewhere to hunt for what it believes is missing,
+/// and it leaves the site with the query — T4's three camera agents ran 233
+/// searches that carried their device IDs and the site name.
+pub(crate) const JUDGMENT_DEFAULT_OFF_TOOLS: &[&str] = &["web_search", "web_fetch"];
+
+/// True for a web tool on a judgment-notify agent whose allowlist does not
+/// name it. An explicit `allowed_tools` entry is the operator's word — it wins.
+pub(crate) fn judgment_tool_off_by_default(agent: &AiAgent, tool: &str) -> bool {
+    agent_uses_judgment_notify(agent)
+        && JUDGMENT_DEFAULT_OFF_TOOLS.contains(&tool)
+        && !agent
+            .tool_config
+            .as_ref()
+            .is_some_and(|config| config.allowed_tools.iter().any(|t| t == tool))
+}
+
 /// True when a shell command is (or wraps) `neomind message send`.
 pub(crate) fn is_message_send_command(command: &str) -> bool {
-    let lower = command.to_ascii_lowercase();
-    // Strip a leading `neomind` so both `neomind message send` and a bare
-    // `message send` (hallucinated CLI-domain rewrite) are recognized.
-    let trimmed = lower.trim();
-    let body = trimmed
-        .strip_prefix("neomind")
-        .map(str::trim_start)
-        .unwrap_or(trimmed);
-    body.starts_with("message send")
-        || body.contains(" message send ")
-        || body.contains("\nmessage send ")
+    // Exact argv through the tokenizer the shell tool dispatches with:
+    // whitespace runs, quoting and backslash escapes collapse to the same
+    // tokens, so `neomind  message   send` is not a different string.
+    if let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(command) {
+        if is_message_send_argv(&argv) {
+            return true;
+        }
+    }
+    // Real shell lines the argv tokenizer does not reduce to one `neomind`
+    // command (pipes, `;` / `&&` sequencing, env prefixes): scan the token
+    // stream for the adjacent `message send` pair.
+    message_send_in_token_stream(command)
+}
+
+/// `neomind message send …` or a bare `message send …` (hallucinated
+/// CLI-domain rewrite), compared as exact argv tokens.
+fn is_message_send_argv(argv: &[String]) -> bool {
+    let rest = if argv.first().map(String::as_str) == Some("neomind") {
+        &argv[1..]
+    } else {
+        argv
+    };
+    rest.first().map(String::as_str) == Some("message")
+        && rest.get(1).map(String::as_str) == Some("send")
+}
+
+/// Adjacent `message` `send` tokens once whitespace and shell separators
+/// (`;` `|` `&`) split the line and edge quotes are dropped.
+fn message_send_in_token_stream(command: &str) -> bool {
+    let tokens: Vec<String> = command
+        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&'))
+        .filter(|t| !t.is_empty())
+        .map(|t| t.trim_matches(['"', '\'']).to_ascii_lowercase())
+        .collect();
+    tokens
+        .windows(2)
+        .any(|pair| pair[0] == "message" && pair[1] == "send")
 }
 
 /// After tool_loop rewrite, return the shell command string if this call would
@@ -95,16 +143,62 @@ pub(crate) fn pending_message_send_command(tool_name: &str, args: &Value) -> Opt
     }
 }
 
-/// Latest non-empty assistant text for this event.
+/// Latest non-empty assistant prose for this event, with the tool-call
+/// payload removed (see [`assistant_prose`]).
 /// Deliberately ignores pending send title/body and older turns.
 pub(crate) fn judgment_context_from_messages(messages: &[Message]) -> String {
     messages
         .iter()
         .rev()
         .filter(|m| m.role == MessageRole::Assistant)
-        .map(|m| m.content.as_text())
-        .find(|t| !t.trim().is_empty())
+        .filter_map(|m| {
+            let text = m.content.as_text();
+            let prose = assistant_prose(&text);
+            (!prose.trim().is_empty()).then(|| prose.into_owned())
+        })
+        .next()
         .unwrap_or_default()
+}
+
+/// Assistant text with the tool-call payload removed, so the verdict is read
+/// from the model's own words and never from the serialized call.
+///
+/// Every backend appends the native tool-call array to the response text
+/// (ollama.rs / openai runtime.rs / llamacpp.rs "backward compat", no
+/// separator), and text-protocol models inline `<tool_calls>` / Hermes /
+/// qwen-coder syntax. Either lands after the verdict line, so the raw last
+/// line was `[{"id":…}]` and the gate denied every send — including a
+/// verdict that followed the protocol exactly.
+fn assistant_prose(text: &str) -> std::borrow::Cow<'_, str> {
+    if let Some(prose) = strip_trailing_native_tool_calls(text) {
+        return std::borrow::Cow::Borrowed(prose);
+    }
+    match crate::agent::tool_parser::parse_tool_calls(text) {
+        Ok((rest, calls)) if !calls.is_empty() => std::borrow::Cow::Owned(rest),
+        _ => std::borrow::Cow::Borrowed(text),
+    }
+}
+
+/// Remove the serialized native tool-call array a backend appends to the
+/// response text. Its start is the last `[{"` from which a tool-call array
+/// parses through to the very end — not simply the last `[`, which may
+/// belong to a nested list inside the call arguments. Up to 256 `[` from the
+/// end are tried: an alert body with a bracket of its own must not hide the
+/// verdict and cost a justified alert.
+fn strip_trailing_native_tool_calls(text: &str) -> Option<&str> {
+    text.rmatch_indices('[')
+        .take(256)
+        .filter_map(|(pos, _)| text[pos..].strip_prefix("[{\"").map(|_| pos))
+        .find_map(|pos| {
+            let tail = &text[pos..];
+            let calls = serde_json::from_str::<Vec<Value>>(tail).ok()?;
+            let is_tool_calls = !calls.is_empty()
+                && calls.iter().all(|call| {
+                    call.is_object()
+                        && (call.get("name").is_some() || call.get("function").is_some())
+                });
+            is_tool_calls.then(|| &text[..pos])
+        })
 }
 
 /// Verdict for the gate: parse a finished judgment label from the latest
@@ -148,27 +242,28 @@ pub(crate) fn judgment_allows_send(verdict: JudgmentVerdict) -> bool {
     matches!(verdict, JudgmentVerdict::CriteriaMet)
 }
 
+/// Leading marker of every judgment-gate deny reason. The tool loop keys on
+/// it to tell a gate block from a safety-policy block.
+pub(crate) const JUDGMENT_GATE_REASON_PREFIX: &str = "Judgment notify gate:";
+
 /// Human-readable block reason returned to the model (and tests).
 pub(crate) fn gate_block_reason(verdict: JudgmentVerdict) -> String {
     match verdict {
-        JudgmentVerdict::CriteriaNotMet => {
-            "Judgment notify gate: alert criteria not met — notification blocked \
+        JudgmentVerdict::CriteriaNotMet => format!(
+            "{JUDGMENT_GATE_REASON_PREFIX} alert criteria not met — notification blocked \
              (silence is the correct outcome)."
-                .to_string()
-        }
-        JudgmentVerdict::InsufficientEvidence => {
-            "Judgment notify gate: insufficient evidence to decide — notification \
+        ),
+        JudgmentVerdict::InsufficientEvidence => format!(
+            "{JUDGMENT_GATE_REASON_PREFIX} insufficient evidence to decide — notification \
              blocked."
-                .to_string()
-        }
-        JudgmentVerdict::Unknown => {
-            "Judgment notify gate: no valid judgment yet (need criteria met / not \
+        ),
+        JudgmentVerdict::Unknown => format!(
+            "{JUDGMENT_GATE_REASON_PREFIX} no valid judgment yet (need criteria met / not \
              met / insufficient evidence) — notification blocked."
-                .to_string()
-        }
+        ),
         JudgmentVerdict::CriteriaMet => {
             // Caller should not block on CriteriaMet; keep a defensive string.
-            "Judgment notify gate: criteria met".to_string()
+            format!("{JUDGMENT_GATE_REASON_PREFIX} criteria met")
         }
     }
 }
@@ -346,14 +441,141 @@ mod tests {
 
     #[test]
     fn detects_message_send_variants() {
-        assert!(is_message_send_command(
-            r#"neomind message send --title "t" --body "b""#
-        ));
-        assert!(is_message_send_command(
-            r#"message send --title "t" --body "b""#
-        ));
-        assert!(!is_message_send_command("neomind message list"));
-        assert!(!is_message_send_command("neomind device get cam-1"));
+        for cmd in [
+            r#"neomind message send --title "t" --body "b""#,
+            r#"message send --title "t" --body "b""#,
+            // Same argv once the shell tokenizer runs — must not read as a
+            // different command to the gate.
+            r#"neomind  message   send --title "t" --body "b""#,
+            "neomind\tmessage\tsend --title t --body b",
+            r#"neomind "message" send --title t --body b"#,
+            r#"neomind mes\sage send --title t"#,
+            // A send wrapped in a real shell line.
+            r#"neomind device get cam-1; neomind message send --title t --body b"#,
+            r#"neomind device get cam-1 && neomind  message   send --title t"#,
+            r#"neomind message send --title t --body b 2>&1 | head -5"#,
+            r#"NEOMIND_JSON=1 neomind message send --title t --body b"#,
+            r#"neomind "message" send --title t; neomind device list"#,
+            // A command line quoted inside another one: the shell tool hands
+            // these to /bin/sh, which runs the send.
+            r#"sh -c "neomind message send --title t --body b""#,
+            "bash -c 'neomind message send --title t --body b'",
+            r#"eval "neomind message send --title t""#,
+            r#"sudo neomind message send --title t"#,
+        ] {
+            assert!(is_message_send_command(cmd), "must gate: {cmd:?}");
+        }
+        for cmd in [
+            "neomind message list",
+            "neomind device get cam-1",
+            r#"neomind device get cam-1; neomind message list"#,
+            r#"echo "please message the send team""#,
+        ] {
+            assert!(!is_message_send_command(cmd), "must not gate: {cmd:?}");
+        }
+    }
+
+    /// Mirrors the real backends (ollama.rs / openai runtime.rs /
+    /// llamacpp.rs): the native tool-call array is appended to the response
+    /// text with no separator.
+    fn backend_appended(prose: &str, call: serde_json::Value) -> String {
+        format!(
+            "{prose}{}",
+            serde_json::to_string(&vec![call]).unwrap_or_default()
+        )
+    }
+
+    fn shell_call(arguments: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "id": "call_1", "name": "shell", "arguments": arguments })
+    }
+
+    fn verdict_of(text: &str) -> JudgmentVerdict {
+        judgment_verdict_from_messages(&[Message::new(MessageRole::Assistant, text)])
+    }
+
+    #[test]
+    fn verdict_is_read_before_the_appended_tool_call_array() {
+        let send = || {
+            shell_call(serde_json::json!({
+                "command": "neomind message send --title \"Alert\" --body \"details\""
+            }))
+        };
+        let met = [
+            backend_appended("有人且疑似赌博。\nVerdict: criteria met", send()),
+            backend_appended("有人且疑似赌博。\nVerdict: criteria met\n", send()),
+            // Prose that itself contains `[`.
+            backend_appended("设备 [200366] 有人。\nVerdict: criteria met", send()),
+            // A nested list inside the call arguments: its `[` is the LAST one.
+            backend_appended(
+                "有人。\nVerdict: criteria met",
+                shell_call(serde_json::json!({
+                    "command": "neomind message send --title t",
+                    "tags": ["a", "b"],
+                })),
+            ),
+            // An alert body with far more than 64 brackets of its own.
+            backend_appended(
+                "有人。\nVerdict: criteria met",
+                shell_call(serde_json::json!({
+                    "command": format!(
+                        "neomind message send --title t --body \"{}\"",
+                        "[位]".repeat(100)
+                    ),
+                })),
+            ),
+        ];
+        for text in met {
+            assert_eq!(
+                verdict_of(&text),
+                JudgmentVerdict::CriteriaMet,
+                "appended tool-call array must not hide the verdict: {text}"
+            );
+        }
+        // Deny verdicts stay deny; a call with no model text is still no verdict.
+        assert_eq!(
+            verdict_of(&backend_appended(
+                "画面为空旷走廊。\nVerdict: criteria not met",
+                send()
+            )),
+            JudgmentVerdict::CriteriaNotMet
+        );
+        assert_eq!(
+            verdict_of(&backend_appended("", send())),
+            JudgmentVerdict::Unknown
+        );
+    }
+
+    #[test]
+    fn verdict_is_read_around_inline_text_protocol_tool_calls() {
+        // Text-protocol models inline the call; either order must resolve.
+        for text in [
+            concat!(
+                "有人且疑似赌博。\nVerdict: criteria met\n",
+                r#"<tool_calls><invoke name="shell"><parameter name="command">"#,
+                r#"neomind message send --title t</parameter></invoke></tool_calls>"#,
+            ),
+            concat!(
+                r#"<tool_calls><invoke name="shell"><parameter name="command">"#,
+                r#"neomind message send --title t</parameter></invoke></tool_calls>"#,
+                "\n有人且疑似赌博。\nVerdict: criteria met",
+            ),
+            concat!(
+                "有人且疑似赌博。\nVerdict: criteria met\n",
+                r#"<function name="shell">"#,
+                r#"<parameter name="command">neomind message send --title t</parameter></function>"#,
+            ),
+        ] {
+            assert_eq!(
+                verdict_of(text),
+                JudgmentVerdict::CriteriaMet,
+                "inline tool-call syntax must not hide the verdict: {text}"
+            );
+        }
+        // Prose that merely ends in a bracket list is left alone.
+        assert_eq!(
+            verdict_of("本帧还在分析中。\n[{\"note\":\"not a call\"}]"),
+            JudgmentVerdict::Unknown
+        );
     }
 
     #[test]

@@ -55,6 +55,15 @@ impl Tool for EchoTool {
 }
 
 async fn build_harness() -> (AgentExecutor, AiAgent, Arc<ToolRegistry>) {
+    build_harness_with_memory(None).await
+}
+
+/// [`build_harness`] with a knowledge-file store, so a test can exercise
+/// what gets inlined from `memory/agents/<id>/custom/` — and what gets
+/// written back.
+async fn build_harness_with_memory(
+    memory_store: Option<Arc<neomind_storage::MarkdownMemoryStore>>,
+) -> (AgentExecutor, AiAgent, Arc<ToolRegistry>) {
     let store = AgentStore::memory().expect("memory store");
     let config = AgentExecutorConfig {
         store,
@@ -66,7 +75,7 @@ async fn build_harness() -> (AgentExecutor, AiAgent, Arc<ToolRegistry>) {
         llm_backend_store: None,
         extension_registry: None,
         tool_registry: None,
-        memory_store: None,
+        memory_store,
         backend_semaphores: None,
         skill_registry: None,
         execution_semaphore: None,
@@ -3711,7 +3720,8 @@ async fn judgment_gate_allows_positive_after_prior_inconclusive() {
                 "command": "neomind device get cam-1"
             }),
         )
-        .with_text("画面过暗，证据不足，无法判断。"),
+        .with_text("画面过暗，证据不足，无法判断。")
+        .with_backend_text_shape(),
         // This event: clear positive judgment + send.
         MockResponse::tool_call(
             "shell",
@@ -3719,7 +3729,8 @@ async fn judgment_gate_allows_positive_after_prior_inconclusive() {
                 "command": "neomind message send --title \"Alert\" --body \"details\""
             }),
         )
-        .with_text("有人且疑似赌博。\nVerdict: criteria met"),
+        .with_text("有人且疑似赌博。\nVerdict: criteria met")
+        .with_backend_text_shape(),
         MockResponse::text("已发送告警。"),
     ])
     .with_function_calling()
@@ -3770,7 +3781,8 @@ async fn judgment_gate_allows_non_gambling_positive_judgment() {
                 "command": "neomind message send --title \"Smoke detected\" --body \"Zone B sensor trip\""
             }),
         )
-        .with_text("Smoke plume confirmed on camera.\nVerdict: criteria met"),
+        .with_text("Smoke plume confirmed on camera.\nVerdict: criteria met")
+        .with_backend_text_shape(),
         MockResponse::text("Alert sent."),
     ])
     .with_function_calling()
@@ -3810,6 +3822,8 @@ async fn judgment_gate_allows_non_gambling_positive_judgment() {
 }
 
 /// Finished this-event protocol `Verdict: criteria met` → sink gets exactly 1.
+/// The response carries the text shape every real backend produces (tool-call
+/// array appended to the text) — the gate reads the verdict before it.
 #[tokio::test]
 async fn judgment_gate_allows_send_when_criteria_met() {
     let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -3820,7 +3834,8 @@ async fn judgment_gate_allows_send_when_criteria_met() {
                 "command": "neomind message send --title \"Alert\" --body \"details\""
             }),
         )
-        .with_text("有人且疑似赌博。\nVerdict: criteria met"),
+        .with_text("有人且疑似赌博。\nVerdict: criteria met")
+        .with_backend_text_shape(),
         MockResponse::text("已发送告警。"),
     ])
     .with_function_calling()
@@ -3856,6 +3871,127 @@ async fn judgment_gate_allows_send_when_criteria_met() {
         sends.load(std::sync::atomic::Ordering::SeqCst),
         1,
         "criteria met must deliver exactly 1 notification"
+    );
+}
+
+/// Verdict stated alongside an earlier tool call (backend text shape), then
+/// `message send` with EMPTY content — the latest non-empty assistant prose
+/// is that verdict → sink 1. Before the fix the appended array hid it.
+#[tokio::test]
+async fn judgment_gate_allows_empty_content_send_after_backend_shaped_verdict() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({ "command": "neomind device get cam-1" }),
+        )
+        .with_text("有人且疑似赌博。\nVerdict: criteria met")
+        .with_backend_text_shape(),
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"Alert\" --body \"details\""
+            }),
+        )
+        .with_text(""),
+        MockResponse::text("已发送告警。"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "仅当有人且疑似赌博时再告警".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let _ = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
+            rt_dyn,
+            "exec-judgment-met-empty-content",
+            None,
+        )
+        .await
+        .expect("criteria-met run must Complete");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "prior-round verdict must authorize the empty-content send"
+    );
+}
+
+/// Backend text shape does not loosen the gate: an explicit `criteria not
+/// met` before the appended array still blocks → sink 0.
+#[tokio::test]
+async fn judgment_gate_blocks_backend_shaped_not_met_verdict() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"告警\" --body \"疑似？\""
+            }),
+        )
+        .with_text("画面为空旷走廊，无赌博行为证据。\nVerdict: criteria not met")
+        .with_backend_text_shape(),
+        MockResponse::text("巡检完成：无赌博，无需告警。"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "仅当有人且疑似赌博时再 neomind message send".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (_dp, er) = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
+            rt_dyn,
+            "exec-judgment-not-met-backend-shape",
+            None,
+        )
+        .await
+        .expect("patrol must Complete");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "criteria not met must deliver 0 notifications"
+    );
+    assert!(
+        er.actions_executed.iter().any(|a| {
+            !a.success
+                && a.result
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("alert criteria not met")
+        }),
+        "block reason must cite the not-met verdict; actions={:?}",
+        er.actions_executed
     );
 }
 
@@ -4084,4 +4220,274 @@ async fn empty_event_skip_does_not_trip_breaker_or_stats() {
         "skip must not increment or reset breaker strikes"
     );
     assert_eq!(stored.status, AgentStatus::Active);
+}
+
+// ─── What T4's three Dongpingshan camera agents exposed (2026-11-21 .. 11-23) ───
+
+/// A knowledge-file store in a private temp dir; the caller removes the dir.
+fn temp_memory_store() -> (
+    Arc<neomind_storage::MarkdownMemoryStore>,
+    std::path::PathBuf,
+) {
+    let dir = std::env::temp_dir().join(format!(
+        "neomind-behavior-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    (
+        Arc::new(neomind_storage::MarkdownMemoryStore::new(&dir)),
+        dir,
+    )
+}
+
+fn judgment_notify() -> neomind_storage::AgentNotify {
+    neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    }
+}
+
+fn task_understanding_ref() -> neomind_storage::KnowledgeFileRef {
+    neomind_storage::KnowledgeFileRef {
+        name: neomind_storage::TASK_UNDERSTANDING_FILE.into(),
+        description: String::new(),
+        created_at: 0,
+        updated_at: 0,
+    }
+}
+
+/// A `web_search` that only counts calls — the side effect that must never
+/// happen for a judgment-notify agent.
+struct WebSearchProbe {
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for WebSearchProbe {
+    fn name(&self) -> &str {
+        "web_search"
+    }
+    fn description(&self) -> &str {
+        "web search probe"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": { "query": { "type": "string" } },
+            "required": ["query"]
+        })
+    }
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(ToolOutput::success("[]"))
+    }
+}
+
+/// The task definition is inlined from `custom:task-understanding` on every
+/// run. A prompt edit that never reached the file kept feeding the model the
+/// old mission — T4's agents read "用 vision 工具分析该图片" for two days
+/// after the operator removed it from the prompt. The executor re-syncs the
+/// file before inlining it, so the model never sees the stale copy.
+#[tokio::test]
+async fn stale_task_understanding_mission_is_resynced_before_it_is_inlined() {
+    const MISSION: &str = "NEW_MISSION 直接看附带的图片";
+    let (memory, dir) = temp_memory_store();
+    let (mut executor, mut agent, _) = build_harness_with_memory(Some(memory.clone())).await;
+    agent.user_prompt = MISSION.into();
+    memory
+        .write_agent_custom_file(
+            &agent.id,
+            neomind_storage::TASK_UNDERSTANDING_FILE,
+            "# Task Understanding\n\n## Mission\nOLD_MISSION 用 vision 工具分析该图片\n\n## Notes\nLEARNED_NOTE\n",
+        )
+        .await
+        .expect("seed a stale file");
+    agent.memory.knowledge_files.push(task_understanding_ref());
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool));
+    executor.set_tool_registry(Arc::new(registry));
+    let rt = MockLlmRuntime::new(vec![MockResponse::text("无人，无赌博行为。")])
+        .with_function_calling()
+        .with_supports_images();
+    let handle = rt.clone();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let _ = executor
+        .execute_with_tools(&agent, &[], rt_dyn, "exec-stale-mission", None)
+        .await
+        .expect("run completes");
+
+    let system = handle.captured_messages()[0].to_string();
+    assert!(
+        system.contains("#### custom:task-understanding"),
+        "the knowledge file is inlined: {system}"
+    );
+    assert!(
+        !system.contains("OLD_MISSION"),
+        "a stale mission must not reach the model: {system}"
+    );
+    assert!(
+        system.contains("LEARNED_NOTE"),
+        "the agent's own notes stay inlined: {system}"
+    );
+
+    let on_disk = memory
+        .read_agent_custom_file(&agent.id, neomind_storage::TASK_UNDERSTANDING_FILE)
+        .expect("file");
+    assert_eq!(
+        neomind_storage::task_understanding_mission(&on_disk),
+        Some(MISSION),
+        "the file itself is re-pointed: {on_disk}"
+    );
+    assert!(on_disk.contains("LEARNED_NOTE"), "{on_disk}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// T4's 200366 replaced its task with one per-run observation
+/// ("无图像数据路径，需设备日志搜索") and then reasoned from that note on
+/// every later run. Whatever the agent writes into the file, the end of a run
+/// puts the mission back on top — the note survives below it.
+#[tokio::test]
+async fn a_task_understanding_overwritten_by_the_agent_gets_its_mission_back() {
+    const MISSION: &str = "MISSION_TEXT";
+    let (memory, dir) = temp_memory_store();
+    let (executor, mut agent, _) = build_harness_with_memory(Some(memory.clone())).await;
+    agent.user_prompt = MISSION.into();
+    agent.memory.knowledge_files.push(task_understanding_ref());
+    let note = "# NE301PIR-200366 任务理解\n## 图像数据路径\n- 无图像数据路径，需设备日志搜索\n";
+    memory
+        .write_agent_custom_file(&agent.id, neomind_storage::TASK_UNDERSTANDING_FILE, note)
+        .await
+        .expect("the agent overwrote its own file");
+
+    // What the executor runs at the end of every execution.
+    executor
+        .finalize_execution_memory(
+            &agent,
+            &[],
+            "无人，无赌博行为。",
+            "exec-overwritten-mission",
+            true,
+            "natural-completion",
+            &None,
+        )
+        .await
+        .expect("memory finalization");
+
+    let on_disk = memory
+        .read_agent_custom_file(&agent.id, neomind_storage::TASK_UNDERSTANDING_FILE)
+        .expect("file");
+    assert_eq!(
+        neomind_storage::task_understanding_mission(&on_disk),
+        Some(MISSION),
+        "the mission comes back: {on_disk}"
+    );
+    assert!(
+        on_disk.ends_with(note),
+        "the agent's note is its own to keep: {on_disk}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The tool names the executor advertises to the model for `agent` on its
+/// first LLM call, with an `echo` tool and a `web_search` probe registered.
+async fn offered_tool_names(agent: &AiAgent) -> Vec<String> {
+    let (mut executor, _, _) = build_harness().await;
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool));
+    registry.register(Arc::new(WebSearchProbe {
+        calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    let rt = MockLlmRuntime::new(vec![MockResponse::text("done")]).with_function_calling();
+    let handle = rt.clone();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+    let _ = executor
+        .execute_with_tools(agent, &[], rt_dyn, "exec-offered-tools", None)
+        .await
+        .expect("run completes");
+    handle.captured_tool_names()[0].clone()
+}
+
+/// A judgment-notify agent decides from the input attached to this run. Web
+/// tools only send the model hunting for what it believes is missing, and
+/// they leave the site with the query (T4: 233 searches carrying device IDs
+/// and the site name). Not offered unless the allowlist names them.
+#[tokio::test]
+async fn judgment_agent_is_not_offered_web_tools_unless_allowlisted() {
+    // Stock agent: every tool goes out.
+    let mut agent = build_harness().await.1;
+    let names = offered_tool_names(&agent).await;
+    assert!(names.contains(&"echo".to_string()), "{names:?}");
+    assert!(names.contains(&"web_search".to_string()), "{names:?}");
+
+    // Judgment-notify: the web tool stays home.
+    agent.notify = Some(judgment_notify());
+    let names = offered_tool_names(&agent).await;
+    assert!(names.contains(&"echo".to_string()), "{names:?}");
+    assert!(
+        !names.contains(&"web_search".to_string()),
+        "web tools are off for a judgment-notify agent: {names:?}"
+    );
+
+    // …unless the operator's allowlist says otherwise.
+    agent.tool_config = Some(neomind_storage::AgentToolConfig {
+        enabled: true,
+        allowed_tools: vec!["echo".into(), "web_search".into()],
+    });
+    let names = offered_tool_names(&agent).await;
+    assert!(names.contains(&"web_search".to_string()), "{names:?}");
+
+    // Any other notify trigger is untouched.
+    agent.tool_config = None;
+    agent.notify.as_mut().expect("notify").on = neomind_storage::NotifyOn::Always;
+    let names = offered_tool_names(&agent).await;
+    assert!(names.contains(&"web_search".to_string()), "{names:?}");
+}
+
+/// Not offering the tool is not enough — a small model invents tool names.
+/// The call itself is refused, so the registry never runs it.
+#[tokio::test]
+async fn judgment_agent_web_tool_call_is_blocked_even_when_invented() {
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "web_search",
+            serde_json::json!({ "query": "NE301PIR-200366 image data path" }),
+        ),
+        MockResponse::text("done"),
+    ])
+    .with_function_calling();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.notify = Some(judgment_notify());
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(WebSearchProbe {
+        calls: calls.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (_, er) = executor
+        .execute_with_tools(&agent, &[], rt_dyn, "exec-blocked-web-tool", None)
+        .await
+        .expect("run completes with the call blocked");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a judgment-notify agent must never run a web tool"
+    );
+    assert!(
+        er.actions_executed.iter().any(|a| a.target == "web_search"
+            && !a.success
+            && a.result
+                .as_deref()
+                .unwrap_or("")
+                .contains("Web tools are off")),
+        "the block must be visible to the model and in the record; actions={:?}",
+        er.actions_executed
+    );
 }

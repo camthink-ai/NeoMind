@@ -62,6 +62,7 @@ pub mod secret;
 pub mod session;
 pub mod settings;
 pub mod system_memory;
+pub mod task_understanding;
 pub mod timeseries;
 pub mod vector;
 
@@ -109,6 +110,12 @@ pub use system_memory::{CategoryStats, MarkdownMemoryStore, MemoryCategory, Memo
 
 // Memory configuration exports
 pub use memory_config::MemoryConfig;
+
+// Task-understanding knowledge file (the agent's task definition)
+pub use task_understanding::{
+    task_understanding_mission, task_understanding_repoint_mission,
+    task_understanding_with_mission, TASK_UNDERSTANDING_FILE,
+};
 
 /// Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -701,6 +701,14 @@ fn build_compact_data_summary(data: &[DataCollected]) -> Vec<String> {
                     "[历史数据: {}个点]",
                     v.as_array().map(|a| a.len()).unwrap_or(0)
                 )
+            } else if d.data_type == "input_status" {
+                // The collector's own input status (event image present / no
+                // bound metrics): show its sentence, not the raw JSON row.
+                d.values
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("input status unavailable")
+                    .to_string()
             } else {
                 // Fallback to compact JSON - use character-safe truncation
                 let json_str = serde_json::to_string(&d.values).unwrap_or_default();

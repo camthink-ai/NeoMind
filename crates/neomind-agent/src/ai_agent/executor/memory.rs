@@ -140,6 +140,10 @@ impl AgentExecutor {
         // currently learn only via explicit memory-tool calls. Proper
         // extraction is tracked as follow-up work (Mem0 single-pass).
 
+        // The agent may have just rewritten its own task-understanding file;
+        // put the mission back before it is inlined into the next run.
+        self.sync_task_understanding_mission(agent).await;
+
         Ok(())
     }
 
@@ -233,7 +237,9 @@ impl AgentExecutor {
              {}\n\
              \n\
              ---\n\
-             Update this file as you discover thresholds, patterns, and device quirks. Append only NEW findings — never re-list previous entries.",
+             The `## Mission` section mirrors the task prompt and is kept in sync with it automatically — never rewrite it.\n\
+             Record thresholds, patterns, and device quirks you discover in a separate knowledge file, e.g.\n\
+             `memory(action='create', target='custom:observations', content='...')`. Append only NEW findings — never re-list previous entries.",
             identity_section,
             agent.user_prompt,
             resources_summary,
@@ -271,6 +277,62 @@ impl AgentExecutor {
             agent_id = %agent.id,
             "Auto-initialized knowledge file: task-understanding"
         );
+    }
+
+    /// Keep `custom:task-understanding` pointing at the agent's current task.
+    ///
+    /// The file's `## Mission` section mirrors `user_prompt` and is inlined
+    /// into every run, so it must not drift. It does drift when the prompt is
+    /// changed by a path other than the update handler (restored database,
+    /// older data), and when the agent overwrites its own task with a
+    /// per-run observation — T4's 200366 replaced its mission with
+    /// "无图像数据路径，需设备日志搜索" and then reasoned from that note on
+    /// every later run. An up-to-date file costs one small read.
+    pub(crate) async fn sync_task_understanding_mission(&self, agent: &AiAgent) {
+        use neomind_storage::{task_understanding_with_mission, TASK_UNDERSTANDING_FILE};
+
+        // No memory-mode check here: a Tool-memory agent is not given this
+        // file, but if it has one it is inlined like any other.
+        if !agent
+            .memory
+            .knowledge_files
+            .iter()
+            .any(|f| f.name == TASK_UNDERSTANDING_FILE)
+        {
+            return;
+        }
+        let Some(store) = self.memory_store.as_ref() else {
+            return;
+        };
+        let content = match store.read_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE) {
+            Ok(content) => content,
+            Err(e) => {
+                tracing::debug!(
+                    agent_id = %agent.id,
+                    error = %e,
+                    "Could not read task-understanding to verify its Mission"
+                );
+                return;
+            }
+        };
+        let synced = task_understanding_with_mission(&content, &agent.user_prompt);
+        if synced == content {
+            return;
+        }
+        match store
+            .write_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE, &synced)
+            .await
+        {
+            Ok(()) => tracing::info!(
+                agent_id = %agent.id,
+                "Task-understanding Mission re-synced to the current task prompt"
+            ),
+            Err(e) => tracing::warn!(
+                agent_id = %agent.id,
+                error = %e,
+                "Could not re-sync the task-understanding Mission"
+            ),
+        }
     }
 
     /// Pre-fetch knowledge file contents from disk for inline injection into

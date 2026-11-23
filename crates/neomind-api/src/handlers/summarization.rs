@@ -361,26 +361,31 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
             out.push('\n');
         }
     }
-    out.push_str("\n## 写入/显示状态\n");
-    // Prefer fail/unknown over success when both appear for the destination.
-    if target_write_failed {
-        out.push_str("- 当前目标 write success=false — 未确认发送/显示；禁止声称已发送\n");
-    } else if target_write_unknown {
-        out.push_str("- write_status=unknown — 未确认发送/显示；禁止声称已发送\n");
-    } else if target_write_success {
-        out.push_str(
-            "- 当前目标存在结构化 write success=true 回执（平台已接受写入；设备是否已显示需另查状态）\n",
-        );
-    } else if saw_other_target_write {
-        if !other_write_attrs.is_empty() {
-            out.push_str("- 写回执已归因到 ");
-            out.push_str(&other_write_attrs.join(", "));
-            out.push_str("；目标发送/显示仍未确认\n");
+    // Write/display status only means something when the summarized range
+    // actually contains tool results — a pure Q&A digest must not suggest a
+    // pending send.
+    if !tool_names.is_empty() {
+        out.push_str("\n## 写入/显示状态\n");
+        // Prefer fail/unknown over success when both appear for the destination.
+        if target_write_failed {
+            out.push_str("- 当前目标 write success=false — 未确认发送/显示；禁止声称已发送\n");
+        } else if target_write_unknown {
+            out.push_str("- write_status=unknown — 未确认发送/显示；禁止声称已发送\n");
+        } else if target_write_success {
+            out.push_str(
+                "- 当前目标存在结构化 write success=true 回执（平台已接受写入；设备是否已显示需另查状态）\n",
+            );
+        } else if saw_other_target_write {
+            if !other_write_attrs.is_empty() {
+                out.push_str("- 写回执已归因到 ");
+                out.push_str(&other_write_attrs.join(", "));
+                out.push_str("；目标发送/显示仍未确认\n");
+            } else {
+                out.push_str("- 有写入回执但未绑定当前目标设备；未确认发送/显示\n");
+            }
         } else {
-            out.push_str("- 有写入回执但未绑定当前目标设备；未确认发送/显示\n");
+            out.push_str("- 无当前目标的结构化写回执；未确认发送/显示\n");
         }
-    } else {
-        out.push_str("- 无当前目标的结构化写回执；未确认发送/显示\n");
     }
     out
 }
@@ -1265,6 +1270,20 @@ mod tests {
             !digest.contains("平台已接受写入"),
             "reads must never claim platform accepted write: {digest}"
         );
+    }
+
+    /// A pure Q&A digest has no tool results, so it must not carry a
+    /// write/display status section suggesting a pending send.
+    #[test]
+    fn fallback_digest_pure_qa_has_no_write_status_section() {
+        let messages = [
+            AgentMessage::user("厦门明天天气怎么样？"),
+            AgentMessage::assistant("明天多云，18 到 24 度。"),
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(digest.contains("厦门明天天气"), "{digest}");
+        assert!(!digest.contains("写入/显示状态"), "{digest}");
+        assert!(!digest.contains("未确认发送"), "{digest}");
     }
 
     /// Queued / unknown write receipts must stay explicit — never infer

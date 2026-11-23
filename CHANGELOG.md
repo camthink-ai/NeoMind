@@ -7,23 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.3.3] - 2026-11-23 — Camera event-image honesty + judgment notify gate
+## [1.3.3] - 2026-11-23 — Judgment notify gate, event-image honesty, chat hard-budget recover
 
-Post-`v1.3.2`: Task 1 (NM-367) honest event-image input status and last-line `Verdict:` judgment-notify gate before `message send`. Product version **1.3.3** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged).
+Post-`v1.3.2`: judgment-notify gate before `message send`, honest event-image input status, chat hard-budget auto-recover, storage-side telemetry pagination. Product version **1.3.3** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged).
 
 ### Upgrade notes
-- Agents with `notify.on = judgment` only send when the **last non-empty** assistant line is exactly `Verdict: criteria met` (`criteria not met` / `insufficient evidence` deny). Mid-message protocol examples, backticks, send titles, questions, progress lines, and policy text no longer authorize `message send`.
-- Event-carried images are reported honestly in input status (event image present vs bound-metrics-only) so vision agents do not claim a frame they never received.
-- When `notify` is configured, legacy keyword alert sniffing stays off (`is_alert_decision` only runs if `agent.notify.is_none()`).
+- **Judgment notify gate**: agents with `notify.on = judgment` send only when the last non-empty line of the model's own text is exactly `Verdict: criteria met` (`criteria not met` / `insufficient evidence` deny); mid-message examples, backticks, send titles, questions, progress lines, and policy text no longer authorize `message send` — an agent-authored send used to be ungated, and keyword scanning after delivery could not unsend it.
+- **Legacy keyword alerts**: agents with any `notify` config no longer send the legacy alert on a `condition_met` decision (it doubled the routed notification); a Judgment agent's only delivery path is now its own `message send`.
+- **Event-image input status**: an event-carried frame counts as input — `resources=[]` vision agents see "event image provided / bound metrics none" instead of `NO DATA COLLECTED`.
+- **Prompt edits reach the inlined task definition**: `custom:task-understanding` mirrors the task prompt in its `## Mission` section and is inlined into every run; editing the prompt now re-points the file's Mission (the old prompt's lines go with it), drops the cached parsed intent (re-derived on the next run), and the executor repairs a stale or agent-overwritten copy before inlining it — "用 vision 工具" used to outlive its removal from the prompt for days. A prompt that itself contains markdown headings or `---` lines is mirrored whole.
+- **Judgment-notify agents keep a clean context**: they no longer see their own execution journal (on T4 a past send made the next send 14× likelier), get no web tools unless the agent's allowlist names them (`web_search` / `web_fetch`; an invented call is refused), and their standing prompt is worded to judge the attached input and stay quiet instead of "gather through tools, act, don't stop at gathering". Its memory guidance says what Context really holds — files inlined, or only their index.
+- **One recover before tools pause**: when the chat hard budget would evict the newest tool feedback, one automatic recover runs first — user wording stays whole, the latest tool bodies are compressed to fit, older tool groups become digests; tools pause (with a system note) only when it still cannot fit, and that turn force-compacts at the end.
+- **Deep telemetry pages**: `GET /devices/:id/telemetry` with `offset > 100` pages by the real storage offset instead of a 1 Hz time estimate that returned empty pages on sparse metrics (`image_data`, PIR); a deep-offset request now scans the whole requested window for `total` (a cursor page scans only up to the cursor, so its `total` counts the points strictly older than it).
+- **ImageHistory widget**: default `fit` is `contain` (stored widgets with an explicit `fit` are unchanged), frames fill the dashboard cell instead of a fixed 180px box, and the widget loads its configured limit/timeRange in one request — the 1h / 3-frame quick phase left quiet devices on two frames.
 - `scripts/verify-upgrade.sh` tip expect defaults to **1.3.3** (`NEOMIND_BIN_132`→`NEOMIND_BIN_133`; legacy `131`/`132` still accepted).
 
 ### Fixed — agent / notify / vision input
-- Judgment notify gate runs after CLI→shell rewrite via shared `judgment_deny_for_tool_call`; FakeNotifySink acceptance covers allow/deny paths.
+- **Verdict before the tool call**: the judgment gate reads the model's prose with the tool-call payload removed — every backend appends the native tool-call array to the response text, so the raw last line was the serialized call and the gate blocked every send.
+- **Exact argv for `message send`**: the gate matches through the shell tokenizer plus a separator-aware token scan; `neomind  message   send`, tab-separated, `"message" send`, and a send quoted inside another command line (`sh -c "neomind message send …"`, `eval`) no longer skip it.
+- Input Status wording matches the input: a bound image is named as such, metric rows are counted as sources with values, command-only agents are not told about a time window, and the text-analysis path shows the status sentence instead of a raw JSON row.
+- **"No image path" is a failed analysis**: with an image attached, a conclusion claiming the image or its path never arrived (`图片路径未提供`, `image_path: "unknown"`, …) is refused instead of landing Completed; "device detections not provided" next to a real analysis is not.
+- **The task definition is not the agent's to rewrite**: knowledge hints send new findings to a separate file instead of inviting an update of `task-understanding`, and the mission is put back on top of whatever the agent wrote there.
 - Last-line exact `Verdict:` protocol only — no lexicon, substring, bare-label, or backtick-stripped auth.
-- Honest event-image vs bound-metrics input status (Change A) so missing frames are visible in the run record.
+
+### Fixed — chat / context
+- **Latest feedback is tracked by lineage**: a per-call stamp on the newest tool result replaces the shape fingerprint, so an older same-named tool or an identical JSON body no longer stands in for a dropped write.
+- **A stored tool result no longer reads as 180K tokens**: the history estimate prices a tool call's stored result only as far as the 120-character preview that is actually sent — the full body was already counted in its tool message. One 273.9KB `device history` output (slimmed to a `$cached:` pointer in its tool message, raw in the call record) priced a 7-message history at 180K tokens: the hard budget evicted all of it, the turn and the next three went out without tools, and because each trimmed request then billed under 35% of the window, auto-compaction never ran (T4, 2026-11-23).
+- **Chat input suggestions no longer read every session's history**: `GET /api/suggestions` looks at ten session titles but used the full listing, which loaded each session's whole history twice (a count and a 50-character preview) — all 81 of T4's sessions, 300KB tool results included, per keystroke. It now uses the light listing, and the full listing itself counts without deserializing and reads only a session's opening messages for the preview.
+- **A tool call's record stores the same slimmed result as its tool message**: the call record on the assistant message kept the raw body although nothing reads more than a 120-character preview of it, so a 273.9KB output stayed in `sessions.redb` and in the history the browser loads at full length.
+- **First-call degrade is no longer silent**: a turn whose first request goes out without its newest tool feedback gets the same one-time system note as later rounds (the flag travels with the turn, not on the interface every session shares); it used to degrade silently and the model narrated tool calls instead (T4 follow-ups "没有发送 重试一下" → "继续").
+- **Honest fallback summaries**: write receipts are bound to the user-stated destination — reads, command catalogs, and writes to the source device no longer read as "platform accepted the write"; `failed=false` without `success=true` is an unknown outcome, and a pure Q&A digest carries no write/display status section.
+
+### Fixed — telemetry / frontend
+- **Stable history pager**: device detail converts a cursor page's remaining count back to the whole-window total; the pager lost a page per "next" and vanished on the last one.
+- Image-history cache keeps the full page of URL/path frames; only heavy base64 payloads truncate to the newest 5.
+- Tools catalog table fills the page width.
 
 ### Test
-- FakeNotifySink gates: criteria met / not met / insufficient evidence / mid-message backtick example / question / progress / policy / prior+positive / image byte-compare.
+- **Judgment gate**: backend text shape (appended tool-call array), inline text-protocol calls, whitespace / quote / escape command variants, two-round empty-content send; the mock LLM can mirror the backend text shape.
+- **Context and paging**: auto-recover keeps user messages verbatim and drops the oldest whole; sparse series offset past 100 (storage + devices); `resolveTelemetryPageTotal` cursor conversion.
+- **Judgment agents on event images (T4 Dongpingshan wording)**: task-understanding Mission sync and parsed-intent reset on prompt edit, Mission repair before inlining and after an agent overwrites it, a prompt with markdown headings mirrored without being rewritten on every run and the old prompt's heading-led lines removed on an edit; no execution journal; first-call degrade note announced once and absent on an intact history; a T4-shaped history (raw 310K-char call result next to its `$cached:` pointer) keeps all 7 messages and its tools; session listing counts and previews a stored history without loading it (300KB tool result included); a call record equals its slimmed tool message; judgment prompt shape; web tools off by default and refused when invented; inline "no image path" claims refused while honest analyses and absent device detections pass; the mock LLM records advertised tool names.
 - `python3 scripts/extract_changelog.py --version 1.3.3 --check` gates this section.
 
 ## [1.3.2] - 2026-11-22 — Agent/CLI reliability, vision false-success, upgrade gate

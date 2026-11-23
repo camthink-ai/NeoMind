@@ -80,6 +80,8 @@ pub(crate) fn multimodal_inline_vision_guidance() -> &'static str {
 Camera / device image(s) for this turn are already attached as multimodal content \
 (including event-carried frames when resources are unbound).
 Your primary model can see them directly — analyze what is in the image(s) yourself.
+The image is inside this message: there is no file path or URL to look up, and no \
+tool is needed to read it.
 Do NOT call a `vision` tool, load a vision skill, or search for a vision extension.
 Analyze the attached image(s) directly and state only your visual findings — do not \
 mention tool availability in your conclusion.
@@ -118,6 +120,49 @@ const VISION_FAILURE_MARKERS: &[&str] = &[
     "视觉不可用",
     "vision is not available",
     "vision not available",
+];
+
+/// Claims, made while an image IS attached, that the image or its path never
+/// arrived — the other way a small model admits it never looked. These runs
+/// used to land Completed: T4's 20035E finished "successful" with
+/// "图片路径未提供，因此无法执行图像分析步骤", and 200360 answered
+/// `"image_path": "/images/unknown.jpg"` on two thirds of its runs.
+///
+/// Checked only on the InlineMultimodal path (see
+/// [`conclusion_admits_vision_failure_for_path`]): elsewhere "no image" may
+/// simply be true. Device-side detections are NOT here — this firmware really
+/// reports none, and an honest "检测结果未提供" next to a real analysis is
+/// not a failure.
+const INLINE_IMAGE_ABSENCE_MARKERS: &[&str] = &[
+    "图片路径未提供",
+    "图片路径缺失",
+    "路径未提供",
+    "无图像数据路径",
+    "无图片路径",
+    "未找到图片路径",
+    "未找到图像路径",
+    "无图像数据可用",
+    "无图片数据可用",
+    "没有接收任何图片数据",
+    "未上传任何图片数据",
+    "图片数据未提供",
+    "图片未提供",
+    "无图像数据",
+    "未获取到图片",
+    "未记录 image_data",
+    "未记录image_data",
+    "image_data 未提供",
+    "image_data未提供",
+    "image path not provided",
+    "image path was not provided",
+    "no image path",
+    "image_path\": \"unknown",
+    "image_path\":\"unknown",
+    "/images/unknown.jpg",
+    "no image data available",
+    "image data not provided",
+    "did not receive any image",
+    "image not provided",
 ];
 
 /// Explicit "did not analyze the image" phrases — used only to veto
@@ -199,15 +244,24 @@ pub(crate) fn conclusion_admits_vision_failure(text: &str) -> bool {
 /// inline-analysis evidence, incidental "no vision tool" explanations are
 /// treated as commentary rather than failure (Prompt-Echo Trap) — unless an
 /// explicit negation phrase is present alongside a failure marker.
+///
+/// On that same path the conclusion may instead claim the image never
+/// arrived ([`INLINE_IMAGE_ABSENCE_MARKERS`]); with the image attached that
+/// is the same admission by another name.
 pub(crate) fn conclusion_admits_vision_failure_for_path(
     text: &str,
     path: VisionExecutionPath,
 ) -> bool {
     let lower = text.to_lowercase();
-    let hit = VISION_FAILURE_MARKERS.iter().any(|m| {
-        let m_lower = m.to_lowercase();
-        lower.contains(&m_lower) && !marker_hit_is_night_vision_false_positive(&lower, &m_lower)
-    });
+    let claims_image_absent = matches!(path, VisionExecutionPath::InlineMultimodal)
+        && INLINE_IMAGE_ABSENCE_MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker));
+    let hit = claims_image_absent
+        || VISION_FAILURE_MARKERS.iter().any(|m| {
+            let m_lower = m.to_lowercase();
+            lower.contains(&m_lower) && !marker_hit_is_night_vision_false_positive(&lower, &m_lower)
+        });
     if !hit {
         return false;
     }
@@ -304,6 +358,77 @@ mod tests {
         // Must NOT teach blacklisted failure phrases for small models to echo.
         assert!(!g.to_lowercase().contains("vision tool not available"));
         assert!(!g.to_lowercase().contains("no vision tool"));
+        for marker in VISION_FAILURE_MARKERS
+            .iter()
+            .chain(INLINE_IMAGE_ABSENCE_MARKERS)
+        {
+            assert!(
+                !g.to_lowercase().contains(&marker.to_lowercase()),
+                "guidance must not teach the failure phrase {marker:?}"
+            );
+        }
+        // The mission text may still speak of an image "path"; the guidance
+        // has to close that door without using a blacklisted phrase.
+        assert!(g.contains("no file path or URL to look up"), "{g}");
+    }
+
+    /// With the image attached, claiming it never arrived is the same
+    /// admission as "no vision tool" — and used to land Completed.
+    #[test]
+    fn inline_image_absence_claims_admit_failure() {
+        // Field wording from T4 (2026-11-21 .. 11-23).
+        let cases = [
+            "我读取到最新的设备上报数据，但图片路径未提供，因此无法执行图像分析步骤。",
+            "无图像数据可用。设备 NE301PIR-20035E 的 image_data 未提供。",
+            "无图像数据路径。设备 NE301PIR-200366-东坪山未记录 image_data 字段。",
+            r#"{"device_id": "200360", "image_path": "/images/unknown.jpg", "detections": "person present", "赌博行为": "无"}"#,
+            r#"{"image_path": "unknown","detections": null}"#,
+            "没有接收任何图片数据或检测结果。",
+            "The image path was not provided, so the frame was not analyzed.",
+        ];
+        for text in cases {
+            assert!(
+                conclusion_admits_vision_failure_for_path(
+                    text,
+                    VisionExecutionPath::InlineMultimodal
+                ),
+                "an absence claim with the image attached must admit failure: {text}"
+            );
+        }
+        // Without an attached image the same sentence is simply true.
+        for path in [
+            VisionExecutionPath::None,
+            VisionExecutionPath::ViaVisionTool,
+        ] {
+            assert!(
+                !conclusion_admits_vision_failure_for_path("图片路径未提供。", path),
+                "absence is only a failure when the image is attached"
+            );
+        }
+    }
+
+    /// The gate must not turn an honest analysis into a failure: the
+    /// mission's own step-1 wording, and device detections this firmware
+    /// really does not report, are not absence claims.
+    #[test]
+    fn inline_absence_markers_spare_honest_analyses() {
+        let cases = [
+            "第1步，读取本次上报的 image_data（图片路径）和 ai_result.ai_result.detections。\
+             第2步，画面为山林步道，两人坐在牌桌旁打麻将。",
+            "设备端检测结果未提供。画面：碎石空地，无人，无赌博行为。",
+            "夜间帐篷场景，无明确人物；结论：无赌博/聚集活动迹象",
+            "无法获取图片中远处物体的细节，近处可见一人站立，未见赌博元素。",
+            "图片：<image_data 路径>。已发送告警：两人打麻将。",
+        ];
+        for text in cases {
+            assert!(
+                !conclusion_admits_vision_failure_for_path(
+                    text,
+                    VisionExecutionPath::InlineMultimodal
+                ),
+                "honest analysis must not be refused: {text}"
+            );
+        }
     }
 
     #[test]

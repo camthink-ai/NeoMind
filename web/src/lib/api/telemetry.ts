@@ -24,6 +24,27 @@ export function buildDeviceTelemetryQuery(opts: {
   })
 }
 
+/**
+ * Whole-window point count for a paged device-telemetry table.
+ *
+ * Offset pages report `pagination.total` for the whole window. A cursor page
+ * scans only `[start, cursor]`, so its `total` is the points STRICTLY OLDER
+ * than the cursor — this page plus the ones after it. A pager that requests
+ * page N with `(N - 1) * pageSize` sends no offset alongside a cursor (the
+ * backend echoes `offset: 0`), so a page past the first with a zero echo is a
+ * cursor page: add back what was already paged.
+ */
+export function resolveTelemetryPageTotal(
+  pagination: TelemetryDataResponse['pagination'],
+  currentPage: number,
+  pageSize: number,
+): number | undefined {
+  if (!pagination) return undefined
+  const isCursorPage = currentPage > 1 && pagination.offset === 0
+  if (!isCursorPage) return pagination.total
+  return (currentPage - 1) * pageSize + pagination.total
+}
+
 export const telemetryApi = {
   // Device Telemetry
   // Prefer `cursor` (previous page's next_cursor) for sequential next-page;

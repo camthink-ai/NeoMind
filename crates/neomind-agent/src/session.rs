@@ -290,6 +290,20 @@ fn instance_to_llm_backend(instance: &LlmBackendInstance) -> Result<LlmBackend> 
     })
 }
 
+/// How many leading messages the session listing reads to find its preview.
+/// A session opens with the user's request (after at most a system line).
+const LISTING_PREVIEW_SCAN: usize = 8;
+
+/// First user message of a history, trimmed to 50 characters.
+fn listing_preview(messages: &[neomind_storage::SessionMessage]) -> Option<String> {
+    let content = messages.iter().find(|m| m.role == "user")?.content.trim();
+    Some(if content.chars().count() > 50 {
+        format!("{}...", content.chars().take(50).collect::<String>())
+    } else {
+        content.to_string()
+    })
+}
+
 /// Information about a session for listing.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionInfo {
@@ -2227,29 +2241,42 @@ Assistant: {ar}\n"
             let timestamp_ms =
                 timestamp_seconds.unwrap_or_else(|| chrono::Utc::now().timestamp()) * 1000;
 
-            // Try to get messages from memory first, then from database
+            // Try to get messages from memory first, then from database.
+            // The store counts persisted keys without deserializing them.
             let message_count =
                 if let Some(msgs) = self.session_messages.read().await.get(&session_id) {
                     msgs.len() as u32
                 } else {
-                    // Load from database to get message count
-                    self.load_history(&session_id)
-                        .map(|msgs| msgs.len() as u32)
+                    self.store
+                        .message_count(&session_id)
+                        .map(|n| n as u32)
                         .unwrap_or(0)
                 };
 
-            // Get preview from database (first user message)
-            let preview = self.load_history(&session_id).ok().and_then(|msgs| {
-                msgs.iter().find(|m| m.role == "user").map(|m| {
-                    // Truncate content to 50 chars (using char boundary for Unicode safety)
-                    let content = m.content.trim();
-                    if content.chars().count() > 50 {
-                        format!("{}...", content.chars().take(50).collect::<String>())
-                    } else {
-                        content.to_string()
-                    }
-                })
-            });
+            // Preview: the first user message. A session opens with the
+            // user's request, so its first few messages are enough — this
+            // listing used to read and deserialize every session's whole
+            // history twice (300KB tool results included) just to cut 50
+            // characters out of the first one, and the chat input's
+            // suggestion request did that for all of T4's 81 sessions on
+            // every keystroke.
+            let preview = match self
+                .store
+                .load_history_prefix(&session_id, LISTING_PREVIEW_SCAN)
+            {
+                Ok(prefix) => match listing_preview(&prefix) {
+                    Some(preview) => Some(preview),
+                    // No user message up front (a restored or imported
+                    // session): rare — only then look at the rest.
+                    None if prefix.len() >= LISTING_PREVIEW_SCAN => self
+                        .store
+                        .load_history(&session_id)
+                        .ok()
+                        .and_then(|msgs| listing_preview(&msgs)),
+                    None => None,
+                },
+                Err(_) => None,
+            };
 
             // Get title and memory_enabled from metadata
             let metadata = self
@@ -5175,5 +5202,73 @@ mod on_demand_memory_tests {
             restored.execute_tool("memory", &read).await.is_err(),
             "global policy still applies"
         );
+    }
+
+    /// Count and preview come from the store without loading the history.
+    /// The listing used to deserialize every session's whole history twice
+    /// for them; on T4 that meant 81 sessions, 300KB tool results included,
+    /// on every chat-input suggestion request.
+    #[tokio::test]
+    async fn listing_counts_and_previews_a_stored_history_without_loading_it() {
+        use neomind_storage::SessionMessage;
+
+        let manager = SessionManager::memory();
+        // Registered and written straight to the store, so the manager holds
+        // no in-memory copy of either session (as after a restart).
+        let with_tool_output = "listing-with-tool-output".to_string();
+        manager.store.save_session_id(&with_tool_output).unwrap();
+        let history = vec![
+            SessionMessage::user("把 200366 的照片发到墨水屏"),
+            SessionMessage::assistant(""),
+            SessionMessage::tool("call-1", "x".repeat(300_000)),
+            SessionMessage::assistant("done"),
+        ];
+        manager
+            .store
+            .save_history(&with_tool_output, &history)
+            .unwrap();
+        let brief = "listing-brief".to_string();
+        manager.store.save_session_id(&brief).unwrap();
+        manager
+            .store
+            .save_history(&brief, &[SessionMessage::user("你好")])
+            .unwrap();
+
+        let infos = manager.list_sessions_with_info().await;
+        let tool_session = infos
+            .iter()
+            .find(|i| i.session_id == with_tool_output)
+            .expect("listed");
+        assert_eq!(tool_session.message_count, 4);
+        assert_eq!(
+            tool_session.preview.as_deref(),
+            Some("把 200366 的照片发到墨水屏")
+        );
+        let brief_info = infos
+            .iter()
+            .find(|i| i.session_id == brief)
+            .expect("listed");
+        assert_eq!(brief_info.message_count, 1);
+        assert_eq!(brief_info.preview.as_deref(), Some("你好"));
+    }
+
+    /// A session that does not open with a user message (restored, imported)
+    /// still gets its preview from further in.
+    #[tokio::test]
+    async fn listing_preview_finds_a_user_message_past_the_opening() {
+        use neomind_storage::SessionMessage;
+
+        let manager = SessionManager::memory();
+        let session_id = "listing-late-user-message".to_string();
+        manager.store.save_session_id(&session_id).unwrap();
+        let mut history: Vec<SessionMessage> = (0..8)
+            .map(|i| SessionMessage::assistant(format!("a{i}")))
+            .collect();
+        history.push(SessionMessage::user("第九条才是用户的话"));
+        manager.store.save_history(&session_id, &history).unwrap();
+
+        let infos = manager.list_sessions_with_info().await;
+        assert_eq!(infos[0].message_count, 9);
+        assert_eq!(infos[0].preview.as_deref(), Some("第九条才是用户的话"));
     }
 }

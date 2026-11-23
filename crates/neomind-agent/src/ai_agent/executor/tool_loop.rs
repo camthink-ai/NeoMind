@@ -801,6 +801,22 @@ impl AgentExecutor {
                             );
                             return Some((i, r));
                         }
+                        // Web tools a judgment-notify agent does not get by
+                        // default are refused when the model invents the call
+                        // anyway — the registry would otherwise run it.
+                        if super::judgment_notify::judgment_tool_off_by_default(agent, &c.name) {
+                            tracing::info!(
+                                agent_id = %agent.id,
+                                tool = %c.name,
+                                "Web tool not offered to a judgment-notify agent — call blocked"
+                            );
+                            return Some((
+                                i,
+                                "Web tools are off for judgment-notify agents (name the tool in \
+                                 the agent's allowlist to enable it)"
+                                    .to_string(),
+                            ));
+                        }
                         None
                     })
                     .collect();
@@ -818,7 +834,9 @@ impl AgentExecutor {
 
                 // Insert the policy-blocked / judgment-gated synthetic errors first.
                 for (i, reason) in &blocked {
-                    let msg = if reason.starts_with("Judgment notify gate:") {
+                    let msg = if reason
+                        .starts_with(super::judgment_notify::JUDGMENT_GATE_REASON_PREFIX)
+                    {
                         reason.clone()
                     } else {
                         format!("Blocked by safety policy: {}", reason)

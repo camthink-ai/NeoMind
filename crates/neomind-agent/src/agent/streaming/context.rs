@@ -395,9 +395,16 @@ fn digest_older_group(group: &[AgentMessage]) -> Vec<AgentMessage> {
     out
 }
 
-/// One automatic recover: reserve latest tool feedback (compress if needed),
-/// digest older bulky groups, keep recent users/system. Does **not** execute
-/// tools or replay writes — pure reassembly of the request window.
+/// One automatic recover: keep user/system wording whole first, then reserve
+/// the latest tool feedback in what is left (compressing the tool bodies —
+/// never the user's words), then digest older bulky groups into the rest.
+/// Does **not** execute tools or replay writes — pure reassembly of the
+/// request window.
+///
+/// User messages carry the conversation's exact wording (see
+/// `hard_budget_evicts_user_messages_last`), so they are never truncated
+/// here. When they alone overflow the budget, the group-aware eviction below
+/// drops the OLDEST ones whole — the same order as the primary selection.
 fn auto_recover_keep_latest_feedback(
     messages: &[AgentMessage],
     max_tokens: usize,
@@ -410,57 +417,50 @@ fn auto_recover_keep_latest_feedback(
     let src_marker = feedback_src.map(feedback_src_marker);
 
     let mut selected: Vec<Option<Vec<AgentMessage>>> = vec![None; groups.len()];
+
+    // User/system wording is reserved whole, up front.
+    let critical_tokens: usize = messages
+        .iter()
+        .filter(|m| m.role == "system" || m.role == "user")
+        .map(estimate_message_tokens)
+        .sum();
+    // Everything else — the latest feedback and older digests — shares this.
+    let tool_budget = max_tokens.saturating_sub(critical_tokens);
     let mut used = 0usize;
 
-    // Reserve latest complete tool interaction first (compress to fit).
-    // Stamp each tool by its absolute call position (not one shared stamp).
+    // Reserve latest complete tool interaction in the remaining room,
+    // compressing its tool bodies to fit. Stamp each tool by its absolute
+    // call position (not one shared stamp).
     if let Some(idx) = latest_group_idx {
         let (group_start, group) = &groups[idx];
         let cost: usize = group.iter().map(estimate_message_tokens).sum();
-        if cost <= max_tokens {
-            let stamped = stamp_group_by_call_position(group.clone(), *group_start);
-            used = stamped.iter().map(estimate_message_tokens).sum();
-            selected[idx] = Some(stamped);
-        } else if let Some(compressed) = compress_agent_tool_group(group, max_tokens, *group_start)
-        {
-            used = compressed.iter().map(estimate_message_tokens).sum();
-            selected[idx] = Some(compressed);
+        let reserved = if cost <= tool_budget {
+            Some(stamp_group_by_call_position(group.clone(), *group_start))
+        } else {
+            compress_agent_tool_group(group, tool_budget, *group_start)
+        };
+        if let Some(reserved) = reserved {
+            used = reserved.iter().map(estimate_message_tokens).sum();
+            selected[idx] = Some(reserved);
         }
         // If still cannot reserve → leave empty; caller marks drop.
     }
 
-    // Keep system + recent user groups next, then digest-fill older tool history.
+    // Newest-first fill: users/system verbatim, older tool history as digests.
     for (i, (_start, group)) in groups.iter().enumerate().rev() {
         if selected[i].is_some() {
             continue;
         }
         let is_critical = group.iter().any(|m| m.role == "system" || m.role == "user");
-        let candidate = if is_critical {
-            group.clone()
-        } else {
-            digest_older_group(group)
-        };
-        let cost: usize = candidate.iter().map(estimate_message_tokens).sum();
-        if used + cost <= max_tokens {
+        if is_critical {
+            selected[i] = Some(group.clone());
+            continue;
+        }
+        let digest = digest_older_group(group);
+        let cost: usize = digest.iter().map(estimate_message_tokens).sum();
+        if used + cost <= tool_budget {
             used += cost;
-            selected[i] = Some(candidate);
-        } else if is_critical {
-            // Users/system: try truncated form.
-            let truncated: Vec<AgentMessage> = candidate
-                .into_iter()
-                .map(|m| {
-                    if estimate_message_tokens(&m) > 200 {
-                        truncate_agent_message(&m, 200)
-                    } else {
-                        m
-                    }
-                })
-                .collect();
-            let cost: usize = truncated.iter().map(estimate_message_tokens).sum();
-            if used + cost <= max_tokens {
-                used += cost;
-                selected[i] = Some(truncated);
-            }
+            selected[i] = Some(digest);
         }
     }
 
@@ -803,7 +803,9 @@ fn compact_tool_results_stream_with_config(
         }
 
         // Check if this is a tool response (role="tool", tool_call_name set)
-        // NOTE: tool_call_id is never set in this codebase — use role + tool_call_name
+        // NOTE: `tool_call_id` only ever carries the request-local hard-budget
+        // lineage stamp on a built window (never persisted) — use role +
+        // tool_call_name here.
         if msg.role == "tool" {
             tool_result_count += 1;
 
@@ -1409,6 +1411,206 @@ mod tests {
                     || m.content.contains("[unknown")
             }) || again.messages.iter().all(|m| m.role != "tool")
         );
+    }
+
+    /// The recover path must not buy room for tool feedback with the user's
+    /// words: the latest tool group is compressed instead, and every user
+    /// message left in the window is byte-identical to what the user wrote
+    /// (see `hard_budget_evicts_user_messages_last`).
+    #[test]
+    fn hard_budget_auto_recover_keeps_user_messages_verbatim() {
+        let user_old = AgentMessage::user(format!(
+            "旧指令：{}",
+            "请把厦门市集美区的完整要求原样保留不要改字，".repeat(8)
+        ));
+        let user_cur = AgentMessage::user(format!(
+            "当前指令：请严格按原文把下面这段话显示到屏幕上，不要改字不要省略 —— {}",
+            "厦门市集美区XX路XX号会议室周三下午三点整开会请准时参加，".repeat(6)
+        ));
+        let mut messages = vec![user_old.clone()];
+        for i in 0..5 {
+            messages.push(AgentMessage::assistant(format!(
+                "old call {i} {}",
+                "x".repeat(300)
+            )));
+            messages.push(AgentMessage::tool_result(
+                "shell",
+                format!("{{\"success\":true,\"data\":\"{}\"}}", "y".repeat(2000)),
+            ));
+        }
+        // Latest tool feedback: large, so it only fits compressed once the
+        // user messages have taken their share.
+        messages.push(AgentMessage::assistant("latest call"));
+        messages.push(AgentMessage::tool_result(
+            "shell",
+            format!("{{\"success\":true,\"data\":\"{}\"}}", "z".repeat(3_000)),
+        ));
+        messages.push(user_cur.clone());
+
+        let latest_group: usize = messages[messages.len() - 3..messages.len() - 1]
+            .iter()
+            .map(estimate_message_tokens)
+            .sum();
+        let user_tokens: usize = messages
+            .iter()
+            .filter(|m| m.role == "user")
+            .map(estimate_message_tokens)
+            .sum();
+        let config = CompactionConfig::for_context_size(8_000);
+
+        for budget in [
+            user_tokens + latest_group / 2,
+            latest_group + estimate_message_tokens(&user_cur) / 2,
+            latest_group + 40,
+        ] {
+            let built = build_context_window_with_config_build(&messages, budget, &config);
+            assert!(
+                built.auto_recover_attempted,
+                "budget={budget}: this shape must take the recover path"
+            );
+            assert!(
+                !built.latest_tool_feedback_dropped,
+                "budget={budget}: latest feedback must be compressed in, not dropped"
+            );
+            assert!(
+                agent_latest_tool_feedback_survives(&messages, &built.messages),
+                "budget={budget}: window must carry the latest feedback"
+            );
+            let users: Vec<&AgentMessage> =
+                built.messages.iter().filter(|m| m.role == "user").collect();
+            assert_eq!(
+                users.len(),
+                2,
+                "budget={budget}: both user messages fit and must both stay"
+            );
+            assert!(
+                users
+                    .iter()
+                    .any(|m| m.content.as_ref() == user_old.content.as_ref()),
+                "budget={budget}: older user wording must stay verbatim"
+            );
+            assert!(
+                users
+                    .iter()
+                    .any(|m| m.content.as_ref() == user_cur.content.as_ref()),
+                "budget={budget}: current user wording must stay verbatim"
+            );
+            assert!(
+                built
+                    .messages
+                    .iter()
+                    .map(estimate_message_tokens)
+                    .sum::<usize>()
+                    <= budget,
+                "budget={budget}: window must respect the budget"
+            );
+        }
+    }
+
+    /// User messages alone overflow the budget: the oldest is dropped WHOLE
+    /// (never cut mid-sentence), the newest stays verbatim, and the feedback
+    /// that could not be reserved is reported dropped.
+    #[test]
+    fn hard_budget_auto_recover_drops_oldest_user_whole_never_truncates() {
+        let user_old = AgentMessage::user(format!("旧指令 {}", "请保留原文要求，".repeat(40)));
+        let user_cur = AgentMessage::user("当前指令：显示 厦门市集美区");
+        let messages = vec![
+            user_old.clone(),
+            AgentMessage::assistant("latest call"),
+            AgentMessage::tool_result(
+                "shell",
+                format!("{{\"success\":true,\"data\":\"{}\"}}", "z".repeat(2000)),
+            ),
+            user_cur.clone(),
+        ];
+        let config = CompactionConfig::for_context_size(8_000);
+        // Room for the newest user message only.
+        let budget = estimate_message_tokens(&user_cur);
+        let built = build_context_window_with_config_build(&messages, budget, &config);
+        assert!(
+            built.latest_tool_feedback_dropped,
+            "no room for feedback → must be reported, not silently recovered"
+        );
+        let users: Vec<&str> = built
+            .messages
+            .iter()
+            .filter(|m| m.role == "user")
+            .map(|m| m.content.as_ref())
+            .collect();
+        assert_eq!(users, vec![user_cur.content.as_ref()]);
+        assert!(
+            built
+                .messages
+                .iter()
+                .map(estimate_message_tokens)
+                .sum::<usize>()
+                <= budget
+        );
+    }
+
+    /// T4, 2026-11-23 (session ebc333d4): one `neomind device history` call
+    /// returned 273.9KB. Its tool message was slimmed to a `$cached:` pointer,
+    /// but the assistant message's tool-call record kept the raw 310K-char
+    /// result — and the estimator priced that copy in full, although only a
+    /// 120-character preview of it ever reaches the model. Seven messages read
+    /// as 180K tokens, the hard budget evicted all of them, and the turn —
+    /// plus the next three — went out without tools.
+    #[test]
+    fn raw_tool_call_result_does_not_inflate_the_history_estimate() {
+        fn call(command: &str, result: &str) -> crate::agent::types::ToolCall {
+            crate::agent::types::ToolCall {
+                name: "shell".into(),
+                id: String::new(),
+                arguments: serde_json::json!({ "command": command }),
+                result: Some(serde_json::Value::String(result.into())),
+                round: Some(1),
+            }
+        }
+        let mut second_round = AgentMessage::assistant("calling three tools");
+        second_round.tool_calls = Some(vec![
+            call("neomind device get 20545d67", &"z".repeat(16_622)),
+            call("neomind device history 200366", &"x".repeat(309_819)),
+            call("neomind device get 200366", &"w".repeat(10_084)),
+        ]);
+        let mut first_round = AgentMessage::assistant("listing devices");
+        first_round.tool_calls = Some(vec![call("neomind device list", &"y".repeat(18_362))]);
+        let history = vec![
+            AgentMessage::user("【device 200366】最近一张照片发送给【device 20545d67】显示"),
+            first_round,
+            AgentMessage::tool_result("shell", "y".repeat(18_362)),
+            second_round,
+            AgentMessage::tool_result("shell", "z".repeat(16_622)),
+            // What the model was actually shown for the 273.9KB output.
+            AgentMessage::tool_result(
+                "shell",
+                "Large string data (273.9KB) cached as $cached:shell.stdout#88400ae0 — read it back with file_read",
+            ),
+            AgentMessage::tool_result("shell", "w".repeat(10_084)),
+        ];
+
+        // The shipped prompt is the three tool bodies plus 120-char previews.
+        let estimate: usize = history.iter().map(estimate_message_tokens).sum();
+        assert!(
+            estimate < 40_000,
+            "a stored raw result must not be priced in full: {estimate} tokens"
+        );
+
+        // The budget the T4 chat ran with (65536 window, 45875 soft budget)
+        // and the default effective budget both keep the whole turn.
+        for budget in [45_875usize, 62_783] {
+            let config = CompactionConfig::for_context_size(budget);
+            let built = build_context_window_with_config_build(&history, budget, &config);
+            assert_eq!(built.messages.len(), history.len(), "budget={budget}");
+            assert!(
+                !built.latest_tool_feedback_dropped,
+                "budget={budget}: the latest tool feedback must survive"
+            );
+            assert!(!built.auto_recover_attempted, "budget={budget}");
+            assert!(
+                !built.pressure,
+                "budget={budget}: nothing had to be trimmed"
+            );
+        }
     }
 
     #[test]

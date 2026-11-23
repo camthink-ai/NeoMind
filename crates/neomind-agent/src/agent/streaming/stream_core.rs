@@ -169,6 +169,19 @@ pub(super) enum InitialStreamMode {
     },
 }
 
+/// What a turn opens with.
+pub(super) struct PreparedTurn {
+    /// History the first request is assembled from.
+    pub history_for_llm: Vec<neomind_core::Message>,
+    /// Token budget the history was fitted to.
+    pub effective_max: usize,
+    /// The history lost its newest tool feedback even after the one
+    /// auto-recover, so the first request goes out without tools. It travels
+    /// with the turn — a flag on the shared `LlmInterface` would be taken by
+    /// whichever session prepared or streamed next.
+    pub first_call_without_feedback: bool,
+}
+
 /// Shared turn-history preparation and dynamic context-window budget calculation
 /// used by both text and multimodal streaming entry points.
 pub(super) async fn prepare_turn_history_and_budget(
@@ -177,7 +190,7 @@ pub(super) async fn prepare_turn_history_and_budget(
     user_message: &str,
     conversation_summary: Option<&str>,
     summary_up_to_index: Option<u64>,
-) -> std::result::Result<(Vec<neomind_core::Message>, usize), AgentEventStream> {
+) -> std::result::Result<PreparedTurn, AgentEventStream> {
     let state_guard = internal_state.read().await;
     let mut history_messages = state_guard.memory.clone();
     // Album from full memory (incl. current turn) before depth drain / strip.
@@ -250,29 +263,31 @@ pub(super) async fn prepare_turn_history_and_budget(
         }));
     }
 
-    let history_for_llm: Vec<neomind_core::Message> = {
-        let built = super::context::build_context_window_with_summary_marked(
-            &history_messages,
-            effective_max,
-            conversation_summary,
-            summary_up_to_index,
-        );
-        if built.pressure || built.latest_tool_feedback_dropped {
-            llm_interface.mark_history_truncated();
-        }
-        if built.auto_recover_attempted && built.latest_tool_feedback_dropped {
-            llm_interface.mark_hard_budget_auto_recover_exhausted();
-        }
-        if built.latest_tool_feedback_dropped {
-            llm_interface.mark_history_window_dropped_latest_feedback();
-        }
-        built.messages
+    let built = super::context::build_context_window_with_summary_marked(
+        &history_messages,
+        effective_max,
+        conversation_summary,
+        summary_up_to_index,
+    );
+    if built.pressure || built.latest_tool_feedback_dropped {
+        llm_interface.mark_history_truncated();
     }
-    .iter()
-    .map(|msg| msg.to_core())
-    .collect::<Vec<_>>();
+    if built.auto_recover_attempted && built.latest_tool_feedback_dropped {
+        llm_interface.mark_hard_budget_auto_recover_exhausted();
+    }
+    if built.latest_tool_feedback_dropped {
+        llm_interface.mark_history_window_dropped_latest_feedback();
+    }
+    let history_for_llm: Vec<neomind_core::Message> =
+        built.messages.iter().map(|msg| msg.to_core()).collect();
 
-    Ok((history_for_llm, effective_max))
+    Ok(PreparedTurn {
+        history_for_llm,
+        effective_max,
+        // Tools are refused for this first request. Say so once the stream
+        // starts instead of degrading silently.
+        first_call_without_feedback: built.latest_tool_feedback_dropped,
+    })
 }
 
 // 7 params: the streaming entry's dependency bundle (iface/state/tools)
@@ -359,7 +374,11 @@ pub async fn process_stream_events_with_safeguards(
         IntentCategory::General => vec![("理解用户问题", "Intent"), ("生成回复", "Response")],
     };
 
-    let (history_for_llm, effective_max) = match prepare_turn_history_and_budget(
+    let PreparedTurn {
+        history_for_llm,
+        effective_max,
+        first_call_without_feedback,
+    } = match prepare_turn_history_and_budget(
         &llm_interface,
         &internal_state,
         &user_message,
@@ -394,12 +413,20 @@ pub async fn process_stream_events_with_safeguards(
         safeguards,
         turn_context,
         effective_max,
+        first_call_without_feedback,
         call_site_turn,
         InitialStreamMode::Text {
             intent_event,
             plan_steps,
         },
     ))
+}
+
+/// What the user is told, once per turn, when a request had to go out
+/// without its newest tool feedback: tools are then withheld so the model
+/// cannot act on results it cannot see.
+pub(super) fn hard_budget_degrade_note() -> &'static str {
+    "Context hard-budget could not keep the latest tool feedback after one automatic compress/recover. Tools are paused for this turn so the model cannot act without feedback. Write/send status is unconfirmed unless a prior receipt exists — do not claim displayed/sent. Literal <tool_call> text is not a real call. Compact the session or continue after compression."
 }
 
 /// Unified multi-round ReAct streaming engine shared by text and multimodal chats.
@@ -413,6 +440,8 @@ pub(super) fn drive_react_stream(
     safeguards: StreamSafeguards,
     turn_context: super::context::TurnContext,
     effective_max: usize,
+    // See [`PreparedTurn::first_call_without_feedback`].
+    first_call_without_feedback: bool,
     call_site_turn: u64,
     mode: InitialStreamMode,
 ) -> AgentEventStream {
@@ -768,6 +797,19 @@ pub(super) fn drive_react_stream(
                 }
             }
 
+            // The FIRST call of a turn can already open without tools: the
+            // history the turn started from lost its newest tool feedback and
+            // the auto-recover could not get it back. Later rounds say so in
+            // the loop; without this the first round degraded silently and the
+            // model just narrated tool calls (T4 follow-ups "没有发送 重试一下"
+            // → "继续" answered with fake <tool_call> text).
+            if first_call_without_feedback {
+                hard_budget_degrade_note_sent = true;
+                let note = hard_budget_degrade_note().to_string();
+                turn_system_notes.push(note.clone());
+                yield AgentEvent::system_note(note);
+            }
+
             // === MULTI-ROUND TOOL CALLING LOOP ===
                 // Chat path: no guard-led hard loop breaker — the user is
                 // watching and can abort. Safety nets: a no-new-information
@@ -795,11 +837,12 @@ pub(super) fn drive_react_stream(
                         if outer_feedback_dropped {
                             // Tool-capable request follows: feed the assemble gate so tools
                             // are refused when the newest tool feedback was evicted (the inner
-                            // selector cannot see the loss). At most one user-visible note.
+                            // selector cannot see the loss). At most one user-visible note
+                            // per turn — the first-call case is noted before the loop.
                             llm_interface.mark_history_window_dropped_latest_feedback();
                             if !hard_budget_degrade_note_sent {
                                 hard_budget_degrade_note_sent = true;
-                                let note = "Context hard-budget could not keep the latest tool feedback after one automatic compress/recover. Tools are paused for this turn so the model cannot act without feedback. Write/send status is unconfirmed unless a prior receipt exists — do not claim displayed/sent. Literal <tool_call> text is not a real call. Compact the session or continue after compression.".to_string();
+                                let note = hard_budget_degrade_note().to_string();
                                 turn_system_notes.push(note.clone());
                                 yield AgentEvent::system_note(note);
                             }
@@ -2408,11 +2451,30 @@ pub(super) fn drive_react_stream(
                                 let sanitized_str = sanitize_tool_result_for_prompt(&slimmed_str);
                                 let display_str = sanitized_str.clone();
 
+                                // The call record carries the same slimmed copy as
+                                // the tool message. It used to keep the raw
+                                // `result_value`: nothing reads more than a
+                                // 120-character preview of it, yet the whole body
+                                // went into sessions.redb, into the history the
+                                // browser loads, and back into memory every turn.
+                                // A 273.9KB `device history` output (already a
+                                // `$cached:` pointer in its tool message) left a
+                                // 309,819-character string here (T4 2026-11-23).
+                                // The sanitized text is normally the same JSON;
+                                // if sanitizing made it unparseable, keep the
+                                // slimmed value rather than fall back to raw.
+                                let stored_result = serde_json::from_str::<serde_json::Value>(
+                                    &sanitized_str,
+                                )
+                                .or_else(|_| {
+                                    serde_json::from_str::<serde_json::Value>(&slimmed_str)
+                                })
+                                .unwrap_or_else(|_| result_value.clone());
                                 tool_calls_with_results.push(ToolCall {
                                     name: name.clone(),
                                     id: String::new(),
                                     arguments: exec_arguments,
-                                    result: Some(result_value.clone()),
+                                    result: Some(stored_result),
                                     round: Some(tool_iteration_count + 1),
                                 });
 

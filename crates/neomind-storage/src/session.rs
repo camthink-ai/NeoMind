@@ -796,6 +796,38 @@ impl SessionStore {
         Ok(messages)
     }
 
+    /// First `limit` persisted messages of a session, in order.
+    ///
+    /// For a caller that only needs the opening of a history — the session
+    /// listing reads the first user message for its preview — this avoids
+    /// reading and deserializing every message. Messages that fail to
+    /// deserialize are skipped, as in [`Self::load_history`].
+    pub fn load_history_prefix(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<SessionMessage>, Error> {
+        let read_txn = self.db.begin_read()?;
+        let table = match read_txn.open_table(HISTORY_TABLE) {
+            Ok(t) => t,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+            Err(e) => return Err(Error::Storage(format!("Failed to open table: {}", e))),
+        };
+
+        let start_key = (session_id, 0u64);
+        let end_key = (session_id, u64::MAX);
+
+        let mut messages = Vec::new();
+        for result in table.range(start_key..=end_key)?.take(limit) {
+            let (_key, value) = result?;
+            if let Ok(message) = serde_json::from_slice(value.value().as_slice()) {
+                messages.push(message);
+            }
+        }
+
+        Ok(messages)
+    }
+
     /// Append a single message to session history (incremental save).
     /// This is more efficient than save_history for adding new messages.
     pub fn append_message(&self, session_id: &str, message: &SessionMessage) -> Result<u64, Error> {
@@ -1595,6 +1627,48 @@ mod tests {
         // Delete session
         store.delete_session("test-session").unwrap();
         assert!(!store.session_exists("test-session").unwrap());
+    }
+
+    /// The session listing reads a history's opening messages only: it must
+    /// get the first `limit` in stored order and nothing else.
+    #[test]
+    fn load_history_prefix_reads_only_the_opening() {
+        let store = create_temp_store();
+        store.save_session_id("test-session").unwrap();
+        let messages: Vec<SessionMessage> = (0..10)
+            .map(|i| {
+                if i % 2 == 0 {
+                    SessionMessage::user(format!("u{i}"))
+                } else {
+                    SessionMessage::assistant(format!("a{i}"))
+                }
+            })
+            .collect();
+        store.save_history("test-session", &messages).unwrap();
+
+        let head = store.load_history_prefix("test-session", 3).unwrap();
+        assert_eq!(
+            head.iter().map(|m| m.content.as_str()).collect::<Vec<_>>(),
+            vec!["u0", "a1", "u2"]
+        );
+
+        // A limit past the end yields everything, in order.
+        let all = store.load_history_prefix("test-session", 50).unwrap();
+        assert_eq!(all.len(), 10);
+        assert_eq!(all[9].content, "a9");
+
+        // Unknown session: nothing, not an error.
+        assert!(store
+            .load_history_prefix("no-such-session", 3)
+            .unwrap()
+            .is_empty());
+    }
+
+    /// A store that never held a history has no history table yet.
+    #[test]
+    fn load_history_prefix_on_a_store_without_history_table() {
+        let store = SessionStore::open_isolated(":memory:").unwrap();
+        assert!(store.load_history_prefix("any", 3).unwrap().is_empty());
     }
 
     #[test]
