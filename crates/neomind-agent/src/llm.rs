@@ -586,6 +586,10 @@ pub struct LlmInterface {
     /// tool-capable requests) to refuse tools instead of continuing a
     /// feedback-less tool loop.
     history_window_dropped_latest_feedback: Arc<std::sync::atomic::AtomicBool>,
+    /// Set when outer hard-budget ran its one auto-recover and still could not
+    /// keep latest tool feedback. End-of-turn summarization may force-compact
+    /// even when the billed meter is missing/implausible (T4: usage_known=false).
+    hard_budget_auto_recover_exhausted: Arc<std::sync::atomic::AtomicBool>,
     /// Last desensitized prompt archive recorded at the final LLM send
     /// boundary (roles/lengths/hashes/budget + tool-feedback survival).
     /// No auth headers / raw secrets. Take/peek for failure forensics.
@@ -743,6 +747,7 @@ impl LlmInterface {
             history_window_dropped_latest_feedback: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
+            hard_budget_auto_recover_exhausted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             last_prompt_archive: Arc::new(tokio::sync::Mutex::new(None)),
             intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
@@ -793,6 +798,7 @@ impl LlmInterface {
             history_window_dropped_latest_feedback: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
+            hard_budget_auto_recover_exhausted: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             last_prompt_archive: Arc::new(tokio::sync::Mutex::new(None)),
             intent_classifier: IntentClassifier::default(),
             global_timezone: Arc::new(RwLock::new(None)), // Will be loaded from settings
@@ -958,6 +964,19 @@ impl LlmInterface {
     /// on tool-capable requests so summary/no-tool requests never consume it.
     pub fn take_history_window_dropped_latest_feedback(&self) -> bool {
         self.history_window_dropped_latest_feedback
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Mark that one hard-budget auto-recover ran and still could not keep
+    /// latest tool feedback (bounded stop / no_tools path).
+    pub fn mark_hard_budget_auto_recover_exhausted(&self) {
+        self.hard_budget_auto_recover_exhausted
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Take (read-and-clear) the auto-recover-exhausted flag for End summarization.
+    pub fn take_hard_budget_auto_recover_exhausted(&self) -> bool {
+        self.hard_budget_auto_recover_exhausted
             .swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 

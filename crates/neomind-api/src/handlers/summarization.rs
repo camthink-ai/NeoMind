@@ -97,6 +97,145 @@ async fn resolve_summary_llm(
     }
 }
 
+/// Device-ish ids mentioned in user text (heuristic for write-target binding).
+fn extract_user_device_targets(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for token in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
+        let t = token.trim();
+        if t.len() < 4 || t.len() > 64 {
+            continue;
+        }
+        // Prefer ids that look like NeoMind device ids (hex-ish / mixed), not
+        // pure English words.
+        let has_digit = t.chars().any(|c| c.is_ascii_digit());
+        if !has_digit {
+            continue;
+        }
+        if !out.iter().any(|x| x == t) {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
+/// Send/display **destinations** from user text (the device being written to).
+///
+/// "把 A 照片发到 B" → only B. Source device A must not inherit write confirmation.
+/// Status queries like "B 显示了吗" fall back to all mentioned ids when no
+/// explicit destination cue is present.
+fn extract_send_destinations(text: &str) -> Vec<String> {
+    const CUES: &[&str] = &[
+        "发送给",
+        "发到",
+        "传到",
+        "显示到",
+        "显示在",
+        "发给",
+        " to ",
+        " onto ",
+    ];
+    let mut dests = Vec::new();
+    let lower = text.to_ascii_lowercase();
+    for cue in CUES {
+        let cue_lower = cue.to_ascii_lowercase();
+        let mut search = lower.as_str();
+        let mut base = 0usize;
+        while let Some(rel) = search.find(&cue_lower) {
+            let abs = base + rel + cue_lower.len();
+            let after = text.get(abs..).unwrap_or("");
+            for id in extract_user_device_targets(after) {
+                if !dests.iter().any(|x| x == &id) {
+                    dests.push(id);
+                }
+            }
+            base = abs;
+            search = lower.get(base..).unwrap_or("");
+        }
+    }
+    if !dests.is_empty() {
+        return dests;
+    }
+    extract_user_device_targets(text)
+}
+
+/// Device id attributed inside a tool body (receipt target), if any.
+fn extract_receipt_device_id(body: &str) -> Option<String> {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+        for key in ["device_id", "id", "device"] {
+            if let Some(id) = v
+                .get("data")
+                .and_then(|d| d.get(key))
+                .and_then(|x| x.as_str())
+                .or_else(|| v.get(key).and_then(|x| x.as_str()))
+            {
+                let id = id.trim();
+                if id.len() >= 4 {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Whether a tool body looks like a mutating write / delivery receipt rather
+/// than a read (list/get/history). Prefer write-ledger signals
+/// (`_operation_resume`, `operation_id` + write/control verbs).
+///
+/// A successful `device get` whose command directory merely *lists*
+/// `render_text` is **not** a write receipt.
+fn looks_like_write_receipt(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    if lower.contains("write-metric")
+        || lower.contains("_operation_resume")
+        || lower.contains("write_metric")
+    {
+        return true;
+    }
+    // Command catalogs / device-get payloads often embed the string
+    // `render_text` as an available command name — never treat that alone
+    // as a send/display receipt.
+    if looks_like_command_catalog(&lower) {
+        return false;
+    }
+    let has_op = lower.contains("operation_id");
+    let write_ish = lower.contains("write")
+        || lower.contains("control")
+        || lower.contains("queued")
+        || lower.contains("adapter_accepted")
+        || lower.contains("delivery");
+    if has_op && write_ish {
+        return true;
+    }
+    // Executed render_text control (has op / acceptance), not a name listing.
+    lower.contains("render_text")
+        && (has_op
+            || lower.contains("adapter_accepted")
+            || lower.contains("queued")
+            || lower.contains("\"command\":\"render_text\""))
+}
+
+fn looks_like_command_catalog(lower: &str) -> bool {
+    let lists_commands = lower.contains("\"commands\"")
+        || lower.contains("command_dir")
+        || lower.contains("\"available_commands\"");
+    lists_commands
+        && !lower.contains("operation_id")
+        && !lower.contains("_operation_resume")
+        && !lower.contains("write-metric")
+        && !lower.contains("write_metric")
+}
+
+fn body_mentions_any_target(body: &str, targets: &[String]) -> bool {
+    if targets.is_empty() {
+        return false;
+    }
+    let lower = body.to_ascii_lowercase();
+    targets
+        .iter()
+        .any(|t| lower.contains(&t.to_ascii_lowercase()))
+}
+
 /// Deterministic no-LLM fallback digest, used when the summary LLM call
 /// fails. Compaction must never silently fail: the summarized messages are
 /// about to be filtered out of the window, so SOMETHING has to carry their
@@ -105,18 +244,84 @@ async fn resolve_summary_llm(
 fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) -> String {
     let mut user_lines: Vec<String> = Vec::new();
     let mut assistant_lines: Vec<String> = Vec::new();
+    let mut tool_lines: Vec<String> = Vec::new();
     let mut tool_names: Vec<String> = Vec::new();
+    // Write status is bound to the user-stated **send destination** + write
+    // receipts — never to an arbitrary Success tool_outcome (reads / command
+    // catalogs / source-device writes must not claim "platform accepted write"
+    // for the destination).
+    let mut write_destinations: Vec<String> = Vec::new();
+    let mut target_write_success = false;
+    let mut target_write_failed = false;
+    let mut target_write_unknown = false;
+    let mut saw_other_target_write = false;
+    let mut other_write_attrs: Vec<String> = Vec::new();
     for msg in messages {
         match msg.role.as_str() {
-            "user" => user_lines.push(truncate_str(&msg.content, per_message_cap)),
+            "user" => {
+                user_lines.push(truncate_str(&msg.content, per_message_cap));
+                for t in extract_send_destinations(&msg.content) {
+                    if !write_destinations.iter().any(|x| x == &t) {
+                        write_destinations.push(t);
+                    }
+                }
+            }
             "assistant" if assistant_lines.len() < 10 => {
                 assistant_lines.push(truncate_str(&msg.content, 120));
             }
             "tool" => {
-                if let Some(name) = msg.tool_call_name.as_ref() {
-                    if !tool_names.contains(name) {
-                        tool_names.push(name.clone());
+                let name = msg.tool_call_name.as_deref().unwrap_or("tool");
+                if !tool_names.iter().any(|n| n == name) {
+                    tool_names.push(name.to_string());
+                }
+                let body = msg.content.as_ref();
+                let outcome = neomind_agent::agent::history_select::tool_outcome_honesty(body);
+                let status = match outcome {
+                    neomind_agent::agent::history_select::ToolOutcomeHonesty::Success => {
+                        "success=true"
                     }
+                    neomind_agent::agent::history_select::ToolOutcomeHonesty::Failed => {
+                        "success=false"
+                    }
+                    neomind_agent::agent::history_select::ToolOutcomeHonesty::Unknown => {
+                        "outcome=unknown"
+                    }
+                };
+                let is_write = looks_like_write_receipt(body);
+                let receipt_dev = extract_receipt_device_id(body);
+                // Structured device_id wins over incidental body mentions
+                // (e.g. receipt for A that quotes destination B in prose).
+                let binds_destination = match &receipt_dev {
+                    Some(id) => write_destinations.iter().any(|d| d == id),
+                    None => body_mentions_any_target(body, &write_destinations),
+                };
+                let line = if !is_write {
+                    format!("{name}: read {status}")
+                } else if binds_destination {
+                    match outcome {
+                        neomind_agent::agent::history_select::ToolOutcomeHonesty::Success => {
+                            target_write_success = true;
+                            format!("{name}: write {status}")
+                        }
+                        neomind_agent::agent::history_select::ToolOutcomeHonesty::Failed => {
+                            target_write_failed = true;
+                            format!("{name}: write {status}")
+                        }
+                        neomind_agent::agent::history_select::ToolOutcomeHonesty::Unknown => {
+                            target_write_unknown = true;
+                            format!("{name}: write write_status=unknown")
+                        }
+                    }
+                } else {
+                    saw_other_target_write = true;
+                    let attr = receipt_dev.as_deref().unwrap_or("unknown");
+                    if !other_write_attrs.iter().any(|x| x == attr) {
+                        other_write_attrs.push(attr.to_string());
+                    }
+                    format!("{name}: write (attributed to {attr}) {status}")
+                };
+                if tool_lines.len() < 12 {
+                    tool_lines.push(line);
                 }
             }
             _ => {}
@@ -147,6 +352,35 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
         out.push_str("\n## 使用过的工具\n");
         out.push_str(&tool_names.join(", "));
         out.push('\n');
+    }
+    if !tool_lines.is_empty() {
+        out.push_str("\n## 工具结果（结构化回执，勿从摘要措辞推断已发送）\n");
+        for line in &tool_lines {
+            out.push_str("- ");
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out.push_str("\n## 写入/显示状态\n");
+    // Prefer fail/unknown over success when both appear for the destination.
+    if target_write_failed {
+        out.push_str("- 当前目标 write success=false — 未确认发送/显示；禁止声称已发送\n");
+    } else if target_write_unknown {
+        out.push_str("- write_status=unknown — 未确认发送/显示；禁止声称已发送\n");
+    } else if target_write_success {
+        out.push_str(
+            "- 当前目标存在结构化 write success=true 回执（平台已接受写入；设备是否已显示需另查状态）\n",
+        );
+    } else if saw_other_target_write {
+        if !other_write_attrs.is_empty() {
+            out.push_str("- 写回执已归因到 ");
+            out.push_str(&other_write_attrs.join(", "));
+            out.push_str("；目标发送/显示仍未确认\n");
+        } else {
+            out.push_str("- 有写入回执但未绑定当前目标设备；未确认发送/显示\n");
+        }
+    } else {
+        out.push_str("- 无当前目标的结构化写回执；未确认发送/显示\n");
     }
     out
 }
@@ -1010,8 +1244,8 @@ mod tests {
             "user wording verbatim: {digest}"
         );
         assert!(
-            digest.matches("image_edit").count() == 1,
-            "tool names deduped: {digest}"
+            digest.contains("image_edit"),
+            "tool names retained: {digest}"
         );
         // 500-char reply capped at 120 + ellipsis
         assert!(
@@ -1019,6 +1253,209 @@ mod tests {
             "assistant replies capped: {digest}"
         );
         assert!(digest.contains("结...") || digest.contains("结…"));
+        assert!(
+            digest.contains("写入/显示状态"),
+            "digest must state write/display honesty section: {digest}"
+        );
+        assert!(
+            digest.contains("无当前目标的结构化写回执"),
+            "non-write tool bodies must not claim platform write accept: {digest}"
+        );
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "reads must never claim platform accepted write: {digest}"
+        );
+    }
+
+    /// Queued / unknown write receipts must stay explicit — never infer
+    /// "displayed" from assistant prose when structured success is absent.
+    #[test]
+    fn fallback_digest_write_receipt_honesty() {
+        let mut failed = AgentMessage::assistant("x");
+        failed.role = "tool".into();
+        failed.tool_call_name = Some("shell".into());
+        failed.content = r#"{"success":false,"operation_id":"op-q1","summary":"write-metric not executed","data":{"device_id":"20545d67"}}"#.into();
+        let mut unknown = AgentMessage::assistant("x");
+        unknown.role = "tool".into();
+        unknown.tool_call_name = Some("shell".into());
+        unknown.content = r#"{"operation_id":"op-q2","summary":"write-metric pending","data":{"device_id":"20545d67"}}"#.into();
+
+        let messages = [
+            AgentMessage::user("20545d67 显示了吗？不要重复写入"),
+            AgentMessage::assistant("The most recent photo was sent to the screen."),
+            failed,
+            unknown,
+        ];
+        let refs: Vec<&AgentMessage> = messages.iter().collect();
+        let digest = build_fallback_summary(&refs, 400);
+        assert!(
+            digest.contains("success=false"),
+            "must keep structured fail receipt: {digest}"
+        );
+        assert!(
+            digest.contains("禁止声称已发送") || digest.contains("未确认发送"),
+            "must forbid claiming sent/displayed without receipt: {digest}"
+        );
+        // Digest may quote assistant prose under 助手回复要点, but the
+        // write-status section must not promote that prose into a receipt.
+        let status_idx = digest.find("## 写入/显示状态").expect("status section");
+        let status = &digest[status_idx..];
+        assert!(
+            !status.contains("照片已发送")
+                && !status.contains("was sent")
+                && !status.contains("平台已接受写入"),
+            "status section must not infer sent from prose: {status}"
+        );
+    }
+
+    #[test]
+    fn fallback_digest_successful_reads_never_claim_platform_write() {
+        let mut read = AgentMessage::assistant("x");
+        read.role = "tool".into();
+        read.tool_call_name = Some("shell".into());
+        read.content =
+            r#"{"success":true,"data":{"devices":[{"id":"200366"},{"id":"20545d67"}]}}"#.into();
+        let messages = [
+            AgentMessage::user("把 200366 照片发到 20545d67 显示"),
+            AgentMessage::assistant("listed devices"),
+            read,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(digest.contains("read success=true"), "{digest}");
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "only successful reads must never claim write accept: {digest}"
+        );
+        assert!(digest.contains("无当前目标的结构化写回执"), "{digest}");
+    }
+
+    #[test]
+    fn fallback_digest_read_ok_then_target_write_fail_not_accepted() {
+        let mut read = AgentMessage::assistant("x");
+        read.role = "tool".into();
+        read.tool_call_name = Some("shell".into());
+        read.content = r#"{"success":true,"data":{"id":"200366","history":[]}}"#.into();
+        let mut write = AgentMessage::assistant("x");
+        write.role = "tool".into();
+        write.tool_call_name = Some("shell".into());
+        write.content = r#"{"success":false,"operation_id":"op-w1","summary":"write-metric failed","data":{"device_id":"20545d67"}}"#.into();
+        let messages = [
+            AgentMessage::user("把 200366 照片发到 20545d67"),
+            read,
+            write,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(digest.contains("write success=false"), "{digest}");
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "target write fail must not claim accepted: {digest}"
+        );
+        assert!(digest.contains("当前目标 write success=false"), "{digest}");
+    }
+
+    #[test]
+    fn fallback_digest_other_device_write_ok_not_current_target() {
+        let mut other = AgentMessage::assistant("x");
+        other.role = "tool".into();
+        other.tool_call_name = Some("shell".into());
+        other.content = r#"{"success":true,"_operation_resume":true,"operation_id":"op-other","summary":"write-metric ok","data":{"device_id":"device-OTHER-99"}}"#.into();
+        let messages = [
+            AgentMessage::user("20545d67 显示了吗"),
+            AgentMessage::assistant("sent"),
+            other,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(digest.contains("attributed to device-OTHER-99"), "{digest}");
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "other-device write must not accept for current target: {digest}"
+        );
+        assert!(
+            digest.contains("目标发送/显示仍未确认") || digest.contains("未确认发送"),
+            "{digest}"
+        );
+    }
+
+    /// Tip acceptance #1: successful device get whose command directory lists
+    /// `render_text` is not a send receipt — destination stays unconfirmed.
+    #[test]
+    fn fallback_digest_device_get_command_dir_render_text_unconfirmed() {
+        let mut get_b = AgentMessage::assistant("x");
+        get_b.role = "tool".into();
+        get_b.tool_call_name = Some("shell".into());
+        get_b.content = r#"{"success":true,"data":{"id":"20545d67","commands":[{"name":"render_text","params":{"text":"string"}},{"name":"clear"}]}}"#.into();
+        let messages = [
+            AgentMessage::user("查看 20545d67 能发什么"),
+            AgentMessage::assistant("getting device"),
+            get_b,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(digest.contains("read success=true"), "{digest}");
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "command-dir render_text must not confirm send: {digest}"
+        );
+        assert!(
+            digest.contains("未确认发送/显示") || digest.contains("无当前目标的结构化写回执"),
+            "B send status must stay unconfirmed: {digest}"
+        );
+    }
+
+    /// Tip3 boundary: structured device_id=A wins over body text that mentions
+    /// destination B — A's success must not confirm B.
+    #[test]
+    fn fallback_digest_structured_device_id_wins_over_body_mention() {
+        let mut write_a = AgentMessage::assistant("x");
+        write_a.role = "tool".into();
+        write_a.tool_call_name = Some("shell".into());
+        // Structured target is A; body prose also names destination B.
+        write_a.content = r#"{"success":true,"_operation_resume":true,"operation_id":"op-a2","summary":"write-metric ok for display on 20545d67","data":{"device_id":"200366"}}"#.into();
+        let messages = [
+            AgentMessage::user("把 200366 照片发到 20545d67 显示"),
+            AgentMessage::assistant("wrote"),
+            write_a,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(
+            digest.contains("attributed to 200366"),
+            "structured device_id=A must win attribution: {digest}"
+        );
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "body mention of B must not confirm destination: {digest}"
+        );
+        assert!(
+            digest.contains("目标发送/显示仍未确认") || digest.contains("未确认发送"),
+            "B must stay unconfirmed: {digest}"
+        );
+    }
+
+    /// Tip acceptance #2: user wants A's photo on B; only a successful write
+    /// receipt for A exists → attribute to A; B stays unconfirmed.
+    #[test]
+    fn fallback_digest_source_write_receipt_does_not_confirm_destination() {
+        let mut write_a = AgentMessage::assistant("x");
+        write_a.role = "tool".into();
+        write_a.tool_call_name = Some("shell".into());
+        write_a.content = r#"{"success":true,"_operation_resume":true,"operation_id":"op-a1","summary":"write-metric ok","data":{"device_id":"200366"}}"#.into();
+        let messages = [
+            AgentMessage::user("把 200366 照片发到 20545d67 显示"),
+            AgentMessage::assistant("wrote source"),
+            write_a,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(
+            digest.contains("attributed to 200366"),
+            "receipt must attribute to source A: {digest}"
+        );
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "source write must not confirm destination B: {digest}"
+        );
+        assert!(
+            digest.contains("目标发送/显示仍未确认") || digest.contains("未确认发送"),
+            "B must stay unconfirmed: {digest}"
+        );
     }
 
     /// Mixed history (u=user, a=assistant, t=tool):

@@ -11,6 +11,46 @@ use neomind_core::{
 /// Marker for a trusted conversation summary inserted by the context builder.
 pub(crate) const CONVERSATION_SUMMARY_PREFIX: &str = "[Summary of previous conversation]\n";
 
+/// Internal hard-budget lineage stamp (`feedback_src=<index>`).
+///
+/// Preferred location: `AgentMessage.tool_call_id` (body stays pristine).
+/// Legacy body-append form is still stripped in [`AgentMessage::to_core`].
+pub(crate) const FEEDBACK_SRC_MARKER: &str = "feedback_src=";
+
+pub(crate) fn feedback_src_marker(src_index: usize) -> String {
+    format!("{FEEDBACK_SRC_MARKER}{src_index}")
+}
+
+/// Stamp call-position lineage onto `tool_call_id` without mutating body.
+pub(crate) fn stamp_feedback_src_id(msg: &mut AgentMessage, src_index: usize) {
+    if msg.role != "tool" {
+        return;
+    }
+    msg.tool_call_id = Some(feedback_src_marker(src_index));
+    let clean = strip_feedback_src_lineage(msg.content.as_ref());
+    if clean.len() != msg.content.as_ref().len() {
+        msg.content = clean.to_string().into();
+    }
+}
+
+pub(crate) fn message_carries_feedback_src(msg: &AgentMessage, marker: &str) -> bool {
+    msg.role == "tool"
+        && (msg.tool_call_id.as_deref() == Some(marker) || msg.content.contains(marker))
+}
+
+/// Remove a trailing `\nfeedback_src=<digits>` lineage line (internal only).
+pub(crate) fn strip_feedback_src_lineage(body: &str) -> &str {
+    if let Some(idx) = body.rfind('\n') {
+        let last = body[idx + 1..].trim_end();
+        if let Some(num) = last.strip_prefix(FEEDBACK_SRC_MARKER) {
+            if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+                return &body[..idx];
+            }
+        }
+    }
+    body
+}
+
 /// Agent event emitted during streaming processing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -820,12 +860,15 @@ impl AgentMessage {
             }
             "system" => Message::system(self.content.as_ref()),
             "tool" => {
-                // Tool result messages - include which tool was called
+                // Tool result messages - include which tool was called.
+                // Strip hard-budget lineage stamps so structured JSON results
+                // stay parseable for the model (and request-shape tests).
+                let body = strip_feedback_src_lineage(self.content.as_ref());
                 if let Some(ref tool_name) = self.tool_call_name {
-                    let tool_content = format!("[Tool: {} returned]\n{}", tool_name, self.content);
+                    let tool_content = format!("[Tool: {tool_name} returned]\n{body}");
                     Message::user(&tool_content)
                 } else {
-                    Message::user(self.content.as_ref())
+                    Message::user(body)
                 }
             }
             _ => Message::user(self.content.as_ref()),
