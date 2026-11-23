@@ -130,7 +130,7 @@ Spark-1.7B 本批与 126-gate（同二进制、同模型、不同采样 .3/.75/2
 
 ## 附录 A：批次档案
 
-- 研究根：`/tmp/neomind-t4-16refresh-20261106-a`（T4，ubuntu@43.132.189.162）
+- 研究根：`/tmp/neomind-t4-16refresh-20261106-a`（T4）
 - 起止：2026-11-06 22:31 CST → 2026-11-09 11:26 CST（墙钟 ~61.9h，含 3 次中断恢复）
 - 产物：`gate/<臂>/`（trials/ 逐例 trace + wire.jsonl + result.json、cohorts/ 模型日志与 props、arm-summary.json）；`binaries/neomind`（715e2dec）；`arms/`（arms-spec / arms.json / batch-plan 预注册链）
 - 执行统计：1482 个 result.json（= 1380 完整臂 + 102 被取代部分臂）；各臂时长 2.4~10.9h（Nanbeige 思考开最长）
