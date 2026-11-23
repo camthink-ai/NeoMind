@@ -1628,6 +1628,7 @@ mod multimodal_shell_deny {
                     }),
                 ],
                 error_msg: None,
+                append_tool_calls_to_text: false,
             },
             MockResponse::text("").with_thinking("thinking through results..."),
             MockResponse::text("device_a 已下发(adapter_accepted)，device_b 离线失败。"),
@@ -1798,4 +1799,207 @@ mod multimodal_shell_deny {
             "reconciled terminal op keeps shell in new-operation protocol set"
         );
     }
+
+    /// The FIRST call of a turn can already open without tools: the history
+    /// the turn started from lost its newest tool feedback and the
+    /// auto-recover could not get it back. Later rounds already said so; the
+    /// first one degraded silently and the model just narrated tool calls
+    /// (T4 follow-ups "没有发送 重试一下" → "继续").
+    #[tokio::test]
+    async fn first_call_without_latest_tool_feedback_is_announced_to_the_user() {
+        use crate::agent::types::{AgentMessage, ToolCall};
+
+        const NOTE_HEAD: &str = "Context hard-budget could not keep the latest tool feedback";
+        let rt = MockLlmRuntime::new(vec![MockResponse::text("好的。")]).with_function_calling();
+        let (iface, state, registry) = harness(&rt);
+
+        {
+            let mut guard = state.write().await;
+            // Instructions that overflow the mock's whole history window even
+            // after per-message truncation, then a tool interaction: the
+            // newest feedback is what gets evicted, and the one auto-recover
+            // cannot bring it back (the user wording takes the entire budget).
+            for i in 0..6 {
+                guard
+                    .memory
+                    .push(AgentMessage::user(format!("{}{}", i, "x".repeat(20_000))));
+            }
+            guard.memory.push(AgentMessage::assistant_with_tools(
+                "calling echo",
+                vec![ToolCall {
+                    name: "echo".into(),
+                    id: "call-1".into(),
+                    arguments: serde_json::json!({ "msg": "hi" }),
+                    result: None,
+                    round: None,
+                }],
+            ));
+            guard
+                .memory
+                .push(AgentMessage::tool_result("echo", "LATEST_TOOL_FEEDBACK"));
+        }
+
+        let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+            iface,
+            state.clone(),
+            registry,
+            "继续",
+            crate::agent::StreamSafeguards::default(),
+            None,
+            None,
+            0,
+        )
+        .await
+        .expect("stream");
+        let events = collect(stream).await;
+
+        let notes: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::SystemNote { note } => Some(note.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            notes.iter().filter(|n| n.starts_with(NOTE_HEAD)).count(),
+            1,
+            "the first-call degrade must be announced exactly once: {notes:?}"
+        );
+        let st = state.read().await;
+        let last = st.memory.last().expect("final assistant message persisted");
+        assert!(
+            last.system_notes
+                .as_ref()
+                .is_some_and(|n| n.iter().any(|n| n.starts_with(NOTE_HEAD))),
+            "the note is attached to the final message, not merged into the reply: {:?}",
+            &*last.content
+        );
+        assert!(!last.content.contains(NOTE_HEAD), "{:?}", &*last.content);
+    }
+
+    /// A turn that opens with its history intact says nothing.
+    #[tokio::test]
+    async fn first_call_with_intact_history_carries_no_degrade_note() {
+        const NOTE_HEAD: &str = "Context hard-budget could not keep the latest tool feedback";
+        let rt = MockLlmRuntime::new(vec![MockResponse::text("好的。")]).with_function_calling();
+        let (iface, state, registry) = harness(&rt);
+
+        state
+            .write()
+            .await
+            .memory
+            .push(crate::agent::types::AgentMessage::user("先看看设备"));
+
+        let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+            iface,
+            state.clone(),
+            registry,
+            "继续",
+            crate::agent::StreamSafeguards::default(),
+            None,
+            None,
+            0,
+        )
+        .await
+        .expect("stream");
+        let events = collect(stream).await;
+
+        assert!(
+            !events.iter().any(
+                |e| matches!(e, AgentEvent::SystemNote { note } if note.starts_with(NOTE_HEAD))
+            ),
+            "no degrade note without a drop: {:?}",
+            events
+        );
+    }
+}
+
+/// A tool whose result carries one string far past the 64KB slimming
+/// threshold next to small sibling fields.
+struct BigOutputTool;
+
+#[async_trait]
+impl Tool for BigOutputTool {
+    fn name(&self) -> &str {
+        "big"
+    }
+    fn description(&self) -> &str {
+        "returns a large stdout"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+        Ok(ToolOutput::success(serde_json::json!({
+            "exit_code": 0,
+            "stdout": "x".repeat(70_000),
+            "stderr": ""
+        })))
+    }
+}
+
+/// A tool result is stored twice — the tool message and the call record on
+/// the assistant message — and both must carry the slimmed copy. The call
+/// record used to keep the raw body: nothing reads more than a 120-character
+/// preview of it, but a 273.9KB `device history` output left 309,819
+/// characters in sessions.redb and in the history the browser loads
+/// (T4 2026-11-23).
+#[tokio::test]
+async fn call_record_stores_the_same_slimmed_result_as_the_tool_message() {
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call("big", serde_json::json!({})),
+        MockResponse::text("done"),
+    ]);
+    let (iface, state, _) = harness(&rt);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(BigOutputTool));
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        Arc::new(registry),
+        "跑一下",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+    assert!(
+        has_tool_call_start(&events, "big"),
+        "the tool must have run: {events:?}"
+    );
+
+    let guard = state.read().await;
+    let call_record = guard
+        .memory
+        .iter()
+        .find(|m| m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()))
+        .expect("assistant message carrying the call record");
+    let result = call_record.tool_calls.as_ref().unwrap()[0]
+        .result
+        .as_ref()
+        .expect("result stored on the call record");
+    let result_text = result.to_string();
+    assert!(
+        result_text.len() < 600,
+        "the call record must carry the slimmed copy, got {} chars",
+        result_text.len()
+    );
+    assert!(result_text.contains("cached as $cached:"), "{result_text}");
+    assert_eq!(result["exit_code"], 0, "small sibling fields stay");
+    assert_eq!(result["stderr"], "");
+
+    // Identical to what the paired tool message carries.
+    let tool_message = guard
+        .memory
+        .iter()
+        .find(|m| m.role == "tool" && m.tool_call_name.as_deref() == Some("big"))
+        .expect("tool message");
+    assert_eq!(
+        result_text,
+        tool_message.content.as_ref(),
+        "call record and tool message must agree"
+    );
 }

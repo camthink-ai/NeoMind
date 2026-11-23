@@ -13,7 +13,8 @@ use std::sync::Arc;
 use futures::Stream;
 
 use super::stream_core::{
-    drive_react_stream, prepare_turn_history_and_budget, InitialStreamMode, StreamSafeguards,
+    drive_react_stream, prepare_turn_history_and_budget, InitialStreamMode, PreparedTurn,
+    StreamSafeguards,
 };
 use crate::agent::types::{AgentEvent, AgentInternalState, AgentMessage, AgentMessageImage};
 use crate::error::{NeoMindError, Result};
@@ -112,7 +113,11 @@ pub async fn process_multimodal_stream_events_with_safeguards(
             .await;
     }
 
-    let (history_for_llm, effective_max) = match prepare_turn_history_and_budget(
+    let PreparedTurn {
+        history_for_llm,
+        effective_max,
+        first_call_without_feedback,
+    } = match prepare_turn_history_and_budget(
         &llm_interface,
         &internal_state,
         &user_message,
@@ -159,6 +164,7 @@ pub async fn process_multimodal_stream_events_with_safeguards(
         safeguards,
         turn_context,
         effective_max,
+        first_call_without_feedback,
         call_site_turn,
         InitialStreamMode::Multimodal { has_images },
     ))

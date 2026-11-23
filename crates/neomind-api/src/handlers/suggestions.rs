@@ -343,8 +343,16 @@ async fn generate_device_based_suggestions(state: &ServerState) -> Vec<Suggestio
 async fn generate_recent_operation_suggestions(state: &ServerState) -> Vec<SuggestionItem> {
     let mut suggestions = Vec::new();
 
-    // Get recent sessions with info
-    let sessions = state.agents.session_manager.list_sessions_with_info().await;
+    // Recent sessions — titles only, which is all this reads. The full
+    // listing resolved a message count and preview for every session; this
+    // request fires while the user types in the chat input, so it walked all
+    // of T4's 81 session histories (300KB tool results included) per
+    // keystroke to look at ten titles.
+    let sessions = state
+        .agents
+        .session_manager
+        .list_sessions_with_info_light()
+        .await;
 
     if sessions.is_empty() {
         // New user: suggest getting started

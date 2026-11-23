@@ -90,13 +90,17 @@ pub fn estimate_message_tokens(message: &crate::agent::AgentMessage) -> usize {
             // Tool name + arguments roughly (convert JSON to string for estimation)
             let args_str = tool_call.arguments.to_string();
             tokens += 10 + estimate_tokens(&args_str);
-            // RESULTS ship in the prompt too. The 2026-11-09 A2 replay
-            // overflowed 32K exactly because this was missing: two cached
-            // read-back windows (16K+20K chars) sat in tool_call.result,
-            // invisible to the estimator, so history assembly believed
-            // everything fit and sent 33.8K tokens.
+            // A stored result reaches the model only as the preview
+            // `to_core()` renders ("… and received: …"); its full body
+            // travels in the paired role=tool message and is counted as that
+            // message's content. Priced in full here, one 310K-char
+            // `device history` output — already slimmed to a `$cached:`
+            // pointer in its tool message — added ~140K phantom tokens: a
+            // ~28K-token history read as 180K, the hard budget evicted all
+            // of it, and the turn went out without its tools (T4 2026-11-23,
+            // session ebc333d4).
             if let Some(result) = &tool_call.result {
-                tokens += estimate_tokens(&result.to_string());
+                tokens += estimate_tokens(&crate::agent::types::tool_result_preview(result));
             }
         }
     }
@@ -446,39 +450,57 @@ mod tests {
         );
     }
 
-    /// Results ship in the prompt, so they MUST ship in the estimate. The
-    /// 2026-11-09 A2 replay overflowed 32K because two cached read-back
-    /// windows in tool_call.result were invisible here — history assembly
-    /// "fit" a prompt that actually needed 33.8K tokens.
+    /// A stored result is priced exactly as far as it ships — the preview
+    /// `to_core()` renders. The 2026-11-09 A2 replay overflow was pinned on
+    /// "results invisible to the estimator", so the stored copy was priced in
+    /// full; but `to_core()` never sent more than the preview, and the body
+    /// was already counted in its role=tool message. On T4 (2026-11-23) that
+    /// double count turned one 310K-char output into ~140K phantom tokens and
+    /// cost a conversation its tools.
     #[test]
-    fn tool_call_results_count_toward_the_estimate() {
-        let base = crate::agent::AgentMessage::assistant("done");
-        let with_args = crate::agent::AgentMessage {
-            tool_calls: Some(vec![crate::agent::types::ToolCall {
-                name: "file_read".to_string(),
-                id: String::new(),
-                arguments: serde_json::json!({"path": "$cached:shell.stdout#ab12cd34"}),
-                result: None,
-                round: None,
-            }]),
-            ..base.clone()
-        };
-        let with_result = crate::agent::AgentMessage {
-            tool_calls: Some(vec![crate::agent::types::ToolCall {
-                name: "file_read".to_string(),
-                id: String::new(),
-                arguments: serde_json::json!({"path": "$cached:shell.stdout#ab12cd34"}),
-                result: Some(serde_json::json!({"content": "x".repeat(8_000)})),
-                round: None,
-            }]),
-            ..base
-        };
-        let args_only = estimate_message_tokens(&with_args);
-        let with_payload = estimate_message_tokens(&with_result);
+    fn tool_call_results_are_priced_only_as_far_as_they_ship() {
+        fn message_with_result(result: Option<serde_json::Value>) -> crate::agent::AgentMessage {
+            crate::agent::AgentMessage {
+                tool_calls: Some(vec![crate::agent::types::ToolCall {
+                    name: "file_read".to_string(),
+                    id: String::new(),
+                    arguments: serde_json::json!({"path": "$cached:shell.stdout#ab12cd34"}),
+                    result,
+                    round: None,
+                }]),
+                ..crate::agent::AgentMessage::assistant("done")
+            }
+        }
+        let args_only = estimate_message_tokens(&message_with_result(None));
+        let eight_k = estimate_message_tokens(&message_with_result(Some(
+            serde_json::json!({"content": "x".repeat(8_000)}),
+        )));
+        let huge = estimate_message_tokens(&message_with_result(Some(serde_json::json!(
+            "x".repeat(309_819)
+        ))));
+
+        // The preview is part of the prompt, so it is still counted…
+        assert!(eight_k > args_only, "{args_only} vs {eight_k}");
+        // …and nothing beyond the 120 characters that ship ever is.
         assert!(
-            with_payload > args_only + 1_500,
-            "8K-char result must move the estimate: {args_only} vs {with_payload}"
+            eight_k - args_only <= 120,
+            "an 8K-char result must cost no more than its preview: {args_only} vs {eight_k}"
         );
+        assert!(
+            huge - args_only <= 120,
+            "a 310K-char result must cost no more than its preview: {args_only} vs {huge}"
+        );
+
+        // The estimate and the rendered prompt agree on how much that is.
+        // (The preview is rendered for a tool-call message with no prose.)
+        let result = serde_json::json!("x".repeat(8_000));
+        let preview = crate::agent::types::tool_result_preview(&result);
+        assert_eq!(preview.chars().count(), 120);
+        let mut prose_free = message_with_result(Some(result));
+        prose_free.content = "".into();
+        let shipped = prose_free.to_core();
+        assert!(shipped.content.as_text().contains(&preview));
+        assert!(!shipped.content.as_text().contains(&format!("{preview}x")));
     }
 
     #[test]

@@ -466,6 +466,10 @@ pub enum ToolOutcomeHonesty {
 }
 
 /// Classify tool-result text for digests / system notes (outer JSON only).
+///
+/// Success requires `success=true`. A bare `failed=false` without it is
+/// **not** a success — it only says nothing failed, which is not evidence a
+/// write was accepted.
 pub fn tool_outcome_honesty(body: &str) -> ToolOutcomeHonesty {
     let needles = extract_evidence_needles(body);
     match evidence_bool(&needles, "success") {
@@ -473,7 +477,6 @@ pub fn tool_outcome_honesty(body: &str) -> ToolOutcomeHonesty {
         Some("false") => ToolOutcomeHonesty::Failed,
         _ => match evidence_bool(&needles, "failed") {
             Some("true") => ToolOutcomeHonesty::Failed,
-            Some("false") => ToolOutcomeHonesty::Success,
             _ => ToolOutcomeHonesty::Unknown,
         },
     }
@@ -1014,6 +1017,30 @@ mod tests {
     fn tool_as_user(name: &str, body: &str) -> Message {
         // Mirrors AgentMessage::to_core() for tool results.
         Message::user(format!("[Tool: {name} returned]\n{body}"))
+    }
+
+    /// A bare `failed=false` is not a success receipt: nothing failed ≠ the
+    /// write was accepted.
+    #[test]
+    fn bare_failed_false_is_not_a_structured_success() {
+        assert_eq!(
+            tool_outcome_honesty(r#"{"failed":false,"data":{"device_id":"20545d67"}}"#),
+            ToolOutcomeHonesty::Unknown
+        );
+        assert_eq!(
+            tool_outcome_honesty(
+                r#"{"success":true,"failed":false,"data":{"device_id":"20545d67"}}"#
+            ),
+            ToolOutcomeHonesty::Success
+        );
+        assert_eq!(
+            tool_outcome_honesty(r#"{"failed":true,"summary":"write not executed"}"#),
+            ToolOutcomeHonesty::Failed
+        );
+        assert_eq!(
+            tool_outcome_honesty(r#"{"success":false,"summary":"write-metric not executed"}"#),
+            ToolOutcomeHonesty::Failed
+        );
     }
 
     #[test]
