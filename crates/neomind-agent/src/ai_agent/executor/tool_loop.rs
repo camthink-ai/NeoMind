@@ -771,19 +771,37 @@ impl AgentExecutor {
                 let cached_read_set: HashSet<usize> =
                     cached_reads.iter().map(|(i, _)| *i).collect();
 
+                // `calls` are post-rewrite: hallucinated CLI-domain tools
+                // (`message`, …) are already `shell` with a `neomind …`
+                // command. Judgment gate therefore covers both entry points
+                // listed in `JUDGMENT_NOTIFY_ENTRY_POINTS` (direct shell +
+                // rewritten CLI) through one helper.
                 let blocked: Vec<(usize, String)> = calls
                     .iter()
                     .enumerate()
                     .filter_map(|(i, c)| {
                         if c.name == "shell" {
-                            c.args
-                                .get("command")
-                                .and_then(|v| v.as_str())
-                                .and_then(crate::toolkit::policy::deny_reason)
-                                .map(|r| (i, r))
-                        } else {
-                            None
+                            if let Some(command) = c.args.get("command").and_then(|v| v.as_str()) {
+                                if let Some(r) = crate::toolkit::policy::deny_reason(command) {
+                                    return Some((i, r));
+                                }
+                            }
                         }
+                        // Judgment-notify gate: auth from independent assistant
+                        // judgment only — never from pending send title/body.
+                        // Keyword scan of the final reply is audit-only and
+                        // cannot unsend.
+                        if let Some(r) = super::judgment_notify::judgment_deny_for_tool_call(
+                            agent, &c.name, &c.args, messages,
+                        ) {
+                            tracing::warn!(
+                                agent_id = %agent.id,
+                                reason = %r,
+                                "Judgment notify gate blocked message send"
+                            );
+                            return Some((i, r));
+                        }
+                        None
                     })
                     .collect();
 
@@ -798,14 +816,16 @@ impl AgentExecutor {
                     .map(|(i, c)| (i, c.clone()))
                     .collect();
 
-                // Insert the policy-blocked synthetic errors first.
+                // Insert the policy-blocked / judgment-gated synthetic errors first.
                 for (i, reason) in &blocked {
+                    let msg = if reason.starts_with("Judgment notify gate:") {
+                        reason.clone()
+                    } else {
+                        format!("Blocked by safety policy: {}", reason)
+                    };
                     assembled[*i] = Some(crate::toolkit::ToolResult {
                         name: calls[*i].name.clone(),
-                        result: Err(crate::toolkit::error::ToolError::Execution(format!(
-                            "Blocked by safety policy: {}",
-                            reason
-                        ))),
+                        result: Err(crate::toolkit::error::ToolError::Execution(msg)),
                     });
                 }
 

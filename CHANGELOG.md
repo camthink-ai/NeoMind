@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.3] - 2026-11-23 — Camera event-image honesty + judgment notify gate
+
+Post-`v1.3.2`: Task 1 (NM-367) honest event-image input status and last-line `Verdict:` judgment-notify gate before `message send`. Product version **1.3.3** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged).
+
+### Upgrade notes
+- Agents with `notify.on = judgment` only send when the **last non-empty** assistant line is exactly `Verdict: criteria met` (`criteria not met` / `insufficient evidence` deny). Mid-message protocol examples, backticks, send titles, questions, progress lines, and policy text no longer authorize `message send`.
+- Event-carried images are reported honestly in input status (event image present vs bound-metrics-only) so vision agents do not claim a frame they never received.
+- When `notify` is configured, legacy keyword alert sniffing stays off (`is_alert_decision` only runs if `agent.notify.is_none()`).
+- `scripts/verify-upgrade.sh` tip expect defaults to **1.3.3** (`NEOMIND_BIN_132`→`NEOMIND_BIN_133`; legacy `131`/`132` still accepted).
+
+### Fixed — agent / notify / vision input
+- Judgment notify gate runs after CLI→shell rewrite via shared `judgment_deny_for_tool_call`; FakeNotifySink acceptance covers allow/deny paths.
+- Last-line exact `Verdict:` protocol only — no lexicon, substring, bare-label, or backtick-stripped auth.
+- Honest event-image vs bound-metrics input status (Change A) so missing frames are visible in the run record.
+
+### Test
+- FakeNotifySink gates: criteria met / not met / insufficient evidence / mid-message backtick example / question / progress / policy / prior+positive / image byte-compare.
+- `python3 scripts/extract_changelog.py --version 1.3.3 --check` gates this section.
+
 ## [1.3.2] - 2026-11-22 — Agent/CLI reliability, vision false-success, upgrade gate
 
 Post-`v1.3.1`: DomainCommandContract 10-domain expansion, multimodal vision false-success refusal, onboarding/redirect/status steering, CLI optional extension ids + dashboard failure-circuit, SoftAP UI stays cut. Product version **1.3.2** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged).

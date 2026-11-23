@@ -478,7 +478,11 @@ impl AgentExecutor {
             "Checking if alert should be sent"
         );
 
-        if should_send_alert {
+        // Same gate as alert-type decisions: an explicit `notify` config
+        // (including Judgment) owns delivery. Legacy keyword alerts only
+        // run when notify is unset — otherwise Judgment agents would get a
+        // second, ungated send via condition_met.
+        if should_send_alert && agent.notify.is_none() {
             self.send_alert_for_decision(agent, decision, notifications)
                 .await;
         }
