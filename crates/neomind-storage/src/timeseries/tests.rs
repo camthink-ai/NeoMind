@@ -439,6 +439,37 @@ async fn test_query_range_rev_pagination() {
     assert_eq!(full.total_count, Some(15));
 }
 
+/// Sparse image_data-like series: offset past 100 must still return points
+/// (mirrors the T4 device telemetry bug where a 1Hz time-window estimate
+/// emptied pages while total stayed large).
+#[tokio::test]
+async fn test_query_range_rev_sparse_offset_past_100() {
+    let store = TimeSeriesStore::memory().unwrap();
+    let start = 1_700_000_000_i64;
+    let hour = 3600_i64;
+    let n = 250usize;
+    for i in 0..n {
+        store
+            .write(
+                "device:200366",
+                "image_data",
+                DataPoint::new_string(start + (i as i64) * hour, format!("frame-{i}")),
+            )
+            .await
+            .unwrap();
+    }
+    store.flush().unwrap();
+    let end = start + (n as i64) * hour;
+
+    let page = store
+        .query_range_rev("device:200366", "image_data", start, end, Some(10), 110)
+        .await
+        .unwrap();
+    assert_eq!(page.total_count, Some(n));
+    assert_eq!(page.points.len(), 10);
+    assert!(n > 110 + page.points.len());
+}
+
 #[tokio::test]
 async fn test_aggregated_queries_avg_min_max_sum_count() {
     let store = TimeSeriesStore::memory().unwrap();

@@ -180,6 +180,38 @@ function formatTimestamp(timestamp: string | number | undefined): string {
   })
 }
 
+/** Default / recommended fit for PIR-like captures — contain avoids stretch. */
+export const IMAGE_HISTORY_DEFAULT_FIT: NonNullable<ImageHistoryProps['fit']> = 'contain'
+
+/**
+ * Frame classes: fill the grid cell when the parent stretches (`h-full` +
+ * `flex-1`), with a sensible min-height so non-grid hosts stay usable.
+ * Previously forced a tiny fixed `h-[180px]` even inside tall dashboard cells.
+ */
+export function imageHistoryFrameClass(size: 'sm' | 'md' | 'lg' = 'md'): string {
+  const minH = size === 'sm' ? 'min-h-[120px]' : size === 'lg' ? 'min-h-[240px]' : 'min-h-[180px]'
+  return cn('w-full flex-1 relative', minH)
+}
+
+/** Map fit prop → object-* utility. Unknown values fall back to contain. */
+export function imageHistoryObjectFitClass(
+  fit: ImageHistoryProps['fit'] = IMAGE_HISTORY_DEFAULT_FIT,
+): string {
+  switch (fit) {
+    case 'cover':
+      return 'object-cover'
+    case 'fill':
+      return 'object-fill'
+    case 'none':
+      return 'object-none'
+    case 'scale-down':
+      return 'object-scale-down'
+    case 'contain':
+    default:
+      return 'object-contain'
+  }
+}
+
 /**
  * Lightweight fingerprint for image source tracking.
  * Avoids storing full base64 strings (~50KB each) in Sets/arrays.
@@ -253,7 +285,9 @@ export const ImageHistory = memo(function ImageHistory({
   images: propImages,
   title,
   size = 'md',
-  fit = 'fill',
+  // Default contain (matches registry/schema). Stored PIR configs with
+  // explicit fit: 'fill' are left alone — no migration of persisted boards.
+  fit = IMAGE_HISTORY_DEFAULT_FIT,
   rounded: _rounded = true,
   showTitle = true,
   limit = 200,
@@ -386,19 +420,12 @@ export const ImageHistory = memo(function ImageHistory({
 
   // --- Main render ---
   return (
-    <div className={cn(dashboardCardBase, 'relative flex flex-col overflow-hidden', className)}>
-      <div className={cn('w-full flex-1 relative', size === 'sm' ? 'h-[120px]' : size === 'md' ? 'h-[180px]' : 'h-[240px]')}>
+    <div className={cn(dashboardCardBase, 'relative flex flex-col overflow-hidden h-full', className)}>
+      <div className={imageHistoryFrameClass(size)}>
         <img
           src={currentImageSrc}
           alt={currentImage?.alt || `Image ${currentIndex + 1}`}
-          className={cn(
-            'w-full h-full',
-            fit === 'contain' && 'object-contain',
-            fit === 'cover' && 'object-cover',
-            fit === 'fill' && 'object-fill',
-            fit === 'none' && 'object-none',
-            fit === 'scale-down' && 'object-scale-down',
-          )}
+          className={cn('w-full h-full', imageHistoryObjectFitClass(fit))}
           onLoad={handleImageLoad}
           onError={handleImageError}
         />

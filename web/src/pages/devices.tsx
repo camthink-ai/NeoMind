@@ -469,15 +469,28 @@ export function DevicesPage() {
     }
   }
 
-  const handleMetricClick = async (metricName: string, offset?: number, limit?: number) => {
+  const handleMetricClick = async (
+    metricName: string,
+    offset?: number,
+    limit?: number,
+    cursor?: number | null,
+  ) => {
     if (!deviceDetailView) return
     setSelectedMetric(metricName)
     // Use current timestamp as end to ensure we get the latest data
     const end = Math.floor(Date.now() / 1000)
     // Max 30 days to match backend limit (MAX_TIME_RANGE_SECS = 30 * 86400)
     const start = end - 30 * 24 * 60 * 60
-    // Fetch with pagination support
-    await fetchTelemetryData(deviceDetailView, metricName, start, end, limit ?? 50, offset ?? 0)
+    // Offset for page jumps; cursor for sequential next when available.
+    await fetchTelemetryData(
+      deviceDetailView,
+      metricName,
+      start,
+      end,
+      limit ?? 50,
+      offset ?? 0,
+      cursor,
+    )
   }
 
   const handleSendCommand = async (

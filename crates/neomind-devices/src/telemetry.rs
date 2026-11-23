@@ -390,7 +390,7 @@ impl TimeSeriesStorage {
         limit: Option<usize>,
     ) -> Result<Vec<DataPoint>, DeviceError> {
         Ok(self
-            .query_limited_with_total(source_id, metric, start_timestamp, end_timestamp, limit)
+            .query_limited_with_total(source_id, metric, start_timestamp, end_timestamp, limit, 0)
             .await?
             .0)
     }
@@ -401,6 +401,9 @@ impl TimeSeriesStorage {
     /// `query_range_rev` already scans the whole range to fill `total_count`.
     /// Dropping that count and reporting `points.len()` made pagination treat
     /// a fetch cap (`limit`, often `page_size * 2`) as the series total.
+    ///
+    /// `offset` skips the newest N points (newest-first pagination), matching
+    /// [`Self::query_with_limit`] and `GET /api/telemetry`.
     pub async fn query_limited_with_total(
         &self,
         source_id: &str,
@@ -408,21 +411,30 @@ impl TimeSeriesStorage {
         start_timestamp: i64,
         end_timestamp: i64,
         limit: Option<usize>,
+        offset: usize,
     ) -> Result<(Vec<DataPoint>, usize), DeviceError> {
         tracing::debug!(
-            "TimeSeriesStorage::query: source_id={}, metric={}, start={}, end={}, limit={:?}",
+            "TimeSeriesStorage::query: source_id={}, metric={}, start={}, end={}, limit={:?}, offset={}",
             source_id,
             metric,
             start_timestamp,
             end_timestamp,
             limit,
+            offset,
         );
 
         let (result, total) = if limit.is_some() {
-            // Reverse scan → newest N points, then reverse to ASC for callers.
+            // Reverse scan → newest N points after offset, then reverse to ASC.
             let rev = self
                 .store()
-                .query_range_rev(source_id, metric, start_timestamp, end_timestamp, limit, 0)
+                .query_range_rev(
+                    source_id,
+                    metric,
+                    start_timestamp,
+                    end_timestamp,
+                    limit,
+                    offset,
+                )
                 .await
                 .map_err(|e| {
                     tracing::error!("query_range_rev failed for {}/{}: {}", source_id, metric, e);
@@ -930,6 +942,73 @@ mod tests {
         let string_point = DataPoint::new(1000, MetricValue::String("hello".to_string()));
         let storage_point = string_point.to_storage();
         assert_eq!(storage_point.value, serde_json::json!("hello"));
+    }
+
+    /// Regression (T4 PIR / image_data): offset > 100 on a sparse series must
+    /// still return a full page while total stays large. The old device
+    /// handler remapped deep offsets to a ~1Hz estimated time window
+    /// (`end - offset` seconds) which emptied pages for sub-Hz metrics.
+    #[tokio::test]
+    async fn sparse_image_data_offset_past_100_returns_real_page() {
+        let storage = TimeSeriesStorage::memory().expect("memory storage");
+        let source = "device:200366";
+        let metric = "image_data";
+        // 250 sparse captures (~1/hour) — denser than PIR but still << 1 Hz.
+        let start = 1_700_000_000_i64;
+        let total_points = 250usize;
+        let hour = 3600_i64;
+        let mut batch = Vec::with_capacity(total_points);
+        for i in 0..total_points {
+            batch.push(DataPoint {
+                timestamp: start + (i as i64) * hour,
+                value: MetricValue::String(format!(
+                    "/api/images/{}/image_data/{}.jpg",
+                    "200366", i
+                )),
+                quality: None,
+                metadata: None,
+            });
+        }
+        storage
+            .write_batch(source, metric, batch)
+            .await
+            .expect("write_batch");
+        let end = start + (total_points as i64) * hour;
+
+        // Page that used to empty under the 1Hz estimate (offset=110, limit=10).
+        let (page, total) = storage
+            .query_limited_with_total(source, metric, start, end, Some(10), 110)
+            .await
+            .expect("page");
+        assert_eq!(total, total_points);
+        assert_eq!(
+            page.len(),
+            10,
+            "offset=110 must return a full page when total>>offset+limit"
+        );
+        assert!(
+            total > 110 + page.len(),
+            "total must stay larger than this page's window"
+        );
+        // Newest-first page via reverse-scan + ASC return: timestamps decrease
+        // when read newest-first by the handler (.rev()).
+        assert!(page[0].timestamp < page[page.len() - 1].timestamp);
+
+        // Deeper page still non-empty while total covers it.
+        let (page2, total2) = storage
+            .query_limited_with_total(source, metric, start, end, Some(10), 200)
+            .await
+            .expect("page2");
+        assert_eq!(total2, total_points);
+        assert_eq!(page2.len(), 10);
+
+        // Beyond the series: empty page, exact total preserved.
+        let (empty, total3) = storage
+            .query_limited_with_total(source, metric, start, end, Some(10), 250)
+            .await
+            .expect("empty");
+        assert!(empty.is_empty());
+        assert_eq!(total3, total_points);
     }
 }
 

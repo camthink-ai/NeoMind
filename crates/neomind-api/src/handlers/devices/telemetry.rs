@@ -470,9 +470,9 @@ pub async fn get_device_telemetry_handler(
                         }
                     };
 
-                    // Cursor-based pagination: use cursor as the scan start for O(1) seek.
+                    // Cursor-based pagination: use cursor as the scan end for O(1) seek.
                     // [boundary fix] The cursor is the OLDEST point of the previous page;
-                    // the storage range is INCLUSIVE, so scanning from `ct` re-fetches
+                    // the storage range is INCLUSIVE, so scanning to `ct` re-fetches
                     // that exact point — every page boundary was returned twice (chart
                     // duplicates, inflated counts). Start the scan at ct but filter to
                     // strictly-older points afterwards (the filter also keeps this correct
@@ -486,18 +486,14 @@ pub async fn get_device_telemetry_handler(
                     // mirror-image bug: an inclusive boundary that looped.) With
                     // the cursor as `end`, the reverse scan hands back the newest
                     // points older than ct; the < ct filter trims the boundary row.
+                    //
+                    // Offset path: push the real offset into storage (same as
+                    // GET /api/telemetry). Never invent a 1Hz estimated time
+                    // window for deep offsets — sparse metrics (image_data /
+                    // PIR) are far below 1 Hz, so that shortcut returned empty
+                    // pages while pagination.total stayed large (T4: offset≥110).
                     let (effective_start, effective_end, effective_offset) =
-                        if let Some(ct) = cursor_ts {
-                            (start, ct, 0)
-                        } else if offset > 100 {
-                            // PERFORMANCE: For deep pagination (offset > 100), estimate start time
-                            // to avoid loading huge amounts of data. Assume 1 point per second as fallback.
-                            let estimated_skip_seconds = offset as i64;
-                            let estimated_start = end.saturating_sub(estimated_skip_seconds);
-                            (estimated_start, end, 0)
-                        } else {
-                            (start, end, offset) // Traditional offset pagination for small offsets
-                        };
+                        resolve_device_telemetry_window(start, end, offset, cursor_ts);
 
                     // Fast path: server-side bucketed downsampling for chart rendering.
                     // When no pagination (cursor/offset) and bucketed=true, use a single
@@ -535,14 +531,13 @@ pub async fn get_device_telemetry_handler(
                         );
                     }
 
-                    // PERFORMANCE FIX: Add limit to prevent loading all historical data points
-                    // For "newest first" pagination, we need to fetch more than requested
-                    // to calculate total count and enable next_cursor, but cap at reasonable limit
-                    // Use smaller limit for cursor-based queries since they're more efficient
-                    let fetch_limit = if cursor_ts.is_some() || effective_offset == 0 {
-                        limit.saturating_mul(2).max(100) // Cursor-based: 2x page size or min 100
+                    // Cursor mode over-fetches so the exclusive-boundary filter
+                    // still yields a full page. Offset mode asks storage for
+                    // exactly one page — skip happens in query_range_rev.
+                    let fetch_limit = if cursor_ts.is_some() {
+                        limit.saturating_mul(2).max(100)
                     } else {
-                        limit.saturating_mul(3).max(500) // Offset-based: 3x page size or min 500
+                        limit
                     };
                     let (points, total) = match device_service
                         .query_telemetry(
@@ -551,12 +546,19 @@ pub async fn get_device_telemetry_handler(
                             Some(effective_start),
                             Some(effective_end),
                             Some(fetch_limit),
+                            // Cursor path applies the exclusive filter in memory
+                            // (offset stays 0). Offset path is storage-side.
+                            if cursor_ts.is_some() {
+                                0
+                            } else {
+                                effective_offset
+                            },
                         )
                         .await
                     {
                         Ok((all_points, range_total)) => {
                             // DB returns points in timestamp-asc order.
-                            // For "newest first" pagination, take from the end and reverse.
+                            // For "newest first" pagination, reverse.
                             // Cursor mode: drop points at-or-after the cursor (the boundary
                             // point was already returned as the previous page's oldest).
                             // `range_total` is the exact count in the scanned window, not
@@ -569,7 +571,6 @@ pub async fn get_device_telemetry_handler(
                                 .into_iter()
                                 .filter(|(ts, _)| cursor_ts.is_none_or(|ct| *ts < ct))
                                 .rev() // newest first without sorting
-                                .skip(effective_offset)
                                 .take(limit)
                                 .map(|(timestamp, value)| {
                                     json!({
@@ -587,10 +588,13 @@ pub async fn get_device_telemetry_handler(
                                 metric_name,
                                 e
                             );
-                            // Fallback to direct telemetry query (with limit for performance)
-                            // NOTE: We must NOT push limit to storage because storage returns
-                            // ascending order (oldest first) and would give us the OLDEST N points
-                            // instead of the NEWEST. Fetch limited data and reverse.
+                            // Fallback: storage newest-first page via query_with_limit
+                            // (ASC after reverse). Same offset semantics as the primary path.
+                            let storage_offset = if cursor_ts.is_some() {
+                                0
+                            } else {
+                                effective_offset
+                            };
                             match telemetry
                                 .query_with_limit(
                                     &device_source_id,
@@ -598,7 +602,7 @@ pub async fn get_device_telemetry_handler(
                                     effective_start,
                                     effective_end,
                                     Some(fetch_limit),
-                                    0,
+                                    storage_offset,
                                 )
                                 .await
                             {
@@ -618,7 +622,6 @@ pub async fn get_device_telemetry_handler(
                                         .into_iter()
                                         .filter(|p| cursor_ts.is_none_or(|ct| p.timestamp < ct))
                                         .rev()
-                                        .skip(effective_offset)
                                         .take(limit)
                                         .map(|p| {
                                             json!({
@@ -699,6 +702,24 @@ pub async fn get_device_telemetry_handler(
                 .unwrap_or(per_metric_stats),
         ),
     }))
+}
+
+/// Resolve the storage window + offset for device telemetry pagination.
+///
+/// - Cursor: upper-bound the scan at the previous page's oldest ts; offset 0.
+/// - Offset: keep the caller's `[start, end]` and real offset — never invent a
+///   1Hz estimated sub-window (that emptied sparse pages past offset 100).
+pub(crate) fn resolve_device_telemetry_window(
+    start: i64,
+    end: i64,
+    offset: usize,
+    cursor: Option<i64>,
+) -> (i64, i64, usize) {
+    if let Some(ct) = cursor {
+        (start, ct, 0)
+    } else {
+        (start, end, offset)
+    }
 }
 
 /// Another page exists only when this page filled `limit` AND the window
@@ -1462,7 +1483,7 @@ mod aggregate_contract_tests {
 
 #[cfg(test)]
 mod pagination_contract_tests {
-    use super::{build_pagination, telemetry_page_has_more};
+    use super::{build_pagination, resolve_device_telemetry_window, telemetry_page_has_more};
 
     #[test]
     fn exact_full_page_has_no_more() {
@@ -1473,6 +1494,22 @@ mod pagination_contract_tests {
         // nothing remains (50 + 100 == 150).
         assert!(!telemetry_page_has_more(100, 100, 150, 50));
         assert!(telemetry_page_has_more(100, 100, 151, 50));
+    }
+
+    /// Deep offset must keep the real time window — the old 1Hz estimate
+    /// (`end - offset` seconds, offset forced to 0) emptied sparse series
+    /// (image_data / PIR) once offset > 100.
+    #[test]
+    fn deep_offset_keeps_real_window_no_1hz_estimate() {
+        let start = 1_700_000_000;
+        let end = start + 30 * 86400;
+        let (s, e, off) = resolve_device_telemetry_window(start, end, 110, None);
+        assert_eq!((s, e, off), (start, end, 110));
+        let (s2, e2, off2) = resolve_device_telemetry_window(start, end, 500, None);
+        assert_eq!((s2, e2, off2), (start, end, 500));
+        // Cursor still wins and zeroes offset.
+        let (s3, e3, off3) = resolve_device_telemetry_window(start, end, 500, Some(end - 60));
+        assert_eq!((s3, e3, off3), (start, end - 60, 0));
     }
 
     /// SINGLE-metric: authoritative total + cursor for the metric — the

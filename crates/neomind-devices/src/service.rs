@@ -2431,7 +2431,10 @@ impl DeviceService {
         Ok(())
     }
 
-    /// Query telemetry data for a device metric
+    /// Query telemetry data for a device metric.
+    ///
+    /// `offset` skips the newest N points (newest-first pagination). Pass 0
+    /// for the first page.
     pub async fn query_telemetry(
         &self,
         device_id: &str,
@@ -2439,6 +2442,7 @@ impl DeviceService {
         start_time: Option<i64>,
         end_time: Option<i64>,
         limit: Option<usize>,
+        offset: usize,
     ) -> Result<(Vec<(i64, MetricValue)>, usize), DeviceError> {
         // Get device config and template
         let (_config, template) = self.get_device_with_template(device_id).await?;
@@ -2483,6 +2487,7 @@ impl DeviceService {
                     start,
                     end,
                     limit,
+                    offset,
                 )
                 .await
                 .map_err(|e| {

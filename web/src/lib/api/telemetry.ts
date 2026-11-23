@@ -2,17 +2,51 @@
 import type { TelemetryDataResponse, TelemetrySummaryResponse, CommandHistoryResponse } from '@/types'
 import { fetchAPI } from "./client"
 
+/** Build query for GET /devices/:id/telemetry. Cursor wins over offset. */
+export function buildDeviceTelemetryQuery(opts: {
+  metric?: string
+  start?: number
+  end?: number
+  limit?: number
+  offset?: number
+  bucketed?: boolean
+  cursor?: number | null
+}): URLSearchParams {
+  const { metric, start, end, limit, offset, bucketed, cursor } = opts
+  return new URLSearchParams({
+    ...(metric && { metric }),
+    ...(start && { start: start.toString() }),
+    ...(end && { end: end.toString() }),
+    ...(limit && { limit: limit.toString() }),
+    ...(offset !== undefined && offset > 0 && cursor == null && { offset: offset.toString() }),
+    ...(cursor != null && { cursor: cursor.toString() }),
+    ...(bucketed && { bucketed: 'true' }),
+  })
+}
+
 export const telemetryApi = {
   // Device Telemetry
-  getDeviceTelemetry: (deviceId: string, metric?: string, start?: number, end?: number, limit?: number, offset?: number, bucketed?: boolean) =>
+  // Prefer `cursor` (previous page's next_cursor) for sequential next-page;
+  // `offset` remains correct for arbitrary page jumps after the storage-offset fix.
+  getDeviceTelemetry: (
+    deviceId: string,
+    metric?: string,
+    start?: number,
+    end?: number,
+    limit?: number,
+    offset?: number,
+    bucketed?: boolean,
+    cursor?: number | null,
+  ) =>
     fetchAPI<TelemetryDataResponse>(
-      `/devices/${deviceId}/telemetry?${new URLSearchParams({
-        ...(metric && { metric }),
-        ...(start && { start: start.toString() }),
-        ...(end && { end: end.toString() }),
-        ...(limit && { limit: limit.toString() }),
-        ...(offset !== undefined && offset > 0 && { offset: offset.toString() }),
-        ...(bucketed && { bucketed: 'true' }),
+      `/devices/${deviceId}/telemetry?${buildDeviceTelemetryQuery({
+        metric,
+        start,
+        end,
+        limit,
+        offset,
+        bucketed,
+        cursor,
       })}`,
       {
         // [deleted-device 404] A device removed by another client (CLI,

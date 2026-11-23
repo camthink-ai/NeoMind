@@ -226,6 +226,8 @@ export interface TelemetryDataResponse {
     offset: number
     limit: number
     total: number
+    /** Oldest timestamp on this page; pass as `cursor` for the next page. Null on the last page. */
+    next_cursor?: number | null
   }
 }
 

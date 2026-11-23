@@ -61,7 +61,12 @@ interface DeviceDetailProps {
   selectedMetric: string | null
   onBack: () => void
   onRefresh: () => void
-  onMetricClick: (metricName: string, offset?: number, limit?: number) => Promise<void>
+  onMetricClick: (
+    metricName: string,
+    offset?: number,
+    limit?: number,
+    cursor?: number | null,
+  ) => Promise<void>
   onMetricBack: () => void
   /**
    * Returns a delivery result when the backend accepted the send, or false.
@@ -373,8 +378,14 @@ export function DeviceDetail({
   const handlePageChange = async (newPage: number) => {
     if (!selectedMetric) return
     const offset = (newPage - 1) * PAGE_SIZE
+    // Sequential next-page: prefer next_cursor (O(1) seek). Arbitrary jumps
+    // still use storage-side offset (fixed — no more empty pages past 100).
+    const cursor =
+      newPage === currentPage + 1
+        ? telemetryData?.pagination?.next_cursor ?? undefined
+        : undefined
     setCurrentPage(newPage)
-    await onMetricClick(selectedMetric, offset, PAGE_SIZE)
+    await onMetricClick(selectedMetric, offset, PAGE_SIZE, cursor)
   }
 
   // Metric history table columns

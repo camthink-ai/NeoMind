@@ -64,7 +64,7 @@ export interface DeviceSlice extends DeviceState, TelemetryState {
   fetchDeviceDetails: (id: string) => Promise<Device | null>
   fetchDeviceTypeDetails: (deviceType: string) => Promise<DeviceType | null>
 
-  fetchTelemetryData: (deviceId: string, metric?: string, start?: number, end?: number, limit?: number, offset?: number) => Promise<void>
+  fetchTelemetryData: (deviceId: string, metric?: string, start?: number, end?: number, limit?: number, offset?: number, cursor?: number | null) => Promise<void>
   fetchTelemetrySummary: (deviceId: string, hours?: number) => Promise<void>
   fetchDeviceCurrentState: (deviceId: string) => Promise<void>  // New: unified device + metrics
   fetchDevicesCurrentBatch: (deviceIds: string[], signal?: AbortSignal) => Promise<void>  // Batch fetch for dashboard
@@ -426,10 +426,19 @@ export const createDeviceSlice: StateCreator<
   },
 
   // Telemetry
-  fetchTelemetryData: async (deviceId, metric, start, end, limit, offset) => {
+  fetchTelemetryData: async (deviceId, metric, start, end, limit, offset, cursor) => {
     set({ telemetryLoading: true })
     try {
-      const data = await api.getDeviceTelemetry(deviceId, metric, start, end, limit, offset)
+      const data = await api.getDeviceTelemetry(
+        deviceId,
+        metric,
+        start,
+        end,
+        limit,
+        offset,
+        undefined,
+        cursor,
+      )
       set({ telemetryData: data })
     } catch (error) {
       logError(error, { operation: 'Fetch telemetry data' })
