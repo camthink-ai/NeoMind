@@ -771,24 +771,28 @@ impl AgentExecutor {
                 let cached_read_set: HashSet<usize> =
                     cached_reads.iter().map(|(i, _)| *i).collect();
 
+                // `calls` are post-rewrite: hallucinated CLI-domain tools
+                // (`message`, …) are already `shell` with a `neomind …`
+                // command. Judgment gate therefore covers both entry points
+                // listed in `JUDGMENT_NOTIFY_ENTRY_POINTS` (direct shell +
+                // rewritten CLI) through one helper.
                 let blocked: Vec<(usize, String)> = calls
                     .iter()
                     .enumerate()
                     .filter_map(|(i, c)| {
-                        if c.name != "shell" {
-                            return None;
+                        if c.name == "shell" {
+                            if let Some(command) = c.args.get("command").and_then(|v| v.as_str()) {
+                                if let Some(r) = crate::toolkit::policy::deny_reason(command) {
+                                    return Some((i, r));
+                                }
+                            }
                         }
-                        let command = c.args.get("command").and_then(|v| v.as_str())?;
-                        // Catastrophic OS / CLI patterns first.
-                        if let Some(r) = crate::toolkit::policy::deny_reason(command) {
-                            return Some((i, r));
-                        }
-                        // Judgment-notify gate: block message send before any
-                        // real delivery when criteria are not met / evidence
-                        // is insufficient / judgment is missing. Keyword scan
-                        // of the final reply is audit-only and cannot unsend.
-                        if let Some(r) = super::judgment_notify::judgment_send_deny_reason(
-                            agent, command, messages,
+                        // Judgment-notify gate: auth from independent assistant
+                        // judgment only — never from pending send title/body.
+                        // Keyword scan of the final reply is audit-only and
+                        // cannot unsend.
+                        if let Some(r) = super::judgment_notify::judgment_deny_for_tool_call(
+                            agent, &c.name, &c.args, messages,
                         ) {
                             tracing::warn!(
                                 agent_id = %agent.id,

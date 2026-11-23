@@ -2,14 +2,40 @@
 //! says alert criteria are met.
 //!
 //! For agents with `notify.on = Judgment`, the machinery never routes a
-//! notification itself — the agent speaks via `shell` → `neomind message send`.
+//! notification itself — the agent speaks via `shell` → `neomind message send`
+//! (or a hallucinated CLI-domain tool rewritten to that shell command).
 //! Keyword-scanning the *final* reply after a successful send cannot unsend,
 //! so this module classifies the turn's judgment and must run **before** the
 //! first real delivery. Ordinary (`Always` / `Failure`) notify agents keep
 //! their previous contract unchanged.
+//!
+//! ## Auth input (must NOT self-approve)
+//! Classification uses **only** independent assistant judgment text already
+//! in the conversation. Pending `message send` `--title` / `--body` are the
+//! delivery payload under review — merging them into the verdict lets a title
+//! of "疑似赌博" approve its own send.
 
 use neomind_core::message::{Message, MessageRole};
 use neomind_storage::{AiAgent, NotifyOn};
+use serde_json::Value;
+
+/// Inventory of `notify.on=Judgment` delivery entry points.
+///
+/// Tool-loop paths (1–2) must share [`judgment_deny_for_tool_call`] in
+/// `tool_loop.rs` after CLI-domain → shell rewrite. Machinery paths (3–4)
+/// silence Judgment without the semantic gate (no agent-authored send).
+pub(crate) const JUDGMENT_NOTIFY_ENTRY_POINTS: &[&str] = &[
+    // (1) Direct shell: `neomind message send` / bare `message send`
+    "tool_loop:shell.message_send",
+    // (2) Hallucinated CLI-domain tools rewritten to shell by build_cli_command
+    //     (`message` / aliases → `neomind message send …`)
+    "tool_loop:rewritten_cli_domain.message_send",
+    // (3) Routed machinery — NotifyOn::Judgment ⇒ should_send=false
+    "command_executor:dispatch_agent_notifications",
+    // (4) Legacy keyword / condition_met alerts — only when notify is None;
+    //     Judgment agents have notify set, so this path must stay closed
+    "command_executor:send_alert_for_decision(legacy,notify=None_only)",
+];
 
 /// Outcome of classifying the agent's judgment for this event/turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,56 +73,24 @@ pub(crate) fn is_message_send_command(command: &str) -> bool {
         || body.contains("\nmessage send ")
 }
 
-/// Extract `--title` / `--body` values from a message-send command for
-/// classification (models often put the verdict only in the alert text).
-pub(crate) fn extract_send_payload_text(command: &str) -> String {
-    let mut parts = Vec::new();
-    for flag in ["--title", "--body"] {
-        if let Some(v) = extract_flag_value(command, flag) {
-            parts.push(v);
-        }
+/// After tool_loop rewrite, return the shell command string if this call would
+/// deliver a platform message (`message send`). Shared by direct `shell` and
+/// rewritten CLI-domain (`message`, …) entry points.
+pub(crate) fn pending_message_send_command(tool_name: &str, args: &Value) -> Option<String> {
+    if tool_name != "shell" {
+        return None;
     }
-    parts.join("\n")
+    let command = args.get("command").and_then(|v| v.as_str())?;
+    if is_message_send_command(command) {
+        Some(command.to_string())
+    } else {
+        None
+    }
 }
 
-fn extract_flag_value(command: &str, flag: &str) -> Option<String> {
-    let bytes = command.as_bytes();
-    let flag_bytes = flag.as_bytes();
-    let mut i = 0;
-    while i + flag_bytes.len() <= bytes.len() {
-        if &bytes[i..i + flag_bytes.len()] == flag_bytes {
-            let after = &command[i + flag.len()..];
-            let after = after.trim_start();
-            if after.is_empty() {
-                return None;
-            }
-            let mut chars = after.chars();
-            let first = chars.next()?;
-            if first == '"' || first == '\'' {
-                let quote = first;
-                let mut out = String::new();
-                for c in chars {
-                    if c == quote {
-                        break;
-                    }
-                    out.push(c);
-                }
-                return Some(out);
-            }
-            // Unquoted: take until next `--` or end.
-            let end = after.find(" --").unwrap_or(after.len());
-            return Some(after[..end].trim().to_string());
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Concatenate recent assistant text + optional send payload for classification.
-pub(crate) fn judgment_context_from_messages(
-    messages: &[Message],
-    send_command: Option<&str>,
-) -> String {
+/// Independent judgment text already produced this turn (assistant messages).
+/// Deliberately ignores any pending send title/body.
+pub(crate) fn judgment_context_from_messages(messages: &[Message]) -> String {
     let mut parts: Vec<String> = messages
         .iter()
         .rev()
@@ -106,12 +100,6 @@ pub(crate) fn judgment_context_from_messages(
         .filter(|t| !t.trim().is_empty())
         .collect();
     parts.reverse();
-    if let Some(cmd) = send_command {
-        let payload = extract_send_payload_text(cmd);
-        if !payload.is_empty() {
-            parts.push(payload);
-        }
-    }
     parts.join("\n")
 }
 
@@ -162,22 +150,35 @@ pub(crate) fn gate_block_reason(verdict: JudgmentVerdict) -> String {
     }
 }
 
-/// If this shell call must be blocked under judgment notify, return the reason.
-pub(crate) fn judgment_send_deny_reason(
+/// Shared tool-loop gate for every Judgment delivery call that reaches shell
+/// (direct or rewritten). Returns a deny reason when send must be blocked.
+pub(crate) fn judgment_deny_for_tool_call(
     agent: &AiAgent,
-    command: &str,
+    tool_name: &str,
+    args: &Value,
     messages: &[Message],
 ) -> Option<String> {
-    if !agent_uses_judgment_notify(agent) || !is_message_send_command(command) {
+    if !agent_uses_judgment_notify(agent) {
         return None;
     }
-    let context = judgment_context_from_messages(messages, Some(command));
+    let _command = pending_message_send_command(tool_name, args)?;
+    let context = judgment_context_from_messages(messages);
     let verdict = classify_judgment(&context);
     if judgment_allows_send(verdict) {
         None
     } else {
         Some(gate_block_reason(verdict))
     }
+}
+
+/// Convenience for tests / call sites that already hold a shell command string.
+pub(crate) fn judgment_send_deny_reason(
+    agent: &AiAgent,
+    command: &str,
+    messages: &[Message],
+) -> Option<String> {
+    let args = serde_json::json!({ "command": command });
+    judgment_deny_for_tool_call(agent, "shell", &args, messages)
 }
 
 fn contains_any(haystack: &str, markers: &[&str]) -> bool {
@@ -374,19 +375,36 @@ mod tests {
     }
 
     #[test]
-    fn extracts_title_and_body() {
-        let cmd =
-            r#"neomind message send --title "疑似赌博" --body "东坪山有人" --severity warning"#;
-        let payload = extract_send_payload_text(cmd);
-        assert!(payload.contains("疑似赌博"));
-        assert!(payload.contains("东坪山有人"));
+    fn title_body_are_not_merged_into_judgment_context() {
+        let msgs = vec![Message::new(MessageRole::Assistant, "巡检中。")];
+        let ctx = judgment_context_from_messages(&msgs);
+        assert_eq!(ctx, "巡检中。");
+        assert!(
+            !ctx.contains("疑似赌博"),
+            "context must not invent title text"
+        );
+    }
+
+    #[test]
+    fn pending_title_alone_cannot_self_approve() {
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        // No independent judgment — only a self-serving title in the pending send.
+        let cmd = r#"neomind message send --title "疑似赌博" --body "告警""#;
+        let msgs: Vec<Message> = vec![];
+        let blocked = judgment_send_deny_reason(&agent, cmd, &msgs);
+        assert!(
+            blocked
+                .as_ref()
+                .is_some_and(|r| r.contains("no valid judgment")),
+            "title must not self-approve; got {blocked:?}"
+        );
     }
 
     #[test]
     fn gate_blocks_not_met_for_judgment_agents_only() {
         let judgment = agent_with_notify(NotifyOn::Judgment);
         let always = agent_with_notify(NotifyOn::Always);
-        let cmd = r#"neomind message send --title "x" --body "无赌博行为""#;
+        let cmd = r#"neomind message send --title "x" --body "y""#;
         let msgs = vec![Message::new(MessageRole::Assistant, "巡检完成：无赌博。")];
 
         let blocked = judgment_send_deny_reason(&judgment, cmd, &msgs);
@@ -404,13 +422,58 @@ mod tests {
     }
 
     #[test]
-    fn gate_allows_criteria_met() {
+    fn gate_allows_criteria_met_from_assistant_only() {
         let agent = agent_with_notify(NotifyOn::Judgment);
-        let cmd = r#"neomind message send --title "告警" --body "疑似赌博""#;
+        // Title deliberately empty of markers — auth is the assistant judgment.
+        let cmd = r#"neomind message send --title "Alert" --body "details""#;
         let msgs = vec![Message::new(
             MessageRole::Assistant,
             "有人且疑似赌博，应告警。",
         )];
         assert!(judgment_send_deny_reason(&agent, cmd, &msgs).is_none());
+    }
+
+    #[test]
+    fn direct_shell_and_rewritten_cli_share_same_gate() {
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let msgs: Vec<Message> = vec![];
+        let direct = serde_json::json!({
+            "command": "neomind message send --title \"疑似赌博\" --body \"x\""
+        });
+        // After tool_loop rewrite, hallucinated `message` becomes shell with
+        // the same command shape — both must hit judgment_deny_for_tool_call.
+        let rewritten = crate::tools::mapper::build_cli_command(
+            "message",
+            &serde_json::json!({ "title": "疑似赌博", "content": "x" }),
+        )
+        .expect("message domain rewrites to shell");
+        assert_eq!(
+            rewritten
+                .get("command")
+                .and_then(|v| v.as_str())
+                .map(is_message_send_command),
+            Some(true),
+            "rewritten CLI must be a message send: {rewritten}"
+        );
+
+        let d = judgment_deny_for_tool_call(&agent, "shell", &direct, &msgs);
+        let r = judgment_deny_for_tool_call(&agent, "shell", &rewritten, &msgs);
+        assert!(d.is_some() && r.is_some(), "both entry points must deny");
+        assert_eq!(d, r, "direct shell and rewritten CLI must share one gate");
+
+        // Inventory stays honest about the two tool-loop paths.
+        assert!(JUDGMENT_NOTIFY_ENTRY_POINTS
+            .iter()
+            .any(|e| e.contains("shell.message_send")));
+        assert!(JUDGMENT_NOTIFY_ENTRY_POINTS
+            .iter()
+            .any(|e| e.contains("rewritten_cli_domain")));
+    }
+
+    #[test]
+    fn non_send_shell_is_not_gated() {
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let args = serde_json::json!({ "command": "neomind device get cam-1" });
+        assert!(judgment_deny_for_tool_call(&agent, "shell", &args, &[]).is_none());
     }
 }

@@ -3069,14 +3069,18 @@ async fn all_tools_failed_is_business_failure_without_output_contract() {
 // 1.3.3 Task 1 — Change A (event-image input status) + Change B (judgment gate)
 // ---------------------------------------------------------------------------
 
-/// Minimal JPEG SOI + padding so base64 is long enough for extract filters and
-/// still uniquely fingerprintable in the captured multimodal request.
-fn test_jpeg_base64() -> String {
-    use base64::Engine;
+/// Minimal JPEG SOI + filler + EOI. `pad_byte` distinguishes fixtures that
+/// share MIME `image/jpeg` but differ in content (byte-compare control).
+fn test_jpeg_bytes(pad_byte: u8) -> Vec<u8> {
     let mut bytes = vec![0xFFu8, 0xD8, 0xFF, 0xE0]; // JPEG SOI + APP0 start
-    bytes.extend(std::iter::repeat_n(0x5Au8, 2048));
+    bytes.extend(std::iter::repeat_n(pad_byte, 2048));
     bytes.extend_from_slice(&[0xFF, 0xD9]); // EOI
-    base64::engine::general_purpose::STANDARD.encode(bytes)
+    bytes
+}
+
+fn test_jpeg_base64(pad_byte: u8) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(test_jpeg_bytes(pad_byte))
 }
 
 fn event_jpeg_data(b64: &str) -> neomind_storage::DataCollected {
@@ -3091,6 +3095,54 @@ fn event_jpeg_data(b64: &str) -> neomind_storage::DataCollected {
         }),
         timestamp: chrono::Utc::now().timestamp(),
     }
+}
+
+/// Walk a MockLlm captured messages JSON value and collect every
+/// `image_base64.data` payload (decoded). MIME alone must not pass tests.
+fn extract_decoded_images_from_captured(messages: &serde_json::Value) -> Vec<(Vec<u8>, String)> {
+    use base64::Engine;
+    let mut out = Vec::new();
+    let Some(arr) = messages.as_array() else {
+        return out;
+    };
+    for msg in arr {
+        let Some(content) = msg.get("content") else {
+            continue;
+        };
+        // Content::Parts serializes as an array of tagged parts, or as an
+        // object with a `Parts` / `parts` wrapper depending on serde shape.
+        let parts = content
+            .as_array()
+            .or_else(|| content.get("Parts").and_then(|v| v.as_array()))
+            .or_else(|| content.get("parts").and_then(|v| v.as_array()));
+        let Some(parts) = parts else {
+            continue;
+        };
+        for part in parts {
+            let is_b64 = part.get("type").and_then(|t| t.as_str()) == Some("image_base64")
+                || part.get("ImageBase64").is_some();
+            if !is_b64 && part.get("data").is_none() {
+                continue;
+            }
+            let data = part
+                .get("data")
+                .or_else(|| part.pointer("/ImageBase64/data"))
+                .and_then(|v| v.as_str());
+            let mime = part
+                .get("mime_type")
+                .or_else(|| part.pointer("/ImageBase64/mime_type"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let Some(data) = data else {
+                continue;
+            };
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                out.push((bytes, mime));
+            }
+        }
+    }
+    out
 }
 
 fn input_status_row() -> neomind_storage::DataCollected {
@@ -3138,11 +3190,23 @@ impl Tool for FakeNotifySink {
     }
 }
 
-/// Change A: known JPEG + resources=[] → model request carries matching image
-/// and prompt distinguishes event image vs bound metrics (no NO DATA COLLECTED).
+/// Change A: known JPEG + resources=[] → model request carries **byte-identical**
+/// image (not MIME-only) and prompt distinguishes event image vs bound metrics.
 #[tokio::test]
 async fn event_image_empty_resources_reaches_model_with_honest_status() {
-    let jpeg_b64 = test_jpeg_base64();
+    let fixture_bytes = test_jpeg_bytes(0x5A);
+    let jpeg_b64 = test_jpeg_base64(0x5A);
+    let control_bytes = test_jpeg_bytes(0xA5); // same MIME, different content
+    assert_ne!(
+        fixture_bytes, control_bytes,
+        "control fixture must differ in bytes"
+    );
+    assert_eq!(
+        fixture_bytes.len(),
+        control_bytes.len(),
+        "control keeps size; only pad differs"
+    );
+
     let rt = MockLlmRuntime::new(vec![MockResponse::text(
         "Attached frame inspected; corridor empty.",
     )])
@@ -3170,12 +3234,24 @@ async fn event_image_empty_resources_reaches_model_with_honest_status() {
 
     let captured = rt_handle.captured_messages();
     assert!(!captured.is_empty(), "LLM must be called");
-    let dump = captured[0].to_string();
+    let images = extract_decoded_images_from_captured(&captured[0]);
     assert!(
-        dump.contains(&jpeg_b64) || dump.contains("image/jpeg"),
-        "final model request must include the event JPEG (fingerprint or mime): {}",
-        &dump[..dump.len().min(800)]
+        !images.is_empty(),
+        "must extract image_base64 from multimodal request, not rely on MIME string alone; dump={}",
+        &captured[0].to_string()[..captured[0].to_string().len().min(600)]
     );
+    let (got_bytes, mime) = &images[0];
+    assert_eq!(mime, "image/jpeg");
+    assert_eq!(
+        got_bytes, &fixture_bytes,
+        "model request image bytes must match fixture (byte-compare)"
+    );
+    assert_ne!(
+        got_bytes, &control_bytes,
+        "same-MIME control image must not match — proves compare is content-based"
+    );
+
+    let dump = captured[0].to_string();
     assert!(
         dump.contains("Event image this turn: provided")
             || dump.contains("event-carried image")
@@ -3235,7 +3311,7 @@ async fn judgment_gate_blocks_send_when_criteria_not_met() {
     let (_dp, er) = executor
         .execute_with_tools(
             &agent,
-            &[event_jpeg_data(&test_jpeg_base64())],
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
             rt_dyn,
             "exec-judgment-not-met",
             None,
@@ -3260,6 +3336,109 @@ async fn judgment_gate_blocks_send_when_criteria_not_met() {
     );
 }
 
+/// Change B: no independent judgment + self-serving title → sink 0
+/// (title/body must not self-approve).
+#[tokio::test]
+async fn judgment_gate_blocks_title_only_self_approval() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"疑似赌博\" --body \"告警正文\""
+            }),
+        )
+        // Empty / non-judgment assistant text — only the pending title has markers.
+        .with_text(""),
+        MockResponse::text("done"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "赌博监测".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let _ = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
+            rt_dyn,
+            "exec-judgment-title-only",
+            None,
+        )
+        .await
+        .expect("run completes (send blocked)");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "title-only 疑似赌博 must not self-approve a notification"
+    );
+}
+
+/// Change B: non-gambling task + clear positive judgment → sink 1.
+#[tokio::test]
+async fn judgment_gate_allows_non_gambling_positive_judgment() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            // Neutral title/body — markers live only in assistant judgment.
+            serde_json::json!({
+                "command": "neomind message send --title \"Smoke detected\" --body \"Zone B sensor trip\""
+            }),
+        )
+        .with_text("Smoke plume confirmed on camera; criteria met — alert warranted."),
+        MockResponse::text("Alert sent."),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "Fire / smoke patrol: notify only when smoke is confirmed".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let _ = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
+            rt_dyn,
+            "exec-judgment-smoke",
+            None,
+        )
+        .await
+        .expect("positive non-gambling judgment must Complete");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "clear positive judgment on a non-gambling task must deliver 1 notification"
+    );
+}
+
 /// Change B: labeled criteria-met → sink gets exactly 1 notification.
 #[tokio::test]
 async fn judgment_gate_allows_send_when_criteria_met() {
@@ -3268,7 +3447,7 @@ async fn judgment_gate_allows_send_when_criteria_met() {
         MockResponse::tool_call(
             "shell",
             serde_json::json!({
-                "command": "neomind message send --title \"疑似赌博\" --body \"东坪山有人赌博\""
+                "command": "neomind message send --title \"Alert\" --body \"details\""
             }),
         )
         .with_text("有人且疑似赌博，应告警。"),
@@ -3296,7 +3475,7 @@ async fn judgment_gate_allows_send_when_criteria_met() {
     let (_dp, _er) = executor
         .execute_with_tools(
             &agent,
-            &[event_jpeg_data(&test_jpeg_base64())],
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
             rt_dyn,
             "exec-judgment-met",
             None,
@@ -3346,7 +3525,7 @@ async fn judgment_gate_blocks_insufficient_evidence() {
     let (dp, _) = executor
         .execute_with_tools(
             &agent,
-            &[event_jpeg_data(&test_jpeg_base64())],
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
             rt_dyn,
             "exec-judgment-insufficient",
             None,
@@ -3362,6 +3541,72 @@ async fn judgment_gate_blocks_insufficient_evidence() {
         sends.load(std::sync::atomic::Ordering::SeqCst),
         0,
         "insufficient evidence must deliver 0 alerts"
+    );
+}
+
+/// Change B: hallucinated CLI-domain `message` tool is rewritten to shell and
+/// hits the **same** judgment gate (title-only → 0).
+#[tokio::test]
+async fn judgment_gate_blocks_rewritten_message_tool_title_only() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "message",
+            serde_json::json!({
+                "title": "疑似赌博",
+                "content": "self-approve attempt"
+            }),
+        )
+        .with_text(""),
+        MockResponse::text("done"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "赌博监测".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    // Only shell is registered — `message` must be rewritten to shell first,
+    // then gated by judgment_deny_for_tool_call (shared entry point).
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (_dp, er) = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
+            rt_dyn,
+            "exec-judgment-rewritten-message",
+            None,
+        )
+        .await
+        .expect("rewritten path Completes with send blocked");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "rewritten message→shell must share judgment gate (0 sends)"
+    );
+    assert!(
+        er.actions_executed.iter().any(|a| {
+            a.target == "shell"
+                && !a.success
+                && a.result
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Judgment notify gate")
+        }),
+        "gate must fire on rewritten shell call; actions={:?}",
+        er.actions_executed
     );
 }
 
@@ -3400,7 +3645,7 @@ async fn always_notify_agent_send_not_gated() {
     let _ = executor
         .execute_with_tools(
             &agent,
-            &[event_jpeg_data(&test_jpeg_base64())],
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
             rt_dyn,
             "exec-always-ungated",
             None,
