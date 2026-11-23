@@ -1,4 +1,6 @@
-use super::super::types::{feedback_src_marker, stamp_feedback_src, AgentMessage};
+use super::super::types::{
+    feedback_src_marker, message_carries_feedback_src, stamp_feedback_src_id, AgentMessage,
+};
 use crate::agent::streaming::{CompactionConfig, MessagePriority};
 
 /// Result of a single tool execution with metadata
@@ -202,13 +204,14 @@ fn latest_complete_tool_result(messages: &[AgentMessage]) -> Option<&AgentMessag
 /// Whether `selected` still carries the input's **same** latest tool feedback.
 ///
 /// Survives only when:
-/// - a honesty-compressed/stubbed/reserved copy stamped with that call's
-///   `feedback_src=<index>`, or
+/// - a reserved/compressed copy stamped with that call's `feedback_src=<index>`
+///   on `tool_call_id` (or legacy body stamp), or
 /// - the original body is present verbatim **and** that body is unique among
 ///   input tool results (identical JSON from an older call must not count).
 ///
-/// Same tool name alone, generic `[truncated` / `[unknown`, or a duplicate
-/// earlier body with the same JSON, does **not** count.
+/// Same tool name alone, a sibling tool in the same group stamped with a
+/// *different* call position, generic `[truncated`, or a duplicate earlier
+/// body with the same JSON, does **not** count.
 fn agent_latest_tool_feedback_survives(input: &[AgentMessage], selected: &[AgentMessage]) -> bool {
     let Some((src_index, fb)) = latest_complete_tool_result_indexed(input) else {
         return true;
@@ -216,7 +219,7 @@ fn agent_latest_tool_feedback_survives(input: &[AgentMessage], selected: &[Agent
     let marker = feedback_src_marker(src_index);
     if selected
         .iter()
-        .any(|m| m.role == "tool" && m.content.contains(marker.as_str()))
+        .any(|m| message_carries_feedback_src(m, marker.as_str()))
     {
         return true;
     }
@@ -234,19 +237,17 @@ fn agent_latest_tool_feedback_survives(input: &[AgentMessage], selected: &[Agent
     false
 }
 
-/// Stamp every tool body in a reserved latest group with `feedback_src`.
-fn stamp_group_feedback_src(
-    group: Vec<AgentMessage>,
-    feedback_src: Option<usize>,
-) -> Vec<AgentMessage> {
-    let Some(idx) = feedback_src else {
-        return group;
-    };
+/// Stamp each tool in a group with **its own** absolute call-position index
+/// via `tool_call_id` (body left pristine). Sibling tools in a parallel
+/// multi-tool turn must not share one stamp — otherwise a kept read can
+/// false-survive a dropped write.
+fn stamp_group_by_call_position(group: Vec<AgentMessage>, group_start: usize) -> Vec<AgentMessage> {
     group
         .into_iter()
-        .map(|mut m| {
+        .enumerate()
+        .map(|(offset, mut m)| {
             if m.role == "tool" {
-                m.content = stamp_feedback_src(m.content.as_ref(), idx).into();
+                stamp_feedback_src_id(&mut m, group_start + offset);
             }
             m
         })
@@ -292,27 +293,21 @@ fn log_hard_budget_shares(
 }
 
 /// Compress tool bodies inside a group so it fits `max_tokens` (honesty rules).
-/// When `feedback_src` is set, stamp lineage onto every tool body so survive
-/// checks can prove this is a compress of that specific call.
+/// After compress, stamp each tool by absolute call position on `tool_call_id`
+/// (bodies stay free of `feedback_src=` pollution).
 fn compress_agent_tool_group(
     group: &[AgentMessage],
     max_tokens: usize,
-    feedback_src: Option<usize>,
+    group_start: usize,
 ) -> Option<Vec<AgentMessage>> {
     if max_tokens == 0 {
         return None;
     }
-    let stamp = |body: String| -> String {
-        match feedback_src {
-            Some(idx) => stamp_feedback_src(&body, idx),
-            None => body,
-        }
-    };
     let mut out = group.to_vec();
     for _ in 0..8 {
         let cost: usize = out.iter().map(estimate_message_tokens).sum();
         if cost <= max_tokens {
-            return Some(out);
+            return Some(stamp_group_by_call_position(out, group_start));
         }
         let Some(idx) = out
             .iter()
@@ -333,25 +328,25 @@ fn compress_agent_tool_group(
             if stub.as_str() == body {
                 break;
             }
-            out[idx].content = stamp(stub).into();
+            out[idx].content = stub.into();
         } else {
-            out[idx].content = stamp(compressed).into();
+            out[idx].content = compressed.into();
         }
     }
     let cost: usize = out.iter().map(estimate_message_tokens).sum();
     if cost <= max_tokens {
-        return Some(out);
+        return Some(stamp_group_by_call_position(out, group_start));
     }
     for msg in &mut out {
         if msg.role == "tool" {
             let name = msg.tool_call_name.as_deref().unwrap_or("tool");
             let stub =
                 crate::agent::history_select::stub_agent_tool_body(name, msg.content.as_ref());
-            msg.content = stamp(stub).into();
+            msg.content = stub.into();
         }
     }
     let cost: usize = out.iter().map(estimate_message_tokens).sum();
-    (cost <= max_tokens).then_some(out)
+    (cost <= max_tokens).then(|| stamp_group_by_call_position(out, group_start))
 }
 
 /// Digest an older tool/assistant group into a short non-executable stub.
@@ -410,7 +405,7 @@ fn auto_recover_keep_latest_feedback(
     let groups = partition_agent_groups(messages);
     let latest_group_idx = groups
         .iter()
-        .rposition(|g| agent_group_is_complete_tool_interaction(g));
+        .rposition(|(_, g)| agent_group_is_complete_tool_interaction(g));
     let feedback_src = latest_complete_tool_result_indexed(messages).map(|(i, _)| i);
     let src_marker = feedback_src.map(feedback_src_marker);
 
@@ -418,16 +413,15 @@ fn auto_recover_keep_latest_feedback(
     let mut used = 0usize;
 
     // Reserve latest complete tool interaction first (compress to fit).
-    // Always lineage-stamp so identical JSON from an older call cannot
-    // false-survive the recover keep-check.
+    // Stamp each tool by its absolute call position (not one shared stamp).
     if let Some(idx) = latest_group_idx {
-        let group = &groups[idx];
+        let (group_start, group) = &groups[idx];
         let cost: usize = group.iter().map(estimate_message_tokens).sum();
         if cost <= max_tokens {
-            let stamped = stamp_group_feedback_src(group.clone(), feedback_src);
+            let stamped = stamp_group_by_call_position(group.clone(), *group_start);
             used = stamped.iter().map(estimate_message_tokens).sum();
             selected[idx] = Some(stamped);
-        } else if let Some(compressed) = compress_agent_tool_group(group, max_tokens, feedback_src)
+        } else if let Some(compressed) = compress_agent_tool_group(group, max_tokens, *group_start)
         {
             used = compressed.iter().map(estimate_message_tokens).sum();
             selected[idx] = Some(compressed);
@@ -436,7 +430,7 @@ fn auto_recover_keep_latest_feedback(
     }
 
     // Keep system + recent user groups next, then digest-fill older tool history.
-    for (i, group) in groups.iter().enumerate().rev() {
+    for (i, (_start, group)) in groups.iter().enumerate().rev() {
         if selected[i].is_some() {
             continue;
         }
@@ -477,7 +471,7 @@ fn auto_recover_keep_latest_feedback(
         let protects_latest = |m: &AgentMessage| {
             src_marker
                 .as_ref()
-                .is_some_and(|mk| m.role == "tool" && m.content.contains(mk.as_str()))
+                .is_some_and(|mk| message_carries_feedback_src(m, mk.as_str()))
         };
         evict_until_fits(&mut out, &mut total, max_tokens, |m| {
             m.role != "system" && m.role != "user" && !protects_latest(m)
@@ -493,13 +487,13 @@ fn select_window_prefer_latest_feedback(
     config: &CompactionConfig,
     total_tokens: usize,
     // Absolute index of the latest tool result in the input history
-    // (pre-soft-compact). Used for `feedback_src` lineage stamps.
+    // (pre-soft-compact). Used when protecting the latest stamp on eviction.
     feedback_src: Option<usize>,
 ) -> Vec<AgentMessage> {
     let groups = partition_agent_groups(working);
     let latest_group_idx = groups
         .iter()
-        .rposition(|g| agent_group_is_complete_tool_interaction(g));
+        .rposition(|(_, g)| agent_group_is_complete_tool_interaction(g));
     let src_marker = feedback_src.map(feedback_src_marker);
 
     let mut selected: Vec<Option<Vec<AgentMessage>>> = vec![None; groups.len()];
@@ -508,7 +502,8 @@ fn select_window_prefer_latest_feedback(
 
     // Phase 1: reserve latest complete tool interaction (compress if needed).
     if let Some(idx) = latest_group_idx {
-        let finalized: Vec<AgentMessage> = groups[idx]
+        let (group_start, group) = &groups[idx];
+        let finalized: Vec<AgentMessage> = group
             .iter()
             .map(|msg| {
                 let msg_tokens = estimate_message_tokens(msg);
@@ -521,12 +516,11 @@ fn select_window_prefer_latest_feedback(
             .collect();
         let cost: usize = finalized.iter().map(estimate_message_tokens).sum();
         if cost <= max_tokens {
-            let stamped = stamp_group_feedback_src(finalized, feedback_src);
+            let stamped = stamp_group_by_call_position(finalized, *group_start);
             kept_message_count += stamped.len();
             used = stamped.iter().map(estimate_message_tokens).sum();
             selected[idx] = Some(stamped);
-        } else if let Some(compressed) =
-            compress_agent_tool_group(&groups[idx], max_tokens, feedback_src)
+        } else if let Some(compressed) = compress_agent_tool_group(group, max_tokens, *group_start)
         {
             kept_message_count += compressed.len();
             used = compressed.iter().map(estimate_message_tokens).sum();
@@ -535,7 +529,7 @@ fn select_window_prefer_latest_feedback(
     }
 
     // Phase 2: newest-first fill for remaining groups (user/system preferred).
-    for (i, group) in groups.iter().enumerate().rev() {
+    for (i, (_start, group)) in groups.iter().enumerate().rev() {
         if selected[i].is_some() {
             continue;
         }
@@ -575,11 +569,11 @@ fn select_window_prefer_latest_feedback(
     let mut total: usize = selected_messages.iter().map(estimate_message_tokens).sum();
     if total > max_tokens {
         // Evict older assistant/tool first; protect lineage-stamped latest only
-        // (not every same-named tool).
+        // (not every same-named tool / sibling in the same group).
         let protects_latest = |m: &AgentMessage| {
             src_marker
                 .as_ref()
-                .is_some_and(|mk| m.role == "tool" && m.content.contains(mk.as_str()))
+                .is_some_and(|mk| message_carries_feedback_src(m, mk.as_str()))
                 || (feedback_src.is_none()
                     && m.role == "tool"
                     && latest_complete_tool_result(working)
@@ -677,8 +671,11 @@ fn message_priority(role: &str) -> MessagePriority {
 
 /// Partition AgentMessages into atomic groups: an assistant tool-call turn
 /// plus its contiguous tool results, or a single non-tool message.
-fn partition_agent_groups(messages: &[AgentMessage]) -> Vec<Vec<AgentMessage>> {
-    let mut groups: Vec<Vec<AgentMessage>> = Vec::new();
+///
+/// Returns `(absolute_start_index, group_messages)` so callers can stamp each
+/// tool by call position.
+fn partition_agent_groups(messages: &[AgentMessage]) -> Vec<(usize, Vec<AgentMessage>)> {
+    let mut groups: Vec<(usize, Vec<AgentMessage>)> = Vec::new();
     let mut i = messages.len();
     while i > 0 {
         let end = i - 1;
@@ -690,10 +687,10 @@ fn partition_agent_groups(messages: &[AgentMessage]) -> Vec<Vec<AgentMessage>> {
             if start > 0 && messages[start - 1].role == "assistant" {
                 start -= 1;
             }
-            groups.push(messages[start..=end].to_vec());
+            groups.push((start, messages[start..=end].to_vec()));
             i = start;
         } else {
-            groups.push(vec![messages[end].clone()]);
+            groups.push((end, vec![messages[end].clone()]));
             i = end;
         }
     }
@@ -1172,18 +1169,24 @@ mod tests {
             !agent_latest_tool_feedback_survives(&input, &fake_truncated),
             "generic [truncated of an older call must not count as latest"
         );
-        // Traceable compress of the SAME write result (stamped) does survive.
+        // Traceable compress of the SAME write result (stamped on tool_call_id)
+        // does survive; body stays pristine.
         let src = latest_complete_tool_result_indexed(&input)
             .map(|(i, _)| i)
             .expect("latest index");
-        let stamped = stamp_feedback_src(
-            &crate::agent::history_select::stub_agent_tool_body("shell", write_fail),
-            src,
+        let stub = crate::agent::history_select::stub_agent_tool_body("shell", write_fail);
+        let mut stamped = AgentMessage::tool_result("shell", stub);
+        stamp_feedback_src_id(&mut stamped, src);
+        assert!(
+            !stamped
+                .content
+                .contains(crate::agent::types::FEEDBACK_SRC_MARKER),
+            "lineage must not pollute tool body"
         );
         let recovered = vec![
             AgentMessage::user("把 200366 照片发到 20545d67"),
             AgentMessage::assistant("writing"),
-            AgentMessage::tool_result("shell", stamped),
+            stamped,
         ];
         assert!(
             agent_latest_tool_feedback_survives(&input, &recovered),
@@ -1216,15 +1219,68 @@ mod tests {
         let src = latest_complete_tool_result_indexed(&input)
             .map(|(i, _)| i)
             .expect("latest index");
-        let stamped = stamp_feedback_src(same, src);
+        let mut stamped = AgentMessage::tool_result("shell", same);
+        stamp_feedback_src_id(&mut stamped, src);
         let recovered = vec![
             AgentMessage::user("继续"),
             AgentMessage::assistant("second"),
-            AgentMessage::tool_result("shell", stamped),
+            stamped,
         ];
         assert!(
             agent_latest_tool_feedback_survives(&input, &recovered),
             "lineage-stamped copy of the latest identical body must survive"
+        );
+    }
+
+    #[test]
+    fn same_group_read_stamp_does_not_survive_dropped_write() {
+        // Tip3 boundary: parallel tools in one assistant group must each get
+        // their own call-position stamp. If trim keeps only the read, the
+        // dropped write must NOT count as surviving.
+        let read_ok = r#"{"success":true,"data":{"devices":[{"id":"200366"}]}}"#;
+        let write_fail = r#"{"success":false,"operation_id":"op-w","summary":"write-metric failed","data":{"device_id":"20545d67"}}"#;
+        let input = vec![
+            AgentMessage::user("把 200366 照片发到 20545d67"),
+            AgentMessage::assistant("parallel"),
+            AgentMessage::tool_result("shell", read_ok),
+            AgentMessage::tool_result("shell", write_fail),
+        ];
+        // Mimic reserve+stamp of the full group, then trim dropping the write.
+        let (group_start, group) = partition_agent_groups(&input)
+            .into_iter()
+            .find(|(_, g)| agent_group_is_complete_tool_interaction(g))
+            .expect("tool group");
+        let stamped = stamp_group_by_call_position(group, group_start);
+        let read_only: Vec<AgentMessage> = stamped
+            .into_iter()
+            .filter(|m| m.role != "tool" || m.content.as_ref() == read_ok)
+            .collect();
+        assert!(
+            read_only.iter().any(|m| m.role == "tool"),
+            "read must remain after trim"
+        );
+        assert!(
+            !agent_latest_tool_feedback_survives(&input, &read_only),
+            "sibling read stamp must not count as surviving the dropped write"
+        );
+        // Full stamped group (including write at its own position) does survive.
+        let full = stamp_group_by_call_position(
+            partition_agent_groups(&input)
+                .into_iter()
+                .find(|(_, g)| agent_group_is_complete_tool_interaction(g))
+                .expect("tool group")
+                .1,
+            group_start,
+        );
+        assert!(
+            agent_latest_tool_feedback_survives(&input, &full),
+            "write's own call-position stamp must survive"
+        );
+        assert!(
+            full.iter()
+                .filter(|m| m.role == "tool")
+                .all(|m| !m.content.contains(crate::agent::types::FEEDBACK_SRC_MARKER)),
+            "tool bodies must stay pristine"
         );
     }
 
@@ -1392,17 +1448,21 @@ mod tests {
             "drop flag must track the latest tool group exactly"
         );
         // Generous budget keeps the latest group → flag must be false.
-        // Reserved latest is lineage-stamped (feedback_src=…) so identical
-        // older JSON cannot false-survive.
+        // Reserved latest is lineage-stamped on tool_call_id (body pristine).
         let roomy = ctx.build_marked(&messages, 100_000);
         assert!(!roomy.latest_tool_feedback_dropped);
+        let src = latest_complete_tool_result_indexed(&messages)
+            .map(|(i, _)| i)
+            .expect("latest");
+        let marker = feedback_src_marker(src);
         assert!(
             roomy.messages.iter().any(|m| {
                 m.role == "tool"
                     && m.content.contains(latest_tool)
-                    && m.content.contains(crate::agent::types::FEEDBACK_SRC_MARKER)
+                    && message_carries_feedback_src(m, &marker)
+                    && !m.content.contains(crate::agent::types::FEEDBACK_SRC_MARKER)
             }),
-            "roomy window must keep lineage-stamped latest tool"
+            "roomy window must keep call-position-stamped latest tool with pristine body"
         );
     }
 

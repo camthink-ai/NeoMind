@@ -289,10 +289,12 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
                 };
                 let is_write = looks_like_write_receipt(body);
                 let receipt_dev = extract_receipt_device_id(body);
-                let binds_destination = body_mentions_any_target(body, &write_destinations)
-                    || receipt_dev
-                        .as_ref()
-                        .is_some_and(|id| write_destinations.iter().any(|d| d == id));
+                // Structured device_id wins over incidental body mentions
+                // (e.g. receipt for A that quotes destination B in prose).
+                let binds_destination = match &receipt_dev {
+                    Some(id) => write_destinations.iter().any(|d| d == id),
+                    None => body_mentions_any_target(body, &write_destinations),
+                };
                 let line = if !is_write {
                     format!("{name}: read {status}")
                 } else if binds_destination {
@@ -1396,6 +1398,35 @@ mod tests {
         assert!(
             digest.contains("未确认发送/显示") || digest.contains("无当前目标的结构化写回执"),
             "B send status must stay unconfirmed: {digest}"
+        );
+    }
+
+    /// Tip3 boundary: structured device_id=A wins over body text that mentions
+    /// destination B — A's success must not confirm B.
+    #[test]
+    fn fallback_digest_structured_device_id_wins_over_body_mention() {
+        let mut write_a = AgentMessage::assistant("x");
+        write_a.role = "tool".into();
+        write_a.tool_call_name = Some("shell".into());
+        // Structured target is A; body prose also names destination B.
+        write_a.content = r#"{"success":true,"_operation_resume":true,"operation_id":"op-a2","summary":"write-metric ok for display on 20545d67","data":{"device_id":"200366"}}"#.into();
+        let messages = [
+            AgentMessage::user("把 200366 照片发到 20545d67 显示"),
+            AgentMessage::assistant("wrote"),
+            write_a,
+        ];
+        let digest = build_fallback_summary(&messages.iter().collect::<Vec<_>>(), 400);
+        assert!(
+            digest.contains("attributed to 200366"),
+            "structured device_id=A must win attribution: {digest}"
+        );
+        assert!(
+            !digest.contains("平台已接受写入"),
+            "body mention of B must not confirm destination: {digest}"
+        );
+        assert!(
+            digest.contains("目标发送/显示仍未确认") || digest.contains("未确认发送"),
+            "B must stay unconfirmed: {digest}"
         );
     }
 

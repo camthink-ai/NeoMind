@@ -11,21 +11,31 @@ use neomind_core::{
 /// Marker for a trusted conversation summary inserted by the context builder.
 pub(crate) const CONVERSATION_SUMMARY_PREFIX: &str = "[Summary of previous conversation]\n";
 
-/// Internal hard-budget lineage stamp (`feedback_src=<index>`). Kept on
-/// in-window `AgentMessage` tool bodies for survive-checks; stripped in
-/// [`AgentMessage::to_core`] so the LLM never sees trailing non-JSON.
+/// Internal hard-budget lineage stamp (`feedback_src=<index>`).
+///
+/// Preferred location: `AgentMessage.tool_call_id` (body stays pristine).
+/// Legacy body-append form is still stripped in [`AgentMessage::to_core`].
 pub(crate) const FEEDBACK_SRC_MARKER: &str = "feedback_src=";
 
 pub(crate) fn feedback_src_marker(src_index: usize) -> String {
     format!("{FEEDBACK_SRC_MARKER}{src_index}")
 }
 
-pub(crate) fn stamp_feedback_src(body: &str, src_index: usize) -> String {
-    let marker = feedback_src_marker(src_index);
-    if body.contains(&marker) {
-        return body.to_string();
+/// Stamp call-position lineage onto `tool_call_id` without mutating body.
+pub(crate) fn stamp_feedback_src_id(msg: &mut AgentMessage, src_index: usize) {
+    if msg.role != "tool" {
+        return;
     }
-    format!("{body}\n{marker}")
+    msg.tool_call_id = Some(feedback_src_marker(src_index));
+    let clean = strip_feedback_src_lineage(msg.content.as_ref());
+    if clean.len() != msg.content.as_ref().len() {
+        msg.content = clean.to_string().into();
+    }
+}
+
+pub(crate) fn message_carries_feedback_src(msg: &AgentMessage, marker: &str) -> bool {
+    msg.role == "tool"
+        && (msg.tool_call_id.as_deref() == Some(marker) || msg.content.contains(marker))
 }
 
 /// Remove a trailing `\nfeedback_src=<digits>` lineage line (internal only).
