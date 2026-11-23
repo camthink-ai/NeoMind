@@ -14,8 +14,9 @@
 //! judgment already in the conversation (this event). Pending `message send`
 //! `--title` / `--body` never enter the verdict — merging them lets a title of
 //! "疑似赌博" approve its own send. Prior-event conclusions must not interfere.
-//! Conditional policy restatements ("如果发现赌博，就需要告警") are not a
-//! judgment for this frame and must not authorize delivery.
+//! Conditional policy restatements ("如果发现赌博，就需要告警") and progress /
+//! intent narration ("我先核对画面是否需要告警") are not a finished judgment
+//! for this frame and must not authorize delivery.
 
 use neomind_core::message::{Message, MessageRole};
 use neomind_storage::{AiAgent, NotifyOn};
@@ -93,8 +94,9 @@ pub(crate) fn pending_message_send_command(tool_name: &str, args: &Value) -> Opt
     }
 }
 
-/// Latest non-empty assistant text for this event, with policy conditionals
-/// stripped. Deliberately ignores pending send title/body and older turns.
+/// Latest non-empty assistant text for this event, with non-verdict sentences
+/// (policy / progress / intent) stripped. Ignores pending send title/body and
+/// older turns.
 pub(crate) fn judgment_context_from_messages(messages: &[Message]) -> String {
     let raw = messages
         .iter()
@@ -103,7 +105,7 @@ pub(crate) fn judgment_context_from_messages(messages: &[Message]) -> String {
         .map(|m| m.content.as_text())
         .find(|t| !t.trim().is_empty())
         .unwrap_or_default();
-    strip_policy_conditionals(&raw)
+    strip_non_verdict_sentences(&raw)
 }
 
 /// Verdict for the gate: classify only the latest independent assistant
@@ -113,21 +115,69 @@ pub(crate) fn judgment_verdict_from_messages(messages: &[Message]) -> JudgmentVe
     classify_judgment(&judgment_context_from_messages(messages))
 }
 
-/// Drop IF/THEN policy restatements that describe when to alert in general,
-/// not a finding for the current frame.
-fn strip_policy_conditionals(text: &str) -> String {
+/// Drop sentences that are not a finished this-event judgment: IF/THEN policy
+/// restatements, and progress / intent narration about checking whether to
+/// alert.
+fn strip_non_verdict_sentences(text: &str) -> String {
     let mut kept = String::new();
     for part in text.split_inclusive(['。', '！', '？', '.', '!', '?', '\n']) {
         let trimmed = part.trim();
         if trimmed.is_empty() {
             continue;
         }
-        if is_conditional_policy_sentence(trimmed) {
+        if is_conditional_policy_sentence(trimmed) || is_progress_or_intent_sentence(trimmed) {
             continue;
         }
         kept.push_str(part);
     }
     kept
+}
+
+/// Progress / intent: "I'll check whether an alert is needed" — not a verdict.
+fn is_progress_or_intent_sentence(sentence: &str) -> bool {
+    let t = sentence
+        .trim_start_matches(|c: char| c.is_whitespace() || matches!(c, '：' | ':' | '（' | '('));
+    let lower = t.to_ascii_lowercase();
+
+    // Interrogative / undecided alert phrasing (contains met-marker substrings).
+    if t.contains("是否需要告警")
+        || t.contains("是否告警")
+        || t.contains("要不要告警")
+        || t.contains("需不需要告警")
+        || lower.contains("whether to alert")
+        || lower.contains("whether an alert is needed")
+        || lower.contains("if an alert is needed")
+        || lower.contains("do i need to alert")
+    {
+        return true;
+    }
+
+    // Explicit progress / intent openers before any finished finding.
+    if t.starts_with("我先")
+        || t.starts_with("先核对")
+        || t.starts_with("先看")
+        || t.starts_with("先检查")
+        || t.starts_with("正在核对")
+        || t.starts_with("正在检查")
+        || t.starts_with("让我")
+        || t.starts_with("我来核对")
+        || t.starts_with("我来检查")
+        || t.starts_with("接下来")
+        || lower.starts_with("i'll check")
+        || lower.starts_with("i will check")
+        || lower.starts_with("let me check")
+        || lower.starts_with("checking whether")
+        || lower.starts_with("checking if")
+    {
+        return true;
+    }
+
+    // "核对…是否…" / "检查…是否需要告警" mid-sentence progress.
+    if (t.contains("核对") || t.contains("检查")) && t.contains("是否") {
+        return true;
+    }
+
+    false
 }
 
 fn is_conditional_policy_sentence(sentence: &str) -> bool {
@@ -163,7 +213,7 @@ fn is_conditional_policy_sentence(sentence: &str) -> bool {
 /// Classify judgment text into a verdict. Prefer insufficient / not-met over
 /// met when both families appear (negation and dark-frame honesty win).
 pub(crate) fn classify_judgment(text: &str) -> JudgmentVerdict {
-    let cleaned = strip_policy_conditionals(text);
+    let cleaned = strip_non_verdict_sentences(text);
     let lower = cleaned.to_lowercase();
 
     if contains_any(&lower, INSUFFICIENT_EVIDENCE_MARKERS) {
@@ -478,6 +528,36 @@ mod tests {
         assert_eq!(
             classify_judgment("规则：如果发现赌博，就需要告警。本帧有人且疑似赌博，应告警。"),
             JudgmentVerdict::CriteriaMet
+        );
+    }
+
+    #[test]
+    fn progress_intent_is_not_a_finished_judgment() {
+        // Source-review #3: progress narration must not authorize delivery.
+        assert_eq!(
+            classify_judgment("我先核对画面是否需要告警"),
+            JudgmentVerdict::Unknown
+        );
+        assert_eq!(
+            classify_judgment("让我检查一下是否需要告警。"),
+            JudgmentVerdict::Unknown
+        );
+        // Progress then a finished finding in the same turn: finding remains.
+        assert_eq!(
+            classify_judgment("我先核对画面是否需要告警。有人且疑似赌博，应告警。"),
+            JudgmentVerdict::CriteriaMet
+        );
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let cmd = r#"neomind message send --title "x" --body "y""#;
+        let msgs = vec![Message::new(
+            MessageRole::Assistant,
+            "我先核对画面是否需要告警",
+        )];
+        assert!(
+            judgment_send_deny_reason(&agent, cmd, &msgs)
+                .as_ref()
+                .is_some_and(|r| r.contains("no valid judgment")),
+            "progress text must not authorize send"
         );
     }
 

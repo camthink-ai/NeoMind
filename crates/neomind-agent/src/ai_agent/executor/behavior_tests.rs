@@ -3388,6 +3388,68 @@ async fn judgment_gate_blocks_title_only_self_approval() {
     );
 }
 
+/// Source-review #3: progress / intent ("我先核对画面是否需要告警") is not a
+/// finished this-event judgment → FakeNotifySink receives 0.
+#[tokio::test]
+async fn judgment_gate_blocks_progress_intent_without_verdict() {
+    let sends = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind message send --title \"核对中\" --body \"progress\""
+            }),
+        )
+        .with_text("我先核对画面是否需要告警"),
+        MockResponse::text("done"),
+    ])
+    .with_function_calling()
+    .with_supports_images();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "仅当有人且疑似赌博时再告警".into();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec!["webhook:ops".into()],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FakeNotifySink {
+        sends: sends.clone(),
+    }));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (_dp, er) = executor
+        .execute_with_tools(
+            &agent,
+            &[event_jpeg_data(&test_jpeg_base64(0x5A))],
+            rt_dyn,
+            "exec-judgment-progress-only",
+            None,
+        )
+        .await
+        .expect("progress-only run Completes with send blocked");
+    assert_eq!(
+        sends.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "progress intent must not count as finished judgment (sink 0)"
+    );
+    assert!(
+        er.actions_executed.iter().any(|a| {
+            !a.success
+                && a.result
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Judgment notify gate")
+        }),
+        "gate must block progress-only send; actions={:?}",
+        er.actions_executed
+    );
+}
+
 /// Acceptance #4: assistant restates policy ("如果发现赌博，就需要告警") with
 /// no this-event judgment → FakeNotifySink receives 0.
 #[tokio::test]
