@@ -102,9 +102,14 @@ export function ChatPage() {
   // True once a load has resolved with an empty list — distinguishes the
   // first load (skeleton) from refetches (keep the guide mounted).
   const everLoadedBackendsRef = useRef(false)
-  // One context-truncation notice per session (a long turn truncates every
-  // round; toasting each time would be noise).
-  const historyTruncatedSessionRef = useRef<string | null>(null)
+  // S1 relaxed truncation toast dedupe: re-notify within the same session
+  // when droppedMessages rises by >=5 or measured ratio crosses 60% / 80%
+  // (at most once per turn; suppressed when droppedMessages === 0).
+  const historyTruncatedStateRef = useRef<{
+    sessionId: string
+    lastDropped: number
+    lastBucket: number
+  } | null>(null)
   const activeBackendId = useStore((state) => state.activeBackendId)
   const activateBackend = useStore((state) => state.activateBackend)
   const loadBackends = useStore((state) => state.loadBackends)
@@ -306,9 +311,31 @@ export function ChatPage() {
       }
       addMessage(completeMessage)
       setLastAssistantMessageId(result.id)
-      if (result.historyTruncated && historyTruncatedSessionRef.current !== sessionId) {
-        historyTruncatedSessionRef.current = sessionId
-        toast({ title: t('chat:context.historyTruncated') })
+      const droppedMessages =
+        result.truncation?.droppedMessages ?? (result.historyTruncated ? 1 : 0)
+      if (droppedMessages > 0 && sessionId) {
+        const ratio = typeof result.usageRatio === 'number' ? result.usageRatio : undefined
+        const bucket = ratio != null ? (ratio >= 0.8 ? 2 : ratio >= 0.6 ? 1 : 0) : 0
+        const prev = historyTruncatedStateRef.current
+        const shouldToast =
+          !prev ||
+          prev.sessionId !== sessionId ||
+          droppedMessages >= prev.lastDropped + 5 ||
+          bucket > prev.lastBucket
+        if (shouldToast) {
+          historyTruncatedStateRef.current = {
+            sessionId,
+            lastDropped: droppedMessages,
+            lastBucket: Math.max(prev && prev.sessionId === sessionId ? prev.lastBucket : 0, bucket),
+          }
+          const title = ratio != null
+            ? t('chat:context.historyTruncatedWithRatio', {
+                count: droppedMessages,
+                percent: Math.round(ratio * 100),
+              })
+            : t('chat:context.historyTruncated', { count: droppedMessages })
+          toast({ title })
+        }
       }
     },
     onError: (message) => {

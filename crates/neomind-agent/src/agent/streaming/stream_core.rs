@@ -269,9 +269,7 @@ pub(super) async fn prepare_turn_history_and_budget(
         conversation_summary,
         summary_up_to_index,
     );
-    if built.pressure || built.latest_tool_feedback_dropped {
-        llm_interface.mark_history_truncated();
-    }
+    llm_interface.record_outer_truncation(built.outer_dropped, built.estimated_before);
     if built.auto_recover_attempted && built.latest_tool_feedback_dropped {
         llm_interface.mark_hard_budget_auto_recover_exhausted();
     }

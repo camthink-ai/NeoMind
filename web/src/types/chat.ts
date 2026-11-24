@@ -215,17 +215,28 @@ export type ServerMessage =
       maxContextTokens?: number
     } }
   | { type: 'ContextUsage'; sessionId: string; tokenUsage: { promptTokens: number; systemPromptTokens?: number; toolTokens?: number; maxContextTokens?: number } }
-  | { type: 'end'; sessionId: string; historyTruncated?: boolean; tokenUsage?: {
-      promptTokens: number
-      systemPromptTokens?: number
-      toolTokens?: number
-      maxContextTokens?: number
-      usageRatio?: number
+  | {
+      type: 'end'
+      sessionId: string
+      historyTruncated?: boolean
+      truncation?: {
+        outerDropped: number
+        innerDropped: number
+        droppedMessages: number
+        estimatedBefore: number
+        measuredPromptTokens?: number | null
+      }
+      tokenUsage?: {
+        promptTokens: number
+        systemPromptTokens?: number
+        toolTokens?: number
+        maxContextTokens?: number
+        usageRatio?: number
+      }
+      /** System-judged goal status — `not_applicable` ≠ verified success. */
+      goalStatus?: SystemGoalStatus
+      endReason?: StreamEndReason
     }
-    /** System-judged goal status — `not_applicable` ≠ verified success. */
-    goalStatus?: SystemGoalStatus
-    endReason?: StreamEndReason
-  }
   // Cancel acknowledged (server-side reply to __CANCEL__); no trailing
   // 'end' is guaranteed on this path, so stream state must reset HERE.
   | { type: 'cancelled'; message?: string; sessionId?: string }

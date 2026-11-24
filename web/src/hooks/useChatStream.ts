@@ -84,6 +84,16 @@ export interface StreamEndResult {
   interrupted?: boolean
   /** The server dropped older history this turn to fit the context window. */
   historyTruncated?: boolean
+  /** Structured per-request truncation snapshot from the final LLM attempt (S1). */
+  truncation?: {
+    outerDropped: number
+    innerDropped: number
+    droppedMessages: number
+    estimatedBefore: number
+    measuredPromptTokens?: number | null
+  }
+  /** Measured context usage ratio (0..1) from the end frame, when available. */
+  usageRatio?: number
   /** System-judged goal status from End (not model NL). */
   goalStatus?: import('@/types').SystemGoalStatus
   /** Stream end reason (normal / interrupted / …). */
@@ -531,6 +541,10 @@ export function useChatStream(options: UseChatStreamOptions) {
           systemNotes,
           generationMs,
           historyTruncated: data.historyTruncated || undefined,
+          truncation: data.truncation,
+          usageRatio: endUsage && plausiblePromptTokenMeter(endUsage.promptTokens)
+            ? endUsage.usageRatio
+            : undefined,
           interrupted: interruptedRef.current || undefined,
           // Pass through system status — never rewrite model content from it.
           goalStatus: data.goalStatus,

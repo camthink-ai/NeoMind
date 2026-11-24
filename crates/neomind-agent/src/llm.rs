@@ -504,6 +504,38 @@ impl From<&neomind_storage::LlmBackendInstance> for BackendRequestDefaults {
     }
 }
 
+/// Structured per-request history truncation snapshot (S1).
+///
+/// Overwritten on every LLM request (never accumulated across ReAct rounds),
+/// and replaced by the final successful attempt when a request triggers
+/// overflow retry (`compact` / `minimal`), with `measured_prompt_tokens`
+/// bound to that same attempt.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TruncationSnapshot {
+    /// Messages evicted by the outer context window builder (measured from
+    /// unsummarized `filtered` messages before summary system-message insertion).
+    pub outer_dropped: usize,
+    /// Messages evicted by the inner `select_history_for_prompt` selector
+    /// (or overflow retry fallback).
+    pub inner_dropped: usize,
+    /// Estimated tokens of the history before trimming.
+    pub estimated_before: usize,
+    /// Provider-billed `prompt_tokens` from the SAME attempt, if reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measured_prompt_tokens: Option<u32>,
+}
+
+impl TruncationSnapshot {
+    pub fn total_dropped(&self) -> usize {
+        self.outer_dropped.saturating_add(self.inner_dropped)
+    }
+
+    pub fn has_truncation(&self) -> bool {
+        self.total_dropped() > 0
+    }
+}
+
 /// Detailed token budget breakdown computed for conversation history selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct HistoryBudgetBreakdown {
@@ -573,12 +605,23 @@ pub struct LlmInterface {
     /// Per backend/model EWMA correction factors for prompt token estimates.
     prompt_calibration:
         Arc<tokio::sync::RwLock<crate::agent::token_calibration::PromptTokenCalibration>>,
-    /// Set when the last context build had to drop history messages. Consumed
-    /// at turn end so summarization triggers on ACTUAL truncation instead of
-    /// a percentage of the total window — with a large system prompt/tool
-    /// overhead the old 60%-of-window threshold could be unreachable while
-    /// history was already being truncated every turn (2026-10-30).
+    /// Sticky turn-level flag: true once any request attempt in this turn
+    /// actually omitted history. Later zero-drop requests must NOT clear it
+    /// until [`Self::take_truncation_snapshot`] at turn end (WS tip +
+    /// auto-summarize gate).
     history_truncated: Arc<std::sync::atomic::AtomicBool>,
+    /// Outer context-window eviction counts staged by `build_for_llm` /
+    /// `prepare_turn_history_and_budget` immediately before the next LLM call.
+    /// Consumed when that LLM request records its per-request snapshot.
+    pending_outer_truncation: Arc<std::sync::Mutex<(usize, usize)>>,
+    /// Per-request structured truncation snapshot for the most recent LLM
+    /// request attempt (overwritten each request / overflow retry) — including
+    /// zero-drop attempts.
+    last_truncation: Arc<std::sync::Mutex<Option<TruncationSnapshot>>>,
+    /// Last request attempt in this turn that actually omitted history
+    /// (`total_dropped() > 0`). Persists across later zero-drop requests so
+    /// the end tip / auto-summarize still report the omit counts + usage.
+    last_omit_truncation: Arc<std::sync::Mutex<Option<TruncationSnapshot>>>,
     /// Set when the streaming context window (outer builder) evicted the
     /// newest complete tool group under hard budget. The inner history
     /// selector inspects the ALREADY-TRIMMED window, so its survives-check
@@ -744,6 +787,9 @@ impl LlmInterface {
                 crate::agent::token_calibration::PromptTokenCalibration::new(),
             )),
             history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pending_outer_truncation: Arc::new(std::sync::Mutex::new((0, 0))),
+            last_truncation: Arc::new(std::sync::Mutex::new(None)),
+            last_omit_truncation: Arc::new(std::sync::Mutex::new(None)),
             history_window_dropped_latest_feedback: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
@@ -795,6 +841,9 @@ impl LlmInterface {
                 crate::agent::token_calibration::PromptTokenCalibration::new(),
             )),
             history_truncated: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pending_outer_truncation: Arc::new(std::sync::Mutex::new((0, 0))),
+            last_truncation: Arc::new(std::sync::Mutex::new(None)),
+            last_omit_truncation: Arc::new(std::sync::Mutex::new(None)),
             history_window_dropped_latest_feedback: Arc::new(std::sync::atomic::AtomicBool::new(
                 false,
             )),
@@ -940,16 +989,124 @@ impl LlmInterface {
         crate::agent::token_calibration::fit_breakdown_to_measured(sys, tools, measured_prompt)
     }
 
-    /// Whether the last context build dropped history messages. Taking it
-    /// clears the flag so one truncated turn triggers at most one summary.
-    pub fn mark_history_truncated(&self) {
-        self.history_truncated
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+    /// Commit a per-attempt truncation snapshot.
+    ///
+    /// Always overwrites the current-attempt slot (`last_truncation`). When the
+    /// attempt actually omitted history, also refreshes the sticky turn-level
+    /// omit snapshot and sets `history_truncated`. Zero-drop attempts leave the
+    /// sticky omit + flag untouched so a later untruncated request cannot erase
+    /// an earlier omit for the end tip / auto-summarize gate.
+    fn commit_truncation_snapshot(&self, snap: TruncationSnapshot) {
+        let truncated = snap.has_truncation();
+        if let Ok(mut last) = self.last_truncation.lock() {
+            *last = Some(snap.clone());
+        }
+        if truncated {
+            if let Ok(mut omit) = self.last_omit_truncation.lock() {
+                *omit = Some(snap);
+            }
+            self.history_truncated
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
     }
 
+    /// Bind a plausible measured `prompt_tokens` meter onto the current
+    /// attempt snapshot, and mirror it onto the sticky omit snapshot when that
+    /// omit is still the current attempt (so the end tip reports usage from
+    /// the omit that actually dropped history).
+    fn bind_measured_prompt_tokens(&self, tokens: u32) {
+        if !neomind_core::plausible_prompt_token_meter(tokens) {
+            return;
+        }
+        let mut current_is_omit = false;
+        if let Ok(mut guard) = self.last_truncation.lock() {
+            if let Some(snap) = guard.as_mut() {
+                snap.measured_prompt_tokens = Some(tokens);
+                current_is_omit = snap.has_truncation();
+            }
+        }
+        if current_is_omit {
+            if let Ok(mut omit) = self.last_omit_truncation.lock() {
+                if let Some(snap) = omit.as_mut() {
+                    snap.measured_prompt_tokens = Some(tokens);
+                }
+            }
+        }
+    }
+
+    /// Stage outer context-window eviction counts right before an LLM request.
+    /// Updates `last_truncation` immediately (so callers inspecting after
+    /// `build_for_llm` without an LLM call still see it) AND stages the counts
+    /// for the imminent inner `select_history_for_prompt` call to merge.
+    pub fn record_outer_truncation(&self, outer_dropped: usize, estimated_before: usize) {
+        if let Ok(mut pending) = self.pending_outer_truncation.lock() {
+            *pending = (outer_dropped, estimated_before);
+        }
+        self.commit_truncation_snapshot(TruncationSnapshot {
+            outer_dropped,
+            inner_dropped: 0,
+            estimated_before,
+            measured_prompt_tokens: None,
+        });
+    }
+
+    /// Record the per-request truncation snapshot at the inner selection
+    /// boundary, combining any staged outer drop with `inner_dropped` and
+    /// overwriting the current-attempt snapshot (not the sticky omit).
+    fn record_request_truncation(&self, inner_dropped: usize, inner_estimated_before: usize) {
+        let (outer_dropped, outer_estimated_before) = self
+            .pending_outer_truncation
+            .lock()
+            .map(|mut p| std::mem::take(&mut *p))
+            .unwrap_or((0, 0));
+        self.commit_truncation_snapshot(TruncationSnapshot {
+            outer_dropped,
+            inner_dropped,
+            estimated_before: outer_estimated_before.max(inner_estimated_before),
+            measured_prompt_tokens: None,
+        });
+    }
+
+    /// Take (read-and-clear) the turn-level truncation snapshot at turn end.
+    /// Prefers the sticky last-omit snapshot when any request in the turn
+    /// dropped history; otherwise returns the latest (possibly zero-drop)
+    /// attempt. Also clears `history_truncated` and any stale pending outer.
+    pub fn take_truncation_snapshot(&self) -> Option<TruncationSnapshot> {
+        if let Ok(mut pending) = self.pending_outer_truncation.lock() {
+            *pending = (0, 0);
+        }
+        let flag = self
+            .history_truncated
+            .swap(false, std::sync::atomic::Ordering::SeqCst);
+        let omit = self
+            .last_omit_truncation
+            .lock()
+            .ok()
+            .and_then(|mut g| g.take());
+        let last = self.last_truncation.lock().ok().and_then(|mut g| g.take());
+        match (omit, last) {
+            (Some(o), _) => Some(o),
+            (None, Some(l)) => Some(l),
+            (None, None) if flag => Some(TruncationSnapshot {
+                outer_dropped: 1,
+                inner_dropped: 0,
+                estimated_before: 0,
+                measured_prompt_tokens: None,
+            }),
+            (None, None) => None,
+        }
+    }
+
+    /// Legacy boolean setter (tests / callers without counts).
+    pub fn mark_history_truncated(&self) {
+        self.record_outer_truncation(1, 0);
+    }
+
+    /// Legacy boolean consumer: returns true iff any request in this turn
+    /// dropped >= 1 history message, and clears the snapshot.
     pub fn take_history_truncated(&self) -> bool {
-        self.history_truncated
-            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        self.take_truncation_snapshot()
+            .is_some_and(|s| s.has_truncation())
     }
 
     /// Mark that the outer context window dropped the newest complete tool
@@ -1318,25 +1475,27 @@ impl LlmInterface {
         log_label: &str,
     ) -> crate::agent::history_select::HistorySelectResult {
         let owned: Vec<Message> = history_msgs.iter().map(|m| (*m).clone()).collect();
+        let total_history_tokens: usize = owned
+            .iter()
+            .map(|m| estimate_tokens(&m.content.as_text()))
+            .sum();
         let selected = crate::agent::history_select::select_messages_for_history_budget(
             &owned,
             available_tokens,
         );
-        if selected.truncated {
+        let inner_dropped = owned.len().saturating_sub(selected.messages.len());
+        self.record_request_truncation(inner_dropped, total_history_tokens);
+        if inner_dropped > 0 {
             tracing::info!(
-                total_history_tokens = owned
-                    .iter()
-                    .map(|m| estimate_tokens(&m.content.as_text()))
-                    .sum::<usize>(),
+                total_history_tokens,
                 kept_messages = selected.messages.len(),
                 total_messages = owned.len(),
+                inner_dropped,
                 available_tokens,
                 used_tokens = selected.used_tokens,
                 reason = ?selected.reason,
                 "{log_label}"
             );
-            self.history_truncated
-                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
         selected
     }
@@ -3036,6 +3195,7 @@ impl LlmInterface {
         let fg_guard = ForegroundChatGuard::acquire();
         let wrapped_stream = PermitStream::new(stream, permit);
         let token_tracker = self.last_prompt_tokens.clone();
+        let iface = self.clone();
 
         // Convert stream
         Ok(Box::pin(async_stream::stream! {
@@ -3049,6 +3209,7 @@ impl LlmInterface {
                             // Record invalid (0/MAX) too — End must not look like
                             // missing usage. ContextUsage UI gates on plausible.
                             *token_tracker.lock().await = Some(t);
+                            iface.bind_measured_prompt_tokens(t);
                         }
                         if !clean.is_empty() {
                             yield Ok((clean, is_thinking));
@@ -3411,6 +3572,9 @@ impl LlmInterface {
         let limiter_retry = self.limiter.clone();
         let token_tracker = self.last_prompt_tokens.clone();
         let raw_estimate_tracker = self.last_raw_prompt_estimate.clone();
+        let iface = self.clone();
+        let initial_history_count = history_before_trim.len();
+        let initial_est_before = estimated_tokens;
 
         // Convert stream with tiered context overflow retry
         Ok(Box::pin(async_stream::stream! {
@@ -3423,6 +3587,7 @@ impl LlmInterface {
                         let (clean, is_thinking, tokens) = extract_token_marker(&content, is_thinking);
                         if let Some(t) = tokens {
                             *token_tracker.lock().await = Some(t);
+                            iface.bind_measured_prompt_tokens(t);
                         }
                         if !clean.is_empty() {
                             yield Ok((clean, is_thinking));
@@ -3449,6 +3614,17 @@ impl LlmInterface {
                             tracing::debug!(reason = "context_overflow_recovery",
                                 enabled = ?retry_thinking.0, effort = ?retry_thinking.1,
                                 "Applying recovery thinking policy");
+                            // Replace the truncation snapshot for this retry attempt
+                            // (outer_dropped=0 because retry rebuilds from history_before_trim;
+                            // inner_dropped = dropped history messages vs retry's kept history).
+                            let retry_kept_history = retry_messages.len().saturating_sub(2);
+                            let retry_inner_dropped = initial_history_count.saturating_sub(retry_kept_history);
+                            iface.commit_truncation_snapshot(TruncationSnapshot {
+                                outer_dropped: 0,
+                                inner_dropped: retry_inner_dropped,
+                                estimated_before: initial_est_before,
+                                measured_prompt_tokens: None,
+                            });
                             let retry_raw_est = Self::estimate_raw_prompt_tokens_with_tools(
                                 &retry_messages,
                                 None,
@@ -4743,5 +4919,153 @@ mod tests {
             without_skill.tool_overhead_tokens < breakdown.tool_overhead_tokens,
             "exclude_skill=true should reduce tool_overhead_tokens"
         );
+    }
+
+    // === S1: Per-request structured truncation snapshot tests (7 cases) ===
+
+    #[test]
+    fn s1_case1_zero_drop_does_not_flag_history_truncated() {
+        let iface = LlmInterface::new(ChatConfig::default());
+        iface.record_outer_truncation(0, 1200);
+        iface.record_request_truncation(0, 1200);
+        let snap = iface.take_truncation_snapshot().expect("snapshot recorded");
+        assert_eq!(snap.outer_dropped, 0);
+        assert_eq!(snap.inner_dropped, 0);
+        assert_eq!(snap.total_dropped(), 0);
+        assert!(!snap.has_truncation());
+    }
+
+    #[test]
+    fn s1_case2_outer_and_inner_drops_combine_within_single_request() {
+        let iface = LlmInterface::new(ChatConfig::default());
+        iface.record_outer_truncation(2, 5000);
+        iface.record_request_truncation(1, 3200);
+        let snap = iface.take_truncation_snapshot().expect("snapshot");
+        assert_eq!(snap.outer_dropped, 2);
+        assert_eq!(snap.inner_dropped, 1);
+        assert_eq!(snap.total_dropped(), 3);
+        assert_eq!(snap.estimated_before, 5000);
+        assert!(snap.has_truncation());
+    }
+
+    #[test]
+    fn s1_case3_subsequent_request_overwrites_attempt_but_sticky_omit_persists() {
+        let iface = LlmInterface::new(ChatConfig::default());
+        // Request 1 dropped 3 messages
+        iface.record_outer_truncation(2, 4000);
+        iface.record_request_truncation(1, 3000);
+        // Request 2 dropped 0 — current attempt is zero-drop, but turn tip must
+        // still report request-1 omit counts (never accumulate 3+0, never clear).
+        iface.record_outer_truncation(0, 1500);
+        iface.record_request_truncation(0, 1500);
+        assert!(
+            iface
+                .last_truncation
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|s| s.total_dropped() == 0 && s.estimated_before == 1500),
+            "current-attempt snapshot must be the zero-drop request"
+        );
+        let snap = iface.take_truncation_snapshot().expect("snapshot");
+        assert_eq!(snap.outer_dropped, 2);
+        assert_eq!(snap.inner_dropped, 1);
+        assert_eq!(snap.total_dropped(), 3);
+        assert!(snap.has_truncation());
+        assert_eq!(snap.estimated_before, 4000);
+    }
+
+    #[test]
+    fn s1_case3b_turn_tip_keeps_omit_after_later_untruncated_request() {
+        let iface = LlmInterface::new(ChatConfig::default());
+        // request2 truncated (7 dropped), then request3 untruncated
+        iface.record_outer_truncation(3, 9000);
+        iface.record_request_truncation(4, 8200);
+        iface.bind_measured_prompt_tokens(7_400);
+        iface.record_outer_truncation(0, 2100);
+        iface.record_request_truncation(0, 2100);
+        iface.bind_measured_prompt_tokens(1_900);
+        let snap = iface.take_truncation_snapshot().expect("omit tip");
+        assert_eq!(snap.total_dropped(), 7);
+        assert_eq!(snap.outer_dropped, 3);
+        assert_eq!(snap.inner_dropped, 4);
+        assert_eq!(snap.measured_prompt_tokens, Some(7_400));
+        assert!(snap.has_truncation());
+    }
+
+    #[test]
+    fn s1_case4_summarized_prefix_not_counted_as_outer_dropped() {
+        use crate::agent::types::AgentMessage;
+        let mut history = Vec::new();
+        for i in 0..8 {
+            history.push(AgentMessage::user(format!("user turn {i}")));
+            history.push(AgentMessage::assistant(format!("reply {i}")));
+        }
+        // Summary covers 0..=5 (6 messages). Remaining unsummarized fit easily.
+        let built = crate::agent::streaming::build_context_window_with_summary_marked(
+            &history,
+            8_000,
+            Some("## 任务与目标\n已完成前几轮"),
+            Some(5),
+        );
+        assert_eq!(
+            built.outer_dropped, 0,
+            "summarized prefix must not be counted as outer_dropped"
+        );
+    }
+
+    #[test]
+    fn s1_case5_measured_prompt_tokens_binds_to_same_attempt_and_skips_implausible() {
+        let iface = LlmInterface::new(ChatConfig::default());
+        iface.record_outer_truncation(1, 3500);
+        iface.record_request_truncation(2, 3000);
+        // Implausible meters (0 / u32::MAX) must not bind
+        for bad in [0u32, u32::MAX] {
+            iface.bind_measured_prompt_tokens(bad);
+        }
+        assert_eq!(
+            iface
+                .last_truncation
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .measured_prompt_tokens,
+            None
+        );
+        // Plausible meter binds to the same omit attempt (and sticky tip).
+        iface.bind_measured_prompt_tokens(2840);
+        let snap = iface.take_truncation_snapshot().expect("snapshot");
+        assert_eq!(snap.measured_prompt_tokens, Some(2840));
+        assert_eq!(snap.total_dropped(), 3);
+    }
+
+    #[test]
+    fn s1_case6_overflow_retry_replaces_snapshot_and_clears_stale_measured() {
+        let iface = LlmInterface::new(ChatConfig::default());
+        // Initial attempt had outer=1, inner=0, measured=10000
+        iface.record_outer_truncation(1, 12_000);
+        iface.record_request_truncation(0, 11_000);
+        iface.bind_measured_prompt_tokens(10_000);
+        // Simulate overflow retry replacing snapshot with compact retry (kept 4 of 10 -> inner_dropped=6)
+        iface.commit_truncation_snapshot(TruncationSnapshot {
+            outer_dropped: 0,
+            inner_dropped: 6,
+            estimated_before: 12_000,
+            measured_prompt_tokens: None,
+        });
+        let snap = iface.take_truncation_snapshot().expect("retry snapshot");
+        assert_eq!(snap.outer_dropped, 0);
+        assert_eq!(snap.inner_dropped, 6);
+        assert_eq!(snap.measured_prompt_tokens, None);
+    }
+
+    #[test]
+    fn s1_case7_take_truncation_snapshot_is_one_shot() {
+        let iface = LlmInterface::new(ChatConfig::default());
+        iface.record_outer_truncation(3, 9000);
+        assert!(iface.take_truncation_snapshot().is_some());
+        assert!(iface.take_truncation_snapshot().is_none());
+        assert!(!iface.take_history_truncated());
     }
 }
