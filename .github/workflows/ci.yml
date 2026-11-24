@@ -84,7 +84,9 @@ jobs:
 
       - name: Smoke chunk routes against dist
         run: |
-          npx --yes serve dist -l 4202 &
+          # -s: SPA fallback so /login and other client routes rewrite to
+          # index.html (bare `serve` 404s them and the smoke always fails).
+          npx --yes serve dist -s -l 4202 &
           SERVE_PID=$!
           trap 'kill $SERVE_PID 2>/dev/null || true' EXIT
           for i in $(seq 1 40); do
