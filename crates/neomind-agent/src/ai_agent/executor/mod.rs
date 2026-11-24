@@ -79,6 +79,15 @@ impl StopReason {
         }
     }
 }
+/// What a run used, known only inside it — kept for the execution record.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct RunFacts {
+    /// Why the run was skipped for lack of input (an input-summary
+    /// `skip_reason` code).
+    pub skip_code: Option<&'static str>,
+    /// How images reached the model — a `VisionExecutionPath::label`.
+    pub vision_path: Option<&'static str>,
+}
 
 pub(crate) struct ToolLoopOutput {
     pub(crate) final_text: String,
@@ -558,7 +567,11 @@ impl AgentExecutor {
         llm_runtime: Arc<dyn LlmRuntime>,
         execution_id: &str,
         invocation_input: Option<&super::AgentInput>,
-    ) -> AgentResult<(DecisionProcess, neomind_storage::ExecutionResult)> {
+    ) -> AgentResult<(
+        DecisionProcess,
+        neomind_storage::ExecutionResult,
+        &'static str,
+    )> {
         let registry = self
             .tool_registry
             .read()
@@ -801,7 +814,7 @@ impl AgentExecutor {
                     "Vision analysis failed: {}",
                     truncate_to(&decision_process.conclusion, 200)
                 );
-                return Ok((decision_process, er));
+                return Ok((decision_process, er, vision_exec_path.label()));
             }
             return Err(NeoMindError::Llm(format!(
                 "Vision analysis failed: {}",
@@ -809,7 +822,7 @@ impl AgentExecutor {
             )));
         }
 
-        Ok((decision_process, execution_result))
+        Ok((decision_process, execution_result, vision_exec_path.label()))
     }
 
     /// Get the agent store.
@@ -1072,7 +1085,7 @@ impl AgentExecutor {
         // execution (e.g., 30 rounds × slow extension tools).
         let global_execution_timeout_secs =
             neomind_storage::AgentDefaults::get().execution_timeout_secs;
-        let execution_result: AgentResult<(DecisionProcess, StorageExecutionResult)> =
+        let execution_result: AgentResult<(DecisionProcess, StorageExecutionResult, RunFacts)> =
             match tokio::time::timeout(
                 std::time::Duration::from_secs(global_execution_timeout_secs),
                 std::panic::AssertUnwindSafe(self.execute_internal(
@@ -1120,7 +1133,7 @@ impl AgentExecutor {
 
         // Build execution record
         let record = match execution_result {
-            Ok((decision_process, result)) => {
+            Ok((decision_process, result, run_facts)) => {
                 // Tool-loop business success: empty tools OR any successful
                 // tool call → Completed. All tools failed (rate==0) or an
                 // explicit vision reject (rate forced to 0) → Failed.
@@ -1155,6 +1168,14 @@ impl AgentExecutor {
                     )
                 };
 
+                // Counts and names only — the record must stay light (T4's
+                // agents.redb reached 295 MB with frames stored per run).
+                let mut input_summary = data_collector::build_execution_input_summary(
+                    &decision_process.data_collected,
+                    run_facts.skip_code,
+                );
+                input_summary.vision_path = run_facts.vision_path.map(str::to_string);
+                let input_summary = Some(input_summary);
                 AgentExecutionRecord {
                     id: execution_id.clone(),
                     agent_id: agent_id.clone(),
@@ -1165,6 +1186,7 @@ impl AgentExecutor {
                     result: Some(result),
                     duration_ms,
                     error,
+                    input_summary,
                 }
             }
             Err(e) => {
@@ -1229,6 +1251,7 @@ impl AgentExecutor {
                     result: None,
                     duration_ms,
                     error: Some(e.to_string()),
+                    input_summary: None,
                 }
             }
         };
@@ -1484,7 +1507,7 @@ impl AgentExecutor {
         per_exec_knowledge_files: Option<
             Arc<tokio::sync::RwLock<Vec<neomind_storage::KnowledgeFileRef>>>,
         >,
-    ) -> AgentResult<(DecisionProcess, StorageExecutionResult)> {
+    ) -> AgentResult<(DecisionProcess, StorageExecutionResult, RunFacts)> {
         let mut agent = context.agent;
         let agent_id = agent.id.clone();
         let execution_id = context.execution_id.clone();
@@ -1507,19 +1530,35 @@ impl AgentExecutor {
         .await;
 
         // Step 1: Collect data (with or without event data)
-        let data_collected = if let Some(ref ed) = event_data {
-            self.collect_data_with_event(&agent, ed).await?
+        let (data_collected, skip) = if let Some(ref ed) = event_data {
+            match self.collect_data_with_event(&agent, ed).await? {
+                data_collector::EventInput::Data(data) => (data, None),
+                data_collector::EventInput::Skipped { code, detail } => {
+                    (Vec::new(), Some((code, detail)))
+                }
+            }
         } else {
-            self.collect_data(&agent).await?
+            (self.collect_data(&agent).await?, None)
         };
 
-        // If event-triggered collection returned no usable data (e.g. image
-        // extraction failed due to malformed field names), skip LLM analysis
-        // and return a minimal result instead of producing a meaningless empty
-        // execution record.
-        if event_data.is_some() && data_collected.is_empty() {
+        // If event-triggered collection produced no usable input, the
+        // collector says why (an event image that could not be read, a
+        // whole-device report with no readable picture): skip LLM analysis,
+        // record that reason, and return a minimal result instead of a blind
+        // run or a meaningless empty record.
+        let skip = skip.or_else(|| {
+            (event_data.is_some() && data_collected.is_empty()).then(|| {
+                (
+                    "no_usable_event_data",
+                    "no usable data collected from the event".to_string(),
+                )
+            })
+        });
+        if let Some((skip_code, skip_detail)) = skip {
             tracing::warn!(
                 agent_id = %agent_id,
+                code = skip_code,
+                reason = %skip_detail,
                 "Skipping analysis — event data collection produced no usable data"
             );
             self.send_progress(
@@ -1532,11 +1571,13 @@ impl AgentExecutor {
             .await;
 
             let decision_process = DecisionProcess {
-                situation_analysis: "Event data collection failed — no usable data to analyze.".to_string(),
+                situation_analysis:
+                    "Event data collection produced no usable input — nothing to analyze."
+                        .to_string(),
                 data_collected: vec![],
                 reasoning_steps: vec![],
                 decisions: vec![],
-                conclusion: "Execution skipped: event data was recognized as an image metric but image extraction failed. Check device data format and field names.".to_string(),
+                conclusion: format!("Execution skipped: {skip_detail}."),
                 confidence: None,
                 stop_reason: String::new(),
                 tokens_used: 0,
@@ -1545,7 +1586,7 @@ impl AgentExecutor {
                 actions_executed: vec![],
                 report: None,
                 notifications_sent: vec![],
-                summary: "Skipped: event data extraction failed".to_string(),
+                summary: format!("Skipped: {skip_detail}"),
                 success_rate: 0.0,
             };
 
@@ -1558,7 +1599,7 @@ impl AgentExecutor {
                 .update_memory(
                     &agent,
                     &[],
-                    "Event skipped: no usable data collected from event trigger",
+                    &format!("Event skipped: {skip_detail}"),
                     &execution_id,
                     false,
                     "",
@@ -1572,7 +1613,14 @@ impl AgentExecutor {
                 );
             }
 
-            return Ok((decision_process, exec_result));
+            return Ok((
+                decision_process,
+                exec_result,
+                RunFacts {
+                    skip_code: Some(skip_code),
+                    vision_path: None,
+                },
+            ));
         }
 
         // Send thinking events for each data source collected
@@ -1597,7 +1645,8 @@ impl AgentExecutor {
         ) {
             return self
                 .execute_structured(&execution_id, &agent, data_collected)
-                .await;
+                .await
+                .map(|(decision_process, result)| (decision_process, result, RunFacts::default()));
         }
 
         // Progress: Analyzing
@@ -1653,14 +1702,17 @@ impl AgentExecutor {
             )
             .await?;
 
-        match analysis {
+        let mut run_facts = RunFacts::default();
+        let analyzed: AgentResult<(DecisionProcess, StorageExecutionResult)> = match analysis {
             // ── Tool-calling path (Free + Focused+) ────────────────────────
             // Tool-calling mode already produced a full DecisionProcess and
             // ExecutionResult.  We only need to update memory and return.
             AnalysisResult::Free {
                 mut decision_process,
                 execution_result,
+                vision_path,
             } => {
+                run_facts.vision_path = Some(vision_path);
                 self.send_thinking(
                     &agent_id,
                     &execution_id,
@@ -1899,7 +1951,10 @@ impl AgentExecutor {
 
                 Ok((decision_process, execution_result))
             }
-        }
+        };
+        let (decision_process, execution_result) = analyzed?;
+
+        Ok((decision_process, execution_result, run_facts))
     }
 }
 

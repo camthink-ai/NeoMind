@@ -373,6 +373,9 @@ struct AgentExecutionDto {
     confidence: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// What the run was given (counts and names), or why it was skipped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_summary: Option<ExecutionInputSummaryDto>,
 }
 
 /// Data collected for API responses.
@@ -478,6 +481,9 @@ struct AgentExecutionDetailDto {
     duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+    /// What the run was given (counts and names), or why it was skipped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input_summary: Option<ExecutionInputSummaryDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     decision_process: Option<DecisionProcessDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -806,6 +812,20 @@ impl From<&AiAgent> for AgentDetailDto {
     }
 }
 
+/// Lightweight input summary for API responses: what a run was given.
+#[derive(Debug, serde::Serialize)]
+struct ExecutionInputSummaryDto {
+    metrics_collected: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_extracted: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_source_field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vision_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skip_reason: Option<String>,
+}
+
 impl From<AgentExecutionRecord> for AgentExecutionDto {
     fn from(record: AgentExecutionRecord) -> Self {
         Self {
@@ -818,6 +838,13 @@ impl From<AgentExecutionRecord> for AgentExecutionDto {
             conclusion: record.decision_process.conclusion,
             confidence: record.decision_process.confidence,
             error: record.error,
+            input_summary: record.input_summary.map(|s| ExecutionInputSummaryDto {
+                metrics_collected: s.metrics_collected,
+                image_extracted: s.image_extracted,
+                image_source_field: s.image_source_field,
+                vision_path: s.vision_path,
+                skip_reason: s.skip_reason,
+            }),
         }
     }
 }
@@ -832,6 +859,13 @@ impl From<AgentExecutionRecord> for AgentExecutionDetailDto {
             status: execution_status_to_string(&record.status).to_string(),
             duration_ms: record.duration_ms,
             error: record.error,
+            input_summary: record.input_summary.map(|s| ExecutionInputSummaryDto {
+                metrics_collected: s.metrics_collected,
+                image_extracted: s.image_extracted,
+                image_source_field: s.image_source_field,
+                vision_path: s.vision_path,
+                skip_reason: s.skip_reason,
+            }),
             decision_process: Some(DecisionProcessDto {
                 situation_analysis: record.decision_process.situation_analysis,
                 data_collected: record

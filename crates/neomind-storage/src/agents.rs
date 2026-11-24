@@ -794,6 +794,37 @@ pub struct UserMessage {
     pub message_type: Option<String>,
 }
 
+/// Lightweight input summary for an execution: counts and a field name,
+/// never values or image bytes.
+///
+/// Stored on [`AgentExecutionRecord`] — NOT on the journal's
+/// [`ExecutionRecord`] — so nothing here is fed back into later prompts.
+/// T4 2026-11-24: eleven camera runs were recorded as successful although
+/// the model had never received the picture, and nothing in their records
+/// showed it.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ExecutionInputSummary {
+    /// Observation rows the run was given: the metrics and images the world
+    /// reported — not the collector's placeholders, the agent's memory, or
+    /// device metadata.
+    pub metrics_collected: usize,
+    /// Whether an image was read and attached to the run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_extracted: Option<bool>,
+    /// The metric that carried the image, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_source_field: Option<String>,
+    /// How images reached the model: `inline_multimodal` or `vision_tool`
+    /// for a run that took the tool path (`none` there without images).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vision_path: Option<String>,
+    /// Why the run was skipped for lack of input — `event_image_unreadable`,
+    /// `report_image_unreadable` or `no_usable_event_data`. The sentence is
+    /// in the record's summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_reason: Option<String>,
+}
+
 /// Agent execution record with full decision process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentExecutionRecord {
@@ -815,6 +846,9 @@ pub struct AgentExecutionRecord {
     pub duration_ms: u64,
     /// Error message if failed
     pub error: Option<String>,
+    /// What the run was given — see [`ExecutionInputSummary`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_summary: Option<ExecutionInputSummary>,
 }
 
 /// Execution status.
@@ -2009,6 +2043,7 @@ mod tests {
             result: None,
             duration_ms: 150,
             error: None,
+            input_summary: None,
         };
 
         store.save_execution(&execution).await.unwrap();
@@ -3056,5 +3091,26 @@ mod event_filter_tests {
             ),
             "a single event satisfying every entry must fire"
         );
+    }
+
+    /// Records written before 1.3.4 carry no `input_summary`; they must still
+    /// load, and the field must stay absent from what they serialize back to.
+    #[test]
+    fn execution_record_without_input_summary_still_deserializes() {
+        let legacy = r#"{
+            "id": "exec-legacy", "agent_id": "agent-1", "timestamp": 1700000000,
+            "trigger_type": "event", "status": "completed",
+            "decision_process": {
+                "situation_analysis": "", "data_collected": [], "reasoning_steps": [],
+                "decisions": [], "conclusion": "ok", "confidence": null,
+                "stop_reason": "", "tokens_used": 0
+            },
+            "result": null, "duration_ms": 12, "error": null
+        }"#;
+        let record: AgentExecutionRecord =
+            serde_json::from_str(legacy).expect("a pre-1.3.4 record loads");
+        assert_eq!(record.input_summary, None);
+        let back = serde_json::to_value(&record).expect("re-serialize");
+        assert!(back.get("input_summary").is_none(), "{back}");
     }
 }

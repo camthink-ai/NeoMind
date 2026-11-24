@@ -48,6 +48,7 @@ async fn seed_executed_agent(state: &ServerState) -> String {
         result: None,
         duration_ms: 1500,
         error: None,
+        input_summary: None,
     };
     state
         .agents

@@ -90,6 +90,50 @@ pub(crate) struct BoundCollectionOpts {
     pub event_image_provided: bool,
 }
 
+/// Input gathered for an event-triggered run.
+#[derive(Debug)]
+pub(crate) enum EventInput {
+    /// What the run works on.
+    Data(Vec<DataCollected>),
+    /// Nothing usable: `detail` goes into the execution record's summary,
+    /// `code` into its input summary.
+    Skipped { code: &'static str, detail: String },
+}
+
+/// Is this collected entry a (read) image?
+fn collected_is_image(d: &DataCollected) -> bool {
+    d.values
+        .get("_is_image")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Is this collected entry something the world reported — not the collector's
+/// own placeholder, the agent's memory, or device metadata?
+fn collected_is_observation(d: &DataCollected) -> bool {
+    d.source != SYSTEM_PLACEHOLDER_SOURCE && d.source != "memory" && d.data_type != "device_info"
+}
+
+/// Build the execution record's input summary — counts and a field name,
+/// never values or image bytes.
+///
+/// `skip_reason` is the code of a run that was skipped for lack of input.
+/// The vision path is filled in by the executor: it is decided after
+/// collection.
+pub(crate) fn build_execution_input_summary(
+    data: &[DataCollected],
+    skip_reason: Option<&str>,
+) -> neomind_storage::ExecutionInputSummary {
+    let image_row = data.iter().find(|d| collected_is_image(d));
+    neomind_storage::ExecutionInputSummary {
+        metrics_collected: data.iter().filter(|d| collected_is_observation(d)).count(),
+        image_extracted: Some(image_row.is_some()),
+        image_source_field: image_row.map(|d| d.data_type.clone()),
+        vision_path: None,
+        skip_reason: skip_reason.map(str::to_string),
+    }
+}
+
 /// True when a collected entry is an event-carried image for this turn.
 pub(crate) fn is_event_carried_image(data: &DataCollected) -> bool {
     let is_image = data
@@ -497,13 +541,9 @@ impl AgentExecutor {
             }
         };
 
-        // Check if this is an image metric
-        let is_image = is_image_metric(metric_name, &latest.value);
-        let (image_url, image_base64, image_mime) = if is_image {
-            extract_image_data(&latest.value)
-        } else {
-            (None, None, None)
-        };
+        // Read it when this is an image metric; a value flagged as an image
+        // always carries pixels (url and/or base64).
+        let (is_image, image_url, image_base64, image_mime) = image_of(metric_name, &latest.value);
 
         // Build values JSON - construct once with all conditional fields
         let mut values_json = serde_json::json!({
@@ -750,12 +790,10 @@ impl AgentExecutor {
                         .await
                 {
                     {
-                        let is_image = is_image_metric(&metric_name, &latest.value);
+                        let (is_image, image_url, image_base64, image_mime) =
+                            image_of(&metric_name, &latest.value);
 
                         if is_image {
-                            let (image_url, image_base64, image_mime) =
-                                extract_image_data(&latest.value);
-
                             let values_json = serde_json::json!({
                                 "value": latest.value,
                                 "timestamp": latest.timestamp,
@@ -917,12 +955,8 @@ impl AgentExecutor {
                             // Without this, an extension image metric (e.g.,
                             // extension:yolov8:values.image) would dump raw base64 into
                             // the text context and bloat the LLM prompt.
-                            let is_image = is_image_metric(field_path, &json_value);
-                            let (image_url, image_base64, image_mime) = if is_image {
-                                extract_image_data(&json_value)
-                            } else {
-                                (None, None, None)
-                            };
+                            let (is_image, image_url, image_base64, image_mime) =
+                                image_of(field_path, &json_value);
 
                             let mut values_json = serde_json::json!({
                                 "extension_id": extension_id,
@@ -975,12 +1009,8 @@ impl AgentExecutor {
                             // Only current value available, no historical data
                             let json_value = metric_value_to_json(&metric_value.value);
 
-                            let is_image = is_image_metric(field_path, &json_value);
-                            let (image_url, image_base64, image_mime) = if is_image {
-                                extract_image_data(&json_value)
-                            } else {
-                                (None, None, None)
-                            };
+                            let (is_image, image_url, image_base64, image_mime) =
+                                image_of(field_path, &json_value);
 
                             let mut values_json = serde_json::json!({
                                 "extension_id": extension_id,
@@ -1030,12 +1060,8 @@ impl AgentExecutor {
                             // No current value but historical data exists
                             let latest = &storage_result.points[storage_result.points.len() - 1];
 
-                            let is_image = is_image_metric(field_path, &latest.value);
-                            let (image_url, image_base64, image_mime) = if is_image {
-                                extract_image_data(&latest.value)
-                            } else {
-                                (None, None, None)
-                            };
+                            let (is_image, image_url, image_base64, image_mime) =
+                                image_of(field_path, &latest.value);
 
                             let mut values_json = serde_json::json!({
                                 "extension_id": extension_id,
@@ -1172,11 +1198,30 @@ impl AgentExecutor {
     }
 
     /// Collect data including the triggering event data.
+    ///
+    /// A trigger on the WHOLE source (see `trigger_covers_whole_source`) is
+    /// fed the device's report instead of the one field that reached the
+    /// trigger first.
     pub(crate) async fn collect_data_with_event(
         &self,
         agent: &AiAgent,
         event_data: &EventTriggerData,
-    ) -> AgentResult<Vec<DataCollected>> {
+    ) -> AgentResult<EventInput> {
+        if event_data.source.source_type == "device"
+            && self
+                .trigger_covers_whole_source(agent, &event_data.source)
+                .await
+        {
+            // The report is the input whenever it can be read; with no
+            // storage to read it from, the event value is all there is.
+            if let Some(input) = self
+                .device_report_snapshot(agent, &event_data.source.source_id)
+                .await?
+            {
+                return Ok(input);
+            }
+        }
+
         let mut data = Vec::new();
         let _timestamp = chrono::Utc::now().timestamp(); // Reserved for future use
 
@@ -1213,12 +1258,17 @@ impl AgentExecutor {
             );
         }
 
-        // Check if the event value is an image
-        let is_image = is_image_metric(&event_data.source.field, &event_value_json);
-        let (image_url, image_base64, image_mime) = if is_image {
-            extract_image_data(&event_value_json)
-        } else {
-            (None, None, None)
+        // Read the event value when it is an image. A field NAME is only a
+        // hint: the camera template's `metadata.image_id` reads as an image
+        // by name and carries an ID string. It stays an ordinary text metric;
+        // only a value that itself carries an image and still cannot be read
+        // leaves the run without its input.
+        let classified = classify_image_value(&event_data.source.field, &event_value_json);
+        let (is_image, image_url, image_base64, image_mime) = match &classified {
+            ImageValue::Extracted { url, base64, mime } => {
+                (true, url.clone(), base64.clone(), mime.clone())
+            }
+            ImageValue::NotImage | ImageValue::Unreadable => (false, None, None, None),
         };
 
         // === DIAGNOSTIC LOG: image extraction result ===
@@ -1234,16 +1284,22 @@ impl AgentExecutor {
             "[DIAG] Image extraction result"
         );
 
-        // If the field is recognized as an image metric but extraction failed
-        // (no URL and no base64), the event data is unusable — skip execution
-        // rather than producing a meaningless empty analysis.
-        if is_image && image_url.is_none() && image_base64.is_none() {
+        // The value carries an image but it could not be read (frame file
+        // gone, base64 too short to decode): the run has nothing to look at —
+        // skip it rather than produce a blind analysis.
+        if let ImageValue::Unreadable = classified {
             tracing::warn!(
                 source_id = %event_data.source.source_id,
                 field = %event_data.source.field,
-                "Event data is an image metric but extraction failed — skipping execution"
+                "Event value carries an image but it could not be read — skipping execution"
             );
-            return Ok(vec![]);
+            return Ok(EventInput::Skipped {
+                code: "event_image_unreadable",
+                detail: format!(
+                    "the event value of field `{}` carries an image that could not be read (frame file missing or undecodable)",
+                    event_data.source.field
+                ),
+            });
         }
 
         let mut event_values = serde_json::json!({
@@ -1373,7 +1429,225 @@ impl AgentExecutor {
             "Collected data including event trigger"
         );
 
-        Ok(data)
+        Ok(EventInput::Data(data))
+    }
+
+    /// Points stamped this far (seconds) from a report's newest point are
+    /// still part of that same uplink.
+    const REPORT_SKEW_SECS: i64 = 2;
+
+    /// Input for a run whose trigger covers a WHOLE device: the device's
+    /// latest report.
+    ///
+    /// One uplink is split into one event per metric, and the first matching
+    /// one starts the run. Building the run around that single event made a
+    /// whole-device trigger unusable in every environment (T4 2026-11-24).
+    /// Where the device type stores `_raw`, the envelope — 242K chars with
+    /// the frame's base64 — was the input and the picture was never read
+    /// (186,732 prompt tokens on a 65K window). Where it does not, the first
+    /// metric is `metadata.image_id`, and every run was skipped as an
+    /// unreadable image. The field that arrived first is now only the
+    /// doorbell: the input is every metric of the device stamped in the same
+    /// uplink, images read by value, `_raw` left out once its fields are
+    /// already split into metrics.
+    ///
+    /// `None` when the report cannot be read at all (no time-series storage,
+    /// nothing stored for the device): the event value is then all there is,
+    /// and the caller falls back to it. A skip is reserved for a device that
+    /// does report a picture nobody can read.
+    async fn device_report_snapshot(
+        &self,
+        agent: &AiAgent,
+        device_id: &str,
+    ) -> AgentResult<Option<EventInput>> {
+        let Some(storage) = self.time_series_storage.clone() else {
+            return Ok(None);
+        };
+        // Telemetry is written under `device:{id}` by every write path.
+        let storage_key = format!("device:{device_id}");
+        // Metric names come from the store, plus the device type's template:
+        // a metric first seen in this very uplink enters the store's index
+        // only at its next flush (≤500 ms), so the first report of a new
+        // device would otherwise lose its frame.
+        let mut metrics = storage.list_metrics(&storage_key).await.unwrap_or_default();
+        if let Some(device_service) = &self.device_service {
+            let template = device_service
+                .get_device(device_id)
+                .and_then(|device| device_service.get_template(&device.device_type));
+            if let Some(template) = template {
+                for metric in template.metrics {
+                    if !metrics.contains(&metric.name) {
+                        metrics.push(metric.name);
+                    }
+                }
+            }
+        }
+        if metrics.is_empty() {
+            return Ok(None);
+        }
+        let names: Vec<&str> = metrics.iter().map(String::as_str).collect();
+        let latest = storage
+            .query_latest_batch(&storage_key, &names)
+            .await
+            .unwrap_or_default();
+        let Some(report_ts) = latest.values().map(|point| point.timestamp).max() else {
+            return Ok(None);
+        };
+
+        let mut report: Vec<(&String, &neomind_storage::timeseries::DataPoint)> = latest
+            .iter()
+            .filter(|(_, point)| (point.timestamp - report_ts).abs() <= Self::REPORT_SKEW_SECS)
+            .collect();
+        report.sort_by(|a, b| a.0.cmp(b.0));
+
+        let has_split_fields = report.iter().any(|(name, _)| name.as_str() != "_raw");
+        let mut data = Vec::new();
+        let mut seen_frames: Vec<String> = Vec::new();
+        let mut unreadable_images = Vec::new();
+        for (name, point) in &report {
+            let name = name.as_str();
+            // `_raw` is the uplink envelope; once its fields are metrics it
+            // only repeats them, with the frame's base64 as text.
+            if name == "_raw" && has_split_fields {
+                continue;
+            }
+            let entry = DataCollected {
+                source: format!("{device_id}:{name}"),
+                data_type: name.to_string(),
+                timestamp: point.timestamp,
+                values: serde_json::json!({
+                    "value": point.value,
+                    "timestamp": point.timestamp,
+                    "points_count": 1,
+                }),
+            };
+            match classify_image_value(name, &point.value) {
+                ImageValue::NotImage => data.push(entry),
+                ImageValue::Unreadable => unreadable_images.push(name.to_string()),
+                ImageValue::Extracted { url, base64, mime } => {
+                    // One frame often arrives under several metrics
+                    // (`image_data`, `__webhook_image`, …): attach it once.
+                    let frame = url
+                        .clone()
+                        .or_else(|| {
+                            base64.as_ref().map(|b| {
+                                format!(
+                                    "base64:{}:{}",
+                                    b.len(),
+                                    b.chars().take(64).collect::<String>()
+                                )
+                            })
+                        })
+                        // `Extracted` guarantees a URL or bytes.
+                        .unwrap_or_default();
+                    if seen_frames.contains(&frame) {
+                        continue;
+                    }
+                    seen_frames.push(frame);
+                    let mut values = entry.values;
+                    // Keep the reference (a path or URL) beside the bytes —
+                    // never a second copy of the bytes.
+                    let is_short_reference = point
+                        .value
+                        .as_str()
+                        .is_some_and(|s| s.chars().count() <= 300);
+                    if !is_short_reference {
+                        if let Some(obj) = values.as_object_mut() {
+                            obj.remove("value");
+                        }
+                    }
+                    values["_is_image"] = serde_json::json!(true);
+                    if let Some(u) = url {
+                        values["image_url"] = serde_json::json!(u);
+                    }
+                    if let Some(b) = base64 {
+                        values["image_base64"] = serde_json::json!(b);
+                    }
+                    if let Some(m) = mime {
+                        values["image_mime_type"] = serde_json::json!(m);
+                    }
+                    data.push(DataCollected { values, ..entry });
+                }
+            }
+        }
+
+        let images = data
+            .iter()
+            .filter(|d| {
+                d.values
+                    .get("_is_image")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            })
+            .count();
+        // The report carries a picture and none of it could be read: a blind
+        // run would only invent findings.
+        if images == 0 && !unreadable_images.is_empty() {
+            return Ok(Some(EventInput::Skipped {
+                code: "report_image_unreadable",
+                detail: format!(
+                    "the report's image could not be read ({}) — frame file missing or undecodable",
+                    unreadable_images.join(", ")
+                ),
+            }));
+        }
+
+        // Device metadata so the LLM knows which device raised the trigger.
+        if let Some(device_service) = &self.device_service {
+            if let Some(device) = device_service.get_device(device_id) {
+                data.push(DataCollected {
+                    source: device_id.to_string(),
+                    data_type: "device_info".to_string(),
+                    timestamp: report_ts,
+                    values: serde_json::json!({
+                        "device_id": device.device_id,
+                        "device_type": device.device_type,
+                        "name": device.name,
+                        "adapter_type": device.adapter_type,
+                        "_is_event_device": true,
+                    }),
+                });
+            }
+        }
+
+        // Bound sources other than this device still contribute (other
+        // devices, extensions, the memory summary). This device's own bound
+        // metrics are the same report, one uplink less exact.
+        let regular_data = self
+            .collect_bound_source_data(
+                agent,
+                BoundCollectionOpts {
+                    event_image_provided: images > 0,
+                },
+            )
+            .await?;
+        let device_prefix = format!("{device_id}:");
+        for item in regular_data {
+            // The collector's own placeholders describe "nothing collected";
+            // here the report is the input.
+            if item.source == SYSTEM_PLACEHOLDER_SOURCE {
+                continue;
+            }
+            if has_split_fields
+                && (item.source == device_id || item.source.starts_with(&device_prefix))
+            {
+                continue;
+            }
+            data.push(item);
+        }
+
+        tracing::info!(
+            agent_id = %agent.id,
+            device_id = %device_id,
+            report_ts,
+            metrics_in_report = report.len(),
+            images,
+            unreadable_images = ?unreadable_images,
+            other_items = data.len() - images,
+            "[COLLECT] Whole-device trigger — input is the device's latest report"
+        );
+
+        Ok(Some(EventInput::Data(data)))
     }
 }
 
@@ -1574,53 +1848,134 @@ pub(crate) fn extract_image_data(
     }
 }
 
-/// Check if a metric value contains image data.
-pub(crate) fn is_image_metric(metric_name: &str, value: &serde_json::Value) -> bool {
-    // Check metric name for image-related keywords
-    let name_indicates_image = metric_name.to_lowercase().contains("image")
-        || metric_name.to_lowercase().contains("snapshot")
-        || metric_name.to_lowercase().contains("photo")
-        || metric_name.to_lowercase().contains("picture")
-        || metric_name.to_lowercase().contains("camera")
-        || metric_name.to_lowercase().contains("video")
-        || metric_name.to_lowercase().contains("frame");
+/// Does the metric NAME suggest an image field?
+///
+/// A hint, not proof: the camera template's `metadata.image_id` reads as an
+/// image by name and carries an ID string.
+pub(crate) fn name_indicates_image(metric_name: &str) -> bool {
+    let lower = metric_name.to_lowercase();
+    [
+        "image", "snapshot", "photo", "picture", "camera", "video", "frame",
+    ]
+    .iter()
+    .any(|keyword| lower.contains(keyword))
+}
 
-    if name_indicates_image {
+/// Object keys that carry an image reference or image bytes outright.
+const IMAGE_OBJECT_KEYS: [&str; 4] = ["image_url", "image_base64", "image_data", "base64"];
+
+/// Does the URL's path end in an image file extension?
+fn has_image_extension(url: &str) -> bool {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let lower = path.to_ascii_lowercase();
+    [
+        ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".heic", ".avif",
+    ]
+    .iter()
+    .any(|ext| lower.ends_with(ext))
+}
+
+/// Does this string carry an image: bytes, or a NeoMind image reference?
+fn string_carries_image(s: &str) -> bool {
+    s.starts_with("/api/images/")
+        || s.starts_with("data:image/")
+        // `starts_with` (not `contains`) so text that merely mentions a
+        // magic prefix somewhere inside is not misclassified.
+        || (s.len() > 100 && crate::image_utils::infer_mime_from_base64_prefix(s).is_some())
+}
+
+/// Does the VALUE itself say "I am an image"?
+///
+/// Strong evidence only: image bytes (`data:image/…`, base64 with an image
+/// magic prefix), a NeoMind image reference (`/api/images/…`), or an object
+/// carrying `image_url` / `image_base64` / `image_data` / `base64`. A bare
+/// `http(s)://` link is NOT evidence on its own — a `firmware_url` metric is
+/// a link, not pixels — and neither is an object with a bare `url` / `data`
+/// key.
+pub(crate) fn value_indicates_image(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(s) => string_carries_image(s),
+        serde_json::Value::Object(obj) => IMAGE_OBJECT_KEYS
+            .iter()
+            .any(|key| obj.get(*key).is_some_and(|v| !v.is_null())),
+        _ => false,
+    }
+}
+
+/// Check if a metric is an image: by name, or by a value that carries one.
+///
+/// A plain `http(s)://` URL — the string itself, or an object's `url` /
+/// `data` key — counts only with a supporting image-keyword name or an image
+/// file extension in its path.
+pub(crate) fn is_image_metric(metric_name: &str, value: &serde_json::Value) -> bool {
+    if name_indicates_image(metric_name) || value_indicates_image(value) {
         return true;
     }
+    let link_is_image = |s: &str| {
+        let is_link = s.starts_with("http://") || s.starts_with("https://");
+        string_carries_image(s) || (is_link && has_image_extension(s))
+    };
+    match value {
+        serde_json::Value::String(s) => link_is_image(s),
+        serde_json::Value::Object(obj) => ["url", "data"]
+            .iter()
+            .filter_map(|key| obj.get(*key))
+            .any(|v| v.as_str().is_some_and(link_is_image)),
+        _ => false,
+    }
+}
 
-    // Check value for URL or base64 data
-    if let Some(s) = value.as_str() {
-        // Check for URL
-        if s.starts_with("http://") || s.starts_with("https://") {
-            return true;
+/// What one collected value is, image-wise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ImageValue {
+    /// Not an image — render it as an ordinary metric.
+    NotImage,
+    /// An image that was read.
+    Extracted {
+        url: Option<String>,
+        base64: Option<String>,
+        mime: Option<String>,
+    },
+    /// The value carries an image, but it could not be read (frame file
+    /// gone, base64 too short to decode).
+    Unreadable,
+}
+
+/// Classify one collected value and read it when it is an image.
+///
+/// A field whose NAME merely suggests an image (`metadata.image_id`) is
+/// `NotImage`: its value must stay visible as text. Before this split such a
+/// field became an image entry with no pixels — dropped from the prompt's
+/// data and listed under **Images**.
+pub(crate) fn classify_image_value(metric_name: &str, value: &serde_json::Value) -> ImageValue {
+    if !is_image_metric(metric_name, value) {
+        return ImageValue::NotImage;
+    }
+    let (url, base64, mime) = extract_image_data(value);
+    if url.is_none() && base64.is_none() {
+        if value_indicates_image(value) {
+            ImageValue::Unreadable
+        } else {
+            ImageValue::NotImage
         }
-        // NeoMind internal image URL (file-backed since v0.9.6). MUST be
-        // recognized here, else a non-image-keyword metric is never classified
-        // and extract_image_data never runs → silent vision loss.
-        if s.starts_with("/api/images/") {
-            return true;
-        }
-        // Check for base64 image data
-        if s.starts_with("data:image/") {
-            return true;
-        }
-        // Check for common base64 prefixes without data URL scheme.
-        // IMPORTANT: use starts_with (not contains) so a text string that
-        // merely mentions "/9j/" somewhere in the middle isn't misclassified.
-        if s.len() > 100 && crate::image_utils::infer_mime_from_base64_prefix(s).is_some() {
-            return true;
-        }
-        false
-    } else if let Some(obj) = value.as_object() {
-        // Check for image_url, url, base64, or data fields
-        obj.contains_key("image_url")
-            || obj.contains_key("url")
-            || obj.contains_key("base64")
-            || obj.contains_key("data")
-            || obj.contains_key("image_data")
     } else {
-        false
+        ImageValue::Extracted { url, base64, mime }
+    }
+}
+
+/// `(is_image, url, base64, mime)` for a collected value.
+///
+/// `is_image` is true only for an image that could actually be read;
+/// everything else — not an image, image-like by name only, or an unreadable
+/// image — comes back as `(false, None, None, None)` and is rendered as an
+/// ordinary metric.
+pub(crate) fn image_of(
+    metric_name: &str,
+    value: &serde_json::Value,
+) -> (bool, Option<String>, Option<String>, Option<String>) {
+    match classify_image_value(metric_name, value) {
+        ImageValue::Extracted { url, base64, mime } => (true, url, base64, mime),
+        ImageValue::NotImage | ImageValue::Unreadable => (false, None, None, None),
     }
 }
 
@@ -1836,5 +2191,108 @@ mod tests {
             "values.image",
             &serde_json::json!("/api/images/9999/values.image/1784027451.jpg")
         ));
+    }
+
+    /// A plain `http(s)://` link is not evidence of an image. A whole-device
+    /// report lists every metric, and a `firmware_url` value used to be
+    /// attached as a picture.
+    #[test]
+    fn plain_links_are_not_images_without_a_supporting_name_or_extension() {
+        let firmware = serde_json::json!("https://example.com/fw/device-v1.bin");
+        assert!(!is_image_metric("firmware_url", &firmware));
+        assert!(!is_image_metric(
+            "device_info.homepage",
+            &serde_json::json!("https://example.com/")
+        ));
+        assert!(!value_indicates_image(&firmware));
+
+        // …an image-keyword name or an image path makes a link an image.
+        assert!(is_image_metric(
+            "snapshot",
+            &serde_json::json!("https://cam.example.com/api/snapshot")
+        ));
+        assert!(is_image_metric(
+            "latest",
+            &serde_json::json!("https://cam.example.com/frame.JPG?ch=1")
+        ));
+        assert!(is_image_metric(
+            "latest",
+            &serde_json::json!("https://cam.example.com/a.png#x")
+        ));
+
+        // The same for objects: an explicit image key is evidence, a bare
+        // `url` / `data` key is not.
+        assert!(is_image_metric(
+            "data",
+            &serde_json::json!({"image_url": "https://cam.example.com/latest"})
+        ));
+        assert!(is_image_metric(
+            "data",
+            &serde_json::json!({"image_base64": "QUJD"})
+        ));
+        assert!(!is_image_metric(
+            "info",
+            &serde_json::json!({"url": "https://example.com/fw/1.bin"})
+        ));
+        assert!(!is_image_metric(
+            "info",
+            &serde_json::json!({"url": null, "data": null})
+        ));
+        assert!(is_image_metric(
+            "info",
+            &serde_json::json!({"url": "/api/images/cam/image_data/1.jpg"})
+        ));
+        assert!(is_image_metric(
+            "info",
+            &serde_json::json!({"data": "https://cam.example.com/a.webp"})
+        ));
+        assert!(value_indicates_image(
+            &serde_json::json!({"image_url": "https://cam.example.com/latest"})
+        ));
+        assert!(!value_indicates_image(
+            &serde_json::json!({"url": "https://cam.example.com/a.jpg"})
+        ));
+
+        // Bytes and internal references stay evidence on their own.
+        assert!(is_image_metric(
+            "payload",
+            &serde_json::json!("data:image/png;base64,iVBORw0KGgo=")
+        ));
+    }
+
+    /// The NAME/VALUE split decides text vs. skip. `metadata.image_id` — the
+    /// camera template's first metric where the device type stores no `_raw`
+    /// — reads as an image by name and carries an ID string; treating it as
+    /// an unreadable image skipped every whole-device camera run.
+    #[test]
+    fn name_only_image_fields_are_text_and_unreadable_images_are_flagged() {
+        assert_eq!(
+            classify_image_value("metadata.image_id", &serde_json::json!("cam01_1795509428")),
+            ImageValue::NotImage
+        );
+        assert_eq!(
+            classify_image_value("latest", &serde_json::json!("https://example.com/fw/1.bin")),
+            ImageValue::NotImage
+        );
+        // A name-only field whose value IS readable bytes is an image.
+        let png = "/api/images/test-device-001/image/1234567890000.png";
+        assert_ne!(
+            classify_image_value("latest", &serde_json::json!(png)),
+            ImageValue::NotImage,
+            "an internal image reference is evidence by itself"
+        );
+        // No frame behind the path: evidence without pixels.
+        assert_eq!(
+            classify_image_value(
+                "image_data",
+                &serde_json::json!("/api/images/nope/image_data/0.jpg")
+            ),
+            ImageValue::Unreadable
+        );
+        assert_eq!(
+            image_of("image_data", &serde_json::json!("/api/images/nope/image_data/0.jpg")),
+            (false, None, None, None),
+            "an unreadable image is rendered as an ordinary metric, never as an image entry without pixels"
+        );
     }
 }

@@ -41,6 +41,11 @@ use super::identity::{
     MQTT_PENDING_CANDIDATE_ID_KEY, OUTBOUND_ECHO_TTL,
 };
 
+/// Latest value per metric per device — updated on write, before anything is
+/// announced.
+type MetricCache =
+    Arc<RwLock<HashMap<String, HashMap<String, (MetricValue, chrono::DateTime<chrono::Utc>)>>>>;
+
 impl MqttAdapter {
     /// Dynamically subscribe to a topic on ALL session-ready brokers.
     /// This is used when a device is registered with a custom telemetry topic.
@@ -481,6 +486,88 @@ impl MqttAdapter {
     }
 
     /// Handle MQTT notification from a specific broker.
+    /// Phase 1 of announcing an uplink: convert, cache and store every
+    /// metric of the report. Nothing is announced until the whole report is
+    /// stored — see [`Self::announce_report_metrics`].
+    ///
+    /// An event starts an agent run the moment it is published, and a run
+    /// reads the device's report from storage: "store one, announce one" let
+    /// the run arrive before the frame (a later metric) was written. Returns
+    /// the stored `(metric, value)` pairs in report order.
+    pub(crate) async fn store_report_metrics(
+        device_id: &str,
+        metrics: Vec<crate::unified_extractor::ExtractedMetric>,
+        point_ts: i64,
+        data_dir: Option<&PathBuf>,
+        metric_cache: &MetricCache,
+        telemetry_storage: &Arc<RwLock<Option<Arc<TimeSeriesStorage>>>>,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Vec<(String, MetricValue)> {
+        let mut stored_metrics = Vec::with_capacity(metrics.len());
+        for metric in metrics {
+            let value = Self::convert_binary_to_url(
+                device_id,
+                &metric.name,
+                point_ts,
+                metric.value,
+                data_dir,
+            );
+
+            {
+                let mut cache = metric_cache.write().await;
+                cache
+                    .entry(device_id.to_string())
+                    .or_default()
+                    .insert(metric.name.clone(), (value.clone(), now));
+            }
+
+            if let Some(storage) = telemetry_storage.read().await.as_ref() {
+                let data_point = crate::telemetry::DataPoint {
+                    timestamp: point_ts,
+                    value: value.clone(),
+                    quality: None,
+                    metadata: None,
+                };
+                if let Err(e) = storage
+                    .write(&format!("device:{}", device_id), &metric.name, data_point)
+                    .await
+                {
+                    error!(
+                        "Failed to write telemetry for {}/{}: {}",
+                        device_id, metric.name, e
+                    );
+                }
+            }
+
+            stored_metrics.push((metric.name, value));
+        }
+        stored_metrics
+    }
+
+    /// Phase 2: announce a stored report on the device event channel, in
+    /// report order. The service task turns these into bus events, which
+    /// start agent runs.
+    pub(crate) fn announce_report_metrics(
+        device_id: &str,
+        stored_metrics: Vec<(String, MetricValue)>,
+        point_ts: i64,
+        event_tx: &broadcast::Sender<DeviceEvent>,
+    ) {
+        for (metric_name, value) in stored_metrics {
+            if let Err(e) = event_tx.send(DeviceEvent::Metric {
+                device_id: device_id.to_string(),
+                metric: metric_name.clone(),
+                value,
+                timestamp: point_ts,
+            }) {
+                error!(
+                    "Failed to send metric event to channel: {}/{} - {}",
+                    device_id, metric_name, e
+                );
+            }
+        }
+    }
+
     /// This is a static method that processes incoming messages.
     pub(crate) async fn handle_mqtt_notification(
         notification: rumqttc::Event,
@@ -823,57 +910,23 @@ impl MqttAdapter {
                                 );
                             }
 
-                            for metric in result.metrics {
-                                let value = Self::convert_binary_to_url(
-                                    &device_id,
-                                    &metric.name,
-                                    point_ts,
-                                    metric.value.clone(),
-                                    data_dir,
-                                );
-
-                                {
-                                    let mut cache = metric_cache.write().await;
-                                    cache
-                                        .entry(device_id.clone())
-                                        .or_default()
-                                        .insert(metric.name.clone(), (value.clone(), now));
-                                }
-
-                                if let Some(storage) = telemetry_storage.read().await.as_ref() {
-                                    let data_point = crate::telemetry::DataPoint {
-                                        timestamp: point_ts,
-                                        value: value.clone(),
-                                        quality: None,
-                                        metadata: None,
-                                    };
-                                    if let Err(e) = storage
-                                        .write(
-                                            &format!("device:{}", device_id),
-                                            &metric.name,
-                                            data_point,
-                                        )
-                                        .await
-                                    {
-                                        error!(
-                                            "Failed to write telemetry for {}/{}: {}",
-                                            device_id, metric.name, e
-                                        );
-                                    }
-                                }
-
-                                if let Err(e) = event_tx.send(DeviceEvent::Metric {
-                                    device_id: device_id.clone(),
-                                    metric: metric.name.clone(),
-                                    value: value.clone(),
-                                    timestamp: point_ts,
-                                }) {
-                                    error!(
-                                        "Failed to send metric event to channel: {}/{} - {}",
-                                        device_id, metric.name, e
-                                    );
-                                }
-                            }
+                            // Store the whole report, then announce it.
+                            let stored_metrics = Self::store_report_metrics(
+                                &device_id,
+                                result.metrics,
+                                point_ts,
+                                data_dir,
+                                metric_cache,
+                                telemetry_storage,
+                                now,
+                            )
+                            .await;
+                            Self::announce_report_metrics(
+                                &device_id,
+                                stored_metrics,
+                                point_ts,
+                                event_tx,
+                            );
 
                             if let Some(bus) = event_bus {
                                 bus.publish(NeoMindEvent::DeviceOnline {

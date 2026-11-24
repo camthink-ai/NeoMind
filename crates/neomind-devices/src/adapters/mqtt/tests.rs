@@ -3432,3 +3432,91 @@ mod unify_subscribe_protocol {
         assert!(adapter.test_topic_confirmed("post", "topic/new").await);
     }
 }
+
+/// T4 2026-11-24. An agent run starts the moment a metric event is published,
+/// and a whole-device run reads the device's report from storage. The MQTT
+/// path announced each metric right after its own write, so the run could
+/// arrive before the frame (a later metric) was stored. A report is now
+/// stored whole first, then announced — the same two phases as the webhook
+/// adapter.
+#[tokio::test]
+async fn uplink_is_stored_before_any_metric_is_announced() {
+    use crate::adapter::DeviceEvent;
+    use crate::mdl::MetricValue;
+    use crate::unified_extractor::ExtractedMetric;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::{broadcast, RwLock};
+
+    let storage = Arc::new(RwLock::new(Some(Arc::new(
+        crate::telemetry::TimeSeriesStorage::memory().expect("memory timeseries"),
+    ))));
+    let metric_cache = Arc::new(RwLock::new(HashMap::new()));
+    let (event_tx, mut events) = broadcast::channel(16);
+    let ts = 1_700_000_000_i64;
+    let frame = "/api/images/cam-1/frame/1700000000.jpg";
+    let metrics = vec![
+        ExtractedMetric {
+            name: "battery".into(),
+            value: MetricValue::Integer(88),
+            source_path: "battery".into(),
+        },
+        ExtractedMetric {
+            name: "frame".into(),
+            value: MetricValue::String(frame.into()),
+            source_path: "frame".into(),
+        },
+    ];
+
+    let stored = MqttAdapter::store_report_metrics(
+        "cam-1",
+        metrics,
+        ts,
+        None,
+        &metric_cache,
+        &storage,
+        chrono::Utc::now(),
+    )
+    .await;
+    let names: Vec<&str> = stored.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, vec!["battery", "frame"], "report order is kept");
+
+    // Stored and cached — and nothing announced yet.
+    {
+        let guard = storage.read().await;
+        let store = guard.as_ref().expect("storage");
+        for metric in ["battery", "frame"] {
+            assert!(
+                store
+                    .latest("device:cam-1", metric)
+                    .await
+                    .expect("query latest")
+                    .is_some(),
+                "`{metric}` must be stored"
+            );
+        }
+    }
+    assert_eq!(
+        metric_cache.read().await["cam-1"]["battery"].0,
+        MetricValue::Integer(88)
+    );
+    assert!(
+        events.try_recv().is_err(),
+        "storing an uplink must not announce anything yet"
+    );
+
+    MqttAdapter::announce_report_metrics("cam-1", stored, ts, &event_tx);
+    let mut announced = Vec::new();
+    while let Ok(DeviceEvent::Metric {
+        device_id,
+        metric,
+        timestamp,
+        ..
+    }) = events.try_recv()
+    {
+        assert_eq!(device_id, "cam-1");
+        assert_eq!(timestamp, ts);
+        announced.push(metric);
+    }
+    assert_eq!(announced, vec!["battery", "frame"]);
+}

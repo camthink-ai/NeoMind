@@ -490,27 +490,43 @@ impl WebhookAdapter {
             }
         }
 
-        let mut metrics_count = 0;
-
         // Use UnifiedExtractor for consistent data processing
         let result = self
             .extractor
             .extract(&device_id, &device_type, &payload.data)
             .await;
 
-        // Emit all extracted metrics. The payload-level quality indicator
-        // applies to every metric in this uplink.
+        // Store the whole uplink before announcing any of it. An event
+        // starts an agent run the moment it is published, and a run reads
+        // the device's report from storage: announcing metric by metric let
+        // the run arrive before the frame (a later metric) was written — and
+        // the announcement even went out ahead of the metric's own write.
+        // The payload-level quality indicator applies to every metric.
+        // Order within the batch is unchanged.
+        let mut stored_metrics = Vec::with_capacity(result.metrics.len());
         for metric in result.metrics {
-            self.emit_metric_event(
+            let value = self
+                .store_metric(
+                    &device_id,
+                    &metric.name,
+                    metric.value,
+                    timestamp,
+                    payload.quality,
+                )
+                .await;
+            stored_metrics.push((metric.name, value));
+        }
+        for (metric_name, value) in &stored_metrics {
+            self.announce_metric(
                 device_id.clone(),
-                metric.name,
-                metric.value,
+                metric_name.clone(),
+                value,
                 timestamp,
                 payload.quality,
             )
             .await;
-            metrics_count += 1;
         }
+        let metrics_count = stored_metrics.len();
 
         // Log warnings if any
         for warning in &result.warnings {
@@ -589,34 +605,26 @@ impl WebhookAdapter {
         }
     }
 
-    /// Emit a metric event to both channels and EventBus.
-    async fn emit_metric_event(
+    /// Store one extracted metric of an uplink, its frame saved to disk
+    /// first. Returns the stored value — the image URL when the metric was
+    /// an image.
+    async fn store_metric(
         &self,
-        device_id: String,
-        metric_name: String,
+        device_id: &str,
+        metric_name: &str,
         value: MetricValue,
         timestamp: i64,
         quality: Option<f32>,
-    ) {
-        use neomind_core::NeoMindEvent;
-
+    ) -> MetricValue {
         // Convert Binary to URL before storage + event bus (fork point)
         let value = Self::convert_binary_to_url(
-            &device_id,
-            &metric_name,
+            device_id,
+            metric_name,
             timestamp,
             value,
             self.data_dir.clone(),
         )
         .await;
-
-        // Emit to device event channel
-        let _ = self.event_tx.send(DeviceEvent::Metric {
-            device_id: device_id.clone(),
-            metric: metric_name.clone(),
-            value: value.clone(),
-            timestamp,
-        });
 
         // Store to time series storage
         {
@@ -632,7 +640,7 @@ impl WebhookAdapter {
                     metadata: None,
                 };
                 if let Err(e) = storage
-                    .write(&format!("device:{}", device_id), &metric_name, data_point)
+                    .write(&format!("device:{}", device_id), metric_name, data_point)
                     .await
                 {
                     warn!(
@@ -642,10 +650,31 @@ impl WebhookAdapter {
                 }
             }
         }
+        value
+    }
+
+    /// Announce a stored metric on the device event channel and the EventBus.
+    async fn announce_metric(
+        &self,
+        device_id: String,
+        metric_name: String,
+        value: &MetricValue,
+        timestamp: i64,
+        quality: Option<f32>,
+    ) {
+        use neomind_core::NeoMindEvent;
+
+        // Emit to device event channel
+        let _ = self.event_tx.send(DeviceEvent::Metric {
+            device_id: device_id.clone(),
+            metric: metric_name.clone(),
+            value: value.clone(),
+            timestamp,
+        });
 
         // Publish to EventBus if available
         if let Some(bus) = &self.event_bus {
-            let core_value = match &value {
+            let core_value = match value {
                 MetricValue::Integer(i) => neomind_core::MetricValue::Integer(*i),
                 MetricValue::Float(f) => neomind_core::MetricValue::Float(*f),
                 MetricValue::String(s) => neomind_core::MetricValue::String(s.clone()),
@@ -680,7 +709,6 @@ impl WebhookAdapter {
         }
     }
 
-    /// Get the webhook URL for a device.
     pub fn get_webhook_url(&self, base_url: &str, device_id: &str) -> String {
         format!("{}/api/devices/{}/webhook", base_url, device_id)
     }
@@ -1078,5 +1106,69 @@ mod tests {
             discoveries_phase2, 0,
             "discovery events must be throttled once per-IP cap is hit"
         );
+    }
+
+    /// T4 2026-11-24. An agent run starts the moment a metric event is
+    /// published, and a whole-device run reads the device's report from
+    /// storage. `emit_metric_event` announced each metric BEFORE its own
+    /// write, so the run could arrive before the frame (a later metric) was
+    /// stored. `process_webhook` now stores the whole uplink first and then
+    /// announces it: storing must not announce, announcing must not store.
+    #[tokio::test]
+    async fn uplink_is_stored_before_any_metric_is_announced() {
+        use futures::StreamExt;
+        use std::time::Duration;
+
+        let adapter = make_adapter_with_config(WebhookAdapterConfig::new("t"));
+        let storage =
+            Arc::new(crate::telemetry::TimeSeriesStorage::memory().expect("memory timeseries"));
+        adapter.set_telemetry_storage(storage.clone()).await;
+        let mut stream = adapter.subscribe();
+        let ts = 1_700_000_000_i64;
+
+        let frame = "/api/images/cam-1/frame/1700000000.jpg";
+        let battery = adapter
+            .store_metric("cam-1", "battery", MetricValue::Integer(88), ts, None)
+            .await;
+        let frame_value = adapter
+            .store_metric(
+                "cam-1",
+                "frame",
+                MetricValue::String(frame.into()),
+                ts,
+                None,
+            )
+            .await;
+        for metric in ["battery", "frame"] {
+            assert!(
+                storage
+                    .latest("device:cam-1", metric)
+                    .await
+                    .expect("query latest")
+                    .is_some(),
+                "`{metric}` must be stored"
+            );
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), stream.next())
+                .await
+                .is_err(),
+            "storing an uplink must not announce anything yet"
+        );
+
+        adapter
+            .announce_metric("cam-1".into(), "battery".into(), &battery, ts, None)
+            .await;
+        adapter
+            .announce_metric("cam-1".into(), "frame".into(), &frame_value, ts, None)
+            .await;
+        let mut announced = Vec::new();
+        for _ in 0..2 {
+            match tokio::time::timeout(Duration::from_millis(500), stream.next()).await {
+                Ok(Some(DeviceEvent::Metric { metric, .. })) => announced.push(metric),
+                other => panic!("expected a Metric event, got {other:?}"),
+            }
+        }
+        assert_eq!(announced, vec!["battery", "frame"]);
     }
 }

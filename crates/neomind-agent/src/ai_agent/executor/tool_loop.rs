@@ -150,24 +150,32 @@ impl AgentExecutor {
             // 400 before the overflow-retry could even run (2026-11-11
             // ctxfix validation, en/A3). Reserve for response first, floor
             // at 512 so a nearly-full window still yields a usable reply.
-            let history_tokens = neomind_core::llm::compaction::estimate_messages_tokens(messages);
-            let response_budget =
-                executor_response_budget(context_window, tool_overhead_tokens, history_tokens);
-            let input = LlmInput {
-                messages: messages.clone(),
-                params: GenerationParams {
-                    // AgentDefaults is the /api/settings/agent surface — the
-                    // loop used to hardcode 0.7 and ignore it (config only
-                    // fed the chat path).
-                    temperature: Some(agent_defaults.default_temperature),
-                    top_p: Some(agent_defaults.default_top_p),
-                    max_tokens: Some(response_budget),
-                    ..Default::default()
-                },
-                model: None,
-                stream: false,
-                tools: Some(filtered_tools.to_vec()),
+            //
+            // Built from the CURRENT `messages` on every attempt. The
+            // overflow retry compacts `messages` in place; a request frozen
+            // before the retry loop re-sent the identical prompt (T4
+            // 2026-11-24: 186,732 tokens, "compacted", 186,734 again).
+            let build_input = |msgs: &[Message]| {
+                let history_tokens = neomind_core::llm::compaction::estimate_messages_tokens(msgs);
+                let response_budget =
+                    executor_response_budget(context_window, tool_overhead_tokens, history_tokens);
+                LlmInput {
+                    messages: msgs.to_vec(),
+                    params: GenerationParams {
+                        // AgentDefaults is the /api/settings/agent surface — the
+                        // loop used to hardcode 0.7 and ignore it (config only
+                        // fed the chat path).
+                        temperature: Some(agent_defaults.default_temperature),
+                        top_p: Some(agent_defaults.default_top_p),
+                        max_tokens: Some(response_budget),
+                        ..Default::default()
+                    },
+                    model: None,
+                    stream: false,
+                    tools: Some(filtered_tools.to_vec()),
+                }
             };
+            let mut input = build_input(messages);
 
             self.send_thinking(
                 &agent.id,
@@ -268,14 +276,24 @@ impl AgentExecutor {
                                             "Context overflow — using backend-reported size"
                                         );
                                     }
+                                    let estimated_before =
+                                        neomind_core::llm::compaction::estimate_messages_tokens(
+                                            messages,
+                                        );
                                     compact::compact_executor_messages(
                                         messages,
                                         retry_window,
                                         retry_overhead,
                                     );
+                                    let estimated_after =
+                                        neomind_core::llm::compaction::estimate_messages_tokens(
+                                            messages,
+                                        );
                                     tracing::warn!(
                                         agent_id = %agent.id,
                                         round = round_num,
+                                        estimated_tokens_before = estimated_before,
+                                        estimated_tokens_after = estimated_after,
                                         "Context overflow — hard-compacting messages (halved window) and retrying once"
                                     );
                                 }
@@ -292,6 +310,10 @@ impl AgentExecutor {
                                 );
                                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms))
                                     .await;
+                                // `messages` may have been compacted above —
+                                // the retry must send that version, with the
+                                // generation budget recomputed for it.
+                                input = build_input(messages);
                                 continue;
                             }
 

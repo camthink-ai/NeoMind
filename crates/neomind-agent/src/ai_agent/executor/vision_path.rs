@@ -22,6 +22,18 @@ pub(crate) enum VisionExecutionPath {
     Unavailable,
 }
 
+impl VisionExecutionPath {
+    /// Stable label for records and logs.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::InlineMultimodal => "inline_multimodal",
+            Self::ViaVisionTool => "vision_tool",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
 /// Decide the vision path from capability + tool availability.
 ///
 /// `has_embeddable_images` must mean a payload that can actually reach the
