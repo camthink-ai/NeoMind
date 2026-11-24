@@ -305,6 +305,79 @@ pub(crate) fn should_exclude_vision_tool(path: VisionExecutionPath) -> bool {
     matches!(path, VisionExecutionPath::InlineMultimodal)
 }
 
+/// Machine stop_reason written when a run depended on vision tools and every
+/// vision call failed (or the conclusion admits vision never ran). Surfaces as
+/// [`neomind_storage::ExecutionStatus::Partial`] — undetermined, not Completed.
+pub(crate) const VISION_TOOLS_FAILED_STOP_REASON: &str = "vision_tools_failed";
+
+/// True for the host `vision` tool (and extension names that start with it).
+pub(crate) fn is_vision_tool_name(name: &str) -> bool {
+    name == "vision" || name.starts_with("vision_") || name.starts_with("vision-")
+}
+
+/// True when at least one vision tool ran and every vision call failed.
+pub(crate) fn vision_tools_all_failed(actions: &[neomind_storage::ActionExecuted]) -> bool {
+    let mut saw_vision = false;
+    for action in actions {
+        if !is_vision_tool_name(&action.target) {
+            continue;
+        }
+        saw_vision = true;
+        if action.success {
+            return false;
+        }
+    }
+    saw_vision
+}
+
+/// Rewrite conclusion / stop_reason / success_rate for a vision-undetermined run.
+///
+/// Strips a trailing `Verdict: criteria met` so Judgment notify cannot fire on
+/// a blind run, and prefixes an undetermined marker so "现场正常" never stands alone.
+pub(crate) fn mark_vision_tools_failed(
+    decision_process: &mut neomind_storage::DecisionProcess,
+    execution_result: &mut neomind_storage::ExecutionResult,
+) {
+    decision_process.stop_reason = VISION_TOOLS_FAILED_STOP_REASON.to_string();
+    decision_process.confidence = None;
+    let body = neutralize_criteria_met_verdict(&decision_process.conclusion);
+    decision_process.conclusion = format!("未判定 / Undetermined (vision tools failed): {body}");
+    execution_result.success_rate = 0.0;
+    if execution_result.summary.is_empty()
+        || !execution_result.summary.to_lowercase().contains("vision")
+    {
+        execution_result.summary = format!(
+            "Vision tools failed — undetermined: {}",
+            truncate_summary(&body, 200)
+        );
+    }
+}
+
+fn neutralize_criteria_met_verdict(text: &str) -> String {
+    let trimmed = text.trim_end();
+    let last_line_start = trimmed.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let last = trimmed[last_line_start..].trim();
+    let lower = last.to_ascii_lowercase();
+    let is_met = lower == "verdict: criteria met" || lower == "verdict: criteria met.";
+    if !is_met {
+        return text.to_string();
+    }
+    let prefix = trimmed[..last_line_start].trim_end();
+    if prefix.is_empty() {
+        "Verdict: insufficient evidence".to_string()
+    } else {
+        format!("{prefix}\nVerdict: insufficient evidence")
+    }
+}
+
+fn truncate_summary(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let truncated: String = s.chars().take(max).collect();
+    format!("{truncated}…")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,5 +682,68 @@ mod tests {
             timestamp: 0,
         };
         assert!(!has_embeddable_image(&[not_image]));
+    }
+
+    #[test]
+    fn vision_tools_all_failed_requires_vision_actions() {
+        let echo_ok = neomind_storage::ActionExecuted {
+            action_type: "tool_call".into(),
+            description: "echo".into(),
+            target: "echo".into(),
+            parameters: serde_json::Value::Null,
+            success: true,
+            result: None,
+        };
+        assert!(!vision_tools_all_failed(std::slice::from_ref(&echo_ok)));
+        assert!(!vision_tools_all_failed(&[]));
+
+        let vision_fail = neomind_storage::ActionExecuted {
+            action_type: "tool_call".into(),
+            description: "vision".into(),
+            target: "vision".into(),
+            parameters: serde_json::Value::Null,
+            success: false,
+            result: Some("timeout".into()),
+        };
+        assert!(vision_tools_all_failed(std::slice::from_ref(&vision_fail)));
+        assert!(vision_tools_all_failed(&[
+            vision_fail.clone(),
+            echo_ok.clone()
+        ]));
+
+        let vision_ok = neomind_storage::ActionExecuted {
+            success: true,
+            ..vision_fail.clone()
+        };
+        assert!(!vision_tools_all_failed(&[vision_ok, vision_fail]));
+    }
+
+    #[test]
+    fn mark_vision_tools_failed_rewrites_conclusion_and_verdict() {
+        let mut dp = neomind_storage::DecisionProcess {
+            situation_analysis: String::new(),
+            data_collected: vec![],
+            reasoning_steps: vec![],
+            decisions: vec![],
+            conclusion: "现场正常，无异常。\nVerdict: criteria met".into(),
+            confidence: Some(0.9),
+            stop_reason: "natural-completion".into(),
+            tokens_used: 0,
+        };
+        let mut er = neomind_storage::ExecutionResult {
+            actions_executed: vec![],
+            report: None,
+            notifications_sent: vec![],
+            summary: String::new(),
+            success_rate: 1.0,
+        };
+        mark_vision_tools_failed(&mut dp, &mut er);
+        assert_eq!(dp.stop_reason, VISION_TOOLS_FAILED_STOP_REASON);
+        assert!(dp.confidence.is_none());
+        assert!(dp.conclusion.starts_with("未判定 / Undetermined"));
+        assert!(dp.conclusion.contains("Verdict: insufficient evidence"));
+        assert!(!dp.conclusion.contains("criteria met"));
+        assert_eq!(er.success_rate, 0.0);
+        assert!(er.summary.to_lowercase().contains("vision"));
     }
 }

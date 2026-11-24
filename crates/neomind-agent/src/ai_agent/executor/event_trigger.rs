@@ -809,6 +809,17 @@ impl AgentExecutor {
                     // as success made the inline retry and the caller's
                     // cooldown-clear dead code — transient LLM faults got no
                     // retry and the 60s window stayed locked.
+                    //
+                    // Vision Partial (undetermined): do not replay and do not
+                    // clear cooldown — same input cannot grow eyes in 5s.
+                    if record.status == neomind_storage::ExecutionStatus::Partial {
+                        tracing::info!(
+                            agent_id = %agent_id,
+                            execution_id = %record.id,
+                            "Event-triggered execution Partial (vision undetermined) — not retrying"
+                        );
+                        return EventRunOutcome::PermanentFailure;
+                    }
                     if record.status != neomind_storage::ExecutionStatus::Failed {
                         return EventRunOutcome::Completed;
                     }

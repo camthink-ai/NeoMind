@@ -215,6 +215,8 @@ export function AgentExecutionTimeline({
         return { icon: CheckCircle2, color: 'text-success', bg: 'bg-success-light border-success-light', label: t('agents:executionStatus.completed') }
       case 'Failed':
         return { icon: XCircle, color: 'text-error', bg: 'bg-error-light border-error', label: t('agents:executionStatus.failed') }
+      case 'Partial':
+        return { icon: AlertCircle, color: 'text-warning', bg: 'bg-warning-light border-warning', label: t('agents:executionStatus.partial') }
       case 'Cancelled':
         return { icon: XCircle, color: 'text-muted-foreground', bg: 'bg-muted border-border', label: t('agents:executionStatus.cancelled') }
       default:

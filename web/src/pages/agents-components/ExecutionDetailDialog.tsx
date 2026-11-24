@@ -161,6 +161,8 @@ export function ExecutionDetailDialog({
         return <CheckCircle2 className="h-4 w-4 text-success" />
       case 'Failed':
         return <XCircle className="h-4 w-4 text-error" />
+      case 'Partial':
+        return <AlertCircle className="h-4 w-4 text-warning" />
       case 'Running':
         return <Clock className="h-4 w-4 text-info" />
       default:
