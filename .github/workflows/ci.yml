@@ -68,6 +68,11 @@ jobs:
       - name: Unit tests
         run: npx vitest run
 
+      # Production build + circular-chunk + bundle budget. PR CI used to skip
+      # this and only release `build.yml` caught chunk/budget regressions.
+      - name: Production build + bundle budget
+        run: npm run build:check
+
   skill-cli-drift:
     name: Skill ↔ CLI drift check
     runs-on: ubuntu-latest

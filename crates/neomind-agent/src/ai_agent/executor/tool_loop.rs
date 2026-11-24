@@ -100,6 +100,19 @@ impl AgentExecutor {
         // Get context window for token-aware compaction
         let context_window = llm_runtime.max_context_length();
 
+        // Allowed tool names for this run (sanitized + original). Empty means
+        // zero-tool: skip parse_tool_calls entirely and never execute.
+        let allowed_tool_names: HashSet<String> = {
+            let mut allowed: HashSet<String> =
+                filtered_tools.iter().map(|t| t.name.clone()).collect();
+            for (sanitized, original) in tool_name_map {
+                if allowed.contains(sanitized) {
+                    allowed.insert(original.clone());
+                }
+            }
+            allowed
+        };
+
         // Tool definitions ride every request and are NOT part of `messages`.
         // The system prompt IS messages[0] — subtracting it here as well
         // double-counted it and collapsed max_tokens to the 512 floor while
@@ -369,8 +382,13 @@ impl AgentExecutor {
                 }
             }
 
-            // Priority: native tool_calls from API → parse from text → thinking field fallback
-            let mut tool_calls = if let Some(ref native) = output.tool_calls {
+            // Priority: native tool_calls from API → parse from text → thinking field fallback.
+            // Zero-tool / empty allowlist: never honor native or text-protocol
+            // tool calls — `filtered_tools` is the sole gate. Parsing here used
+            // to bypass the LLM `tools: None` contract and run disallowed tools.
+            let mut tool_calls = if filtered_tools.is_empty() {
+                Vec::new()
+            } else if let Some(ref native) = output.tool_calls {
                 if !native.is_empty() {
                     tracing::debug!(
                         agent_id = %agent.id,
@@ -487,7 +505,11 @@ impl AgentExecutor {
             };
 
             // Get remaining text for reasoning tracking
-            let remaining_text = if output.tool_calls.is_some() {
+            let remaining_text = if filtered_tools.is_empty() {
+                // Zero-tool: keep the model text intact — do not strip via
+                // parse_tool_calls (that path is skipped above).
+                output.text.clone()
+            } else if output.tool_calls.is_some() {
                 // Native tool calls: strip the appended JSON from text directly
                 // (backends append serialized tool_calls to response_text for backward compat)
                 if let Some(pos) = output.text.rfind('[') {
@@ -806,6 +828,23 @@ impl AgentExecutor {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, c)| {
+                        // Allowlist gate: post-rewrite name must be in
+                        // filtered_tools (sanitized or original). Text-protocol
+                        // invents must not bypass `--allowed-tools`.
+                        if !allowed_tool_names.contains(&c.name) {
+                            tracing::info!(
+                                agent_id = %agent.id,
+                                tool = %c.name,
+                                "Tool not in filtered allowlist — call blocked"
+                            );
+                            return Some((
+                                i,
+                                format!(
+                                    "Tool '{}' is not in this agent's allowed set for this run",
+                                    c.name
+                                ),
+                            ));
+                        }
                         if c.name == "shell" {
                             if let Some(command) = c.args.get("command").and_then(|v| v.as_str()) {
                                 if let Some(r) = crate::toolkit::policy::deny_reason(command) {
@@ -816,9 +855,14 @@ impl AgentExecutor {
                         // Judgment-notify gate: auth from independent assistant
                         // judgment only — never from pending send title/body.
                         // Keyword scan of the final reply is audit-only and
-                        // cannot unsend.
+                        // cannot unsend. Also blocks mid-loop when vision tools
+                        // already all failed (Partial race before finish path).
                         if let Some(r) = super::judgment_notify::judgment_deny_for_tool_call(
-                            agent, &c.name, &c.args, messages,
+                            agent,
+                            &c.name,
+                            &c.args,
+                            messages,
+                            &all_tool_results,
                         ) {
                             tracing::warn!(
                                 agent_id = %agent.id,

@@ -532,22 +532,53 @@ pub(crate) fn gate_block_reason(verdict: JudgmentVerdict) -> String {
 
 /// Shared tool-loop gate for every Judgment delivery call that reaches shell
 /// (direct or rewritten). Returns a deny reason when send must be blocked.
+///
+/// `prior_tool_results` closes the mid-loop Partial race: once every vision
+/// tool this run has already failed, a `Verdict: criteria met` + message send
+/// must not deliver before the finish path marks Partial.
 pub(crate) fn judgment_deny_for_tool_call(
     agent: &AiAgent,
     tool_name: &str,
     args: &Value,
     messages: &[Message],
+    prior_tool_results: &[crate::toolkit::ToolResult],
 ) -> Option<String> {
     if !agent_uses_judgment_notify(agent) {
         return None;
     }
     let _command = pending_message_send_command(tool_name, args)?;
+    if vision_tools_already_failed(prior_tool_results) {
+        return Some(format!(
+            "{JUDGMENT_GATE_REASON_PREFIX} vision tools already failed this run — \
+             notification blocked (undetermined / Partial)."
+        ));
+    }
     let verdict = judgment_verdict_from_messages(messages);
     if judgment_allows_send(verdict) {
         None
     } else {
         Some(gate_block_reason(verdict))
     }
+}
+
+/// True when at least one vision tool already ran this loop and every vision
+/// call failed — same semantics as [`super::vision_path::vision_tools_all_failed`].
+fn vision_tools_already_failed(results: &[crate::toolkit::ToolResult]) -> bool {
+    let mut saw_vision = false;
+    for r in results {
+        if !super::vision_path::is_vision_tool_name(&r.name) {
+            continue;
+        }
+        saw_vision = true;
+        let success = matches!(
+            &r.result,
+            Ok(o) if crate::toolkit::tool::effective_success(&r.name, o)
+        );
+        if success {
+            return false;
+        }
+    }
+    saw_vision
 }
 
 /// Convenience for tests that already hold a shell command string.
@@ -558,7 +589,7 @@ pub(crate) fn judgment_send_deny_reason(
     messages: &[Message],
 ) -> Option<String> {
     let args = serde_json::json!({ "command": command });
-    judgment_deny_for_tool_call(agent, "shell", &args, messages)
+    judgment_deny_for_tool_call(agent, "shell", &args, messages, &[])
 }
 
 #[cfg(test)]
@@ -1120,8 +1151,8 @@ mod tests {
             "rewritten CLI must be a message send: {rewritten}"
         );
 
-        let d = judgment_deny_for_tool_call(&agent, "shell", &direct, &msgs);
-        let r = judgment_deny_for_tool_call(&agent, "shell", &rewritten, &msgs);
+        let d = judgment_deny_for_tool_call(&agent, "shell", &direct, &msgs, &[]);
+        let r = judgment_deny_for_tool_call(&agent, "shell", &rewritten, &msgs, &[]);
         assert!(d.is_some() && r.is_some(), "both entry points must deny");
         assert_eq!(d, r, "direct shell and rewritten CLI must share one gate");
 
@@ -1137,6 +1168,42 @@ mod tests {
     fn non_send_shell_is_not_gated() {
         let agent = agent_with_notify(NotifyOn::Judgment);
         let args = serde_json::json!({ "command": "neomind device get cam-1" });
-        assert!(judgment_deny_for_tool_call(&agent, "shell", &args, &[]).is_none());
+        assert!(judgment_deny_for_tool_call(&agent, "shell", &args, &[], &[]).is_none());
+    }
+
+    /// Mid-loop Partial race: vision tools already all failed → deny send even
+    /// with a finished `Verdict: criteria met` (finish path has not marked
+    /// Partial yet).
+    #[test]
+    fn vision_already_failed_blocks_criteria_met_send() {
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let msgs = vec![Message::new(
+            MessageRole::Assistant,
+            "有人且疑似赌博。\nVerdict: criteria met",
+        )];
+        let args = serde_json::json!({
+            "command": "neomind message send --title \"告警\" --body \"疑似赌博\""
+        });
+        assert!(
+            judgment_deny_for_tool_call(&agent, "shell", &args, &msgs, &[]).is_none(),
+            "without prior vision failure, criteria met must allow"
+        );
+
+        let prior = vec![crate::toolkit::ToolResult {
+            name: "vision".into(),
+            result: Ok(crate::toolkit::ToolOutput {
+                success: false,
+                data: serde_json::json!({"error": "timeout"}),
+                error: Some("timeout".into()),
+                metadata: None,
+            }),
+        }];
+        let denied = judgment_deny_for_tool_call(&agent, "shell", &args, &msgs, &prior);
+        assert!(
+            denied
+                .as_ref()
+                .is_some_and(|r| r.contains("vision tools already failed")),
+            "vision-all-failed must block mid-loop send: {denied:?}"
+        );
     }
 }

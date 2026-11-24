@@ -95,8 +95,13 @@ Respond in the same language as the task definition and operator messages. Never
     // nothing, so the agent has to know both that it may speak and that
     // silence is a legitimate outcome — otherwise the operator configures
     // "let the agent decide" and hears nothing, ever.
-    let speak_guidance = match agent.notify.as_ref().map(|n| n.on.clone()) {
-        Some(neomind_storage::NotifyOn::Judgment) => "\
+    //
+    // Only inject when tools are available AND `shell` is allowed — the
+    // guidance tells the model to `neomind message send`, which needs shell.
+    // Zero-tool / shell-excluded runs must not be told to invent that call.
+    let speak_guidance = if shell_allowed_for_speak(agent, config.tools_available) {
+        match agent.notify.as_ref().map(|n| n.on.clone()) {
+            Some(neomind_storage::NotifyOn::Judgment) => "\
 ## When to Notify\n\
 No notification is sent on your behalf — this task decides for itself whether the\n\
 operator needs to hear from it.\n\
@@ -123,8 +128,11 @@ teaches them to ignore the ones that do.\n\
 \n\
 Before sending, ask whether they could act on it. If the honest answer is no, say\n\
 nothing.\n\n"
-            .to_string(),
-        _ => String::new(),
+                .to_string(),
+            _ => String::new(),
+        }
+    } else {
+        String::new()
     };
 
     // ── Event trigger callout (if triggered by data event) ──
@@ -179,21 +187,22 @@ nothing.\n\n"
     };
 
     // ── Context: User Messages → Knowledge Files → Journal ──
-    // Skip for zero-tool: the empty-memory tip advertises a `memory` tool
-    // that is not available this run.
-    let history_section = if !config.tools_available {
-        String::new()
-    } else if config.is_focused_plus {
+    // Keep history for zero-tool runs — the operator's corrections, knowledge,
+    // and journal still apply. Pass tools_available so empty/memory tips do
+    // not advertise a `memory` tool that cannot run.
+    let history_section = if config.is_focused_plus {
         build_history_context(
             agent,
             &HistoryConfig::focused(agent.context_window_size),
             knowledge_content,
+            config.tools_available,
         )
     } else {
         build_history_context(
             agent,
             &HistoryConfig::free(agent.context_window_size),
             knowledge_content,
+            config.tools_available,
         )
     };
 
@@ -370,6 +379,21 @@ nothing.\n\n"
         speak_guidance,
         combined_guidance,
     )
+}
+
+/// True when Judgment speak guidance may mention `neomind message send`.
+/// Requires tools this run and `shell` in the allowlist (or no allowlist).
+fn shell_allowed_for_speak(agent: &AiAgent, tools_available: bool) -> bool {
+    if !tools_available {
+        return false;
+    }
+    match agent.tool_config.as_ref() {
+        Some(cfg) if !cfg.enabled => false,
+        Some(cfg) if !cfg.allowed_tools.is_empty() => {
+            cfg.allowed_tools.iter().any(|t| t == "shell")
+        }
+        _ => true,
+    }
 }
 
 /// Longest metric value (chars) printed verbatim in a resource section.
@@ -1054,7 +1078,17 @@ mod tests {
 
     #[test]
     fn zero_tool_prompt_skips_hierarchy_and_tool_bias() {
-        let agent = minimal_agent("summarize status");
+        let mut agent = minimal_agent("summarize status");
+        agent.user_messages.push(neomind_storage::UserMessage {
+            id: "m1".into(),
+            timestamp: 0,
+            content: "STANDARD_keep_this".into(),
+            message_type: None,
+        });
+        agent.notify = Some(neomind_storage::AgentNotify {
+            channels: vec!["webhook:ops".into()],
+            on: neomind_storage::NotifyOn::Judgment,
+        });
         let mut cfg = ToolLoopConfig::focused_plus(&agent);
         cfg.tools_available = false;
         cfg.recommended_tools = None;
@@ -1077,6 +1111,14 @@ mod tests {
         assert!(
             prompt.contains("no tools") || prompt.contains("analysis-only"),
             "zero-tool should state analysis-only: {prompt}"
+        );
+        assert!(
+            prompt.contains("STANDARD_keep_this"),
+            "zero-tool must keep user_messages history: {prompt}"
+        );
+        assert!(
+            !prompt.contains("## When to Notify") && !prompt.contains("neomind message send"),
+            "zero-tool must not inject speak_guidance: {prompt}"
         );
 
         let msgs = build_tool_messages(&prompt, &[], false);

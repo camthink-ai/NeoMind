@@ -92,9 +92,8 @@ jobs:
         id: build
         working-directory: ./web
         run: |
-          npm run build
-          node scripts/check-bundle.mjs
-          echo "sha=$(shasum web/dist/index.html | awk '{print $1}')" >> $GITHUB_OUTPUT
+          npm run build:check
+          echo "sha=$(shasum dist/index.html | awk '{print $1}')" >> $GITHUB_OUTPUT
           echo "✅ Frontend built successfully"
           ls -lh dist/
 

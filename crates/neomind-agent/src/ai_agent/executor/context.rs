@@ -54,10 +54,14 @@ impl HistoryConfig {
 /// `knowledge_content`: optional pre-fetched file contents (name → content).
 /// When provided, knowledge files are inlined directly so the agent doesn't
 /// waste a tool-call round reading them.
+///
+/// `tools_available`: when false, keep user/knowledge/journal content but skip
+/// tips that advertise the `memory` tool (zero-tool runs cannot call it).
 pub(crate) fn build_history_context(
     agent: &AiAgent,
     config: &HistoryConfig,
     knowledge_content: Option<&std::collections::HashMap<String, String>>,
+    tools_available: bool,
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
 
@@ -91,21 +95,34 @@ pub(crate) fn build_history_context(
                 }
             }
             if !sections.is_empty() {
-                parts.push(format!(
-                    "### Your Knowledge (loaded)\n{}\n\
-                     → New findings: `memory(action='create', target='custom:{{name}}', content='...')`\n\
-                     → Append to a notes file: `memory(action='add', target='custom:{{name}}', content='...')` — never to `custom:task-understanding`, which mirrors the task prompt.",
-                    sections.join("\n\n")
-                ));
+                if tools_available {
+                    parts.push(format!(
+                        "### Your Knowledge (loaded)\n{}\n\
+                         → New findings: `memory(action='create', target='custom:{{name}}', content='...')`\n\
+                         → Append to a notes file: `memory(action='add', target='custom:{{name}}', content='...')` — never to `custom:task-understanding`, which mirrors the task prompt.",
+                        sections.join("\n\n")
+                    ));
+                } else {
+                    parts.push(format!(
+                        "### Your Knowledge (loaded)\n{}",
+                        sections.join("\n\n")
+                    ));
+                }
             } else {
                 // Fallback to index if no content was loaded
-                parts.push(build_knowledge_index(&agent.memory.knowledge_files));
+                parts.push(build_knowledge_index(
+                    &agent.memory.knowledge_files,
+                    tools_available,
+                ));
             }
         } else {
             // Index-only mode: show file names and descriptions
-            parts.push(build_knowledge_index(&agent.memory.knowledge_files));
+            parts.push(build_knowledge_index(
+                &agent.memory.knowledge_files,
+                tools_available,
+            ));
         }
-    } else {
+    } else if tools_available {
         parts.push(
             "### Memory\n\
              You have a `memory` tool. When you discover important patterns:\n\
@@ -183,18 +200,25 @@ pub(crate) fn build_history_context(
 }
 
 /// Build knowledge file index section (name + description + tool commands).
-fn build_knowledge_index(files: &[neomind_storage::KnowledgeFileRef]) -> String {
+fn build_knowledge_index(
+    files: &[neomind_storage::KnowledgeFileRef],
+    tools_available: bool,
+) -> String {
     let items: Vec<String> = files
         .iter()
         .map(|f| format!("- custom:{} — {}", f.name, f.description))
         .collect();
-    format!(
-        "### Your Knowledge Files\n{}\n\
-         → Read: `memory(action='read', target='custom:{{name}}')`\n\
-         → New findings: `memory(action='create', target='custom:{{name}}', content='...')`\n\
-         → Append to a notes file: `memory(action='add', target='custom:{{name}}', content='...')` — never to `custom:task-understanding`, which mirrors the task prompt.",
-        items.join("\n")
-    )
+    if tools_available {
+        format!(
+            "### Your Knowledge Files\n{}\n\
+             → Read: `memory(action='read', target='custom:{{name}}')`\n\
+             → New findings: `memory(action='create', target='custom:{{name}}', content='...')`\n\
+             → Append to a notes file: `memory(action='add', target='custom:{{name}}', content='...')` — never to `custom:task-understanding`, which mirrors the task prompt.",
+            items.join("\n")
+        )
+    } else {
+        format!("### Your Knowledge Files\n{}", items.join("\n"))
+    }
 }
 
 /// Format a Unix timestamp as a human-readable date string.
@@ -262,7 +286,7 @@ mod tests {
     #[test]
     fn tool_mode_drops_past_runs_but_keeps_the_users_rules() {
         let agent = agent_with_history(Some(neomind_storage::MemoryMode::Tool));
-        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None);
+        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None, true);
 
         assert!(
             !ctx.contains("HISTORY_"),
@@ -280,7 +304,7 @@ mod tests {
     #[test]
     fn unset_memory_mode_keeps_todays_behaviour() {
         let agent = agent_with_history(None);
-        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None);
+        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None, true);
 
         assert!(ctx.contains("HISTORY_"), "expected the journal in: {ctx}");
         assert!(ctx.contains("STANDARD_"), "expected the rules in: {ctx}");
@@ -289,9 +313,26 @@ mod tests {
     #[test]
     fn assistant_mode_keeps_past_runs() {
         let agent = agent_with_history(Some(neomind_storage::MemoryMode::Assistant));
-        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None);
+        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None, true);
 
         assert!(ctx.contains("HISTORY_"), "expected the journal in: {ctx}");
+    }
+
+    /// Zero-tool runs still get user instructions / journal / knowledge, but
+    /// must not be told about a `memory` tool they cannot call.
+    #[test]
+    fn zero_tool_keeps_history_without_memory_tips() {
+        let agent = agent_with_history(Some(neomind_storage::MemoryMode::Assistant));
+        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None, false);
+        assert!(
+            ctx.contains("STANDARD_"),
+            "user instructions must stay: {ctx}"
+        );
+        assert!(ctx.contains("HISTORY_"), "journal must stay: {ctx}");
+        assert!(
+            !ctx.contains("`memory`") && !ctx.contains("memory(action="),
+            "zero-tool must not advertise memory tool: {ctx}"
+        );
     }
 
     /// A judgment-notify agent decides each event on its own. A past send in
@@ -305,7 +346,7 @@ mod tests {
             channels: vec!["webhook:ops".into()],
             on: neomind_storage::NotifyOn::Judgment,
         });
-        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None);
+        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None, true);
 
         assert!(
             !ctx.contains("HISTORY_"),
@@ -319,7 +360,7 @@ mod tests {
 
         // Any other notify trigger keeps today's behaviour.
         agent.notify.as_mut().expect("notify").on = neomind_storage::NotifyOn::Always;
-        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None);
+        let ctx = build_history_context(&agent, &HistoryConfig::focused(10), None, true);
         assert!(ctx.contains("HISTORY_"), "expected the journal in: {ctx}");
     }
 
@@ -342,8 +383,9 @@ mod tests {
             "task-understanding".to_string(),
             "# Task Understanding\n\n## Mission\np\n".to_string(),
         )]);
-        let inline = build_history_context(&agent, &HistoryConfig::focused(10), Some(&loaded));
-        let index = build_history_context(&agent, &HistoryConfig::focused(10), None);
+        let inline =
+            build_history_context(&agent, &HistoryConfig::focused(10), Some(&loaded), true);
+        let index = build_history_context(&agent, &HistoryConfig::focused(10), None, true);
         for (label, ctx) in [("inline", inline.as_str()), ("index", index.as_str())] {
             assert!(
                 ctx.contains("never to `custom:task-understanding`"),
