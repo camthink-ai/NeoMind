@@ -53,10 +53,7 @@ pub fn tool_exposed_in_profile(
         },
         ToolProfile::Balanced => {
             // Mid windows: keep Stage-1 image_edit deferral for pure-text turns.
-            if tool_name == "image_edit" && !has_user_images {
-                return false;
-            }
-            true
+            tool_name != "image_edit" || has_user_images
         }
         ToolProfile::Standard => {
             // Full exposure (≥32K). Vision still gated by VLM / inline images above.
