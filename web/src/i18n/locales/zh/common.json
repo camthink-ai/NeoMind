@@ -642,6 +642,7 @@
   "minUsernameLength": "用户名最少字符数",
   "userAlreadyExists": "用户已存在",
   "authFailed": "认证失败",
+  "outcomeUnknown": "请求已发出，但没有收到确定的结果（网关异常或超时）。请先刷新确认是否已生效，再决定是否重试。",
   "done": "完成",
   "memory": {
     "showLess": "收起",

@@ -10,6 +10,13 @@ import { ThemeProvider } from "@/components/ui/theme"
 import { ThemeColorSync } from "@/hooks/useThemeColor"
 import { initVisualViewport } from "@/hooks/useVisualViewport"
 import { installGlobalTauriWindowDrag } from "@/lib/windowDrag"
+import { purgeLegacyCredentials } from "@/lib/auth"
+
+// Erase the plaintext password that older "remember me" logins kept in
+// localStorage. Must run before any community/extension bundle is injected
+// (those load after React mounts), and cannot live on the login page: a user
+// who is still signed in after an upgrade never visits it.
+purgeLegacyCredentials()
 
 // Expose React and JSX runtime as globals for community component bundles (IIFE)
 ;(window as any).React = React

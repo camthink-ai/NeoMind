@@ -646,6 +646,7 @@
   "minUsernameLength": "Min Username Length",
   "userAlreadyExists": "User Already Exists",
   "authFailed": "Auth Failed",
+  "outcomeUnknown": "The request was sent, but no confirmed result came back (gateway error or timeout). Refresh to check whether it took effect before trying again.",
   "done": "Done",
   "memory": {
     "showLess": "Show Less",

@@ -8,6 +8,7 @@ import type { StateCreator } from 'zustand'
 import type { AuthState } from '../types'
 import type { UserInfo } from '@/types'
 import { tokenManager, api, getApiKey, clearApiKey } from '@/lib/api'
+import { logWarning } from '@/lib/errors'
 
 export interface AuthSlice extends AuthState {
   // UI state
@@ -56,16 +57,37 @@ export const createAuthSlice: StateCreator<
     } else if (apiKey) {
       // API key auth — no JWT token, but authenticated via service account
       set({ token: null, isAuthenticated: true, user: null })
-      // Fetch service account info (backend returns virtual user for API key).
-      // A 401/403 means the key is stale (e.g. the backend data was wiped) —
-      // clear it, otherwise isAuthenticated stays true and the app loops
-      // between rendering protected pages and bouncing off 401s.
-      get().getCurrentUser().catch((error) => {
-        if (error?.status === 401 || error?.status === 403) {
-          clearApiKey()
-          set({ isAuthenticated: false, user: null })
-        }
-      })
+      // Check the key against the backend: a stale one (e.g. the backend data
+      // was wiped) would otherwise leave isAuthenticated true and the app
+      // looping between rendering protected pages and bouncing off 401s.
+      // Calls the API directly — getCurrentUser() swallows every error, so it
+      // does the success bookkeeping inline instead.
+      // `/auth/me` is guarded by hybrid_auth_middleware, which answers 401 for
+      // an unknown or deactivated key and has no 403 branch. So only a 401
+      // means the key itself is invalid; on 403, a 5xx or a network failure
+      // the key may still be good and the session is kept.
+      const usedKey = apiKey
+      api.getCurrentUser()
+        .then((user) => {
+          // The service account is the signed-in user (sidebar, mobile nav and
+          // chat read `user`). Session-only cache: an API-key sign-in is never
+          // "remembered". A result arriving after the key was replaced belongs
+          // to the old key.
+          if (getApiKey() !== usedKey) return
+          tokenManager.setUser(user, false)
+          set({ user })
+        })
+        .catch((error) => {
+          // A 401 arriving after the key was replaced belongs to the old one.
+          if (getApiKey() !== usedKey) return
+          if (error?.status === 401) {
+            clearApiKey()
+            tokenManager.clearUser()
+            set({ isAuthenticated: false, user: null })
+            return
+          }
+          logWarning('API key check failed without a 401; keeping the session', { status: error?.status ?? null })
+        })
     } else {
       set({ isAuthenticated: false, user: null })
     }
