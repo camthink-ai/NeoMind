@@ -683,22 +683,33 @@ fn find_delivery_receipt_for_matched_mutation(
     matched_cmd: &str,
     tool_results: &[(String, String)],
 ) -> Option<CommandDeliveryReceipt> {
-    let (target, subcmd) = extract_device_control_target_and_subcmd(matched_cmd)?;
-    tool_results
-        .iter()
-        .rev()
-        .filter_map(|(_, body)| parse_command_delivery_from_tool_result(body))
-        .find(|r| {
-            let device_ok = r
-                .device_id
-                .as_deref()
-                .is_some_and(|id| id.eq_ignore_ascii_case(&target));
-            let cmd_ok = r
-                .command
-                .as_deref()
-                .is_some_and(|c| c.eq_ignore_ascii_case(&subcmd));
-            device_ok && cmd_ok
-        })
+    // Split compound `&&` / `;` the same way as
+    // `mutation_satisfies_action_for_user` — binding against the full string
+    // missed target/subcmd on live compound shell lines.
+    for seg in matched_cmd.split("&&").flat_map(|s| s.split(';')) {
+        let Some((target, subcmd)) = extract_device_control_target_and_subcmd(seg) else {
+            continue;
+        };
+        if let Some(receipt) = tool_results
+            .iter()
+            .rev()
+            .filter_map(|(_, body)| parse_command_delivery_from_tool_result(body))
+            .find(|r| {
+                let device_ok = r
+                    .device_id
+                    .as_deref()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(&target));
+                let cmd_ok = r
+                    .command
+                    .as_deref()
+                    .is_some_and(|c| c.eq_ignore_ascii_case(&subcmd));
+                device_ok && cmd_ok
+            })
+        {
+            return Some(receipt);
+        }
+    }
+    None
 }
 
 /// TURN-END completeness note: the user asked for an ACTION and no

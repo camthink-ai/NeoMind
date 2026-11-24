@@ -308,6 +308,8 @@ function ExecutionDetailDialog({ execution, open, onClose, agentId }: ExecutionD
                 <CheckCircle2 className="h-4 w-4 text-success" />
               ) : execution.status === 'Running' ? (
                 <Loader2 className="h-4 w-4 text-info animate-spin" />
+              ) : execution.status === 'Partial' ? (
+                <AlertCircle className="h-4 w-4 text-warning" />
               ) : (
                 <XCircle className="h-4 w-4 text-error" />
               )}
@@ -336,12 +338,46 @@ function ExecutionDetailDialog({ execution, open, onClose, agentId }: ExecutionD
                   )}
                 </div>
 
-                {/* Error */}
+                {/* Error / Partial */}
                 {execution.error && (
-                  <div className="p-3 rounded-lg bg-error-light border border-error text-sm text-error">
+                  <div
+                    className={cn(
+                      'p-3 rounded-lg border text-sm',
+                      execution.status === 'Partial'
+                        ? 'bg-warning-light border-warning text-warning'
+                        : 'bg-error-light border-error text-error',
+                    )}
+                  >
                     {execution.error}
                   </div>
                 )}
+
+                {/* Input summary chip (vision path / skip reason) */}
+                {execution.input_summary &&
+                  (execution.input_summary.vision_path ||
+                    execution.input_summary.skip_reason ||
+                    execution.input_summary.image_extracted != null) && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {execution.input_summary.vision_path && (
+                        <Badge variant="outline" className={cn(textNano, 'h-5 px-1.5')}>
+                          vision: {execution.input_summary.vision_path}
+                        </Badge>
+                      )}
+                      {execution.input_summary.skip_reason && (
+                        <Badge variant="outline" className={cn(textNano, 'h-5 px-1.5 text-warning')}>
+                          skip: {execution.input_summary.skip_reason}
+                        </Badge>
+                      )}
+                      {execution.input_summary.image_extracted != null && (
+                        <Badge variant="secondary" className={cn(textNano, 'h-5 px-1.5')}>
+                          image: {execution.input_summary.image_extracted ? 'yes' : 'no'}
+                          {execution.input_summary.metrics_collected > 0
+                            ? ` · ${execution.input_summary.metrics_collected} metrics`
+                            : ''}
+                        </Badge>
+                      )}
+                    </div>
+                  )}
 
                 {/* Input Data Section */}
                 {(images.length > 0 || metricTags.length > 0) && (
@@ -536,6 +572,8 @@ const FlowNode = memo(function FlowNode({ execution, isLatest, isRunning, onClic
             <Loader2 className="h-4 w-4 text-info shrink-0 animate-spin" />
           ) : execution.status === 'Completed' ? (
             <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
+          ) : execution.status === 'Partial' ? (
+            <AlertCircle className="h-4 w-4 text-warning shrink-0" />
           ) : (
             <XCircle className="h-4 w-4 text-error shrink-0" />
           )}
@@ -557,6 +595,16 @@ const FlowNode = memo(function FlowNode({ execution, isLatest, isRunning, onClic
           <span className={cn(textNano, "text-muted-foreground")}>{formatTime(execution.timestamp)}</span>
           {execution.duration_ms > 0 && (
             <span className={cn(textNano, "font-mono text-muted-foreground")}>{formatDuration(execution.duration_ms)}</span>
+          )}
+          {execution.input_summary?.vision_path && (
+            <Badge variant="outline" className={cn(textMicro, "h-4 px-1")}>
+              {execution.input_summary.vision_path}
+            </Badge>
+          )}
+          {execution.input_summary?.skip_reason && (
+            <Badge variant="outline" className={cn(textMicro, "h-4 px-1 text-warning")}>
+              {execution.input_summary.skip_reason}
+            </Badge>
           )}
           <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity ml-auto" />
         </div>

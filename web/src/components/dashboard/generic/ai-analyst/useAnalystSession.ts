@@ -62,7 +62,7 @@ function isMetaField(key: string): boolean {
 function findLastCompletedAi(msgs: AnalystMessage[]): number {
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i]
-    if ((m.type === 'ai' || m.type === 'error') && !m.isStreaming) return i
+    if ((m.type === 'ai' || m.type === 'error' || m.type === 'warning') && !m.isStreaming) return i
   }
   return -1
 }
@@ -362,7 +362,12 @@ async function loadHistoryMessages(
       // AI response after data
       messages.push({
         id: `hist-${exec.id}`,
-        type: exec.status === 'Failed' ? 'error' : 'ai',
+        type:
+          exec.status === 'Failed'
+            ? 'error'
+            : exec.status === 'Partial'
+              ? 'warning'
+              : 'ai',
         content: conclusion,
         timestamp: ts,
         duration: exec.duration_ms,
@@ -525,7 +530,12 @@ export function useAnalystSession({
             const dedupKey = `exec-${exec.id}`
             const aiMsg: AnalystMessage = {
               id: dedupKey,
-              type: exec.status === 'Failed' ? 'error' : 'ai',
+              type:
+                exec.status === 'Failed'
+                  ? 'error'
+                  : exec.status === 'Partial'
+                    ? 'warning'
+                    : 'ai',
               content: conclusion || 'No result',
               timestamp: Date.now(),
               duration: exec.duration_ms,
@@ -931,7 +941,7 @@ export function useAnalystSession({
           timestamp: Date.now(),
           dataSource: ds,
         }
-        const insertIdx = prev.findIndex((m, idx) => idx > lastCompletedAiIdx && (m.type === 'ai' || m.type === 'error'))
+        const insertIdx = prev.findIndex((m, idx) => idx > lastCompletedAiIdx && (m.type === 'ai' || m.type === 'error' || m.type === 'warning'))
         if (insertIdx === -1) return [...prev, newMsg]
         return [...prev.slice(0, insertIdx), newMsg, ...prev.slice(insertIdx)]
       })
@@ -963,7 +973,7 @@ export function useAnalystSession({
         }
 
         // No data message in current round — insert BEFORE any streaming AI message
-        const insertIdx = prev.findIndex((m, idx) => idx > lastCompletedAiIdx && (m.type === 'ai' || m.type === 'error'))
+        const insertIdx = prev.findIndex((m, idx) => idx > lastCompletedAiIdx && (m.type === 'ai' || m.type === 'error' || m.type === 'warning'))
         if (insertIdx === -1) {
           return [...prev, {
             id: nextId(),

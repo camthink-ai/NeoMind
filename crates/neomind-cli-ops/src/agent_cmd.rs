@@ -115,6 +115,21 @@ pub async fn get_agent(client: &ApiClient, id: &str) -> Result<CliResponse> {
     Ok(CliResponse::success(data, "Agent retrieved"))
 }
 
+fn notify_on_is_judgment(notify: Option<&str>) -> bool {
+    let Some(notify_json) = notify else {
+        return false;
+    };
+    crate::json_arg::parse_json_arg(notify_json)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .get("on")
+                .and_then(|v| v.as_str())
+                .map(|s| s.eq_ignore_ascii_case("judgment"))
+        })
+        .unwrap_or(false)
+}
+
 /// Resolve CLI `--no-tools` / `--allowed-tools` into an API `tool_config` payload.
 ///
 /// Returns `Ok(None)` when neither flag is set (leave API default). Conflicts
@@ -132,21 +147,12 @@ fn resolve_tool_config_flags(
         ));
     }
     if no_tools {
-        if let Some(notify_json) = notify {
-            if let Ok(parsed) = crate::json_arg::parse_json_arg(notify_json) {
-                let on = parsed
-                    .get("on")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_ascii_lowercase();
-                if on == "judgment" {
-                    return Err(CliResponse::error_with_suggestion(
-                        "--no-tools conflicts with --notify on=judgment (judgment alerts need shell to send messages).",
-                        "NO_TOOLS_CONFLICTS_WITH_JUDGMENT_NOTIFY",
-                        "Use `--allowed-tools shell` with judgment notify, or switch notify to `always`/`failure` with `--no-tools`.",
-                    ));
-                }
-            }
+        if notify_on_is_judgment(notify) {
+            return Err(CliResponse::error_with_suggestion(
+                "--no-tools conflicts with --notify on=judgment (judgment alerts need shell to send messages).",
+                "NO_TOOLS_CONFLICTS_WITH_JUDGMENT_NOTIFY",
+                "Use `--allowed-tools shell` with judgment notify, or switch notify to `always`/`failure` with `--no-tools`.",
+            ));
         }
         return Ok(Some(json!({
             "enabled": false,
@@ -166,6 +172,13 @@ fn resolve_tool_config_flags(
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+        if notify_on_is_judgment(notify) && !list.iter().any(|t| t.eq_ignore_ascii_case("shell")) {
+            return Err(CliResponse::error_with_suggestion(
+                "--allowed-tools without `shell` conflicts with --notify on=judgment (judgment alerts need shell to send messages).",
+                "ALLOWED_TOOLS_OMITS_SHELL_FOR_JUDGMENT",
+                "Include `shell` in --allowed-tools, or switch notify to `always`/`failure`.",
+            ));
+        }
         return Ok(Some(json!({
             "enabled": true,
             "allowed_tools": list,
@@ -494,7 +507,17 @@ pub async fn update_agent(
             "Pass both flags together, e.g. --schedule-type interval --schedule-config 300",
         ));
     }
-    let tool_config = match resolve_tool_config_flags(no_tools, allowed_tools, notify) {
+    // Mirror schedule merge: when tool flags change without --notify, GET the
+    // existing notify so judgment×no-tools / judgment×no-shell still conflict.
+    let existing_notify_owned;
+    let notify_for_tools = if (no_tools || allowed_tools.is_some()) && notify.is_none() {
+        let existing = client.get(&format!("/agents/{}", id)).await?;
+        existing_notify_owned = existing.get("notify").cloned().map(|v| v.to_string());
+        existing_notify_owned.as_deref()
+    } else {
+        notify
+    };
+    let tool_config = match resolve_tool_config_flags(no_tools, allowed_tools, notify_for_tools) {
         Ok(v) => v,
         Err(resp) => return Ok(resp),
     };
@@ -890,6 +913,17 @@ mod tests {
         assert_eq!(
             err.code.as_deref(),
             Some("NO_TOOLS_CONFLICTS_WITH_JUDGMENT_NOTIFY")
+        );
+
+        let err = resolve_tool_config_flags(
+            false,
+            Some("memory"),
+            Some(r#"{"channels":["IM"],"on":"judgment"}"#),
+        )
+        .expect_err("allowlist without shell");
+        assert_eq!(
+            err.code.as_deref(),
+            Some("ALLOWED_TOOLS_OMITS_SHELL_FOR_JUDGMENT")
         );
     }
 

@@ -108,6 +108,20 @@ describe('fetchAPI — write requests are never auto-retried', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('reports a 503 on a write as outcome unknown too', async () => {
+    fetchMock.mockResolvedValue(json(503, { message: 'Service Unavailable' }))
+
+    const call = fetchAPI(COMMAND_URL, { method: 'POST' })
+    const rejected = expect(call).rejects.toMatchObject({
+      status: 503,
+      message: i18n.t('common:outcomeUnknown'),
+    })
+    await vi.runAllTimersAsync()
+    await rejected
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the server message for a write the backend rejected outright', async () => {
     fetchMock.mockResolvedValue(json(400, { message: 'Device is offline' }))
 

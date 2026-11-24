@@ -303,7 +303,10 @@ export async function fetchAPI<T>(
     // usable answer: the server may have run the request before timing out.
     // Say the outcome is unknown instead of "failed", so nobody sends it again
     // assuming nothing happened.
-    const outcomeUnknown = !isRead && (response.status === 502 || response.status === 504)
+    // 503 is a common gateway blip (upstream overloaded / restarting) — same
+    // "may already have run" ambiguity as 502/504 for writes.
+    const outcomeUnknown =
+      !isRead && (response.status === 502 || response.status === 503 || response.status === 504)
     const message = outcomeUnknown
       ? i18n.t('common:outcomeUnknown')
       : await parseErrorMessage(response)

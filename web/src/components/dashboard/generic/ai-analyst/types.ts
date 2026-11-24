@@ -7,7 +7,7 @@ export interface AiAnalystConfig {
   contextWindowSize: number
 }
 
-export type AnalystMessageType = 'image' | 'data' | 'ai' | 'user' | 'error'
+export type AnalystMessageType = 'image' | 'data' | 'ai' | 'user' | 'error' | 'warning'
 
 export interface AnalystMessage {
   id: string
