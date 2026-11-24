@@ -5,6 +5,7 @@
  */
 
 export { tokenManager } from './tokenManager'
+export { LEGACY_CREDENTIALS_KEY, purgeLegacyCredentials } from './legacyCredentials'
 export {
   getToken,
   setToken,

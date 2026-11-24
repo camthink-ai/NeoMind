@@ -26,8 +26,9 @@ const languages = [
   { code: 'zh', name: '简体中文' },
 ]
 
-// LocalStorage keys for remembering credentials
-const CREDENTIALS_KEY = 'neomind_remembered_credentials'
+// Remembered username for the login form. The password itself is never
+// stored: "remember me" keeps the session token instead (see tokenManager).
+const REMEMBERED_USERNAME_KEY = 'neomind_remembered_username'
 
 interface CachedInstance {
   id: string
@@ -92,7 +93,6 @@ export function LoginPage() {
   const [error, setError] = useState("")
   const [_isFirstSetup, setIsFirstSetup] = useState<boolean | null>(null)
   const [checkingAuth, setCheckingAuth] = useState(true)
-  const [hasLoadedCredentials, setHasLoadedCredentials] = useState(false)
   const [showInstancePicker, setShowInstancePicker] = useState(false)
 
   const cachedInstances = getCachedInstances()
@@ -186,7 +186,7 @@ export function LoginPage() {
     checkExistingAuth()
   }, [checkAuthStatus, navigate])
 
-  // Load saved credentials on mount
+  // Load the remembered username on mount
   useEffect(() => {
     if (checkingAuth) return
 
@@ -212,13 +212,10 @@ export function LoginPage() {
     checkSetupStatus()
 
     try {
-      const saved = localStorage.getItem(CREDENTIALS_KEY)
-      if (saved) {
-        const credentials = JSON.parse(saved)
-        if (credentials.username) setUsername(credentials.username)
-        if (credentials.password) setPassword(credentials.password)
-        if (credentials.rememberMe !== undefined) setRememberMe(credentials.rememberMe)
-        setHasLoadedCredentials(true)
+      const rememberedUsername = localStorage.getItem(REMEMBERED_USERNAME_KEY)
+      if (rememberedUsername) {
+        setUsername(rememberedUsername)
+        setRememberMe(true)
       }
     } catch { /* ignore */ }
 
@@ -235,24 +232,6 @@ export function LoginPage() {
     }
   }, [checkingAuth, navigate])
 
-  // Save credentials when rememberMe changes
-  useEffect(() => {
-    if (!hasLoadedCredentials) return
-    try {
-      if (rememberMe) {
-        const saved = localStorage.getItem(CREDENTIALS_KEY)
-        const existing = saved ? JSON.parse(saved) : {}
-        localStorage.setItem(CREDENTIALS_KEY, JSON.stringify({
-          username: username || existing.username,
-          password: existing.password || '',
-          rememberMe: true,
-        }))
-      } else {
-        localStorage.removeItem(CREDENTIALS_KEY)
-      }
-    } catch { /* ignore */ }
-  }, [rememberMe, username, hasLoadedCredentials])
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
@@ -260,12 +239,10 @@ export function LoginPage() {
 
     try {
       await login(username, password, rememberMe)
-      if (rememberMe) {
-        try { localStorage.setItem(CREDENTIALS_KEY, JSON.stringify({ username, password, rememberMe: true })) } catch { /* ignore */ }
-      } else {
-        try { localStorage.removeItem(CREDENTIALS_KEY) } catch { /* ignore */ }
-      }
-      setHasLoadedCredentials(true)
+      try {
+        if (rememberMe) localStorage.setItem(REMEMBERED_USERNAME_KEY, username)
+        else localStorage.removeItem(REMEMBERED_USERNAME_KEY)
+      } catch { /* ignore */ }
       forceViewportReset()
       navigate('/', { replace: true })
     } catch (err) {
