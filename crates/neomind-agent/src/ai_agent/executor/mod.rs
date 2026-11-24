@@ -129,6 +129,10 @@ pub(crate) struct ToolLoopConfig {
     pub(crate) recommended_tools: Option<Vec<String>>,
     /// Whether this is Focused+ mode (Focused with tool chaining enabled)
     pub(crate) is_focused_plus: bool,
+    /// False when the filtered tool set is empty (`tool_config.enabled=false`).
+    /// Skips tool-hierarchy prompt bias, sends `tools: None`, and never nudges
+    /// for tool-call narration.
+    pub(crate) tools_available: bool,
 }
 
 impl ToolLoopConfig {
@@ -138,6 +142,7 @@ impl ToolLoopConfig {
             max_rounds,
             recommended_tools: None,
             is_focused_plus: false,
+            tools_available: true,
         }
     }
 
@@ -147,6 +152,7 @@ impl ToolLoopConfig {
             max_rounds: agent.max_chain_depth.clamp(1, ceiling),
             recommended_tools: Some(Self::build_focused_recommended_tools(agent)),
             is_focused_plus: true,
+            tools_available: true,
         }
     }
 
@@ -584,7 +590,7 @@ impl AgentExecutor {
         // of Arc handles, and the memory tool would register new files into the wrong handle.
 
         // Build mode-specific config
-        let tool_config = match agent.execution_mode {
+        let mut tool_config = match agent.execution_mode {
             neomind_storage::agents::ExecutionMode::Free => ToolLoopConfig::free(),
             neomind_storage::agents::ExecutionMode::Focused => ToolLoopConfig::focused_plus(agent),
             // Structured (L0) never reaches the tool loop — execute_internal
@@ -597,6 +603,13 @@ impl AgentExecutor {
 
         let (mut filtered_tools, mut tool_name_map) =
             Self::filter_tools(&registry, &agent.tool_config);
+
+        // Zero-tool agents: drop recommended-tool bias and mark the loop so
+        // prompts skip hierarchy / narration nudge and LlmInput.tools is None.
+        if filtered_tools.is_empty() {
+            tool_config.recommended_tools = None;
+            tool_config.tools_available = false;
+        }
 
         // Honest vision path (T4 Dongpingshan false-success):
         // - Multimodal primary + embeddable images → strip `vision`, rewrite
@@ -698,7 +711,11 @@ impl AgentExecutor {
             knowledge_content.as_ref(),
             vision_exec_path,
         );
-        let mut messages = tool_prompt::build_tool_messages(&system_prompt, data_collected);
+        let mut messages = tool_prompt::build_tool_messages(
+            &system_prompt,
+            data_collected,
+            tool_config.tools_available,
+        );
 
         // The bound device image is injected into the multimodal user message
         // above, so the LLM SEES it — but it cannot reproduce the base64 to

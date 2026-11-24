@@ -115,6 +115,78 @@ pub async fn get_agent(client: &ApiClient, id: &str) -> Result<CliResponse> {
     Ok(CliResponse::success(data, "Agent retrieved"))
 }
 
+/// Resolve CLI `--no-tools` / `--allowed-tools` into an API `tool_config` payload.
+///
+/// Returns `Ok(None)` when neither flag is set (leave API default). Conflicts
+/// with judgment notify are rejected here so create/update stay symmetric.
+#[allow(clippy::result_large_err)] // CliResponse is the CLI error surface by design
+fn resolve_tool_config_flags(
+    no_tools: bool,
+    allowed_tools: Option<&str>,
+    notify: Option<&str>,
+) -> Result<Option<serde_json::Value>, CliResponse> {
+    if no_tools && allowed_tools.is_some() {
+        return Err(CliResponse::error(
+            "Cannot combine --no-tools with --allowed-tools — pick one.",
+            "NO_TOOLS_CONFLICTS_WITH_ALLOWED_TOOLS",
+        ));
+    }
+    if no_tools {
+        if let Some(notify_json) = notify {
+            if let Ok(parsed) = crate::json_arg::parse_json_arg(notify_json) {
+                let on = parsed
+                    .get("on")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if on == "judgment" {
+                    return Err(CliResponse::error_with_suggestion(
+                        "--no-tools conflicts with --notify on=judgment (judgment alerts need shell to send messages).",
+                        "NO_TOOLS_CONFLICTS_WITH_JUDGMENT_NOTIFY",
+                        "Use `--allowed-tools shell` with judgment notify, or switch notify to `always`/`failure` with `--no-tools`.",
+                    ));
+                }
+            }
+        }
+        return Ok(Some(json!({
+            "enabled": false,
+            "allowed_tools": [],
+        })));
+    }
+    if let Some(raw) = allowed_tools {
+        let trimmed = raw.trim();
+        if trimmed.eq_ignore_ascii_case("all") {
+            return Ok(Some(json!({
+                "enabled": true,
+                "allowed_tools": [],
+            })));
+        }
+        let list: Vec<String> = trimmed
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        return Ok(Some(json!({
+            "enabled": true,
+            "allowed_tools": list,
+        })));
+    }
+    Ok(None)
+}
+
+/// Append API soft-warning text into the CLI success message so Chat models see it.
+fn message_with_warnings(base: String, data: &serde_json::Value) -> String {
+    let warnings = data
+        .get("warnings")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|w| w.as_str()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if warnings.is_empty() {
+        return base;
+    }
+    format!("{base} Warnings: {}", warnings.join("; "))
+}
+
 /// Create a new agent
 #[allow(clippy::too_many_arguments)]
 pub async fn create_agent(
@@ -132,6 +204,8 @@ pub async fn create_agent(
     output_schema: Option<&str>,
     memory_mode: Option<&str>,
     notify: Option<&str>,
+    no_tools: bool,
+    allowed_tools: Option<&str>,
     device_ids: Option<&str>,
     resources: Option<&str>,
     metrics: Option<&str>,
@@ -183,7 +257,15 @@ pub async fn create_agent(
     // Default aligned with the API's (focused = the plainest agent); the
     // editor, CLI and API now agree on one default.
     let exec_mode = execution_mode.unwrap_or("focused");
-    let has_resources = resources.is_some() || device_ids.map(|d| !d.is_empty()).unwrap_or(false);
+    let has_resources = resources.is_some()
+        || device_ids.map(|d| !d.is_empty()).unwrap_or(false)
+        || metrics.is_some()
+        || commands.is_some();
+
+    let tool_config = match resolve_tool_config_flags(no_tools, allowed_tools, notify) {
+        Ok(v) => v,
+        Err(resp) => return Ok(resp),
+    };
 
     let mut body = json!({
         "name": name,
@@ -191,6 +273,9 @@ pub async fn create_agent(
         "schedule": schedule,
         "execution_mode": exec_mode,
     });
+    if let Some(tc) = tool_config {
+        body["tool_config"] = tc;
+    }
     if let Some(schema_json) = output_schema {
         let parsed: serde_json::Value = crate::json_arg::parse_json_arg(schema_json).map_err(|e| {
             anyhow::anyhow!(
@@ -304,9 +389,9 @@ pub async fn create_agent(
         // of retrying blind. Matches the data_push error_with_suggestion gold
         // standard.
         return Ok(CliResponse::error_with_suggestion(
-            "Focused mode requires --resources or --device-ids to bind at least one resource.",
+            "Focused mode requires --resources, --device-ids, --metrics, or --commands to bind at least one resource.",
             "FOCUSED_REQUIRES_RESOURCES",
-            "Either bind devices (`--device-ids sensor-001` or `--resources '[…]'`) OR switch \
+            "Either bind devices (`--device-ids sensor-001`, `--metrics '[…]'`, or `--resources '[…]'`) OR switch \
              off focused with `--execution-mode free` (multi-round) / `manual` schedule for \
              create→invoke→delete lifecycles. Default execution-mode is focused.",
         ));
@@ -320,12 +405,13 @@ pub async fn create_agent(
         .unwrap_or("unknown")
         .to_string();
 
+    let base = format!(
+        "Agent created and active (id: {agent_id}). {}",
+        create_next_step(&agent_id, schedule_type)
+    );
     Ok(CliResponse::success(
-        data,
-        format!(
-            "Agent created and active (id: {agent_id}). {}",
-            create_next_step(&agent_id, schedule_type)
-        ),
+        data.clone(),
+        message_with_warnings(base, &data),
     ))
 }
 
@@ -368,10 +454,14 @@ pub async fn update_agent(
     user_prompt: Option<&str>,
     schedule_type: Option<&str>,
     schedule_config: Option<&str>,
+    event_filter: Option<&str>,
+    timezone: Option<&str>,
     execution_mode: Option<&str>,
     output_schema: Option<&str>,
     memory_mode: Option<&str>,
     notify: Option<&str>,
+    no_tools: bool,
+    allowed_tools: Option<&str>,
     device_ids: Option<&str>,
     resources: Option<&str>,
     metrics: Option<&str>,
@@ -404,6 +494,15 @@ pub async fn update_agent(
             "Pass both flags together, e.g. --schedule-type interval --schedule-config 300",
         ));
     }
+    let tool_config = match resolve_tool_config_flags(no_tools, allowed_tools, notify) {
+        Ok(v) => v,
+        Err(resp) => return Ok(resp),
+    };
+    if let Some(tc) = tool_config {
+        body["tool_config"] = tc;
+    }
+    // Schedule: rebuild when type is set; otherwise merge --event-filter /
+    // --timezone into the existing schedule so partial updates do not wipe it.
     if let Some(st) = schedule_type {
         let mut schedule = json!({"schedule_type": st});
         match st {
@@ -429,6 +528,25 @@ pub async fn update_agent(
                 }
             }
             _ => {}
+        }
+        if let Some(ef) = event_filter {
+            schedule["event_filter"] = json!(ef);
+        }
+        if let Some(tz) = timezone {
+            schedule["timezone"] = json!(tz);
+        }
+        body["schedule"] = schedule;
+    } else if event_filter.is_some() || timezone.is_some() {
+        let existing = client.get(&format!("/agents/{}", id)).await?;
+        let mut schedule = existing
+            .get("schedule")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        if let Some(ef) = event_filter {
+            schedule["event_filter"] = json!(ef);
+        }
+        if let Some(tz) = timezone {
+            schedule["timezone"] = json!(tz);
         }
         body["schedule"] = schedule;
     }
@@ -513,7 +631,10 @@ pub async fn update_agent(
     }
 
     let data = client.put(&format!("/agents/{}", id), &body).await?;
-    Ok(CliResponse::success(data, "Agent updated"))
+    Ok(CliResponse::success(
+        data.clone(),
+        message_with_warnings("Agent updated".to_string(), &data),
+    ))
 }
 
 /// Delete agent
@@ -729,6 +850,54 @@ mod tests {
                 "{schedule:?}: {step}"
             );
         }
+    }
+
+    #[test]
+    fn no_tools_writes_disabled_tool_config() {
+        let tc = resolve_tool_config_flags(true, None, None)
+            .expect("ok")
+            .expect("some");
+        assert_eq!(tc["enabled"], json!(false));
+        assert_eq!(tc["allowed_tools"], json!([]));
+    }
+
+    #[test]
+    fn allowed_tools_shell_and_all_reset() {
+        let shell = resolve_tool_config_flags(false, Some("shell"), None)
+            .expect("ok")
+            .expect("some");
+        assert_eq!(shell["enabled"], json!(true));
+        assert_eq!(shell["allowed_tools"], json!(["shell"]));
+
+        let all = resolve_tool_config_flags(false, Some("all"), None)
+            .expect("ok")
+            .expect("some");
+        assert_eq!(all["enabled"], json!(true));
+        assert_eq!(all["allowed_tools"], json!([]));
+    }
+
+    #[test]
+    fn no_tools_conflicts_with_allowed_and_judgment() {
+        let err = resolve_tool_config_flags(true, Some("shell"), None).expect_err("conflict");
+        assert_eq!(
+            err.code.as_deref(),
+            Some("NO_TOOLS_CONFLICTS_WITH_ALLOWED_TOOLS")
+        );
+
+        let err =
+            resolve_tool_config_flags(true, None, Some(r#"{"channels":["IM"],"on":"judgment"}"#))
+                .expect_err("judgment conflict");
+        assert_eq!(
+            err.code.as_deref(),
+            Some("NO_TOOLS_CONFLICTS_WITH_JUDGMENT_NOTIFY")
+        );
+    }
+
+    #[test]
+    fn warnings_append_into_cli_message() {
+        let data = json!({"warnings": ["a", "b"]});
+        let msg = message_with_warnings("Agent updated".into(), &data);
+        assert!(msg.contains("Warnings: a; b"), "{msg}");
     }
 }
 

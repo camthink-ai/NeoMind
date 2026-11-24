@@ -47,19 +47,32 @@ pub(crate) fn build_tool_system_prompt(
     // "go find more data and do something": T4's camera agents searched the
     // web for their own image path and sent alerts whose text said "no
     // gambling". Steps 2–3 are reworded for that kind of agent.
+    //
+    // Zero-tool agents (`tools_available=false`) skip Tool Hierarchy and all
+    // shell/skill/memory guidance — those lines would otherwise nudge the
+    // model to invent tool calls that cannot run.
     let judgment_notify = super::judgment_notify::agent_uses_judgment_notify(agent);
-    let (gather_step, act_step) = if judgment_notify {
-        (
-            "2. **Gather**: Judge the input attached to this run; call a tool only for something it does not contain — never fabricate IDs, metric names, or values.",
-            "3. **Act**: Only what this run's judgment calls for (see When to Notify) — doing nothing is a complete outcome.",
-        )
+    let preamble = if !config.tools_available {
+        "## Language Policy\n\
+Respond in the same language as the task definition and operator messages. Never mix languages in a single response. When uncertain, default to English.\n\n\
+## Task Workflow\n\
+1. **Understand**: What does this task require from the provided data?\n\
+2. **Analyze**: Reason over the snapshot and any attached images — you have no tools this run.\n\
+3. **Respond**: Report findings directly with root cause, impact, and recommended next steps.\n"
+            .to_string()
     } else {
-        (
-            "2. **Gather**: Collect real data through tools — never fabricate IDs, metric names, or values.",
-            "3. **Act**: Perform the real operation (control devices, send alerts, persist memory) — don't stop at gathering.",
-        )
-    };
-    let preamble = format!("\
+        let (gather_step, act_step) = if judgment_notify {
+            (
+                "2. **Gather**: Judge the input attached to this run; call a tool only for something it does not contain — never fabricate IDs, metric names, or values.",
+                "3. **Act**: Only what this run's judgment calls for (see When to Notify) — doing nothing is a complete outcome.",
+            )
+        } else {
+            (
+                "2. **Gather**: Collect real data through tools — never fabricate IDs, metric names, or values.",
+                "3. **Act**: Perform the real operation (control devices, send alerts, persist memory) — don't stop at gathering.",
+            )
+        };
+        format!("\
 ## Language Policy\n\
 Respond in the same language as the task definition and operator messages. Never mix languages in a single response. When uncertain, default to English.\n\n\
 ## Task Workflow\n\
@@ -71,7 +84,8 @@ Respond in the same language as the task definition and operator messages. Never
 1. **`shell`** — primary tool. Wraps the full `neomind` CLI for all platform operations (devices, rules, agents, dashboards, messages, extensions, etc.).\n\
 2. **`skill`** — on-demand workflow guides for unfamiliar operations: `skill(action=\"search\", query=\"...\")` then `skill(action=\"load\", id=\"...\")`.\n\
 3. **`memory`** — cross-execution persistence (see Guidelines below).\n\
-4. Extension commands via CLI only — overview: `neomind extension list` (not `--search \"extension capabilities\"`); concrete task: `neomind extension commands --search \"<task>\"` then paste hit `shell_example` `{{command, params}}`; known id/cmd: reuse invoke; full schema: `neomind extension commands <id>`. Do not invent `{{ext_id}}:{{cmd}}` chat tools or sanitized CLI subcommands.\n");
+4. Extension commands via CLI only — overview: `neomind extension list` (not `--search \"extension capabilities\"`); concrete task: `neomind extension commands --search \"<task>\"` then paste hit `shell_example` `{{command, params}}`; known id/cmd: reuse invoke; full schema: `neomind extension commands <id>`. Do not invent `{{ext_id}}:{{cmd}}` chat tools or sanitized CLI subcommands.\n")
+    };
 
     // ── When to speak (only where the routing leaves it to the agent) ──
     //
@@ -144,11 +158,19 @@ nothing.\n\n"
         .unwrap_or_default();
 
     // ── Merged resource + data section (eliminates redundancy) ──
-    let resource_data_section = if config.is_focused_plus {
+    let mut resource_data_section = if config.is_focused_plus {
         build_focused_resource_section(agent, data_collected, vision_path)
     } else {
         build_free_resource_section(agent, data_collected, vision_path)
     };
+    if !config.tools_available {
+        // Zero-tool runs cannot query — drop the tool nudge in the empty
+        // resources placeholder so the model does not invent CLI calls.
+        resource_data_section = resource_data_section.replace(
+            "No bound resources. Use tools to query.",
+            "No bound resources.",
+        );
+    }
 
     let vision_guidance = if vision_path::should_inject_inline_vision_guidance(vision_path) {
         vision_path::multimodal_inline_vision_guidance().to_string()
@@ -157,7 +179,11 @@ nothing.\n\n"
     };
 
     // ── Context: User Messages → Knowledge Files → Journal ──
-    let history_section = if config.is_focused_plus {
+    // Skip for zero-tool: the empty-memory tip advertises a `memory` tool
+    // that is not available this run.
+    let history_section = if !config.tools_available {
+        String::new()
+    } else if config.is_focused_plus {
         build_history_context(
             agent,
             &HistoryConfig::focused(agent.context_window_size),
@@ -199,109 +225,124 @@ nothing.\n\n"
 
     // Mode constraints
     let mut mode_constraints = String::new();
-    if let Some(ref recommended) = config.recommended_tools {
-        mode_constraints.push_str(&format!(
-            "\nRecommended tools for this task (prioritize these): {}",
-            recommended.join(", ")
-        ));
+    if config.tools_available {
+        if let Some(ref recommended) = config.recommended_tools {
+            mode_constraints.push_str(&format!(
+                "\nRecommended tools for this task (prioritize these): {}",
+                recommended.join(", ")
+            ));
+        }
+        if config.is_focused_plus {
+            mode_constraints.push_str(&format!(
+                "\nYou have at most {} round(s). Be efficient — \
+                 use tools to query history or details when the snapshot is insufficient.",
+                config.max_rounds
+            ));
+        }
     }
-    if config.is_focused_plus {
-        mode_constraints.push_str(&format!(
-            "\nYou have at most {} round(s). Be efficient — \
-             use tools to query history or details when the snapshot is insufficient.",
-            config.max_rounds
-        ));
-    }
 
-    // Combined guidelines + exit guidance (one section, no redundancy)
-    //
-    // The stock "Read first" bullet sends the model to `memory(action='list')`
-    // before it has looked at anything. For a judgment-notify agent the run
-    // log is deliberately absent, and whatever a first read could return is
-    // already under Context, so that call can only spend a round — T4's
-    // 200360 spent one on nearly every run and echoed this bullet as its
-    // "action_taken". The wording follows what Context really holds: the
-    // same condition `build_history_context` uses to choose between the
-    // inlined files and their index.
-    let knowledge_inlined = knowledge_content.is_some_and(|loaded| {
-        !loaded.is_empty()
-            && agent
-                .memory
-                .knowledge_files
-                .iter()
-                .any(|f| loaded.contains_key(&f.name))
-    });
-    let memory_read_first = if !judgment_notify {
-        "- **Read first**: At execution start, call `memory(action='list')` and read relevant files (especially `procedures` and `knowledge`) to leverage accumulated experience from prior executions.\n"
-    } else if knowledge_inlined {
-        "- Knowledge files are already loaded under Context above — no `memory` call is needed to read them. Use the `memory` tool only to persist a discovery that meets the Rule of three below.\n"
+    let combined_guidance = if !config.tools_available {
+        "## Guidelines & Exit\n\
+         - You have no tools this run. Analyze the provided snapshot and any attached images.\n\
+         - Write your analysis directly — plain text only, key findings first.\n\
+         - Do not invent tool calls, CLI commands, or claim you queried additional data.\n"
+            .to_string()
     } else {
-        "- Read a knowledge file only when this run's judgment needs it — never as a first step. Use the `memory` tool otherwise only to persist a discovery that meets the Rule of three below.\n"
-    };
-    let memory_guidance = format!(
-        "\
-         {memory_read_first}\
-         - Use the `memory` tool to persist important discoveries. **Rule of three**: only write when a pattern has been observed across at least 3 executions (stable, not noise). Single observations stay in your analysis output, not in permanent files.\n\
-         - **Three standard targets first**:\n\
-           * `user` (2000 chars) — operator identity, preferences, environment (e.g., 'Factory floor A', 'Operator: Wang')\n\
-           * `knowledge` (3000 chars) — stable cross-device facts about the deployment (e.g., 'Production line A has 5 sensors')\n\
-           * `procedures` (3000 chars) — step-by-step SOPs, playbooks, how-tos future executions should follow (e.g., '## Coolant Refill\\n1. Stop pump\\n2. Open valve\\n3. Fill to mark')\n\
-           * `session` — scratch notes for the current multi-step task (auto-deleted 7d)\n\
-           * `custom:{{name}}` (1000+ chars) — ADVANCED escape hatch, persist across ALL future executions; only when content doesn't fit user/knowledge/procedures\n\
-         - **Most content fits one of the 3 standard targets.** Procedural 'how-to' knowledge goes in `procedures`; declarative facts in `knowledge`; user-specific info in `user`. Global custom files are a last-resort escape hatch.\n\
-         - Knowledge/procedures format: bullet points or numbered steps, concise. Example:\n\
-           `memory(action='add', target='procedures', content='## Coolant Refill\\n1. Stop pump\\n2. Open valve\\n3. Fill to mark')`\n\
-         - **When to create a new global custom file** — only `create` when ALL are true:\n\
-           1. Pattern observed across 3+ executions (Rule of Three).\n\
-           2. No existing custom file covers this topic (verify via `memory(action='list')`).\n\
-           3. The content does NOT fit `user`/`knowledge`/`procedures`.\n\
-           4. The content is **reusable** — future executions will genuinely consult it (not a one-off finding).\n\
-           5. The content is **scoped to a specific topic** — general facts go in `user` or `knowledge` instead.\n\
-           Examples of good custom files: stable thresholds/ranges tied to a specific device, recurring event patterns for one resource, environment-specific quirks. Examples of bad ones: today's readings, a single observation, a stream of timestamps, general SOPs (use `procedures`), general facts (use `knowledge`).\n\
-           Otherwise: `add`/`replace` an existing file, or write to `user`/`knowledge`/`procedures`/`session`.\n\
-         - When appending (`add`), append ONLY the new data point — never re-list previous entries or resend the full section. For time-series notes, add just the new timestamp line.\n\
-         - If two custom files overlap significantly, merge them via `replace` + `remove`.\n\
-         - **Don't write**: transient readings, raw metric values, resource counts, timestamps, or anything that drifts between executions."
-    );
+        // Combined guidelines + exit guidance (one section, no redundancy)
+        //
+        // The stock "Read first" bullet sends the model to `memory(action='list')`
+        // before it has looked at anything. For a judgment-notify agent the run
+        // log is deliberately absent, and whatever a first read could return is
+        // already under Context, so that call can only spend a round — T4's
+        // 200360 spent one on nearly every run and echoed this bullet as its
+        // "action_taken". The wording follows what Context really holds: the
+        // same condition `build_history_context` uses to choose between the
+        // inlined files and their index.
+        let knowledge_inlined = knowledge_content.is_some_and(|loaded| {
+            !loaded.is_empty()
+                && agent
+                    .memory
+                    .knowledge_files
+                    .iter()
+                    .any(|f| loaded.contains_key(&f.name))
+        });
+        let memory_read_first = if !judgment_notify {
+            "- **Read first**: At execution start, call `memory(action='list')` and read relevant files (especially `procedures` and `knowledge`) to leverage accumulated experience from prior executions.\n"
+        } else if knowledge_inlined {
+            "- Knowledge files are already loaded under Context above — no `memory` call is needed to read them. Use the `memory` tool only to persist a discovery that meets the Rule of three below.\n"
+        } else {
+            "- Read a knowledge file only when this run's judgment needs it — never as a first step. Use the `memory` tool otherwise only to persist a discovery that meets the Rule of three below.\n"
+        };
+        let memory_guidance = format!(
+            "\
+             {memory_read_first}\
+             - Use the `memory` tool to persist important discoveries. **Rule of three**: only write when a pattern has been observed across at least 3 executions (stable, not noise). Single observations stay in your analysis output, not in permanent files.\n\
+             - **Three standard targets first**:\n\
+               * `user` (2000 chars) — operator identity, preferences, environment (e.g., 'Factory floor A', 'Operator: Wang')\n\
+               * `knowledge` (3000 chars) — stable cross-device facts about the deployment (e.g., 'Production line A has 5 sensors')\n\
+               * `procedures` (3000 chars) — step-by-step SOPs, playbooks, how-tos future executions should follow (e.g., '## Coolant Refill\\n1. Stop pump\\n2. Open valve\\n3. Fill to mark')\n\
+               * `session` — scratch notes for the current multi-step task (auto-deleted 7d)\n\
+               * `custom:{{name}}` (1000+ chars) — ADVANCED escape hatch, persist across ALL future executions; only when content doesn't fit user/knowledge/procedures\n\
+             - **Most content fits one of the 3 standard targets.** Procedural 'how-to' knowledge goes in `procedures`; declarative facts in `knowledge`; user-specific info in `user`. Global custom files are a last-resort escape hatch.\n\
+             - Knowledge/procedures format: bullet points or numbered steps, concise. Example:\n\
+               `memory(action='add', target='procedures', content='## Coolant Refill\\n1. Stop pump\\n2. Open valve\\n3. Fill to mark')`\n\
+             - **When to create a new global custom file** — only `create` when ALL are true:\n\
+               1. Pattern observed across 3+ executions (Rule of Three).\n\
+               2. No existing custom file covers this topic (verify via `memory(action='list')`).\n\
+               3. The content does NOT fit `user`/`knowledge`/`procedures`.\n\
+               4. The content is **reusable** — future executions will genuinely consult it (not a one-off finding).\n\
+               5. The content is **scoped to a specific topic** — general facts go in `user` or `knowledge` instead.\n\
+               Examples of good custom files: stable thresholds/ranges tied to a specific device, recurring event patterns for one resource, environment-specific quirks. Examples of bad ones: today's readings, a single observation, a stream of timestamps, general SOPs (use `procedures`), general facts (use `knowledge`).\n\
+               Otherwise: `add`/`replace` an existing file, or write to `user`/`knowledge`/`procedures`/`session`.\n\
+             - When appending (`add`), append ONLY the new data point — never re-list previous entries or resend the full section. For time-series notes, add just the new timestamp line.\n\
+             - If two custom files overlap significantly, merge them via `replace` + `remove`.\n\
+             - **Don't write**: transient readings, raw metric values, resource counts, timestamps, or anything that drifts between executions."
+        );
 
-    let action_guidance = if judgment_notify {
-        "- When — and only when — your judgment says criteria are met (see When to Notify), send the alert via the `shell` tool with: `neomind message send --title \"<title>\" --body \"<body>\" --severity <info|warning|error|critical>`. There is NO separate `message` tool — always use `shell`."
-    } else {
-        "- Send notifications/alerts via the `shell` tool with: `neomind message send --title \"<title>\" --body \"<body>\" --severity <info|warning|error|critical>`. There is NO separate `message` tool — always use `shell`."
+        let action_guidance = if judgment_notify {
+            "- When — and only when — your judgment says criteria are met (see When to Notify), send the alert via the `shell` tool with: `neomind message send --title \"<title>\" --body \"<body>\" --severity <info|warning|error|critical>`. There is NO separate `message` tool — always use `shell`."
+        } else {
+            "- Send notifications/alerts via the `shell` tool with: `neomind message send --title \"<title>\" --body \"<body>\" --severity <info|warning|error|critical>`. There is NO separate `message` tool — always use `shell`."
+        };
+
+        if config.is_focused_plus {
+            format!(
+                "## Guidelines & Exit\n\
+                 - The snapshot above shows current values. Use `shell` with command `neomind device history <device_id>` for trends.\n\
+                 - You can use `shell` with command `neomind device control <device_id> <command>` to execute bound commands.\n\
+                 - Do NOT call the same tool with the same parameters if it already returned results.\n\
+                 - Max {} rounds. Be efficient.\n\
+                 - For complex operations, use the `skill` tool to search for guides.\n\
+                 - Stop when you have enough data or a tool call failed. Write your analysis directly — plain text only.\n\
+                 {action_guidance}\n\
+                 {memory_guidance}",
+                config.max_rounds,
+            )
+        } else {
+            format!(
+                "## Guidelines & Exit\n\
+                 - Do NOT call the same tool with the same parameters if it already returned results.\n\
+                 - If a metric query returns empty data, try a different metric or move on.\n\
+                 - Batch similar queries: use `neomind device list` once, then query each device in ONE round. Do NOT re-query devices you already have data for.\n\
+                 - Before querying, review the tool results in your conversation — if a device's data was already returned, do not query it again.\n\
+                 - Track what you have: mentally note which devices/queries are already done and only issue new queries.\n\
+                 - Max {} rounds. Be efficient.\n\
+                 - For complex operations, use the `skill` tool to search for guides.\n\
+                 - Stop when you have enough data, already sent notifications, got the same result, or a tool failed.\n\
+                 - After your last tool call, write your analysis directly — plain text only, key findings first.\n\
+                 {action_guidance}\n\
+                 {memory_guidance}",
+                config.max_rounds,
+            )
+        }
     };
 
-    let combined_guidance = if config.is_focused_plus {
+    let default_identity = if !config.tools_available {
         format!(
-            "## Guidelines & Exit\n\
-             - The snapshot above shows current values. Use `shell` with command `neomind device history <device_id>` for trends.\n\
-             - You can use `shell` with command `neomind device control <device_id> <command>` to execute bound commands.\n\
-             - Do NOT call the same tool with the same parameters if it already returned results.\n\
-             - Max {} rounds. Be efficient.\n\
-             - For complex operations, use the `skill` tool to search for guides.\n\
-             - Stop when you have enough data or a tool call failed. Write your analysis directly — plain text only.\n\
-             {action_guidance}\n\
-             {memory_guidance}",
-            config.max_rounds,
+            "You are **{}**, a resident AI engineer on this IoT edge platform. You think like a seasoned site engineer: observe telemetry, diagnose issues, and report clearly. This run is analysis-only — no tools are available.",
+            agent.name
         )
-    } else {
-        format!(
-            "## Guidelines & Exit\n\
-             - Do NOT call the same tool with the same parameters if it already returned results.\n\
-             - If a metric query returns empty data, try a different metric or move on.\n\
-             - Batch similar queries: use `neomind device list` once, then query each device in ONE round. Do NOT re-query devices you already have data for.\n\
-             - Before querying, review the tool results in your conversation — if a device's data was already returned, do not query it again.\n\
-             - Track what you have: mentally note which devices/queries are already done and only issue new queries.\n\
-             - Max {} rounds. Be efficient.\n\
-             - For complex operations, use the `skill` tool to search for guides.\n\
-             - Stop when you have enough data, already sent notifications, got the same result, or a tool failed.\n\
-             - After your last tool call, write your analysis directly — plain text only, key findings first.\n\
-             {action_guidance}\n\
-             {memory_guidance}",
-            config.max_rounds,
-        )
-    };
-
-    let default_identity = if judgment_notify {
+    } else if judgment_notify {
         format!(
             "You are **{}**, a resident AI engineer on this IoT edge platform. You think like a seasoned site engineer: observe telemetry, diagnose issues, automate responses, and report clearly. You judge each run on the input it carries, and act only when the task calls for it.",
             agent.name
@@ -818,6 +859,7 @@ pub(crate) fn bound_image_data_url(data_collected: &[DataCollected]) -> Option<S
 pub(crate) fn build_tool_messages(
     system_prompt: &str,
     data_collected: &[DataCollected],
+    tools_available: bool,
 ) -> Vec<Message> {
     // Collect image parts
     let image_parts: Vec<ContentPart> = data_collected
@@ -840,17 +882,18 @@ pub(crate) fn build_tool_messages(
         })
         .collect();
 
+    let user_text = if tools_available {
+        "Analyze the current situation and take appropriate actions using the available tools."
+    } else {
+        "Analyze the current situation based on the provided data and provide your findings directly."
+    };
+
     let user_msg = if !image_parts.is_empty() {
-        let mut parts = vec![ContentPart::text(
-            "Analyze the current situation and take appropriate actions using the available tools.",
-        )];
+        let mut parts = vec![ContentPart::text(user_text)];
         parts.extend(image_parts);
         Message::from_parts(MessageRole::User, parts)
     } else {
-        Message::new(
-            MessageRole::User,
-            Content::text("Analyze the current situation and take appropriate actions using the available tools."),
-        )
+        Message::new(MessageRole::User, Content::text(user_text))
     };
 
     vec![
@@ -1001,11 +1044,50 @@ mod tests {
             "must not tell model to go query when pixels are attached: {prompt}"
         );
 
-        let msgs = build_tool_messages(&prompt, &data);
+        let msgs = build_tool_messages(&prompt, &data, true);
         let dump = format!("{:?}", msgs);
         assert!(
             dump.contains("image") || dump.contains("Image") || dump.contains("base64"),
             "final model request must carry the image part: {dump}"
+        );
+    }
+
+    #[test]
+    fn zero_tool_prompt_skips_hierarchy_and_tool_bias() {
+        let agent = minimal_agent("summarize status");
+        let mut cfg = ToolLoopConfig::focused_plus(&agent);
+        cfg.tools_available = false;
+        cfg.recommended_tools = None;
+        let prompt =
+            build_tool_system_prompt(&agent, &[], None, &cfg, None, VisionExecutionPath::None);
+        assert!(
+            !prompt.contains("## Tool Hierarchy"),
+            "zero-tool must skip Tool Hierarchy: {prompt}"
+        );
+        assert!(
+            !prompt.contains("Everything goes through tool calls"),
+            "zero-tool must not bias toward tools: {prompt}"
+        );
+        assert!(
+            !prompt.contains("`shell`")
+                && !prompt.contains("`skill`")
+                && !prompt.contains("`memory`"),
+            "zero-tool guidelines must not name shell/skill/memory: {prompt}"
+        );
+        assert!(
+            prompt.contains("no tools") || prompt.contains("analysis-only"),
+            "zero-tool should state analysis-only: {prompt}"
+        );
+
+        let msgs = build_tool_messages(&prompt, &[], false);
+        let dump = format!("{:?}", msgs);
+        assert!(
+            dump.contains("provide your findings directly"),
+            "user turn must ask for direct findings: {dump}"
+        );
+        assert!(
+            !dump.contains("available tools"),
+            "user turn must not mention available tools: {dump}"
         );
     }
 

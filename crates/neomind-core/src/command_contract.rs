@@ -538,12 +538,22 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
                 required: false,
                 summary: "focused | free | structured",
             },
+            DomainParamSummary {
+                name: "--no-tools",
+                required: false,
+                summary: "Text-only agent (disables all tools; conflicts with `--allowed-tools` and judgment notify)",
+            },
+            DomainParamSummary {
+                name: "--allowed-tools",
+                required: false,
+                summary: "Comma-separated allowlist (e.g. `shell`); `all` restores every tool",
+            },
         ],
         shell_example: DomainShellExample {
             command: "neomind agent create --name \"Sensor Monitor\" --prompt \"Check sensor anomalies\" --every 10m --execution-mode free",
             params_json: None,
         },
-        guidance: "Required `--name` + `--prompt` + schedule (`--every 10m` or `--schedule-type interval --schedule-config \"600\"` seconds). Default execution-mode is focused and needs `--device-ids`/`--resources`; for unbound create→invoke→delete use `--execution-mode free`. Prefer `--every` over inventing JSON schedule-config objects.",
+        guidance: "Required `--name` + `--prompt` + schedule (`--every 10m` or `--schedule-type interval --schedule-config \"600\"` seconds). Default execution-mode is focused and needs `--device-ids`/`--resources`/`--metrics`/`--commands`; for unbound create→invoke→delete use `--execution-mode free`. Use `--no-tools` for text-only or `--allowed-tools shell` for judgment alerts (never both; never `--no-tools` with `--notify on=judgment`). Prefer `--every` over inventing JSON schedule-config objects.",
     },
     DomainCommandContract {
         domain: "agent",
@@ -571,12 +581,27 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
                 required: false,
                 summary: "Updated schedule type (interval | cron | event | manual)",
             },
+            DomainParamSummary {
+                name: "--event-filter",
+                required: false,
+                summary: "Event filter JSON; merges into existing schedule when type unchanged",
+            },
+            DomainParamSummary {
+                name: "--timezone",
+                required: false,
+                summary: "Cron timezone (e.g. Asia/Shanghai); merges into existing schedule",
+            },
+            DomainParamSummary {
+                name: "--allowed-tools",
+                required: false,
+                summary: "Comma-separated allowlist; `all` restores every tool after `--no-tools`",
+            },
         ],
         shell_example: DomainShellExample {
             command: "neomind agent update agent-001 --prompt \"Check temperature sensors\"",
             params_json: None,
         },
-        guidance: "Pass the agent ID positionally and supply only the flags you want to change (inspect current config first with `agent get <ID>`).",
+        guidance: "Pass the agent ID positionally and supply only the flags you want to change (inspect current config first with `agent get <ID>`). `--event-filter` / `--timezone` merge into the existing schedule when `--schedule-type` is omitted. Tool gating: `--no-tools` or `--allowed-tools` (use `all` to re-enable).",
     },
     DomainCommandContract {
         domain: "agent",

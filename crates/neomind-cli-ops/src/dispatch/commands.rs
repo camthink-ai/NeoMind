@@ -1706,9 +1706,10 @@ pub enum AgentCommand {
         /// System prompt for the LLM (overrides default agent system prompt).
         #[arg(short, long)]
         system_prompt: Option<String>,
-        /// Execution mode: "focused" (single-pass, default — plainest agent),
-        /// "free" (multi-round tool calling), or "structured" (one constrained
-        /// inference; needs --output-schema). Any mode works without bindings.
+        /// Execution mode: "focused" (single-pass, default — plainest agent;
+        /// requires bindings via --device-ids/--resources/--metrics/--commands),
+        /// "free" (multi-round tool calling; bindings optional), or "structured"
+        /// (one constrained inference; needs --output-schema + bindings).
         #[arg(long)]
         execution_mode: Option<String>,
         /// Output contract (JSON array) — fields published as ai:{id}:{field}
@@ -1729,6 +1730,14 @@ pub enum AgentCommand {
         /// Example: --notify '{"channels":["telegram:main"],"on":"always"}'
         #[arg(long)]
         notify: Option<String>,
+        /// Disable all tools (text-only single-pass). Conflicts with --allowed-tools
+        /// and with --notify on=judgment (judgment needs shell to send messages).
+        #[arg(long, default_value_t = false)]
+        no_tools: bool,
+        /// Comma-separated tool allowlist (e.g. "shell"). Use "all" to re-enable
+        /// every tool after --no-tools. Conflicts with --no-tools.
+        #[arg(long)]
+        allowed_tools: Option<String>,
         /// Device IDs to bind (comma-separated). Used in focused mode.
         /// Example: --device-ids "device-001,device-002"
         #[arg(long)]
@@ -1801,6 +1810,22 @@ pub enum AgentCommand {
         /// `judgment` routes nothing and lets the task decide whether to speak.
         #[arg(long)]
         notify: Option<String>,
+        /// Disable all tools (text-only). Conflicts with --allowed-tools and with
+        /// --notify on=judgment.
+        #[arg(long, default_value_t = false)]
+        no_tools: bool,
+        /// Comma-separated tool allowlist (e.g. "shell"). Use "all" to re-enable
+        /// every tool after --no-tools. Conflicts with --no-tools.
+        #[arg(long)]
+        allowed_tools: Option<String>,
+        /// Event filter JSON (event schedule). Merged into the existing schedule
+        /// when --schedule-type is omitted.
+        #[arg(long)]
+        event_filter: Option<String>,
+        /// Timezone for cron schedule (e.g. "Asia/Shanghai"). Merged into the
+        /// existing schedule when --schedule-type is omitted.
+        #[arg(long)]
+        timezone: Option<String>,
         /// New device IDs (comma-separated). Replaces existing bindings.
         #[arg(long)]
         device_ids: Option<String>,
