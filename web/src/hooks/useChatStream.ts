@@ -42,6 +42,34 @@ import { generateId } from "@/lib/id"
 import { ws } from "@/lib/websocket"
 import type { ServerMessage, ToolCall } from "@/types"
 
+/** Same-attempt tip ratio from the omit snapshot; never endUsage (ring). */
+export function tipUsageRatioFromTruncation(
+  truncation:
+    | {
+        measuredPromptTokens?: number | null
+        usageRatio?: number
+      }
+    | undefined,
+  endUsage: { maxContextTokens?: number } | undefined,
+): number | undefined {
+  if (!truncation) return undefined
+  if (typeof truncation.usageRatio === "number" && Number.isFinite(truncation.usageRatio)) {
+    return truncation.usageRatio
+  }
+  const measured = truncation.measuredPromptTokens
+  const maxCtx = endUsage?.maxContextTokens
+  if (
+    typeof measured === "number" &&
+    plausiblePromptTokenMeter(measured) &&
+    typeof maxCtx === "number" &&
+    maxCtx > 0
+  ) {
+    return Math.round((measured / maxCtx) * 1000) / 1000
+  }
+  // Omit without measured tokens → tip is count-only.
+  return undefined
+}
+
 export interface StreamTokenUsage {
   promptTokens: number
   systemPromptTokens?: number
@@ -91,8 +119,10 @@ export interface StreamEndResult {
     droppedMessages: number
     estimatedBefore: number
     measuredPromptTokens?: number | null
+    /** Same-attempt omit usage ratio (0..1); absent → tip is count-only. */
+    usageRatio?: number
   }
-  /** Measured context usage ratio (0..1) from the end frame, when available. */
+  /** Same-attempt truncation tip ratio (0..1). Not the ring's last-request ratio. */
   usageRatio?: number
   /** System-judged goal status from End (not model NL). */
   goalStatus?: import('@/types').SystemGoalStatus
@@ -542,9 +572,10 @@ export function useChatStream(options: UseChatStreamOptions) {
           generationMs,
           historyTruncated: data.historyTruncated || undefined,
           truncation: data.truncation,
-          usageRatio: endUsage && plausiblePromptTokenMeter(endUsage.promptTokens)
-            ? endUsage.usageRatio
-            : undefined,
+          // Tip ratio MUST be same-attempt as truncation.droppedMessages.
+          // endUsage is the last request (ring); a later untruncated request
+          // must not pair its 70% with an earlier omit's 7 dropped msgs.
+          usageRatio: tipUsageRatioFromTruncation(data.truncation, endUsage),
           interrupted: interruptedRef.current || undefined,
           // Pass through system status — never rewrite model content from it.
           goalStatus: data.goalStatus,

@@ -314,7 +314,14 @@ export function ChatPage() {
       const droppedMessages =
         result.truncation?.droppedMessages ?? (result.historyTruncated ? 1 : 0)
       if (droppedMessages > 0 && sessionId) {
-        const ratio = typeof result.usageRatio === 'number' ? result.usageRatio : undefined
+        // Same-attempt omit ratio only (truncation snapshot / derived tip ratio).
+        // Missing measured → count-only tip; never the ring's last-request %.
+        const ratio =
+          typeof result.truncation?.usageRatio === 'number'
+            ? result.truncation.usageRatio
+            : typeof result.usageRatio === 'number'
+              ? result.usageRatio
+              : undefined
         const bucket = ratio != null ? (ratio >= 0.8 ? 2 : ratio >= 0.6 ? 1 : 0) : 0
         const prev = historyTruncatedStateRef.current
         const shouldToast =

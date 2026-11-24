@@ -372,16 +372,44 @@ async fn process_stream_to_channel(
                             // must not clear the tip — S1).
                             "historyTruncated": history_truncated,
                         });
+                        // Context meter denominator: the session model's real
+                        // window. Shared by the tip (same-attempt omit usage)
+                        // and the ring (last-request usage).
+                        let max_ctx = match state
+                            .agents
+                            .session_manager
+                            .get_agent_llm(&session_id)
+                            .await
+                        {
+                            Some(llm) => llm.max_context_length().await,
+                            None => 0,
+                        };
                         if let Some(snap) =
                             truncation_snapshot.as_ref().filter(|s| s.has_truncation())
                         {
-                            end_json["truncation"] = json!({
+                            let mut trunc = json!({
                                 "outerDropped": snap.outer_dropped,
                                 "innerDropped": snap.inner_dropped,
                                 "droppedMessages": snap.total_dropped(),
                                 "estimatedBefore": snap.estimated_before,
                                 "measuredPromptTokens": snap.measured_prompt_tokens,
                             });
+                            // Same-attempt tip ratio: only from the omit
+                            // snapshot's measured tokens — never the later
+                            // untruncated request's endUsage (would mix 50%+7
+                            // with 70%+0 into "70% + 7 msgs").
+                            if let Some(measured) = snap
+                                .measured_prompt_tokens
+                                .filter(|pt| neomind_core::plausible_prompt_token_meter(*pt))
+                            {
+                                if max_ctx > 0 {
+                                    let tip_ratio = (measured as f64 / max_ctx as f64 * 1000.0)
+                                        .round()
+                                        / 1000.0;
+                                    trunc["usageRatio"] = json!(tip_ratio);
+                                }
+                            }
+                            end_json["truncation"] = trunc;
                         }
                         // Compact gate above keeps invalid meters as Some(0/MAX);
                         // the UI ring must not — omit tokenUsage for implausible.
@@ -390,18 +418,6 @@ async fn process_stream_to_channel(
                             .copied()
                             .filter(|pt| neomind_core::plausible_prompt_token_meter(*pt))
                         {
-                            // Context meter denominator: the session model's
-                            // real window, so the UI can show usage as a
-                            // ratio instead of a raw token count.
-                            let max_ctx = match state
-                                .agents
-                                .session_manager
-                                .get_agent_llm(&session_id)
-                                .await
-                            {
-                                Some(llm) => llm.max_context_length().await,
-                                None => 0,
-                            };
                             let ratio = if max_ctx > 0 {
                                 (pt as f64 / max_ctx as f64 * 1000.0).round() / 1000.0
                             } else {
