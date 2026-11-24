@@ -177,6 +177,103 @@ async fn test_update_agent_prompt_restores_a_missing_mission() {
     );
 }
 
+/// Operators edit this file too. A prompt edit replaces exactly the text of
+/// the previous prompt: a section they filed between Mission and Resources
+/// stays byte for byte, and a previous prompt with headings of its own is
+/// taken out whole instead of up to its first heading.
+#[tokio::test]
+async fn test_update_agent_prompt_keeps_the_operators_section_next_to_the_mission() {
+    const NEW_MISSION: &str = "NEW_MISSION 直接看附带的图片";
+    for old_mission in [
+        "看一下包装台画面有没有错装漏装",
+        "每天巡检。\n## 判定标准\n用 vision 工具分析该图片\n\n---\n周日休息",
+    ] {
+        let state = create_test_server_state().await;
+        let id = create_agent_with(
+            &state,
+            json!({ "execution_mode": "free", "user_prompt": old_mission }),
+        )
+        .await;
+        let memory = state.agents.system_memory_store.clone();
+
+        let before = memory
+            .read_agent_custom_file(&id, "task-understanding")
+            .expect("created agents get a task-understanding file");
+        assert!(
+            before.contains(&format!("## Mission\n{old_mission}\n\n## Bound Resources")),
+            "{before}"
+        );
+        // The operator files a section of their own right under the mission.
+        let filed = before.replacen(
+            "## Bound Resources",
+            "## Operator Notes\nKEEP-ME\n\n## Bound Resources",
+            1,
+        );
+        memory
+            .write_agent_custom_file(&id, "task-understanding", &filed)
+            .await
+            .expect("the operator edits the file");
+
+        let edit: UpdateAgentRequest =
+            serde_json::from_value(json!({ "user_prompt": NEW_MISSION })).expect("valid update");
+        let _ = update_agent(State(state.clone()), Path(id.clone()), Json(edit))
+            .await
+            .expect("a prompt edit must be accepted");
+
+        let after = memory
+            .read_agent_custom_file(&id, "task-understanding")
+            .expect("file");
+        assert_eq!(
+            after,
+            filed.replacen(old_mission, NEW_MISSION, 1),
+            "{after}"
+        );
+        assert!(after.contains("## Operator Notes\nKEEP-ME\n\n## Bound Resources"));
+        assert!(!after.contains("vision"), "{after}");
+    }
+}
+
+/// When the section no longer starts with the previous prompt — the operator
+/// reworded it, the agent overwrote it — its extent is not known, and what
+/// sits under the heading may be theirs. The edit leaves the file alone; the
+/// task takes effect from `user_prompt` when the agent runs.
+#[tokio::test]
+async fn test_update_agent_prompt_leaves_a_file_it_cannot_match_untouched() {
+    let state = create_test_server_state().await;
+    let id = create_agent_with(&state, json!({ "execution_mode": "free" })).await;
+    let memory = state.agents.system_memory_store.clone();
+
+    let before = memory
+        .read_agent_custom_file(&id, "task-understanding")
+        .expect("file");
+    let hand_edited = before.replacen(
+        "## Mission\n看一下包装台画面有没有错装漏装\n",
+        "## Mission\n我自己改过的任务说明\n\n## Operator Notes\nKEEP-ME\n",
+        1,
+    );
+    assert_ne!(hand_edited, before);
+    memory
+        .write_agent_custom_file(&id, "task-understanding", &hand_edited)
+        .await
+        .expect("the operator edits the file");
+
+    let edit: UpdateAgentRequest =
+        serde_json::from_value(json!({ "user_prompt": "只在工作日告警" })).expect("valid update");
+    let _ = update_agent(State(state.clone()), Path(id.clone()), Json(edit))
+        .await
+        .expect("a prompt edit must be accepted");
+
+    let after = memory
+        .read_agent_custom_file(&id, "task-understanding")
+        .expect("file");
+    assert_eq!(after, hand_edited, "the operator's file is theirs to fix");
+    assert_eq!(
+        read_back(&state, &id).await["user_prompt"],
+        "只在工作日告警",
+        "the task itself did change"
+    );
+}
+
 /// The parsed intent is derived from the prompt once and then cached. After a
 /// prompt edit it has to be re-derived: a stale intent still evaluates its
 /// old conditions into `condition_met` decisions, which run the agent's

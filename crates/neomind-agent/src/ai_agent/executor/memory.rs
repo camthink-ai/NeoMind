@@ -141,8 +141,9 @@ impl AgentExecutor {
         // extraction is tracked as follow-up work (Mem0 single-pass).
 
         // The agent may have just rewritten its own task-understanding file;
-        // put the mission back before it is inlined into the next run.
-        self.sync_task_understanding_mission(agent).await;
+        // put the mission back before it is inlined into the next run. The
+        // repaired view is not needed here — the next run computes its own.
+        let _ = self.sync_task_understanding_mission(agent).await;
 
         Ok(())
     }
@@ -287,9 +288,21 @@ impl AgentExecutor {
     /// older data), and when the agent overwrites its own task with a
     /// per-run observation — T4's 200366 replaced its mission with
     /// "无图像数据路径，需设备日志搜索" and then reasoned from that note on
-    /// every later run. An up-to-date file costs one small read.
-    pub(crate) async fn sync_task_understanding_mission(&self, agent: &AiAgent) {
-        use neomind_storage::{task_understanding_with_mission, TASK_UNDERSTANDING_FILE};
+    /// every later run.
+    ///
+    /// The file is the operator's as much as the agent's, so only a repair
+    /// that removes nothing is written; this path has no previous prompt,
+    /// which leaves one: a missing Mission section goes back on top. A
+    /// section that carries something else may hold the operator's notes, so
+    /// it is repaired for the prompt only and the file stays as it is.
+    ///
+    /// An up-to-date file costs one small read. Returns the content the file
+    /// should be inlined with, when that differs from what is stored.
+    pub(crate) async fn sync_task_understanding_mission(
+        &self,
+        agent: &AiAgent,
+    ) -> Option<(&'static str, String)> {
+        use neomind_storage::{task_understanding_repair, TASK_UNDERSTANDING_FILE};
 
         // No memory-mode check here: a Tool-memory agent is not given this
         // file, but if it has one it is inlined like any other.
@@ -299,11 +312,9 @@ impl AgentExecutor {
             .iter()
             .any(|f| f.name == TASK_UNDERSTANDING_FILE)
         {
-            return;
+            return None;
         }
-        let Some(store) = self.memory_store.as_ref() else {
-            return;
-        };
+        let store = self.memory_store.as_ref()?;
         let content = match store.read_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE) {
             Ok(content) => content,
             Err(e) => {
@@ -312,27 +323,35 @@ impl AgentExecutor {
                     error = %e,
                     "Could not read task-understanding to verify its Mission"
                 );
-                return;
+                return None;
             }
         };
-        let synced = task_understanding_with_mission(&content, &agent.user_prompt);
-        if synced == content {
-            return;
+        let repair = task_understanding_repair(&content, &agent.user_prompt, None);
+        if repair.content == content {
+            return None;
         }
-        match store
-            .write_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE, &synced)
-            .await
-        {
-            Ok(()) => tracing::info!(
+        if repair.store {
+            match store
+                .write_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE, &repair.content)
+                .await
+            {
+                Ok(()) => tracing::info!(
+                    agent_id = %agent.id,
+                    "Task-understanding Mission restored on top of the file"
+                ),
+                Err(e) => tracing::warn!(
+                    agent_id = %agent.id,
+                    error = %e,
+                    "Could not restore the task-understanding Mission"
+                ),
+            }
+        } else {
+            tracing::debug!(
                 agent_id = %agent.id,
-                "Task-understanding Mission re-synced to the current task prompt"
-            ),
-            Err(e) => tracing::warn!(
-                agent_id = %agent.id,
-                error = %e,
-                "Could not re-sync the task-understanding Mission"
-            ),
+                "Task-understanding Mission differs from the task prompt — the prompt shows the task prompt in its place; the file is left untouched"
+            );
         }
+        Some((TASK_UNDERSTANDING_FILE, repair.content))
     }
 
     /// Pre-fetch knowledge file contents from disk for inline injection into
@@ -366,6 +385,9 @@ impl AgentExecutor {
         agent_id: &str,
         knowledge_files: &[neomind_storage::KnowledgeFileRef],
         context_tokens: usize,
+        // `(file name, content)` to inline in place of what is stored for
+        // that file — a task-understanding Mission repaired for the prompt.
+        inline_override: Option<(&str, &str)>,
     ) -> Option<std::collections::HashMap<String, String>> {
         if knowledge_files.is_empty() {
             return None;
@@ -390,7 +412,11 @@ impl AgentExecutor {
                 );
                 continue;
             }
-            match store.read_agent_custom_file(agent_id, &f.name) {
+            let read = match inline_override {
+                Some((name, content)) if name == f.name => Ok(content.to_string()),
+                _ => store.read_agent_custom_file(agent_id, &f.name),
+            };
+            match read {
                 Ok(content) => {
                     // Cap each file to min(per_file_limit, what's left) so we
                     // never overshoot the cumulative budget.

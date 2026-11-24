@@ -215,10 +215,16 @@ impl AgentExecutor {
 
         // Build system prompt using the shared builder (no tools, no invocation)
         let config = ToolLoopConfig::focused_plus(agent);
+        // The task-understanding file is inlined here too: it must carry the
+        // agent's current mission, not a copy left behind by a prompt edit.
+        let task_understanding = self.sync_task_understanding_mission(agent).await;
         let knowledge_content = self.prefetch_knowledge_files(
             &agent.id,
             &agent.memory.knowledge_files,
             llm.max_context_length(),
+            task_understanding
+                .as_ref()
+                .map(|(name, content)| (*name, content.as_str())),
         );
         let system_prompt = super::tool_prompt::build_tool_system_prompt(
             agent,

@@ -1506,11 +1506,20 @@ async fn init_agent_knowledge_file(state: &crate::server::ServerState, agent: &A
 }
 
 /// Re-point the `## Mission` section of `custom:task-understanding` at the
-/// agent's edited task prompt. Runs only after a prompt change, which is
-/// what tells it the old section is stale — lines of the old prompt that
-/// begin with a heading go with it.
-async fn sync_task_understanding_mission(state: &crate::server::ServerState, agent: &AiAgent) {
-    use neomind_storage::{task_understanding_repoint_mission, TASK_UNDERSTANDING_FILE};
+/// agent's edited task prompt.
+///
+/// `prompt_before` is what the section was mirroring: where it still starts
+/// with that text, exactly that text is replaced and everything after it —
+/// a section the operator filed in between, notes under the mission — stays.
+/// The operator edits this file too, so a section that no longer starts
+/// with the previous prompt is left alone: what is under the heading may be
+/// theirs, and runs show the task prompt in its place either way.
+async fn sync_task_understanding_mission(
+    state: &crate::server::ServerState,
+    agent: &AiAgent,
+    prompt_before: &str,
+) {
+    use neomind_storage::{task_understanding_repair, TASK_UNDERSTANDING_FILE};
 
     let memory_store = &state.agents.system_memory_store;
     let content = match memory_store.read_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE) {
@@ -1523,12 +1532,19 @@ async fn sync_task_understanding_mission(state: &crate::server::ServerState, age
             return;
         }
     };
-    let synced = task_understanding_repoint_mission(&content, &agent.user_prompt);
-    if synced == content {
+    let repair = task_understanding_repair(&content, &agent.user_prompt, Some(prompt_before));
+    if repair.content == content {
+        return;
+    }
+    if !repair.store {
+        tracing::warn!(
+            agent_id = %agent.id,
+            "Task-understanding no longer carries the previous task prompt — file left untouched; runs show the task prompt in the Mission's place"
+        );
         return;
     }
     if let Err(e) = memory_store
-        .write_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE, &synced)
+        .write_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE, &repair.content)
         .await
     {
         tracing::warn!(
@@ -1888,7 +1904,7 @@ pub async fn update_agent(
             .iter()
             .any(|f| f.name == neomind_storage::TASK_UNDERSTANDING_FILE)
     {
-        sync_task_understanding_mission(&state, &agent).await;
+        sync_task_understanding_mission(&state, &agent, &prompt_before).await;
     }
 
     // Reschedule the agent if schedule changed or if agent is active (interval/cron type)
