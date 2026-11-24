@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "NODE_OPTIONS='--max-http-header-size=65536' vite",
     "build": "tsc && vite build",
-    "build:check": "tsc && vite build 2>&1 | grep -i 'circular' && echo 'ERROR: Circular dependencies detected!' && exit 1 || echo 'Build OK - no circular dependencies'",
+    "build:check": "node scripts/check-build.mjs",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "lint:ci": "eslint . --ext ts,tsx --report-unused-disable-directives --quiet",
