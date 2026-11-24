@@ -604,13 +604,6 @@ impl AgentExecutor {
         let (mut filtered_tools, mut tool_name_map) =
             Self::filter_tools(&registry, &agent.tool_config);
 
-        // Zero-tool agents: drop recommended-tool bias and mark the loop so
-        // prompts skip hierarchy / narration nudge and LlmInput.tools is None.
-        if filtered_tools.is_empty() {
-            tool_config.recommended_tools = None;
-            tool_config.tools_available = false;
-        }
-
         // Honest vision path (T4 Dongpingshan false-success):
         // - Multimodal primary + embeddable images → strip `vision`, rewrite
         //   standing guidance so the model does not hunt for a missing tool.
@@ -676,6 +669,14 @@ impl AgentExecutor {
                     "Excluded web tool(s) — judgment-notify agent (name them in the tool allowlist to enable)"
                 );
             }
+        }
+
+        // Zero-tool agents: evaluate AFTER vision/judgment retains so a list
+        // emptied by those filters also drops recommended-tool bias and marks
+        // the loop (prompt skip / tools:None / no narration nudge).
+        if filtered_tools.is_empty() {
+            tool_config.recommended_tools = None;
+            tool_config.tools_available = false;
         }
 
         if !tool_name_map.is_empty() {

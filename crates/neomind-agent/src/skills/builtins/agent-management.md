@@ -375,7 +375,7 @@ neomind agent create \
 **Whole device or one field:**
 - **No `field`** = the agent listens to the WHOLE device. It runs once per uplink and receives that uplink as a whole: every metric the device reported in it, with images attached as images (not as text). Use this for camera and vision tasks ("watch this camera") and whenever the prompt needs more than one reading. You do not need to bind the device's metrics yourself.
 - **With `field`** = the agent runs only when that metric is reported, and receives that metric's value plus whatever is bound with `--metrics` / `--resources`. Use it when the prompt is about one specific reading.
-- After a run, `neomind agent latest-execution <AGENT_ID>` shows what the run was given (`input_summary`: metric names and attached images). Check it when a new event agent's conclusions look unfounded.
+- After a run, `neomind agent latest-execution <AGENT_ID>` shows what the run was given (`input_summary`: metric count, attached image field, vision path, and skip reason). Check it when a new event agent's conclusions look unfounded.
 
 **When to use event vs interval:**
 - **Event**: React immediately when data arrives (real-time anomaly detection)
