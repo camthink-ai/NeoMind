@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# T3.2 / Gate G6 — in-place upgrade acceptance: v1.3.2 binary → tip (1.3.3 RC).
+# T3.2 / Gate G6 — in-place upgrade acceptance: v1.3.3 binary → tip (1.3.4 RC).
 #
 # Lives under scripts/ (tracked) rather than gitignored work/ so Gate G6 cannot
 # silently drift. Pass binaries via env — no hard-coded stage artifact paths.
 #
 # Required:
-#   NEOMIND_BIN_132  path to a 1.3.2 neomind binary
-#   NEOMIND_BIN_133  path to the 1.3.3 RC neomind binary under test
+#   NEOMIND_BIN_133  path to a 1.3.3 neomind binary
+#   NEOMIND_BIN_134  path to the 1.3.4 RC neomind binary under test
 # Compatibility aliases (still accepted):
-#   NEOMIND_BIN_131 → treated as the seed/from binary (prefer NEOMIND_BIN_132)
-#   NEOMIND_BIN_132 → when NEOMIND_BIN_133 is set, tip is 133; else tip is 132
+#   NEOMIND_BIN_132 → treated as the seed/from binary (prefer NEOMIND_BIN_133)
+#   NEOMIND_BIN_133 → when NEOMIND_BIN_134 is set, tip is 134; else tip is 133
+#   NEOMIND_BIN_131 → older seed alias still accepted
 #
 # Optional:
 #   NEOMIND_UPGRADE_DATA_DIR  parent for this run's data dir, default /tmp/neomind-upgrade-test
 #   NEOMIND_UPGRADE_OUT       default /tmp/neomind-upgrade-verify
 #   NEOMIND_UPGRADE_HTTP_PORT default 19400
 #   NEOMIND_UPGRADE_MQTT_PORT default 19500
-#   NEOMIND_EXPECT_VERSION    default 1.3.3
+#   NEOMIND_EXPECT_VERSION    default 1.3.4
 #
 # Isolated: STRICT_DATA_DIR + private ports. Never touches :29375 / :29385 / :18788.
 #
@@ -28,8 +29,11 @@ set -euo pipefail
 
 DATA_ROOT="${NEOMIND_UPGRADE_DATA_DIR:-/tmp/neomind-upgrade-test}"
 OUT_DIR="${NEOMIND_UPGRADE_OUT:-/tmp/neomind-upgrade-verify}"
-# Prefer 1.3.2 → 1.3.3; fall back to legacy 131/132 env names.
-if [[ -n "${NEOMIND_BIN_133:-}" ]]; then
+# Prefer 1.3.3 → 1.3.4; fall back to legacy 132/133 (and 131) env names.
+if [[ -n "${NEOMIND_BIN_134:-}" ]]; then
+  BIN_FROM="${NEOMIND_BIN_133:-${NEOMIND_BIN_132:-${NEOMIND_BIN_131:-}}}"
+  BIN_TIP="${NEOMIND_BIN_134}"
+elif [[ -n "${NEOMIND_BIN_133:-}" ]]; then
   BIN_FROM="${NEOMIND_BIN_132:-${NEOMIND_BIN_131:-}}"
   BIN_TIP="${NEOMIND_BIN_133}"
 else
@@ -40,7 +44,7 @@ BIN131="$BIN_FROM"
 BIN132="$BIN_TIP"
 HTTP_PORT="${NEOMIND_UPGRADE_HTTP_PORT:-19400}"
 MQTT_PORT="${NEOMIND_UPGRADE_MQTT_PORT:-19500}"
-EXPECT_VERSION="${NEOMIND_EXPECT_VERSION:-1.3.3}"
+EXPECT_VERSION="${NEOMIND_EXPECT_VERSION:-1.3.4}"
 
 DATA_DIR="$DATA_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$"
 mkdir -p "$OUT_DIR" "$DATA_DIR"
@@ -54,13 +58,13 @@ echo "BIN131=$BIN131"
 echo "BIN132=$BIN132"
 
 if [[ -z "$BIN131" || ! -x "$BIN131" ]]; then
-  echo "missing executable seed binary (NEOMIND_BIN_132 or NEOMIND_BIN_131)"; exit 2
+  echo "missing executable seed binary (NEOMIND_BIN_133 / NEOMIND_BIN_132 / NEOMIND_BIN_131)"; exit 2
 fi
 if [[ -z "$BIN132" || ! -x "$BIN132" ]]; then
-  echo "missing executable tip binary (NEOMIND_BIN_133 or NEOMIND_BIN_132)"; exit 2
+  echo "missing executable tip binary (NEOMIND_BIN_134 / NEOMIND_BIN_133 / NEOMIND_BIN_132)"; exit 2
 fi
 if [[ "$BIN131" == "$BIN132" ]]; then
-  echo "seed and tip binaries resolve to the same path — set NEOMIND_BIN_132 + NEOMIND_BIN_133"; exit 2
+  echo "seed and tip binaries resolve to the same path — set NEOMIND_BIN_133 + NEOMIND_BIN_134"; exit 2
 fi
 
 stop_serve() {
