@@ -1,7 +1,32 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Rollup } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import viteCompression from 'vite-plugin-compression'
+
+/**
+ * Whether a module is loaded on first paint: reachable from a static entry
+ * through static imports only. Edges that come from a dynamic `import()` do
+ * not count, which is why `importedIds` (static imports) is checked rather
+ * than the importer list as a whole.
+ */
+function isReachedFromStaticEntry(
+  id: string,
+  getModuleInfo: (id: string) => Rollup.ModuleInfo | null,
+): boolean {
+  const seen = new Set([id])
+  const stack = [id]
+  while (stack.length) {
+    const cur = stack.pop()!
+    if (getModuleInfo(cur)?.isEntry) return true
+    for (const imp of getModuleInfo(cur)?.importers ?? []) {
+      if (seen.has(imp)) continue
+      if (!getModuleInfo(imp)?.importedIds.includes(cur)) continue
+      seen.add(imp)
+      stack.push(imp)
+    }
+  }
+  return false
+}
 
 export default defineConfig({
   plugins: [
@@ -134,6 +159,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // The bundle budget check (scripts/check-bundle.mjs) reads
+    // dist/.vite/manifest.json to find the chunks a route loads.
+    manifest: true,
     chunkSizeWarningLimit: 800,
     // Performance: Use esbuild for faster minification
     minify: 'esbuild',
@@ -142,42 +170,19 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
-        // Simplified chunking strategy to avoid circular dependencies
-        // The key is to group all interdependent packages together
-        manualChunks: (id) => {
-          // Page-level grouping is OFF by default. lazy() routes already
-          // split naturally per dynamic import; forcing page-path groups
-          // instead created static entry→page-chunk edges (the whole export
-          // surface of five page chunks + every heavy vendor landed in the
-          // eager preload set — see the CHANGELOG perf(web) audit). Set
-          // VITE_PAGE_CHUNKS=1 to restore the old grouping for comparison.
-          if (process.env.VITE_PAGE_CHUNKS === '1') {
-            if (id.includes('/pages/dashboard-components/VisualDashboard')) {
-              return 'page-dashboard'
-            }
-            if (id.includes('/pages/agents')) {
-              return 'page-agents'
-            }
-            if (id.includes('/pages/devices')) {
-              return 'page-devices'
-            }
-            if (id.includes('/pages/automation')) {
-              return 'page-automation'
-            }
-            if (id.includes('/pages/chat')) {
-              return 'page-chat'
-            }
-            if (id.includes('/pages/messages')) {
-              return 'page-messages'
-            }
-            if (id.includes('/pages/settings')) {
-              return 'page-settings'
-            }
-            if (id.includes('/pages/login') || id.includes('/pages/setup')) {
-              return 'page-auth'
-            }
-          }
-
+        // Chunking keeps three long-lived vendor groups (React core, Radix,
+        // icons) and otherwise leaves the split to Rollup. Routes are lazy(),
+        // so a library only one route uses loads with that route, and a
+        // library several routes share goes into a shared chunk.
+        //
+        // A manual chunk also absorbs the full static dependency closure of
+        // the modules assigned to it. Pinning every `node_modules` module to
+        // `vendor` therefore dragged lazy-only libraries (CodeMirror, TipTap,
+        // recharts, zod, …) into the entry's preload set — a hand-kept
+        // exclusion list could not stop that, because each missed package took
+        // its own dependencies along. The catch-all below pins only what the
+        // entry statically reaches.
+        manualChunks(id, { getModuleInfo }) {
           // React core - stable, rarely changes between deploys
           if (
             id.includes('node_modules/react/') ||
@@ -195,118 +200,14 @@ export default defineConfig({
             return 'vendor-radix'
           }
 
-          // Lazy-vendor grouping (codemirror/recharts/markdown/hls/export)
-          // is also OFF by default: same mechanism as the page groups —
-          // once manualChunks force-splits a lazy-only dependency into its
-          // own chunk, Rollup adds it to the entry's STATIC import list
-          // (observed: vendor-codemirror 494K eager even with a provably
-          // clean source-level static graph). Without the rules these
-          // libraries land inside the lazy chunks that import them.
-          if (process.env.VITE_PAGE_CHUNKS === '1') {
-            if (
-              id.includes('node_modules/recharts') ||
-              id.includes('node_modules/d3-') ||
-              id.includes('node_modules/victory-vendor')
-            ) {
-              return 'vendor-recharts'
-            }
-            if (
-              id.includes('node_modules/@codemirror/') ||
-              id.includes('node_modules/codemirror/') ||
-              id.includes('node_modules/@uiw/react-codemirror') ||
-              id.includes('node_modules/@marijn/') ||
-              id.includes('node_modules/@lezer/') ||
-              id.includes('node_modules/crelt/') ||
-              id.includes('node_modules/w3c-keyname/') ||
-              id.includes('node_modules/style-mod/')
-            ) {
-              return 'vendor-codemirror'
-            }
-            if (id.includes('node_modules/hls.js')) {
-              return 'vendor-hls'
-            }
-            if (id.includes('node_modules/jszip')) {
-              return 'vendor-export'
-            }
-            if (
-              id.includes('node_modules/react-markdown') ||
-              id.includes('node_modules/remark') ||
-              id.includes('node_modules/rehype') ||
-              id.includes('node_modules/unified') ||
-              id.includes('node_modules/micromark') ||
-              id.includes('node_modules/mdast-') ||
-              id.includes('node_modules/hast-') ||
-              id.includes('node_modules/unist-') ||
-              id.includes('node_modules/vfile') ||
-              id.includes('node_modules/property-information') ||
-              id.includes('node_modules/space-separated-tokens') ||
-              id.includes('node_modules/trim-lines') ||
-              id.includes('node_modules/trough') ||
-              id.includes('node_modules/bail') ||
-              id.includes('node_modules/devlop') ||
-              id.includes('node_modules/zwitch') ||
-              id.includes('node_modules/esc') ||
-              id.includes('node_modules/web-namespaces') ||
-              id.includes('node_modules/html-url-entities') ||
-              id.includes('node_modules/decode-named-character-reference') ||
-              id.includes('node_modules/character-') ||
-              id.includes('node_modules/highlight.js') ||
-              id.includes('node_modules/lowlight')
-            ) {
-              return 'vendor-markdown'
-            }
-          }
-
           // Lucide icons - tree-shakeable but still sizable
           if (id.includes('node_modules/lucide-react')) {
             return 'vendor-icons'
           }
 
-          // All other node_modules go into a single vendor bundle — EXCEPT
-          // the heavy lazy-only libraries above, which are left to Rollup's
-          // natural splitting (undefined): they land inside the lazy chunks
-          // that import them instead of bloating the eager vendor bundle.
-          if (id.includes('node_modules')) {
-            if (
-              id.includes('node_modules/recharts') ||
-              id.includes('node_modules/d3-') ||
-              id.includes('node_modules/victory-vendor') ||
-              id.includes('node_modules/@codemirror/') ||
-              id.includes('node_modules/codemirror/') ||
-              id.includes('node_modules/@uiw/react-codemirror') ||
-              id.includes('node_modules/@marijn/') ||
-              id.includes('node_modules/@lezer/') ||
-              id.includes('node_modules/crelt/') ||
-              id.includes('node_modules/w3c-keyname/') ||
-              id.includes('node_modules/style-mod/') ||
-              id.includes('node_modules/hls.js') ||
-              id.includes('node_modules/jszip') ||
-              id.includes('node_modules/react-markdown') ||
-              id.includes('node_modules/remark') ||
-              id.includes('node_modules/rehype') ||
-              id.includes('node_modules/unified') ||
-              id.includes('node_modules/micromark') ||
-              id.includes('node_modules/mdast-') ||
-              id.includes('node_modules/hast-') ||
-              id.includes('node_modules/unist-') ||
-              id.includes('node_modules/vfile') ||
-              id.includes('node_modules/property-information') ||
-              id.includes('node_modules/space-separated-tokens') ||
-              id.includes('node_modules/trim-lines') ||
-              id.includes('node_modules/trough') ||
-              id.includes('node_modules/bail') ||
-              id.includes('node_modules/devlop') ||
-              id.includes('node_modules/zwitch') ||
-              id.includes('node_modules/esc') ||
-              id.includes('node_modules/web-namespaces') ||
-              id.includes('node_modules/html-url-entities') ||
-              id.includes('node_modules/decode-named-character-reference') ||
-              id.includes('node_modules/character-') ||
-              id.includes('node_modules/highlight.js') ||
-              id.includes('node_modules/lowlight')
-            ) {
-              return undefined
-            }
+          // Everything else the entry needs on first paint. Code reached only
+          // through a dynamic import stays with the chunk that imports it.
+          if (id.includes('node_modules') && isReachedFromStaticEntry(id, getModuleInfo)) {
             return 'vendor'
           }
 
