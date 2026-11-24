@@ -389,9 +389,10 @@ fn shell_allowed_for_speak(agent: &AiAgent, tools_available: bool) -> bool {
     }
     match agent.tool_config.as_ref() {
         Some(cfg) if !cfg.enabled => false,
-        Some(cfg) if !cfg.allowed_tools.is_empty() => {
-            cfg.allowed_tools.iter().any(|t| t == "shell")
-        }
+        Some(cfg) if !cfg.allowed_tools.is_empty() => cfg
+            .allowed_tools
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case("shell")),
         _ => true,
     }
 }

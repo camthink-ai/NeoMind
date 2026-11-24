@@ -1356,29 +1356,32 @@ impl AgentExecutor {
                 .update_agent_consecutive_failures(&agent_id, 0)
                 .await;
             neomind_storage::AgentStatus::Active
-        } else if record.status == ExecutionStatus::Partial {
-            // Vision undetermined: failed_executions already bumped, but do
-            // not strike the breaker — the next clearer frame may succeed.
-            tracing::info!(
-                agent_id = %agent_id,
-                execution_id = %execution_id,
-                "Partial (vision undetermined) — keeping agent Active without breaker strike"
-            );
-            neomind_storage::AgentStatus::Active
         } else if is_probe {
             // A probe run does not re-litigate the demotion: only a COMPLETED
-            // run recovers the agent. Letting a failed probe fall through to
-            // the threshold logic (or the transient branch) flipped demoted
+            // run recovers the agent. Letting a failed / Partial probe fall
+            // through (e.g. Partial→Active before this branch) flipped demoted
             // agents back to Active without evidence — a flaky-network agent
             // would ping-pong Active/Error, re-notifying on every demotion.
             // "Still can't tell" keeps Error; the next backoff probe decides.
             tracing::info!(
                 agent_id = %agent_id,
                 execution_id = %execution_id,
+                status = ?record.status,
                 error = ?record.error,
                 "Recovery probe did not complete — agent stays Error"
             );
             neomind_storage::AgentStatus::Error
+        } else if record.status == ExecutionStatus::Partial {
+            // Vision undetermined: failed_executions already bumped, but do
+            // not strike the breaker — the next clearer frame may succeed.
+            // Must stay after `is_probe` so a Partial probe cannot revive
+            // a demoted agent.
+            tracing::info!(
+                agent_id = %agent_id,
+                execution_id = %execution_id,
+                "Partial (vision undetermined) — keeping agent Active without breaker strike"
+            );
+            neomind_storage::AgentStatus::Active
         } else if is_transient_failure(record.error.as_deref()) {
             tracing::info!(
                 agent_id = %agent_id,
