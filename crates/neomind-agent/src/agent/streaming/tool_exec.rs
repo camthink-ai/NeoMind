@@ -55,30 +55,27 @@ fn merge_device_control_params_for_exec(
 
     // Clap path: same Control surface the dispatcher parses.
     if let Ok(args) = neomind_cli_ops::dispatch::commands::Args::try_parse_from(argv.iter()) {
-        if let neomind_cli_ops::dispatch::commands::Command::Device { device_cmd } = args.command {
-            if let neomind_cli_ops::dispatch::commands::DeviceCommand::Control {
-                params,
-                param,
-                ..
-            } = device_cmd
-            {
-                let mut params_json = if let Some(host) = structured {
-                    host
-                } else if let Some(params_str) = params.as_ref() {
-                    neomind_cli_ops::json_arg::parse_json_arg_str(params_str)
-                        .unwrap_or_else(|_| serde_json::json!({}))
-                } else {
-                    serde_json::json!({})
-                };
-                if !param.is_empty() {
-                    if let Ok(overrides) = neomind_cli_ops::kv::parse_kv_params(&param) {
-                        if let Some(obj) = params_json.as_object_mut() {
-                            obj.extend(overrides);
-                        }
+        if let neomind_cli_ops::dispatch::commands::Command::Device {
+            device_cmd:
+                neomind_cli_ops::dispatch::commands::DeviceCommand::Control { params, param, .. },
+        } = args.command
+        {
+            let mut params_json = if let Some(host) = structured {
+                host
+            } else if let Some(params_str) = params.as_ref() {
+                neomind_cli_ops::json_arg::parse_json_arg_str(params_str)
+                    .unwrap_or_else(|_| serde_json::json!({}))
+            } else {
+                serde_json::json!({})
+            };
+            if !param.is_empty() {
+                if let Ok(overrides) = neomind_cli_ops::kv::parse_kv_params(&param) {
+                    if let Some(obj) = params_json.as_object_mut() {
+                        obj.extend(overrides);
                     }
                 }
-                return Some(params_json);
             }
+            return Some(params_json);
         }
     }
 
