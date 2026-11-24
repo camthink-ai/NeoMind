@@ -662,11 +662,7 @@ pub fn is_private_host(host: &str) -> bool {
         return is_private_ip(&ip);
     }
 
-    if host.ends_with(".local") || host.ends_with(".localhost") || host == "localhost.localdomain" {
-        return true;
-    }
-
-    false
+    host.ends_with(".local") || host.ends_with(".localhost") || host == "localhost.localdomain"
 }
 
 /// Check if an IP address is private/local.

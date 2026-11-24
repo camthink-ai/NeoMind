@@ -3438,10 +3438,7 @@ pub(super) fn drive_react_stream(
                         };
                         yield AgentEvent::system_note(note.clone());
                         turn_system_notes.push(note);
-                    } else if let Some(note) = {
-                        if guards_disabled {
-                            None
-                        } else {
+                    } else if !guards_disabled {
                         // === TURN-END ACTION-COMPLETENESS NOTE ===
                         // Live incident: a 400s turn ended with the requested
                         // "add to dashboard" NEVER executed (files written,
@@ -3456,24 +3453,23 @@ pub(super) fn drive_react_stream(
                         // DELIVERS the requested (domain, action)".
                         let cmds: Vec<&str> =
                             recently_executed_commands.iter().map(|s| s.as_str()).collect();
-                        super::intent::build_incomplete_action_note(
+                        if let Some(note) = super::intent::build_incomplete_action_note(
                             &user_message,
                             &cmds,
                             &successful_mutations,
-                        )
+                        ) {
+                            guard_ledger.record(
+                                super::guard::GuardKind::IncompleteActionNote,
+                                super::guard::GuardOutcome::Fired,
+                                tool_iteration_count + 1,
+                                "requested_action_not_delivered",
+                            );
+                            tracing::warn!(
+                                "Turn ending with the requested ACTION never executed — appending completeness note"
+                            );
+                            yield AgentEvent::system_note(note.clone());
+                            turn_system_notes.push(note);
                         }
-                    } {
-                        guard_ledger.record(
-                            super::guard::GuardKind::IncompleteActionNote,
-                            super::guard::GuardOutcome::Fired,
-                            tool_iteration_count + 1,
-                            "requested_action_not_delivered",
-                        );
-                        tracing::warn!(
-                            "Turn ending with the requested ACTION never executed — appending completeness note"
-                        );
-                        yield AgentEvent::system_note(note.clone());
-                        turn_system_notes.push(note);
                     }
 
                     // `buffer` holds *every* streamed chunk for this round and is the

@@ -586,10 +586,7 @@ impl AgentExecutor {
                         }
                     }
                     // 3. Extension tool format: action contains the full rid
-                    if action.contains(rid.as_str()) {
-                        return true;
-                    }
-                    false
+                    action.contains(rid.as_str())
                 });
 
                 if !is_allowed {

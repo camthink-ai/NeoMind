@@ -661,8 +661,9 @@ impl AgentExecutor {
         }
 
         // Knowledge is inlined right below: the task-understanding file must
-        // still carry the agent's current mission when it goes in.
-        self.sync_task_understanding_mission(agent).await;
+        // carry the agent's current mission when it goes in. A file that
+        // cannot be repaired on disk is inlined in its repaired form.
+        let task_understanding = self.sync_task_understanding_mission(agent).await;
 
         // Pre-fetch knowledge file content for inline injection.
         // This avoids wasting a tool-call round to read files the agent already
@@ -671,6 +672,9 @@ impl AgentExecutor {
             &agent.id,
             &agent.memory.knowledge_files,
             llm_runtime.max_context_length(),
+            task_understanding
+                .as_ref()
+                .map(|(name, content)| (*name, content.as_str())),
         );
 
         let system_prompt = tool_prompt::build_tool_system_prompt(

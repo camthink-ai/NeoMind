@@ -113,8 +113,7 @@ pub use memory_config::MemoryConfig;
 
 // Task-understanding knowledge file (the agent's task definition)
 pub use task_understanding::{
-    task_understanding_mission, task_understanding_repoint_mission,
-    task_understanding_with_mission, TASK_UNDERSTANDING_FILE,
+    task_understanding_mission, task_understanding_repair, MissionRepair, TASK_UNDERSTANDING_FILE,
 };
 
 /// Version information

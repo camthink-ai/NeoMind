@@ -227,14 +227,10 @@ fn agent_latest_tool_feedback_survives(input: &[AgentMessage], selected: &[Agent
         .iter()
         .filter(|m| m.role == "tool" && m.content.as_ref() == fb.content.as_ref())
         .count();
-    if same_body_count == 1
+    same_body_count == 1
         && selected
             .iter()
             .any(|m| m.role == "tool" && m.content.as_ref() == fb.content.as_ref())
-    {
-        return true;
-    }
-    false
 }
 
 /// Stamp each tool in a group with **its own** absolute call-position index

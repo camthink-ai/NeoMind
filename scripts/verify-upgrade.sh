@@ -12,16 +12,21 @@
 #   NEOMIND_BIN_132 → when NEOMIND_BIN_133 is set, tip is 133; else tip is 132
 #
 # Optional:
-#   NEOMIND_UPGRADE_DATA_DIR  default /tmp/neomind-upgrade-test
+#   NEOMIND_UPGRADE_DATA_DIR  parent for this run's data dir, default /tmp/neomind-upgrade-test
 #   NEOMIND_UPGRADE_OUT       default /tmp/neomind-upgrade-verify
 #   NEOMIND_UPGRADE_HTTP_PORT default 19400
 #   NEOMIND_UPGRADE_MQTT_PORT default 19500
 #   NEOMIND_EXPECT_VERSION    default 1.3.3
 #
 # Isolated: STRICT_DATA_DIR + private ports. Never touches :29375 / :29385 / :18788.
+#
+# Deletes nothing. Each run works in a data directory of its own,
+# <NEOMIND_UPGRADE_DATA_DIR>/run-<time>-<pid>, so a wrong value for that
+# variable cannot cost a real installation; earlier runs stay until removed by
+# hand. The API key the run creates never enters the report directory.
 set -euo pipefail
 
-DATA_DIR="${NEOMIND_UPGRADE_DATA_DIR:-/tmp/neomind-upgrade-test}"
+DATA_ROOT="${NEOMIND_UPGRADE_DATA_DIR:-/tmp/neomind-upgrade-test}"
 OUT_DIR="${NEOMIND_UPGRADE_OUT:-/tmp/neomind-upgrade-verify}"
 # Prefer 1.3.2 → 1.3.3; fall back to legacy 131/132 env names.
 if [[ -n "${NEOMIND_BIN_133:-}" ]]; then
@@ -37,6 +42,7 @@ HTTP_PORT="${NEOMIND_UPGRADE_HTTP_PORT:-19400}"
 MQTT_PORT="${NEOMIND_UPGRADE_MQTT_PORT:-19500}"
 EXPECT_VERSION="${NEOMIND_EXPECT_VERSION:-1.3.3}"
 
+DATA_DIR="$DATA_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$"
 mkdir -p "$OUT_DIR" "$DATA_DIR"
 LOG="$OUT_DIR/verify-upgrade.log"
 : >"$LOG"
@@ -57,11 +63,53 @@ if [[ "$BIN131" == "$BIN132" ]]; then
   echo "seed and tip binaries resolve to the same path — set NEOMIND_BIN_132 + NEOMIND_BIN_133"; exit 2
 fi
 
-rm -rf "$DATA_DIR"
-mkdir -p "$DATA_DIR"
+stop_serve() {
+  local tag="$1"
+  local pidfile="$OUT_DIR/serve-${tag}.pid"
+  if [[ -f "$pidfile" ]]; then
+    local pid
+    pid=$(cat "$pidfile")
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "stopping $tag pid=$pid (SIGTERM)"
+      kill -TERM "$pid" || true
+      local deadline=$((SECONDS + 30))
+      while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
+        sleep 0.3
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        echo "force kill $tag"
+        kill -KILL "$pid" || true
+      fi
+    fi
+    rm -f "$pidfile"
+  fi
+  local p
+  p=$(lsof -nP -iTCP:"$HTTP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)
+  if [[ -n "${p:-}" ]]; then
+    echo "leftover listener $p on :$HTTP_PORT — killing"
+    kill -TERM "$p" || true
+    sleep 1
+  fi
+}
 
-KEY_OUT="$OUT_DIR/api-key-create.txt"
-"$BIN131" api-key create --name upgrade-seed --data-dir "$DATA_DIR" >"$KEY_OUT" 2>&1
+cleanup() {
+  stop_serve 131 || true
+  stop_serve 132 || true
+  # The only directory this script removes is the private one it made for
+  # the key, and only when it is that one.
+  case "${SECRETS_DIR:-}" in
+    */neomind-upgrade-secrets.*) rm -rf -- "$SECRETS_DIR" || true ;;
+  esac
+}
+
+# The API key stays out of the report directory — that is what gets shared,
+# log included. It lives in a private directory of its own, removed on exit.
+SECRETS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/neomind-upgrade-secrets.XXXXXX")"
+chmod 700 "$SECRETS_DIR"
+trap cleanup EXIT
+
+KEY_OUT="$SECRETS_DIR/api-key-create.txt"
+(umask 077; "$BIN131" api-key create --name upgrade-seed --data-dir "$DATA_DIR" >"$KEY_OUT" 2>&1)
 API_KEY="$(python3 - "$KEY_OUT" <<'PY'
 from pathlib import Path
 import re, sys
@@ -73,7 +121,7 @@ for line in text.splitlines():
         break
 PY
 )"
-test -n "$API_KEY" || { echo "failed to parse API key"; cat "$KEY_OUT"; exit 2; }
+test -n "$API_KEY" || { echo "failed to parse API key"; sed -E 's/nmk_[A-Za-z0-9_-]+/nmk_<redacted>/g' "$KEY_OUT"; exit 2; }
 echo "API_KEY_LEN=${#API_KEY}"
 
 cat >"$DATA_DIR/config.toml" <<EOF
@@ -128,35 +176,6 @@ start_serve() {
   echo $! >"$OUT_DIR/serve-${tag}.pid"
   echo "started $tag pid=$(cat "$OUT_DIR/serve-${tag}.pid") log=$srv_log"
   wait_health
-}
-
-stop_serve() {
-  local tag="$1"
-  local pidfile="$OUT_DIR/serve-${tag}.pid"
-  if [[ -f "$pidfile" ]]; then
-    local pid
-    pid=$(cat "$pidfile")
-    if kill -0 "$pid" 2>/dev/null; then
-      echo "stopping $tag pid=$pid (SIGTERM)"
-      kill -TERM "$pid" || true
-      local deadline=$((SECONDS + 30))
-      while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
-        sleep 0.3
-      done
-      if kill -0 "$pid" 2>/dev/null; then
-        echo "force kill $tag"
-        kill -KILL "$pid" || true
-      fi
-    fi
-    rm -f "$pidfile"
-  fi
-  local p
-  p=$(lsof -nP -iTCP:"$HTTP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)
-  if [[ -n "${p:-}" ]]; then
-    echo "leftover listener $p on :$HTTP_PORT — killing"
-    kill -TERM "$p" || true
-    sleep 1
-  fi
 }
 
 post_retry() {
@@ -499,12 +518,6 @@ PY
   fi
   echo "=== VERIFY PASS ==="
 }
-
-cleanup() {
-  stop_serve 131 || true
-  stop_serve 132 || true
-}
-trap cleanup EXIT
 
 start_serve "$BIN131" 131
 seed_v131

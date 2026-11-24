@@ -10,88 +10,115 @@
 //! per-run observation ("无图像数据路径，需设备日志搜索"), leaving it with
 //! learned notes and no task at all.
 //!
-//! Two entry points re-point the section, and both restore it when it is
-//! missing: [`task_understanding_repoint_mission`] after a prompt edit, and
-//! [`task_understanding_with_mission`] for the check before every run.
+//! [`task_understanding_repair`] is the one place that puts the section right.
+//! People edit this file by hand as well, so it writes only what it can
+//! prove: where the old mission's extent is not known, the file is left
+//! alone and the repair serves the prompt only.
 
 /// Knowledge-file name of the auto-generated task definition.
 pub const TASK_UNDERSTANDING_FILE: &str = "task-understanding";
 
-/// Headings the stock templates put right after `## Mission`. The Mission
-/// section runs to the first of these.
+/// Headings the stock templates put right after `## Mission`.
 const MISSION_SUCCESSORS: [&str; 2] = ["## Bound Resources", "## Resources"];
 
-/// Body of the file's `## Mission` section, or `None` when it has none.
+/// A task-understanding file repaired so its Mission section carries the
+/// current task prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissionRepair {
+    /// The file as a run should inline it — the stored content when nothing
+    /// was wrong with it.
+    pub content: String,
+    /// Whether `content` may replace the stored file.
+    ///
+    /// True only for a repair that removes nothing but text known to be the
+    /// old mission (or adds a missing section). False when the extent of the
+    /// old mission is not known: what sits under the heading may be the
+    /// operator's own notes, so the repair is for the prompt alone.
+    pub store: bool,
+}
+
+/// Body of the file's `## Mission` section up to the next heading of level
+/// 1–2 or `---` rule, or `None` when it has none.
 ///
-/// Best effort — for display and tests. A file that kept the stock layout is
-/// read exactly, whatever the prompt contains; in a layout of the agent's
-/// own the section ends at the next heading or `---` line, so a prompt that
-/// itself contains one is cut there. Neither sync below depends on this.
+/// For display and tests, and best effort: the section is cut at the first
+/// such line even when the prompt itself contains one. No repair depends on
+/// this cut.
 pub fn task_understanding_mission(content: &str) -> Option<&str> {
     let start = mission_body_start(content)?;
-    Some(content[start..mission_section_end(content, start)].trim())
+    Some(content[start..next_section_start(content, start).unwrap_or(content.len())].trim())
 }
 
-/// The file with its `## Mission` section set to `mission`, for the check
-/// before a run. An up-to-date file comes back unchanged.
+/// Bring the file's `## Mission` section in line with `mission`.
 ///
-/// Everything else in the file — identity, resources, the agent's appended
-/// sections — is kept byte for byte. A file without a Mission section gets
-/// one on top, so a task definition that was overwritten comes back while
-/// the notes written below it survive.
+/// `previous_mission` is the prompt before an edit, when the caller knows
+/// it. Three outcomes:
 ///
-/// The mission is a verbatim copy of the prompt, and a prompt may itself
-/// contain markdown headings or `---` lines. So the section is measured from
-/// the END of the current mission, not from its first heading-like line:
-/// cutting it there read an in-sync file as stale on every run and appended
-/// the prompt again each time. Unheaded text written under the mission goes
-/// — the section is the task's, not a place for notes.
+/// - **The previous prompt is known and the section starts with it**: that
+///   text is the old mission, and only it moves — every byte after it stays
+///   where it was, be it a section the operator filed between Mission and
+///   Resources or notes written under the mission. Stored.
+/// - **In sync** — the section starts with `mission`: the content is returned
+///   unchanged.
+/// - **Anything else** (no previous prompt, or the section no longer starts
+///   with it): the old mission cannot be told from notes written around it.
+///   `content` then shows `mission` in the section's place, up to the
+///   template's next heading, for the prompt only; `store` is false and the
+///   file on disk is the operator's to fix.
 ///
-/// Not enough after a prompt edit: when the old mission keeps the new one as
-/// its first lines and what was removed starts with a heading, that heading
-/// is indistinguishable from the next section of the file. The caller that
-/// knows the prompt changed uses [`task_understanding_repoint_mission`].
-pub fn task_understanding_with_mission(content: &str, mission: &str) -> String {
+/// A file without a Mission section gets one on top of content that is
+/// otherwise untouched — the task comes back while whatever the agent wrote
+/// below it survives.
+pub fn task_understanding_repair(
+    content: &str,
+    mission: &str,
+    previous_mission: Option<&str>,
+) -> MissionRepair {
     let mission = mission.trim();
     let Some(body_start) = mission_body_start(content) else {
-        return with_missing_mission(content, mission);
+        return MissionRepair {
+            content: with_missing_mission(content, mission),
+            store: true,
+        };
     };
-    if let Some(after) = mission_tops_section(&content[body_start..], mission) {
-        let after = body_start + after;
-        let next = next_section_start(content, after).unwrap_or(content.len());
-        if content[after..next].trim().is_empty() {
-            return content.to_string();
-        }
-        return splice(content, body_start, next, mission);
+    let body = &content[body_start..];
+
+    // Checked before "in sync": a shortened prompt keeps its first line, so
+    // the new mission would match while the rest of the old one stayed under
+    // the heading.
+    if let Some(after_old) = previous_mission
+        .map(str::trim)
+        .and_then(|old| mission_ends_a_line(body, old))
+    {
+        let mut out = String::with_capacity(content.len() + mission.len());
+        out.push_str(&content[..body_start]);
+        out.push_str(mission);
+        out.push_str(&content[body_start + after_old..]);
+        return MissionRepair {
+            content: out,
+            store: true,
+        };
     }
-    replace_mission(content, body_start, mission)
+
+    if mission_ends_a_line(body, mission).is_some() {
+        return MissionRepair {
+            content: content.to_string(),
+            store: false,
+        };
+    }
+
+    MissionRepair {
+        content: splice(
+            content,
+            body_start,
+            mission_view_end(content, body_start),
+            mission,
+        ),
+        store: false,
+    }
 }
 
-/// The file with its `## Mission` section replaced by `mission`, whether or
-/// not the old one looks current. For a prompt edit.
-///
-/// The old mission's extent is not known — it may hold headings of its own —
-/// so the section runs to the heading the stock template puts after Mission,
-/// else to the first heading-like line, else to the end of the file.
-pub fn task_understanding_repoint_mission(content: &str, mission: &str) -> String {
-    let mission = mission.trim();
-    let Some(body_start) = mission_body_start(content) else {
-        return with_missing_mission(content, mission);
-    };
-    replace_mission(content, body_start, mission)
-}
-
-/// Replace the Mission section that starts at `body_start`.
-fn replace_mission(content: &str, body_start: usize, mission: &str) -> String {
-    splice(
-        content,
-        body_start,
-        mission_section_end(content, body_start),
-        mission,
-    )
-}
-
-/// The file with a Mission section carrying `mission` put on top.
+/// The file with a Mission section carrying `mission` put on top. Nothing is
+/// removed.
 fn with_missing_mission(content: &str, mission: &str) -> String {
     let mut out = String::with_capacity(content.len() + mission.len() + 32);
     out.push_str("# Task Understanding\n\n## Mission\n");
@@ -102,13 +129,12 @@ fn with_missing_mission(content: &str, mission: &str) -> String {
 }
 
 /// Replace `content[start..end]` with `mission`, keeping one blank line
-/// before the section that follows.
+/// before what follows.
 fn splice(content: &str, start: usize, end: usize, mission: &str) -> String {
     let mut out = String::with_capacity(content.len() + mission.len());
     out.push_str(&content[..start]);
     out.push_str(mission);
     if end < content.len() {
-        // One blank line, then the next section exactly as it was.
         out.push_str("\n\n");
         out.push_str(&content[end..]);
     } else {
@@ -117,22 +143,26 @@ fn splice(content: &str, start: usize, end: usize, mission: &str) -> String {
     out
 }
 
-/// Where the current `mission` ends inside the section body, when the body
-/// starts with it: `Some(mission.len())`. `None` when the body holds a
-/// different mission — text glued to the last character of `mission` is part
-/// of a longer line, not the end of it.
-fn mission_tops_section(body: &str, mission: &str) -> Option<usize> {
-    if !body.starts_with(mission) {
+/// Where `text` ends inside the section body, when the body starts with it
+/// and it ends the body or its line: `Some(text.len())`. `None` when the body
+/// carries something else — more text glued to the last character of `text`
+/// is a longer line, not the end of it.
+fn mission_ends_a_line(body: &str, text: &str) -> Option<usize> {
+    if !body.starts_with(text) {
         return None;
     }
-    (body.len() == mission.len() || body[mission.len()..].starts_with('\n'))
-        .then_some(mission.len())
+    let rest = &body[text.len()..];
+    (rest.is_empty() || rest.starts_with('\n') || rest.starts_with("\r\n")).then_some(text.len())
 }
 
-/// End of the Mission section measured from `from`: the heading the stock
-/// template puts after Mission, else the next heading of level 1–2 or a
-/// `---` rule, else the end of the file.
-fn mission_section_end(content: &str, from: usize) -> usize {
+/// End of what stands in for the mission, measured from `from`: the heading
+/// the stock template puts after Mission, else the next heading of level 1–2
+/// or `---` rule, else the end of the file.
+///
+/// For the prompt-only repair. In the stock layout that keeps a prompt with
+/// headings of its own from leaving its tail behind; a layout rebuilt without
+/// those headings falls back to the next heading.
+fn mission_view_end(content: &str, from: usize) -> usize {
     next_line_starting_with(content, from, &MISSION_SUCCESSORS)
         .or_else(|| next_section_start(content, from))
         .unwrap_or(content.len())
@@ -167,7 +197,7 @@ fn starts_section(line: &str) -> bool {
 }
 
 /// `(offset, line)` for each line from `from` on. `from` sits on a line
-/// boundary or on a newline.
+/// boundary.
 fn lines_from(content: &str, from: usize) -> impl Iterator<Item = (usize, &str)> {
     content[from..]
         .split_inclusive('\n')
@@ -189,6 +219,18 @@ mod tests {
     const EXECUTOR_TEMPLATE: &str = "# Task Understanding\n\n## Role\nagent\n\n## Mission\n\
         OLD MISSION\n\n## Resources\nNone\n\n## Schedule\nEvent-driven\n\n---\n\
         Update this file as you discover thresholds.\n";
+    /// A file the operator reworked: their own section filed between the
+    /// mission and the template's Resources.
+    const OPERATOR_FILE: &str =
+        "# Task Understanding\n\n## Mission\nOLD MISSION\n\n## Operator Notes\nKEEP-ME\n\n\
+        ## Resources\nNone\n";
+    /// A prompt with headings of its own.
+    const HEADED_PROMPT: &str =
+        "每天巡检。\n## 判定标准\n用 vision 工具分析该图片\n\n---\n周日休息";
+
+    fn with_mission(template: &str, mission: &str) -> String {
+        template.replacen("OLD MISSION", mission, 1)
+    }
 
     #[test]
     fn reads_the_mission_section() {
@@ -206,6 +248,11 @@ mod tests {
         );
         assert_eq!(task_understanding_mission("## Mission"), Some(""));
         assert_eq!(
+            task_understanding_mission(OPERATOR_FILE),
+            Some("OLD MISSION"),
+            "cut at the operator's next heading"
+        );
+        assert_eq!(
             task_understanding_mission("free notes\n## Observations\nx"),
             None
         );
@@ -213,32 +260,150 @@ mod tests {
     }
 
     #[test]
-    fn replaces_the_mission_and_keeps_everything_else() {
-        for template in [API_TEMPLATE, EXECUTOR_TEMPLATE] {
-            let out = task_understanding_with_mission(template, "  NEW MISSION \n");
+    fn an_in_sync_file_is_returned_untouched() {
+        for previous in [None, Some("an older prompt")] {
+            let repair = task_understanding_repair(API_TEMPLATE, "  OLD MISSION \n", previous);
             assert_eq!(
-                task_understanding_mission(&out),
-                Some("NEW MISSION"),
-                "{out}"
+                repair,
+                MissionRepair {
+                    content: API_TEMPLATE.to_string(),
+                    store: false,
+                }
             );
-            let after = out.split("NEW MISSION\n\n").nth(1).expect("rest");
-            let original_after = template.split("OLD MISSION\n\n").nth(1).expect("rest");
-            assert_eq!(
-                after, original_after,
-                "sections after Mission must be untouched"
+        }
+        // A prompt with headings of its own, mirrored whole.
+        let file = with_mission(API_TEMPLATE, HEADED_PROMPT);
+        let repair = task_understanding_repair(&file, HEADED_PROMPT, None);
+        assert_eq!(repair.content, file);
+        assert!(!repair.store);
+    }
+
+    /// A prompt edit. The previous prompt is what the section starts with, so
+    /// exactly that text moves — and the operator's section between Mission
+    /// and Resources, or anything else, stays byte for byte.
+    #[test]
+    fn an_edit_replaces_exactly_the_previous_prompt() {
+        let repair = task_understanding_repair(OPERATOR_FILE, "NEW MISSION", Some("OLD MISSION"));
+
+        assert!(repair.store, "a known old mission may be replaced on disk");
+        assert_eq!(
+            repair.content,
+            OPERATOR_FILE.replacen("OLD MISSION", "NEW MISSION", 1)
+        );
+        assert!(repair
+            .content
+            .contains("## Operator Notes\nKEEP-ME\n\n## Resources"));
+    }
+
+    /// The same edit for a prompt with headings of its own: matching the
+    /// known text does not stop at the first heading inside it. The new
+    /// mission is also the old prompt's first line — the in-sync check alone
+    /// would have let the rest of the old prompt stand.
+    #[test]
+    fn an_edit_handles_a_previous_prompt_with_headings() {
+        let file = with_mission(API_TEMPLATE, HEADED_PROMPT);
+        let repair = task_understanding_repair(&file, "每天巡检。", Some(HEADED_PROMPT));
+
+        assert!(repair.store);
+        assert_eq!(
+            repair.content,
+            API_TEMPLATE.replacen("OLD MISSION", "每天巡检。", 1),
+            "{}",
+            repair.content
+        );
+        assert!(!repair.content.contains("vision"));
+        assert!(!repair.content.contains("## 判定标准"));
+        assert!(!repair.content.contains("周日休息"));
+    }
+
+    /// Both at once, in the operator's file.
+    #[test]
+    fn an_edit_keeps_the_operators_section_next_to_a_headed_prompt() {
+        let file = with_mission(OPERATOR_FILE, HEADED_PROMPT);
+        let repair = task_understanding_repair(&file, "每天巡检。", Some(HEADED_PROMPT));
+
+        assert!(repair.store);
+        assert_eq!(
+            repair.content,
+            OPERATOR_FILE.replacen("OLD MISSION", "每天巡检。", 1)
+        );
+        assert!(repair.content.contains("KEEP-ME"));
+        assert!(!repair.content.contains("vision"));
+    }
+
+    /// The edit path does not guess: a mission that no longer starts with the
+    /// previous prompt (edited by hand, or overwritten by the agent) is not
+    /// rewritten on disk — what is under the heading may be the operator's.
+    #[test]
+    fn an_edit_leaves_a_mission_it_cannot_match_alone() {
+        for file in [
+            with_mission(OPERATOR_FILE, "OLD MISSION, trimmed by hand"),
+            with_mission(OPERATOR_FILE, "用 vision 工具分析该图片"),
+        ] {
+            let repair = task_understanding_repair(&file, "NEW MISSION", Some("OLD MISSION"));
+
+            assert!(
+                !repair.store,
+                "the file must not be rewritten: {}",
+                repair.content
             );
-            assert_eq!(
-                out.split("## Mission\n").next(),
-                template.split("## Mission\n").next(),
-                "everything before Mission must be untouched"
-            );
+            assert_ne!(repair.content, file);
+            assert!(repair.content.contains("## Mission\nNEW MISSION"));
         }
     }
 
+    /// Before a run the previous prompt is not known. The prompt then shows
+    /// the task in the section's place, and the file is left to its owner.
     #[test]
-    fn mission_as_last_section() {
-        let out = task_understanding_with_mission("## Role\nagent\n\n## Mission\nold", "new");
-        assert_eq!(out, "## Role\nagent\n\n## Mission\nnew\n");
+    fn a_stale_mission_is_repaired_for_the_prompt_only() {
+        for file in [
+            with_mission(API_TEMPLATE, "OLD MISSION 用 vision 工具分析该图片"),
+            with_mission(API_TEMPLATE, HEADED_PROMPT),
+            OPERATOR_FILE.to_string(),
+        ] {
+            // Not the first line of any old text: the per-run check has no
+            // previous prompt and reads such a first line as in sync.
+            let repair = task_understanding_repair(&file, "每周巡检。", None);
+
+            assert!(!repair.store);
+            assert_ne!(repair.content, file);
+            assert!(
+                repair.content.contains("## Mission\n每周巡检。"),
+                "{}",
+                repair.content
+            );
+            assert!(!repair.content.contains("vision"), "{}", repair.content);
+            assert!(
+                !repair.content.contains("## 判定标准"),
+                "{}",
+                repair.content
+            );
+            assert!(
+                repair
+                    .content
+                    .contains("## Bound Resources\nNone (free mode)")
+                    || repair.content.contains("## Resources\nNone"),
+                "{}",
+                repair.content
+            );
+        }
+        // Without the template's headings the section ends at the next one.
+        let custom = "## Mission\nold task\nmore of it\n\n## Observations\nnote\n";
+        let repair = task_understanding_repair(custom, "new task", None);
+        assert_eq!(
+            repair.content,
+            "## Mission\nnew task\n\n## Observations\nnote\n"
+        );
+    }
+
+    /// An operator may write under the mission without a heading. That is
+    /// theirs too: an in-sync file is never touched for it.
+    #[test]
+    fn notes_under_an_in_sync_mission_are_left_alone() {
+        let file = "## Mission\nM\n\nwritten by hand, no heading\n\n## Bound Resources\nNone\n";
+        let repair = task_understanding_repair(file, "M", None);
+        assert_eq!(repair.content, file);
+        assert!(!repair.store);
     }
 
     #[test]
@@ -247,133 +412,83 @@ mod tests {
         // observation. The task comes back on top; the note is kept.
         let corrupted =
             "# NE301PIR-200366 任务理解\n## 图像数据路径\n- 无图像数据路径，需设备日志搜索\n";
-        let out = task_understanding_with_mission(corrupted, "只在工作日告警");
-        assert_eq!(
-            out,
-            format!("# Task Understanding\n\n## Mission\n只在工作日告警\n\n{corrupted}")
-        );
-        assert_eq!(task_understanding_mission(&out), Some("只在工作日告警"));
+        for previous in [None, Some("the prompt before the edit")] {
+            let repair = task_understanding_repair(corrupted, "只在工作日告警", previous);
+
+            assert!(
+                repair.store,
+                "a missing section is added; nothing is removed"
+            );
+            assert_eq!(
+                repair.content,
+                format!("# Task Understanding\n\n## Mission\n只在工作日告警\n\n{corrupted}")
+            );
+            assert_eq!(
+                task_understanding_mission(&repair.content),
+                Some("只在工作日告警")
+            );
+        }
     }
 
     #[test]
     fn empty_file_gets_just_the_mission() {
         // read_agent_custom_file yields "" for a missing file.
-        let out = task_understanding_with_mission("", "task");
-        assert_eq!(out, "# Task Understanding\n\n## Mission\ntask\n\n");
+        let repair = task_understanding_repair("", "task", None);
+        assert!(repair.store);
+        assert_eq!(
+            repair.content,
+            "# Task Understanding\n\n## Mission\ntask\n\n"
+        );
     }
 
     #[test]
-    fn idempotent_for_an_up_to_date_file() {
-        assert_eq!(
-            task_understanding_with_mission(API_TEMPLATE, "OLD MISSION"),
-            API_TEMPLATE
-        );
-        assert_eq!(
-            task_understanding_with_mission(EXECUTOR_TEMPLATE, "OLD MISSION\n"),
-            EXECUTOR_TEMPLATE
-        );
+    fn mission_as_last_section() {
+        let repair = task_understanding_repair("## Role\nagent\n\n## Mission\nold", "new", None);
+        assert!(!repair.store);
+        assert_eq!(repair.content, "## Role\nagent\n\n## Mission\nnew\n");
     }
 
-    /// The mission is a verbatim copy of the prompt. A prompt with markdown
-    /// headings or `---` lines used to be cut at the first of them — the file
-    /// then read as out of sync on every run and grew by one prompt each time.
-    #[test]
-    fn a_prompt_with_markdown_headings_is_not_resynced_forever() {
-        let mission =
-            "每天 8 点巡检。\n\n## 判定标准\n\n- 有人赌博才告警\n\n---\n\n# 附注\n周日跳过";
-        let file = task_understanding_with_mission(API_TEMPLATE, mission);
-
-        assert_eq!(
-            task_understanding_with_mission(&file, mission),
-            file,
-            "in sync: the file must not be rewritten"
-        );
-        // Nothing of the template is lost, and nothing is duplicated.
-        assert_eq!(file.matches("## Bound Resources").count(), 1, "{file}");
-        assert!(file.ends_with("## Notes\nlearned notes\n"), "{file}");
-        assert_eq!(file.matches(mission).count(), 1, "{file}");
-    }
-
-    /// A prompt edit: the old mission keeps the new one as its first lines
-    /// and what was removed starts with a heading. The per-run check cannot
-    /// tell that heading from the next section of the file; the edit path
-    /// can, and takes the old wording with it.
-    #[test]
-    fn a_stale_mission_with_headings_is_replaced_whole() {
-        let old = "每天巡检。\n## 判定标准\n用 vision 工具分析该图片";
-        let file = task_understanding_with_mission(API_TEMPLATE, old);
-
-        let out = task_understanding_repoint_mission(&file, "每天巡检。");
-
-        assert_eq!(
-            task_understanding_mission(&out),
-            Some("每天巡检。"),
-            "{out}"
-        );
-        assert!(!out.contains("vision"), "{out}");
-        assert!(!out.contains("## 判定标准"), "{out}");
-        assert!(
-            out.contains("## Bound Resources\nNone (free mode)"),
-            "{out}"
-        );
-    }
-
-    /// The per-run check stays conservative: a section the agent put under
-    /// the mission, with a heading of its own, is not touched when the
-    /// mission itself is current.
-    #[test]
-    fn the_per_run_check_leaves_the_agents_sections_alone() {
-        let mission = "每天巡检。";
-        let file = API_TEMPLATE.replacen(
-            "## Mission\nOLD MISSION\n\n",
-            "## Mission\n每天巡检。\n\n## 观察记录\n- 周一设备离线\n\n",
-            1,
-        );
-        assert_eq!(task_understanding_with_mission(&file, mission), file);
-    }
-
-    /// A prompt edit also re-points a file that already carries the new
-    /// mission — the edit path does not guess.
-    #[test]
-    fn repointing_an_in_sync_file_is_a_no_op() {
-        let file = task_understanding_with_mission(API_TEMPLATE, "巡检。");
-        assert_eq!(task_understanding_repoint_mission(&file, "巡检。"), file);
-        assert_eq!(
-            task_understanding_repoint_mission(EXECUTOR_TEMPLATE, "OLD MISSION"),
-            EXECUTOR_TEMPLATE
-        );
-    }
-
-    /// Shortening the prompt leaves none of the old wording under the new
-    /// mission — the T4 failure, where "用 vision 工具" outlived its removal.
+    /// The T4 failure in its simplest form: a line removed from the prompt
+    /// goes from the file too, and nothing else moves.
     #[test]
     fn a_shortened_prompt_takes_its_old_lines_with_it() {
-        let file =
-            task_understanding_with_mission(API_TEMPLATE, "巡检东坪山。\n用 vision 工具分析该图片");
+        let old = "巡检东坪山。\n用 vision 工具分析该图片";
+        let file = with_mission(API_TEMPLATE, old);
 
-        let out = task_understanding_with_mission(&file, "巡检东坪山。");
+        let repair = task_understanding_repair(&file, "巡检东坪山。", Some(old));
 
+        assert!(repair.store);
         assert_eq!(
-            task_understanding_mission(&out),
-            Some("巡检东坪山。"),
-            "{out}"
+            repair.content,
+            API_TEMPLATE.replacen("OLD MISSION", "巡检东坪山。", 1)
         );
-        assert!(!out.contains("vision"), "{out}");
         // Stable from here on.
-        assert_eq!(task_understanding_with_mission(&out, "巡检东坪山。"), out);
+        assert_eq!(
+            task_understanding_repair(&repair.content, "巡检东坪山。", None).content,
+            repair.content
+        );
     }
 
-    /// A longer line is a different mission, not the current one plus a note:
-    /// the old tail goes.
+    /// More text glued to the last character is a longer line, not the
+    /// mission plus a note: it is not taken for in sync.
     #[test]
-    fn a_longer_old_line_is_not_mistaken_for_the_new_mission() {
-        let file = task_understanding_with_mission(API_TEMPLATE, "巡检东坪山，顺带看水位");
-        let out = task_understanding_with_mission(&file, "巡检东坪山");
-        assert_eq!(
-            task_understanding_mission(&out),
-            Some("巡检东坪山"),
-            "{out}"
-        );
-        assert!(!out.contains("水位"), "{out}");
+    fn a_longer_line_is_not_mistaken_for_the_mission() {
+        let file = with_mission(API_TEMPLATE, "巡检东坪山，顺带看水位");
+        let repair = task_understanding_repair(&file, "巡检东坪山", None);
+        assert!(!repair.store);
+        assert!(!repair.content.contains("水位"), "{}", repair.content);
+    }
+
+    /// A prompt edit where the file was already behind by more than one
+    /// edit: the previous prompt is not what the section holds, so the file
+    /// stays and the next run shows the task from the prompt.
+    #[test]
+    fn a_file_behind_by_more_than_one_edit_is_kept() {
+        let file = with_mission(OPERATOR_FILE, "two edits ago");
+        let repair = task_understanding_repair(&file, "now", Some("one edit ago"));
+
+        assert!(!repair.store);
+        assert!(repair.content.contains("## Mission\nnow"));
+        assert!(!repair.content.contains("two edits ago"));
     }
 }

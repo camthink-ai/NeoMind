@@ -87,45 +87,307 @@ pub(crate) fn judgment_tool_off_by_default(agent: &AiAgent, tool: &str) -> bool 
             .is_some_and(|config| config.allowed_tools.iter().any(|t| t == tool))
 }
 
-/// True when a shell command is (or wraps) `neomind message send`.
+/// Shells that run a command line given as text.
+const PASS_THROUGH_SHELLS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh"];
+
+/// Programs that run whatever their argument says. Judged on the raw text.
+const INTERPRETERS: &[&str] = &[
+    "python",
+    "python3",
+    "perl",
+    "ruby",
+    "node",
+    "php",
+    "awk",
+    "gawk",
+    "xargs",
+    "find",
+    "osascript",
+    "cmd",
+    "powershell",
+    "pwsh",
+];
+
+/// Commands that pass the rest of their argv through. A bare `message send`
+/// behind one of these is still the command.
+const WRAPPERS: &[&str] = &["sudo", "env", "nohup", "time", "command", "exec"];
+
+/// How far a command line may sit inside another (`sh -c "…"`, `$(…)`).
+const MAX_COMMAND_NESTING: usize = 4;
+
+/// True when a shell command runs `neomind message send` anywhere in it.
+///
+/// Judged by argv, one command of the line at a time — the argv the shell
+/// tool dispatches with, so whitespace runs, quoting and escapes collapse to
+/// the same tokens. A quoted argument is a single token: parameter text that
+/// merely quotes the words "message send" is text, not a send.
 pub(crate) fn is_message_send_command(command: &str) -> bool {
-    // Exact argv through the tokenizer the shell tool dispatches with:
-    // whitespace runs, quoting and backslash escapes collapse to the same
-    // tokens, so `neomind  message   send` is not a different string.
-    if let Ok(argv) = crate::toolkit::shell::tokenize_neomind_command(command) {
-        if is_message_send_argv(&argv) {
-            return true;
+    command_line_runs_message_send(command, 0)
+}
+
+fn command_line_runs_message_send(line: &str, depth: usize) -> bool {
+    if depth > MAX_COMMAND_NESTING {
+        return message_send_words_in(line, true);
+    }
+    shell_commands(line)
+        .iter()
+        .any(|command| command_runs_message_send(command, depth))
+}
+
+/// One command of a line, judged by its argv. Anything that is not a plain
+/// argv — a redirection, an unbalanced quote — is judged on its words:
+/// blocking too much costs the model one retry, letting a send through
+/// costs the operator an alert they did not want.
+fn command_runs_message_send(command: &str, depth: usize) -> bool {
+    let command = command.trim();
+    if command.is_empty() {
+        return false;
+    }
+    let argv: Vec<String> = match crate::toolkit::shell::tokenize_neomind_command(command) {
+        Ok(argv) if !argv.is_empty() => argv,
+        _ => return message_send_words_in(command, false),
+    };
+    if argv_runs_message_send(&argv) {
+        return true;
+    }
+    let program = program_name(&argv[0]);
+    if PASS_THROUGH_SHELLS.contains(&program) {
+        // `sh -c '<line>'`: the operand is a command line of its own.
+        return match shell_c_operand(&argv) {
+            Some(operand) => command_line_runs_message_send(operand, depth + 1),
+            None => false,
+        };
+    }
+    if program == "eval" {
+        return command_line_runs_message_send(&argv[1..].join(" "), depth + 1);
+    }
+    // It runs whatever its argument says — quoted or not.
+    INTERPRETERS.contains(&program) && message_send_words_in(command, true)
+}
+
+/// `neomind message send` as three adjacent argv tokens, wherever it sits
+/// (`sudo neomind …`, `NEOMIND_JSON=1 neomind …`, `timeout 30 neomind …`),
+/// or a bare `message send` — the hallucinated CLI-domain form — at the
+/// start, behind a wrapper, or behind a program token that expands to
+/// neomind (`"$(which neomind)"`).
+fn argv_runs_message_send(argv: &[String]) -> bool {
+    let is_neomind = |token: &str| program_name(token) == "neomind";
+    argv.windows(3)
+        .any(|w| is_neomind(&w[0]) && w[1] == "message" && w[2] == "send")
+        || argv.windows(2).enumerate().any(|(i, w)| {
+            w[0] == "message"
+                && w[1] == "send"
+                && (i == 0
+                    || WRAPPERS.contains(&program_name(&argv[i - 1]))
+                    || is_env_assignment(&argv[i - 1])
+                    || i == 1 && argv[0].to_ascii_lowercase().contains("neomind"))
+        })
+}
+
+/// The command string of `sh -c '<line>'` (option clusters such as `-lc`
+/// count). `None` for `sh script.sh`: the operand is a file, not a line.
+fn shell_c_operand(argv: &[String]) -> Option<&str> {
+    let mut args = argv.iter().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            return args.next().map(String::as_str);
+        }
+        if arg.starts_with('-') && arg.len() > 1 {
+            if arg.contains('c') {
+                return args.next().map(String::as_str);
+            }
+            continue;
+        }
+        return None;
+    }
+    None
+}
+
+/// The program a token names: `sudo`'s `(sudo` and a subshell's `(neomind`
+/// lose their brackets, a full path keeps only its last component.
+fn program_name(token: &str) -> &str {
+    let token = token
+        .trim_start_matches(['(', '{'])
+        .trim_end_matches([')', '}', ';', ',']);
+    token.rsplit('/').next().unwrap_or(token)
+}
+
+/// `NAME=value` — an environment assignment ahead of the command.
+fn is_env_assignment(token: &str) -> bool {
+    token.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+/// The commands a shell would run for `line`: the parts between unquoted
+/// `;`, `&&`, `||`, `|`, `&` and newlines, then what sits in `$(…)` and
+/// backticks, which run as lines of their own.
+fn shell_commands(line: &str) -> Vec<&str> {
+    let mut commands = Vec::new();
+    let mut nested = Vec::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut start = 0usize;
+    let mut prev = '\0';
+    let mut chars = line.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' if !in_single => {
+                chars.next();
+            }
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '`' if !in_single => {
+                let from = i + 1;
+                let to = skip_past(&mut chars, line.len(), |c| c == '`');
+                nested.push(&line[from..to]);
+            }
+            '$' if !in_single && chars.peek().is_some_and(|(_, n)| *n == '(') => {
+                chars.next();
+                let from = i + 2;
+                let to = skip_parens(&mut chars, line.len());
+                nested.push(&line[from..to]);
+            }
+            ';' | '\n' if !in_single && !in_double => {
+                cut_command(line, i, i + c.len_utf8(), &mut commands, &mut start);
+            }
+            // `&&` ends the command as well; the `&` of `2>&1` does not.
+            '&' if !in_single && !in_double && prev != '>' && prev != '<' => {
+                let width = if chars.peek().is_some_and(|(_, n)| *n == '&') {
+                    chars.next();
+                    2
+                } else {
+                    1
+                };
+                cut_command(line, i, i + width, &mut commands, &mut start);
+            }
+            '|' if !in_single && !in_double => {
+                let width = if chars.peek().is_some_and(|(_, n)| *n == '|' || *n == '&') {
+                    chars.next();
+                    2
+                } else {
+                    1
+                };
+                cut_command(line, i, i + width, &mut commands, &mut start);
+            }
+            _ => {}
+        }
+        prev = c;
+    }
+    commands.push(&line[start..]);
+    commands.extend(nested);
+    commands
+}
+
+fn cut_command<'a>(
+    line: &'a str,
+    from: usize,
+    to: usize,
+    commands: &mut Vec<&'a str>,
+    start: &mut usize,
+) {
+    commands.push(&line[*start..from]);
+    *start = to;
+}
+
+/// Index just past the next character `ends_with`, or `end` if there is none.
+fn skip_past(
+    chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+    end: usize,
+    ends_with: impl Fn(char) -> bool,
+) -> usize {
+    while let Some((i, c)) = chars.next() {
+        if c == '\\' {
+            chars.next();
+            continue;
+        }
+        if ends_with(c) {
+            return i + c.len_utf8();
         }
     }
-    // Real shell lines the argv tokenizer does not reduce to one `neomind`
-    // command (pipes, `;` / `&&` sequencing, env prefixes): scan the token
-    // stream for the adjacent `message send` pair.
-    message_send_in_token_stream(command)
+    end
 }
 
-/// `neomind message send …` or a bare `message send …` (hallucinated
-/// CLI-domain rewrite), compared as exact argv tokens.
-fn is_message_send_argv(argv: &[String]) -> bool {
-    let rest = if argv.first().map(String::as_str) == Some("neomind") {
-        &argv[1..]
-    } else {
-        argv
-    };
-    rest.first().map(String::as_str) == Some("message")
-        && rest.get(1).map(String::as_str) == Some("send")
+/// Index just past the `)` closing a `$(…)` whose `(` is already consumed.
+fn skip_parens(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>, end: usize) -> usize {
+    let mut depth = 1usize;
+    let mut in_single = false;
+    let mut in_double = false;
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' if !in_single => {
+                chars.next();
+            }
+            '\'' if !in_double => in_single = !in_single,
+            '"' if !in_single => in_double = !in_double,
+            '(' if !in_single => depth += 1,
+            ')' if !in_single => {
+                depth -= 1;
+                if depth == 0 {
+                    return i + 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    end
 }
 
-/// Adjacent `message` `send` tokens once whitespace and shell separators
-/// (`;` `|` `&`) split the line and edge quotes are dropped.
-fn message_send_in_token_stream(command: &str) -> bool {
-    let tokens: Vec<String> = command
-        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&'))
-        .filter(|t| !t.is_empty())
-        .map(|t| t.trim_matches(['"', '\'']).to_ascii_lowercase())
-        .collect();
-    tokens
-        .windows(2)
-        .any(|pair| pair[0] == "message" && pair[1] == "send")
+/// Adjacent `message` `send` words in text that is not a plain argv — a
+/// redirection, an unbalanced quote. Whitespace and shell separators (`;`
+/// `|` `&`) split it.
+///
+/// A quoted run that holds a separator is text — `echo "message send" > log`
+/// is not a send. Quotes around one word (`neomind "message" send`) are the
+/// word. `raw` ignores quoting altogether, for a line nested too deep to
+/// judge and for a program that runs whatever its argument says.
+fn message_send_words_in(text: &str, raw: bool) -> bool {
+    // (lowercased word, is quoted text)
+    let mut words: Vec<(String, bool)> = Vec::new();
+    let mut word = String::new();
+    let mut quoted_text = false;
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if !in_single && !raw => {
+                if let Some(next) = chars.next() {
+                    word.push(next);
+                }
+            }
+            '\'' if !raw && !in_double => in_single = !in_single,
+            '"' if !raw && !in_single => in_double = !in_double,
+            c if (raw || !in_single && !in_double) && is_word_break(c) => {
+                flush_word(&mut words, &mut word, &mut quoted_text);
+            }
+            c => {
+                if !raw && (in_single || in_double) && is_word_break(c) {
+                    quoted_text = true;
+                }
+                word.push(c);
+            }
+        }
+    }
+    flush_word(&mut words, &mut word, &mut quoted_text);
+    words.windows(2).any(|pair| {
+        pair[0].0 == "message" && pair[1].0 == "send" && (raw || !pair[0].1 && !pair[1].1)
+    })
+}
+
+fn is_word_break(c: char) -> bool {
+    c.is_whitespace() || matches!(c, ';' | '|' | '&')
+}
+
+fn flush_word(words: &mut Vec<(String, bool)>, word: &mut String, quoted_text: &mut bool) {
+    if !word.is_empty() {
+        // In raw mode the quotes themselves are part of the word.
+        let word = std::mem::take(word);
+        words.push((
+            word.trim_matches(['"', '\'']).to_ascii_lowercase(),
+            std::mem::take(quoted_text),
+        ));
+    }
 }
 
 /// After tool_loop rewrite, return the shell command string if this call would
@@ -460,19 +722,92 @@ mod tests {
             // these to /bin/sh, which runs the send.
             r#"sh -c "neomind message send --title t --body b""#,
             "bash -c 'neomind message send --title t --body b'",
+            "sh -lc 'neomind message send --title t'",
             r#"eval "neomind message send --title t""#,
             r#"sudo neomind message send --title t"#,
+            r#"sudo -u neo neomind message send --title t"#,
+            r#"NEOMIND_JSON=1 timeout 30 neomind message send --title t"#,
+            r#"/usr/local/bin/neomind message send --title t"#,
+            // Shell syntax around the command.
+            r#"(neomind message send --title t)"#,
+            "{ neomind message send --title t; }",
+            "if true; then neomind message send --title t; fi",
+            "neomind message send --title t &",
+            // Substitutions run as commands of their own, quotes or not.
+            r#"echo "$(neomind message send --title t)""#,
+            "echo `neomind message send --title t`",
+            r#""$(which neomind)" message send --title t"#,
+            // A real send with shell characters of its own inside quotes.
+            r#"neomind message send --title "a | b; c" --body "x""#,
+            r#"neomind message send --title t --body "message send failed""#,
+            r#"neomind message send --title t > out.txt 2>&1"#,
+            // Redirection keeps the words quoted one by one.
+            r#"neomind "message" send --title t 2>&1 | head -5"#,
+            // A program that runs whatever its argument says.
+            r#"python3 -c "import os; os.system('neomind message send --title t')""#,
         ] {
             assert!(is_message_send_command(cmd), "must gate: {cmd:?}");
         }
+    }
+
+    /// Parameter text that quotes the command's words is text. Judged by
+    /// argv, a quoted argument is one token — it used to be split on
+    /// whitespace, so an ordinary command whose text mentioned "message
+    /// send" was stopped until the model produced a verdict.
+    #[test]
+    fn quoted_parameter_text_is_not_a_send() {
         for cmd in [
+            r#"neomind device control 20545d67 display --params '{"text":"message send failed"}'"#,
+            r#"neomind device control 20545d67 display --params {"text":"message send failed"}"#,
+            r#"neomind device get 200366 --output "x | y; z""#,
+            r#"neomind agent update a1 --user-prompt "when in doubt, message send nothing""#,
+            r#"neomind message list --query "message send""#,
+            r#"neomind device get cam-1 && neomind device get "message send""#,
+            r#"neomind device get cam-1; echo "message send""#,
+            r#"echo "message send""#,
+            r#"echo "neomind message send""#,
+            r#"grep -r "message send" /var/log/neomind"#,
+            r#"echo "message send" > notes.txt"#,
+            r#"echo "please message the send team""#,
             "neomind message list",
             "neomind device get cam-1",
             r#"neomind device get cam-1; neomind message list"#,
-            r#"echo "please message the send team""#,
+            r#"sh -c "echo message send""#,
+            r#"sh deploy.sh"#,
+            r#"echo "$(cat notes.txt) message send""#,
         ] {
             assert!(!is_message_send_command(cmd), "must not gate: {cmd:?}");
         }
+    }
+
+    /// The pair at the gate itself, with no verdict anywhere in the
+    /// conversation: an ordinary command runs, a real send is stopped — and
+    /// goes through once the verdict is there.
+    #[test]
+    fn ordinary_text_passes_the_gate_and_a_real_send_needs_a_verdict() {
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let ordinary =
+            r#"neomind device control 20545d67 display --params '{"text":"message send failed"}'"#;
+        let send = r#"neomind message send --title "有人" --body "两人打麻将""#;
+
+        assert!(
+            judgment_send_deny_reason(&agent, ordinary, &[]).is_none(),
+            "parameter text is not a send"
+        );
+        assert_eq!(
+            judgment_send_deny_reason(&agent, send, &[]),
+            Some(gate_block_reason(JudgmentVerdict::Unknown)),
+            "a send without a verdict is stopped"
+        );
+
+        let verdict = [Message::new(
+            MessageRole::Assistant,
+            "画面里两人打麻将。\nVerdict: criteria met",
+        )];
+        assert!(
+            judgment_send_deny_reason(&agent, send, &verdict).is_none(),
+            "with the verdict the send goes through"
+        );
     }
 
     /// Mirrors the real backends (ollama.rs / openai runtime.rs /

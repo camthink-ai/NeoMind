@@ -4285,11 +4285,16 @@ impl Tool for WebSearchProbe {
 /// The task definition is inlined from `custom:task-understanding` on every
 /// run. A prompt edit that never reached the file kept feeding the model the
 /// old mission — T4's agents read "用 vision 工具分析该图片" for two days
-/// after the operator removed it from the prompt. The executor re-syncs the
+/// after the operator removed it from the prompt. The executor repairs the
 /// file before inlining it, so the model never sees the stale copy.
+///
+/// This path has no previous prompt to match the old mission by, so the
+/// repair is for the prompt only: what is under the heading may be the
+/// operator's, and the file is theirs to fix.
 #[tokio::test]
 async fn stale_task_understanding_mission_is_resynced_before_it_is_inlined() {
     const MISSION: &str = "NEW_MISSION 直接看附带的图片";
+    const STALE_FILE: &str = "# Task Understanding\n\n## Mission\nOLD_MISSION 用 vision 工具分析该图片\n\n## Notes\nLEARNED_NOTE\n";
     let (memory, dir) = temp_memory_store();
     let (mut executor, mut agent, _) = build_harness_with_memory(Some(memory.clone())).await;
     agent.user_prompt = MISSION.into();
@@ -4297,7 +4302,7 @@ async fn stale_task_understanding_mission_is_resynced_before_it_is_inlined() {
         .write_agent_custom_file(
             &agent.id,
             neomind_storage::TASK_UNDERSTANDING_FILE,
-            "# Task Understanding\n\n## Mission\nOLD_MISSION 用 vision 工具分析该图片\n\n## Notes\nLEARNED_NOTE\n",
+            STALE_FILE,
         )
         .await
         .expect("seed a stale file");
@@ -4328,20 +4333,69 @@ async fn stale_task_understanding_mission_is_resynced_before_it_is_inlined() {
         "a stale mission must not reach the model: {system}"
     );
     assert!(
+        system.contains(MISSION),
+        "the current mission reaches the model: {system}"
+    );
+    assert!(
         system.contains("LEARNED_NOTE"),
         "the agent's own notes stay inlined: {system}"
     );
 
+    // The old mission's extent is not known here, so nothing is written.
     let on_disk = memory
         .read_agent_custom_file(&agent.id, neomind_storage::TASK_UNDERSTANDING_FILE)
         .expect("file");
-    assert_eq!(
-        neomind_storage::task_understanding_mission(&on_disk),
-        Some(MISSION),
-        "the file itself is re-pointed: {on_disk}"
-    );
-    assert!(on_disk.contains("LEARNED_NOTE"), "{on_disk}");
+    assert_eq!(on_disk, STALE_FILE, "the file is left as it was");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The operator writes in this file too. A note they filed under the
+/// mission, with or without a heading of its own, survives every run — the
+/// prompt shows the task prompt in the mission's place, the file stays.
+#[tokio::test]
+async fn an_operators_note_under_a_stale_mission_is_never_written_over() {
+    const MISSION: &str = "NEW_MISSION 直接看附带的图片";
+    for operator_file in [
+        // Their own section, filed between the mission and the template's
+        // next heading.
+        "# Task Understanding\n\n## Mission\nOLD_MISSION\n\n## Operator Notes\nKEEP-ME\n\n## Bound Resources\nNone\n",
+        // A bare note written right under the mission.
+        "# Task Understanding\n\n## Mission\nOLD_MISSION\n\nKEEP-ME, no heading\n\n## Bound Resources\nNone\n",
+    ] {
+        let (memory, dir) = temp_memory_store();
+        let (mut executor, mut agent, _) =
+            build_harness_with_memory(Some(memory.clone())).await;
+        agent.user_prompt = MISSION.into();
+        memory
+            .write_agent_custom_file(
+                &agent.id,
+                neomind_storage::TASK_UNDERSTANDING_FILE,
+                operator_file,
+            )
+            .await
+            .expect("seed the operator's file");
+        agent.memory.knowledge_files.push(task_understanding_ref());
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Arc::new(EchoTool));
+        executor.set_tool_registry(Arc::new(registry));
+        let rt = MockLlmRuntime::new(vec![MockResponse::text("无人，无赌博行为。")])
+            .with_function_calling()
+            .with_supports_images();
+        let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+        executor.set_llm_runtime(rt_dyn.clone()).await;
+
+        let _ = executor
+            .execute_with_tools(&agent, &[], rt_dyn, "exec-operator-note", None)
+            .await
+            .expect("run completes");
+
+        let on_disk = memory
+            .read_agent_custom_file(&agent.id, neomind_storage::TASK_UNDERSTANDING_FILE)
+            .expect("file");
+        assert_eq!(on_disk, operator_file, "the operator's file is theirs");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 /// T4's 200366 replaced its task with one per-run observation
