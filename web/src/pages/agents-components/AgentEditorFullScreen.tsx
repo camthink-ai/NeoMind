@@ -1376,7 +1376,7 @@ export function AgentEditorFullScreen({
       setToolsEnabled(preset.fill.toolConfig.enabled)
       const allowed = preset.fill.toolConfig.allowedTools ?? []
       setRestrictTools(allowed.length > 0)
-      if (allowed.length > 0) setAllowedTools([...allowed])
+      if (allowed.length > 0) setAllowedTools(new Set(allowed))
     }
     const sched = preset.fill.schedule
     setScheduleType(sched.type)
