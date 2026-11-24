@@ -690,7 +690,12 @@ impl AgentExecutor {
         // failed silently, every run, and nothing said so. Route the failure to
         // the same floor a new agent would have been given; success keeps the
         // legacy behaviour exactly as it was.
+        //
+        // Partial (vision undetermined) is not Completed: Failure notify may
+        // fire; Judgment routed notify stays silent (agent would speak via
+        // tools, but a blind run must not claim criteria met).
         let failed = record.status != neomind_storage::ExecutionStatus::Completed;
+        let is_partial = record.status == neomind_storage::ExecutionStatus::Partial;
         let notify = match agent.notify.clone() {
             Some(notify) => notify,
             None if failed => super::super::notify::default_agent_notify(),
@@ -709,13 +714,16 @@ impl AgentExecutor {
             neomind_storage::NotifyOn::Failure => failed,
             // The agent speaks for itself through its tools; a routed
             // notification would be a second voice saying the same thing.
+            // Partial never satisfies Verdict: criteria met.
             neomind_storage::NotifyOn::Judgment => false,
         };
         if !should_send {
             return;
         }
 
-        let title = if failed {
+        let title = if is_partial {
+            format!("Agent '{}' undetermined (vision tools failed)", agent_name)
+        } else if failed {
             format!("Agent '{}' failed", agent_name)
         } else {
             format!("Agent '{}' completed", agent_name)

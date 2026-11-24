@@ -105,13 +105,13 @@ function deriveFailure(detail: AgentExecutionDetail): FailureEvidence {
       lower.includes('timeout') ||
       lower.includes('abort') ||
       lower.includes('cancel')
-    if (looksFailed || detail.status === 'Failed') {
+    if (looksFailed || detail.status === 'Failed' || detail.status === 'Partial') {
       return { kind: 'stop_reason', detail: stop, state: 'known' }
     }
   }
 
-  if (detail.status === 'Failed') {
-    // Status says failed but no error / failed action / stop — unknown node
+  if (detail.status === 'Failed' || detail.status === 'Partial') {
+    // Status says failed/undetermined but no error / failed action / stop — unknown node
     return { kind: 'unknown', detail: null, state: 'unknown' }
   }
 

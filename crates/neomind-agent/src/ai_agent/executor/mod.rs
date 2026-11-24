@@ -804,40 +804,32 @@ impl AgentExecutor {
             loop_output.final_text = classification.cleaned_text;
         }
 
-        let (decision_process, execution_result) =
+        let (mut decision_process, mut execution_result) =
             tool_result::build_tool_result(agent, data_collected, loop_output);
 
-        // Safety net: images were on this run but the conclusion admits vision
-        // analysis never happened ("Vision tool not available", etc.). That is
-        // product false-success — do not leave Completed + high confidence.
-        // When tools already ran (e.g. message send), keep actions_executed in
-        // the result and mark success_rate=0 so stats/journal stay aligned
-        // without erasing the side-effect audit.
-        if has_embeddable_images
+        // Vision-undetermined Partial (D2 / PR3):
+        // 1) ViaVisionTool and every vision call failed, or
+        // 2) Images were present but the conclusion admits vision never ran.
+        // Both land as ExecutionStatus::Partial with stop_reason =
+        // vision_tools_failed — not Completed (false "现场正常") and not a
+        // hard Err (so the finish path can emit Partial + Failure notify).
+        let vision_calls_failed =
+            vision_path::vision_tools_all_failed(&execution_result.actions_executed);
+        let conclusion_admits_blind = has_embeddable_images
             && vision_path::conclusion_admits_vision_failure_for_path(
                 &decision_process.conclusion,
                 vision_exec_path,
-            )
-        {
+            );
+        if vision_calls_failed || conclusion_admits_blind {
             tracing::warn!(
                 agent_id = %agent.id,
                 vision_path = ?vision_exec_path,
+                vision_calls_failed,
+                conclusion_admits_blind,
                 actions = execution_result.actions_executed.len(),
-                "Conclusion admits vision failure — refusing Completed/false-success"
+                "Vision tools failed / conclusion admits blind run — Partial undetermined"
             );
-            if !execution_result.actions_executed.is_empty() {
-                let mut er = execution_result;
-                er.success_rate = 0.0;
-                er.summary = format!(
-                    "Vision analysis failed: {}",
-                    truncate_to(&decision_process.conclusion, 200)
-                );
-                return Ok((decision_process, er, vision_exec_path.label()));
-            }
-            return Err(NeoMindError::Llm(format!(
-                "Vision analysis failed: {}",
-                truncate_to(&decision_process.conclusion, 200)
-            )));
+            vision_path::mark_vision_tools_failed(&mut decision_process, &mut execution_result);
         }
 
         Ok((decision_process, execution_result, vision_exec_path.label()))
@@ -1153,12 +1145,17 @@ impl AgentExecutor {
         let record = match execution_result {
             Ok((decision_process, result, run_facts)) => {
                 // Tool-loop business success: empty tools OR any successful
-                // tool call → Completed. All tools failed (rate==0) or an
-                // explicit vision reject (rate forced to 0) → Failed.
+                // tool call → Completed. Vision-tools-all-failed → Partial
+                // (undetermined). Other all-tools-failed (rate==0) → Failed.
                 // Empty-event skips are Completed for retry/breaker purposes
                 // but do not bump successful_executions (or failed).
                 let is_skip = is_empty_event_skip(&result);
-                let business_ok = execution_business_ok(&result);
+                let is_vision_partial =
+                    decision_process.stop_reason == vision_path::VISION_TOOLS_FAILED_STOP_REASON;
+                // Vision Partial is never business-ok — even with empty
+                // actions (conclusion-admits-blind path), which would otherwise
+                // look like "no tools → success" to execution_business_ok.
+                let business_ok = !is_vision_partial && execution_business_ok(&result);
                 if !is_skip {
                     if let Err(e) = self
                         .store
@@ -1175,6 +1172,15 @@ impl AgentExecutor {
 
                 let (status, error) = if is_skip || business_ok {
                     (ExecutionStatus::Completed, None)
+                } else if is_vision_partial {
+                    (
+                        ExecutionStatus::Partial,
+                        Some(format!(
+                            "Vision tools failed — undetermined (success_rate={:.2}): {}",
+                            result.success_rate,
+                            truncate_to(&result.summary, 200)
+                        )),
+                    )
                 } else {
                     (
                         ExecutionStatus::Failed,
@@ -1748,8 +1754,11 @@ impl AgentExecutor {
 
                 // Update memory with Free mode results.
                 // Self-heal runs (0 < success_rate < 1) count as business success;
-                // only all-tools-failed / vision-reject (rate == 0 with actions) fail.
-                let overall_success = execution_business_ok(&execution_result);
+                // all-tools-failed fail; vision Partial is never success (even
+                // with empty actions after a blind-conclusion rewrite).
+                let overall_success = decision_process.stop_reason
+                    != vision_path::VISION_TOOLS_FAILED_STOP_REASON
+                    && execution_business_ok(&execution_result);
                 self.finalize_execution_memory(
                     &agent,
                     &decision_process.decisions,
@@ -2125,12 +2134,13 @@ pub(crate) fn is_empty_event_skip(result: &StorageExecutionResult) -> bool {
     result.summary.starts_with("Skipped:") || lower.contains("event data extraction failed")
 }
 
-/// Tool-loop / run business success for stats + Completed vs Failed.
+/// Tool-loop / run business success for stats + Completed vs Failed/Partial.
 ///
 /// - Empty-event skip → false (caller must not bump successful_executions)
-/// - No tools called → true
+/// - No tools called → true (caller must still exclude vision Partial via
+///   `stop_reason == vision_tools_failed` before trusting this)
 /// - Any successful tool (`success_rate > 0`) → true (self-heal OK)
-/// - All tools failed or vision reject (`success_rate == 0` with actions) → false
+/// - All tools failed (`success_rate == 0` with actions) → false
 pub(crate) fn execution_business_ok(result: &StorageExecutionResult) -> bool {
     if is_empty_event_skip(result) {
         return false;

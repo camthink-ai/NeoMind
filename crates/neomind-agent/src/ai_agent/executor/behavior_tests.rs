@@ -2567,6 +2567,31 @@ impl Tool for StubVisionTool {
     }
 }
 
+/// Vision tool that always soft-fails (success=false) — drives Partial path.
+struct FailingVisionTool;
+
+#[async_trait]
+impl Tool for FailingVisionTool {
+    fn name(&self) -> &str {
+        "vision"
+    }
+    fn description(&self) -> &str {
+        "analyze an image (always fails)"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "image": { "type": "string" },
+                "prompt": { "type": "string" }
+            }
+        })
+    }
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+        Ok(ToolOutput::error("vision backend timeout"))
+    }
+}
+
 fn embeddable_image_data() -> neomind_storage::DataCollected {
     neomind_storage::DataCollected {
         source: "device:NE301PIR-200366:image_data".into(),
@@ -2632,7 +2657,7 @@ async fn multimodal_inline_vision_succeeds_without_vision_tool() {
 }
 
 /// Negative: multimodal strip + conclusion admits "Vision tool not available"
-/// → must NOT return Completed/false-success.
+/// → Partial undetermined markers (not Completed / false-success).
 #[tokio::test]
 async fn multimodal_conclusion_admitting_vision_failure_is_rejected() {
     let rt = MockLlmRuntime::new(vec![MockResponse::text(
@@ -2652,7 +2677,7 @@ async fn multimodal_conclusion_admitting_vision_failure_is_rejected() {
     executor.set_tool_registry(registry);
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let err = executor
+    let (dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[embeddable_image_data()],
@@ -2661,13 +2686,17 @@ async fn multimodal_conclusion_admitting_vision_failure_is_rejected() {
             None,
         )
         .await
-        .expect_err("must refuse false-success when conclusion admits vision failure");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("Vision analysis failed")
-            || msg.to_lowercase().contains("vision tool not available"),
-        "error must name vision failure: {msg}"
+        .expect("blind conclusion must return Ok Partial markers, not Err");
+    assert_eq!(
+        dp.stop_reason,
+        super::vision_path::VISION_TOOLS_FAILED_STOP_REASON
     );
+    assert!(
+        dp.conclusion.starts_with("未判定 / Undetermined"),
+        "conclusion: {}",
+        dp.conclusion
+    );
+    assert_eq!(er.success_rate, 0.0);
 }
 
 /// Negative: images present, text-only LLM, no vision tool → Unavailable.
@@ -2700,6 +2729,163 @@ async fn vision_unavailable_refuses_completed() {
     assert!(
         err.to_string().contains("Vision required but unavailable"),
         "got: {err}"
+    );
+}
+
+/// D2 / PR3: ViaVisionTool + all vision calls fail → ExecutionStatus::Partial,
+/// stop_reason=vision_tools_failed, consecutive_failures not reset, Failure
+/// notify allowed, Judgment notify silent.
+#[tokio::test]
+async fn vision_tools_all_failed_becomes_partial_undetermined() {
+    let store = AgentStore::memory().expect("store");
+    let message_manager = Arc::new(neomind_messages::MessageManager::new());
+    let config = AgentExecutorConfig {
+        store: store.clone(),
+        time_series_storage: None,
+        device_service: None,
+        event_bus: None,
+        message_manager: Some(message_manager.clone()),
+        llm_runtime: None,
+        llm_backend_store: None,
+        extension_registry: None,
+        tool_registry: None,
+        memory_store: None,
+        backend_semaphores: None,
+        skill_registry: None,
+        execution_semaphore: None,
+    };
+    let mut executor = AgentExecutor::new(config).await.expect("executor");
+
+    let mut agent: AiAgent = serde_json::from_value(serde_json::json!({
+        "id": "vision-partial-agent",
+        "name": "看图未判定",
+        "user_prompt": "analyze camera image with vision tool; alert on gambling",
+        "resources": [],
+        "schedule": { "schedule_type": "manual" },
+        "status": "active",
+        "execution_mode": "free",
+        "created_at": 0, "updated_at": 0,
+        "stats": {
+            "total_executions": 0, "successful_executions": 0,
+            "failed_executions": 0, "avg_duration_ms": 0, "last_duration_ms": null
+        },
+        "memory": {},
+        "consecutive_failures": 2,
+        "notify": { "channels": [], "on": "failure" },
+        "parsed_intent": {
+            "intent_type": "monitoring",
+            "target_metrics": [],
+            "conditions": [],
+            "actions": [],
+            "confidence": 0.9
+        }
+    }))
+    .expect("fixture");
+    agent.execution_mode = ExecutionMode::Free;
+    store.save_agent(&agent).await.expect("seed");
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(FailingVisionTool));
+    executor.set_tool_registry(Arc::new(registry));
+
+    // Text-only LLM so path is ViaVisionTool (tool kept).
+    let rt: Arc<dyn LlmRuntime> = Arc::new(
+        MockLlmRuntime::new(vec![
+            MockResponse::tool_call(
+                "vision",
+                serde_json::json!({
+                    "image": "data:image/jpeg;base64,aGVsbG8=",
+                    "prompt": "describe"
+                }),
+            ),
+            // Model still invents "现场正常" — Partial must neutralize it.
+            MockResponse::text("现场正常，无异常。\nVerdict: criteria met"),
+        ])
+        .with_function_calling(),
+    );
+    executor.set_llm_runtime(rt).await;
+
+    // No event required: any vision-tool-all-failed run is Partial even when
+    // the collected data had no image payload (tool was still attempted).
+    let record = executor
+        .execute_agent(agent.clone(), None, None)
+        .await
+        .expect("Partial run must Ok(record)");
+
+    assert_eq!(
+        record.status,
+        neomind_storage::ExecutionStatus::Partial,
+        "error={:?}",
+        record.error
+    );
+    assert_eq!(
+        record.decision_process.stop_reason,
+        super::vision_path::VISION_TOOLS_FAILED_STOP_REASON
+    );
+    assert!(
+        record
+            .decision_process
+            .conclusion
+            .starts_with("未判定 / Undetermined"),
+        "conclusion: {}",
+        record.decision_process.conclusion
+    );
+    assert!(
+        !record
+            .decision_process
+            .conclusion
+            .contains("Verdict: criteria met"),
+        "Judgment must not see criteria met: {}",
+        record.decision_process.conclusion
+    );
+    assert!(record
+        .error
+        .as_ref()
+        .is_some_and(|e| e.contains("Vision tools failed")));
+
+    let stored = store
+        .get_agent(&agent.id)
+        .await
+        .expect("get")
+        .expect("exists");
+    assert_eq!(
+        stored.stats.successful_executions, 0,
+        "Partial must not count as success"
+    );
+    assert_eq!(
+        stored.stats.failed_executions, 1,
+        "Partial still bumps failed_executions for breaker pacing"
+    );
+    // consecutive_failures was 2; Partial must NOT reset to 0 (increments).
+    assert!(
+        stored.consecutive_failures >= 2,
+        "consecutive_failures must not reset on Partial, got {}",
+        stored.consecutive_failures
+    );
+
+    // Failure notify allowed for Partial.
+    let sent = message_manager.list_messages().await;
+    assert_eq!(sent.len(), 1, "Failure notify must fire for Partial");
+    assert!(
+        sent[0].title.contains("undetermined") || sent[0].title.contains("failed"),
+        "title: {}",
+        sent[0].title
+    );
+
+    // Judgment notify stays silent even with same Partial record.
+    agent.notify = Some(neomind_storage::AgentNotify {
+        channels: vec![],
+        on: neomind_storage::NotifyOn::Judgment,
+    });
+    store.save_agent(&agent).await.expect("update notify");
+    let before = message_manager.list_messages().await.len();
+    executor
+        .dispatch_agent_notifications(&agent.id, &agent.name, &record, false)
+        .await;
+    assert_eq!(
+        message_manager.list_messages().await.len(),
+        before,
+        "Judgment notify must not route for Partial"
     );
 }
 
@@ -2857,7 +3043,7 @@ async fn dongpingshan_honest_zh_image_analysis_completes() {
     assert!(dp.conclusion.contains("无赌博"));
 }
 
-/// T4 table: ZH/EN conclusions that admit vision failure must Fail, not Completed.
+/// T4 table: ZH/EN conclusions that admit vision failure must Partial, not Completed.
 #[tokio::test]
 async fn dongpingshan_vision_failure_conclusions_table_fail() {
     let cases = [
@@ -2883,7 +3069,7 @@ async fn dongpingshan_vision_failure_conclusions_table_fail() {
         executor.set_tool_registry(Arc::new(registry));
         executor.set_llm_runtime(rt_dyn.clone()).await;
 
-        let err = executor
+        let (dp, er, _) = executor
             .execute_with_tools(
                 &agent,
                 &[embeddable_image_data()],
@@ -2892,13 +3078,17 @@ async fn dongpingshan_vision_failure_conclusions_table_fail() {
                 None,
             )
             .await
-            .expect_err(&format!(
-                "conclusion must Fail (not Completed): {conclusion}"
-            ));
-        let msg = err.to_string();
+            .unwrap_or_else(|e| panic!("case {i} ({conclusion}) must Ok Partial, got Err: {e}"));
+        assert_eq!(
+            dp.stop_reason,
+            super::vision_path::VISION_TOOLS_FAILED_STOP_REASON,
+            "case {i} ({conclusion})"
+        );
+        assert_eq!(er.success_rate, 0.0, "case {i}");
         assert!(
-            msg.contains("Vision analysis failed"),
-            "case {i} ({conclusion}) → {msg}"
+            dp.conclusion.starts_with("未判定 / Undetermined"),
+            "case {i}: {}",
+            dp.conclusion
         );
     }
 }

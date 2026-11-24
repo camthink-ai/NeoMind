@@ -199,6 +199,7 @@
     "running": "Running",
     "completed": "Completed",
     "failed": "Failed",
+    "partial": "Partial",
     "cancelled": "Cancelled"
   },
   "execution": {
