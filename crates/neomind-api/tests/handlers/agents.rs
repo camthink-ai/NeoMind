@@ -417,6 +417,68 @@ async fn test_create_agent_without_resources_is_allowed() {
         .expect("a prompt-only agent must be creatable");
 }
 
+/// Schedule-only PUT must not wipe bindings (Bug 3 / PR2 B1). Before the fix,
+/// `has_schedule_update` was OR'd into the resources rewrite predicate, so a
+/// PUT that only changed `schedule` cleared `agent.resources`.
+#[tokio::test]
+async fn test_schedule_only_update_preserves_resources() {
+    let state = create_test_server_state().await;
+    let id = create_agent_with(
+        &state,
+        json!({
+            "execution_mode": "focused",
+            "resources": [{
+                "resource_id": "sensor-001",
+                "resource_type": "device",
+                "name": "Temp Sensor"
+            }],
+        }),
+    )
+    .await;
+
+    let before = read_back(&state, &id).await;
+    let before_resources = before["resources"]
+        .as_array()
+        .expect("created with resources")
+        .clone();
+    assert_eq!(before_resources.len(), 1);
+    assert_eq!(before_resources[0]["resource_id"], "sensor-001");
+
+    let schedule_only: UpdateAgentRequest = serde_json::from_value(json!({
+        "schedule": { "schedule_type": "interval", "interval_seconds": 120 },
+    }))
+    .expect("schedule-only update body");
+    let _ = update_agent(State(state.clone()), Path(id.clone()), Json(schedule_only))
+        .await
+        .expect("schedule-only update must succeed");
+
+    let after = read_back(&state, &id).await;
+    assert_eq!(
+        after["schedule"]["interval_seconds"], 120,
+        "schedule must update"
+    );
+    assert_eq!(
+        after["resources"].as_array().expect("resources array"),
+        &before_resources,
+        "resources must survive a schedule-only PUT"
+    );
+
+    // Explicit empty array still clears bindings (editor clear path).
+    let clear: UpdateAgentRequest = serde_json::from_value(json!({
+        "resources": [],
+    }))
+    .expect("explicit clear body");
+    let _ = update_agent(State(state.clone()), Path(id.clone()), Json(clear))
+        .await
+        .expect("explicit resources:[] must succeed");
+    let cleared = read_back(&state, &id).await;
+    assert_eq!(
+        cleared["resources"].as_array().map(|a| a.len()),
+        Some(0),
+        "resources:[] must clear bindings"
+    );
+}
+
 /// Data Explorer's detail view queries `?source=ai:{agent_id}&metric={field}` —
 /// the fallback source parser only knew device/extension/transform, so
 /// clicking into an AI-published series was a 400.
