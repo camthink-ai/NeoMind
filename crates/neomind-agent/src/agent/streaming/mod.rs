@@ -39,6 +39,9 @@ pub use context::{
     align_end_to_tool_group_boundary, estimate_post_summary_context_usage, partition_agent_groups,
     protected_user_indices, PostSummaryContextUsage, RECENT_PROTECTED_USER_MSGS,
 };
+pub use intent::{
+    extract_receipt_device_id, extract_send_destinations, extract_user_device_targets,
+};
 pub use result_format::format_tool_results;
 pub use stream_core::{process_stream_events_with_safeguards, StreamSafeguards};
 pub use stream_multimodal::process_multimodal_stream_events_with_safeguards;

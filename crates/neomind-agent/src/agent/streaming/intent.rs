@@ -471,6 +471,210 @@ pub(crate) fn build_list_only_dead_end_prompt(
     Some(msg)
 }
 
+/// Structured delivery status returned by `device control` API / CLI responses.
+///
+/// Mirrors `neomind_devices::service::CommandDelivery` JSON encoding:
+/// - `{"adapter_accepted": {"adapters": N}}` (object)
+/// - `"extension_accepted"` (string)
+/// - `"device_acknowledged"` (string)
+/// - `"physical_effect_verified"` (string, reserved)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CommandDeliveryState {
+    AdapterAccepted { adapters: u32 },
+    ExtensionAccepted,
+    DeviceAcknowledged,
+    PhysicalEffectVerified,
+}
+
+/// Parsed structured delivery receipt extracted from a tool result payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommandDeliveryReceipt {
+    pub device_id: Option<String>,
+    pub command: Option<String>,
+    pub delivery: CommandDeliveryState,
+    pub delivery_note: Option<String>,
+}
+
+/// True for calendar-like tokens (`2026-11-24`, `2026/11/24`) that must not be
+/// treated as device ids by the display_url source gate.
+fn looks_like_date_token(token: &str) -> bool {
+    let sep = if token.contains('-') {
+        '-'
+    } else if token.contains('/') {
+        '/'
+    } else {
+        return false;
+    };
+    let parts: Vec<&str> = token.split(sep).collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    let (y, m, d) = (parts[0], parts[1], parts[2]);
+    y.len() == 4
+        && y.chars().all(|c| c.is_ascii_digit())
+        && (1..=2).contains(&m.len())
+        && m.chars().all(|c| c.is_ascii_digit())
+        && (1..=2).contains(&d.len())
+        && d.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Device-ish ids mentioned in user text (heuristic for write-target binding).
+pub fn extract_user_device_targets(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for token in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
+        let t = token.trim();
+        if t.len() < 4 || t.len() > 64 {
+            continue;
+        }
+        let has_digit = t.chars().any(|c| c.is_ascii_digit());
+        if !has_digit {
+            continue;
+        }
+        if looks_like_date_token(t) {
+            continue;
+        }
+        if !out.iter().any(|x| x == t) {
+            out.push(t.to_string());
+        }
+    }
+    out
+}
+
+/// Send/display **destinations** from user text (the device being written to).
+///
+/// "把 A 照片发到 B" → only B. Source device A must not inherit write confirmation.
+/// Status queries like "B 显示了吗" fall back to all mentioned ids when no
+/// explicit destination cue is present.
+pub fn extract_send_destinations(text: &str) -> Vec<String> {
+    const CUES: &[&str] = &[
+        "发送到",
+        "发送给",
+        "推送到",
+        "发到",
+        "传到",
+        "显示到",
+        "显示在",
+        "展示到",
+        "展示在",
+        "发给",
+        " to ",
+        " onto ",
+    ];
+    let mut dests = Vec::new();
+    let lower = text.to_ascii_lowercase();
+    for cue in CUES {
+        let cue_lower = cue.to_ascii_lowercase();
+        let mut search = lower.as_str();
+        let mut base = 0usize;
+        while let Some(rel) = search.find(&cue_lower) {
+            let abs = base + rel + cue_lower.len();
+            let after = text.get(abs..).unwrap_or("");
+            for id in extract_user_device_targets(after) {
+                if !dests.iter().any(|x| x == &id) {
+                    dests.push(id);
+                }
+            }
+            base = abs;
+            search = lower.get(base..).unwrap_or("");
+        }
+    }
+    if !dests.is_empty() {
+        return dests;
+    }
+    extract_user_device_targets(text)
+}
+
+/// Device id attributed inside a tool body (receipt target), if any.
+pub fn extract_receipt_device_id(body: &str) -> Option<String> {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+        for key in ["device_id", "id", "device"] {
+            if let Some(id) = v
+                .get("data")
+                .and_then(|d| d.get(key))
+                .and_then(|x| x.as_str())
+                .or_else(|| v.get(key).and_then(|x| x.as_str()))
+            {
+                let id = id.trim();
+                if id.len() >= 4 {
+                    return Some(id.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn parse_delivery_value(val: &serde_json::Value) -> Option<CommandDeliveryState> {
+    match val {
+        serde_json::Value::String(s) => match s.as_str() {
+            "extension_accepted" => Some(CommandDeliveryState::ExtensionAccepted),
+            "device_acknowledged" => Some(CommandDeliveryState::DeviceAcknowledged),
+            "physical_effect_verified" => Some(CommandDeliveryState::PhysicalEffectVerified),
+            "adapter_accepted" => Some(CommandDeliveryState::AdapterAccepted { adapters: 1 }),
+            _ => None,
+        },
+        serde_json::Value::Object(map) => {
+            if let Some(inner) = map.get("adapter_accepted") {
+                let adapters = inner
+                    .get("adapters")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as u32)
+                    .unwrap_or(1);
+                return Some(CommandDeliveryState::AdapterAccepted { adapters });
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn extract_delivery_receipt_from_json(v: &serde_json::Value) -> Option<CommandDeliveryReceipt> {
+    let payload = v
+        .get("data")
+        .filter(|d| d.get("delivery").is_some())
+        .or_else(|| v.get("delivery").map(|_| v))?;
+    let delivery = parse_delivery_value(payload.get("delivery")?)?;
+    let device_id = payload
+        .get("device_id")
+        .or_else(|| payload.get("id"))
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let command = payload
+        .get("command")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let delivery_note = payload
+        .get("delivery_note")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    Some(CommandDeliveryReceipt {
+        device_id,
+        command,
+        delivery,
+        delivery_note,
+    })
+}
+
+/// Parse a `CommandDeliveryReceipt` from a raw tool result string (handling
+/// shell wrapper `{"exit_code":0,"stdout":"{...}"}`, API wrapper `{"data":{...}}`,
+/// and direct JSON payloads).
+pub(crate) fn parse_command_delivery_from_tool_result(
+    raw: &str,
+) -> Option<CommandDeliveryReceipt> {
+    let v: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
+    if let Some(stdout) = v.get("stdout").and_then(|s| s.as_str()) {
+        if let Ok(inner) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
+            if let Some(receipt) = extract_delivery_receipt_from_json(&inner) {
+                return Some(receipt);
+            }
+        }
+    }
+    extract_delivery_receipt_from_json(&v)
+}
+
 /// TURN-END completeness note: the user asked for an ACTION and no
 /// successful mutation DELIVERED it this turn. Covers the failure shapes
 /// observed live: the action never ran at all (files written,
@@ -479,14 +683,36 @@ pub(crate) fn build_list_only_dead_end_prompt(
 /// (widget create exit 0 while the requested add-to-dashboard never ran —
 /// "any mutation succeeded" suppressed the note and the turn ended
 /// promising "let me install it now"). Delivery is judged by
-/// `mutation_satisfies_action` against the same action vocabulary as the
-/// hint. Scoping matches the mid-turn detector: an action hint must be
+/// `mutation_satisfies_action_for_user` against the same action vocabulary as
+/// the hint. Scoping matches the mid-turn detector: an action hint must be
 /// extractable (noun false-positives skipped); with no extractable hint we
 /// stay silent.
+#[cfg(test)]
 pub(crate) fn build_incomplete_action_note(
     user_message: &str,
     executed_commands: &[&str],
     successful_mutations: &[String],
+) -> Option<String> {
+    build_incomplete_action_note_with_results(
+        user_message,
+        executed_commands,
+        successful_mutations,
+        &[],
+    )
+}
+
+/// Result-aware turn-end completeness & delivery-honesty note.
+///
+/// When a matching `device control` mutation succeeded this turn and its tool
+/// result carried a structured `CommandDelivery` receipt (`adapter_accepted`,
+/// `extension_accepted`, or `device_acknowledged`), emits a factual delivery
+/// note that never claims physical display and never asks the user to send
+/// `"continue"`.
+pub(crate) fn build_incomplete_action_note_with_results(
+    user_message: &str,
+    executed_commands: &[&str],
+    successful_mutations: &[String],
+    tool_results: &[(String, String)],
 ) -> Option<String> {
     if !user_message_requires_action(user_message) {
         return None;
@@ -508,11 +734,47 @@ pub(crate) fn build_incomplete_action_note(
     }
     let delivered = successful_mutations
         .iter()
-        .any(|c| mutation_satisfies_action(c, domain, action));
+        .any(|c| mutation_satisfies_action_for_user(c, domain, action, user_message));
     if delivered {
+        if domain == "device" {
+            let dests = extract_send_destinations(user_message);
+            if let Some(receipt) = tool_results
+                .iter()
+                .rev()
+                .filter_map(|(_, body)| parse_command_delivery_from_tool_result(body))
+                .find(|r| {
+                    dests.is_empty()
+                        || r.device_id
+                            .as_deref()
+                            .map(|id| dests.iter().any(|d| d.eq_ignore_ascii_case(id)))
+                            .unwrap_or(true)
+                })
+            {
+                let dev = receipt.device_id.as_deref().unwrap_or("target device");
+                let cmd = receipt.command.as_deref().unwrap_or("control");
+                return match receipt.delivery {
+                    CommandDeliveryState::AdapterAccepted { adapters } => Some(format!(
+                        "Delivery receipt: command '{cmd}' for device '{dev}' was accepted by {adapters} adapter(s) (adapter_accepted); physical display/effect on the device is NOT yet confirmed. Check device status or preview to verify."
+                    )),
+                    CommandDeliveryState::ExtensionAccepted => Some(format!(
+                        "Delivery receipt: command '{cmd}' for device '{dev}' was accepted by the extension (extension_accepted); physical display/effect on the device is NOT yet confirmed. Check device status or preview to verify."
+                    )),
+                    CommandDeliveryState::DeviceAcknowledged => Some(format!(
+                        "Delivery receipt: command '{cmd}' for device '{dev}' was acknowledged by the device (device_acknowledged); physical display/effect is NOT yet verified."
+                    )),
+                    CommandDeliveryState::PhysicalEffectVerified => None,
+                };
+            }
+        }
         return None;
     }
     let action_hint = extract_action_hint(user_message);
+    if domain == "device" && action == "write/send" && !successful_mutations.is_empty() {
+        return Some(format!(
+            "Delivery mismatch: mutations ran ({}), but none matched the requested target device and command for ({action_hint}). Target send/display is NOT confirmed.",
+            successful_mutations.join("; ")
+        ));
+    }
     let done_summary = if executed_commands.is_empty() {
         "no commands ran".to_string()
     } else {
@@ -1124,6 +1386,144 @@ pub(crate) fn mutation_satisfies_action(cmd: &str, hint_domain: &str, hint_actio
     cmd.split("&&")
         .flat_map(|seg| seg.split(';'))
         .any(|seg| segment_satisfies_action(seg, hint_domain, hint_action))
+}
+
+/// User-aware mutation delivery check.
+///
+/// Extends [`mutation_satisfies_action`] with target-device and subcommand
+/// binding for `("device", "write/send")` when `device control <target> <subcmd>`
+/// runs, without widening `ACTION_CLASSES`:
+/// - target device must match [`extract_send_destinations`] when destinations
+///   are stated in `user_message`;
+/// - if the user explicitly named a snake_case command (e.g. `display_url`,
+///   `render_text`, `set_alarm`), `<subcmd>` must match it;
+/// - else if the user asked to display/show/render on a screen, `<subcmd>`
+///   must be a display subcommand (`display_url`, `display_image`,
+///   `render_text`, `show_image`, `display`, etc.) rather than `reboot`/etc.
+pub(crate) fn mutation_satisfies_action_for_user(
+    cmd: &str,
+    hint_domain: &str,
+    hint_action: &str,
+    user_message: &str,
+) -> bool {
+    cmd.split("&&")
+        .flat_map(|seg| seg.split(';'))
+        .any(|seg| segment_satisfies_action_for_user(seg, hint_domain, hint_action, user_message))
+}
+
+/// Parse `(target_device, subcommand)` from `neomind device control <target> <subcmd> ...`.
+pub(crate) fn extract_device_control_target_and_subcmd(seg: &str) -> Option<(String, String)> {
+    let argv: Vec<String> = crate::toolkit::shell::tokenize_neomind_command(seg.trim())
+        .unwrap_or_else(|_| seg.split_whitespace().map(str::to_string).collect());
+    let mut i = 0usize;
+    while i + 1 < argv.len() {
+        if argv[i].eq_ignore_ascii_case("device") && argv[i + 1].eq_ignore_ascii_case("control") {
+            let mut pos = Vec::new();
+            let mut j = i + 2;
+            while j < argv.len() {
+                let tok = argv[j].as_str();
+                if tok.starts_with("--") {
+                    if tok.contains('=') {
+                        j += 1;
+                    } else {
+                        j += 2;
+                    }
+                    continue;
+                }
+                if tok.starts_with('-') && tok.len() == 2 {
+                    j += 2;
+                    continue;
+                }
+                let cleaned = tok.trim_matches(|c| c == '"' || c == '\'');
+                if !cleaned.is_empty() {
+                    pos.push(cleaned.to_string());
+                    if pos.len() == 2 {
+                        return Some((pos[0].clone(), pos[1].clone()));
+                    }
+                }
+                j += 1;
+            }
+            return None;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn user_asks_display_action(user_message: &str) -> bool {
+    let lower = user_message.to_ascii_lowercase();
+    ["显示", "展示", "屏幕", "screen", "display", "show", "render"]
+        .iter()
+        .any(|kw| lower.contains(kw))
+}
+
+fn is_display_subcommand(subcmd: &str) -> bool {
+    let lower = subcmd.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "display_url" | "display_image" | "render_text" | "show_image" | "display" | "render"
+    ) || lower.starts_with("display_")
+        || lower.starts_with("render_")
+        || lower.starts_with("show_")
+}
+
+/// Extract explicit snake_case command names mentioned by the user (e.g.
+/// `display_url`, `render_text`, `set_alarm`), ignoring device-like IDs that
+/// contain digits.
+fn explicit_named_subcommands(user_message: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for token in user_message.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        let t = token.trim();
+        if t.len() >= 4
+            && t.contains('_')
+            && !t.starts_with('_')
+            && !t.ends_with('_')
+            && !t.chars().any(|c| c.is_ascii_digit())
+            && !out.iter().any(|x: &String| x.eq_ignore_ascii_case(t))
+        {
+            out.push(t.to_ascii_lowercase());
+        }
+    }
+    out
+}
+
+fn segment_satisfies_action_for_user(
+    seg: &str,
+    hint_domain: &str,
+    hint_action: &str,
+    user_message: &str,
+) -> bool {
+    if (hint_domain == "device" || hint_domain.is_empty()) && hint_action == "write/send" {
+        if let Some((target, subcmd)) = extract_device_control_target_and_subcmd(seg) {
+            let dests = extract_send_destinations(user_message);
+            if !dests.is_empty() && !dests.iter().any(|d| d.eq_ignore_ascii_case(&target)) {
+                return false;
+            }
+            let explicit_cmds = explicit_named_subcommands(user_message);
+            if !explicit_cmds.is_empty() {
+                return explicit_cmds
+                    .iter()
+                    .any(|c| c.eq_ignore_ascii_case(&subcmd));
+            }
+            if user_asks_display_action(user_message) {
+                return is_display_subcommand(&subcmd);
+            }
+            return true;
+        }
+        // Regression control: `write-metric` still satisfies `("device", "write/send")`
+        // when its target device matches (or no destination was specified).
+        let seg_lower = seg.to_lowercase();
+        if seg_lower.contains("write-metric") {
+            let dests = extract_send_destinations(user_message);
+            if !dests.is_empty() {
+                return dests
+                    .iter()
+                    .any(|d| seg_lower.contains(&d.to_ascii_lowercase()));
+            }
+            return true;
+        }
+    }
+    segment_satisfies_action(seg, hint_domain, hint_action)
 }
 
 fn segment_satisfies_action(seg: &str, hint_domain: &str, hint_action: &str) -> bool {
@@ -3249,5 +3649,101 @@ mod tests {
                 .is_some(),
             "device list total:0 must not skip agent_conclusion_redirect"
         );
+    }
+
+    #[test]
+    fn section6_1_parses_mixed_command_delivery_json_shapes() {
+        // Object form: {"adapter_accepted": {"adapters": 1}} inside shell stdout wrapper.
+        let adapter_raw = r#"{"exit_code":0,"stdout":"{\"success\":true,\"data\":{\"device_id\":\"20545d67\",\"command\":\"display_url\",\"sent\":true,\"delivery\":{\"adapter_accepted\":{\"adapters\":2}},\"delivery_note\":\"queued\"}}","stderr":""}"#;
+        let r1 = parse_command_delivery_from_tool_result(adapter_raw).expect("adapter_accepted");
+        assert_eq!(r1.device_id.as_deref(), Some("20545d67"));
+        assert_eq!(r1.command.as_deref(), Some("display_url"));
+        assert_eq!(r1.delivery, CommandDeliveryState::AdapterAccepted { adapters: 2 });
+
+        // String form: "extension_accepted"
+        let ext_raw = r#"{"success":true,"data":{"device_id":"screen-01","command":"render_text","delivery":"extension_accepted"}}"#;
+        let r2 = parse_command_delivery_from_tool_result(ext_raw).expect("extension_accepted");
+        assert_eq!(r2.delivery, CommandDeliveryState::ExtensionAccepted);
+
+        // String form: "device_acknowledged"
+        let ack_raw = r#"{"device_id":"screen-01","command":"display_url","delivery":"device_acknowledged"}"#;
+        let r3 = parse_command_delivery_from_tool_result(ack_raw).expect("device_acknowledged");
+        assert_eq!(r3.delivery, CommandDeliveryState::DeviceAcknowledged);
+
+        // Turn-end note for adapter_accepted: honest delivery receipt, never "Send continue".
+        let note = build_incomplete_action_note_with_results(
+            "把设备 200366 的照片发送到 20545d67 显示",
+            &["neomind device control 20545d67 display_url --param url=/api/images/200366/frame_preview"],
+            &["neomind device control 20545d67 display_url --param url=/api/images/200366/frame_preview".to_string()],
+            &[("shell".to_string(), adapter_raw.to_string())],
+        )
+        .expect("should emit factual delivery receipt note");
+        assert!(note.contains("adapter_accepted"), "{note}");
+        assert!(note.contains("NOT yet confirmed"), "{note}");
+        assert!(!note.contains("Send \"continue\""), "{note}");
+    }
+
+    #[test]
+    fn section6_3_device_write_send_target_and_subcommand_binding_five_cases() {
+        let ask = "把设备 200366 的照片发送到 20545d67 显示";
+
+        // Case 1: Correct destination (20545d67) + display subcommand (display_url) -> satisfies.
+        assert!(mutation_satisfies_action_for_user(
+            "neomind device control 20545d67 display_url --param url=/api/images/200366/frame_preview",
+            "device",
+            "write/send",
+            ask,
+        ));
+
+        // Case 2: Wrong destination (source 200366 instead of 20545d67) -> does NOT satisfy.
+        assert!(!mutation_satisfies_action_for_user(
+            "neomind device control 200366 display_url --param url=/api/images/200366/frame_preview",
+            "device",
+            "write/send",
+            ask,
+        ));
+
+        // Case 3: Right destination (20545d67) but non-display subcommand (reboot) -> does NOT satisfy.
+        assert!(!mutation_satisfies_action_for_user(
+            "neomind device control 20545d67 reboot",
+            "device",
+            "write/send",
+            ask,
+        ));
+
+        // Case 4: User explicitly names a command (`render_text`) for `screen-01`:
+        // `render_text` satisfies, `display_url` does not.
+        let named_ask = "给设备 screen-01 发送 render_text 命令";
+        assert!(mutation_satisfies_action_for_user(
+            "neomind device control screen-01 render_text --param text=hello",
+            "device",
+            "write/send",
+            named_ask,
+        ));
+        assert!(!mutation_satisfies_action_for_user(
+            "neomind device control screen-01 display_url --param url=/api/images/200366/frame_preview",
+            "device",
+            "write/send",
+            named_ask,
+        ));
+
+        // Case 5: Mismatch emits factual delivery mismatch note (not silent, not claiming sent).
+        let mismatch_note = build_incomplete_action_note_with_results(
+            ask,
+            &["neomind device control 20545d67 reboot"],
+            &["neomind device control 20545d67 reboot".to_string()],
+            &[],
+        )
+        .expect("mismatch must emit factual note");
+        assert!(mismatch_note.contains("Delivery mismatch"), "{mismatch_note}");
+        assert!(mismatch_note.contains("NOT confirmed"), "{mismatch_note}");
+
+        // Regression control: write-metric on target device still satisfies.
+        assert!(mutation_satisfies_action_for_user(
+            "neomind device write-metric 20545d67 --metric temp --value 25",
+            "device",
+            "write/send",
+            "给设备 20545d67 写入指标 temp",
+        ));
     }
 }
