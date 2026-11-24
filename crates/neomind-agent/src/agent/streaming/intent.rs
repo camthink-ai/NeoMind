@@ -661,9 +661,7 @@ fn extract_delivery_receipt_from_json(v: &serde_json::Value) -> Option<CommandDe
 /// Parse a `CommandDeliveryReceipt` from a raw tool result string (handling
 /// shell wrapper `{"exit_code":0,"stdout":"{...}"}`, API wrapper `{"data":{...}}`,
 /// and direct JSON payloads).
-pub(crate) fn parse_command_delivery_from_tool_result(
-    raw: &str,
-) -> Option<CommandDeliveryReceipt> {
+pub(crate) fn parse_command_delivery_from_tool_result(raw: &str) -> Option<CommandDeliveryReceipt> {
     let v: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
     if let Some(stdout) = v.get("stdout").and_then(|s| s.as_str()) {
         if let Ok(inner) = serde_json::from_str::<serde_json::Value>(stdout.trim()) {
@@ -1452,9 +1450,11 @@ pub(crate) fn extract_device_control_target_and_subcmd(seg: &str) -> Option<(Str
 
 fn user_asks_display_action(user_message: &str) -> bool {
     let lower = user_message.to_ascii_lowercase();
-    ["显示", "展示", "屏幕", "screen", "display", "show", "render"]
-        .iter()
-        .any(|kw| lower.contains(kw))
+    [
+        "显示", "展示", "屏幕", "screen", "display", "show", "render",
+    ]
+    .iter()
+    .any(|kw| lower.contains(kw))
 }
 
 fn is_display_subcommand(subcmd: &str) -> bool {
@@ -3658,7 +3658,10 @@ mod tests {
         let r1 = parse_command_delivery_from_tool_result(adapter_raw).expect("adapter_accepted");
         assert_eq!(r1.device_id.as_deref(), Some("20545d67"));
         assert_eq!(r1.command.as_deref(), Some("display_url"));
-        assert_eq!(r1.delivery, CommandDeliveryState::AdapterAccepted { adapters: 2 });
+        assert_eq!(
+            r1.delivery,
+            CommandDeliveryState::AdapterAccepted { adapters: 2 }
+        );
 
         // String form: "extension_accepted"
         let ext_raw = r#"{"success":true,"data":{"device_id":"screen-01","command":"render_text","delivery":"extension_accepted"}}"#;
@@ -3666,7 +3669,8 @@ mod tests {
         assert_eq!(r2.delivery, CommandDeliveryState::ExtensionAccepted);
 
         // String form: "device_acknowledged"
-        let ack_raw = r#"{"device_id":"screen-01","command":"display_url","delivery":"device_acknowledged"}"#;
+        let ack_raw =
+            r#"{"device_id":"screen-01","command":"display_url","delivery":"device_acknowledged"}"#;
         let r3 = parse_command_delivery_from_tool_result(ack_raw).expect("device_acknowledged");
         assert_eq!(r3.delivery, CommandDeliveryState::DeviceAcknowledged);
 
@@ -3735,7 +3739,10 @@ mod tests {
             &[],
         )
         .expect("mismatch must emit factual note");
-        assert!(mismatch_note.contains("Delivery mismatch"), "{mismatch_note}");
+        assert!(
+            mismatch_note.contains("Delivery mismatch"),
+            "{mismatch_note}"
+        );
         assert!(mismatch_note.contains("NOT confirmed"), "{mismatch_note}");
 
         // Regression control: write-metric on target device still satisfies.

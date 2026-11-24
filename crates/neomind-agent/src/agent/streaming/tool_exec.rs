@@ -51,10 +51,7 @@ fn merge_device_control_params_for_exec(
     argv: &[String],
     arguments: &serde_json::Value,
 ) -> Option<serde_json::Value> {
-    let structured = arguments
-        .get("params")
-        .filter(|v| v.is_object())
-        .cloned();
+    let structured = arguments.get("params").filter(|v| v.is_object()).cloned();
 
     // Clap path: same Control surface the dispatcher parses.
     if let Ok(args) = neomind_cli_ops::dispatch::commands::Args::try_parse_from(argv.iter()) {
@@ -197,11 +194,9 @@ pub(crate) fn display_url_source_block(
     if real_name != "shell" {
         return None;
     }
-    let canonical =
-        crate::agent::task_continuity::canonicalize_tool_arguments(name, arguments);
+    let canonical = crate::agent::task_continuity::canonicalize_tool_arguments(name, arguments);
     let cmd = canonical.get("command").and_then(|v| v.as_str())?;
-    let (target_device, subcmd) =
-        super::intent::extract_device_control_target_and_subcmd(cmd)?;
+    let (target_device, subcmd) = super::intent::extract_device_control_target_and_subcmd(cmd)?;
     if !subcmd.eq_ignore_ascii_case("display_url") {
         return None;
     }
@@ -637,7 +632,10 @@ mod cache_regressions {
         let blocked = display_url_source_block("shell", &cli_self_preview, &recent_with_source)
             .expect("self-preview with distinct source 200366 must be blocked");
         let err = blocked.result.unwrap_err().to_string();
-        assert!(err.contains("200366"), "error must guide to source 200366: {err}");
+        assert!(
+            err.contains("200366"),
+            "error must guide to source 200366: {err}"
+        );
 
         // 2) Structured `params.url` form -> BLOCKED too.
         let structured_self_preview = serde_json::json!({
@@ -684,19 +682,15 @@ mod cache_regressions {
         );
 
         // 7) Date tokens must not be treated as a source device id.
-        let with_date = vec![
-            "2026-11-24 让设备 20545d67 显示预览".to_string(),
-        ];
+        let with_date = vec!["2026-11-24 让设备 20545d67 显示预览".to_string()];
         assert!(
             display_url_source_block("shell", &cli_self_preview, &with_date).is_none(),
             "ISO date must not false-positive as a source device"
         );
         assert!(
-            !crate::agent::streaming::extract_user_device_targets(
-                "check 2026-11-24 then 20545d67"
-            )
-            .iter()
-            .any(|id| id == "2026-11-24"),
+            !crate::agent::streaming::extract_user_device_targets("check 2026-11-24 then 20545d67")
+                .iter()
+                .any(|id| id == "2026-11-24"),
             "extract_user_device_targets must skip dates"
         );
 
@@ -738,16 +732,16 @@ mod cache_regressions {
         let argv: Vec<String> = crate::toolkit::shell::tokenize_neomind_command(cmd)
             .unwrap_or_else(|_| cmd.split_whitespace().map(str::to_string).collect());
 
-        let validated = extract_display_url_param(&argv, &conflicting)
-            .expect("merged URL must resolve");
+        let validated =
+            extract_display_url_param(&argv, &conflicting).expect("merged URL must resolve");
         assert_eq!(
             validated, "/api/images/20545d67/frame_preview",
             "validation must see --param override (execution truth), not structured camera URL"
         );
 
         // Same merge the dispatcher would produce after inject + clap Control.
-        let exec_merge = merge_device_control_params_for_exec(&argv, &conflicting)
-            .expect("exec merge");
+        let exec_merge =
+            merge_device_control_params_for_exec(&argv, &conflicting).expect("exec merge");
         assert_eq!(
             url_from_params_object(&exec_merge).as_deref(),
             Some("/api/images/20545d67/frame_preview")
