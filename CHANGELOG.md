@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.3.4] - 2026-11-25 — Agent runtime/Partial, creation gating, chat context, frontend budget
+
+Post-`v1.3.3`: whole-device event snapshots + vision `Partial`, Chat agent create/tool gating, chat truncation/receipt honesty, frontend auth + first-paint budget, then post-merge HIGH/MEDIUM closures (#33/#34). Product version **1.3.4** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged).
+
+### Upgrade notes
+- **Whole-device event runs see the full device report**: an empty-field device trigger (or Run now on a device-bound event agent) pulls the current metric snapshot — including `image_data` — instead of racing the first arriving field alone; MQTT/Webhook adapters write the whole batch before emitting events so the snapshot is already on disk.
+- **Vision undetermined is `Partial`, not Completed/Failed**: when every vision tool fails or the conclusion admits a blind run, the record is `ExecutionStatus::Partial` (WS `success=false`, no event replay, cooldown kept); Judgment `message send` is blocked mid-loop once vision has already failed, and on Partial recovery probes the agent stays `Error` until a Completed run.
+- **Judgment alerts need `shell`**: `notify.on=judgment` with `tool_config.enabled=false` or an allowlist that omits `shell` is a hard 400 on create/update (CLI `--no-tools` / `--allowed-tools` match); speak guidance is injected only when tools are available and `shell` is allowed (case-insensitive).
+- **Zero-tool / filtered-tools runs stay honest**: empty allowlists skip text-protocol tool parse; non-empty sets refuse rewritten tools outside the allowlist; zero-tool agents keep user/knowledge/journal history without advertising `memory`.
+- **Write outcomes stay uncertain on gateway blips**: frontend writes that get 502/503/504 report "outcome unknown" and are never auto-retried; JWT sessions clear only on 401 (aligned with API-key auth); login passwords are no longer stored.
+- **First-paint JS is budgeted in CI**: `npm run build:check` gates entry + chat cold-start raw/gzip (`BUNDLE_*`, with `BUDGET_*` aliases); PR CI runs it on ubuntu-24.04 and smoke-loads chunk routes against `dist`.
+- `scripts/verify-upgrade.sh` tip expect defaults to **1.3.4** (`NEOMIND_BIN_133`→`NEOMIND_BIN_134`; legacy `132`/`133` still accepted).
+
+### Added
+- `ExecutionStatus::Partial` for vision-undetermined runs, with listing/detail `input_summary` (`vision_path` / `skip_reason` / image flags) and monitor/analyst warning UX.
+- CLI `--no-tools` / `--allowed-tools` on agent create/update (update merges existing `notify` for conflict checks) plus API create/update soft warnings for event-without-resources / vision-without-multimodal / unrestricted Focused monitors.
+- Frontend first-paint bundle budgets, cold-start measure, and route-pass `smoke-chunks.mjs`.
+
+### Fixed — agent / runtime / notify
+- **Text-protocol calls honor `filtered_tools`**: invent-and-block still records when judgment strips web tools; Judgment same-batch vision+send and ViaVisionTool blind send are denied until vision succeeds.
+- **Overflow retries rebuild `LlmInput`**: context-overflow compact no longer resends the pre-compact prompt; Focused/Free string fields truncate instead of dumping raw base64 into the prompt.
+- **Permanent event failures keep their cooldown**: only transport/timeout/rate-limit clears the 60s dedup key for replay.
+- **Scalar `*image*` metrics are not images**: value-shape detection stops `metadata.image_id` / counts from triggering empty-event skips; `display_url` receipts stay honest about source device vs destination.
+- **`device_command` no longer false-mismatches delivery**: successful structured commands enter turn-end mutations; compound `&&`/`;` shell lines bind receipts to the satisfying segment.
+- **Partial does not trip the breaker**: `failed_executions` still bumps, `consecutive_failures` does not; Err finish keeps `input_summary` when collection already ran.
+- **Invoke returns the real status string**: `POST /agents/{id}/invoke` reports Completed / Failed / Partial instead of hardcoding Completed.
+
+### Fixed — chat / summarization
+- Turn-level truncation tip ratio and matched write-receipt bind; verbatim user corrections survive compress.
+- Summarization verbatim merge is incremental-only (10-cap fold no longer resurrects drained users); over-budget finish trims oldest verbatim then narrative; inject de-dupes entries still live in the protected-user window.
+
+### Fixed — frontend / CI
+- Stale API key cleared only on definitive 401; service-account user published after key check; gateway write 503 treated like 502/504 outcome-unknown.
+- Lazy-only libraries kept out of the entry preload set; `build:check` / smoke CI catch chunk regressions that text scanning missed.
+- README AI Chat and Mobile Web screenshots refreshed.
+
+### Test
+- Judgment gate: mid-loop vision-failed deny, same-batch / blind ViaVisionTool blocks, invent-block after web filter, invoke Partial status string.
+- Partial / input_summary / monitor-analyst warning mapping; CLI/API judgment×tools hard conflicts; summarization trim + inject dedupe; frontend retry 503 outcomeUnknown.
+- `python3 scripts/extract_changelog.py --version 1.3.4 --check` gates this section.
+
 ## [1.3.3] - 2026-11-24 — Judgment notify gate, event-image honesty, chat hard-budget recover
 
 Post-`v1.3.2`: judgment-notify gate before `message send`, honest event-image input status, chat hard-budget auto-recover, storage-side telemetry pagination. Product version **1.3.3** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged).
