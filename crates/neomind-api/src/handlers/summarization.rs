@@ -428,23 +428,28 @@ pub(crate) fn strip_verbatim_user_block(summary: &str) -> (String, Vec<String>) 
     (narrative, entries)
 }
 
-/// Merge prior verbatim user entries with covered user messages in
-/// `covered_prefix`, deduplicating identical lines and capping at the most
-/// recent [`MAX_VERBATIM_USER_ENTRIES`] × [`VERBATIM_USER_CHAR_CAP`].
+/// Merge prior verbatim user entries with **newly covered** user messages
+/// (incremental slice only), deduplicating identical lines and capping at the
+/// most recent [`MAX_VERBATIM_USER_ENTRIES`] × [`VERBATIM_USER_CHAR_CAP`].
+///
+/// Callers MUST pass only the newly covered slice — not the full covered
+/// prefix. Re-walking older covered users onto an already-capped `existing`
+/// list resurrected drained entries after the 10-entry fold (zombies that had
+/// already fallen out of the verbatim window).
 ///
 /// Covered users that are still in the live protection window are included on
-/// purpose: the next user turn can age them out of protection before a second
-/// compress runs, and the next model request must still recover their wording
-/// from the summary's deterministic block (without calling merge/summarize
-/// helpers again). Temporary duplication with live protected messages is
+/// purpose when they land in this incremental slice: the next user turn can
+/// age them out of protection before a second compress runs, and the next
+/// model request must still recover their wording from the summary's
+/// deterministic block. Temporary duplication with live protected messages is
 /// intentional and small.
 pub(crate) fn merge_verbatim_user_entries(
     existing: Vec<String>,
-    covered_prefix: &[AgentMessage],
+    newly_covered: &[AgentMessage],
     _protected_indices: &std::collections::HashSet<usize>,
 ) -> Vec<String> {
     let mut merged = existing;
-    for msg in covered_prefix.iter() {
+    for msg in newly_covered.iter() {
         if msg.role != "user" {
             continue;
         }
@@ -1098,9 +1103,11 @@ pub async fn trigger_summarization(
     }
     let summarize_count = summarized_count;
     let new_covered_end = covered_count + summarize_count;
+    // Incremental slice only — never re-walk older covered users onto an
+    // already-capped verbatim list (that resurrected drained entries).
     let verbatim_users = merge_verbatim_user_entries(
         existing_verbatim_users,
-        &history[..new_covered_end],
+        &history[covered_count..new_covered_end],
         &protected_users,
     );
 
@@ -1712,6 +1719,45 @@ mod tests {
         assert_eq!(extracted, merged);
     }
 
+    /// Regression: after a 10-cap fold, re-walking the full covered prefix
+    /// used to resurrect drained early users (zombies). Incremental merge
+    /// must keep them out.
+    #[test]
+    fn verbatim_fold_does_not_resurrect_drained_users() {
+        let mut history = Vec::new();
+        for i in 1..=20 {
+            history.push(AgentMessage::user(format!("用户第{i}条要求")));
+            history.push(AgentMessage::assistant(format!("回复 {i}")));
+        }
+        let protected = neomind_agent::agent::streaming::protected_user_indices(&history);
+
+        // First compress covers users 1..=12 → cap keeps 3..=12.
+        let first = merge_verbatim_user_entries(Vec::new(), &history[..24], &protected);
+        assert_eq!(first.len(), MAX_VERBATIM_USER_ENTRIES);
+        assert!(first[0].contains("用户第3条要求"));
+        assert!(!first.iter().any(|e| e.contains("用户第1条要求")));
+        assert!(!first.iter().any(|e| e.contains("用户第2条要求")));
+
+        // Second fold: only newly covered users 13..=20. Must NOT re-add 1..=2.
+        let second = merge_verbatim_user_entries(first.clone(), &history[24..40], &protected);
+        assert_eq!(second.len(), MAX_VERBATIM_USER_ENTRIES);
+        assert!(
+            !second.iter().any(|e| e.contains("用户第1条要求")),
+            "drained U1 must stay dead after fold: {second:?}"
+        );
+        assert!(
+            !second.iter().any(|e| e.contains("用户第2条要求")),
+            "drained U2 must stay dead after fold: {second:?}"
+        );
+        // Contrast: the old full-prefix merge resurrected U1/U2.
+        let zombie = merge_verbatim_user_entries(first, &history[..40], &protected);
+        assert!(
+            zombie.iter().any(|e| e.contains("用户第1条要求"))
+                || zombie.iter().any(|e| e.contains("用户第2条要求")),
+            "sanity: full-prefix merge is the zombie path this test documents"
+        );
+    }
+
     #[test]
     fn s3_planned_summary_target_never_splits_tool_group() {
         // index: 0=U, 1=A, 2=T, 3=T, 4=T, 5=A, 6=T, 7=U
@@ -2070,7 +2116,9 @@ mod r1_three_layer_compaction_tests {
         assert!(!fold_prompt.contains(VERBATIM_USERS_START));
 
         let protected2 = neomind_agent::agent::streaming::protected_user_indices(&history);
-        let verbatim2 = merge_verbatim_user_entries(prev_verbatim, &history[..20], &protected2);
+        // Incremental slice only (newly covered after cycle-1's 12) — re-walking
+        // the full covered prefix resurrected drained verbatim entries.
+        let verbatim2 = merge_verbatim_user_entries(prev_verbatim, &history[12..20], &protected2);
         assert_eq!(
             verbatim2
                 .iter()

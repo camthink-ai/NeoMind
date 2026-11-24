@@ -2589,11 +2589,23 @@ pub async fn invoke_agent(
                 None => (summary.summary.clone(), None, vec![]),
             };
 
+            // Prefer the persisted record status (Completed / Failed / Partial)
+            // — hardcoding "Completed" lied about vision-undetermined Partial
+            // and Failed runs that still returned Ok(summary).
+            let status = execution
+                .as_ref()
+                .map(|r| execution_status_to_string(&r.status))
+                .unwrap_or(if summary.has_error {
+                    "Failed"
+                } else {
+                    "Completed"
+                });
+
             ok(json!({
                 "execution_id": summary.execution_id,
                 "agent_id": id,
                 "agent_name": agent_name,
-                "status": "Completed",
+                "status": status,
                 "duration_ms": summary.duration_ms,
                 "conclusion": conclusion,
                 "confidence": confidence,
