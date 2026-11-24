@@ -1693,6 +1693,8 @@ pub enum AgentCommand {
         every: Option<String>,
         /// Event filter JSON for event schedule type. Format: '{"sources":[{"type":"device","id":"sensor-001"}]}'
         /// Use "all" as id to match any source of that type. Add "field" to match a specific metric.
+        /// Without "field" the agent listens to the whole source: it runs once per uplink and
+        /// receives every metric of that uplink, with images attached as images.
         #[arg(long)]
         event_filter: Option<String>,
         /// Timezone for cron schedule (e.g., "Asia/Shanghai", "UTC"). Default: system timezone.
