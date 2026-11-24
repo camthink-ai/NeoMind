@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use clap::Parser;
 use tokio::sync::RwLock;
 
 use super::cache::{is_tool_cacheable, ToolResultCache};
@@ -25,6 +26,222 @@ pub(crate) fn shell_policy_block(
         arguments: arguments.clone(),
         result: Err(crate::toolkit::error::ToolError::Execution(format!(
             "Blocked by safety policy: {reason}"
+        ))),
+        operation_id: None,
+    })
+}
+
+/// Pull `url` from a JSON object params blob when present.
+fn url_from_params_object(params: &serde_json::Value) -> Option<String> {
+    let url = params.get("url").and_then(|v| v.as_str())?;
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+/// Merge shell structured `params` with CLI `--params`/`-p` + `--param` the
+/// same way execute does: host structured params replace CLI `--params`
+/// (`inject_structured_json_argv`), then repeatable `--param key=value`
+/// overrides (`handlers.rs` Device::Control). Validation must see this value
+/// — never prefer a lone `arguments.params.url` that execution will overwrite.
+fn merge_device_control_params_for_exec(
+    argv: &[String],
+    arguments: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    let structured = arguments.get("params").filter(|v| v.is_object()).cloned();
+
+    // Clap path: same Control surface the dispatcher parses.
+    if let Ok(args) = neomind_cli_ops::dispatch::commands::Args::try_parse_from(argv.iter()) {
+        if let neomind_cli_ops::dispatch::commands::Command::Device {
+            device_cmd:
+                neomind_cli_ops::dispatch::commands::DeviceCommand::Control { params, param, .. },
+        } = args.command
+        {
+            let mut params_json = if let Some(host) = structured {
+                host
+            } else if let Some(params_str) = params.as_ref() {
+                neomind_cli_ops::json_arg::parse_json_arg_str(params_str)
+                    .unwrap_or_else(|_| serde_json::json!({}))
+            } else {
+                serde_json::json!({})
+            };
+            if !param.is_empty() {
+                if let Ok(overrides) = neomind_cli_ops::kv::parse_kv_params(&param) {
+                    if let Some(obj) = params_json.as_object_mut() {
+                        obj.extend(overrides);
+                    }
+                }
+            }
+            return Some(params_json);
+        }
+    }
+
+    // Hand-parse fallback when clap rejects the argv (keeps `-p` as `--params`).
+    let host_structured = structured.is_some();
+    let mut params_json = structured.unwrap_or_else(|| serde_json::json!({}));
+    let mut param_overrides: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while i < argv.len() {
+        let tok = argv[i].as_str();
+        if tok == "--param" {
+            if let Some(val) = argv.get(i + 1) {
+                param_overrides.push(val.clone());
+            }
+            i += 2;
+            continue;
+        }
+        if let Some(rest) = tok.strip_prefix("--param=") {
+            param_overrides.push(rest.to_string());
+            i += 1;
+            continue;
+        }
+        if !host_structured && matches!(tok, "--params" | "-p") {
+            if let Some(raw_json) = argv.get(i + 1) {
+                if let Ok(v) = neomind_cli_ops::json_arg::parse_json_arg_str(raw_json) {
+                    params_json = v;
+                }
+            }
+            i += 2;
+            continue;
+        }
+        if !host_structured {
+            if let Some(rest) = tok
+                .strip_prefix("--params=")
+                .or_else(|| tok.strip_prefix("-p="))
+            {
+                let cleaned = rest.trim().trim_matches(|c| c == '"' || c == '\'');
+                if let Ok(v) = neomind_cli_ops::json_arg::parse_json_arg_str(cleaned) {
+                    params_json = v;
+                }
+            }
+        }
+        i += 1;
+    }
+    if !param_overrides.is_empty() {
+        if let Ok(overrides) = neomind_cli_ops::kv::parse_kv_params(&param_overrides) {
+            if let Some(obj) = params_json.as_object_mut() {
+                obj.extend(overrides);
+            }
+        }
+    }
+    if params_json.as_object().is_some_and(|o| !o.is_empty()) {
+        Some(params_json)
+    } else {
+        None
+    }
+}
+
+/// URL the pre-exec gate must validate — identical to the merged Control
+/// params the in-process dispatcher will send.
+fn extract_display_url_param(argv: &[String], arguments: &serde_json::Value) -> Option<String> {
+    merge_device_control_params_for_exec(argv, arguments).and_then(|p| url_from_params_object(&p))
+}
+
+/// Current-turn wording that clearly asks to show target `T`'s own preview
+/// (allows self-preview even when an earlier turn named a different camera).
+///
+/// If this turn also names another device (a source camera), self-preview
+/// keywords must NOT early-allow — e.g. “屏幕 T 不要显示自己的预览，请显示
+/// 相机 S 的照片” still contains “自己的” but is a cross-device ask.
+fn user_asks_target_self_preview(msg: &str, target_device: &str) -> bool {
+    let targets = super::intent::extract_user_device_targets(msg);
+    let mentions_target = targets
+        .iter()
+        .any(|id| id.eq_ignore_ascii_case(target_device));
+    if !mentions_target {
+        return false;
+    }
+    if targets
+        .iter()
+        .any(|id| !id.eq_ignore_ascii_case(target_device))
+    {
+        return false;
+    }
+    let lower = msg.to_ascii_lowercase();
+    const CUES: &[&str] = &[
+        "自己的",
+        "自身",
+        "本机",
+        "自己预览",
+        "最新预览",
+        "own preview",
+        "its own",
+        "self preview",
+        "own frame",
+    ];
+    CUES.iter()
+        .any(|cue| lower.contains(&cue.to_ascii_lowercase()) || msg.contains(cue))
+}
+
+/// Pre-execution source check for `device control <T> display_url`:
+///
+/// Blocks sending target device `T`'s own `/api/images/<T>/frame_preview*` back
+/// to `T` when recent user messages name another source device `S != T`.
+/// Prefers current-turn intent: a clear "show B's own preview" request is
+/// allowed even if a prior turn mentioned camera A. Dates are not device ids.
+pub(crate) fn display_url_source_block(
+    name: &str,
+    arguments: &serde_json::Value,
+    recent_user_messages: &[String],
+) -> Option<ToolExecutionResult> {
+    let real_name = resolve_tool_name(name);
+    if real_name != "shell" {
+        return None;
+    }
+    let canonical = crate::agent::task_continuity::canonicalize_tool_arguments(name, arguments);
+    let cmd = canonical.get("command").and_then(|v| v.as_str())?;
+    let (target_device, subcmd) = super::intent::extract_device_control_target_and_subcmd(cmd)?;
+    if !subcmd.eq_ignore_ascii_case("display_url") {
+        return None;
+    }
+    let argv: Vec<String> = crate::toolkit::shell::tokenize_neomind_command(cmd.trim())
+        .unwrap_or_else(|_| cmd.split_whitespace().map(str::to_string).collect());
+    let url = extract_display_url_param(&argv, arguments)
+        .or_else(|| extract_display_url_param(&argv, &canonical))?;
+
+    let self_preview_needle = format!(
+        "/api/images/{}/frame_preview",
+        target_device.to_ascii_lowercase()
+    );
+    if !url.to_ascii_lowercase().contains(&self_preview_needle) {
+        return None;
+    }
+
+    let recent: Vec<&String> = recent_user_messages
+        .iter()
+        .rev()
+        .take(3) // last N user messages, matches recent protected-user window
+        .collect();
+
+    // Current-turn explicit self-preview intent wins over older source names
+    // (prior turn mentioned camera A; this turn asks B to show its own preview).
+    if let Some(current) = recent.first() {
+        if user_asks_target_self_preview(current, &target_device) {
+            return None;
+        }
+    }
+
+    // Prefer current-turn source ids, then older protected messages.
+    let source_device = recent.iter().find_map(|msg| {
+        super::intent::extract_user_device_targets(msg)
+            .into_iter()
+            .find(|id| !id.eq_ignore_ascii_case(&target_device))
+    })?;
+
+    tracing::warn!(
+        target_device = %target_device,
+        source_device = %source_device,
+        url = %url,
+        "Blocked display_url pointing to target device's own frame_preview when source device was named"
+    );
+    Some(ToolExecutionResult {
+        _name: name.to_string(),
+        arguments: arguments.clone(),
+        result: Err(crate::toolkit::error::ToolError::Execution(format!(
+            "Blocked display_url source mismatch: target device '{target_device}' was given its own preview URL '{url}', but recent user messages specify source device '{source_device}'. Use the source device's image URL (e.g. '/api/images/{source_device}/frame_preview' or the edited/captured image URL from '{source_device}') instead."
         ))),
         operation_id: None,
     })
@@ -396,5 +613,149 @@ mod cache_regressions {
             .unwrap();
         assert!(recreated.success);
         assert_eq!(recreated.data["guide"], "OLD_GUIDE");
+    }
+
+    #[test]
+    fn section6_2_display_url_source_block_covers_cli_structured_and_positive_control() {
+        let recent_with_source = vec![
+            "把设备 200366 的照片加上 厦门市集美区".to_string(),
+            "发送到 20545d67 显示".to_string(),
+        ];
+
+        // 1) CLI `--param url=...` pointing to target's own frame_preview -> BLOCKED with source hint.
+        let cli_self_preview = serde_json::json!({
+            "command": "neomind device control 20545d67 display_url --param url=http://localhost:9375/api/images/20545d67/frame_preview.jpg"
+        });
+        let blocked = display_url_source_block("shell", &cli_self_preview, &recent_with_source)
+            .expect("self-preview with distinct source 200366 must be blocked");
+        let err = blocked.result.unwrap_err().to_string();
+        assert!(
+            err.contains("200366"),
+            "error must guide to source 200366: {err}"
+        );
+
+        // 2) Structured `params.url` form -> BLOCKED too.
+        let structured_self_preview = serde_json::json!({
+            "command": "neomind device control 20545d67 display_url",
+            "params": { "url": "/api/images/20545d67/frame_preview" }
+        });
+        assert!(
+            display_url_source_block("shell", &structured_self_preview, &recent_with_source)
+                .is_some(),
+            "structured params self-preview must be blocked"
+        );
+
+        // 3) Corrected URL pointing to source 200366 -> ALLOWED.
+        let corrected = serde_json::json!({
+            "command": "neomind device control 20545d67 display_url --param url=/api/images/200366/frame_preview"
+        });
+        assert!(display_url_source_block("shell", &corrected, &recent_with_source).is_none());
+
+        // 4) Positive control: no other source device named -> self-preview ALLOWED.
+        let self_only_users = vec!["让设备 20545d67 显示自己的最新预览图".to_string()];
+        assert!(display_url_source_block("shell", &cli_self_preview, &self_only_users).is_none());
+
+        // 5) Equivalent spellings: `--params` JSON and `-p` JSON must also block.
+        // Quote the JSON so the shell tokenizer keeps key quotes (same as real CLI).
+        for cmd in [
+            r#"neomind device control 20545d67 display_url --params {"url":"/api/images/20545d67/frame_preview"}"#,
+            r#"neomind device control 20545d67 display_url -p '{"url":"/api/images/20545d67/frame_preview"}'"#,
+        ] {
+            let args = serde_json::json!({ "command": cmd });
+            assert!(
+                display_url_source_block("shell", &args, &recent_with_source).is_some(),
+                "self-preview must be blocked for spelling: {cmd}"
+            );
+        }
+
+        // 6) Prior turn named camera A; this turn clearly asks B self-preview → ALLOW.
+        let redisplay_own = vec![
+            "把设备 200366 的照片发到 20545d67".to_string(),
+            "让设备 20545d67 显示自己的最新预览图".to_string(),
+        ];
+        assert!(
+            display_url_source_block("shell", &cli_self_preview, &redisplay_own).is_none(),
+            "current-turn self-preview intent must override prior source camera"
+        );
+
+        // 7) Date tokens must not be treated as a source device id.
+        let with_date = vec!["2026-11-24 让设备 20545d67 显示预览".to_string()];
+        assert!(
+            display_url_source_block("shell", &cli_self_preview, &with_date).is_none(),
+            "ISO date must not false-positive as a source device"
+        );
+        assert!(
+            !crate::agent::streaming::extract_user_device_targets("check 2026-11-24 then 20545d67")
+                .iter()
+                .any(|id| id == "2026-11-24"),
+            "extract_user_device_targets must skip dates"
+        );
+
+        // 8) Negated self-preview that names another source must NOT early-allow.
+        let negated = "屏幕 20545d67 不要显示自己的预览，请显示相机 20035E 的照片。";
+        let negated_users = vec![negated.to_string()];
+        let wrong_self = serde_json::json!({
+            "command": "neomind device control 20545d67 display_url --param url=/api/images/20545d67/frame_preview"
+        });
+        let blocked_neg = display_url_source_block("shell", &wrong_self, &negated_users)
+            .expect("negated self-preview naming 20035E must block screen-self URL");
+        let neg_err = blocked_neg.result.unwrap_err().to_string();
+        assert!(
+            neg_err.contains("20035E") || neg_err.contains("20035e"),
+            "block must name the camera source: {neg_err}"
+        );
+        // Positive control stays allowed.
+        assert!(
+            display_url_source_block(
+                "shell",
+                &cli_self_preview,
+                &["让设备 20545d67 重显屏幕自己的预览".to_string()]
+            )
+            .is_none(),
+            "重显屏幕自己的预览 must still early-allow"
+        );
+    }
+
+    #[test]
+    fn display_url_param_conflict_validation_matches_execution_merge() {
+        // Structured params say camera URL; CLI `--param` says screen self-preview.
+        // Execute merges host structured as --params then applies --param overrides
+        // → final URL is the screen preview. Gate must validate that same value.
+        let conflicting = serde_json::json!({
+            "command": "neomind device control 20545d67 display_url --param url=/api/images/20545d67/frame_preview",
+            "params": { "url": "/api/images/200366/frame_preview" }
+        });
+        let cmd = conflicting["command"].as_str().unwrap();
+        let argv: Vec<String> = crate::toolkit::shell::tokenize_neomind_command(cmd)
+            .unwrap_or_else(|_| cmd.split_whitespace().map(str::to_string).collect());
+
+        let validated =
+            extract_display_url_param(&argv, &conflicting).expect("merged URL must resolve");
+        assert_eq!(
+            validated, "/api/images/20545d67/frame_preview",
+            "validation must see --param override (execution truth), not structured camera URL"
+        );
+
+        // Same merge the dispatcher would produce after inject + clap Control.
+        let exec_merge =
+            merge_device_control_params_for_exec(&argv, &conflicting).expect("exec merge");
+        assert_eq!(
+            url_from_params_object(&exec_merge).as_deref(),
+            Some("/api/images/20545d67/frame_preview")
+        );
+        assert_eq!(
+            validated,
+            url_from_params_object(&exec_merge).unwrap(),
+            "validation and execution must see the same URL"
+        );
+
+        let recent = vec![
+            "把设备 200366 的照片发到 20545d67".to_string(),
+            "发送到 20545d67 显示".to_string(),
+        ];
+        assert!(
+            display_url_source_block("shell", &conflicting, &recent).is_some(),
+            "gate must block the executed screen-self URL even when structured params look correct"
+        );
     }
 }

@@ -2101,3 +2101,288 @@ async fn r2_in_loop_large_tool_outputs_diagnostic_table() {
     );
     assert!(joined_content(&events).contains("三轮大输出诊断完成"));
 }
+
+/// Section 6.4 Replay A: Historical receipts exist in memory from an earlier
+/// turn, but NO execution runs in the current turn when the user asks to send
+/// again. Must NOT reuse historical receipts to suppress the incomplete-action
+/// note or claim delivery.
+#[tokio::test]
+async fn section6_replay_a_historical_receipts_without_current_execution_do_not_claim_sent() {
+    use crate::agent::types::{AgentMessage, ToolCall};
+
+    let rt = MockLlmRuntime::new(vec![MockResponse::text(
+        "已将照片发送到设备 20545d67 显示。",
+    )]);
+    let (iface, state, registry) = harness(&rt);
+
+    {
+        let mut guard = state.write().await;
+        guard
+            .memory
+            .push(AgentMessage::user("把 200366 照片发到 20545d67 显示"));
+        guard.memory.push(AgentMessage::assistant_with_tools(
+            "",
+            vec![ToolCall {
+                name: "shell".into(),
+                id: "hist-1".into(),
+                arguments: serde_json::json!({
+                    "command": "neomind device control 20545d67 display_url --param url=/api/images/200366/frame_preview"
+                }),
+                result: None,
+                round: Some(1),
+            }],
+        ));
+        guard.memory.push(AgentMessage::tool_result(
+            "shell",
+            r#"{"exit_code":0,"stdout":"{\"success\":true,\"data\":{\"device_id\":\"20545d67\",\"command\":\"display_url\",\"sent\":true,\"delivery\":{\"adapter_accepted\":{\"adapters\":1}}}}","stderr":""}"#,
+        ));
+        guard.memory.push(AgentMessage::assistant("已发送。"));
+    }
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state.clone(),
+        registry,
+        "再把设备 200366 的照片发送到 20545d67 显示",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+
+    let notes: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::SystemNote { note } => Some(note.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.contains("NOT successfully executed") && n.contains("no commands ran")),
+        "historical receipt must NOT suppress turn-end incomplete action note when current turn ran nothing: {notes:?}"
+    );
+}
+
+/// Scripted shell tool for Section 6.4 Replay B & controls that records executed
+/// commands and returns realistic `CommandDelivery` JSON receipts.
+struct DeliveryShell {
+    commands: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl Tool for DeliveryShell {
+    fn name(&self) -> &str {
+        "shell"
+    }
+    fn description(&self) -> &str {
+        "mock neomind CLI returning CommandDelivery JSON"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "params": {"type": "object"}
+            },
+            "required": ["command"]
+        })
+    }
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+        let cmd = args["command"].as_str().unwrap_or("").to_string();
+        self.commands.lock().unwrap().push(cmd.clone());
+        let (dev, subcmd) = super::intent::extract_device_control_target_and_subcmd(&cmd)
+            .unwrap_or_else(|| ("20545d67".to_string(), "write-metric".to_string()));
+        let stdout = if cmd.contains("write-metric") {
+            serde_json::json!({
+                "success": true,
+                "data": { "device_id": "20545d67", "metric": "label", "written": true }
+            })
+            .to_string()
+        } else {
+            serde_json::json!({
+                "success": true,
+                "data": {
+                    "device_id": dev,
+                    "command": subcmd,
+                    "sent": true,
+                    "delivery": { "adapter_accepted": { "adapters": 1 } },
+                    "delivery_note": "accepted by mqtt adapter"
+                }
+            })
+            .to_string()
+        };
+        Ok(ToolOutput::success(serde_json::json!({
+            "exit_code": 0,
+            "stdout": stdout,
+            "stderr": ""
+        })))
+    }
+}
+
+/// Section 6.4 Replay B: Pre-execution source check blocks `display_url`
+/// pointing to target device `20545d67`'s own `frame_preview` when recent user
+/// messages name source `200366`; scripted model retries with `/api/images/200366/...`
+/// which succeeds and produces an honest `adapter_accepted` delivery receipt note
+/// (never claiming "displayed", never prompting `Send "continue"`).
+#[tokio::test]
+async fn section6_replay_b_blocks_self_preview_and_allows_corrected_source_retry() {
+    let commands = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind device control 20545d67 display_url --param url=http://localhost:9375/api/images/20545d67/frame_preview"
+            }),
+        ),
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind device control 20545d67 display_url --param url=http://localhost:9375/api/images/200366/frame_preview"
+            }),
+        ),
+        MockResponse::text("已将 200366 的画面下发到 20545d67（平台适配器已接收）。"),
+    ]);
+    let (iface, state, _) = harness(&rt);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(DeliveryShell {
+        commands: commands.clone(),
+    }));
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state,
+        Arc::new(registry),
+        "把设备 200366 的照片发送到 20545d67 显示",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+
+    let executed = commands.lock().unwrap().clone();
+    assert_eq!(
+        executed.len(),
+        1,
+        "only the corrected source URL call should reach tool execution: {executed:?}"
+    );
+    assert!(
+        executed[0].contains("/api/images/200366/frame_preview"),
+        "executed command must use source 200366: {:?}",
+        executed[0]
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::ToolCallEnd { success: false, result, .. }
+                if result.contains("Blocked display_url source mismatch")
+                    && result.contains("/api/images/200366/frame_preview")
+        )),
+        "first attempt must be blocked with actionable source hint"
+    );
+    let notes: Vec<String> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentEvent::SystemNote { note } => Some(note.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        notes.iter().any(|n| n.contains("adapter_accepted")
+            && n.contains("NOT yet confirmed")
+            && !n.contains("Send \"continue\"")),
+        "turn-end note must report adapter_accepted honestly without Send continue: {notes:?}"
+    );
+}
+
+/// Section 6.4 Positive Control: When NO other source device is mentioned,
+/// sending `20545d67`'s own `frame_preview` to `20545d67` is allowed.
+#[tokio::test]
+async fn section6_positive_control_allows_self_preview_when_no_other_source_named() {
+    let commands = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind device control 20545d67 display_url --param url=/api/images/20545d67/frame_preview"
+            }),
+        ),
+        MockResponse::text("已下发自预览命令。"),
+    ]);
+    let (iface, state, _) = harness(&rt);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(DeliveryShell {
+        commands: commands.clone(),
+    }));
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state,
+        Arc::new(registry),
+        "让设备 20545d67 显示自己的最新预览图",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .expect("stream");
+    let _events = collect(stream).await;
+
+    let executed = commands.lock().unwrap().clone();
+    assert_eq!(
+        executed.len(),
+        1,
+        "self-preview must be allowed when no other source device was mentioned: {executed:?}"
+    );
+}
+
+/// Section 6.4 Regression Control: `write-metric` continues to satisfy
+/// `("device", "write/send")` cleanly without emitting an incomplete-action note.
+#[tokio::test]
+async fn section6_regression_control_write_metric_satisfies_device_write() {
+    let commands = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call(
+            "shell",
+            serde_json::json!({
+                "command": "neomind device write-metric 20545d67 --metric label --value ok"
+            }),
+        ),
+        MockResponse::text("已写入指标 label=ok 到设备 20545d67。"),
+    ]);
+    let (iface, state, _) = harness(&rt);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(DeliveryShell {
+        commands: commands.clone(),
+    }));
+
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface,
+        state,
+        Arc::new(registry),
+        "给设备 20545d67 写入指标 label",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+
+    assert_eq!(commands.lock().unwrap().len(), 1);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::SystemNote { .. })),
+        "successful write-metric must not trigger incomplete-action or mismatch note: {events:?}"
+    );
+}

@@ -1728,10 +1728,30 @@ pub(super) fn drive_react_stream(
                     }
                     let tool_calls_to_execute = tool_calls.clone();
 
-                    // Resolve cached data references in tool arguments
-                    let (large_cache, cache) = {
+                    // Resolve cached data references in tool arguments and snapshot
+                    // the last 3 user messages for pre-execution display_url source checks.
+                    let (large_cache, cache, recent_user_messages) = {
                         let state = internal_state.read().await;
-                        (state.large_data_cache.clone(), state.tool_result_cache.clone())
+                        let mut users: Vec<String> = state
+                            .memory
+                            .iter()
+                            .filter(|m| m.role == "user")
+                            .map(|m| m.content.to_string())
+                            .collect();
+                        if users.last().map(|s| s.as_str()) != Some(user_message.as_str()) {
+                            users.push(user_message.clone());
+                        }
+                        // Keep last 3 user messages (same window as recent protected users).
+                        const RECENT_USER_MSGS: usize = 3;
+                        if users.len() > RECENT_USER_MSGS {
+                            let drop_n = users.len() - RECENT_USER_MSGS;
+                            users.drain(0..drop_n);
+                        }
+                        (
+                            state.large_data_cache.clone(),
+                            state.tool_result_cache.clone(),
+                            Arc::new(users),
+                        )
                     };
 
                     // Execute tool calls with bounded concurrency (max 6 parallel)
@@ -1769,6 +1789,7 @@ pub(super) fn drive_react_stream(
                     let stream_owner_for_tools = stream_owner.clone();
                     let call_site_turn_for_tools = call_site_turn;
                     let turn_loaded_skills_for_tools = turn_loaded_skills.clone();
+                    let recent_user_messages_for_tools = recent_user_messages.clone();
                     let tool_futures = futures::stream::iter(tool_inputs.into_iter().map(|(i, name, arguments, cached_read)| {
                         let tools_clone = tools.clone();
                         let cache_clone = cache.clone();
@@ -1778,6 +1799,7 @@ pub(super) fn drive_react_stream(
                         let stream_owner = stream_owner_for_tools.clone();
                         let call_site_turn = call_site_turn_for_tools;
                         let turn_loaded_skills = turn_loaded_skills_for_tools.clone();
+                        let recent_user_messages = recent_user_messages_for_tools.clone();
 
                         async move {
                             // `$cached:` read-back: served from the cache in
@@ -1814,6 +1836,15 @@ pub(super) fn drive_react_stream(
                             }
                             // Shared shell deny-list gate (blocks catastrophic commands).
                             if let Some(blocked) = shell_policy_block(&name, &arguments) {
+                                return (i, name.clone(), blocked);
+                            }
+                            // Pre-execution display_url source check: block target self-preview
+                            // when recent user messages name a different source device.
+                            if let Some(blocked) = super::tool_exec::display_url_source_block(
+                                &name,
+                                &arguments,
+                                &recent_user_messages,
+                            ) {
                                 return (i, name.clone(), blocked);
                             }
 
@@ -3451,11 +3482,14 @@ pub(super) fn drive_react_stream(
                         // DELIVERS the requested (domain, action)".
                         let cmds: Vec<&str> =
                             recently_executed_commands.iter().map(|s| s.as_str()).collect();
-                        if let Some(note) = super::intent::build_incomplete_action_note(
-                            &user_message,
-                            &cmds,
-                            &successful_mutations,
-                        ) {
+                        if let Some(note) =
+                            super::intent::build_incomplete_action_note_with_results(
+                                &user_message,
+                                &cmds,
+                                &successful_mutations,
+                                &all_round_tool_results,
+                            )
+                        {
                             guard_ledger.record(
                                 super::guard::GuardKind::IncompleteActionNote,
                                 super::guard::GuardOutcome::Fired,
