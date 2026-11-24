@@ -12,6 +12,7 @@ if (typeof AbortSignal !== 'undefined' && !AbortSignal.timeout) {
 import { notifyFromError, notifySuccess } from '../notify'
 import { tokenManager as unifiedTokenManager } from '../auth'
 import { setApiKey as _setApiKey, clearApiKey as _clearApiKey, getApiKey as _getApiKey, resetToDefault as _resetToDefault, buildWsUrl as _buildWsUrl } from '../urls'
+import i18n from '../../i18n/config'
 
 export function isTauriEnv(): boolean {
   return typeof window !== 'undefined' && '__TAURI__' in window
@@ -159,6 +160,13 @@ export interface FetchOptions extends RequestInit {
   skipErrorToast?: boolean  // Skip automatic error toast notification
   /** Skip gateway-style retries (429/502/503/504). Use for app-level 503s like BindIncomplete. */
   skipRetry?: boolean
+  /**
+   * Allow gateway-style retries (429/502/503/504) for a write (POST/PUT/PATCH/DELETE).
+   * Off by default: a gateway timeout can arrive after the server already ran
+   * the request, and sending it again would create a second object or dispatch
+   * a device command twice. Enable only for endpoints the server makes idempotent.
+   */
+  retryWrite?: boolean
   successMessage?: string   // Auto-show success toast with this message
   signal?: AbortSignal      // For timeout/cancellation support
 }
@@ -172,6 +180,7 @@ export async function fetchAPI<T>(
     skipGlobalError = false,
     skipErrorToast = false,
     skipRetry = false,
+    retryWrite = false,
     successMessage,
     signal,
     ...fetchOptions
@@ -203,18 +212,23 @@ export async function fetchAPI<T>(
   // Ensure headers is not undefined for headers as Record<string, string>
   const finalHeaders = headers as Record<string, string>
 
-  // Auto-retry gateway errors (502/503/504) and rate limiting (429)
-  // Not 500 (application bugs) — avoids duplicate operations on POST/PUT
+  // Auto-retry gateway errors (502/503/504) and rate limiting (429) — for reads
+  // only. A write may already have run by the time a gateway times out, so
+  // sending it again would create a second object or dispatch a device command
+  // twice. Writes opt in per endpoint with `retryWrite`.
   const MAX_RETRIES = 3
   const RETRY_DELAYS = [500, 1500, 3000] // Progressive backoff
   const RETRYABLE_STATUS = [429, 502, 503, 504]
+  const method = (fetchOptions.method ?? 'GET').toUpperCase()
+  const isRead = method === 'GET' || method === 'HEAD'
+  const mayRetry = !skipRetry && (isRead || retryWrite)
   let response = await fetch(`${getApiBase()}${path}`, {
     ...fetchOptions,
     headers: finalHeaders,
     signal,
   })
 
-  if (!skipRetry && RETRYABLE_STATUS.includes(response.status) && !signal?.aborted) {
+  if (mayRetry && RETRYABLE_STATUS.includes(response.status) && !signal?.aborted) {
     for (let i = 0; i < MAX_RETRIES; i++) {
       // For 429, wait longer before retrying
       const delay = response.status === 429 ? RETRY_DELAYS[i] * 2 : RETRY_DELAYS[i]
@@ -285,7 +299,14 @@ export async function fetchAPI<T>(
 
   // Handle other errors
   if (!response.ok) {
-    const message = await parseErrorMessage(response)
+    // A write that got a gateway error was not retried, and the gateway has no
+    // usable answer: the server may have run the request before timing out.
+    // Say the outcome is unknown instead of "failed", so nobody sends it again
+    // assuming nothing happened.
+    const outcomeUnknown = !isRead && (response.status === 502 || response.status === 504)
+    const message = outcomeUnknown
+      ? i18n.t('common:outcomeUnknown')
+      : await parseErrorMessage(response)
     if (!skipErrorToast) {
       notifyFromError(message)
     }
