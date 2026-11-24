@@ -1499,22 +1499,41 @@ fn is_display_subcommand(subcmd: &str) -> bool {
         || lower.starts_with("show_")
 }
 
+/// Verb stems that start real device-control / CLI subcommands. Ordinary
+/// underscore nouns (`frame_preview`, `image_url`, `living_room`) share the
+/// snake_case shape but are not commands — treating them as named subcommands
+/// made a correct `display_url` look like a Delivery mismatch.
+const COMMAND_VERB_STEMS: &[&str] = &[
+    "display", "render", "show", "set", "get", "send", "write", "clear", "update", "open", "close",
+    "start", "stop", "toggle", "enable", "disable", "play", "pause", "reboot", "restart",
+    "control", "read", "query", "fetch", "create", "delete", "remove", "add", "push", "pull",
+    "turn", "switch", "capture", "snapshot",
+];
+
 /// Extract explicit snake_case command names mentioned by the user (e.g.
 /// `display_url`, `render_text`, `set_alarm`), ignoring device-like IDs that
-/// contain digits.
+/// contain digits and ordinary underscore nouns that are not commands.
 fn explicit_named_subcommands(user_message: &str) -> Vec<String> {
     let mut out = Vec::new();
     for token in user_message.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
         let t = token.trim();
-        if t.len() >= 4
-            && t.contains('_')
-            && !t.starts_with('_')
-            && !t.ends_with('_')
-            && !t.chars().any(|c| c.is_ascii_digit())
-            && !out.iter().any(|x: &String| x.eq_ignore_ascii_case(t))
+        if t.len() < 4
+            || !t.contains('_')
+            || t.starts_with('_')
+            || t.ends_with('_')
+            || t.chars().any(|c| c.is_ascii_digit())
+            || out.iter().any(|x: &String| x.eq_ignore_ascii_case(t))
         {
-            out.push(t.to_ascii_lowercase());
+            continue;
         }
+        let stem = t.split_once('_').map(|(s, _)| s).unwrap_or(t);
+        if !COMMAND_VERB_STEMS
+            .iter()
+            .any(|v| stem.eq_ignore_ascii_case(v))
+        {
+            continue;
+        }
+        out.push(t.to_ascii_lowercase());
     }
     out
 }
@@ -3792,6 +3811,21 @@ mod tests {
             "device",
             "write/send",
             named_ask,
+        ));
+
+        // Ordinary underscore nouns in the ask are not command names — a
+        // correct display_url still satisfies write/send.
+        let noun_ask = "把 living_room 相机的 frame_preview / image_url 发到 20545d67 显示";
+        assert_eq!(
+            explicit_named_subcommands(noun_ask),
+            Vec::<String>::new(),
+            "frame_preview / image_url / living_room must not count as commands"
+        );
+        assert!(mutation_satisfies_action_for_user(
+            "neomind device control 20545d67 display_url --param url=/api/images/200366/frame_preview",
+            "device",
+            "write/send",
+            noun_ask,
         ));
 
         // Case 5: Mismatch emits factual delivery mismatch note (not silent, not claiming sent).

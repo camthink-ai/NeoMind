@@ -116,6 +116,19 @@ describe('notification routing the presets do set', () => {
     expect(weekly.fill.schedule.subType).toBe('weekly')
     expect(weekly.fill.schedule.weekday).toBeTypeOf('number')
   })
+
+  it('Focused presets default tool_config off so create does not soft-warn no-tools', () => {
+    // API soft-warns Focused + unrestricted tools + no commands. These four
+    // derive to focused with no output contract — seed enabled:false.
+    for (const key of ['scheduled', 'weekly', 'shift', 'qa'] as const) {
+      const p = AGENT_PRESETS.find((x) => x.key === key)!
+      expect(p.fill.toolConfig, `preset ${key}`).toEqual({ enabled: false })
+    }
+    for (const p of AGENT_PRESETS) {
+      if (p.key === 'scheduled' || p.key === 'weekly' || p.key === 'shift' || p.key === 'qa') continue
+      expect(p.fill.toolConfig, `preset ${p.key} leaves Tools card alone`).toBeUndefined()
+    }
+  })
 })
 
 describe('preset field localisation', () => {

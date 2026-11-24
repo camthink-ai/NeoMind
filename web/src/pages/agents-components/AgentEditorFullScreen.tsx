@@ -1369,6 +1369,15 @@ export function AgentEditorFullScreen({
         ? { channels: [...preset.fill.notify.channels], on: preset.fill.notify.on }
         : null,
     )
+    // Focused presets ship `toolConfig.enabled: false` so save does not soft-
+    // warn "Focused monitor without tool restrictions". Judgment / free
+    // presets leave the Tools card alone (full tools / shell).
+    if (preset.fill.toolConfig) {
+      setToolsEnabled(preset.fill.toolConfig.enabled)
+      const allowed = preset.fill.toolConfig.allowedTools ?? []
+      setRestrictTools(allowed.length > 0)
+      if (allowed.length > 0) setAllowedTools([...allowed])
+    }
     const sched = preset.fill.schedule
     setScheduleType(sched.type)
     if (sched.type === 'timer') {

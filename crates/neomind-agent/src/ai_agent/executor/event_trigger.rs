@@ -929,7 +929,12 @@ impl AgentExecutor {
                         );
                         return EventRunOutcome::Completed;
                     }
-                    if attempt <= retries {
+                    // Mirror the Failed-status branch: only transport faults
+                    // replay. Permanent Err (context overflow, bad key, …)
+                    // must not burn the retry budget just because attempt
+                    // is still ≤ retries.
+                    let transient = Self::is_retryable_event_failure(Some(&e.to_string()));
+                    if transient && attempt <= retries {
                         tracing::warn!(
                             agent_id = %agent_id,
                             attempt = attempt,
@@ -946,7 +951,7 @@ impl AgentExecutor {
                         error = %e,
                         "Event-triggered agent execution failed (final)"
                     );
-                    if Self::is_retryable_event_failure(Some(&e.to_string())) {
+                    if transient {
                         return EventRunOutcome::TransientFailure;
                     }
                     return EventRunOutcome::PermanentFailure;

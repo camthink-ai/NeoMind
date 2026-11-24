@@ -86,8 +86,17 @@ export interface AgentPreset {
     schedule: PresetSchedule
     /** Omitted = leave routing alone; the API's floor applies instead. */
     notify?: PresetNotify
+    /**
+     * Tools card seed. Focused (prose, no contract) presets default to
+     * `enabled: false` so create does not soft-warn "Focused monitor without
+     * tool restrictions". Omitted = leave the Tools card alone (full tools).
+     */
+    toolConfig?: { enabled: boolean; allowedTools?: string[] }
   }
 }
+
+/** Text-only Focused presets — no tool loop, no soft-warn. */
+const NO_TOOLS: NonNullable<AgentPreset['fill']['toolConfig']> = { enabled: false }
 
 /**
  * A task that reads its own data and decides whether it is worth speaking.
@@ -174,6 +183,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
       autonomy: false,
       memoryMode: 'assistant',
       schedule: { type: 'timer', subType: 'daily', hour: 9 },
+      toolConfig: NO_TOOLS,
     },
   },
 
@@ -243,6 +253,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
       autonomy: false,
       memoryMode: 'assistant',
       schedule: { type: 'timer', subType: 'weekly', weekday: 1, hour: 9 },
+      toolConfig: NO_TOOLS,
     },
   },
   {
@@ -256,6 +267,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
       autonomy: false,
       memoryMode: 'tool',
       schedule: { type: 'timer', subType: 'interval', intervalMinutes: 30 },
+      toolConfig: NO_TOOLS,
     },
   },
   {
@@ -286,6 +298,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
       autonomy: false,
       memoryMode: 'tool',
       schedule: { type: 'on-demand' },
+      toolConfig: NO_TOOLS,
     },
   },
   {

@@ -5309,6 +5309,10 @@ fn plain_event() -> EventTriggerData {
 /// T4 2026-11-24: a context overflow is a permanent failure, yet the event
 /// path replayed the identical input five seconds later — two Failed runs,
 /// two failure notifications and two breaker strikes for one event.
+///
+/// The Err(e) branch must also consult `is_retryable_event_failure` before
+/// `attempt <= retries` (same predicate as Ok(Failed)) — otherwise a
+/// permanent storage/admission Err burned the replay budget too.
 #[tokio::test]
 async fn permanent_event_failure_is_not_replayed() {
     let (mut executor, agent) = build_event_agent(ExecutionMode::Structured, None).await;
