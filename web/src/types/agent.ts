@@ -228,6 +228,17 @@ export interface OutputFieldState {
   execution_id?: string
 }
 
+/** What the run was given — mirrors backend `ExecutionInputSummaryDto`. */
+export interface ExecutionInputSummary {
+  metrics_collected: number
+  image_extracted?: boolean
+  image_source_field?: string
+  /** `inline_multimodal` | `vision_tool` | `none` */
+  vision_path?: string
+  /** `event_image_unreadable` | `report_image_unreadable` | `no_usable_event_data` */
+  skip_reason?: string
+}
+
 export interface AgentExecution {
   id: string
   agent_id: string
@@ -236,6 +247,7 @@ export interface AgentExecution {
   status: ExecutionStatus
   duration_ms: number
   error?: string
+  input_summary?: ExecutionInputSummary
 }
 
 /**

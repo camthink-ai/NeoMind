@@ -26,7 +26,10 @@ env:
 jobs:
   frontend-checks:
     name: Frontend lint / typecheck / unit tests
-    runs-on: ubuntu-latest
+    # Pin 24.04: ubuntu-latest is 26.04 and Playwright 1.58 cannot install
+    # Chromium there (`ERROR: Playwright does not support chromium on
+    # ubuntu26.04-x64`), which breaks the route-pass smoke step below.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: web
@@ -72,6 +75,24 @@ jobs:
       # this and only release `build.yml` caught chunk/budget regressions.
       - name: Production build + bundle budget
         run: npm run build:check
+
+      # Route-pass chunk smoke against the just-built dist (not --all-chunks;
+      # that stays nightly / local). Catches circular-chunk eval failures that
+      # text scanning of the build output misses.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke chunk routes against dist
+        run: |
+          npx --yes serve dist -l 4202 &
+          SERVE_PID=$!
+          trap 'kill $SERVE_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 40); do
+            curl -sf http://127.0.0.1:4202/ >/dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:4202/ >/dev/null
+          node scripts/smoke-chunks.mjs http://127.0.0.1:4202
 
   skill-cli-drift:
     name: Skill ↔ CLI drift check

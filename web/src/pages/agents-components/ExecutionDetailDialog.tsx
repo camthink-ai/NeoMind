@@ -221,9 +221,45 @@ export function ExecutionDetailDialog({
           {/* Evidence: inputs/times, output, actions, failure — missing = unknown */}
           <AgentExecutionEvidencePanel detail={execution} />
 
+          {execution.input_summary &&
+            (execution.input_summary.vision_path ||
+              execution.input_summary.skip_reason ||
+              execution.input_summary.image_extracted != null) && (
+              <div className="flex flex-wrap gap-1.5 px-1">
+                {execution.input_summary.vision_path && (
+                  <Badge variant="outline" className="h-5 px-1.5 text-xs">
+                    vision: {execution.input_summary.vision_path}
+                  </Badge>
+                )}
+                {execution.input_summary.skip_reason && (
+                  <Badge variant="outline" className="h-5 px-1.5 text-xs text-warning">
+                    skip: {execution.input_summary.skip_reason}
+                  </Badge>
+                )}
+                {execution.input_summary.image_extracted != null && (
+                  <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                    image: {execution.input_summary.image_extracted ? 'yes' : 'no'}
+                    {execution.input_summary.metrics_collected > 0
+                      ? ` · ${execution.input_summary.metrics_collected} metrics`
+                      : ''}
+                  </Badge>
+                )}
+              </div>
+            )}
+
           {execution.error && (
-            <Card className="p-2 border-error bg-muted">
-              <div className="flex items-start gap-1.5 text-error">
+            <Card
+              className={cn(
+                'p-2 bg-muted',
+                execution.status === 'Partial' ? 'border-warning' : 'border-error',
+              )}
+            >
+              <div
+                className={cn(
+                  'flex items-start gap-1.5',
+                  execution.status === 'Partial' ? 'text-warning' : 'text-error',
+                )}
+              >
                 <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
                 <div className="text-xs break-words">{execution.error}</div>
               </div>

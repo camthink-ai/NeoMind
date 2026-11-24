@@ -1095,6 +1095,11 @@ impl AgentExecutor {
         // execution (e.g., 30 rounds × slow extension tools).
         let global_execution_timeout_secs =
             neomind_storage::AgentDefaults::get().execution_timeout_secs;
+        // Filled after collection so the outer Err path can still attach an
+        // input_summary when the run fails post-collection (timeout/panic/LLM).
+        let collected_for_err: std::sync::Arc<
+            std::sync::Mutex<Option<Vec<neomind_storage::DataCollected>>>,
+        > = std::sync::Arc::new(std::sync::Mutex::new(None));
         let execution_result: AgentResult<(DecisionProcess, StorageExecutionResult, RunFacts)> =
             match tokio::time::timeout(
                 std::time::Duration::from_secs(global_execution_timeout_secs),
@@ -1102,6 +1107,7 @@ impl AgentExecutor {
                     context,
                     event_data.clone(),
                     per_exec_knowledge_files.clone(),
+                    Some(collected_for_err.clone()),
                 ))
                 .catch_unwind(),
             )
@@ -1170,6 +1176,9 @@ impl AgentExecutor {
                     }
                 }
 
+                // Partial still bumps failed_executions via business_ok=false
+                // above, but the breaker path below skips Partial strikes so a
+                // clearer next frame is not demoted as a permanent failure.
                 let (status, error) = if is_skip || business_ok {
                     (ExecutionStatus::Completed, None)
                 } else if is_vision_partial {
@@ -1254,6 +1263,11 @@ impl AgentExecutor {
                     }
                 }
 
+                let input_summary = collected_for_err
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone())
+                    .map(|data| data_collector::build_execution_input_summary(&data, None));
                 AgentExecutionRecord {
                     id: execution_id.clone(),
                     agent_id: agent_id.clone(),
@@ -1275,7 +1289,7 @@ impl AgentExecutor {
                     result: None,
                     duration_ms,
                     error: Some(e.to_string()),
-                    input_summary: None,
+                    input_summary,
                 }
             }
         };
@@ -1344,18 +1358,30 @@ impl AgentExecutor {
             neomind_storage::AgentStatus::Active
         } else if is_probe {
             // A probe run does not re-litigate the demotion: only a COMPLETED
-            // run recovers the agent. Letting a failed probe fall through to
-            // the threshold logic (or the transient branch) flipped demoted
+            // run recovers the agent. Letting a failed / Partial probe fall
+            // through (e.g. Partial→Active before this branch) flipped demoted
             // agents back to Active without evidence — a flaky-network agent
             // would ping-pong Active/Error, re-notifying on every demotion.
             // "Still can't tell" keeps Error; the next backoff probe decides.
             tracing::info!(
                 agent_id = %agent_id,
                 execution_id = %execution_id,
+                status = ?record.status,
                 error = ?record.error,
                 "Recovery probe did not complete — agent stays Error"
             );
             neomind_storage::AgentStatus::Error
+        } else if record.status == ExecutionStatus::Partial {
+            // Vision undetermined: failed_executions already bumped, but do
+            // not strike the breaker — the next clearer frame may succeed.
+            // Must stay after `is_probe` so a Partial probe cannot revive
+            // a demoted agent.
+            tracing::info!(
+                agent_id = %agent_id,
+                execution_id = %execution_id,
+                "Partial (vision undetermined) — keeping agent Active without breaker strike"
+            );
+            neomind_storage::AgentStatus::Active
         } else if is_transient_failure(record.error.as_deref()) {
             tracing::info!(
                 agent_id = %agent_id,
@@ -1531,6 +1557,9 @@ impl AgentExecutor {
         per_exec_knowledge_files: Option<
             Arc<tokio::sync::RwLock<Vec<neomind_storage::KnowledgeFileRef>>>,
         >,
+        collected_for_err: Option<
+            std::sync::Arc<std::sync::Mutex<Option<Vec<neomind_storage::DataCollected>>>>,
+        >,
     ) -> AgentResult<(DecisionProcess, StorageExecutionResult, RunFacts)> {
         let mut agent = context.agent;
         let agent_id = agent.id.clone();
@@ -1564,6 +1593,12 @@ impl AgentExecutor {
         } else {
             (self.collect_data(&agent).await?, None)
         };
+
+        if let Some(slot) = collected_for_err.as_ref() {
+            if let Ok(mut guard) = slot.lock() {
+                *guard = Some(data_collected.clone());
+            }
+        }
 
         // If event-triggered collection produced no usable input, the
         // collector says why (an event image that could not be read, a

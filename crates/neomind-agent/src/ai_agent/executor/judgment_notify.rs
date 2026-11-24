@@ -530,18 +530,30 @@ pub(crate) fn gate_block_reason(verdict: JudgmentVerdict) -> String {
     }
 }
 
+/// Extra vision-aware context for the Judgment send gate (same-batch +
+/// ViaVisionTool blind-send races beyond prior-round failure).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct JudgmentVisionGate<'a> {
+    /// Other tool names in the same execute batch (post-rewrite).
+    pub same_batch_names: &'a [&'a str],
+    /// True when this run requires the vision tool (images + ViaVisionTool).
+    pub vision_required: bool,
+}
+
 /// Shared tool-loop gate for every Judgment delivery call that reaches shell
 /// (direct or rewritten). Returns a deny reason when send must be blocked.
 ///
-/// `prior_tool_results` closes the mid-loop Partial race: once every vision
-/// tool this run has already failed, a `Verdict: criteria met` + message send
-/// must not deliver before the finish path marks Partial.
+/// Closes three Partial races:
+/// 1. prior rounds already vision-all-failed
+/// 2. same-batch vision + message send (gate runs before the batch executes)
+/// 3. ViaVisionTool blind send (images present, no successful vision yet)
 pub(crate) fn judgment_deny_for_tool_call(
     agent: &AiAgent,
     tool_name: &str,
     args: &Value,
     messages: &[Message],
     prior_tool_results: &[crate::toolkit::ToolResult],
+    vision_gate: JudgmentVisionGate<'_>,
 ) -> Option<String> {
     if !agent_uses_judgment_notify(agent) {
         return None;
@@ -551,6 +563,22 @@ pub(crate) fn judgment_deny_for_tool_call(
         return Some(format!(
             "{JUDGMENT_GATE_REASON_PREFIX} vision tools already failed this run — \
              notification blocked (undetermined / Partial)."
+        ));
+    }
+    if vision_gate
+        .same_batch_names
+        .iter()
+        .any(|n| super::vision_path::is_vision_tool_name(n))
+    {
+        return Some(format!(
+            "{JUDGMENT_GATE_REASON_PREFIX} vision tool is still running in this \
+             batch — notification blocked until vision completes."
+        ));
+    }
+    if vision_gate.vision_required && !vision_tools_any_success(prior_tool_results) {
+        return Some(format!(
+            "{JUDGMENT_GATE_REASON_PREFIX} vision not yet confirmed this run — \
+             notification blocked (need a successful vision call first)."
         ));
     }
     let verdict = judgment_verdict_from_messages(messages);
@@ -581,6 +609,16 @@ fn vision_tools_already_failed(results: &[crate::toolkit::ToolResult]) -> bool {
     saw_vision
 }
 
+fn vision_tools_any_success(results: &[crate::toolkit::ToolResult]) -> bool {
+    results.iter().any(|r| {
+        super::vision_path::is_vision_tool_name(&r.name)
+            && matches!(
+                &r.result,
+                Ok(o) if crate::toolkit::tool::effective_success(&r.name, o)
+            )
+    })
+}
+
 /// Convenience for tests that already hold a shell command string.
 #[cfg(test)]
 pub(crate) fn judgment_send_deny_reason(
@@ -589,7 +627,14 @@ pub(crate) fn judgment_send_deny_reason(
     messages: &[Message],
 ) -> Option<String> {
     let args = serde_json::json!({ "command": command });
-    judgment_deny_for_tool_call(agent, "shell", &args, messages, &[])
+    judgment_deny_for_tool_call(
+        agent,
+        "shell",
+        &args,
+        messages,
+        &[],
+        JudgmentVisionGate::default(),
+    )
 }
 
 #[cfg(test)]
@@ -1151,8 +1196,9 @@ mod tests {
             "rewritten CLI must be a message send: {rewritten}"
         );
 
-        let d = judgment_deny_for_tool_call(&agent, "shell", &direct, &msgs, &[]);
-        let r = judgment_deny_for_tool_call(&agent, "shell", &rewritten, &msgs, &[]);
+        let gate = JudgmentVisionGate::default();
+        let d = judgment_deny_for_tool_call(&agent, "shell", &direct, &msgs, &[], gate);
+        let r = judgment_deny_for_tool_call(&agent, "shell", &rewritten, &msgs, &[], gate);
         assert!(d.is_some() && r.is_some(), "both entry points must deny");
         assert_eq!(d, r, "direct shell and rewritten CLI must share one gate");
 
@@ -1168,7 +1214,15 @@ mod tests {
     fn non_send_shell_is_not_gated() {
         let agent = agent_with_notify(NotifyOn::Judgment);
         let args = serde_json::json!({ "command": "neomind device get cam-1" });
-        assert!(judgment_deny_for_tool_call(&agent, "shell", &args, &[], &[]).is_none());
+        assert!(judgment_deny_for_tool_call(
+            &agent,
+            "shell",
+            &args,
+            &[],
+            &[],
+            JudgmentVisionGate::default()
+        )
+        .is_none());
     }
 
     /// Mid-loop Partial race: vision tools already all failed → deny send even
@@ -1184,8 +1238,9 @@ mod tests {
         let args = serde_json::json!({
             "command": "neomind message send --title \"告警\" --body \"疑似赌博\""
         });
+        let gate = JudgmentVisionGate::default();
         assert!(
-            judgment_deny_for_tool_call(&agent, "shell", &args, &msgs, &[]).is_none(),
+            judgment_deny_for_tool_call(&agent, "shell", &args, &msgs, &[], gate).is_none(),
             "without prior vision failure, criteria met must allow"
         );
 
@@ -1198,12 +1253,71 @@ mod tests {
                 metadata: None,
             }),
         }];
-        let denied = judgment_deny_for_tool_call(&agent, "shell", &args, &msgs, &prior);
+        let denied = judgment_deny_for_tool_call(&agent, "shell", &args, &msgs, &prior, gate);
         assert!(
             denied
                 .as_ref()
                 .is_some_and(|r| r.contains("vision tools already failed")),
             "vision-all-failed must block mid-loop send: {denied:?}"
+        );
+    }
+
+    #[test]
+    fn same_batch_vision_blocks_criteria_met_send() {
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let msgs = vec![Message::new(
+            MessageRole::Assistant,
+            "有人。\nVerdict: criteria met",
+        )];
+        let args = serde_json::json!({
+            "command": "neomind message send --title \"告警\" --body \"疑似\""
+        });
+        let peers = ["vision", "shell"];
+        let denied = judgment_deny_for_tool_call(
+            &agent,
+            "shell",
+            &args,
+            &msgs,
+            &[],
+            JudgmentVisionGate {
+                same_batch_names: &peers,
+                vision_required: true,
+            },
+        );
+        assert!(
+            denied
+                .as_ref()
+                .is_some_and(|r| r.contains("still running in this batch")),
+            "same-batch vision+send must block: {denied:?}"
+        );
+    }
+
+    #[test]
+    fn vision_required_without_success_blocks_blind_send() {
+        let agent = agent_with_notify(NotifyOn::Judgment);
+        let msgs = vec![Message::new(
+            MessageRole::Assistant,
+            "现场正常。\nVerdict: criteria met",
+        )];
+        let args = serde_json::json!({
+            "command": "neomind message send --title \"正常\" --body \"无异常\""
+        });
+        let denied = judgment_deny_for_tool_call(
+            &agent,
+            "shell",
+            &args,
+            &msgs,
+            &[],
+            JudgmentVisionGate {
+                same_batch_names: &[],
+                vision_required: true,
+            },
+        );
+        assert!(
+            denied
+                .as_ref()
+                .is_some_and(|r| r.contains("vision not yet confirmed")),
+            "blind ViaVisionTool send must block: {denied:?}"
         );
     }
 }

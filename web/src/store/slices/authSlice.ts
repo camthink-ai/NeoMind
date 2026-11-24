@@ -46,13 +46,16 @@ export const createAuthSlice: StateCreator<
       set({ token, isAuthenticated: true, user: cachedUser })
       // Try to fetch current user info
       get().getCurrentUser().catch((error) => {
-        // Only clear token and user on 401/403 (auth errors)
-        if (error?.status === 401 || error?.status === 403) {
+        // Align with API-key path: hybrid_auth answers 401 for invalid
+        // credentials; a 403 is not "key/token invalid" and must not sign out
+        // (permission-denied or transient middleware can return 403 while the
+        // session is still good).
+        if (error?.status === 401) {
           tokenManager.clearToken()
           tokenManager.clearUser()
           set({ token: null, user: null, isAuthenticated: false })
         }
-        // On 500 or other errors, keep cached user info
+        // On 403/5xx/network, keep cached user info
       })
     } else if (apiKey) {
       // API key auth — no JWT token, but authenticated via service account

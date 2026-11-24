@@ -2271,6 +2271,21 @@ pub(super) fn drive_react_stream(
                                     successful_mutations.push(cmd.to_string());
                                 }
                             }
+                        } else if real_name == "device_command"
+                            && matches!(
+                                &execution.result,
+                                Ok(out) if crate::toolkit::tool::effective_success("device_command", out)
+                            )
+                        {
+                            // Structured device_command never entered
+                            // successful_mutations (shell-only), so turn-end
+                            // emitted a false Delivery mismatch when the
+                            // intended control already delivered.
+                            if let Some(synth) =
+                                synthesize_device_control_mutation(&exec_arguments)
+                            {
+                                successful_mutations.push(synth);
+                            }
                         }
                         // Round 2: finalize Operation status + confirm steps.
                         // PreferKnown resume skips finalize (already terminal).
@@ -3833,6 +3848,20 @@ pub(super) fn drive_react_stream(
 
 /// Reserve tokens for model response generation (minimum 1024).
 const RESERVE_FOR_RESPONSE: usize = 1024;
+
+/// Build a shell-shaped mutation fingerprint from structured `device_command`
+/// args so turn-end delivery notes treat it like `neomind device control …`.
+fn synthesize_device_control_mutation(args: &serde_json::Value) -> Option<String> {
+    let device = args
+        .get("device")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    let command = args
+        .get("command")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    Some(format!("neomind device control {device} {command}"))
+}
 
 /// History budget given the model's context capacity and the measured
 /// prompt overhead (system prompt + tool definitions).

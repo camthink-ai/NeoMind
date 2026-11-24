@@ -92,23 +92,43 @@ fn resource_type_to_string(resource_type: &ResourceType) -> &'static str {
     }
 }
 
-/// Soft configuration warnings for create/update responses (never hard-fails).
-fn collect_agent_config_warnings(agent: &AiAgent) -> Vec<String> {
-    let mut warnings = Vec::new();
-
-    let tools_disabled = agent.tool_config.as_ref().is_some_and(|tc| !tc.enabled);
+/// Hard reject judgment notify with tools disabled or an allowlist that omits
+/// `shell` — mirrors CLI `--no-tools` / `--allowed-tools` conflict checks so
+/// Chat/`curl` cannot persist a mute Judgment agent.
+fn judgment_tool_config_conflict(agent: &AiAgent) -> Option<String> {
     let judgment = agent
         .notify
         .as_ref()
         .is_some_and(|n| matches!(n.on, neomind_storage::NotifyOn::Judgment));
-
-    if tools_disabled && judgment {
-        warnings.push(
-            "tool_config.enabled=false truncates judgment notify: judgment alerts need `shell` \
-             to send messages — use allowed_tools=[\"shell\"] or notify.on=always/failure."
+    if !judgment {
+        return None;
+    }
+    let tc = agent.tool_config.as_ref()?;
+    if !tc.enabled {
+        return Some(
+            "tool_config.enabled=false conflicts with notify.on=judgment: judgment alerts need \
+             `shell` to send messages — use allowed_tools=[\"shell\"] or notify.on=always/failure."
                 .to_string(),
         );
     }
+    if !tc.allowed_tools.is_empty()
+        && !tc
+            .allowed_tools
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case("shell"))
+    {
+        return Some(
+            "tool_config.allowed_tools omits `shell` while notify.on=judgment: judgment alerts \
+             need `shell` to send messages — include \"shell\" or switch notify.on."
+                .to_string(),
+        );
+    }
+    None
+}
+
+/// Soft configuration warnings for create/update responses (never hard-fails).
+fn collect_agent_config_warnings(agent: &AiAgent) -> Vec<String> {
+    let mut warnings = Vec::new();
 
     if agent.schedule.schedule_type == ScheduleType::Event && agent.resources.is_empty() {
         warnings.push(
@@ -1504,6 +1524,10 @@ pub async fn create_agent(
         max_tokens_per_run: request.max_tokens_per_run,
     };
 
+    if let Some(msg) = judgment_tool_config_conflict(&agent) {
+        return Err(ErrorResponse::bad_request(msg));
+    }
+
     // Save to storage
     let store = &state.agents.agent_store;
     store
@@ -2055,6 +2079,10 @@ pub async fn update_agent(
     }
 
     agent.updated_at = chrono::Utc::now().timestamp();
+
+    if let Some(msg) = judgment_tool_config_conflict(&agent) {
+        return Err(ErrorResponse::bad_request(msg));
+    }
 
     // Save
     store
@@ -3583,7 +3611,7 @@ mod config_warning_tests {
     }
 
     #[test]
-    fn warns_on_no_tools_plus_judgment() {
+    fn rejects_no_tools_plus_judgment() {
         let mut agent = base_agent();
         agent.tool_config = Some(AgentToolConfig {
             enabled: false,
@@ -3593,10 +3621,34 @@ mod config_warning_tests {
             channels: vec!["IM".into()],
             on: NotifyOn::Judgment,
         });
+        let conflict = judgment_tool_config_conflict(&agent);
+        assert!(
+            conflict.as_ref().is_some_and(|m| m.contains("judgment")),
+            "{conflict:?}"
+        );
+        // Soft warnings no longer cover this — it is a hard 400.
         let warnings = collect_agent_config_warnings(&agent);
         assert!(
-            warnings.iter().any(|w| w.contains("judgment")),
+            warnings.iter().all(|w| !w.contains("judgment")),
             "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_judgment_allowlist_without_shell() {
+        let mut agent = base_agent();
+        agent.tool_config = Some(AgentToolConfig {
+            enabled: true,
+            allowed_tools: vec!["memory".into()],
+        });
+        agent.notify = Some(AgentNotify {
+            channels: vec!["IM".into()],
+            on: NotifyOn::Judgment,
+        });
+        let conflict = judgment_tool_config_conflict(&agent);
+        assert!(
+            conflict.as_ref().is_some_and(|m| m.contains("shell")),
+            "{conflict:?}"
         );
     }
 

@@ -706,16 +706,28 @@ fn finish_summary_with_verbatim(
         }
         _ => text.to_string(),
     };
-    let combined = attach_verbatim_user_block(&narrative, verbatim_users);
-    // Repeated fallback must not create an unbounded system message. If we
-    // cannot preserve it within budget, keep the previous coverage unchanged.
-    if neomind_agent::agent::tokenizer::estimate_tokens(&combined) > max_tokens {
-        return Err(
-            "Summary cannot fit its budget without discarding prior memory; coverage unchanged"
-                .into(),
-        );
+    // Prefer keeping coverage: trim oldest verbatim entries, then truncate
+    // narrative, before aborting (which used to stall compress forever).
+    let mut entries: Vec<String> = verbatim_users.to_vec();
+    let mut narrative_owned = narrative;
+    loop {
+        let combined = attach_verbatim_user_block(&narrative_owned, &entries);
+        if neomind_agent::agent::tokenizer::estimate_tokens(&combined) <= max_tokens {
+            return Ok((combined, fallback_used));
+        }
+        if !entries.is_empty() {
+            entries.remove(0);
+            continue;
+        }
+        let chars = narrative_owned.chars().count();
+        if chars <= 200 {
+            break;
+        }
+        let keep = (chars * 3) / 4;
+        narrative_owned = narrative_owned.chars().take(keep).collect();
+        narrative_owned.push_str("\n…[summary truncated to fit budget]");
     }
-    Ok((combined, fallback_used))
+    Err("Summary cannot fit its budget without discarding prior memory; coverage unchanged".into())
 }
 
 #[cfg(test)]
@@ -1717,6 +1729,34 @@ mod tests {
         let (stripped_narrative, extracted) = strip_verbatim_user_block(&combined);
         assert_eq!(stripped_narrative, narrative);
         assert_eq!(extracted, merged);
+    }
+
+    #[test]
+    fn finish_summary_trims_oldest_verbatim_before_aborting() {
+        // Fat narrative + many verbatim entries that exceed a tiny budget —
+        // must drop oldest entries and still return Ok (coverage continues).
+        let narrative = "n".repeat(400);
+        let entries: Vec<String> = (0..8)
+            .map(|i| format!("user line {i} {}", "x".repeat(80)))
+            .collect();
+        let (combined, _) = finish_summary_with_verbatim(
+            None,
+            Some((narrative.as_str(), "Stop")),
+            "fallback unused",
+            120,
+            &[],
+            &entries,
+        )
+        .expect("should trim not abort");
+        assert!(
+            neomind_agent::agent::tokenizer::estimate_tokens(&combined) <= 120,
+            "trimmed summary must fit budget"
+        );
+        // Oldest entry should be gone after trim.
+        assert!(
+            !combined.contains("user line 0"),
+            "oldest verbatim should be dropped first: {combined}"
+        );
     }
 
     /// Regression: after a 10-cap fold, re-walking the full covered prefix

@@ -118,10 +118,21 @@ pub(crate) fn build_context_window_with_summary_marked(
     // Inject summary as a system message at the beginning (after any existing system messages)
     if let Some(summary_text) = summary {
         if !summary_text.is_empty() {
+            // Drop verbatim entries still present as live protected users so
+            // the same wording is not billed twice (store keeps them; inject
+            // is the polish point).
+            let live_user_bodies: Vec<String> = protected_users
+                .iter()
+                .filter_map(|&i| messages.get(i))
+                .filter(|m| m.role == "user")
+                .map(|m| m.content.trim().replace('\n', " "))
+                .filter(|s| !s.is_empty())
+                .collect();
+            let inject_text = dedupe_verbatim_against_live_users(summary_text, &live_user_bodies);
             let summary_msg = AgentMessage::system(format!(
                 "{}{}",
                 super::super::types::CONVERSATION_SUMMARY_PREFIX,
-                summary_text
+                inject_text
             ));
             // Find insertion point: after system messages, before other messages
             let insert_pos = result.iter().take_while(|m| m.role == "system").count();
@@ -687,6 +698,78 @@ pub fn protected_user_indices(messages: &[AgentMessage]) -> std::collections::Ha
         .collect()
 }
 
+/// HTML markers wrapping the deterministic verbatim-user block in a stored
+/// summary (must stay in sync with `neomind-api` summarization handlers).
+const VERBATIM_USERS_START: &str = "<!-- neomind:verbatim-user-messages:start -->";
+const VERBATIM_USERS_END: &str = "<!-- neomind:verbatim-user-messages:end -->";
+
+/// At inject time, drop verbatim-block bullets whose wording is already in
+/// the live protected-user window. Storage keeps the full block; only the
+/// prompt payload is de-duplicated.
+pub(crate) fn dedupe_verbatim_against_live_users(
+    summary: &str,
+    live_user_bodies: &[String],
+) -> String {
+    let Some(start_idx) = summary.find(VERBATIM_USERS_START) else {
+        return summary.to_string();
+    };
+    let Some(end_rel) = summary[start_idx..].find(VERBATIM_USERS_END) else {
+        return summary.to_string();
+    };
+    let end_idx = start_idx + end_rel;
+    let block = &summary[start_idx + VERBATIM_USERS_START.len()..end_idx];
+    let mut kept = Vec::new();
+    for line in block.lines() {
+        let trimmed = line.trim();
+        let Some(item) = trimmed.strip_prefix("- ") else {
+            continue;
+        };
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let still_live = live_user_bodies
+            .iter()
+            .any(|live| live == item || live.starts_with(item) || item.starts_with(live.as_str()));
+        if !still_live {
+            kept.push(item.to_string());
+        }
+    }
+    if kept.is_empty() {
+        // Drop the whole empty block (and surrounding blank lines).
+        let before = summary[..start_idx].trim_end();
+        let after = summary[end_idx + VERBATIM_USERS_END.len()..].trim_start();
+        if after.is_empty() {
+            return before.to_string();
+        }
+        return format!("{before}\n\n{after}");
+    }
+    let mut rebuilt = String::new();
+    rebuilt.push_str(VERBATIM_USERS_START);
+    rebuilt.push('\n');
+    // Preserve the Chinese header line if present.
+    for line in block.lines() {
+        let t = line.trim();
+        if t.starts_with("## ") {
+            rebuilt.push_str(t);
+            rebuilt.push('\n');
+            break;
+        }
+    }
+    for entry in &kept {
+        rebuilt.push_str("- ");
+        rebuilt.push_str(entry);
+        rebuilt.push('\n');
+    }
+    rebuilt.push_str(VERBATIM_USERS_END);
+    format!(
+        "{}{}{}",
+        &summary[..start_idx],
+        rebuilt,
+        &summary[end_idx + VERBATIM_USERS_END.len()..]
+    )
+}
+
 /// Partition AgentMessages into atomic groups: an assistant tool-call turn
 /// plus its contiguous tool results, or a single non-tool message.
 ///
@@ -1019,6 +1102,22 @@ impl TurnContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inject_dedupes_verbatim_entries_still_live() {
+        let summary = format!(
+            "## 任务\n旧叙事\n\n{VERBATIM_USERS_START}\n## 早期用户原话（逐字保留）\n- keep me\n- live user wording\n{VERBATIM_USERS_END}"
+        );
+        let live = vec!["live user wording".to_string()];
+        let out = dedupe_verbatim_against_live_users(&summary, &live);
+        assert!(out.contains("keep me"), "{out}");
+        assert!(
+            !out.contains("live user wording"),
+            "live protected wording must not double-inject: {out}"
+        );
+        assert!(out.contains(VERBATIM_USERS_START));
+    }
+
     #[test]
     fn compacted_prefix_keeps_recent_user_words_verbatim() {
         let exact = "请按原文写上 厦门市集美区，不要改字";

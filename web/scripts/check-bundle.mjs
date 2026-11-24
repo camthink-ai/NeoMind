@@ -20,9 +20,26 @@ import { gzipSync } from 'node:zlib'
 import { join, resolve } from 'node:path'
 
 const KB = 1024
+// Single BUNDLE_* prefix. BUDGET_* aliases kept so existing CI/local overrides
+// still apply — prefer BUNDLE_* going forward. Always run via `npm run
+// build:check` (never bare `node check-bundle.mjs` after a custom outDir).
+const envNum = (...names) => {
+  for (const name of names) {
+    if (process.env[name] != null && process.env[name] !== '') {
+      return Number(process.env[name])
+    }
+  }
+  return undefined
+}
 const LIMITS = {
-  entry: { raw: Number(process.env.BUNDLE_ENTRY_RAW_KB || 1400), gzip: Number(process.env.BUNDLE_ENTRY_GZIP_KB || 430) },
-  chat: { raw: Number(process.env.BUDGET_CHAT_RAW_KB || 2300), gzip: Number(process.env.BUDGET_CHAT_GZIP_KB || 720) },
+  entry: {
+    raw: envNum('BUNDLE_ENTRY_RAW_KB', 'BUDGET_ENTRY_RAW_KB') ?? 1400,
+    gzip: envNum('BUNDLE_ENTRY_GZIP_KB', 'BUDGET_ENTRY_GZIP_KB') ?? 430,
+  },
+  chat: {
+    raw: envNum('BUNDLE_CHAT_RAW_KB', 'BUDGET_CHAT_RAW_KB') ?? 2300,
+    gzip: envNum('BUNDLE_CHAT_GZIP_KB', 'BUDGET_CHAT_GZIP_KB') ?? 720,
+  },
 }
 const dist = resolve(process.argv[2] || 'dist')
 const kb = (bytes) => `${(bytes / KB).toFixed(0).padStart(5)} KB`

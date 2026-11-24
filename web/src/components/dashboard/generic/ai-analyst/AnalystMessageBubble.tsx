@@ -5,6 +5,7 @@ import {
   Bot,
   User,
   AlertCircle,
+  AlertTriangle,
   Loader2,
   Clock,
   Cpu,
@@ -214,6 +215,22 @@ export function AnalystMessageBubble({ message, streamingContent }: AnalystMessa
         <div className="flex-1 min-w-0">
           <div className="rounded-lg px-3 py-2 bg-error-light border border-error w-full">
             <p className="text-xs text-error">{message.content}</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Partial / undetermined (vision) — not success, not hard failure
+  if (message.type === 'warning') {
+    return (
+      <div className="flex items-start gap-2">
+        <div className="w-6 h-6 rounded-md bg-warning-light flex items-center justify-center shrink-0 mt-0.5">
+          <AlertTriangle className="h-4 w-4 text-warning" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="rounded-lg px-3 py-2 bg-warning-light border border-warning w-full">
+            <p className="text-xs text-warning">{message.content}</p>
           </div>
         </div>
       </div>

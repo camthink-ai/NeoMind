@@ -873,13 +873,27 @@ impl AgentExecutor {
                         // judgment only — never from pending send title/body.
                         // Keyword scan of the final reply is audit-only and
                         // cannot unsend. Also blocks mid-loop when vision tools
-                        // already all failed (Partial race before finish path).
+                        // already all failed, same-batch vision+send, or
+                        // ViaVisionTool blind send (no successful vision yet).
+                        let batch_names: Vec<&str> =
+                            calls.iter().map(|peer| peer.name.as_str()).collect();
+                        let vision_required = bound_image.is_some()
+                            && (filtered_tools
+                                .iter()
+                                .any(|t| super::vision_path::is_vision_tool_name(&t.name))
+                                || tool_name_map
+                                    .values()
+                                    .any(|n| super::vision_path::is_vision_tool_name(n)));
                         if let Some(r) = super::judgment_notify::judgment_deny_for_tool_call(
                             agent,
                             &c.name,
                             &c.args,
                             messages,
                             &all_tool_results,
+                            super::judgment_notify::JudgmentVisionGate {
+                                same_batch_names: &batch_names,
+                                vision_required,
+                            },
                         ) {
                             tracing::warn!(
                                 agent_id = %agent.id,
