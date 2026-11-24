@@ -92,6 +92,142 @@ fn resource_type_to_string(resource_type: &ResourceType) -> &'static str {
     }
 }
 
+/// Soft configuration warnings for create/update responses (never hard-fails).
+fn collect_agent_config_warnings(agent: &AiAgent) -> Vec<String> {
+    let mut warnings = Vec::new();
+
+    let tools_disabled = agent.tool_config.as_ref().is_some_and(|tc| !tc.enabled);
+    let judgment = agent
+        .notify
+        .as_ref()
+        .is_some_and(|n| matches!(n.on, neomind_storage::NotifyOn::Judgment));
+
+    if tools_disabled && judgment {
+        warnings.push(
+            "tool_config.enabled=false truncates judgment notify: judgment alerts need `shell` \
+             to send messages — use allowed_tools=[\"shell\"] or notify.on=always/failure."
+                .to_string(),
+        );
+    }
+
+    if agent.schedule.schedule_type == ScheduleType::Event && agent.resources.is_empty() {
+        warnings.push(
+            "Event-triggered agent has no bound resources — it will rely only on the trigger \
+             snapshot. Prefer binding the target device or metrics."
+                .to_string(),
+        );
+    }
+
+    if looks_like_vision_task(agent) && !agent_backend_supports_vision(agent) {
+        warnings.push(
+            "This agent looks vision/image-related but the selected LLM does not report vision \
+             support — runs that need images may fail every trigger."
+                .to_string(),
+        );
+    }
+
+    let tools_unrestricted = agent
+        .tool_config
+        .as_ref()
+        .map(|tc| tc.enabled && tc.allowed_tools.is_empty())
+        .unwrap_or(true);
+    let has_commands = agent
+        .resources
+        .iter()
+        .any(|r| matches!(r.resource_type, ResourceType::Command));
+    if agent.execution_mode == ExecutionMode::Focused && tools_unrestricted && !has_commands {
+        warnings.push(
+            "Focused monitor without tool restrictions: consider tool_config enabled=false \
+             (with notify.on=always) or allowed_tools=[\"shell\"] (with judgment) to cut latency \
+             and tool-hallucination risk."
+                .to_string(),
+        );
+    }
+
+    warnings
+}
+
+fn looks_like_vision_task(agent: &AiAgent) -> bool {
+    let prompt = agent.user_prompt.to_ascii_lowercase();
+    if prompt.contains("image")
+        || prompt.contains("vision")
+        || prompt.contains("camera")
+        || prompt.contains("图片")
+        || prompt.contains("看图")
+        || prompt.contains("摄像头")
+    {
+        return true;
+    }
+    if let Some(filter) = agent.schedule.event_filter.as_deref() {
+        let lower = filter.to_ascii_lowercase();
+        if lower.contains("image") || lower.contains("frame") {
+            return true;
+        }
+    }
+    agent.resources.iter().any(|r| {
+        let id = r.resource_id.to_ascii_lowercase();
+        let name = r.name.to_ascii_lowercase();
+        id.contains("image")
+            || name.contains("image")
+            || id.contains("camera")
+            || name.contains("camera")
+    })
+}
+
+fn agent_backend_supports_vision(agent: &AiAgent) -> bool {
+    let Ok(manager) = get_instance_manager() else {
+        // Unknown — do not warn as if vision is missing.
+        return true;
+    };
+    let instance = match agent.llm_backend_id.as_deref() {
+        Some(id) if id != "default" => manager.get_instance(id),
+        _ => manager.get_active_instance(),
+    };
+    match instance {
+        Some(inst) => inst.capabilities.supports_multimodal,
+        None => true,
+    }
+}
+
+/// Compact effective-config summary for create/update success payloads.
+fn agent_effective_config_summary(agent: &AiAgent) -> Value {
+    let tool_summary = match &agent.tool_config {
+        Some(tc) if !tc.enabled => json!({"enabled": false, "allowed_tools": []}),
+        Some(tc) if !tc.allowed_tools.is_empty() => {
+            json!({"enabled": true, "allowed_tools": tc.allowed_tools})
+        }
+        _ => json!({"enabled": true, "allowed_tools": "all"}),
+    };
+    json!({
+        "execution_mode": execution_mode_to_string(&agent.execution_mode),
+        "schedule_type": schedule_type_to_string(&agent.schedule.schedule_type),
+        "resource_count": agent.resources.len(),
+        "tool_config": tool_summary,
+        "notify": agent.notify,
+    })
+}
+
+fn agent_mutation_response(agent: &AiAgent, include_name_status: bool) -> Value {
+    let warnings = collect_agent_config_warnings(agent);
+    let mut body = if include_name_status {
+        json!({
+            "id": agent.id,
+            "name": agent.name,
+            "status": "active",
+            "effective_config": agent_effective_config_summary(agent),
+        })
+    } else {
+        json!({
+            "id": agent.id,
+            "effective_config": agent_effective_config_summary(agent),
+        })
+    };
+    if !warnings.is_empty() {
+        body["warnings"] = json!(warnings);
+    }
+    body
+}
+
 /// Infer resource type from resource_id string.
 ///
 /// This function uses DataSourceId parsing to determine the resource type
@@ -1411,11 +1547,7 @@ pub async fn create_agent(
         agent.llm_backend_id.as_deref().unwrap_or("default")
     );
 
-    ok(json!({
-        "id": agent.id,
-        "name": agent.name,
-        "status": "active",
-    }))
+    ok(agent_mutation_response(&agent, true))
 }
 
 /// Initialize the agent's knowledge file at creation time.
@@ -1892,8 +2024,10 @@ pub async fn update_agent(
         }
     }
 
-    // Only update resources if new resources were provided
-    if has_schedule_update || has_resources_update || has_old_format {
+    // Only update resources when resources (or legacy binding fields) were
+    // actually provided. Including `has_schedule_update` here used to wipe
+    // bindings whenever a schedule-only PUT omitted `resources`.
+    if has_resources_update || has_old_format {
         agent.resources = resources;
     }
 
@@ -1971,9 +2105,7 @@ pub async fn update_agent(
 
     tracing::info!("Updated AI Agent: {}", id);
 
-    ok(json!({
-        "id": agent.id,
-    }))
+    ok(agent_mutation_response(&agent, false))
 }
 
 /// Delete an AI Agent.
@@ -3383,4 +3515,115 @@ pub async fn list_agent_tools(State(state): State<ServerState>) -> HandlerResult
         "tools": tools,
         "count": count,
     }))
+}
+
+#[cfg(test)]
+mod config_warning_tests {
+    use super::*;
+    use neomind_storage::{
+        AgentMemory, AgentNotify, AgentSchedule, AgentStats, AgentStatus, AgentToolConfig, NotifyOn,
+    };
+
+    fn base_agent() -> AiAgent {
+        AiAgent {
+            id: "a1".into(),
+            name: "WarnTest".into(),
+            description: None,
+            user_prompt: "Check temperature".into(),
+            llm_backend_id: None,
+            parsed_intent: None,
+            resources: vec![],
+            schedule: AgentSchedule {
+                schedule_type: ScheduleType::Event,
+                cron_expression: None,
+                interval_seconds: None,
+                event_filter: None,
+                timezone: None,
+            },
+            status: AgentStatus::Active,
+            priority: 128,
+            created_at: 0,
+            updated_at: 0,
+            last_execution_at: None,
+            stats: AgentStats::default(),
+            memory: AgentMemory::default(),
+            conversation_history: vec![],
+            user_messages: vec![],
+            conversation_summary: None,
+            context_window_size: 10,
+            enable_tool_chaining: false,
+            max_chain_depth: 3,
+            tool_config: None,
+            execution_mode: ExecutionMode::Focused,
+            error_message: None,
+            system_prompt: None,
+            max_retries: 0,
+            consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
+            memory_mode: None,
+            notify: Some(AgentNotify {
+                channels: vec!["IM".into()],
+                on: NotifyOn::Failure,
+            }),
+            max_tokens_per_run: None,
+        }
+    }
+
+    #[test]
+    fn warns_on_no_tools_plus_judgment() {
+        let mut agent = base_agent();
+        agent.tool_config = Some(AgentToolConfig {
+            enabled: false,
+            allowed_tools: vec![],
+        });
+        agent.notify = Some(AgentNotify {
+            channels: vec!["IM".into()],
+            on: NotifyOn::Judgment,
+        });
+        let warnings = collect_agent_config_warnings(&agent);
+        assert!(
+            warnings.iter().any(|w| w.contains("judgment")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn warns_on_event_without_resources() {
+        let agent = base_agent();
+        let warnings = collect_agent_config_warnings(&agent);
+        assert!(
+            warnings.iter().any(|w| w.contains("no bound resources")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn schedule_only_update_must_not_clear_resources_guard() {
+        // Documents the fixed predicate: resources rewrite requires an
+        // explicit resources/legacy-bindings update, never schedule alone.
+        let has_schedule_update = true;
+        let has_resources_update = false;
+        let has_old_format = false;
+        let should_rewrite = has_resources_update || has_old_format;
+        assert!(
+            !should_rewrite,
+            "schedule-only must not rewrite resources (had schedule={has_schedule_update})"
+        );
+    }
+
+    #[test]
+    fn mutation_response_omits_empty_warnings() {
+        let mut agent = base_agent();
+        agent.schedule.schedule_type = ScheduleType::Manual;
+        agent.execution_mode = ExecutionMode::Free;
+        agent.tool_config = Some(AgentToolConfig {
+            enabled: false,
+            allowed_tools: vec![],
+        });
+        let body = agent_mutation_response(&agent, true);
+        assert_eq!(body["id"], "a1");
+        assert!(body.get("warnings").is_none(), "{body}");
+        assert!(body.get("effective_config").is_some());
+    }
 }

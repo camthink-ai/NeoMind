@@ -172,7 +172,9 @@ impl AgentExecutor {
                     },
                     model: None,
                     stream: false,
-                    tools: Some(filtered_tools.to_vec()),
+                    // Empty allowlist must be `None`, not `Some([])` — some
+                    // backends reject an empty tools array with HTTP 400.
+                    tools: (!filtered_tools.is_empty()).then(|| filtered_tools.to_vec()),
                 }
             };
             let mut input = build_input(messages);
@@ -515,7 +517,9 @@ impl AgentExecutor {
                 // promise as the conclusion. Nudge once with a pointed retry
                 // — same ephemeral-User-message pattern the AllDuplicate
                 // branch uses — and only when round budget remains.
-                if !narration_nudged
+                // Never nudge a zero-tool agent to emit tool calls.
+                if !filtered_tools.is_empty()
+                    && !narration_nudged
                     && round + 1 < max_rounds
                     && !crate::agent::user_requested_no_execution(&agent.user_prompt)
                     && crate::agent::is_narration_without_action(&remaining_text)

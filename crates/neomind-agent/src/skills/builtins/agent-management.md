@@ -75,48 +75,57 @@ All agent operations go through `shell`. Always RUN the command yourself and rep
 | `neomind agent conversation <id>` | Get agent conversation / messages |
 | `neomind agent send-message <id> <text>` | Send a message to an agent |
 
-## CRITICAL: Create → Active Pattern
+## CRITICAL: 4-step create SOP
 
-New agents are created in **active** state and start executing immediately (if scheduled). Use this pattern:
+New agents are created **active** and may run immediately. Follow these steps — never paste Chat history into `--prompt`.
+
+1. **Discover real IDs first**: `device list` → `device get <ID>` (metric names/types). Never invent `device_id` / metric fields.
+2. **Pick mode / trigger / notify / tools** from the profile table below. Hard rule: `--no-tools` conflicts with `--notify on=judgment` (judgment needs `--allowed-tools shell`). Use `--output-schema` only for `structured`.
+3. **Isolate context**: distill a clean business `--prompt` (target, criteria, action/output, silence rules). Do not dump chat troubleshooting into the agent.
+4. **Report the effective summary**: after create/update, read back mode, schedule, bindings, tool_config, notify — and surface any `warnings` from the response.
+
+| Profile | Mode | Trigger | Notify | Tools | Bindings | Example |
+|---|---|---|---|---|---|---|
+| 1a pure analysis / always report | focused | event / interval / cron | always | `--no-tools` | required metrics/device-ids | status digest, describe every frame |
+| 1b conditional alert | focused | event / interval | judgment | `--allowed-tools shell` | required metrics/device-ids | temp alert, vision anomaly→message |
+| 2 structured label | structured | event / interval | failure | (none; L0) | metrics + `--output-schema` | risk enum / people count |
+| 3 monitor + limited control | focused | event / interval | judgment or failure | `--allowed-tools shell` (+ whitelist) | metrics + `--commands` | overheat → shutdown + notify |
+| 4 cross-device inspect | free | cron / interval | always or judgment | default (optional whitelist) | optional | daily patrol |
 
 ```bash
-neomind agent create --name 'Monitor' --prompt 'Check battery levels'
-# → Returns agent ID (e.g., agent-abc123), already active and running
+# 1b — focused + judgment + shell only (bind real IDs from device get)
+neomind agent create --name 'Temp Alert' --prompt 'Alert only when temp > 30C' \
+  --schedule-type event --execution-mode focused \
+  --metrics '[{"device_id":"<real-id>","metric_name":"temperature","display_name":"Temp"}]' \
+  --allowed-tools shell --notify '{"channels":["IM"],"on":"judgment"}'
 
-# To pause later:
-neomind agent control agent-abc123 paused
-
-# To resume:
-neomind agent control agent-abc123 active
+# Pause / resume later
+neomind agent control <id> paused
+neomind agent control <id> active
 ```
 
 ## Schedule Types
 
 | Type | `--schedule-type` | Shortcut / `--schedule-config` | Example |
 |------|-------------------|-------------------------------|---------|
-| Event | `event` (default) | Not needed | Triggered by device data matching the event filter |
-| Interval | `interval` | `--every 5m` (shortcut) or `--schedule-config '300'` | `--every 5m` = every 5 min |
-| Cron | `cron` | `--schedule-config` + `--timezone` | `--schedule-config '0 9 * * *' --timezone 'Asia/Shanghai'` = daily 9 AM Beijing time |
-| Manual | `manual` | Not needed | Never auto-scheduled — runs ONLY via `agent invoke` |
+| Event | `event` (default) | optional `--event-filter` | Device uplink matching filter (no field = whole device) |
+| Interval | `interval` | `--every 5m` or `--schedule-config '300'` | every 5 min |
+| Cron | `cron` | `--schedule-config` + `--timezone` | `'0 9 * * *' --timezone 'Asia/Shanghai'` |
+| Manual | `manual` | — | only via `agent invoke` |
 
-For a cron schedule, the expression does not encode a timezone. If the user specifies a timezone, pass `--timezone` explicitly (Beijing time: `Asia/Shanghai`), then verify both the cron expression and timezone with `neomind agent get <id>`. Do not claim a local-time schedule is configured when the returned timezone is missing or different. If the user does not specify a timezone, use the timezone configured in NeoMind system settings; verify the effective scheduled time before reporting it.
-
-**Manual agents** are repeatable one-off workers: they never fire on their own, `agent invoke <ID>` runs them any number of times, and between runs they show status `Completed` (a ready-state — Completed agents can always be invoked again). Use manual for on-demand analysis, ad-hoc checks, or tasks delegated from chat.
-
-**`--every` shortcut**: `--every 30s`, `--every 5m`, `--every 1h`, `--every 2d` — replaces `--schedule-type interval --schedule-config <seconds>`.
+Cron timezone is separate from the expression — pass `--timezone` (e.g. `Asia/Shanghai`) and verify on `agent get`. Manual agents show `Completed` between invokes (ready to run again). `--every 30s|5m|1h|2d` replaces interval+seconds.
 
 ## Execution Modes
 
 | Mode | What happens | When to Use |
 |------|--------------|-------------|
-| `focused` (default) | Single-pass analysis of the bound data; plainest agent | "Look once and answer" — summaries, checks |
-| `free` | Multi-round tool calling: the agent queries, calls tools, executes bound commands until done | Open-ended investigation, linked actions |
-| `structured` | ONE constrained inference; schema-validated fields published as `ai:{id}:{field}` data sources | Meter reading, QC verdicts, anything that feeds a dashboard/rule |
+| `focused` (default) | Single-pass on bound data | summaries / checks — **requires** `--device-ids`/`--resources`/`--metrics`/`--commands` |
+| `free` | Multi-round tools | open investigation; bindings optional |
+| `structured` | One constrained inference → `ai:{id}:{field}` | schema labels; **requires** bindings + `--output-schema` |
 
-Focused/free tasks may operate without bindings when appropriate. Structured mode requires actual bound input.
-Default `--execution-mode` is **focused** — creating without `--device-ids` / `--resources` fails with `FOCUSED_REQUIRES_RESOURCES`. For create→invoke→delete or unbound investigation, pass `--execution-mode free` (or bind devices and keep focused).
+Default focused without bindings → `FOCUSED_REQUIRES_RESOURCES`. Unbound create→invoke→delete → `--execution-mode free`.
 
-### Output Contract (structured & reasoning agents)
+### Output Contract (structured)
 
 `--output-schema` declares the fields the agent must produce. Every field is
 published as a live data source `ai:{agent_id}:{field}` — dashboards, rules
@@ -230,52 +239,9 @@ Confirm the IDs exist before creating.
 ]
 ```
 
-## Choosing the Right LLM Backend
+## LLM backend & vision
 
-Before creating an agent, check available backends and their capabilities:
-
-```bash
-neomind llm list
-```
-
-The response includes a `capabilities` object per backend. Match it to your task:
-
-| Task Type | Required Capability | How to Check |
-|-----------|-------------------|--------------|
-| Text-only (monitoring, alerts, reports) | None (any backend works) | — |
-| Vision / Image analysis | `multimodal: true` or `supports_images: true` | Look for vision models (e.g., `qwen3-vl`, `gpt-4o`) |
-| Tool calling / function calling | `function_calling: true` | Most modern models support this |
-| Long context tasks | `max_context` value | Compare context window sizes |
-
-> If `--llm-backend` is not specified, the **default active backend** is used.
-
-**Example — creating a vision-capable agent:**
-```bash
-# Step 1: Find a backend with multimodal support
-neomind llm list
-# Look for backends where capabilities.multimodal or capabilities.supports_images is true
-
-# Step 2: Create agent with that backend
-neomind agent create \
-  --name 'Image Analyzer' \
-  --prompt 'Analyze device camera images and detect anomalies' \
-  --llm-backend <multimodal_backend_id>
-```
-
-### Vision Tool (Image Analysis)
-
-Agents have access to a `vision` tool that can analyze images:
-- **Data URLs**: `data:image/jpeg;base64,...` (preferred for inline images)
-- **HTTP URLs**: any publicly accessible image URL (10s fetch timeout)
-
-The tool uses the agent's bound LLM backend — the backend MUST have `capabilities.multimodal: true`. The tool returns structured text descriptions suitable for downstream reasoning, alerting, or reporting.
-
-Typical use cases:
-- Analyze device camera snapshots (via webhook/metric attachment)
-- Inspect uploaded screenshots or diagnostic photos
-- Verify visual state changes detected by sensors
-
-For backend selection and multimodal capability overrides, see the **llm-management** skill.
+`neomind llm list` → match `capabilities.multimodal` / `supports_images` / `function_calling` / `max_context`. Omit `--llm-backend` to use the active default. Vision agents need a multimodal backend; the `vision` tool accepts data URLs or HTTP image URLs and uses that backend. Overrides: **llm-management** skill.
 
 
 ## Command Reference
@@ -284,23 +250,16 @@ For backend selection and multimodal capability overrides, see the **llm-managem
 
 ```bash
 neomind agent create \
-  --name '<name>' \
-  --prompt '<task_description>' \
-  [--schedule-type <event|interval|cron|manual>] \
-  [--schedule-config '<config>'] \
-  [--timezone '<IANA timezone>'] \
-  [--description '<desc>'] \
-  [--llm-backend '<llm_backend_id>'] \
-  [--system-prompt '<instructions>'] \
-  [--execution-mode <focused|free|structured>] \
-  [--output-schema '<json array of fields>'] \
-  [--memory-mode <tool|assistant>] \
+  --name '<name>' --prompt '<task_description>' \
+  [--schedule-type <event|interval|cron|manual>] [--schedule-config '<config>'] \
+  [--event-filter '<json>'] [--timezone '<IANA>'] [--every <dur>] \
+  [--execution-mode <focused|free|structured>] [--output-schema '<json>'] \
   [--notify '{"channels":["name"],"on":"failure|always|judgment"}'] \
-  [--device-ids 'id1,id2']
+  [--no-tools | --allowed-tools <list|all>] \
+  [--device-ids 'id1,id2'] [--metrics '<json>'] [--commands '<json>'] [--resources '<json>']
 ```
 
-**Required**: `--name`, `--prompt`
-**Important**: `--llm-backend` selects which LLM powers the agent. Run `neomind llm list` first and match backend capabilities to your task (see "Choosing the Right LLM Backend" above).
+**Required**: `--name`, `--prompt`. Tools: `--no-tools` XOR `--allowed-tools` (`all` restores full set). Never `--no-tools` + judgment notify. Match `--llm-backend` via `llm list` capabilities.
 
 ### Control Agent
 
@@ -325,9 +284,10 @@ neomind agent list              # All agents
 ### Update Agent
 
 ```bash
-neomind agent update <ID> --prompt 'New task description'
-neomind agent update <ID> --llm-backend qwen3.5:4b
-neomind agent update <ID> --name 'Better Name' --description 'Updated'
+neomind agent update <ID> --prompt 'New task'
+neomind agent update <ID> --event-filter '{"sources":[{"type":"device","id":"<id>"}]}' --timezone 'Asia/Shanghai'
+neomind agent update <ID> --allowed-tools all   # reverse a prior --no-tools
+neomind agent update <ID> --no-tools
 ```
 
 ### Monitor Executions
@@ -411,6 +371,11 @@ neomind agent create \
 # Trigger on extension data
 --event-filter '{"sources":[{"type":"extension","id":"weather"}]}'
 ```
+
+**Whole device or one field:**
+- **No `field`** = the agent listens to the WHOLE device. It runs once per uplink and receives that uplink as a whole: every metric the device reported in it, with images attached as images (not as text). Use this for camera and vision tasks ("watch this camera") and whenever the prompt needs more than one reading. You do not need to bind the device's metrics yourself.
+- **With `field`** = the agent runs only when that metric is reported, and receives that metric's value plus whatever is bound with `--metrics` / `--resources`. Use it when the prompt is about one specific reading.
+- After a run, `neomind agent latest-execution <AGENT_ID>` shows what the run was given (`input_summary`: metric count, attached image field, vision path, and skip reason). Check it when a new event agent's conclusions look unfounded.
 
 **When to use event vs interval:**
 - **Event**: React immediately when data arrives (real-time anomaly detection)
