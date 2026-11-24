@@ -1057,7 +1057,7 @@ impl LlmInterface {
         let (outer_dropped, outer_estimated_before) = self
             .pending_outer_truncation
             .lock()
-            .map(|mut p| std::mem::replace(&mut *p, (0, 0)))
+            .map(|mut p| std::mem::take(&mut *p))
             .unwrap_or((0, 0));
         self.commit_truncation_snapshot(TruncationSnapshot {
             outer_dropped,
