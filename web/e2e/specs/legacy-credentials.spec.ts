@@ -5,24 +5,17 @@
 /// upgrades while still signed in lands straight in Chat and never sees the
 /// login page — so the purge runs at app startup, before any community or
 /// extension bundle can load. No live backend: API and auth are mocked.
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { installMentionA11yMocks } from '../fixtures/mentionMockApi'
 
 const LEGACY_KEY = 'neomind_remembered_credentials'
 const OLD_PASSWORD = 'legacy-plaintext-password'
-const CHAT_URL = '/chat/mention-a11y-session'
 
-test('upgrade: a still-signed-in user lands in Chat with the legacy password purged', async ({ page }) => {
-  await installMentionA11yMocks(page)
-  await page.addInitScript(
-    ({ key, password }) => {
-      localStorage.setItem(key, JSON.stringify({ username: 'a11y-runner', password, rememberMe: true }))
-    },
-    { key: LEGACY_KEY, password: OLD_PASSWORD },
-  )
+// Where an upgraded user can land without ever seeing the login page: the app
+// root (which is the chat page) and a session URL.
+const ENTRY_POINTS = ['/', '/chat/mention-a11y-session']
 
-  await page.goto(CHAT_URL)
-
+async function expectSignedInChatWithoutLegacyPassword(page: Page) {
   // Still signed in: no bounce to the login page, and the composer is up and usable.
   await expect(page).not.toHaveURL(/\/login/)
   const composer = page.locator('[contenteditable=true]').first()
@@ -46,4 +39,20 @@ test('upgrade: a still-signed-in user lands in Chat with the legacy password pur
     return values.filter((value) => value.includes(password))
   }, OLD_PASSWORD)
   expect(leaked).toEqual([])
-})
+}
+
+for (const path of ENTRY_POINTS) {
+  test(`upgrade: a still-signed-in user opening ${path} lands in Chat with the legacy password purged`, async ({ page }) => {
+    await installMentionA11yMocks(page)
+    await page.addInitScript(
+      ({ key, password }) => {
+        localStorage.setItem(key, JSON.stringify({ username: 'a11y-runner', password, rememberMe: true }))
+      },
+      { key: LEGACY_KEY, password: OLD_PASSWORD },
+    )
+
+    await page.goto(path)
+
+    await expectSignedInChatWithoutLegacyPassword(page)
+  })
+}
