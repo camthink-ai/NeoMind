@@ -4,7 +4,12 @@
 /// page/panel cross-talk), cancellation, and token-usage reporting.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, act, cleanup } from '@testing-library/react'
-import { useChatStream, type StreamEndResult, type UseChatStreamOptions } from '../useChatStream'
+import {
+  tipUsageRatioFromTruncation,
+  useChatStream,
+  type StreamEndResult,
+  type UseChatStreamOptions,
+} from '../useChatStream'
 import type { ServerMessage } from '@/types'
 
 // ── ws singleton mock: capture the subscriber the hook registers ──
@@ -477,5 +482,91 @@ describe('useChatStream', () => {
 
     rerender(<Harness sessionId="s2" />)
     expect(latest.pendingAuthorizeConfirms).toHaveLength(0)
+  })
+
+  // ── P1: truncation tip must not mix attempts ──
+
+  it('tip uses same-attempt omit ratio (50%) while ring keeps last request (70%)', async () => {
+    const onEnd = vi.fn()
+    const onTokenUsage = vi.fn()
+    render(<Harness sessionId="s1" onEnd={onEnd} onTokenUsage={onTokenUsage} />)
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({ type: 'Content', content: 'ok', sessionId: 's1' })
+      emit({
+        type: 'end',
+        sessionId: 's1',
+        historyTruncated: true,
+        truncation: {
+          outerDropped: 0,
+          innerDropped: 7,
+          droppedMessages: 7,
+          estimatedBefore: 12000,
+          // Sticky omit from request2 @ 50%; request3 endUsage is 70%.
+          measuredPromptTokens: 16384,
+          usageRatio: 0.5,
+        },
+        tokenUsage: {
+          promptTokens: 22938,
+          maxContextTokens: 32768,
+          usageRatio: 0.7,
+        },
+      } as ServerMessage)
+    })
+    expect(onEnd).toHaveBeenCalledTimes(1)
+    const result = onEnd.mock.calls[0][0] as StreamEndResult
+    expect(result.truncation?.droppedMessages).toBe(7)
+    expect(result.usageRatio).toBe(0.5)
+    expect(onTokenUsage).toHaveBeenCalledWith(
+      expect.objectContaining({ promptTokens: 22938, maxContextTokens: 32768 }),
+      's1',
+    )
+    // Ring ratio from last request — not the tip's 50%.
+    expect(onTokenUsage.mock.calls[0][0].promptTokens / 32768).toBeCloseTo(0.7, 1)
+  })
+
+  it('tip is count-only when omit snapshot lacks measured tokens', async () => {
+    const onEnd = vi.fn()
+    render(<Harness sessionId="s1" onEnd={onEnd} />)
+    act(() => latest.beginTurn())
+    await act(async () => {
+      emit({ type: 'Content', content: 'ok', sessionId: 's1' })
+      emit({
+        type: 'end',
+        sessionId: 's1',
+        historyTruncated: true,
+        truncation: {
+          outerDropped: 0,
+          innerDropped: 7,
+          droppedMessages: 7,
+          estimatedBefore: 12000,
+          measuredPromptTokens: null,
+        },
+        tokenUsage: {
+          promptTokens: 22938,
+          maxContextTokens: 32768,
+          usageRatio: 0.7,
+        },
+      } as ServerMessage)
+    })
+    expect(onEnd).toHaveBeenCalledTimes(1)
+    const result = onEnd.mock.calls[0][0] as StreamEndResult
+    expect(result.truncation?.droppedMessages).toBe(7)
+    expect(result.usageRatio).toBeUndefined()
+  })
+
+  it('tipUsageRatioFromTruncation derives from measured when usageRatio omitted', () => {
+    expect(
+      tipUsageRatioFromTruncation(
+        { measuredPromptTokens: 16384 },
+        { maxContextTokens: 32768 },
+      ),
+    ).toBe(0.5)
+    expect(
+      tipUsageRatioFromTruncation(
+        { measuredPromptTokens: null },
+        { maxContextTokens: 32768 },
+      ),
+    ).toBeUndefined()
   })
 })

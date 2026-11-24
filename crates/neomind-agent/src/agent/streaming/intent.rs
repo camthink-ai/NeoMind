@@ -673,6 +673,34 @@ pub(crate) fn parse_command_delivery_from_tool_result(raw: &str) -> Option<Comma
     extract_delivery_receipt_from_json(&v)
 }
 
+/// Bind a delivery receipt to the **matched** satisfying mutation.
+///
+/// Prefer a tool result whose receipt names both the matched mutation's
+/// target device and subcommand. Device-id-only / missing-id matches are
+/// rejected — a later `ping` on the same device must not steal the note
+/// for a prior `display_url` ask. No associateable receipt → unconfirmed.
+fn find_delivery_receipt_for_matched_mutation(
+    matched_cmd: &str,
+    tool_results: &[(String, String)],
+) -> Option<CommandDeliveryReceipt> {
+    let (target, subcmd) = extract_device_control_target_and_subcmd(matched_cmd)?;
+    tool_results
+        .iter()
+        .rev()
+        .filter_map(|(_, body)| parse_command_delivery_from_tool_result(body))
+        .find(|r| {
+            let device_ok = r
+                .device_id
+                .as_deref()
+                .is_some_and(|id| id.eq_ignore_ascii_case(&target));
+            let cmd_ok = r
+                .command
+                .as_deref()
+                .is_some_and(|c| c.eq_ignore_ascii_case(&subcmd));
+            device_ok && cmd_ok
+        })
+}
+
 /// TURN-END completeness note: the user asked for an ACTION and no
 /// successful mutation DELIVERED it this turn. Covers the failure shapes
 /// observed live: the action never ran at all (files written,
@@ -730,38 +758,31 @@ pub(crate) fn build_incomplete_action_note_with_results(
     if domain.is_empty() {
         return None;
     }
-    let delivered = successful_mutations
+    let matched_mutation = successful_mutations
         .iter()
-        .any(|c| mutation_satisfies_action_for_user(c, domain, action, user_message));
+        .find(|c| mutation_satisfies_action_for_user(c, domain, action, user_message));
+    let delivered = matched_mutation.is_some();
     if delivered {
         if domain == "device" {
-            let dests = extract_send_destinations(user_message);
-            if let Some(receipt) = tool_results
-                .iter()
-                .rev()
-                .filter_map(|(_, body)| parse_command_delivery_from_tool_result(body))
-                .find(|r| {
-                    dests.is_empty()
-                        || r.device_id
-                            .as_deref()
-                            .map(|id| dests.iter().any(|d| d.eq_ignore_ascii_case(id)))
-                            .unwrap_or(true)
-                })
-            {
-                let dev = receipt.device_id.as_deref().unwrap_or("target device");
-                let cmd = receipt.command.as_deref().unwrap_or("control");
-                return match receipt.delivery {
-                    CommandDeliveryState::AdapterAccepted { adapters } => Some(format!(
-                        "Delivery receipt: command '{cmd}' for device '{dev}' was accepted by {adapters} adapter(s) (adapter_accepted); physical display/effect on the device is NOT yet confirmed. Check device status or preview to verify."
-                    )),
-                    CommandDeliveryState::ExtensionAccepted => Some(format!(
-                        "Delivery receipt: command '{cmd}' for device '{dev}' was accepted by the extension (extension_accepted); physical display/effect on the device is NOT yet confirmed. Check device status or preview to verify."
-                    )),
-                    CommandDeliveryState::DeviceAcknowledged => Some(format!(
-                        "Delivery receipt: command '{cmd}' for device '{dev}' was acknowledged by the device (device_acknowledged); physical display/effect is NOT yet verified."
-                    )),
-                    CommandDeliveryState::PhysicalEffectVerified => None,
-                };
+            if let Some(matched_cmd) = matched_mutation {
+                if let Some(receipt) =
+                    find_delivery_receipt_for_matched_mutation(matched_cmd, tool_results)
+                {
+                    let dev = receipt.device_id.as_deref().unwrap_or("target device");
+                    let cmd = receipt.command.as_deref().unwrap_or("control");
+                    return match receipt.delivery {
+                        CommandDeliveryState::AdapterAccepted { adapters } => Some(format!(
+                            "Delivery receipt: command '{cmd}' for device '{dev}' was accepted by {adapters} adapter(s) (adapter_accepted); physical display/effect on the device is NOT yet confirmed. Check device status or preview to verify."
+                        )),
+                        CommandDeliveryState::ExtensionAccepted => Some(format!(
+                            "Delivery receipt: command '{cmd}' for device '{dev}' was accepted by the extension (extension_accepted); physical display/effect on the device is NOT yet confirmed. Check device status or preview to verify."
+                        )),
+                        CommandDeliveryState::DeviceAcknowledged => Some(format!(
+                            "Delivery receipt: command '{cmd}' for device '{dev}' was acknowledged by the device (device_acknowledged); physical display/effect is NOT yet verified."
+                        )),
+                        CommandDeliveryState::PhysicalEffectVerified => None,
+                    };
+                }
             }
         }
         return None;
@@ -3685,6 +3706,37 @@ mod tests {
         assert!(note.contains("adapter_accepted"), "{note}");
         assert!(note.contains("NOT yet confirmed"), "{note}");
         assert!(!note.contains("Send \"continue\""), "{note}");
+    }
+
+    /// Later `ping` on the same device must not steal the delivery note for a
+    /// matched `display_url` (receipt binds to matched mutation's subcommand).
+    #[test]
+    fn section6_receipt_binds_to_matched_subcommand_not_later_ping() {
+        let ask = "把设备 200366 的照片发送到 20545d67 显示";
+        let display_cmd =
+            "neomind device control 20545d67 display_url --param url=/api/images/200366/frame_preview";
+        let ping_cmd = "neomind device control 20545d67 ping";
+        let display_raw = r#"{"exit_code":0,"stdout":"{\"success\":true,\"data\":{\"device_id\":\"20545d67\",\"command\":\"display_url\",\"sent\":true,\"delivery\":{\"adapter_accepted\":{\"adapters\":2}},\"delivery_note\":\"queued\"}}","stderr":""}"#;
+        let ping_raw = r#"{"exit_code":0,"stdout":"{\"success\":true,\"data\":{\"device_id\":\"20545d67\",\"command\":\"ping\",\"sent\":true,\"delivery\":\"device_acknowledged\"}}","stderr":""}"#;
+
+        let note = build_incomplete_action_note_with_results(
+            ask,
+            &[display_cmd, ping_cmd],
+            &[display_cmd.to_string(), ping_cmd.to_string()],
+            &[
+                ("shell".to_string(), display_raw.to_string()),
+                ("shell".to_string(), ping_raw.to_string()),
+            ],
+        )
+        .expect("matched display_url must keep its receipt");
+        assert!(
+            note.contains("display_url") && note.contains("adapter_accepted"),
+            "expected display_url adapter_accepted note, got: {note}"
+        );
+        assert!(
+            !note.contains("ping") && !note.contains("device_acknowledged"),
+            "later ping must not steal the receipt note: {note}"
+        );
     }
 
     #[test]

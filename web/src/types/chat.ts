@@ -225,6 +225,8 @@ export type ServerMessage =
         droppedMessages: number
         estimatedBefore: number
         measuredPromptTokens?: number | null
+        /** Same-attempt omit usage ratio (0..1); absent → tip is count-only. */
+        usageRatio?: number
       }
       tokenUsage?: {
         promptTokens: number
