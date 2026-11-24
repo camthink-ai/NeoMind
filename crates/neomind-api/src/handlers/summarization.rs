@@ -448,8 +448,7 @@ pub(crate) fn merge_verbatim_user_entries(
         if msg.role != "user" {
             continue;
         }
-        let clean = truncate_str(msg.content.trim(), VERBATIM_USER_CHAR_CAP)
-            .replace('\n', " ");
+        let clean = truncate_str(msg.content.trim(), VERBATIM_USER_CHAR_CAP).replace('\n', " ");
         if clean.is_empty() {
             continue;
         }
@@ -722,7 +721,14 @@ fn finish_summary(
     max_tokens: usize,
     evidence_messages: &[&AgentMessage],
 ) -> Result<(String, bool), String> {
-    finish_summary_with_verbatim(previous, generated, fallback, max_tokens, evidence_messages, &[])
+    finish_summary_with_verbatim(
+        previous,
+        generated,
+        fallback,
+        max_tokens,
+        evidence_messages,
+        &[],
+    )
 }
 
 /// Plan how many unsummarized messages starting at `covered` should be
@@ -747,10 +753,8 @@ pub(crate) fn planned_summary_target(history: &[AgentMessage], covered: usize) -
     if half == 0 {
         return 0;
     }
-    let target = neomind_agent::agent::streaming::align_end_to_tool_group_boundary(
-        unsummarized,
-        half,
-    );
+    let target =
+        neomind_agent::agent::streaming::align_end_to_tool_group_boundary(unsummarized, half);
     if target == 0 {
         return 0;
     }
@@ -927,7 +931,11 @@ pub async fn trigger_summarization(
     let current_up_to = covered_count.saturating_sub(1);
     let unsummarized_slice = history.get(covered_count..).unwrap_or(&[]);
     let protected_users = neomind_agent::agent::streaming::protected_user_indices(&history);
-    let protected_first = protected_users.iter().copied().min().unwrap_or(history.len());
+    let protected_first = protected_users
+        .iter()
+        .copied()
+        .min()
+        .unwrap_or(history.len());
 
     // Force mode compacts whatever is summarizable (manual endpoint); the
     // auto path keeps the meaningful-minimum gate.
@@ -970,8 +978,8 @@ pub async fn trigger_summarization(
         .as_deref()
         .map(strip_verbatim_user_block)
         .unwrap_or_default();
-    let previous_narrative = (!previous_narrative_owned.is_empty())
-        .then_some(previous_narrative_owned.as_str());
+    let previous_narrative =
+        (!previous_narrative_owned.is_empty()).then_some(previous_narrative_owned.as_str());
     let input_budget = if summary_llm.is_ready().await {
         summary_input_budget(
             summary_context,
@@ -1645,7 +1653,10 @@ mod tests {
         let msgs = [AgentMessage::user("把 200366 照片发到 20545d67")];
         let refs: Vec<&AgentMessage> = msgs.iter().collect();
         assert_eq!(evidence_reject_reason("   ", &refs), Some("empty"));
-        let too_long = format!("## 任务与目标\n200366 {}", "字".repeat(SUMMARY_MAX_CHARS + 10));
+        let too_long = format!(
+            "## 任务与目标\n200366 {}",
+            "字".repeat(SUMMARY_MAX_CHARS + 10)
+        );
         assert_eq!(
             evidence_reject_reason(&too_long, &refs),
             Some("exceeds_max_chars")
@@ -1673,7 +1684,9 @@ mod tests {
     fn s3_verbatim_user_block_strips_merges_caps_and_attaches() {
         let mut history = Vec::new();
         for i in 1..=15 {
-            history.push(AgentMessage::user(format!("用户第{i}条要求 厦门市集美区-{i}")));
+            history.push(AgentMessage::user(format!(
+                "用户第{i}条要求 厦门市集美区-{i}"
+            )));
             history.push(AgentMessage::assistant(format!("回复 {i}")));
         }
         let protected = neomind_agent::agent::streaming::protected_user_indices(&history);
@@ -1869,22 +1882,33 @@ mod r1_three_layer_compaction_tests {
     fn t4_27_msg_fixture() -> Vec<AgentMessage> {
         let mut h = Vec::with_capacity(27);
         // Turn 1: U1 + 3 tool groups (1 + 6 = 7 msgs, idx 0..=6)
-        h.push(AgentMessage::user("把 device 200366 的照片加上 厦门市集美区"));
+        h.push(AgentMessage::user(
+            "把 device 200366 的照片加上 厦门市集美区",
+        ));
         for i in 1..=3 {
             h.push(AgentMessage::assistant(format!("t1 call {i}")));
-            h.push(AgentMessage::tool_result("shell", format!("t1 res {i} 200366")));
+            h.push(AgentMessage::tool_result(
+                "shell",
+                format!("t1 res {i} 200366"),
+            ));
         }
         // Turn 2: U2 + 3 tool groups (1 + 6 = 7 msgs, idx 7..=13)
         h.push(AgentMessage::user("发到 device 20545d67 显示"));
         for i in 1..=3 {
             h.push(AgentMessage::assistant(format!("t2 call {i}")));
-            h.push(AgentMessage::tool_result("shell", format!("t2 res {i} 20545d67")));
+            h.push(AgentMessage::tool_result(
+                "shell",
+                format!("t2 res {i} 20545d67"),
+            ));
         }
         // Turn 3: U3 + 3 tool groups (1 + 6 = 7 msgs, idx 14..=20)
         h.push(AgentMessage::user("还没有显示 重试一下"));
         for i in 1..=3 {
             h.push(AgentMessage::assistant(format!("t3 call {i}")));
-            h.push(AgentMessage::tool_result("shell", format!("t3 res {i} 20545d67")));
+            h.push(AgentMessage::tool_result(
+                "shell",
+                format!("t3 res {i} 20545d67"),
+            ));
         }
         // Turn 4: U4 + 2 tool groups + final assistant (1 + 4 + 1 = 6 msgs, idx 21..=26)
         h.push(AgentMessage::user("确认一下 20545d67 当前画面"));
@@ -1909,13 +1933,15 @@ mod r1_three_layer_compaction_tests {
             "27-msg multi-turn session must advance summarization instead of stalling at floor"
         );
         assert_ne!(
-            history[target].role,
-            "tool",
+            history[target].role, "tool",
             "Invariant 2: uncovered suffix must never begin with an orphan tool message"
         );
         let protected = neomind_agent::agent::streaming::protected_user_indices(&history);
         assert_eq!(protected.len(), 3);
-        assert!(!protected.contains(&0), "U1 at idx 0 is outside last 3 users");
+        assert!(
+            !protected.contains(&0),
+            "U1 at idx 0 is outside last 3 users"
+        );
         assert!(protected.contains(&7), "U2 at idx 7 is protected");
         assert!(protected.contains(&14), "U3 at idx 14 is protected");
         assert!(protected.contains(&21), "U4 at idx 21 is protected");
@@ -1953,8 +1979,7 @@ mod r1_three_layer_compaction_tests {
         assert!(out.summarized_messages > 0);
         let next_idx = out.new_up_to_index + 1;
         assert_ne!(
-            history[next_idx].role,
-            "tool",
+            history[next_idx].role, "tool",
             "summary_up_to_index must end on an atomic tool-group boundary"
         );
 
@@ -2047,7 +2072,10 @@ mod r1_three_layer_compaction_tests {
         let protected2 = neomind_agent::agent::streaming::protected_user_indices(&history);
         let verbatim2 = merge_verbatim_user_entries(prev_verbatim, &history[..20], &protected2);
         assert_eq!(
-            verbatim2.iter().filter(|e| e.contains("厦门市集美区")).count(),
+            verbatim2
+                .iter()
+                .filter(|e| e.contains("厦门市集美区"))
+                .count(),
             1,
             "U1 must not duplicate across folds"
         );
@@ -2108,8 +2136,7 @@ mod r1_three_layer_compaction_tests {
             3,
             "fixture must place correction as one of the last 3 users"
         );
-        let verbatim =
-            merge_verbatim_user_entries(Vec::new(), &history[..covered_end], &protected);
+        let verbatim = merge_verbatim_user_entries(Vec::new(), &history[..covered_end], &protected);
         assert!(
             verbatim.iter().any(|e| e.contains(correction)),
             "first compress must retain the protected correction verbatim"

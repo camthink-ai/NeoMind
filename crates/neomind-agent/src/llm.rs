@@ -1083,11 +1083,7 @@ impl LlmInterface {
             .lock()
             .ok()
             .and_then(|mut g| g.take());
-        let last = self
-            .last_truncation
-            .lock()
-            .ok()
-            .and_then(|mut g| g.take());
+        let last = self.last_truncation.lock().ok().and_then(|mut g| g.take());
         match (omit, last) {
             (Some(o), _) => Some(o),
             (None, Some(l)) => Some(l),

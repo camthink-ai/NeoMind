@@ -372,7 +372,9 @@ async fn process_stream_to_channel(
                             // must not clear the tip — S1).
                             "historyTruncated": history_truncated,
                         });
-                        if let Some(snap) = truncation_snapshot.as_ref().filter(|s| s.has_truncation()) {
+                        if let Some(snap) =
+                            truncation_snapshot.as_ref().filter(|s| s.has_truncation())
+                        {
                             end_json["truncation"] = json!({
                                 "outerDropped": snap.outer_dropped,
                                 "innerDropped": snap.inner_dropped,

@@ -2004,7 +2004,6 @@ async fn call_record_stores_the_same_slimmed_result_as_the_tool_message() {
     );
 }
 
-
 /// R2 Diagnostic: replay a single ReAct turn with 227KB / 26KB / 37KB tool
 /// outputs (T4 session shape) and print an observation table of slimming,
 /// history token estimates, truncation snapshot, and tool attachment.
