@@ -26,7 +26,10 @@ env:
 jobs:
   frontend-checks:
     name: Frontend lint / typecheck / unit tests
-    runs-on: ubuntu-latest
+    # Pin 24.04: ubuntu-latest is 26.04 and Playwright 1.58 cannot install
+    # Chromium there (`ERROR: Playwright does not support chromium on
+    # ubuntu26.04-x64`), which breaks the route-pass smoke step below.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: web
