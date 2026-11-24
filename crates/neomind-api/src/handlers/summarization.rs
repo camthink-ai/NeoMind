@@ -391,6 +391,102 @@ fn build_fallback_summary(messages: &[&AgentMessage], per_message_cap: usize) ->
 }
 
 const SUMMARY_SEPARATOR: &str = "--- 后续对话摘要 ---";
+const VERBATIM_USERS_START: &str = "<!-- neomind:verbatim-user-messages:start -->";
+const VERBATIM_USERS_END: &str = "<!-- neomind:verbatim-user-messages:end -->";
+const VERBATIM_USERS_HEADER: &str = "## 早期用户原话（逐字保留）";
+const MAX_VERBATIM_USER_ENTRIES: usize = 10;
+const VERBATIM_USER_CHAR_CAP: usize = 800;
+
+/// Strip the deterministic verbatim-user block from a stored summary so LLM
+/// folding only sees the narrative section and never echoes or re-paraphrases
+/// the verbatim block.
+pub(crate) fn strip_verbatim_user_block(summary: &str) -> (String, Vec<String>) {
+    let Some(start_idx) = summary.find(VERBATIM_USERS_START) else {
+        return (summary.trim().to_string(), Vec::new());
+    };
+    let after_start = &summary[start_idx + VERBATIM_USERS_START.len()..];
+    let (block_body, tail) = match after_start.find(VERBATIM_USERS_END) {
+        Some(end_rel) => (
+            &after_start[..end_rel],
+            &after_start[end_rel + VERBATIM_USERS_END.len()..],
+        ),
+        None => (after_start, ""),
+    };
+    let mut entries = Vec::new();
+    for line in block_body.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("- ") {
+            let item = rest.trim();
+            if !item.is_empty() && !entries.iter().any(|e: &String| e == item) {
+                entries.push(item.to_string());
+            }
+        }
+    }
+    let narrative = format!("{}{}", summary[..start_idx].trim_end(), tail.trim_start())
+        .trim()
+        .to_string();
+    (narrative, entries)
+}
+
+/// Merge prior verbatim user entries with covered user messages in
+/// `covered_prefix`, deduplicating identical lines and capping at the most
+/// recent [`MAX_VERBATIM_USER_ENTRIES`] × [`VERBATIM_USER_CHAR_CAP`].
+///
+/// Covered users that are still in the live protection window are included on
+/// purpose: the next user turn can age them out of protection before a second
+/// compress runs, and the next model request must still recover their wording
+/// from the summary's deterministic block (without calling merge/summarize
+/// helpers again). Temporary duplication with live protected messages is
+/// intentional and small.
+pub(crate) fn merge_verbatim_user_entries(
+    existing: Vec<String>,
+    covered_prefix: &[AgentMessage],
+    _protected_indices: &std::collections::HashSet<usize>,
+) -> Vec<String> {
+    let mut merged = existing;
+    for msg in covered_prefix.iter() {
+        if msg.role != "user" {
+            continue;
+        }
+        let clean = truncate_str(msg.content.trim(), VERBATIM_USER_CHAR_CAP)
+            .replace('\n', " ");
+        if clean.is_empty() {
+            continue;
+        }
+        if !merged.iter().any(|e| e == &clean) {
+            merged.push(clean);
+        }
+    }
+    if merged.len() > MAX_VERBATIM_USER_ENTRIES {
+        let drop_n = merged.len() - MAX_VERBATIM_USER_ENTRIES;
+        merged.drain(0..drop_n);
+    }
+    merged
+}
+
+/// Deterministically attach the verbatim-user block AFTER `summary_is_evidence_only`
+/// has validated the raw LLM narrative.
+pub(crate) fn attach_verbatim_user_block(narrative: &str, entries: &[String]) -> String {
+    let base = narrative.trim_end();
+    if entries.is_empty() {
+        return base.to_string();
+    }
+    let mut out = String::from(base);
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(VERBATIM_USERS_START);
+    out.push('\n');
+    out.push_str(VERBATIM_USERS_HEADER);
+    out.push('\n');
+    for entry in entries {
+        out.push_str("- ");
+        out.push_str(entry);
+        out.push('\n');
+    }
+    out.push_str(VERBATIM_USERS_END);
+    out
+}
 
 fn should_fold_summary(existing: Option<&str>) -> bool {
     existing.is_some_and(|s| !s.trim().is_empty())
@@ -545,54 +641,68 @@ fn is_evidence_stopword(tok: &str) -> bool {
     )
 }
 
+/// Return the specific rejection reason when an LLM summary fails the
+/// evidence-only gate, or `None` when it passes.
+pub(crate) fn evidence_reject_reason(
+    text: &str,
+    messages: &[&AgentMessage],
+) -> Option<&'static str> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Some("empty");
+    }
+    if trimmed.chars().count() > SUMMARY_MAX_CHARS {
+        return Some("exceeds_max_chars");
+    }
+    if COMPRESSOR_META_LEAKS.iter().any(|p| trimmed.contains(p)) {
+        return Some("compressor_meta_leak");
+    }
+    if !SUMMARY_SECTION_MARKERS.iter().any(|h| trimmed.contains(h)) {
+        return Some("missing_section_header");
+    }
+    let needles = collect_evidence_needles(messages);
+    if !needles.is_empty() && !needles.iter().any(|n| trimmed.contains(n.as_str())) {
+        return Some("no_evidence_needles");
+    }
+    None
+}
+
 /// True when `text` looks like a grounded structured summary of `messages`.
 ///
 /// Rejects compressor-meta leakage, missing section headers, overlong dumps,
 /// and summaries that cite none of the distinctive evidence needles. Callers
 /// must fall back to the deterministic digest when this returns false.
 pub(crate) fn summary_is_evidence_only(text: &str, messages: &[&AgentMessage]) -> bool {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-    if trimmed.chars().count() > SUMMARY_MAX_CHARS {
-        return false;
-    }
-    if COMPRESSOR_META_LEAKS.iter().any(|p| trimmed.contains(p)) {
-        return false;
-    }
-    if !SUMMARY_SECTION_MARKERS.iter().any(|h| trimmed.contains(h)) {
-        return false;
-    }
-    let needles = collect_evidence_needles(messages);
-    if needles.is_empty() {
-        return true;
-    }
-    needles.iter().any(|n| trimmed.contains(n.as_str()))
+    evidence_reject_reason(text, messages).is_none()
 }
 
 /// Empty, interrupted, non-evidence or token-limited model output cannot
 /// replace memory. The deterministic fallback is always appended, even at
 /// the fold boundary: it never saw the old summary and therefore cannot
 /// stand in for it.
-fn finish_summary(
-    previous: Option<&str>,
+///
+/// `verbatim_users` are deterministically attached AFTER `summary_is_evidence_only`
+/// validates the raw LLM narrative so the 720-char gate only governs LLM output.
+fn finish_summary_with_verbatim(
+    previous_narrative: Option<&str>,
     generated: Option<(&str, &str)>,
     fallback: &str,
     max_tokens: usize,
     evidence_messages: &[&AgentMessage],
+    verbatim_users: &[String],
 ) -> Result<(String, bool), String> {
     let generated = generated
         .filter(|(text, reason)| !text.trim().is_empty() && *reason == "Stop")
         .filter(|(text, _)| summary_is_evidence_only(text, evidence_messages));
     let fallback_used = generated.is_none();
     let text = generated.map_or(fallback, |(text, _)| text);
-    let combined = match previous.filter(|s| !s.is_empty()) {
+    let narrative = match previous_narrative.filter(|s| !s.is_empty()) {
         Some(old) if fallback_used => {
             format!("{old}\n\n{SUMMARY_SEPARATOR}\n{text}")
         }
         _ => text.to_string(),
     };
+    let combined = attach_verbatim_user_block(&narrative, verbatim_users);
     // Repeated fallback must not create an unbounded system message. If we
     // cannot preserve it within budget, keep the previous coverage unchanged.
     if neomind_agent::agent::tokenizer::estimate_tokens(&combined) > max_tokens {
@@ -604,82 +714,54 @@ fn finish_summary(
     Ok((combined, fallback_used))
 }
 
-/// The last N user messages are NEVER covered by a summary.
-///
-/// A summary paraphrases (and its input is char-capped), so verbatim user
-/// wording — the exact text to draw on an image, exact names/ids/commands —
-/// does not survive it. Observed failure: the model had to grep
-/// sessions.redb to recover wording from two turns earlier because the
-/// summary had swallowed that message.
-const RECENT_PROTECTED_USER_MSGS: usize = 3;
-
-/// Index of the first PROTECTED message: the `keep`-th user message counting
-/// from the end. Everything at or after this index must stay in the context
-/// window verbatim. `keep == 0` protects nothing (tool-heavy sessions with
-/// ≤1 user message still compress).
-fn recent_user_floor(history: &[AgentMessage], keep: usize) -> usize {
-    if keep == 0 {
-        return history.len();
-    }
-    let mut seen = 0;
-    for (i, msg) in history.iter().enumerate().rev() {
-        if msg.role == "user" {
-            seen += 1;
-            if seen == keep {
-                return i;
-            }
-        }
-    }
-    0
+#[cfg(test)]
+fn finish_summary(
+    previous: Option<&str>,
+    generated: Option<(&str, &str)>,
+    fallback: &str,
+    max_tokens: usize,
+    evidence_messages: &[&AgentMessage],
+) -> Result<(String, bool), String> {
+    finish_summary_with_verbatim(previous, generated, fallback, max_tokens, evidence_messages, &[])
 }
 
-fn planned_summary_target(history: &[AgentMessage], covered: usize) -> usize {
-    let target = summarizable_target(
-        history.len().saturating_sub(covered),
-        covered,
-        summary_protection_floor(history),
+/// Plan how many unsummarized messages starting at `covered` should be
+/// summarized in this cycle.
+///
+/// - Takes the first half of unsummarized messages (`unsummarized.len() / 2`)
+///   without clamping at a recent-user floor: the context builder retains the
+///   last [`neomind_agent::agent::streaming::RECENT_PROTECTED_USER_MSGS`] user
+///   messages verbatim in their original role, and earlier user messages are
+///   carried in the deterministic verbatim block.
+/// - Aligns the end boundary backwards to an atomic `assistant + tool` group
+///   boundary so a summary prefix never splits an assistant turn from its
+///   contiguous tool results.
+/// - Returns 0 when the aligned slice contains no `assistant` or `tool`
+///   messages (summarizing only protected user messages releases no context).
+pub(crate) fn planned_summary_target(history: &[AgentMessage], covered: usize) -> usize {
+    if covered >= history.len() {
+        return 0;
+    }
+    let unsummarized = &history[covered..];
+    let half = unsummarized.len() / 2;
+    if half == 0 {
+        return 0;
+    }
+    let target = neomind_agent::agent::streaming::align_end_to_tool_group_boundary(
+        unsummarized,
+        half,
     );
-    // Covered users remain native context. Summarizing only a user would
-    // add a summary without releasing any context.
-    if history
+    if target == 0 {
+        return 0;
+    }
+    if unsummarized[..target]
         .iter()
-        .skip(covered)
-        .take(target)
         .any(|m| matches!(m.role.as_str(), "assistant" | "tool"))
     {
         target
     } else {
         0
     }
-}
-
-fn summary_protection_floor(history: &[AgentMessage]) -> usize {
-    let users = history.iter().filter(|m| m.role == "user").count();
-    if users <= RECENT_PROTECTED_USER_MSGS {
-        // The context builder retains these users verbatim alongside the summary.
-        // Permit compressing the surrounding first-turn tool transcript.
-        history.len()
-    } else {
-        recent_user_floor(history, RECENT_PROTECTED_USER_MSGS)
-    }
-}
-
-/// How many messages (starting at `covered_count`) may be summarized without
-/// the summary's coverage reaching `protected_first`.
-///
-/// `covered_count` is the EXCLUSIVE boundary of already-covered messages
-/// (count, not index). Summarizing `count` more covers indices
-/// `covered_count ..= covered_count + count - 1`; the stored boundary is the
-/// inclusive last index, and the context-side filter keeps `i > up_to`. The
-/// first protected user message sits at `protected_first`, so the coverage
-/// must stop strictly below it: `covered_count + count - 1 < protected_first`
-/// → `count <= protected_first - covered_count`.
-fn summarizable_target(
-    unsummarized_len: usize,
-    covered_count: usize,
-    protected_first: usize,
-) -> usize {
-    (unsummarized_len / 2).min(protected_first.saturating_sub(covered_count))
 }
 
 /// Post-compact meter snapshot (same shape as WS `ContextUsage.tokenUsage`).
@@ -821,6 +903,14 @@ pub async fn trigger_summarization(
     };
 
     if history.is_empty() {
+        tracing::info!(
+            session_id = %session_id,
+            reason = "empty_history",
+            unsummarized = 0usize,
+            covered_up_to = 0usize,
+            summarizable = 0usize,
+            "Skipping summarization"
+        );
         return Ok(idle_outcome(0));
     }
 
@@ -835,33 +925,35 @@ pub async fn trigger_summarization(
         .summary_up_to_index
         .map_or(0usize, |u| u as usize + 1);
     let current_up_to = covered_count.saturating_sub(1);
-    let unsummarized: Vec<&AgentMessage> = history
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i >= covered_count)
-        .map(|(_, msg)| msg)
-        .collect();
+    let unsummarized_slice = history.get(covered_count..).unwrap_or(&[]);
+    let protected_users = neomind_agent::agent::streaming::protected_user_indices(&history);
+    let protected_first = protected_users.iter().copied().min().unwrap_or(history.len());
 
     // Force mode compacts whatever is summarizable (manual endpoint); the
     // auto path keeps the meaningful-minimum gate.
-    if !force && unsummarized.len() < 4 {
+    if !force && unsummarized_slice.len() < 4 {
+        tracing::info!(
+            session_id = %session_id,
+            reason = "below_min_unsummarized",
+            unsummarized = unsummarized_slice.len(),
+            covered_up_to = current_up_to,
+            summarizable = 0usize,
+            protected_first,
+            "Skipping summarization"
+        );
         return Ok(idle_outcome(current_up_to));
     }
 
-    // [verbatim floor] The last few user messages must never be summarized
-    // away — the summary paraphrases, and follow-up turns need the user's
-    // exact wording (draw-text content, names, thresholds). Clamp the range
-    // BEFORE building the summary text so text and coverage stay in sync.
-    // Short sessions may summarize tool history because the context builder
-    // retains recent user messages verbatim even inside the covered prefix.
-    let protected_first = summary_protection_floor(&history);
-
     let summarize_count_target = planned_summary_target(&history, covered_count);
     if summarize_count_target == 0 {
-        tracing::debug!(
+        tracing::info!(
             session_id = %session_id,
-            protected_from = protected_first,
-            "Nothing summarizable without covering recent user messages — skipping"
+            reason = "no_summarizable_target",
+            unsummarized = unsummarized_slice.len(),
+            covered_up_to = current_up_to,
+            summarizable = 0usize,
+            protected_first,
+            "Skipping summarization"
         );
         return Ok(idle_outcome(current_up_to));
     }
@@ -873,12 +965,18 @@ pub async fn trigger_summarization(
     let session_llm = llm_interface.clone();
     let summary_llm = resolve_summary_llm(llm_interface).await;
     let summary_context = max_ctx.min(summary_llm.max_context_length().await);
-    let previous = metadata.conversation_summary.as_deref();
+    let (previous_narrative_owned, existing_verbatim_users) = metadata
+        .conversation_summary
+        .as_deref()
+        .map(strip_verbatim_user_block)
+        .unwrap_or_default();
+    let previous_narrative = (!previous_narrative_owned.is_empty())
+        .then_some(previous_narrative_owned.as_str());
     let input_budget = if summary_llm.is_ready().await {
         summary_input_budget(
             summary_context,
             summary_llm.estimate_prompt_overhead_tokens().await,
-            previous,
+            previous_narrative,
         )?
     } else {
         // No model request will be sent: preserve manual/offline compaction
@@ -891,43 +989,76 @@ pub async fn trigger_summarization(
     const PER_MESSAGE_CHAR_CAP: usize = 800;
     const TOOL_RESULT_CHAR_CAP: usize = 500;
 
-    // Build conversation text for summarization under the remaining budget.
-    // `included` keeps the same message slice for the deterministic fallback.
+    // Build conversation text for summarization under the remaining budget,
+    // advancing strictly by atomic `assistant + tool` groups so a token-budget
+    // break never splits a tool call turn from its results.
     let mut conv_text = String::new();
     let mut input_tokens = 0usize;
     let mut summarized_count = 0usize;
     let mut included: Vec<&AgentMessage> = Vec::new();
-    for (source_offset, msg) in unsummarized.iter().take(summarize_count_target).enumerate() {
-        let line = match msg.role.as_str() {
-            "user" => format!(
-                "User: {}\n",
-                truncate_str(&msg.content, PER_MESSAGE_CHAR_CAP)
-            ),
-            "assistant" => {
-                // Skip thinking content, only include actual response
-                format!(
-                    "Assistant: {}\n",
-                    truncate_str(&msg.content, PER_MESSAGE_CHAR_CAP)
-                )
-            }
-            "tool" => {
-                if let Some(ref tool_name) = msg.tool_call_name {
-                    format!(
-                        "[Tool {}: {}]\n",
-                        tool_name,
-                        truncate_str(&msg.content, TOOL_RESULT_CHAR_CAP)
-                    )
-                } else {
-                    continue;
+    let mut evidence_messages: Vec<&AgentMessage> = Vec::new();
+    let target_slice = &unsummarized_slice[..summarize_count_target];
+    for (group_rel_start, group_msgs) in
+        neomind_agent::agent::streaming::partition_agent_groups(target_slice)
+    {
+        let mut group_text = String::new();
+        let mut group_included: Vec<&AgentMessage> = Vec::new();
+        let mut group_evidence: Vec<&AgentMessage> = Vec::new();
+        for offset in 0..group_msgs.len() {
+            let rel_idx = group_rel_start + offset;
+            let abs_idx = covered_count + rel_idx;
+            let msg = &unsummarized_slice[rel_idx];
+            let is_protected_user = msg.role == "user" && protected_users.contains(&abs_idx);
+            let line = match msg.role.as_str() {
+                "user" if is_protected_user => {
+                    "User: [本条近期用户消息仍在原文上下文中保留]\n".to_string()
                 }
+                "user" => format!(
+                    "User: {}\n",
+                    truncate_str(&msg.content, PER_MESSAGE_CHAR_CAP)
+                ),
+                "assistant" => {
+                    // Skip thinking content, only include actual response
+                    format!(
+                        "Assistant: {}\n",
+                        truncate_str(&msg.content, PER_MESSAGE_CHAR_CAP)
+                    )
+                }
+                "tool" => {
+                    if let Some(ref tool_name) = msg.tool_call_name {
+                        format!(
+                            "[Tool {}: {}]\n",
+                            tool_name,
+                            truncate_str(&msg.content, TOOL_RESULT_CHAR_CAP)
+                        )
+                    } else {
+                        continue;
+                    }
+                }
+                _ => continue,
+            };
+            group_text.push_str(&line);
+            group_included.push(msg);
+            if !is_protected_user {
+                group_evidence.push(msg);
             }
-            _ => continue,
-        };
-        let line_tokens = neomind_agent::agent::tokenizer::estimate_tokens(&line);
-        if input_tokens.saturating_add(line_tokens) > input_budget {
+        }
+        let group_tokens = neomind_agent::agent::tokenizer::estimate_tokens(&group_text);
+        if input_tokens.saturating_add(group_tokens) > input_budget {
             // The previous memory and response headroom already occupy their
             // reserved budget. A minimum-message rule must not override it.
             if included.is_empty() {
+                tracing::info!(
+                    session_id = %session_id,
+                    reason = "zero_messages_fit_budget",
+                    unsummarized = unsummarized_slice.len(),
+                    covered_up_to = current_up_to,
+                    summarizable = summarize_count_target,
+                    protected_first,
+                    input_budget,
+                    first_group_tokens = group_tokens,
+                    "Skipping summarization"
+                );
                 return Err(
                     "No new summary message fits the remaining input budget; coverage unchanged"
                         .into(),
@@ -935,22 +1066,42 @@ pub async fn trigger_summarization(
             }
             break;
         }
-        conv_text.push_str(&line);
-        input_tokens += line_tokens;
-        included.push(msg);
+        conv_text.push_str(&group_text);
+        input_tokens += group_tokens;
+        included.extend(group_included);
+        evidence_messages.extend(group_evidence);
         // Coverage is an index into the SOURCE history, not the number of
         // rendered lines. Skipped system/unnamed-tool messages still occupy
-        // source positions before this included message.
-        summarized_count = source_offset + 1;
+        // source positions before this included group.
+        summarized_count = group_rel_start + group_msgs.len();
     }
 
     if summarized_count == 0 || conv_text.is_empty() {
+        tracing::info!(
+            session_id = %session_id,
+            reason = "zero_messages_fit_budget",
+            unsummarized = unsummarized_slice.len(),
+            covered_up_to = current_up_to,
+            summarizable = summarize_count_target,
+            protected_first,
+            "Skipping summarization"
+        );
         return Ok(idle_outcome(current_up_to));
     }
     let summarize_count = summarized_count;
+    let new_covered_end = covered_count + summarize_count;
+    let verbatim_users = merge_verbatim_user_entries(
+        existing_verbatim_users,
+        &history[..new_covered_end],
+        &protected_users,
+    );
 
     // Structured summary prompt (template in SUMMARY_SYSTEM_PROMPT).
-    let summary_prompt = build_summary_prompt(&conv_text, previous, should_fold_summary(previous));
+    let summary_prompt = build_summary_prompt(
+        &conv_text,
+        previous_narrative,
+        should_fold_summary(previous_narrative),
+    );
 
     // Thinking disabled via a PER-CALL override. The old pattern mutated the
     // interface-global flag around the call (set false -> chat -> restore):
@@ -978,26 +1129,38 @@ pub async fn trigger_summarization(
     };
 
     let fallback = build_fallback_summary(&included, PER_MESSAGE_CHAR_CAP);
+    let evidence_slice: &[&AgentMessage] = if evidence_messages.is_empty() {
+        &included
+    } else {
+        &evidence_messages
+    };
     if let Some(resp) = response.as_ref() {
-        if !resp.text.trim().is_empty()
-            && resp.finish_reason == "Stop"
-            && !summary_is_evidence_only(&resp.text, &included)
-        {
+        if resp.finish_reason != "Stop" {
             tracing::info!(
                 session_id = %session_id,
+                reject_reason = "non_stop_finish_reason",
+                finish_reason = %resp.finish_reason,
+                chars = resp.text.chars().count(),
+                "Summarization LLM output rejected — using digest fallback"
+            );
+        } else if let Some(reject_reason) = evidence_reject_reason(&resp.text, evidence_slice) {
+            tracing::info!(
+                session_id = %session_id,
+                reject_reason,
                 chars = resp.text.chars().count(),
                 "Summarization LLM output failed evidence-only gate — using digest fallback"
             );
         }
     }
-    let (new_summary, fallback_used) = finish_summary(
-        previous,
+    let (new_summary, fallback_used) = finish_summary_with_verbatim(
+        previous_narrative,
         response
             .as_ref()
             .map(|r| (r.text.as_str(), r.finish_reason.as_str())),
         &fallback,
         max_ctx / 3,
-        &included,
+        evidence_slice,
+        &verbatim_users,
     )?;
 
     // Inclusive index of the last newly covered message. summarize_count ≥ 1
@@ -1477,132 +1640,92 @@ mod tests {
         );
     }
 
-    /// Mixed history (u=user, a=assistant, t=tool):
-    /// index: 0 1 2 3 4 5 6 7 8 9
-    /// role:  a t u  a t u  a t u  a
-    fn mixed_history() -> Vec<AgentMessage> {
-        ["a", "t", "u", "a", "t", "u", "a", "t", "u", "a"]
-            .into_iter()
-            .map(|r| AgentMessage {
-                role: if r == "u" {
-                    "user".to_string()
-                } else if r == "a" {
-                    "assistant".to_string()
-                } else {
-                    "tool".to_string()
-                },
-                ..AgentMessage::assistant("x")
-            })
-            .collect()
-    }
-
     #[test]
-    fn floor_protects_last_three_user_messages() {
-        let h = mixed_history(); // user msgs at 2, 5, 8
-        assert_eq!(recent_user_floor(&h, 3), 2);
-        assert_eq!(recent_user_floor(&h, 1), 8);
-        // keep == 0 → no protection → boundary at end
-        assert_eq!(recent_user_floor(&h, 0), h.len());
-    }
-
-    #[test]
-    fn target_clamped_below_protected_floor() {
-        let h = mixed_history();
-        let protected = recent_user_floor(&h, 3); // = 2
-                                                  // 10 unsummarized from index 0: naive half = 5, but coverage must
-                                                  // stop at index 1 — the user message AT index 2 is protected and the
-                                                  // context filter drops `i <= up_to`, so up_to must stay ≤ 1.
-        let target = summarizable_target(10, 0, protected);
-        assert_eq!(target, 2);
+    fn s2_evidence_reject_reasons_are_specific() {
+        let msgs = [AgentMessage::user("把 200366 照片发到 20545d67")];
+        let refs: Vec<&AgentMessage> = msgs.iter().collect();
+        assert_eq!(evidence_reject_reason("   ", &refs), Some("empty"));
+        let too_long = format!("## 任务与目标\n200366 {}", "字".repeat(SUMMARY_MAX_CHARS + 10));
         assert_eq!(
-            covered_last(0, target),
-            1,
-            "coverage ends before protected msg"
+            evidence_reject_reason(&too_long, &refs),
+            Some("exceeds_max_chars")
         );
-        // One message already covered → only index 1 remains.
-        assert_eq!(summarizable_target(10, 1, protected), 1);
-        // Floor already reached → nothing left to summarize.
-        assert_eq!(summarizable_target(10, 2, protected), 0);
-        // Over-covered (can happen mid-transition) → saturates to 0.
-        assert_eq!(summarizable_target(10, 3, protected), 0);
-    }
-
-    /// The stored boundary is the inclusive last covered index.
-    fn covered_last(covered_count: usize, count: usize) -> usize {
-        covered_count + count - 1
-    }
-
-    /// Regression for the review-found off-by-one: a protected user message
-    /// at index 0 (young session, keep ≥ user_count) must never be summarized.
-    #[test]
-    fn target_is_zero_when_first_user_message_is_protected() {
-        for covered in [0usize, 1, 5] {
-            assert_eq!(
-                summarizable_target(10, covered, 0),
-                0,
-                "protected_first=0 must yield nothing regardless of covered={covered}"
-            );
-        }
-    }
-
-    /// The single invariant everything else serves: after summarizing
-    /// `target` messages, every index >= protected_first stays in context.
-    #[test]
-    fn target_never_covers_protected_boundary() {
-        for covered in 0..6usize {
-            for protected in 0..8usize {
-                let t = summarizable_target(20, covered, protected);
-                if t == 0 {
-                    continue;
-                }
-                let last_covered = covered_last(covered, t);
-                assert!(
-                    last_covered < protected,
-                    "covered={covered} protected={protected} target={t} last_covered={last_covered}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn target_unclamped_when_no_user_protection() {
-        // Tool-heavy session, ≤1 user message → keep=0 → original behavior.
-        assert_eq!(summarizable_target(10, 0, 10), 5);
-        assert_eq!(summarizable_target(9, 0, 9), 4);
-    }
-
-    /// The exact-wording scenario from the field: a draw-text instruction two
-    /// user-messages back must land inside the protected window.
-    #[test]
-    fn draw_text_instruction_stays_protected() {
-        let mut h = Vec::new();
-        for _ in 0..6 {
-            h.push(AgentMessage::assistant("filler"));
-        }
-        h.push(AgentMessage::user(
-            "可以给图片加上地理位置 厦门市集美区吗？",
-        )); // idx 6
-        h.push(AgentMessage::assistant("分析已完成"));
-        h.push(AgentMessage::user("按照我说的图片上加上我要求的文字就好")); // idx 8
-        let user_count = h.iter().filter(|m| m.role == "user").count();
-        assert_eq!(user_count, 2);
-        let keep = RECENT_PROTECTED_USER_MSGS.min(user_count); // = 2
-        let protected = recent_user_floor(&h, keep);
-        // Both user messages are within the last `keep` → both protected.
+        let leaked = "## 任务与目标\n对话压缩器 200366";
         assert_eq!(
-            protected, 6,
-            "the geo instruction at idx 6 must be protected"
+            evidence_reject_reason(leaked, &refs),
+            Some("compressor_meta_leak")
         );
-        // Target here is limited by the half-clamp (9/2=4), not the floor.
-        // Coverage: indices 0..=3; the stored boundary is the inclusive 3.
-        let target = summarizable_target(h.len(), 0, protected);
-        assert_eq!(target, 4);
-        // covered_count = 0 in this scenario; summarize_count = target.
-        let new_up_to = covered_last(0, target);
-        assert!(
-            new_up_to < protected,
-            "summary must never cover the protected user messages"
+        let no_header = "已将 200366 照片发到 20545d67";
+        assert_eq!(
+            evidence_reject_reason(no_header, &refs),
+            Some("missing_section_header")
         );
+        let no_needle = "## 任务与目标\n无相关内容";
+        assert_eq!(
+            evidence_reject_reason(no_needle, &refs),
+            Some("no_evidence_needles")
+        );
+        let valid = "## 任务与目标\n把 200366 照片发到 20545d67";
+        assert_eq!(evidence_reject_reason(valid, &refs), None);
+    }
+
+    #[test]
+    fn s3_verbatim_user_block_strips_merges_caps_and_attaches() {
+        let mut history = Vec::new();
+        for i in 1..=15 {
+            history.push(AgentMessage::user(format!("用户第{i}条要求 厦门市集美区-{i}")));
+            history.push(AgentMessage::assistant(format!("回复 {i}")));
+        }
+        let protected = neomind_agent::agent::streaming::protected_user_indices(&history);
+        assert_eq!(protected.len(), 3);
+
+        // Cover all 15 users: capped to last 10, which now includes protected
+        // users 6..=15 so a later age-out still recovers them without a second
+        // compress. Cap keeps the most recent entries.
+        let merged = merge_verbatim_user_entries(Vec::new(), &history, &protected);
+        assert_eq!(merged.len(), MAX_VERBATIM_USER_ENTRIES);
+        assert!(merged[0].contains("用户第6条要求"));
+        assert!(merged.last().unwrap().contains("用户第15条要求"));
+        // Protected users are intentionally retained in the verbatim block.
+        assert!(merged.iter().any(|e| e.contains("用户第13条要求")));
+        assert!(merged.iter().any(|e| e.contains("用户第15条要求")));
+
+        let narrative = "## 任务与目标\n处理设备照片";
+        let combined = attach_verbatim_user_block(narrative, &merged);
+        assert!(combined.contains(VERBATIM_USERS_START));
+        assert!(combined.contains(VERBATIM_USERS_END));
+        let (stripped_narrative, extracted) = strip_verbatim_user_block(&combined);
+        assert_eq!(stripped_narrative, narrative);
+        assert_eq!(extracted, merged);
+    }
+
+    #[test]
+    fn s3_planned_summary_target_never_splits_tool_group() {
+        // index: 0=U, 1=A, 2=T, 3=T, 4=T, 5=A, 6=T, 7=U
+        // len = 8, half = 4 → index 4 is inside the (1..=4) assistant+3*tool group.
+        // align_end_to_tool_group_boundary must align cleanly to 1 (or 5 if >=5),
+        // so index 4 is NOT split from assistant@1.
+        let history = vec![
+            AgentMessage::user("u1"),
+            AgentMessage::assistant("a1"),
+            AgentMessage::tool_result("shell", "t1"),
+            AgentMessage::tool_result("shell", "t2"),
+            AgentMessage::tool_result("shell", "t3"),
+            AgentMessage::assistant("a2"),
+            AgentMessage::tool_result("shell", "t4"),
+            AgentMessage::user("u2"),
+        ];
+        // half = 4 → only U@0 fits completely before 4, which has no assistant/tool → 0.
+        assert_eq!(planned_summary_target(&history, 0), 0);
+
+        // Add 2 more messages so len=10, half=5 → (0..5) ends right after t3@4!
+        let mut h2 = history;
+        h2.push(AgentMessage::assistant("a3"));
+        h2.push(AgentMessage::tool_result("shell", "t5"));
+        let target = planned_summary_target(&h2, 0);
+        assert_eq!(target, 5);
+        // Next message after target must NOT be an orphan tool.
+        assert_ne!(h2[target].role, "tool");
     }
 }
 
@@ -1739,18 +1862,293 @@ mod trigger_meter_smoke_tests {
 }
 
 #[cfg(test)]
-mod early_turn_compaction_tests {
+mod r1_three_layer_compaction_tests {
     use super::*;
-    #[test]
-    fn first_user_tool_transcript_has_a_compressible_prefix() {
-        let mut history = vec![AgentMessage::user("保留原话 厦门市集美区")];
-        for _ in 0..12 {
-            history.push(AgentMessage::assistant("tool output"));
+
+    /// Build a 27-message T4-shaped multi-turn history (4 user turns + tool groups).
+    fn t4_27_msg_fixture() -> Vec<AgentMessage> {
+        let mut h = Vec::with_capacity(27);
+        // Turn 1: U1 + 3 tool groups (1 + 6 = 7 msgs, idx 0..=6)
+        h.push(AgentMessage::user("把 device 200366 的照片加上 厦门市集美区"));
+        for i in 1..=3 {
+            h.push(AgentMessage::assistant(format!("t1 call {i}")));
+            h.push(AgentMessage::tool_result("shell", format!("t1 res {i} 200366")));
         }
-        let floor = summary_protection_floor(&history);
-        assert_eq!(floor, history.len());
-        assert!(summarizable_target(history.len(), 0, floor) > 0);
+        // Turn 2: U2 + 3 tool groups (1 + 6 = 7 msgs, idx 7..=13)
+        h.push(AgentMessage::user("发到 device 20545d67 显示"));
+        for i in 1..=3 {
+            h.push(AgentMessage::assistant(format!("t2 call {i}")));
+            h.push(AgentMessage::tool_result("shell", format!("t2 res {i} 20545d67")));
+        }
+        // Turn 3: U3 + 3 tool groups (1 + 6 = 7 msgs, idx 14..=20)
+        h.push(AgentMessage::user("还没有显示 重试一下"));
+        for i in 1..=3 {
+            h.push(AgentMessage::assistant(format!("t3 call {i}")));
+            h.push(AgentMessage::tool_result("shell", format!("t3 res {i} 20545d67")));
+        }
+        // Turn 4: U4 + 2 tool groups + final assistant (1 + 4 + 1 = 6 msgs, idx 21..=26)
+        h.push(AgentMessage::user("确认一下 20545d67 当前画面"));
+        for i in 1..=2 {
+            h.push(AgentMessage::assistant(format!("t4 call {i}")));
+            h.push(AgentMessage::tool_result("shell", format!("t4 res {i}")));
+        }
+        h.push(AgentMessage::assistant("已检查"));
+        assert_eq!(h.len(), 27);
+        h
     }
+
+    /// R1 Layer 1: Planner advances past old user turns on the 27-msg fixture,
+    /// respects tool-group boundaries, and carries covered user wording
+    /// (including still-protected users) in the deterministic verbatim block.
+    #[test]
+    fn r1_layer1_planner_advances_27_msg_fixture_with_invariants() {
+        let history = t4_27_msg_fixture();
+        let target = planned_summary_target(&history, 0);
+        assert!(
+            target > 0,
+            "27-msg multi-turn session must advance summarization instead of stalling at floor"
+        );
+        assert_ne!(
+            history[target].role,
+            "tool",
+            "Invariant 2: uncovered suffix must never begin with an orphan tool message"
+        );
+        let protected = neomind_agent::agent::streaming::protected_user_indices(&history);
+        assert_eq!(protected.len(), 3);
+        assert!(!protected.contains(&0), "U1 at idx 0 is outside last 3 users");
+        assert!(protected.contains(&7), "U2 at idx 7 is protected");
+        assert!(protected.contains(&14), "U3 at idx 14 is protected");
+        assert!(protected.contains(&21), "U4 at idx 21 is protected");
+
+        let verbatim = merge_verbatim_user_entries(Vec::new(), &history[..target], &protected);
+        assert!(
+            verbatim.iter().any(|u| u.contains("厦门市集美区")),
+            "Invariant 1: covered U1 must enter verbatim block"
+        );
+        assert!(
+            target > 7,
+            "planner must cover protected U2 so the next-request gap can be closed"
+        );
+        assert!(
+            verbatim.iter().any(|u| u.contains("发到 device 20545d67")),
+            "Invariant 1: covered protected U2 must also enter verbatim (gap-safe)"
+        );
+    }
+
+    /// R1 Layer 2: End-to-end trigger_summarization on the 27-msg fixture writes
+    /// a summary that preserves U1 in the verbatim block, advances up_to past
+    /// idx 0 without splitting a tool group, and keeps U2/U3/U4 native.
+    #[tokio::test]
+    async fn r1_layer2_trigger_summarization_preserves_fidelity_on_27_msg_fixture() {
+        let state = crate::server::ServerState::new_for_testing().await;
+        let manager = state.agents.session_manager.clone();
+        let sid = manager.create_session().await.expect("session");
+        let agent = manager.get_session(&sid).await.expect("agent");
+        let history = t4_27_msg_fixture();
+        agent.restore_history(history.clone()).await;
+
+        let out = trigger_summarization(&sid, &state, None, true, true)
+            .await
+            .expect("compact");
+        assert!(out.summarized_messages > 0);
+        let next_idx = out.new_up_to_index + 1;
+        assert_ne!(
+            history[next_idx].role,
+            "tool",
+            "summary_up_to_index must end on an atomic tool-group boundary"
+        );
+
+        let meta = state
+            .agents
+            .session_manager
+            .session_store()
+            .get_session_metadata(&sid)
+            .unwrap_or_default();
+        let summary = meta.conversation_summary.expect("summary saved");
+        assert!(summary.contains(VERBATIM_USERS_START));
+        assert!(summary.contains("厦门市集美区"));
+        assert!(!summary.contains("确认一下 20545d67 当前画面"));
+    }
+
+    /// R1 Layer 3: Cross-turn LLM summary success + fold dedup.
+    /// Verifies that the 720-char evidence gate applies ONLY to LLM narrative,
+    /// the verbatim block is stripped before LLM folding, and entries dedupe
+    /// cleanly while covered protected users are already present for the
+    /// next-request gap (no second merge required).
+    #[test]
+    fn r1_layer3_cross_turn_llm_success_and_fold_dedup() {
+        let mut history = t4_27_msg_fixture();
+
+        // Cycle 1: LLM produces a valid 500-char narrative (passes 720-char gate),
+        // while verbatim block already carries covered U1 + protected U2.
+        let summary1 = {
+            let refs1: Vec<&AgentMessage> = history[..12].iter().collect();
+            let protected1 = neomind_agent::agent::streaming::protected_user_indices(&history);
+            let verbatim1 = merge_verbatim_user_entries(Vec::new(), &history[..12], &protected1);
+            assert!(
+                verbatim1.iter().any(|e| e.contains("发到 device 20545d67")),
+                "cycle-1 compress must already retain protected U2 for the next-request gap"
+            );
+            let llm_narrative_1 = format!(
+                "## 任务与目标\n处理 200366 照片并发送到 20545d67。{}",
+                "详情记录。".repeat(100)
+            );
+            assert!(llm_narrative_1.chars().count() <= SUMMARY_MAX_CHARS);
+            let (summary1, fallback1) = finish_summary_with_verbatim(
+                None,
+                Some((&llm_narrative_1, "Stop")),
+                "fallback",
+                32_768,
+                &refs1,
+                &verbatim1,
+            )
+            .expect("cycle 1");
+            assert!(
+                !fallback1,
+                "LLM summary must be accepted even when combined with verbatim block"
+            );
+            assert!(summary1.contains(VERBATIM_USERS_START));
+            assert!(summary1.contains("厦门市集美区"));
+            assert!(summary1.contains("发到 device 20545d67"));
+            summary1
+        };
+
+        // Gap acceptance (no second summarize/merge): add one user message so
+        // U2 ages out of protection, then the stored summary alone must still
+        // recover the correction for the next model request.
+        history.push(AgentMessage::user("再检查一次日志"));
+        history.push(AgentMessage::assistant("好的"));
+        let up_to = 11u64;
+        let protected_after = neomind_agent::agent::streaming::protected_user_indices(&history);
+        assert!(!protected_after.contains(&7), "U2 aged out of last 3 users");
+        let native_keeps_u2 = history.iter().enumerate().any(|(i, m)| {
+            m.role == "user"
+                && m.content.contains("发到 device 20545d67")
+                && ((i as u64) > up_to || protected_after.contains(&i))
+        });
+        assert!(
+            !native_keeps_u2,
+            "aged-out U2 must leave the native protected window"
+        );
+        assert!(
+            summary1.contains("发到 device 20545d67"),
+            "next request must recover U2 from the first compress verbatim block without a second merge"
+        );
+
+        // Cycle 2 fold: strip verbatim before LLM folding; entries dedupe.
+        let (prev_narrative, prev_verbatim) = strip_verbatim_user_block(&summary1);
+        assert!(
+            !prev_narrative.contains(VERBATIM_USERS_START),
+            "verbatim block must be stripped before LLM folding"
+        );
+        let fold_prompt = build_summary_prompt("Assistant: checked", Some(&prev_narrative), true);
+        assert!(!fold_prompt.contains(VERBATIM_USERS_START));
+
+        let protected2 = neomind_agent::agent::streaming::protected_user_indices(&history);
+        let verbatim2 = merge_verbatim_user_entries(prev_verbatim, &history[..20], &protected2);
+        assert_eq!(
+            verbatim2.iter().filter(|e| e.contains("厦门市集美区")).count(),
+            1,
+            "U1 must not duplicate across folds"
+        );
+        assert!(
+            verbatim2.iter().any(|e| e.contains("发到 device 20545d67")),
+            "U2 remains in verbatim across fold"
+        );
+
+        let refs2: Vec<&AgentMessage> = history[..20].iter().collect();
+        let llm_narrative_2 = "## 任务与目标\n已完成 200366 到 20545d67 的多次重试检查";
+        let (summary2, fallback2) = finish_summary_with_verbatim(
+            Some(&prev_narrative),
+            Some((llm_narrative_2, "Stop")),
+            "fallback",
+            32_768,
+            &refs2,
+            &verbatim2,
+        )
+        .expect("cycle 2");
+        assert!(!fallback2);
+        assert_eq!(
+            summary2.matches(VERBATIM_USERS_START).count(),
+            1,
+            "only one verbatim block marker after fold"
+        );
+        assert!(summary2.contains("厦门市集美区"));
+        assert!(summary2.contains("发到 device 20545d67"));
+    }
+
+    /// Review P1 gap: one successful compress, then one new user message, then
+    /// the next model request — without calling summarize/merge helpers — must
+    /// still recover a full protected correction from the summary block.
+    #[test]
+    fn r1_protected_correction_available_on_next_request_without_second_compress() {
+        let correction = "source is A, B is only the screen";
+        // Correction is the oldest of the last-3 protected users so a single
+        // new user message ages it out of the live window.
+        let mut history = vec![
+            AgentMessage::user(correction),
+            AgentMessage::assistant("sending to B"),
+            AgentMessage::tool_result("shell", "queued"),
+            AgentMessage::user("status on B?"),
+            AgentMessage::assistant("pending"),
+            AgentMessage::tool_result("shell", "still pending"),
+            AgentMessage::user("check again"),
+            AgentMessage::assistant("still pending"),
+            AgentMessage::tool_result("shell", "no ack yet"),
+        ];
+        // Cover through the first tool group (includes correction at idx 0).
+        let covered_end = 3usize;
+        let protected = neomind_agent::agent::streaming::protected_user_indices(&history);
+        assert!(
+            protected.contains(&0),
+            "correction must be protected at first compress"
+        );
+        assert_eq!(
+            protected.len(),
+            3,
+            "fixture must place correction as one of the last 3 users"
+        );
+        let verbatim =
+            merge_verbatim_user_entries(Vec::new(), &history[..covered_end], &protected);
+        assert!(
+            verbatim.iter().any(|e| e.contains(correction)),
+            "first compress must retain the protected correction verbatim"
+        );
+        let narrative = "## 任务与目标\nSend A image to screen B";
+        let summary = attach_verbatim_user_block(narrative, &verbatim);
+        assert!(summary.contains(correction));
+
+        // One new user message ages the correction (3rd-nearest) out of last-3.
+        history.push(AgentMessage::user("any update?"));
+        let up_to = (covered_end - 1) as u64;
+        let protected_next = neomind_agent::agent::streaming::protected_user_indices(&history);
+        assert!(
+            !protected_next.contains(&0),
+            "correction must age out before the next request"
+        );
+
+        // Next model request (no summarize/merge helpers): native filter drops
+        // the aged-out correction, but the first-compress summary still carries
+        // the full wording the request will inject.
+        let native_keeps_correction = history.iter().enumerate().any(|(i, m)| {
+            m.role == "user"
+                && m.content.contains(correction)
+                && ((i as u64) > up_to || protected_next.contains(&i))
+        });
+        assert!(
+            !native_keeps_correction,
+            "correction must leave the native protected window"
+        );
+        assert!(
+            summary.contains(correction),
+            "next request must still carry the full correction via the first-compress verbatim block"
+        );
+        assert!(
+            summary.contains("source is A") && summary.contains("B is only the screen"),
+            "full correction wording must be recoverable"
+        );
+    }
+
     #[test]
     fn a_user_only_prefix_does_not_pretend_to_release_context() {
         let history = vec![
@@ -1758,20 +2156,5 @@ mod early_turn_compaction_tests {
             AgentMessage::assistant("answer"),
         ];
         assert_eq!(planned_summary_target(&history, 0), 0);
-    }
-    #[test]
-    fn longer_chats_keep_the_existing_recent_user_floor() {
-        let history = (0..5)
-            .flat_map(|_| {
-                [
-                    AgentMessage::user("exact words"),
-                    AgentMessage::assistant("answer"),
-                ]
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            summary_protection_floor(&history),
-            recent_user_floor(&history, 3)
-        );
     }
 }

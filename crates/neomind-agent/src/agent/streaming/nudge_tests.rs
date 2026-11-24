@@ -2003,3 +2003,102 @@ async fn call_record_stores_the_same_slimmed_result_as_the_tool_message() {
         "call record and tool message must agree"
     );
 }
+
+
+/// R2 Diagnostic: replay a single ReAct turn with 227KB / 26KB / 37KB tool
+/// outputs (T4 session shape) and print an observation table of slimming,
+/// history token estimates, truncation snapshot, and tool attachment.
+/// Deliberately diagnostic (no hard red gate on "no in-loop summary").
+struct BurstOutputTool {
+    sizes: Vec<usize>,
+    idx: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl Tool for BurstOutputTool {
+    fn name(&self) -> &str {
+        "burst_payload"
+    }
+    fn description(&self) -> &str {
+        "returns scripted large payloads (227KB / 26KB / 37KB)"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object", "properties": {"step": {"type": "number"}}})
+    }
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolOutput, ToolError> {
+        let i = self.idx.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let bytes = self.sizes.get(i).copied().unwrap_or(1024);
+        let row = "{\"ts\":1700000000,\"temp\":23.5,\"hum\":60}\n";
+        let stdout = row.repeat((bytes / row.len()).max(1));
+        Ok(ToolOutput::success(serde_json::json!({
+            "exit_code": 0,
+            "stdout": stdout,
+            "stderr": ""
+        })))
+    }
+}
+
+#[tokio::test]
+async fn r2_in_loop_large_tool_outputs_diagnostic_table() {
+    let sizes = vec![227 * 1024, 26 * 1024, 37 * 1024];
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call("burst_payload", serde_json::json!({"step": 1})),
+        MockResponse::tool_call("burst_payload", serde_json::json!({"step": 2})),
+        MockResponse::tool_call("burst_payload", serde_json::json!({"step": 3})),
+        MockResponse::text("三轮大输出诊断完成。"),
+    ]);
+    let (iface, state, _) = harness(&rt);
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(BurstOutputTool {
+        sizes: sizes.clone(),
+        idx: std::sync::atomic::AtomicUsize::new(0),
+    }));
+    let stream = crate::agent::streaming::process_stream_events_with_safeguards(
+        iface.clone(),
+        state.clone(),
+        Arc::new(registry),
+        "连续读取三份大设备历史并总结",
+        super::StreamSafeguards::default(),
+        None,
+        None,
+        0,
+    )
+    .await
+    .expect("stream");
+    let events = collect(stream).await;
+
+    let guard = state.read().await;
+    let tool_msgs: Vec<&crate::agent::types::AgentMessage> = guard
+        .memory
+        .iter()
+        .filter(|m| m.role == "tool" && m.tool_call_name.as_deref() == Some("burst_payload"))
+        .collect();
+    let total_est_tokens: usize = guard
+        .memory
+        .iter()
+        .map(crate::agent::tokenizer::estimate_message_tokens)
+        .sum();
+    let snap = iface.take_truncation_snapshot();
+    println!("=== R2 Diagnostic Observation Table (227KB / 26KB / 37KB) ===");
+    println!("| Round | Raw Bytes | Stored Tool Chars | Slimmed? |");
+    for (idx, msg) in tool_msgs.iter().enumerate() {
+        let raw = sizes.get(idx).copied().unwrap_or(0);
+        let stored = msg.content.len();
+        let slimmed = msg.content.contains("cached as $cached:");
+        println!("| {} | {} | {} | {} |", idx + 1, raw, stored, slimmed);
+    }
+    println!(
+        "Total memory msgs={}, est_tokens={}, final_truncation={:?}, llm_calls={}",
+        guard.memory.len(),
+        total_est_tokens,
+        snap,
+        rt.call_count()
+    );
+    // Sanity assertions only (diagnostic test): all 3 rounds executed and completed cleanly.
+    assert_eq!(tool_msgs.len(), 3, "all 3 burst rounds must execute");
+    assert!(
+        tool_msgs[0].content.contains("cached as $cached:"),
+        "227KB payload must be slimmed into cache"
+    );
+    assert!(joined_content(&events).contains("三轮大输出诊断完成"));
+}

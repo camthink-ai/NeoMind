@@ -36,6 +36,12 @@ pub(crate) struct ContextWindowBuild {
     /// True when the builder ran one compress/digest reassembly before
     /// deciding whether to keep or drop latest tool feedback.
     pub auto_recover_attempted: bool,
+    /// Number of unsummarized (`filtered`) messages actually evicted by the
+    /// outer context window builder (measured before summary system-message
+    /// insertion so already-summarized prefix messages are never double-counted).
+    pub outer_dropped: usize,
+    /// Estimated tokens of the unsummarized history + summary before outer trim.
+    pub estimated_before: usize,
 }
 
 pub(crate) fn build_context_window_with_summary_tracked(
@@ -83,14 +89,7 @@ pub(crate) fn build_context_window_with_summary_marked(
 
     // Recent user instructions stay verbatim even when their surrounding
     // tool history is summarized. They still count against the window budget.
-    let protected_users: std::collections::HashSet<usize> = messages
-        .iter()
-        .enumerate()
-        .rev()
-        .filter(|(_, m)| m.role == "user")
-        .take(3)
-        .map(|(i, _)| i)
-        .collect();
+    let protected_users = protected_user_indices(messages);
 
     // Filter out summarized messages if summary exists
     let filtered: Vec<AgentMessage> =
@@ -105,11 +104,13 @@ pub(crate) fn build_context_window_with_summary_marked(
             messages.to_vec()
         };
 
-    let pressure = filtered.iter().map(estimate_message_tokens).sum::<usize>() > history_budget
-        || summary_tokens > max_tokens;
+    let filtered_tokens: usize = filtered.iter().map(estimate_message_tokens).sum();
+    let estimated_before = filtered_tokens.saturating_add(summary_tokens);
+    let pressure = filtered_tokens > history_budget || summary_tokens > max_tokens;
 
     // Build context window from filtered messages
     let built = build_context_window_with_config_build(&filtered, history_budget, &config);
+    let outer_dropped = filtered.len().saturating_sub(built.messages.len());
     let mut result = built.messages;
     let latest_tool_feedback_dropped = built.latest_tool_feedback_dropped;
     let auto_recover_attempted = built.auto_recover_attempted;
@@ -133,6 +134,8 @@ pub(crate) fn build_context_window_with_summary_marked(
         pressure: pressure || auto_recover_attempted,
         latest_tool_feedback_dropped,
         auto_recover_attempted,
+        outer_dropped,
+        estimated_before,
     }
 }
 
@@ -647,11 +650,14 @@ fn build_context_window_with_config_build(
 
     log_hard_budget_shares(max_tokens, input, auto_recover_attempted, dropped);
 
+    let outer_dropped = input.len().saturating_sub(final_messages.len());
     ContextWindowBuild {
         messages: final_messages,
         pressure: total_tokens > max_tokens || auto_recover_attempted,
         latest_tool_feedback_dropped: dropped,
         auto_recover_attempted,
+        outer_dropped,
+        estimated_before: total_tokens,
     }
 }
 
@@ -665,12 +671,28 @@ fn message_priority(role: &str) -> MessagePriority {
     }
 }
 
+/// Number of most-recent user messages kept verbatim in the request context.
+/// Shared single source of truth between request assembly and summarization.
+pub const RECENT_PROTECTED_USER_MSGS: usize = 3;
+
+/// Indices of the most recent [`RECENT_PROTECTED_USER_MSGS`] user messages.
+pub fn protected_user_indices(messages: &[AgentMessage]) -> std::collections::HashSet<usize> {
+    messages
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, m)| m.role == "user")
+        .take(RECENT_PROTECTED_USER_MSGS)
+        .map(|(i, _)| i)
+        .collect()
+}
+
 /// Partition AgentMessages into atomic groups: an assistant tool-call turn
 /// plus its contiguous tool results, or a single non-tool message.
 ///
 /// Returns `(absolute_start_index, group_messages)` so callers can stamp each
 /// tool by call position.
-fn partition_agent_groups(messages: &[AgentMessage]) -> Vec<(usize, Vec<AgentMessage>)> {
+pub fn partition_agent_groups(messages: &[AgentMessage]) -> Vec<(usize, Vec<AgentMessage>)> {
     let mut groups: Vec<(usize, Vec<AgentMessage>)> = Vec::new();
     let mut i = messages.len();
     while i > 0 {
@@ -692,6 +714,23 @@ fn partition_agent_groups(messages: &[AgentMessage]) -> Vec<(usize, Vec<AgentMes
     }
     groups.reverse();
     groups
+}
+
+/// Align an exclusive end index backwards to the nearest atomic tool-group
+/// boundary so a summary prefix never splits an assistant turn from its
+/// contiguous tool results.
+pub fn align_end_to_tool_group_boundary(messages: &[AgentMessage], end_exclusive: usize) -> usize {
+    let clamped = end_exclusive.min(messages.len());
+    let mut aligned = 0usize;
+    for (start, group) in partition_agent_groups(messages) {
+        let group_end = start + group.len();
+        if group_end <= clamped {
+            aligned = group_end;
+        } else {
+            break;
+        }
+    }
+    aligned
 }
 
 /// Evict oldest-first the messages matching `evictable` until `total` fits
@@ -960,9 +999,7 @@ impl TurnContext {
         llm: &crate::llm::LlmInterface,
     ) -> (Vec<AgentMessage>, bool) {
         let built = self.build_marked(messages, budget);
-        if built.pressure || built.latest_tool_feedback_dropped {
-            llm.mark_history_truncated();
-        }
+        llm.record_outer_truncation(built.outer_dropped, built.estimated_before);
         if built.auto_recover_attempted && built.latest_tool_feedback_dropped {
             llm.mark_hard_budget_auto_recover_exhausted();
         }

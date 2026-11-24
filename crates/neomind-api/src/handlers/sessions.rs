@@ -275,21 +275,24 @@ async fn process_stream_to_channel(
                         // history truncation — the latter is the only signal
                         // that works when prompt/tool overhead makes the 60%
                         // of-window mark unreachable (2026-10-30).
-                        let (history_truncated, force_budget_recover) = match state
+                        let (truncation_snapshot, force_budget_recover) = match state
                             .agents
                             .session_manager
                             .get_agent_llm(&session_id)
                             .await
                         {
                             Some(llm) => (
-                                llm.take_history_truncated(),
+                                llm.take_truncation_snapshot(),
                                 // One auto-recover already failed in-turn: force
                                 // digest even when usage_known=false / meter is 0
                                 // (T4 hard_budget → no_tools follow-ups).
                                 llm.take_hard_budget_auto_recover_exhausted(),
                             ),
-                            None => (false, false),
+                            None => (None, false),
                         };
+                        let history_truncated = truncation_snapshot
+                            .as_ref()
+                            .is_some_and(|s| s.has_truncation());
                         // Meter kinds:
                         // - Some(plausible) → bill-first gate
                         // - None (usage omitted) + truncated → still compact
@@ -364,11 +367,20 @@ async fn process_stream_to_channel(
                         let mut end_json = json!({
                             "type": "end",
                             "sessionId": session_id,
-                            // The LLM context dropped history this turn — the
-                            // UI shows a one-shot notice instead of leaving
-                            // the user to wonder why old facts are forgotten.
+                            // True when any request attempt in this turn dropped
+                            // history (sticky last-omit; later zero-drop requests
+                            // must not clear the tip — S1).
                             "historyTruncated": history_truncated,
                         });
+                        if let Some(snap) = truncation_snapshot.as_ref().filter(|s| s.has_truncation()) {
+                            end_json["truncation"] = json!({
+                                "outerDropped": snap.outer_dropped,
+                                "innerDropped": snap.inner_dropped,
+                                "droppedMessages": snap.total_dropped(),
+                                "estimatedBefore": snap.estimated_before,
+                                "measuredPromptTokens": snap.measured_prompt_tokens,
+                            });
+                        }
                         // Compact gate above keeps invalid meters as Some(0/MAX);
                         // the UI ring must not — omit tokenUsage for implausible.
                         if let Some(pt) = prompt_tokens
@@ -3104,10 +3116,10 @@ mod compact_clear_tests {
     }
 
     /// Force-compact on a session with no LLM backend must still write a
-    /// (deterministic-fallback) summary, never cover the last 3 user
-    /// messages, and report the fallback.
+    /// (deterministic-fallback) summary, advance past protected users while
+    /// preserving them in the deterministic verbatim block, and report fallback.
     #[tokio::test]
-    async fn compact_writes_fallback_and_respects_protection_floor() {
+    async fn compact_writes_fallback_and_advances_with_verbatim_block() {
         let (state, sid) = seeded_state().await;
         let manager = state.agents.session_manager.clone();
         let (status, body) = post_json(state, format!("/api/sessions/{}/compact", sid)).await;
@@ -3134,23 +3146,22 @@ mod compact_clear_tests {
             "maxContextTokens required for the ring denominator: {usage:?}"
         );
 
-        // Boundary math: 12 messages, users at 0,2,4,6,8,10. keep=3 →
-        // protected_first=6. target = min(12/2, 6-0) = 6 → covers 0..=5.
+        // 12 messages (6 alternating turns, no tool groups): half = 6 → covers 0..=5.
         let store = manager.session_store();
         let meta = store.get_session_metadata(&sid).expect("metadata");
         assert_eq!(
             meta.summary_up_to_index,
             Some(5),
-            "coverage must stop one below the protected boundary (index 6)"
+            "first half of 12 alternating messages covers 0..=5"
         );
         let summary = meta.conversation_summary.expect("summary written");
         assert!(
             summary.contains("user turn 0 wording"),
-            "fallback digest carries user wording verbatim: {summary}"
+            "verbatim user block carries covered user wording: {summary}"
         );
         assert!(
-            !summary.contains("user turn 3 wording"),
-            "the protected user turns (3..5) must NOT be summarized"
+            summary.contains("<!-- neomind:verbatim-user-messages:start -->"),
+            "deterministic verbatim user block must be attached: {summary}"
         );
 
         manager.remove_session(&sid).await.unwrap();

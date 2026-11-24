@@ -35,7 +35,10 @@ pub use neomind_core::llm::compaction::{CompactionConfig, MessagePriority};
 
 // Public API re-exports (preserving all original import paths)
 pub use cache::ToolResultCache;
-pub use context::{estimate_post_summary_context_usage, PostSummaryContextUsage};
+pub use context::{
+    align_end_to_tool_group_boundary, estimate_post_summary_context_usage, partition_agent_groups,
+    protected_user_indices, PostSummaryContextUsage, RECENT_PROTECTED_USER_MSGS,
+};
 pub use result_format::format_tool_results;
 pub use stream_core::{process_stream_events_with_safeguards, StreamSafeguards};
 pub use stream_multimodal::process_multimodal_stream_events_with_safeguards;
@@ -44,6 +47,8 @@ pub use thinking::cleanup_thinking_content;
 /// Write-lease fingerprint (canonical args; lifecycle flag stripped first).
 /// Un-gated: production code outside this module tree (ledger fingerprint
 /// migration at restore) also needs it, not just tests.
+#[cfg(test)]
+pub(crate) use context::build_context_window_with_summary_marked;
 pub(crate) use context::compact_skill_tool_reference;
 pub(crate) use intent::mutating_write_fingerprint;
 
