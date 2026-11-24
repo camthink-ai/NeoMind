@@ -4709,6 +4709,12 @@ async fn judgment_agent_is_not_offered_web_tools_unless_allowlisted() {
 
 /// Not offering the tool is not enough — a small model invents tool names.
 /// The call itself is refused, so the registry never runs it.
+///
+/// Keep a non-web tool (`EchoTool`) registered: after judgment filtering drops
+/// `web_search`, an empty allowlist would enter zero-tool mode and skip
+/// parse/execute entirely (HIGH filtered_tools gate). The invent-and-block
+/// path needs at least one remaining tool so the loop still honors calls and
+/// `judgment_tool_off_by_default` can record the refusal.
 #[tokio::test]
 async fn judgment_agent_web_tool_call_is_blocked_even_when_invented() {
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -4725,6 +4731,7 @@ async fn judgment_agent_web_tool_call_is_blocked_even_when_invented() {
     let (mut executor, mut agent, _) = build_harness().await;
     agent.notify = Some(judgment_notify());
     let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool));
     registry.register(Arc::new(WebSearchProbe {
         calls: calls.clone(),
     }));

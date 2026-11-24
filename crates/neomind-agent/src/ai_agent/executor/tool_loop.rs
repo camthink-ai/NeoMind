@@ -828,6 +828,23 @@ impl AgentExecutor {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, c)| {
+                        // Judgment web-tool refuse BEFORE the generic allowlist
+                        // gate so inventing `web_search` still surfaces the
+                        // specific "Web tools are off" reason (not a bare
+                        // allowed-set miss) when other tools remain offered.
+                        if super::judgment_notify::judgment_tool_off_by_default(agent, &c.name) {
+                            tracing::info!(
+                                agent_id = %agent.id,
+                                tool = %c.name,
+                                "Web tool not offered to a judgment-notify agent — call blocked"
+                            );
+                            return Some((
+                                i,
+                                "Web tools are off for judgment-notify agents (name the tool in \
+                                 the agent's allowlist to enable it)"
+                                    .to_string(),
+                            ));
+                        }
                         // Allowlist gate: post-rewrite name must be in
                         // filtered_tools (sanitized or original). Text-protocol
                         // invents must not bypass `--allowed-tools`.
@@ -870,22 +887,6 @@ impl AgentExecutor {
                                 "Judgment notify gate blocked message send"
                             );
                             return Some((i, r));
-                        }
-                        // Web tools a judgment-notify agent does not get by
-                        // default are refused when the model invents the call
-                        // anyway — the registry would otherwise run it.
-                        if super::judgment_notify::judgment_tool_off_by_default(agent, &c.name) {
-                            tracing::info!(
-                                agent_id = %agent.id,
-                                tool = %c.name,
-                                "Web tool not offered to a judgment-notify agent — call blocked"
-                            );
-                            return Some((
-                                i,
-                                "Web tools are off for judgment-notify agents (name the tool in \
-                                 the agent's allowlist to enable it)"
-                                    .to_string(),
-                            ));
                         }
                         None
                     })
