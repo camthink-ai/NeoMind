@@ -22,6 +22,8 @@ pub(crate) enum AnalysisResult {
     Free {
         decision_process: Box<DecisionProcess>,
         execution_result: Box<neomind_storage::ExecutionResult>,
+        /// How images reached the model — a `VisionExecutionPath::label`.
+        vision_path: &'static str,
     },
 }
 
@@ -64,7 +66,7 @@ impl AgentExecutor {
                             invocation_input,
                         )
                         .await
-                        .map(|(dp, exec_result)| {
+                        .map(|(dp, exec_result, vision_path)| {
                             tracing::info!(
                                 agent_id = %agent.id,
                                 "Tool-based analysis completed successfully"
@@ -72,6 +74,7 @@ impl AgentExecutor {
                             AnalysisResult::Free {
                                 decision_process: Box::new(dp),
                                 execution_result: Box::new(exec_result),
+                                vision_path,
                             }
                         })
                         .map_err(|e| {
@@ -701,7 +704,7 @@ fn build_compact_data_summary(data: &[DataCollected]) -> Vec<String> {
         .map(|d| {
             // Create a more compact representation of values
             let value_str = if let Some(v) = d.values.get("value") {
-                format!("{}", v) // Compact value representation
+                super::tool_prompt::bounded_value(v, &d.data_type)
             } else if let Some(v) = d.values.get("history") {
                 format!(
                     "[历史数据: {}个点]",

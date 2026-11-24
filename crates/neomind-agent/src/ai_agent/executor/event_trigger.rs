@@ -23,6 +23,25 @@ const MIN_BURST_MERGE_SECS: i64 = 1;
 /// degrades to "no cooldown", the fail-open direction).
 const EVENT_DEDUP_RETENTION_SECS: i64 = 3600;
 
+/// How an event-triggered run ended — the caller's cue for its cooldown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EventRunOutcome {
+    /// The run is over: it completed, or ended in a way that is not a
+    /// fault of the agent (daily-cap refusal, busy, empty-event skip).
+    /// The cooldown stays.
+    Completed,
+    /// The LLM side hiccuped and a retry did not help. The cooldown is
+    /// cleared so the next event gets its chance.
+    TransientFailure,
+    /// The run itself cannot succeed right now — context overflow, a
+    /// permanent LLM error, a failure after side effects. Replaying the
+    /// same input seconds later cannot end differently; it only doubled
+    /// the breaker count and the failure notifications (T4 2026-11-24:
+    /// one overflow became two Failed runs and two notifications per
+    /// event, and tripped the breaker at twice the speed).
+    PermanentFailure,
+}
+
 impl AgentExecutor {
     /// Prune stale entries from the event dedup map. Entries older than
     /// `EVENT_DEDUP_RETENTION_SECS` are removed. Also prunes recovery-probe
@@ -334,7 +353,7 @@ impl AgentExecutor {
                         // Execute with one inline retry; clear cooldown on persistent failure
                         // so transient errors (API hiccups, network blips) don't lock out
                         // subsequent events for the full 60s cooldown window.
-                        let result = Self::execute_with_retry(
+                        let outcome = Self::execute_with_retry(
                             &executor,
                             agent_clone,
                             event_trigger_data,
@@ -343,13 +362,18 @@ impl AgentExecutor {
                         )
                         .await;
 
-                        if result.is_err() {
+                        // Only a transient failure frees the cooldown, so
+                        // the next event gets its chance. A permanent one
+                        // keeps it: the next report carries the same
+                        // unrunnable input, and re-firing on it would trip
+                        // the breaker within seconds.
+                        if matches!(outcome, EventRunOutcome::TransientFailure) {
                             let mut recent = recent_executions_clone.write().await;
                             recent.remove(&dedup_key_clone);
                             tracing::info!(
                                 agent_id = %agent_id_for_log,
                                 dedup_key = %dedup_key_clone,
-                                "Cleared event cooldown after failed execution"
+                                "Cleared event cooldown after a transient failure"
                             );
                         }
 
@@ -508,10 +532,41 @@ impl AgentExecutor {
     /// Returns `None` if time-series storage is unavailable or no candidate has data.
     pub async fn build_synthetic_event_data(&self, agent: &AiAgent) -> Option<EventTriggerData> {
         let ts = self.time_series_storage.as_ref()?;
+
+        // A whole-device trigger has no single field to quote, so no concrete
+        // candidate below can represent it — "Run now" used to fall through
+        // to a run with no event context at all. The run reads the device's
+        // latest report itself (`collect_device_report_snapshot`).
+        if let Some((src_type, src_id)) = Self::whole_source_candidate(agent) {
+            tracing::info!(
+                agent_id = %agent.id,
+                source_type = %src_type,
+                source_id = %src_id,
+                "Manual execution of a whole-source event agent — the run reads the source's latest report"
+            );
+            return Some(EventTriggerData {
+                source: DataSourceRef {
+                    source_type: src_type,
+                    source_id: src_id,
+                    field: String::new(),
+                },
+                value: neomind_core::MetricValue::Json(serde_json::Value::Null),
+                timestamp: chrono::Utc::now().timestamp(),
+            });
+        }
+
         let candidates = Self::extract_trigger_candidates(agent);
 
         for (src_type, src_id, field) in candidates {
-            match ts.query_latest(&src_id, &field).await {
+            // Telemetry is written under `device:{id}` by every write path;
+            // the bare id read a key that never exists, so a field-specific
+            // "Run now" always ran without event context.
+            let storage_key = if src_type == "device" {
+                format!("device:{src_id}")
+            } else {
+                src_id.clone()
+            };
+            match ts.query_latest(&storage_key, &field).await {
                 Ok(Some(point)) => {
                     tracing::info!(
                         agent_id = %agent.id,
@@ -552,37 +607,95 @@ impl AgentExecutor {
         None
     }
 
-    /// Extract candidate `(source_type, source_id, field)` tuples from an agent's
-    /// trigger configuration — first from `event_filter.sources`, then from
-    /// resource bindings (Metric / ExtensionMetric). Sources with `id == "all"`
-    /// or empty fields are skipped (they cannot be resolved to a concrete query).
+    /// A field name no device reports. Asking whether a trigger ALSO fires
+    /// for the same source with this field answers "is the match on the
+    /// source, or on one of its fields?" without duplicating the matcher.
+    const ANY_FIELD: &str = "\u{1}any-field";
+
+    /// Does the agent's trigger cover the WHOLE source that raised `source`,
+    /// rather than one of its fields?
+    ///
+    /// True for a field-less source (`{"type":"device","id":"d1"}`), the
+    /// `all` wildcard, and the resource fallback matching a whole-device
+    /// resource. Such a run is fed the device's report as a whole — the
+    /// field that reached the trigger first is only the doorbell.
+    pub(crate) async fn trigger_covers_whole_source(
+        &self,
+        agent: &AiAgent,
+        source: &DataSourceRef,
+    ) -> bool {
+        match agent.schedule.parsed_event_filter() {
+            Some(filter) => filter.any.iter().chain(filter.all.iter()).any(|spec| {
+                spec.matches_event(&source.source_type, &source.source_id, Self::ANY_FIELD)
+            }),
+            None => {
+                self.matches_data_source_filter(
+                    agent,
+                    &source.source_type,
+                    &source.source_id,
+                    Self::ANY_FIELD,
+                )
+                .await
+            }
+        }
+    }
+
+    /// The first whole-DEVICE source an event agent listens on, if any.
+    ///
+    /// Only devices: a device report is what `collect_device_report_snapshot`
+    /// can read back. The `all` wildcard names no concrete device.
+    fn whole_source_candidate(agent: &AiAgent) -> Option<(String, String)> {
+        let is_whole = |source_type: &str, id: &str, field: Option<&str>| {
+            source_type == "device"
+                && !id.is_empty()
+                && id != "all"
+                && field.is_none_or(str::is_empty)
+        };
+        if let Some(filter) = agent.schedule.parsed_event_filter() {
+            return filter
+                .any
+                .iter()
+                .chain(filter.all.iter())
+                .find(|spec| is_whole(&spec.source_type, &spec.id, spec.field.as_deref()))
+                .map(|spec| (spec.source_type.clone(), spec.id.clone()));
+        }
+        agent
+            .resources
+            .iter()
+            .find(|r| matches!(r.resource_type, ResourceType::Device))
+            .map(|r| ("device".to_string(), r.resource_id.clone()))
+    }
+
+    /// Extract candidate `(source_type, source_id, field)` tuples for a
+    /// manual run, from the agent's trigger configuration: the field-specific
+    /// sources of `event_filter` — `any` and `all`, in the legacy `sources`
+    /// and `event_type` shapes too — then the metric resources.
+    ///
+    /// Read through `parsed_event_filter()`. A hand-rolled read of the
+    /// `sources` key missed the M2-1 `{"any":[…]}` / `{"all":[…]}` shapes
+    /// entirely, so those agents got no event context on "Run now". Sources
+    /// naming no single field (`id == "all"`, or a whole-device source) are
+    /// skipped here; `whole_source_candidate` handles whole-device ones.
     fn extract_trigger_candidates(agent: &AiAgent) -> Vec<(String, String, String)> {
         let mut out: Vec<(String, String, String)> = Vec::new();
 
-        // 1. event_filter.sources
-        if let Some(ref filter_json) = agent.schedule.event_filter {
-            if let Ok(filter) = serde_json::from_str::<serde_json::Value>(filter_json) {
-                if let Some(sources) = filter.get("sources").and_then(|v| v.as_array()) {
-                    for s in sources {
-                        let s_type = match s.get("type").and_then(|v| v.as_str()) {
-                            Some(t) if !t.is_empty() => t.to_string(),
-                            _ => continue,
-                        };
-                        let s_id = s.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                        if s_id.is_empty() || s_id == "all" {
-                            continue;
-                        }
-                        let s_field = match s.get("field").and_then(|v| v.as_str()) {
-                            Some(f) if !f.is_empty() => f.to_string(),
-                            _ => continue,
-                        };
-                        out.push((s_type, s_id.to_string(), s_field));
-                    }
+        // 1. event_filter sources that name one field
+        if let Some(filter) = agent.schedule.parsed_event_filter() {
+            for spec in filter.any.iter().chain(filter.all.iter()) {
+                let Some(field) = spec.field.as_deref().filter(|f| !f.is_empty()) else {
+                    continue;
+                };
+                if spec.source_type.is_empty() || spec.id.is_empty() || spec.id == "all" {
+                    continue;
+                }
+                let candidate = (spec.source_type.clone(), spec.id.clone(), field.to_string());
+                if !out.contains(&candidate) {
+                    out.push(candidate);
                 }
             }
         }
 
-        // 2. Fallback: resource bindings (device:metric or extension:metric)
+        // 2. Metric resources (device:metric or extension:metric)
         for r in &agent.resources {
             match r.resource_type {
                 ResourceType::Metric => {
@@ -610,20 +723,72 @@ impl AgentExecutor {
         out
     }
 
-    /// Execute an event-triggered agent with up to `retries` inline retries.
+    /// Backoff between an event run's attempts.
+    const EVENT_RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// Is a failed event run worth ONE replay?
     ///
-    /// Between attempts, a 5-second backoff is applied. The agent clone and event
-    /// data are reused across attempts. Returns `Ok(())` on success (logging the
-    /// execution record), or `Err` if all attempts fail — callers should clear
-    /// the event cooldown marker on `Err` so transient failures don't lock out
-    /// subsequent events.
+    /// Deliberately not the breaker's `is_transient_failure`. That one answers
+    /// "should this agent be demoted?" and counts `already executing` and
+    /// `daily run cap` as transient. For an event run those two are settled
+    /// earlier (dropped, cooldown kept) and must never reach a replay or a
+    /// cooldown clear; two separate lists also keep a future change to the
+    /// breaker from silently turning into event replays.
+    pub(super) fn is_retryable_event_failure(error: Option<&str>) -> bool {
+        // An unknown error is not replayed.
+        let Some(msg) = error else {
+            return false;
+        };
+        let lower = msg.to_lowercase();
+        // Transport faults (reqwest::Error display) and DNS.
+        lower.contains("network")
+            || lower.contains("error sending request")
+            || lower.contains("dns")
+            || lower.contains("connection reset")
+            || lower.contains("connection refused")
+            || lower.contains("broken pipe")
+            // Timeouts (per-request and global).
+            || lower.contains("timed out")
+            || lower.contains("timeout")
+            // Rate limiting — backends emit the words, not a bare "429".
+            || lower.contains("rate limit")
+            || lower.contains("too many requests")
+    }
+
+    /// Execute an event-triggered agent, retrying TRANSIENT failures with up
+    /// to `retries` inline retries (a 5-second backoff between attempts).
+    ///
+    /// The agent clone and event data are reused across attempts. A
+    /// permanent failure is returned after its first attempt — see
+    /// [`EventRunOutcome::PermanentFailure`].
     pub(super) async fn execute_with_retry(
         executor: &AgentExecutor,
         agent: AiAgent,
         event_data: EventTriggerData,
         retries: u32,
         agent_id: &str,
-    ) -> Result<(), crate::error::NeoMindError> {
+    ) -> EventRunOutcome {
+        Self::execute_with_retry_with_backoff(
+            executor,
+            agent,
+            event_data,
+            retries,
+            agent_id,
+            Self::EVENT_RETRY_BACKOFF,
+        )
+        .await
+    }
+
+    /// [`Self::execute_with_retry`] with the backoff made explicit, so tests
+    /// do not sit through it.
+    pub(super) async fn execute_with_retry_with_backoff(
+        executor: &AgentExecutor,
+        agent: AiAgent,
+        event_data: EventTriggerData,
+        retries: u32,
+        agent_id: &str,
+        backoff: std::time::Duration,
+    ) -> EventRunOutcome {
         let mut attempt: u32 = 0;
         loop {
             attempt += 1;
@@ -644,81 +809,85 @@ impl AgentExecutor {
                     // as success made the inline retry and the caller's
                     // cooldown-clear dead code — transient LLM faults got no
                     // retry and the 60s window stayed locked.
-                    if record.status == neomind_storage::ExecutionStatus::Failed {
-                        // Daily-cap refusals arrive as Failed records (the
-                        // budget check lives inside execute_agent). Retrying a
-                        // midnight-resetting cap from a 5s backoff ladder just
-                        // burns attempts — skip cleanly; tomorrow's first
-                        // event proceeds under a fresh budget.
-                        if record
-                            .error
-                            .as_deref()
-                            .map(|e| e.to_lowercase().contains("daily run cap"))
-                            .unwrap_or(false)
-                        {
-                            tracing::info!(
-                                agent_id = %agent_id,
-                                execution_id = %record.id,
-                                "Event trigger refused by daily run cap — skipping (not a failure)"
-                            );
-                            return Ok(());
-                        }
-                        // Empty-event skips are Completed in execute_agent; if a
-                        // Failed record still carries the skip marker, do not
-                        // 5s×N replay / breaker-storm it.
-                        if record
-                            .result
-                            .as_ref()
-                            .is_some_and(super::is_empty_event_skip)
-                        {
-                            tracing::info!(
-                                agent_id = %agent_id,
-                                execution_id = %record.id,
-                                "Event trigger empty-data skip — not retrying"
-                            );
-                            return Ok(());
-                        }
-                        // Vision reject / partial business failure after a
-                        // successful message send / device control must not be
-                        // replayed — that would duplicate side effects.
-                        if record
-                            .result
-                            .as_ref()
-                            .is_some_and(|r| r.actions_executed.iter().any(|a| a.success))
-                        {
-                            tracing::warn!(
-                                agent_id = %agent_id,
-                                execution_id = %record.id,
-                                "Event-triggered execution Failed after successful side effects — not retrying"
-                            );
-                            return Err(crate::error::NeoMindError::Llm(format!(
-                                "event-triggered execution failed after successful side effects (execution_id={})",
-                                record.id
-                            )));
-                        }
-                        if attempt <= retries {
-                            tracing::warn!(
-                                agent_id = %agent_id,
-                                execution_id = %record.id,
-                                attempt = attempt,
-                                retries = retries,
-                                "Event-triggered execution FAILED — retrying after 5s backoff"
-                            );
-                            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                            continue;
-                        }
+                    if record.status != neomind_storage::ExecutionStatus::Failed {
+                        return EventRunOutcome::Completed;
+                    }
+                    // Daily-cap refusals arrive as Failed records (the
+                    // budget check lives inside execute_agent). Retrying a
+                    // midnight-resetting cap from a 5s backoff ladder just
+                    // burns attempts — skip cleanly; tomorrow's first
+                    // event proceeds under a fresh budget.
+                    if record
+                        .error
+                        .as_deref()
+                        .map(|e| e.to_lowercase().contains("daily run cap"))
+                        .unwrap_or(false)
+                    {
+                        tracing::info!(
+                            agent_id = %agent_id,
+                            execution_id = %record.id,
+                            "Event trigger refused by daily run cap — skipping (not a failure)"
+                        );
+                        return EventRunOutcome::Completed;
+                    }
+                    // Empty-event skips are Completed in execute_agent; if a
+                    // Failed record still carries the skip marker, do not
+                    // 5s×N replay / breaker-storm it.
+                    if record
+                        .result
+                        .as_ref()
+                        .is_some_and(super::is_empty_event_skip)
+                    {
+                        tracing::info!(
+                            agent_id = %agent_id,
+                            execution_id = %record.id,
+                            "Event trigger empty-data skip — not retrying"
+                        );
+                        return EventRunOutcome::Completed;
+                    }
+                    // Vision reject / partial business failure after a
+                    // successful message send / device control must not be
+                    // replayed — that would duplicate side effects.
+                    if record
+                        .result
+                        .as_ref()
+                        .is_some_and(|r| r.actions_executed.iter().any(|a| a.success))
+                    {
+                        tracing::warn!(
+                            agent_id = %agent_id,
+                            execution_id = %record.id,
+                            "Event-triggered execution Failed after successful side effects — not retrying"
+                        );
+                        return EventRunOutcome::PermanentFailure;
+                    }
+                    let transient = Self::is_retryable_event_failure(record.error.as_deref());
+                    if transient && attempt <= retries {
+                        tracing::warn!(
+                            agent_id = %agent_id,
+                            execution_id = %record.id,
+                            attempt = attempt,
+                            retries = retries,
+                            "Event-triggered execution FAILED (transient) — retrying after backoff"
+                        );
+                        tokio::time::sleep(backoff).await;
+                        continue;
+                    }
+                    if transient {
                         tracing::error!(
                             agent_id = %agent_id,
                             execution_id = %record.id,
                             attempt = attempt,
                             "Event-triggered execution failed (status=Failed) after all retries"
                         );
-                        return Err(crate::error::NeoMindError::Llm(format!(
-                            "event-triggered execution failed (status=Failed) after {} attempts",
-                            attempt
-                        )));
+                        return EventRunOutcome::TransientFailure;
                     }
-                    return Ok(());
+                    tracing::error!(
+                        agent_id = %agent_id,
+                        execution_id = %record.id,
+                        error = ?record.error,
+                        "Event-triggered execution failed (status=Failed) — permanent, not replaying"
+                    );
+                    return EventRunOutcome::PermanentFailure;
                 }
                 Err(e) => {
                     // Daily-cap refusals are a budget pause, not a fault:
@@ -732,7 +901,7 @@ impl AgentExecutor {
                             error = %e,
                             "Event trigger refused by daily run cap — skipping (not a failure)"
                         );
-                        return Ok(());
+                        return EventRunOutcome::Completed;
                     }
                     // Busy, not broken: "already executing" means another run
                     // (an earlier admission from the same burst, or a manual
@@ -747,7 +916,7 @@ impl AgentExecutor {
                             agent_id = %agent_id,
                             "Event admission found the agent busy — dropping (in-flight run owns it)"
                         );
-                        return Ok(());
+                        return EventRunOutcome::Completed;
                     }
                     if attempt <= retries {
                         tracing::warn!(
@@ -755,9 +924,9 @@ impl AgentExecutor {
                             attempt = attempt,
                             retries = retries,
                             error = %e,
-                            "Event-triggered agent execution failed, retrying after 5s backoff"
+                            "Event-triggered agent execution failed (transient) — retrying after backoff"
                         );
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                        tokio::time::sleep(backoff).await;
                         continue;
                     }
                     tracing::error!(
@@ -766,7 +935,10 @@ impl AgentExecutor {
                         error = %e,
                         "Event-triggered agent execution failed (final)"
                     );
-                    return Err(e);
+                    if Self::is_retryable_event_failure(Some(&e.to_string())) {
+                        return EventRunOutcome::TransientFailure;
+                    }
+                    return EventRunOutcome::PermanentFailure;
                 }
             }
         }

@@ -941,7 +941,10 @@ async fn busy_event_admission_drops_without_the_retry_backoff() {
         AgentExecutor::execute_with_retry(&executor, agent.clone(), event, 1, &agent.id).await;
     super::in_flight_agents().lock().unwrap().remove(&agent.id);
 
-    assert!(out.is_ok(), "busy is a drop, not an error: {out:?}");
+    assert!(
+        matches!(out, super::event_trigger::EventRunOutcome::Completed),
+        "busy is a drop, not an error: {out:?}"
+    );
     assert!(
         started.elapsed() < std::time::Duration::from_secs(3),
         "must return without the 5s retry backoff (took {:?})",
@@ -1908,6 +1911,7 @@ async fn an_agent_without_channels_still_records_its_alert_in_app() {
         result: None,
         duration_ms: 12,
         error: None,
+        input_summary: None,
     };
 
     executor
@@ -2001,6 +2005,7 @@ async fn a_failed_run_reports_even_without_routing() {
         result: None,
         duration_ms: 12,
         error: error.map(str::to_string),
+        input_summary: None,
     };
 
     // A failure: one message, and it carries the reason.
@@ -2599,7 +2604,7 @@ async fn multimodal_inline_vision_succeeds_without_vision_tool() {
     executor.set_tool_registry(registry);
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (dp, er) = executor
+    let (dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[embeddable_image_data()],
@@ -2724,7 +2729,7 @@ async fn text_llm_keeps_vision_tool_path() {
     executor.set_tool_registry(registry);
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (dp, er) = executor
+    let (dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[embeddable_image_data()],
@@ -2774,7 +2779,7 @@ async fn dongpingshan_free_mode_prompt_rewrite_after_vision_strip() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (dp, er) = executor
+    let (dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[embeddable_image_data()],
@@ -2832,7 +2837,7 @@ async fn dongpingshan_honest_zh_image_analysis_completes() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (dp, er) = executor
+    let (dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[embeddable_image_data()],
@@ -3235,7 +3240,7 @@ async fn event_image_empty_resources_reaches_model_with_honest_status() {
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
     let data = vec![event_jpeg_data(&jpeg_b64), input_status_row()];
-    let (_dp, er) = executor
+    let (_dp, er, _) = executor
         .execute_with_tools(&agent, &data, rt_dyn, "exec-event-image-status", None)
         .await
         .expect("event-image run must succeed");
@@ -3317,7 +3322,7 @@ async fn judgment_gate_blocks_send_when_criteria_not_met() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (_dp, er) = executor
+    let (_dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[event_jpeg_data(&test_jpeg_base64(0x5A))],
@@ -3431,7 +3436,7 @@ async fn judgment_gate_blocks_mid_message_backtick_verdict_example() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (_dp, er) = executor
+    let (_dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[event_jpeg_data(&test_jpeg_base64(0x5A))],
@@ -3493,7 +3498,7 @@ async fn judgment_gate_blocks_explanatory_criteria_met_mention() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (_dp, er) = executor
+    let (_dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[event_jpeg_data(&test_jpeg_base64(0x5A))],
@@ -3555,7 +3560,7 @@ async fn judgment_gate_blocks_question_need_alert_without_verdict() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (_dp, er) = executor
+    let (_dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[event_jpeg_data(&test_jpeg_base64(0x5A))],
@@ -3617,7 +3622,7 @@ async fn judgment_gate_blocks_progress_intent_without_verdict() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (_dp, er) = executor
+    let (_dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[event_jpeg_data(&test_jpeg_base64(0x5A))],
@@ -3679,7 +3684,7 @@ async fn judgment_gate_blocks_policy_conditional_without_verdict() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (_dp, er) = executor
+    let (_dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[event_jpeg_data(&test_jpeg_base64(0x5A))],
@@ -3857,7 +3862,7 @@ async fn judgment_gate_allows_send_when_criteria_met() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (_dp, _er) = executor
+    let (_dp, _er, _) = executor
         .execute_with_tools(
             &agent,
             &[event_jpeg_data(&test_jpeg_base64(0x5A))],
@@ -3967,7 +3972,7 @@ async fn judgment_gate_blocks_backend_shaped_not_met_verdict() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (_dp, er) = executor
+    let (_dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[event_jpeg_data(&test_jpeg_base64(0x5A))],
@@ -4028,7 +4033,7 @@ async fn judgment_gate_blocks_insufficient_evidence() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (dp, _) = executor
+    let (dp, _, _) = executor
         .execute_with_tools(
             &agent,
             &[event_jpeg_data(&test_jpeg_base64(0x5A))],
@@ -4087,7 +4092,7 @@ async fn judgment_gate_blocks_rewritten_message_tool_title_only() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (_dp, er) = executor
+    let (_dp, er, _) = executor
         .execute_with_tools(
             &agent,
             &[event_jpeg_data(&test_jpeg_base64(0x5A))],
@@ -4181,14 +4186,17 @@ async fn empty_event_skip_does_not_trip_breaker_or_stats() {
     });
     executor.store().save_agent(&agent).await.expect("seed");
 
-    // Image-named field with non-image value → extraction fails → empty skip.
+    // A value that carries an image nobody can read (no frame behind the
+    // path) → the run has nothing to look at → empty skip. (A field that is
+    // merely image-NAMED, with a plain value, no longer skips: see
+    // `image_like_name_with_a_plain_value_is_text_not_a_skip`.)
     let event = super::context::EventTriggerData {
         source: super::context::DataSourceRef {
             source_type: "device".into(),
             source_id: "cam-1".into(),
             field: "image_data".into(),
         },
-        value: neomind_core::event::MetricValue::Float(1.0),
+        value: neomind_core::event::MetricValue::String("/api/images/nope/image_data/0.jpg".into()),
         timestamp: 0,
     };
 
@@ -4205,6 +4213,14 @@ async fn empty_event_skip_does_not_trip_breaker_or_stats() {
             .is_some_and(|r| r.summary.starts_with("Skipped:")),
         "expected skip summary, got {:?}",
         record.result.as_ref().map(|r| &r.summary)
+    );
+    assert_eq!(
+        record
+            .input_summary
+            .as_ref()
+            .and_then(|s| s.skip_reason.as_deref()),
+        Some("event_image_unreadable"),
+        "the record says why the run was skipped"
     );
 
     let stored = executor
@@ -4525,7 +4541,7 @@ async fn judgment_agent_web_tool_call_is_blocked_even_when_invented() {
     executor.set_tool_registry(Arc::new(registry));
     executor.set_llm_runtime(rt_dyn.clone()).await;
 
-    let (_, er) = executor
+    let (_, er, _) = executor
         .execute_with_tools(&agent, &[], rt_dyn, "exec-blocked-web-tool", None)
         .await
         .expect("run completes with the call blocked");
@@ -4543,5 +4559,947 @@ async fn judgment_agent_web_tool_call_is_blocked_even_when_invented() {
                 .contains("Web tools are off")),
         "the block must be visible to the model and in the record; actions={:?}",
         er.actions_executed
+    );
+}
+
+// ── Context-overflow retry ──────────────────────────────────────────────
+
+use std::pin::Pin;
+use std::sync::Mutex;
+
+use neomind_core::llm::backend::{
+    BackendCapabilities, BackendId, LlmError, LlmInput, LlmOutput, StreamChunk,
+};
+
+/// Fails the FIRST call with a backend-reported context overflow, then answers
+/// normally. Records each call's prompt size and generation budget.
+struct OverflowOnceRuntime {
+    calls: Mutex<Vec<(usize, usize)>>, // (prompt text chars, max_tokens)
+    inner: MockLlmRuntime,
+}
+
+#[async_trait]
+impl LlmRuntime for OverflowOnceRuntime {
+    fn backend_id(&self) -> BackendId {
+        BackendId::new("overflow-once")
+    }
+    fn model_name(&self) -> &str {
+        "overflow-once-model"
+    }
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities {
+            streaming: false,
+            multimodal: false,
+            function_calling: true,
+            multiple_models: false,
+            max_context: Some(8192),
+            modalities: vec![],
+            reasoning: Default::default(),
+            supports_images: false,
+            thinking_display: false,
+        }
+    }
+    fn max_context_length(&self) -> usize {
+        8192
+    }
+    async fn generate(&self, input: LlmInput) -> Result<LlmOutput, LlmError> {
+        let prompt_chars = input
+            .messages
+            .iter()
+            .map(|m| m.content.as_text().len())
+            .sum::<usize>();
+        let max_tokens = input.params.max_tokens.unwrap_or(0);
+        let first = {
+            let mut calls = self.calls.lock().unwrap();
+            let first = calls.is_empty();
+            calls.push((prompt_chars, max_tokens));
+            first
+        };
+        if first {
+            Err(LlmError::ContextOverflow {
+                prompt_tokens: 20_000,
+                max_context: 8192,
+            })
+        } else {
+            self.inner.generate(input).await
+        }
+    }
+    async fn generate_stream(
+        &self,
+        _input: LlmInput,
+    ) -> Result<Pin<Box<dyn futures::Stream<Item = StreamChunk> + Send>>, LlmError> {
+        Err(LlmError::Generation("unused".into()))
+    }
+}
+
+/// T4 2026-11-24: the overflow retry logged "hard-compacting messages and
+/// retrying" and then re-sent the request frozen before the retry loop —
+/// the backend reported 186,732 tokens, then 186,734. The retry must carry
+/// the compacted messages, with the generation budget recomputed for them.
+#[tokio::test]
+async fn overflow_retry_resends_the_compacted_request() {
+    let rt = Arc::new(OverflowOnceRuntime {
+        calls: Mutex::new(Vec::new()),
+        inner: MockLlmRuntime::new(vec![MockResponse::text("done")]),
+    });
+    let rt_dyn: Arc<dyn LlmRuntime> = rt.clone();
+    let (executor, agent, registry) = build_harness().await;
+    let (filtered_tools, tool_name_map) =
+        AgentExecutor::filter_tools(&registry, &agent.tool_config);
+    // ~48K chars of base64 with no spaces: the estimator under-counts it, so
+    // the first request goes out oversized exactly like a raw-payload event.
+    let big = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=".repeat(1_500);
+    let mut messages = vec![
+        Message::new(
+            MessageRole::System,
+            format!(
+                "You are a test agent.\n\n## Resources & Data\n**cam:_raw** [now]: value=\"{}\"",
+                big
+            ),
+        ),
+        Message::new(MessageRole::User, "do the thing"),
+    ];
+    let out = executor
+        .run_tool_loop(
+            &agent,
+            &registry,
+            &rt_dyn,
+            &filtered_tools,
+            &mut messages,
+            "exec-overflow-retry",
+            30,
+            &tool_name_map,
+            None,
+        )
+        .await;
+
+    let calls = rt.calls.lock().unwrap().clone();
+    assert_eq!(
+        calls.len(),
+        2,
+        "one overflowed attempt, then one retry — got {calls:?}"
+    );
+    assert!(
+        calls[1].0 * 4 < calls[0].0,
+        "retry must send the compacted messages, got {calls:?}"
+    );
+    assert!(
+        calls[1].1 > calls[0].1,
+        "generation budget must be recomputed for the smaller request, got {calls:?}"
+    );
+    assert_eq!(
+        out.stop_reason,
+        StopReason::NaturalCompletion,
+        "calls: {calls:?}"
+    );
+}
+
+// ── Whole-device trigger: the report is the input ───────────────────────
+
+use super::data_collector::{classify_image_value, EventInput, ImageValue};
+use super::{DataSourceRef, EventTriggerData};
+use neomind_storage::timeseries::DataPoint as TsPoint;
+
+const CAM: &str = "test-device-001";
+const FRAME_URL: &str = "/api/images/test-device-001/image/1234567890001.jpg";
+
+fn event_for(field: &str, value: &str, ts: i64) -> EventTriggerData {
+    EventTriggerData {
+        source: DataSourceRef {
+            source_type: "device".into(),
+            source_id: CAM.into(),
+            field: field.into(),
+        },
+        value: neomind_core::MetricValue::String(value.into()),
+        timestamp: ts,
+    }
+}
+
+fn point(timestamp: i64, value: serde_json::Value) -> TsPoint {
+    TsPoint {
+        timestamp,
+        value,
+        quality: None,
+        metadata: None,
+    }
+}
+
+async fn seed_report(
+    ts: &Arc<neomind_storage::TimeSeriesStore>,
+    report_ts: i64,
+    metrics: &[(&str, serde_json::Value)],
+) {
+    let key = format!("device:{CAM}");
+    for (metric, value) in metrics {
+        ts.write(&key, metric, point(report_ts, value.clone()))
+            .await
+            .expect("seed report");
+    }
+    // The store's metric-name index is filled at flush time.
+    ts.flush().expect("flush seeded report");
+}
+
+/// A camera uplink as the extractor emits it where the device type stores
+/// `_raw`: the envelope first, then the template's metrics.
+async fn seed_camera_report(ts: &Arc<neomind_storage::TimeSeriesStore>, report_ts: i64) -> String {
+    let envelope = format!(
+        r#"{{"metadata":{{"image_id":"cam01_{report_ts}"}},"image_data":"{FRAME_URL}","data":"{}"}}"#,
+        "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=".repeat(2_000)
+    );
+    seed_report(
+        ts,
+        report_ts,
+        &[
+            ("_raw", serde_json::json!(envelope)),
+            (
+                "metadata.image_id",
+                serde_json::json!(format!("cam01_{report_ts}")),
+            ),
+            ("device_info.battery_percent", serde_json::json!(88)),
+            ("image_data", serde_json::json!(FRAME_URL)),
+        ],
+    )
+    .await;
+    // A reading from an earlier uplink — not part of this report.
+    ts.write(
+        &format!("device:{CAM}"),
+        "temperature",
+        point(report_ts - 600, serde_json::json!(21.5)),
+    )
+    .await
+    .expect("seed older uplink");
+    ts.flush().expect("flush older uplink");
+    envelope
+}
+
+fn whole_device_filter() -> Option<String> {
+    Some(format!(r#"{{"any":[{{"type":"device","id":"{CAM}"}}]}}"#))
+}
+
+/// T4 2026-11-24. A trigger on the whole device used to be fed whichever
+/// field reached it first: the `_raw` envelope where the device type stores
+/// one (242K chars of base64 as text — 186,732 prompt tokens on a 65K window,
+/// the picture never read), or `metadata.image_id` where it does not (every
+/// run skipped as an unreadable image). Both doorbells must yield the same
+/// input: the report itself, frame attached once.
+#[serial_test::serial]
+#[tokio::test]
+async fn whole_device_trigger_reads_the_report_whatever_field_rang() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "neomind_test_whole_device_{}",
+        uuid::Uuid::new_v4()
+    ));
+    crate::testing_helpers::setup_test_image_dir(&data_dir).expect("image dir");
+    // The fixture is tens of bytes; pad it past the usable-image threshold.
+    let frame = data_dir.join("images/test-device-001/image/1234567890001.jpg");
+    let mut bytes = std::fs::read(&frame).expect("fixture");
+    bytes.extend(std::iter::repeat_n(0u8, 1024));
+    std::fs::write(&frame, &bytes).expect("pad fixture");
+    std::env::set_var("NEOMIND_DATA_DIR", data_dir.to_str().unwrap());
+
+    let report_ts = chrono::Utc::now().timestamp() - 5;
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(ts.clone());
+    let envelope = seed_camera_report(&ts, report_ts).await;
+
+    // The shape the CLI/AI creates: a device-level filter, nothing bound.
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+
+    let doorbells = [
+        (
+            "type that stores _raw",
+            event_for("_raw", &envelope, report_ts),
+        ),
+        (
+            "type without _raw",
+            event_for(
+                "metadata.image_id",
+                &format!("cam01_{report_ts}"),
+                report_ts,
+            ),
+        ),
+    ];
+    for (label, event) in &doorbells {
+        let input = executor
+            .collect_data_with_event(&agent, event)
+            .await
+            .expect("collect");
+        let EventInput::Data(data) = &input else {
+            panic!("{label}: the report carries a readable frame, got {input:?}");
+        };
+        let sources: Vec<&str> = data.iter().map(|d| d.source.as_str()).collect();
+        assert!(
+            !sources.contains(&format!("{CAM}:_raw").as_str()),
+            "{label}: the envelope leaked into the input: {sources:?}"
+        );
+        assert!(
+            !sources.contains(&format!("{CAM}:temperature").as_str()),
+            "{label}: an older uplink's reading got in: {sources:?}"
+        );
+        let image_id = data
+            .iter()
+            .find(|d| d.data_type == "metadata.image_id")
+            .expect("image_id stays visible");
+        assert_eq!(image_id.values["value"], format!("cam01_{report_ts}"));
+        assert!(
+            image_id.values.get("_is_image").is_none(),
+            "{label}: an ID string is not an image: {}",
+            image_id.values
+        );
+        let frames: Vec<_> = data
+            .iter()
+            .filter(|d| d.values.get("_is_image").and_then(|v| v.as_bool()) == Some(true))
+            .collect();
+        assert_eq!(frames.len(), 1, "{label}: the frame is attached once");
+        assert_eq!(frames[0].data_type, "image_data");
+        assert_eq!(
+            frames[0].values["value"], FRAME_URL,
+            "the reference stays beside the bytes"
+        );
+        assert!(
+            frames[0].values["image_base64"]
+                .as_str()
+                .is_some_and(|b| b.len() >= 1024),
+            "{label}: frame bytes are attached"
+        );
+    }
+
+    std::env::remove_var("NEOMIND_DATA_DIR");
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+/// The snapshot is for triggers that cover the WHOLE device only. A trigger
+/// on one field keeps reading that field alone.
+#[tokio::test]
+async fn field_specific_trigger_still_reads_only_that_field() {
+    let report_ts = chrono::Utc::now().timestamp() - 5;
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(ts.clone());
+    seed_report(
+        &ts,
+        report_ts,
+        &[
+            (
+                "_raw",
+                serde_json::json!(r#"{"temperature":21.5,"humidity":60}"#),
+            ),
+            ("temperature", serde_json::json!(21.5)),
+            ("humidity", serde_json::json!(60)),
+        ],
+    )
+    .await;
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = Some(format!(
+        r#"{{"any":[{{"type":"device","id":"{CAM}","field":"humidity"}}]}}"#
+    ));
+
+    let input = executor
+        .collect_data_with_event(&agent, &event_for("humidity", "60", report_ts))
+        .await
+        .expect("collect");
+    let EventInput::Data(data) = input else {
+        panic!("a text field is usable input");
+    };
+    let sources: Vec<&str> = data.iter().map(|d| d.source.as_str()).collect();
+    assert_eq!(sources, vec![format!("{CAM}:humidity").as_str()]);
+
+    // An unrelated field arriving does not open the whole report either.
+    let input = executor
+        .collect_data_with_event(&agent, &event_for("temperature", "21.5", report_ts))
+        .await
+        .expect("collect");
+    let EventInput::Data(data) = input else {
+        panic!("a text field is usable input");
+    };
+    let sources: Vec<&str> = data.iter().map(|d| d.source.as_str()).collect();
+    assert_eq!(sources, vec![format!("{CAM}:temperature").as_str()]);
+}
+
+/// "Run now" on a whole-device agent used to run with no event context at
+/// all: the candidate list skips field-less sources. It now opens the latest
+/// report, like a real event does.
+#[tokio::test]
+async fn run_now_on_a_whole_device_agent_reads_the_latest_report() {
+    let report_ts = chrono::Utc::now().timestamp() - 5;
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(ts.clone());
+    seed_report(
+        &ts,
+        report_ts,
+        &[
+            ("battery", serde_json::json!(88)),
+            ("temperature", serde_json::json!(21.5)),
+        ],
+    )
+    .await;
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+
+    let event = executor
+        .build_synthetic_event_data(&agent)
+        .await
+        .expect("a whole-source event is synthesized");
+    assert_eq!(
+        event.source.field, "",
+        "no single field stands for the device"
+    );
+    assert!(
+        executor
+            .trigger_covers_whole_source(&agent, &event.source)
+            .await
+    );
+    let input = executor
+        .collect_data_with_event(&agent, &event)
+        .await
+        .expect("collect");
+    let EventInput::Data(data) = input else {
+        panic!("the report is usable input");
+    };
+    for metric in ["battery", "temperature"] {
+        assert!(
+            data.iter().any(|d| d.data_type == metric),
+            "{metric} missing from the run's input"
+        );
+    }
+
+    // A field-specific trigger is not whole-device, and "Run now" quotes
+    // that field.
+    agent.schedule.event_filter = Some(format!(
+        r#"{{"any":[{{"type":"device","id":"{CAM}","field":"battery"}}]}}"#
+    ));
+    assert!(
+        !executor
+            .trigger_covers_whole_source(&agent, &event_for("battery", "88", report_ts).source)
+            .await
+    );
+    let event = executor
+        .build_synthetic_event_data(&agent)
+        .await
+        .expect("a field named in the `any` shape yields its candidate");
+    assert_eq!(event.source.field, "battery");
+    assert_eq!(event.timestamp, report_ts, "quotes the stored point");
+}
+
+/// A report whose only picture cannot be read leaves the run without its
+/// input — whichever field rang — and the record says so instead of a generic
+/// "image extraction failed".
+#[tokio::test]
+async fn whole_device_report_with_an_unreadable_frame_is_skipped_with_a_reason() {
+    let report_ts = chrono::Utc::now().timestamp() - 5;
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(ts.clone());
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+
+    // A device with no picture at all is ordinary input, not a skip.
+    seed_report(
+        &ts,
+        report_ts,
+        &[
+            ("battery", serde_json::json!(88)),
+            ("temperature", serde_json::json!(21.5)),
+        ],
+    )
+    .await;
+    let input = executor
+        .collect_data_with_event(&agent, &event_for("battery", "88", report_ts))
+        .await
+        .expect("collect");
+    let EventInput::Data(data) = input else {
+        panic!("a report without pictures is usable input");
+    };
+    assert_eq!(
+        data.iter().filter(|d| d.data_type != "device_info").count(),
+        2
+    );
+
+    // The same device reports a frame that is not there to read
+    // (NEOMIND_DATA_DIR is unset in this test).
+    seed_report(
+        &ts,
+        report_ts,
+        &[
+            ("metadata.image_id", serde_json::json!("cam01_1")),
+            (
+                "image_data",
+                serde_json::json!("/api/images/nope/image_data/0.jpg"),
+            ),
+        ],
+    )
+    .await;
+    for field in ["image_data", "metadata.image_id"] {
+        let input = executor
+            .collect_data_with_event(&agent, &event_for(field, "cam01_1", report_ts))
+            .await
+            .expect("collect");
+        let EventInput::Skipped { code, detail } = input else {
+            panic!("{field}: a camera report with no readable frame must not run blind");
+        };
+        assert_eq!(code, "report_image_unreadable", "{field}");
+        assert!(detail.contains("could not be read"), "{field}: {detail}");
+        assert!(detail.contains("image_data"), "{field}: {detail}");
+    }
+}
+
+/// A field NAME is a hint, not proof. `metadata.image_id` carries an ID
+/// string; it used to be treated as an image whose extraction failed.
+#[tokio::test]
+async fn image_like_name_with_a_plain_value_is_text_not_a_skip() {
+    let report_ts = chrono::Utc::now().timestamp() - 5;
+    let (executor, mut agent, _registry) = build_harness().await;
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = Some(format!(
+        r#"{{"any":[{{"type":"device","id":"{CAM}","field":"metadata.image_id"}}]}}"#
+    ));
+
+    let input = executor
+        .collect_data_with_event(
+            &agent,
+            &event_for("metadata.image_id", "cam01_1795509428", report_ts),
+        )
+        .await
+        .expect("collect");
+    let EventInput::Data(data) = input else {
+        panic!("an ID string is usable text input");
+    };
+    assert_eq!(data[0].values["value"], "cam01_1795509428");
+    assert!(data[0].values.get("_is_image").is_none());
+
+    // A value that IS an image but cannot be read still skips the run.
+    let input = executor
+        .collect_data_with_event(
+            &agent,
+            &event_for(
+                "metadata.image_id",
+                "/api/images/nope/image_id/0.jpg",
+                report_ts,
+            ),
+        )
+        .await
+        .expect("collect");
+    match &input {
+        EventInput::Skipped {
+            code: "event_image_unreadable",
+            ..
+        } => {}
+        other => panic!("an unreadable image value must skip, got {other:?}"),
+    }
+    assert_eq!(
+        classify_image_value("metadata.image_id", &serde_json::json!("cam01_1")),
+        ImageValue::NotImage
+    );
+}
+
+// ── Event-triggered failure classes ─────────────────────────────────────
+
+fn plain_event() -> EventTriggerData {
+    EventTriggerData {
+        source: DataSourceRef {
+            source_type: "device".into(),
+            source_id: "dev-a".into(),
+            field: "temp".into(),
+        },
+        value: neomind_core::event::MetricValue::Float(1.0),
+        timestamp: 0,
+    }
+}
+
+/// T4 2026-11-24: a context overflow is a permanent failure, yet the event
+/// path replayed the identical input five seconds later — two Failed runs,
+/// two failure notifications and two breaker strikes for one event.
+#[tokio::test]
+async fn permanent_event_failure_is_not_replayed() {
+    let (mut executor, agent) = build_event_agent(ExecutionMode::Structured, None).await;
+    // Every inference fails: empty script → the exhausted sentinel is not
+    // valid JSON for the structured contract.
+    executor
+        .set_llm_runtime(Arc::new(MockLlmRuntime::new(vec![])))
+        .await;
+
+    let started = std::time::Instant::now();
+    let out =
+        AgentExecutor::execute_with_retry(&executor, agent.clone(), plain_event(), 1, &agent.id)
+            .await;
+    assert_eq!(out, super::event_trigger::EventRunOutcome::PermanentFailure);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(3),
+        "a permanent failure must not sit through the 5s replay (took {:?})",
+        started.elapsed()
+    );
+    let stored = executor
+        .store()
+        .get_agent(&agent.id)
+        .await
+        .expect("store")
+        .expect("agent");
+    assert_eq!(stored.stats.total_executions, 1, "exactly one run");
+    assert_eq!(
+        stored.consecutive_failures, 1,
+        "one breaker strike per event"
+    );
+    assert_eq!(
+        stored.status,
+        neomind_storage::AgentStatus::Active,
+        "one strike of three"
+    );
+    super::global_error_probe_state().write().remove(&agent.id);
+}
+
+/// A transient failure is still reported as one, so the listener frees the
+/// cooldown for the next event.
+#[tokio::test]
+async fn transient_event_failure_is_reported_transient() {
+    let (mut executor, agent) = build_event_agent(ExecutionMode::Structured, None).await;
+    let network_blip = MockResponse::error("error sending request for url (http://llm.local)");
+    executor
+        .set_llm_runtime(Arc::new(MockLlmRuntime::new(vec![network_blip])))
+        .await;
+
+    let out =
+        AgentExecutor::execute_with_retry(&executor, agent.clone(), plain_event(), 0, &agent.id)
+            .await;
+    assert_eq!(out, super::event_trigger::EventRunOutcome::TransientFailure);
+}
+
+/// The cooldown is freed only for a transient failure. After a permanent one
+/// the next report carries the same unrunnable input: re-firing on it used to
+/// burn the breaker within seconds.
+#[tokio::test]
+async fn permanent_failure_keeps_the_event_cooldown() {
+    let (mut executor, mut agent) = build_event_agent(ExecutionMode::Structured, Some(0)).await;
+    let mut op = crate::ai_agent::executor::structured::default_operator_config();
+    op.debounce_secs = 0;
+    op.event_cooldown_secs = Some(60);
+    with_operator_config(&executor, &mut agent, op).await;
+    executor
+        .set_llm_runtime(Arc::new(MockLlmRuntime::new(vec![])))
+        .await;
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    assert_eq!(
+        drain_event_tasks(&executor).await,
+        1,
+        "the first event runs"
+    );
+    let stored = executor
+        .store()
+        .get_agent(&agent.id)
+        .await
+        .expect("store")
+        .expect("agent");
+    assert_eq!(stored.stats.total_executions, 1);
+    assert_eq!(stored.consecutive_failures, 1);
+
+    fire_event(&executor, "device", "dev-a", "temp").await;
+    assert_eq!(
+        drain_event_tasks(&executor).await,
+        0,
+        "inside the cooldown the same unrunnable input must not run again"
+    );
+    super::global_error_probe_state().write().remove(&agent.id);
+}
+
+/// The execution record says what the run was given — counts and a field
+/// name, never values or image bytes — so a "successful" camera run that
+/// never received the picture is visible (T4 2026-11-24: eleven such runs,
+/// and nothing in their records showed it).
+#[tokio::test]
+async fn input_summary_counts_metrics_and_names_the_image_without_values() {
+    use super::data_collector::build_execution_input_summary;
+    use neomind_storage::{DataCollected, ExecutionInputSummary};
+
+    let now = chrono::Utc::now().timestamp();
+    let entry = |source: &str, data_type: &str, values: serde_json::Value| DataCollected {
+        source: source.into(),
+        data_type: data_type.into(),
+        values,
+        timestamp: now,
+    };
+    let data = vec![
+        entry(
+            "test-device-001:metadata.image_id",
+            "metadata.image_id",
+            serde_json::json!({ "value": "cam01_1", "timestamp": now }),
+        ),
+        entry(
+            "test-device-001:device_info.battery_percent",
+            "device_info.battery_percent",
+            serde_json::json!({ "value": 88 }),
+        ),
+        entry(
+            "test-device-001:image_data",
+            "image_data",
+            serde_json::json!({
+                "_is_image": true,
+                "image_url": "/api/images/cam/image_data/1.jpg",
+                "image_base64": "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=",
+            }),
+        ),
+        entry(
+            "test-device-001",
+            "device_info",
+            serde_json::json!({ "name": "cam" }),
+        ),
+        entry(
+            "memory",
+            "summary",
+            serde_json::json!({ "text": "last time: nothing" }),
+        ),
+    ];
+    assert_eq!(
+        build_execution_input_summary(&data, None),
+        ExecutionInputSummary {
+            // Two metrics and the image; device metadata and memory are not
+            // observations.
+            metrics_collected: 3,
+            image_extracted: Some(true),
+            image_source_field: Some("image_data".into()),
+            vision_path: None,
+            skip_reason: None,
+        }
+    );
+
+    // A run without pictures says so; a skipped one carries its code.
+    let no_images = build_execution_input_summary(&data[..2], None);
+    assert_eq!(no_images.image_extracted, Some(false));
+    assert_eq!(no_images.image_source_field, None);
+    let skipped = build_execution_input_summary(&[], Some("report_image_unreadable"));
+    assert_eq!(skipped.metrics_collected, 0);
+    assert_eq!(
+        skipped.skip_reason.as_deref(),
+        Some("report_image_unreadable")
+    );
+}
+
+/// The summary reaches the record, with the vision path the run actually
+/// took — all three of them.
+#[tokio::test]
+async fn execution_record_carries_the_input_summary() {
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = Some(format!(
+        r#"{{"any":[{{"type":"device","id":"{CAM}","field":"image_data"}}]}}"#
+    ));
+    agent.execution_mode = ExecutionMode::Free;
+    executor.store().save_agent(&agent).await.expect("seed");
+    let tool_capable = || {
+        Arc::new(MockLlmRuntime::new(vec![MockResponse::text("all fine")]).with_function_calling())
+    };
+    let frame = format!("data:image/jpeg;base64,{}", test_jpeg_base64(0x5A));
+    let registry_with = |tool: Arc<dyn Tool>| {
+        let mut registry = ToolRegistry::new();
+        registry.register(tool);
+        Arc::new(registry)
+    };
+
+    // The tool path with no image in sight.
+    executor.set_llm_runtime(tool_capable()).await;
+    executor.set_tool_registry(registry_with(Arc::new(EchoTool)));
+    let summary = executor
+        .execute_agent(agent.clone(), Some(event_for("battery", "88", 0)), None)
+        .await
+        .expect("run")
+        .input_summary
+        .expect("every recorded run says what it was given");
+    assert_eq!(summary.metrics_collected, 1);
+    assert_eq!(summary.image_extracted, Some(false));
+    assert_eq!(summary.vision_path.as_deref(), Some("none"));
+    assert_eq!(summary.skip_reason, None);
+
+    // An image a text-only model can only reach through the vision tool —
+    // the T4 camera setup.
+    executor.set_llm_runtime(tool_capable()).await;
+    executor.set_tool_registry(registry_with(Arc::new(StubVisionTool)));
+    let summary = executor
+        .execute_agent(
+            agent.clone(),
+            Some(event_for("image_data", &frame, 0)),
+            None,
+        )
+        .await
+        .expect("run")
+        .input_summary
+        .expect("summary");
+    assert_eq!(summary.image_extracted, Some(true));
+    assert_eq!(summary.image_source_field.as_deref(), Some("image_data"));
+    assert_eq!(summary.vision_path.as_deref(), Some("vision_tool"));
+
+    // A multimodal model sees the picture in its own message.
+    let multimodal = Arc::new(
+        MockLlmRuntime::new(vec![MockResponse::text("all fine")])
+            .with_function_calling()
+            .with_supports_images(),
+    );
+    executor.set_llm_runtime(multimodal).await;
+    let summary = executor
+        .execute_agent(
+            agent.clone(),
+            Some(event_for("image_data", &frame, 0)),
+            None,
+        )
+        .await
+        .expect("run")
+        .input_summary
+        .expect("summary");
+    assert_eq!(summary.image_extracted, Some(true));
+    assert_eq!(summary.vision_path.as_deref(), Some("inline_multimodal"));
+}
+
+/// The labels end up in stored records — they are a contract, not prose.
+#[test]
+fn vision_path_labels_are_stable() {
+    use super::vision_path::VisionExecutionPath as Path;
+    assert_eq!(Path::None.label(), "none");
+    assert_eq!(Path::InlineMultimodal.label(), "inline_multimodal");
+    assert_eq!(Path::ViaVisionTool.label(), "vision_tool");
+    assert_eq!(Path::Unavailable.label(), "unavailable");
+}
+
+/// The event path decides "worth one replay?" on its own list. The breaker's
+/// `is_transient_failure` answers a different question and also counts
+/// `already executing` / `daily run cap` as transient — reusing it would
+/// replay those or free their cooldown.
+#[test]
+fn event_retry_predicate_is_independent_of_the_breaker() {
+    let retryable = AgentExecutor::is_retryable_event_failure;
+    for transient in [
+        "Network error: connection refused",
+        "error sending request for url (http://llm.local/v1)",
+        "request timed out after 300s",
+        "Rate limited by API",
+        "HTTP 429 too many requests",
+        "operation timed out",
+    ] {
+        assert!(
+            retryable(Some(transient)),
+            "{transient} is a transport fault"
+        );
+    }
+    for permanent in [
+        "Context overflow: 186732 prompt tokens exceed 65536 context limit",
+        "LLM tool-calling failed: context overflow",
+        "invalid api key",
+        "model not found",
+        "agent is already executing",
+        "daily run cap reached",
+    ] {
+        assert!(
+            !retryable(Some(permanent)),
+            "{permanent} must not be replayed"
+        );
+    }
+    assert!(!retryable(None), "an unknown error is not replayed");
+}
+
+/// A transient failure gets exactly ONE replay — no more — and is reported as
+/// transient when the replay fails too, so the caller frees the cooldown.
+#[tokio::test]
+async fn transient_event_failure_is_replayed_once_at_most() {
+    let (mut executor, agent) = build_event_agent(ExecutionMode::Structured, None).await;
+    let blip = || MockResponse::error("error sending request for url (http://llm.local)");
+    let no_backoff = std::time::Duration::ZERO;
+
+    let rt = Arc::new(MockLlmRuntime::new(vec![blip(), blip()]));
+    executor.set_llm_runtime(rt.clone()).await;
+    let out = AgentExecutor::execute_with_retry_with_backoff(
+        &executor,
+        agent.clone(),
+        plain_event(),
+        1,
+        &agent.id,
+        no_backoff,
+    )
+    .await;
+    assert_eq!(out, super::event_trigger::EventRunOutcome::TransientFailure);
+    assert_eq!(rt.call_count(), 2, "the first attempt plus one replay");
+
+    // The replay succeeding completes the run.
+    let rt = Arc::new(MockLlmRuntime::new(vec![
+        blip(),
+        MockResponse::text(r#"{"missing_count": 1}"#),
+    ]));
+    executor.set_llm_runtime(rt.clone()).await;
+    let out = AgentExecutor::execute_with_retry_with_backoff(
+        &executor,
+        agent.clone(),
+        plain_event(),
+        1,
+        &agent.id,
+        no_backoff,
+    )
+    .await;
+    assert_eq!(out, super::event_trigger::EventRunOutcome::Completed);
+    assert_eq!(rt.call_count(), 2);
+}
+
+/// "Run now" finds an event for every way a trigger can be written: a
+/// whole-device source in the `all` shape, a whole-device resource with no
+/// filter at all (`--device-ids`), and one field named in the M2-1 `any`
+/// shape — which the old `sources`-only reader never saw.
+#[tokio::test]
+async fn run_now_covers_every_trigger_shape() {
+    let report_ts = chrono::Utc::now().timestamp() - 5;
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(ts.clone());
+    seed_report(
+        &ts,
+        report_ts,
+        &[
+            ("battery", serde_json::json!(88)),
+            ("temperature", serde_json::json!(21.5)),
+        ],
+    )
+    .await;
+    agent.schedule.schedule_type = ScheduleType::Event;
+
+    // Whole-device source written in the `all` shape.
+    agent.schedule.event_filter = Some(format!(
+        r#"{{"all":[{{"type":"device","id":"{CAM}"}}],"within_secs":60}}"#
+    ));
+    let event = executor
+        .build_synthetic_event_data(&agent)
+        .await
+        .expect("`all`-shaped whole-device source is synthesized");
+    assert_eq!(
+        event.source.field, "",
+        "no single field stands for the device"
+    );
+
+    // `--device-ids`: a whole-device resource and no filter at all.
+    agent.schedule.event_filter = None;
+    agent.resources = vec![neomind_storage::AgentResource {
+        resource_type: neomind_storage::ResourceType::Device,
+        resource_id: CAM.into(),
+        name: CAM.into(),
+        config: serde_json::json!({}),
+    }];
+    let event = executor
+        .build_synthetic_event_data(&agent)
+        .await
+        .expect("a `--device-ids` binding is synthesized");
+    assert_eq!(event.source.field, "");
+
+    // One field, written in the `any` shape.
+    agent.resources = vec![];
+    agent.schedule.event_filter = Some(format!(
+        r#"{{"any":[{{"type":"device","id":"{CAM}","field":"battery"}}]}}"#
+    ));
+    let event = executor
+        .build_synthetic_event_data(&agent)
+        .await
+        .expect("a field named in the `any` shape yields its candidate");
+    assert_eq!(event.source.field, "battery");
+    assert_eq!(event.source.source_id, CAM);
+    assert_eq!(event.timestamp, report_ts, "quotes the stored point");
+    assert!(
+        matches!(&event.value, neomind_core::MetricValue::Json(v) if *v == serde_json::json!(88)),
+        "telemetry lives under `device:{{id}}` — the bare id found nothing: {:?}",
+        event.value
     );
 }

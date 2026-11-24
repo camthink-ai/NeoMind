@@ -331,6 +331,56 @@ nothing.\n\n"
     )
 }
 
+/// Longest metric value (chars) printed verbatim in a resource section.
+///
+/// T4 2026-11-24: a device-level trigger admitted the `_raw` uplink envelope
+/// — a 242K-char JSON string carrying the frame's base64 — and both resource
+/// sections printed it whole (186,732 prompt tokens on a 65K window; the
+/// estimator under-counts base64 ~3x, so nothing caught it earlier).
+const MAX_RENDERED_VALUE_CHARS: usize = 300;
+
+/// Render a collected value for the prompt, bounded to
+/// [`MAX_RENDERED_VALUE_CHARS`].
+///
+/// Strings print as their text, anything else as compact JSON. A longer value
+/// keeps its head and states the full size, so the model knows to fetch the
+/// rest with a tool instead of reading the head as the whole value. `_raw` is
+/// never printed beyond its top-level keys: it is the uplink envelope, and
+/// its fields are already split into metrics.
+pub(crate) fn bounded_value(value: &serde_json::Value, metric: &str) -> String {
+    let text = value
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| value.to_string());
+    let total = text.chars().count();
+    if total <= MAX_RENDERED_VALUE_CHARS {
+        return text;
+    }
+    if metric == "_raw" {
+        let object = match value {
+            serde_json::Value::Object(_) => Some(value.clone()),
+            serde_json::Value::String(_) => serde_json::from_str(&text).ok(),
+            _ => None,
+        };
+        let keys: Vec<String> = object
+            .and_then(|v| match v {
+                serde_json::Value::Object(map) => Some(map.keys().cloned().collect()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let keys_note = if keys.is_empty() {
+            String::new()
+        } else {
+            format!(" Top-level keys: {}.", keys.join(", "))
+        };
+        return format!(
+            "[raw uplink envelope omitted: {total} chars; its fields are already split into metrics.{keys_note}]"
+        );
+    }
+    let head: String = text.chars().take(MAX_RENDERED_VALUE_CHARS).collect();
+    format!("{head}...[truncated; {total} chars in total]")
+}
+
 /// Build merged resource + data section for Focused+ mode.
 /// Single table: | Resource | Type | Current |
 pub(crate) fn build_focused_resource_section(
@@ -363,7 +413,7 @@ pub(crate) fn build_focused_resource_section(
             continue;
         }
         let val_str = if let Some(v) = d.values.get("value") {
-            format!("{}", v)
+            bounded_value(v, &d.data_type)
         } else if d.values != serde_json::Value::Null {
             truncate_to(&serde_json::to_string(&d.values).unwrap_or_default(), 80)
         } else {
@@ -589,7 +639,7 @@ pub(crate) fn build_free_resource_section(
                     .filter(|(k, _)| !k.starts_with('_')) // skip internal fields
                     .map(|(k, v)| {
                         let val = match v {
-                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::String(_) => bounded_value(v, &d.data_type),
                             serde_json::Value::Number(n) => n.to_string(),
                             serde_json::Value::Bool(b) => b.to_string(),
                             other => truncate_to(&other.to_string(), 100),
@@ -1275,5 +1325,79 @@ mod tests {
             timestamp: 0,
         };
         assert!(bound_image_data_url(&[dc]).is_none());
+    }
+
+    /// T4 2026-11-24: a device-level trigger admitted `_raw` — a 242K-char
+    /// JSON string carrying the frame's base64 — and both resource sections
+    /// printed it whole (186,732 prompt tokens on a 65K window).
+    #[test]
+    fn raw_envelope_is_never_printed_whole() {
+        let payload = format!(
+            r#"{{"metadata":{{"image_id":"cam01_1"}},"image_data":"{}"}}"#,
+            "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=".repeat(2_000)
+        );
+        let raw_event = DataCollected {
+            source: "20035E:_raw".into(),
+            data_type: "_raw".into(),
+            values: serde_json::json!({
+                "value": payload,
+                "timestamp": 0,
+                "_is_event_data": true,
+            }),
+            timestamp: 0,
+        };
+        let agent = minimal_agent("watch the camera");
+        let free = build_free_resource_section(
+            &agent,
+            std::slice::from_ref(&raw_event),
+            VisionExecutionPath::None,
+        );
+        let focused =
+            build_focused_resource_section(&agent, &[raw_event], VisionExecutionPath::None);
+        for (mode, section) in [("free", &free), ("focused", &focused)] {
+            assert!(
+                section.chars().count() < 1_500,
+                "{mode} section must stay small, got {} chars",
+                section.chars().count()
+            );
+            assert!(
+                !section.contains("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo"),
+                "{mode} printed the envelope body: {section}"
+            );
+            assert!(
+                section.contains("raw uplink envelope omitted"),
+                "{mode}: {section}"
+            );
+            assert!(
+                section.contains("Top-level keys: metadata, image_data."),
+                "{mode}: {section}"
+            );
+        }
+    }
+
+    /// Ordinary values are untouched up to the bound; past it the head stays
+    /// and the full size is stated, so the model knows to fetch the rest.
+    #[test]
+    fn long_values_keep_head_and_state_size() {
+        let path = "/api/images/cam/image_data/1795509428_7825f1e9.jpg";
+        assert_eq!(bounded_value(&serde_json::json!(path), "image_data"), path);
+
+        let long = "abcdefghij".repeat(100);
+        let out = bounded_value(&serde_json::json!(long), "ai_result.ai_result.detections");
+        assert!(out.starts_with(&long[..300]), "{out}");
+        assert!(
+            out.ends_with("...[truncated; 1000 chars in total]"),
+            "{out}"
+        );
+
+        // A non-string value renders as compact JSON and is bounded the same way.
+        let list: Vec<u32> = (0..200).collect();
+        let out = bounded_value(&serde_json::json!(list), "values.list");
+        assert!(out.starts_with("[0,1,2,"), "{out}");
+        assert!(out.ends_with(" chars in total]"), "{out}");
+
+        // A short raw envelope (a device with no template) still prints as-is.
+        let small = serde_json::json!({"temp": 21});
+        assert_eq!(bounded_value(&small, "_raw"), r#"{"temp":21}"#);
     }
 }
