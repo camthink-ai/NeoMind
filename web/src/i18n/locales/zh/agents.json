@@ -807,7 +807,7 @@
   "editorV2": {
     "titleCreate": "创建智能体",
     "titleEdit": "编辑智能体",
-    "subtitle": "先选任务类型，再填写名称、任务与何时运行。",
+    "subtitle": "左侧编辑，右侧实时预览摘要。",
     "dailyBriefHint": "先选任务类型，再填写名称、任务与何时运行。",
     "basicsTitle": "任务",
     "basicsHint": "给智能体起名，并写清它要做的事。",
@@ -984,6 +984,20 @@
       "scoped": "白名单",
       "allowedTools": "允许的工具",
       "allowedToolsHint": "逗号分隔的工具名"
+    },
+    "summary": {
+      "title": "实时摘要",
+      "hint": "左侧改动会即时反映在这里。",
+      "template": "任务类型",
+      "noTemplate": "尚未选择",
+      "name": "名称",
+      "mission": "任务说明",
+      "when": "何时运行",
+      "sources": "读取来源",
+      "noSources": "尚未选择来源",
+      "tools": "工具",
+      "notify": "通知",
+      "empty": "（未填写）"
     }
   }
 }

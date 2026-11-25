@@ -807,7 +807,7 @@
   "editorV2": {
     "titleCreate": "Create Agent",
     "titleEdit": "Edit Agent",
-    "subtitle": "Pick a task type, then name, mission, and when it runs.",
+    "subtitle": "Edit on the left; live summary on the right.",
     "dailyBriefHint": "Pick a task type, then name, mission, and when it runs.",
     "basicsTitle": "Mission",
     "basicsHint": "Name the agent and describe what it should do.",
@@ -984,6 +984,20 @@
       "scoped": "Scoped",
       "allowedTools": "Allowed tools",
       "allowedToolsHint": "Comma-separated tool names"
+    },
+    "summary": {
+      "title": "Live summary",
+      "hint": "Updates as you edit on the left.",
+      "template": "Task type",
+      "noTemplate": "Not selected yet",
+      "name": "Name",
+      "mission": "Mission",
+      "when": "When",
+      "sources": "Sources",
+      "noSources": "No sources yet",
+      "tools": "Tools",
+      "notify": "Notify",
+      "empty": "(empty)"
     }
   }
 }

@@ -1,6 +1,6 @@
 /**
- * AgentSpec-v2 editor — task-template create path + simple primary form.
- * Advanced engineer knobs stay collapsed behind “高级”.
+ * AgentSpec-v2 editor — templates-first form (left) + live summary (right).
+ * Mirrors the old FullScreen left/right workspace; advanced stays collapsed.
  */
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -22,6 +22,7 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import { AgentExecutionEvidencePanel } from '@/components/agents/AgentExecutionEvidencePanel'
+import { useIsMobile } from '@/hooks/useMobile'
 import { cn } from '@/lib/utils'
 import type {
   AgentSpecDraft,
@@ -38,7 +39,7 @@ import { NotifyPolicySection, normalizeNotify } from './NotifyPolicySection'
 import { SimpleWhenSection } from './SimpleWhenSection'
 import { SimpleSourcesSection } from './SimpleSourcesSection'
 import { SimpleNotifySection } from './SimpleNotifySection'
-import { PlanConfirmLine } from './PlanConfirmLine'
+import { LiveSummaryPanel } from './LiveSummaryPanel'
 import {
   TASK_TEMPLATES,
   inferTemplateId,
@@ -64,6 +65,7 @@ export function AgentEditorV2({
   onSave,
 }: AgentEditorV2Props) {
   const { t } = useTranslation(['agents', 'common'])
+  const isMobile = useIsMobile()
   const [draft, setDraft] = useState<AgentSpecDraft>(() => emptyDraft())
   const [templateId, setTemplateId] = useState<TaskTemplateId | null>(null)
   const [saving, setSaving] = useState(false)
@@ -119,6 +121,163 @@ export function AgentEditorV2({
     draft.name.trim().length > 0 &&
     draft.user_prompt.trim().length > 0
 
+  const formColumn = (
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 lg:mx-0 lg:max-w-none">
+      <section data-section="templates" className="space-y-3">
+        <div className="space-y-1">
+          <h2 className="text-base font-semibold tracking-tight text-foreground">
+            {t('agents:editorV2.templates.title')}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {t('agents:editorV2.templates.hint')}
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {TASK_TEMPLATES.map((tmpl) => {
+            const Icon = tmpl.icon
+            const selected = templateId === tmpl.id
+            return (
+              <button
+                key={tmpl.id}
+                type="button"
+                onClick={() => applyTemplate(tmpl.id)}
+                className={cn(
+                  'flex flex-col items-start gap-1.5 rounded-lg border px-3 py-3 text-left transition-colors',
+                  selected
+                    ? 'border-primary bg-muted'
+                    : 'border-border hover:border-muted-foreground hover:bg-muted-20',
+                )}
+              >
+                <Icon className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium text-foreground">
+                  {t(`agents:${tmpl.nameKey}`)}
+                </span>
+                <span className="line-clamp-2 text-xs text-muted-foreground">
+                  {t(`agents:${tmpl.descKey}`)}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
+      {!needsTemplate && (
+        <>
+          <FormSurface>
+            <EditorSection
+              first
+              title={t('agents:editorV2.basicsTitle')}
+              description={t('agents:editorV2.basicsHint')}
+              data-section="basics"
+            >
+              <FormField label={t('agents:editorV2.name')} required>
+                <Input
+                  value={draft.name}
+                  onChange={(e) => patch({ name: e.target.value })}
+                  placeholder={t('agents:editorV2.namePlaceholder')}
+                  autoFocus={isCreate}
+                />
+              </FormField>
+              <FormField label={t('agents:editorV2.prompt')} required>
+                <Textarea
+                  value={draft.user_prompt}
+                  onChange={(e) => patch({ user_prompt: e.target.value })}
+                  placeholder={t('agents:editorV2.promptPlaceholder')}
+                  rows={4}
+                  className="min-h-[6.5rem] resize-y"
+                />
+              </FormField>
+            </EditorSection>
+
+            <EditorSection
+              title={t('agents:editorV2.when.title')}
+              description={t('agents:editorV2.when.hint')}
+              data-section="when"
+            >
+              <SimpleWhenSection
+                value={draft.trigger}
+                onChange={(trigger) => patch({ trigger })}
+              />
+            </EditorSection>
+
+            <EditorSection
+              title={t('agents:editorV2.sources.title')}
+              description={t('agents:editorV2.sources.hint')}
+              data-section="sources"
+            >
+              <SimpleSourcesSection
+                value={draft.input}
+                onChange={(input) => patch({ input })}
+              />
+            </EditorSection>
+
+            <EditorSection
+              title={t('agents:editorV2.notifySimple.title')}
+              description={t('agents:editorV2.notifySimple.hint')}
+              data-section="notify"
+            >
+              <SimpleNotifySection
+                value={notify}
+                onChange={(n) => patch({ notify: n })}
+              />
+            </EditorSection>
+          </FormSurface>
+
+          <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+            <CollapsibleTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full justify-between px-3 text-muted-foreground"
+              >
+                <span className="text-sm font-medium">
+                  {t('agents:editorV2.advanced.title')}
+                </span>
+                <ChevronDown
+                  className={cn(
+                    'h-4 w-4 transition-transform',
+                    advancedOpen && 'rotate-180',
+                  )}
+                />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-2">
+              <FormSurface>
+                <TriggerSection
+                  first
+                  value={draft.trigger}
+                  onChange={(trigger) => patch({ trigger })}
+                />
+                <InputContractSection
+                  value={draft.input}
+                  onChange={(input) => patch({ input })}
+                />
+                <ToolPolicySection
+                  value={draft.tool_policy}
+                  onChange={(tool_policy) => patch({ tool_policy })}
+                />
+                <NotifyPolicySection
+                  value={notify}
+                  onChange={(n) => patch({ notify: n })}
+                />
+              </FormSurface>
+            </CollapsibleContent>
+          </Collapsible>
+
+          {evidenceDetail !== undefined && (
+            <AgentExecutionEvidencePanel detail={evidenceDetail} />
+          )}
+        </>
+      )}
+
+      {needsTemplate && (
+        <p className="text-sm text-muted-foreground" data-testid="pick-template-hint">
+          {t('agents:editorV2.templates.pickFirst')}
+        </p>
+      )}
+    </div>
+  )
+
   return (
     <FullScreenDialog open={open} onOpenChange={onOpenChange}>
       <FullScreenDialogHeader
@@ -127,164 +286,35 @@ export function AgentEditorV2({
         onClose={() => onOpenChange(false)}
       />
       <FullScreenDialogContent>
-        <FullScreenDialogMain className="overflow-auto bg-background">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 p-4 md:p-6">
-            <section data-section="templates" className="space-y-3">
-              <div className="space-y-1">
-                <h2 className="text-base font-semibold tracking-tight text-foreground">
-                  {t('agents:editorV2.templates.title')}
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  {t('agents:editorV2.templates.hint')}
-                </p>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                {TASK_TEMPLATES.map((tmpl) => {
-                  const Icon = tmpl.icon
-                  const selected = templateId === tmpl.id
-                  return (
-                    <button
-                      key={tmpl.id}
-                      type="button"
-                      onClick={() => applyTemplate(tmpl.id)}
-                      className={cn(
-                        'flex flex-col items-start gap-1.5 rounded-lg border px-3 py-3 text-left transition-colors',
-                        selected
-                          ? 'border-primary bg-muted'
-                          : 'border-border hover:border-muted-foreground hover:bg-muted-20',
-                      )}
-                    >
-                      <Icon className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium text-foreground">
-                        {t(`agents:${tmpl.nameKey}`)}
-                      </span>
-                      <span className="line-clamp-2 text-xs text-muted-foreground">
-                        {t(`agents:${tmpl.descKey}`)}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
-            </section>
-
+        {isMobile ? (
+          <FullScreenDialogMain className="overflow-auto bg-background p-4">
+            {formColumn}
             {!needsTemplate && (
-              <>
-                <FormSurface>
-                  <EditorSection
-                    first
-                    title={t('agents:editorV2.basicsTitle')}
-                    description={t('agents:editorV2.basicsHint')}
-                    data-section="basics"
-                  >
-                    <FormField label={t('agents:editorV2.name')} required>
-                      <Input
-                        value={draft.name}
-                        onChange={(e) => patch({ name: e.target.value })}
-                        placeholder={t('agents:editorV2.namePlaceholder')}
-                        autoFocus={isCreate}
-                      />
-                    </FormField>
-                    <FormField label={t('agents:editorV2.prompt')} required>
-                      <Textarea
-                        value={draft.user_prompt}
-                        onChange={(e) => patch({ user_prompt: e.target.value })}
-                        placeholder={t('agents:editorV2.promptPlaceholder')}
-                        rows={4}
-                        className="min-h-[6.5rem] resize-y"
-                      />
-                    </FormField>
-                  </EditorSection>
-
-                  <EditorSection
-                    title={t('agents:editorV2.when.title')}
-                    description={t('agents:editorV2.when.hint')}
-                    data-section="when"
-                  >
-                    <SimpleWhenSection
-                      value={draft.trigger}
-                      onChange={(trigger) => patch({ trigger })}
-                    />
-                  </EditorSection>
-
-                  <EditorSection
-                    title={t('agents:editorV2.sources.title')}
-                    description={t('agents:editorV2.sources.hint')}
-                    data-section="sources"
-                  >
-                    <SimpleSourcesSection
-                      value={draft.input}
-                      onChange={(input) => patch({ input })}
-                    />
-                  </EditorSection>
-
-                  <EditorSection
-                    title={t('agents:editorV2.notifySimple.title')}
-                    description={t('agents:editorV2.notifySimple.hint')}
-                    data-section="notify"
-                  >
-                    <SimpleNotifySection
-                      value={notify}
-                      onChange={(n) => patch({ notify: n })}
-                    />
-                  </EditorSection>
-                </FormSurface>
-
-                <PlanConfirmLine draft={draft} />
-
-                <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                  <CollapsibleTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="w-full justify-between px-3 text-muted-foreground"
-                    >
-                      <span className="text-sm font-medium">
-                        {t('agents:editorV2.advanced.title')}
-                      </span>
-                      <ChevronDown
-                        className={cn(
-                          'h-4 w-4 transition-transform',
-                          advancedOpen && 'rotate-180',
-                        )}
-                      />
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="pt-2">
-                    <FormSurface>
-                      <TriggerSection
-                        first
-                        value={draft.trigger}
-                        onChange={(trigger) => patch({ trigger })}
-                      />
-                      <InputContractSection
-                        value={draft.input}
-                        onChange={(input) => patch({ input })}
-                      />
-                      <ToolPolicySection
-                        value={draft.tool_policy}
-                        onChange={(tool_policy) => patch({ tool_policy })}
-                      />
-                      <NotifyPolicySection
-                        value={notify}
-                        onChange={(n) => patch({ notify: n })}
-                      />
-                    </FormSurface>
-                  </CollapsibleContent>
-                </Collapsible>
-
-                {evidenceDetail !== undefined && (
-                  <AgentExecutionEvidencePanel detail={evidenceDetail} />
-                )}
-              </>
+              <div className="mt-5">
+                <LiveSummaryPanel
+                  draft={draft}
+                  templateId={templateId}
+                  className="rounded-xl border border-border"
+                />
+              </div>
             )}
-
-            {needsTemplate && (
-              <p className="text-sm text-muted-foreground" data-testid="pick-template-hint">
-                {t('agents:editorV2.templates.pickFirst')}
-              </p>
-            )}
-          </div>
-        </FullScreenDialogMain>
+          </FullScreenDialogMain>
+        ) : (
+          <>
+            {/* Left: edit form (primary) */}
+            <FullScreenDialogMain className="overflow-auto bg-background p-5 md:p-6">
+              {formColumn}
+            </FullScreenDialogMain>
+            {/* Right: live summary rail — border-l so it sits after the form */}
+            <aside className="hidden w-[300px] shrink-0 border-l border-border lg:flex lg:w-[340px] xl:w-[360px]">
+              <LiveSummaryPanel
+                draft={draft}
+                templateId={templateId}
+                className="w-full"
+              />
+            </aside>
+          </>
+        )}
       </FullScreenDialogContent>
       <FullScreenDialogFooter>
         <div className="flex w-full items-center justify-between gap-3">
