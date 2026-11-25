@@ -2909,8 +2909,7 @@ async fn vision_tools_all_failed_becomes_partial_undetermined() {
 /// end gate must still require a successful vision call.
 #[tokio::test]
 async fn via_vision_tool_zero_calls_blind_conclusion_is_partial() {
-    let rt = MockLlmRuntime::new(vec![MockResponse::text("未发现人员")])
-        .with_function_calling();
+    let rt = MockLlmRuntime::new(vec![MockResponse::text("未发现人员")]).with_function_calling();
     let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
 
     let (mut executor, mut agent, _) = build_harness().await;
@@ -5287,6 +5286,153 @@ async fn whole_device_snapshot_binds_triggering_report_not_latest() {
         serde_json::json!("cam01_A"),
         "sidecar metrics must come from A's uplink too"
     );
+
+    std::env::remove_var("NEOMIND_DATA_DIR");
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+/// NM-389: same-second A then B overwrite — timeseries only keeps B, but the
+/// triggering event still carries A. Collection must prefer the trigger frame
+/// (decode to A's fill byte), never silently feed B to vision.
+#[serial_test::serial]
+#[tokio::test]
+async fn whole_device_same_second_overwrite_prefers_trigger_frame_a() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "neomind_test_whole_device_same_sec_{}",
+        uuid::Uuid::new_v4()
+    ));
+    crate::testing_helpers::setup_test_image_dir(&data_dir).expect("image dir");
+    let frame_a_path = data_dir.join("images/test-device-001/image/frame_a_ss.jpg");
+    let frame_b_path = data_dir.join("images/test-device-001/image/frame_b_ss.jpg");
+    std::fs::create_dir_all(frame_a_path.parent().unwrap()).expect("mkdir");
+    let mut bytes_a = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_a.extend(std::iter::repeat_n(b'A', 2048));
+    let mut bytes_b = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_b.extend(std::iter::repeat_n(b'B', 2048));
+    std::fs::write(&frame_a_path, &bytes_a).expect("write A");
+    std::fs::write(&frame_b_path, &bytes_b).expect("write B");
+    std::env::set_var("NEOMIND_DATA_DIR", data_dir.to_str().unwrap());
+
+    let url_a = "/api/images/test-device-001/image/frame_a_ss.jpg";
+    let url_b = "/api/images/test-device-001/image/frame_b_ss.jpg";
+    let ts = chrono::Utc::now().timestamp() - 20;
+
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let store = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(store.clone());
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+
+    seed_report(
+        &store,
+        ts,
+        &[
+            ("metadata.image_id", serde_json::json!("cam01_A")),
+            ("image_data", serde_json::json!(url_a)),
+        ],
+    )
+    .await;
+    // Same second overwrite — metric key now only holds B.
+    seed_report(
+        &store,
+        ts,
+        &[
+            ("metadata.image_id", serde_json::json!("cam01_B")),
+            ("image_data", serde_json::json!(url_b)),
+        ],
+    )
+    .await;
+
+    let event_a = event_for("image_data", url_a, ts);
+    let input = executor
+        .collect_data_with_event(&agent, &event_a)
+        .await
+        .expect("collect A");
+    let EventInput::Data(data) = &input else {
+        panic!("trigger-carried A must be recoverable, got {input:?}");
+    };
+    let frames: Vec<_> = data
+        .iter()
+        .filter(|d| d.values.get("_is_image").and_then(|v| v.as_bool()) == Some(true))
+        .collect();
+    assert_eq!(frames.len(), 1, "exactly one frame");
+    use base64::Engine;
+    let b64 = frames[0]
+        .values
+        .get("image_base64")
+        .and_then(|v| v.as_str())
+        .expect("image_base64");
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .expect("decode");
+    assert!(
+        decoded.iter().skip(4).any(|b| *b == b'A'),
+        "model input must decode to A's bytes after same-second overwrite"
+    );
+    assert!(
+        !decoded.iter().skip(4).any(|b| *b == b'B'),
+        "must not silently feed B"
+    );
+
+    std::env::remove_var("NEOMIND_DATA_DIR");
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+/// NM-389: scalar trigger A has no image; B uploads an image 1s later inside
+/// the ±2s nearest window. A's run must not attach B — record unconfirmed.
+#[serial_test::serial]
+#[tokio::test]
+async fn whole_device_scalar_trigger_rejects_nearby_later_frame() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "neomind_test_whole_device_scalar_no_b_{}",
+        uuid::Uuid::new_v4()
+    ));
+    crate::testing_helpers::setup_test_image_dir(&data_dir).expect("image dir");
+    let frame_b_path = data_dir.join("images/test-device-001/image/frame_b_near.jpg");
+    std::fs::create_dir_all(frame_b_path.parent().unwrap()).expect("mkdir");
+    let mut bytes_b = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_b.extend(std::iter::repeat_n(b'B', 2048));
+    std::fs::write(&frame_b_path, &bytes_b).expect("write B");
+    std::env::set_var("NEOMIND_DATA_DIR", data_dir.to_str().unwrap());
+
+    let url_b = "/api/images/test-device-001/image/frame_b_near.jpg";
+    let ts_a = chrono::Utc::now().timestamp() - 20;
+    let ts_b = ts_a + 1;
+
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let store = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(store.clone());
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+
+    seed_report(&store, ts_a, &[("temperature", serde_json::json!(21.5))]).await;
+    seed_report(&store, ts_b, &[("image_data", serde_json::json!(url_b))]).await;
+
+    let event_a = event_for("temperature", "21.5", ts_a);
+    let input = executor
+        .collect_data_with_event(&agent, &event_a)
+        .await
+        .expect("collect A");
+    let EventInput::Data(data) = &input else {
+        panic!("scalar A should still yield Data, got {input:?}");
+    };
+    let frames: Vec<_> = data
+        .iter()
+        .filter(|d| d.values.get("_is_image").and_then(|v| v.as_bool()) == Some(true))
+        .collect();
+    assert!(
+        frames.is_empty(),
+        "A's request must not include B's frame: {frames:?}"
+    );
+    let status = data
+        .iter()
+        .find(|d| d.data_type == "frame_status")
+        .expect("unconfirmed frame_status");
+    assert_eq!(
+        status.values.get("message").and_then(|v| v.as_str()),
+        Some("本次画面无法确定")
+    );
+    assert!(data.iter().any(|d| d.data_type == "temperature"));
 
     std::env::remove_var("NEOMIND_DATA_DIR");
     let _ = std::fs::remove_dir_all(&data_dir);

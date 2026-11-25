@@ -3501,11 +3501,7 @@ impl ServerState {
                         }
                         if let Err(e) = executor
                             .check_and_trigger_data_event(
-                                "device",
-                                device_id,
-                                metric,
-                                &value,
-                                timestamp,
+                                "device", device_id, metric, &value, timestamp,
                             )
                             .await
                         {

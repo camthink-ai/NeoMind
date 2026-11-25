@@ -1500,10 +1500,15 @@ impl AgentExecutor {
             .resolve_trigger_bound_report_ts(&storage, &storage_key, trigger)
             .await;
 
-        let (report_points, report_ts, binding): (
+        // `image_anchor_ts`: for trigger-bound runs, timeseries images may
+        // only attach when their stamp equals this exact second (same-uplink
+        // identity). Nearest-within-±2s is not enough — that silently pulls
+        // B's frame onto A's scalar trigger (NM-389 review).
+        let (report_points, report_ts, binding, image_anchor_ts): (
             Vec<(String, neomind_storage::timeseries::DataPoint)>,
             i64,
             &'static str,
+            Option<i64>,
         ) = match bound {
             Some(bound_ts) => {
                 let start = bound_ts - Self::REPORT_SKEW_SECS;
@@ -1514,10 +1519,14 @@ impl AgentExecutor {
                     .unwrap_or_default();
                 let mut points: Vec<(String, neomind_storage::timeseries::DataPoint)> = Vec::new();
                 for (name, result) in ranged {
-                    // Prefer the point closest to bound_ts within the window.
-                    if let Some(point) = result.points.into_iter().min_by_key(|p| {
-                        (p.timestamp - bound_ts).unsigned_abs()
-                    }) {
+                    // Prefer the point closest to bound_ts within the window
+                    // (scalars / sidecar metrics). Images are filtered later
+                    // against `image_anchor_ts`.
+                    if let Some(point) = result
+                        .points
+                        .into_iter()
+                        .min_by_key(|p| (p.timestamp - bound_ts).unsigned_abs())
+                    {
                         points.push((name, point));
                     }
                 }
@@ -1536,7 +1545,7 @@ impl AgentExecutor {
                     .map(|(_, p)| p.timestamp)
                     .max()
                     .unwrap_or(bound_ts);
-                (points, report_ts, "trigger_bound")
+                (points, report_ts, "trigger_bound", Some(bound_ts))
             }
             None => {
                 let latest = storage
@@ -1552,9 +1561,18 @@ impl AgentExecutor {
                         (point.timestamp - report_ts).abs() <= Self::REPORT_SKEW_SECS
                     })
                     .collect();
-                (points, report_ts, "latest")
+                // Manual / unbound "latest" keeps cluster semantics.
+                (points, report_ts, "latest", None)
             }
         };
+
+        // Trigger-carried usable frame wins over any timeseries nearest-pick
+        // (same-second A/B overwrite leaves only B on disk for the metric key,
+        // but the event still holds A's URL/bytes).
+        let trigger_frame = trigger.and_then(|t| {
+            Self::trigger_carried_image_entry(device_id, t, image_anchor_ts.unwrap_or(report_ts))
+        });
+        let prefer_trigger_frame = trigger_frame.is_some();
 
         let mut report: Vec<(&String, &neomind_storage::timeseries::DataPoint)> = report_points
             .iter()
@@ -1567,6 +1585,7 @@ impl AgentExecutor {
         let mut data = Vec::new();
         let mut seen_frames: Vec<String> = Vec::new();
         let mut unreadable_images = Vec::new();
+        let mut rejected_nearby_image = false;
         for (name, point) in &report {
             let name = name.as_str();
             // `_raw` is the uplink envelope; once its fields are metrics it
@@ -1586,8 +1605,27 @@ impl AgentExecutor {
             };
             match classify_image_value(name, &point.value) {
                 ImageValue::NotImage => data.push(entry),
-                ImageValue::Unreadable => unreadable_images.push(name.to_string()),
+                ImageValue::Unreadable => {
+                    if prefer_trigger_frame {
+                        // Trigger owns the frame; ignore timeseries unreadables.
+                        continue;
+                    }
+                    unreadable_images.push(name.to_string());
+                }
                 ImageValue::Extracted { url, base64, mime } => {
+                    if prefer_trigger_frame {
+                        // Do not let a later/overwritten timeseries image
+                        // replace the trigger-carried frame.
+                        continue;
+                    }
+                    if let Some(anchor) = image_anchor_ts {
+                        if point.timestamp != anchor {
+                            // Same ±2s window but not the triggering uplink —
+                            // attaching it would mis-feed vision (NM-389).
+                            rejected_nearby_image = true;
+                            continue;
+                        }
+                    }
                     // One frame often arrives under several metrics
                     // (`image_data`, `__webhook_image`, …): attach it once.
                     let frame = url
@@ -1643,22 +1681,25 @@ impl AgentExecutor {
                     .unwrap_or(false)
             })
             .count();
-        // Prefer a trigger-carried frame when the doorbell itself is the
-        // image and the timeseries cluster somehow lacked readable bytes
-        // (or only held a path we cannot resolve). Per-frame patrol must
-        // still bind `image_data`; this is the recovery path for A after B.
-        if images == 0 {
-            if let Some(trigger) = trigger {
-                if let Some(frame) =
-                    Self::trigger_carried_image_entry(device_id, trigger, report_ts)
-                {
-                    data.push(frame);
-                    images = 1;
-                }
-            }
+        if let Some(frame) = trigger_frame {
+            data.push(frame);
+            images = 1;
+        } else if images == 0 && binding == "trigger_bound" && rejected_nearby_image {
+            // Nearby frame exists but is not same-uplink identity — keep
+            // scalars, record that vision cannot use that picture.
+            data.push(DataCollected {
+                source: device_id.to_string(),
+                data_type: "frame_status".to_string(),
+                timestamp: image_anchor_ts.unwrap_or(report_ts),
+                values: serde_json::json!({
+                    "status": "unconfirmed",
+                    "message": "本次画面无法确定",
+                    "_frame_unconfirmed": true,
+                }),
+            });
         }
-        // The report carries a picture and none of it could be read: a blind
-        // run would only invent findings.
+        // Same-uplink picture present but unreadable: blind run would invent
+        // findings (trigger-carried frame already handled above).
         if images == 0 && !unreadable_images.is_empty() {
             return Ok(Some(EventInput::Skipped {
                 code: "report_image_unreadable",
@@ -1787,10 +1828,7 @@ impl AgentExecutor {
         // Wide enough to survive collection delay after a later uplink, but
         // still anchored on the trigger hint when present.
         let (start, end) = if hint_ts > 0 {
-            (
-                hint_ts - 600,
-                hint_ts + Self::REPORT_SKEW_SECS.max(5),
-            )
+            (hint_ts - 600, hint_ts + Self::REPORT_SKEW_SECS.max(5))
         } else {
             let now = chrono::Utc::now().timestamp();
             (now - 3600, now + Self::REPORT_SKEW_SECS)
