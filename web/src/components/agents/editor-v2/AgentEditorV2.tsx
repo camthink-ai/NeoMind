@@ -39,6 +39,8 @@ import { NotifyPolicySection, normalizeNotify } from './NotifyPolicySection'
 import { SimpleWhenSection } from './SimpleWhenSection'
 import { SimpleSourcesSection } from './SimpleSourcesSection'
 import { SimpleNotifySection } from './SimpleNotifySection'
+import { SimpleModelSection } from './SimpleModelSection'
+import { SimpleOutputSection } from './SimpleOutputSection'
 import { LiveSummaryPanel } from './LiveSummaryPanel'
 import {
   TASK_TEMPLATES,
@@ -99,6 +101,7 @@ export function AgentEditorV2({
       user_prompt: prev.user_prompt.trim() ? prev.user_prompt : seed.user_prompt,
       description: prev.description?.trim() ? prev.description : seed.description,
       input: prev.input.requirements.length ? prev.input : seed.input,
+      llm_backend_id: prev.llm_backend_id ?? seed.llm_backend_id,
     }))
     setTemplateId(id)
   }
@@ -178,6 +181,10 @@ export function AgentEditorV2({
                   className="min-h-[6.5rem] resize-y"
                 />
               </FormField>
+              <SimpleModelSection
+                value={draft.llm_backend_id}
+                onChange={(llm_backend_id) => patch({ llm_backend_id })}
+              />
             </EditorSection>
 
             <EditorSection title={t('agents:editorV2.when.title')} data-section="when">
@@ -191,6 +198,13 @@ export function AgentEditorV2({
               <SimpleSourcesSection
                 value={draft.input}
                 onChange={(input) => patch({ input })}
+              />
+            </EditorSection>
+
+            <EditorSection title={t('agents:editorV2.output.title')} data-section="output">
+              <SimpleOutputSection
+                value={draft.output}
+                onChange={(output) => patch({ output })}
               />
             </EditorSection>
 

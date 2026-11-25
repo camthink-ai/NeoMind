@@ -1008,7 +1008,24 @@
       "noSources": "尚未选择来源",
       "tools": "工具",
       "notify": "通知",
-      "empty": "（未填写）"
+      "empty": "（未填写）",
+      "model": "模型",
+      "modelActive": "全局默认",
+      "output": "结构化输出",
+      "outputOff": "未启用"
+    },
+    "model": {
+      "label": "模型",
+      "useActive": "使用全局默认",
+      "useActiveNamed": "全局默认（{{name}}）"
+    },
+    "output": {
+      "title": "结构化输出",
+      "enabled": "输出 JSON 字段",
+      "fields": "字段名",
+      "add": "添加",
+      "remove": "删除字段",
+      "namePlaceholder": "例如 status"
     }
   }
 }

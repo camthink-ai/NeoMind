@@ -110,7 +110,24 @@ export function LiveSummaryPanel({ draft, templateId, className }: LiveSummaryPa
             <span className="text-muted-foreground">{t('editorV2.summary.empty')}</span>
           )}
         </Row>
+        <Row label={t('editorV2.summary.model')}>
+          {draft.llm_backend_id?.trim() ? (
+            <span className="font-mono text-xs">{draft.llm_backend_id}</span>
+          ) : (
+            t('editorV2.summary.modelActive')
+          )}
+        </Row>
         <Row label={t('editorV2.summary.when')}>{whenLabel(draft.trigger, t)}</Row>
+        <Row label={t('editorV2.summary.output')}>
+          {(draft.output?.fields ?? []).filter((f) => f.name.trim()).length === 0 ? (
+            <span className="text-muted-foreground">{t('editorV2.summary.outputOff')}</span>
+          ) : (
+            (draft.output?.fields ?? [])
+              .map((f) => f.name.trim())
+              .filter(Boolean)
+              .join(', ')
+          )}
+        </Row>
         <Row label={t('editorV2.summary.sources')}>
           {reads.length === 0 ? (
             <span className="text-muted-foreground">{t('editorV2.summary.noSources')}</span>

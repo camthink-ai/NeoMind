@@ -1008,7 +1008,24 @@
       "noSources": "No sources yet",
       "tools": "Tools",
       "notify": "Notify",
-      "empty": "(empty)"
+      "empty": "(empty)",
+      "model": "Model",
+      "modelActive": "Global default",
+      "output": "Structured output",
+      "outputOff": "Off"
+    },
+    "model": {
+      "label": "Model",
+      "useActive": "Use global default",
+      "useActiveNamed": "Global default ({{name}})"
+    },
+    "output": {
+      "title": "Structured output",
+      "enabled": "JSON fields",
+      "fields": "Field names",
+      "add": "Add",
+      "remove": "Remove field",
+      "namePlaceholder": "e.g. status"
     }
   }
 }
