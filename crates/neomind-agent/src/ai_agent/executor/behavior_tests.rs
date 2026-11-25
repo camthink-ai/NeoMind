@@ -714,6 +714,7 @@ async fn structured_event_agent_debounces_across_sources() {
                 source.to_string(),
                 "temp".to_string(),
                 &neomind_core::event::MetricValue::Float(1.0),
+                1_700_000_000,
             )
             .await
             .expect("trigger must not error");
@@ -752,6 +753,7 @@ async fn free_event_agent_merges_same_instant_sources() {
                 source.to_string(),
                 "temp".to_string(),
                 &neomind_core::event::MetricValue::Float(1.0),
+                1_700_000_000,
             )
             .await
             .expect("trigger must not error");
@@ -1354,6 +1356,7 @@ async fn fire_event(executor: &AgentExecutor, source_type: &str, source_id: &str
             source_id.to_string(),
             field.to_string(),
             &neomind_core::event::MetricValue::Boolean(true),
+            1_700_000_000,
         )
         .await
         .expect("trigger must not error");
@@ -1372,6 +1375,7 @@ async fn all_filter_waits_for_every_source_before_firing() {
             "cam-01".to_string(),
             "occupied".to_string(),
             &neomind_core::event::MetricValue::Boolean(true),
+            1_700_000_000,
         )
         .await
         .expect("trigger must not error");
@@ -1391,6 +1395,7 @@ async fn all_filter_waits_for_every_source_before_firing() {
             "booking".to_string(),
             "reserved".to_string(),
             &neomind_core::event::MetricValue::Boolean(false),
+            1_700_000_000,
         )
         .await
         .expect("trigger must not error");
@@ -2606,12 +2611,13 @@ fn embeddable_image_data() -> neomind_storage::DataCollected {
     }
 }
 
-/// Positive: multimodal primary + image → strip vision tool, inject inline
-/// guidance, Completes when the model analyzes the attached image honestly.
+/// Positive / NM-388 control: multimodal primary + image → strip vision tool,
+/// Completes when the model analyzes the attached image directly (including a
+/// "未发现人员" conclusion — ViaVisionTool blind gate must NOT fire here).
 #[tokio::test]
 async fn multimodal_inline_vision_succeeds_without_vision_tool() {
     let rt = MockLlmRuntime::new(vec![MockResponse::text(
-        "Attached frame shows an empty corridor; no gambling activity.",
+        "未发现人员 — empty corridor, no gambling activity.",
     )])
     .with_function_calling()
     .with_supports_images();
@@ -2641,7 +2647,16 @@ async fn multimodal_inline_vision_succeeds_without_vision_tool() {
         .expect("inline multimodal run must succeed");
 
     assert!(er.success_rate >= 1.0);
-    assert!(dp.conclusion.contains("empty corridor"));
+    assert_ne!(
+        dp.stop_reason,
+        super::vision_path::VISION_TOOLS_FAILED_STOP_REASON,
+        "inline multimodal must Complete, not Partial"
+    );
+    assert!(
+        dp.conclusion.contains("未发现人员") || dp.conclusion.contains("empty corridor"),
+        "conclusion={}",
+        dp.conclusion
+    );
 
     let captured = rt_handle.captured_messages();
     assert!(!captured.is_empty(), "LLM must be called");
@@ -2887,6 +2902,109 @@ async fn vision_tools_all_failed_becomes_partial_undetermined() {
         before,
         "Judgment notify must not route for Partial"
     );
+}
+
+/// NM-388: ViaVisionTool + images + zero tool calls + "未发现人员" must be
+/// Partial (not Completed). `vision_tools_all_failed([])` is false — the
+/// end gate must still require a successful vision call.
+#[tokio::test]
+async fn via_vision_tool_zero_calls_blind_conclusion_is_partial() {
+    let rt = MockLlmRuntime::new(vec![MockResponse::text("未发现人员")])
+        .with_function_calling();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "用 vision 工具分析图像；未发现人员则报告正常".into();
+    agent.execution_mode = ExecutionMode::Free;
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(StubVisionTool));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (dp, er, _) = executor
+        .execute_with_tools(
+            &agent,
+            &[embeddable_image_data()],
+            rt_dyn,
+            "exec-blind-zero-tools",
+            None,
+        )
+        .await
+        .expect("Partial path returns Ok");
+
+    assert_eq!(
+        dp.stop_reason,
+        super::vision_path::VISION_TOOLS_FAILED_STOP_REASON,
+        "conclusion={}",
+        dp.conclusion
+    );
+    assert!(
+        dp.conclusion.starts_with("未判定 / Undetermined"),
+        "conclusion={}",
+        dp.conclusion
+    );
+    assert_eq!(er.success_rate, 0.0);
+    assert!(
+        er.actions_executed
+            .iter()
+            .all(|a| !super::vision_path::is_vision_tool_name(&a.target)),
+        "fixture must not have called vision: {:?}",
+        er.actions_executed
+    );
+}
+
+/// NM-388: a successful non-vision tool (device-info style) does not satisfy
+/// the ViaVisionTool evidence gate — still Partial on "未发现人员".
+#[tokio::test]
+async fn via_vision_tool_only_non_vision_success_is_partial() {
+    let rt = MockLlmRuntime::new(vec![
+        MockResponse::tool_call("echo", serde_json::json!({ "msg": "device_info ok" })),
+        MockResponse::text("未发现人员"),
+    ])
+    .with_function_calling();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    agent.user_prompt = "先读设备信息，再用 vision 看图；未发现人员则报告正常".into();
+    agent.execution_mode = ExecutionMode::Free;
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(EchoTool));
+    registry.register(Arc::new(StubVisionTool));
+    executor.set_tool_registry(Arc::new(registry));
+    executor.set_llm_runtime(rt_dyn.clone()).await;
+
+    let (dp, er, _) = executor
+        .execute_with_tools(
+            &agent,
+            &[embeddable_image_data()],
+            rt_dyn,
+            "exec-blind-echo-only",
+            None,
+        )
+        .await
+        .expect("Partial path returns Ok");
+
+    assert_eq!(
+        dp.stop_reason,
+        super::vision_path::VISION_TOOLS_FAILED_STOP_REASON
+    );
+    assert!(
+        er.actions_executed
+            .iter()
+            .any(|a| a.target == "echo" && a.success),
+        "echo must have succeeded: {:?}",
+        er.actions_executed
+    );
+    assert!(
+        !er.actions_executed
+            .iter()
+            .any(|a| super::vision_path::is_vision_tool_name(&a.target) && a.success),
+        "no successful vision: {:?}",
+        er.actions_executed
+    );
+    assert!(dp.conclusion.starts_with("未判定 / Undetermined"));
 }
 
 /// Positive: text LLM + vision tool available → keep vision path (no strip).
@@ -5062,6 +5180,113 @@ async fn whole_device_trigger_reads_the_report_whatever_field_rang() {
             "{label}: frame bytes are attached"
         );
     }
+
+    std::env::remove_var("NEOMIND_DATA_DIR");
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+/// NM-389: report A triggers; B lands before collection — A's run must still
+/// receive A's frame bytes (or skip with trigger_report_unavailable), never B.
+#[serial_test::serial]
+#[tokio::test]
+async fn whole_device_snapshot_binds_triggering_report_not_latest() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "neomind_test_whole_device_bind_{}",
+        uuid::Uuid::new_v4()
+    ));
+    crate::testing_helpers::setup_test_image_dir(&data_dir).expect("image dir");
+    let frame_a_path = data_dir.join("images/test-device-001/image/frame_a.jpg");
+    let frame_b_path = data_dir.join("images/test-device-001/image/frame_b.jpg");
+    std::fs::create_dir_all(frame_a_path.parent().unwrap()).expect("mkdir");
+    // Distinct JPEG-magic payloads past the usable-image / magic-byte gates.
+    let mut bytes_a = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_a.extend(std::iter::repeat_n(b'A', 2048));
+    let mut bytes_b = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_b.extend(std::iter::repeat_n(b'B', 2048));
+    std::fs::write(&frame_a_path, &bytes_a).expect("write A");
+    std::fs::write(&frame_b_path, &bytes_b).expect("write B");
+    std::env::set_var("NEOMIND_DATA_DIR", data_dir.to_str().unwrap());
+
+    let url_a = "/api/images/test-device-001/image/frame_a.jpg";
+    let url_b = "/api/images/test-device-001/image/frame_b.jpg";
+    let ts_a = chrono::Utc::now().timestamp() - 30;
+    let ts_b = ts_a + 10;
+
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let ts = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(ts.clone());
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+
+    // Seed A, then B (B is latest by the time we collect).
+    seed_report(
+        &ts,
+        ts_a,
+        &[
+            ("metadata.image_id", serde_json::json!("cam01_A")),
+            ("image_data", serde_json::json!(url_a)),
+            ("device_info.battery_percent", serde_json::json!(80)),
+        ],
+    )
+    .await;
+    seed_report(
+        &ts,
+        ts_b,
+        &[
+            ("metadata.image_id", serde_json::json!("cam01_B")),
+            ("image_data", serde_json::json!(url_b)),
+            ("device_info.battery_percent", serde_json::json!(79)),
+        ],
+    )
+    .await;
+
+    let event_a = event_for("image_data", url_a, ts_a);
+    let input = executor
+        .collect_data_with_event(&agent, &event_a)
+        .await
+        .expect("collect A");
+    let EventInput::Data(data) = &input else {
+        panic!("A's report must be recoverable, got {input:?}");
+    };
+    let frames: Vec<_> = data
+        .iter()
+        .filter(|d| d.values.get("_is_image").and_then(|v| v.as_bool()) == Some(true))
+        .collect();
+    assert_eq!(frames.len(), 1, "exactly one frame for A's run");
+    let url = frames[0]
+        .values
+        .get("image_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let b64 = frames[0]
+        .values
+        .get("image_base64")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    // /api/images/ extraction returns base64 (url cleared); A's fill byte is 'A'.
+    use base64::Engine;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .expect("A's image_base64 must decode");
+    assert!(
+        decoded.iter().skip(4).any(|b| *b == b'A'),
+        "A's run must get A's bytes, got len={} url={url}",
+        decoded.len()
+    );
+    assert!(
+        !decoded.iter().skip(4).any(|b| *b == b'B'),
+        "must not inherit B's frame bytes"
+    );
+    let image_id = data
+        .iter()
+        .find(|d| d.data_type == "metadata.image_id")
+        .and_then(|d| d.values.get("value").cloned())
+        .unwrap_or(serde_json::Value::Null);
+    assert_eq!(
+        image_id,
+        serde_json::json!("cam01_A"),
+        "sidecar metrics must come from A's uplink too"
+    );
 
     std::env::remove_var("NEOMIND_DATA_DIR");
     let _ = std::fs::remove_dir_all(&data_dir);

@@ -98,12 +98,17 @@ impl AgentExecutor {
 
     /// Unified entry point for triggering agents on any data source update.
     /// Called from the EventBus listener when any data source produces new values.
+    ///
+    /// `report_timestamp` is the uplink / metric stamp from the bus event
+    /// (DeviceMetric.timestamp). Whole-device snapshots bind to that report
+    /// instead of whatever became "latest" by collection time (NM-389).
     pub async fn check_and_trigger_data_event(
         &self,
         source_type: &str,
         source_id: String,
         field: String,
         value: &MetricValue,
+        report_timestamp: i64,
     ) -> AgentResult<()> {
         // Refresh event-triggered agents cache
         self.refresh_event_agents().await;
@@ -301,7 +306,15 @@ impl AgentExecutor {
             let value_clone = value.clone();
             let source_id_for_task = source_id_for_spawn.clone();
             let source_type_for_task = source_type.to_string();
-            let timestamp = chrono::Utc::now().timestamp();
+            // Prefer the bus event's report stamp so whole-device collection
+            // can recover uplink A after B lands; fall back to wall-clock
+            // only when the publisher left timestamp unset/zero.
+            let timestamp = if report_timestamp > 0 {
+                report_timestamp
+            } else {
+                chrono::Utc::now().timestamp()
+            };
+            let admitted_at = chrono::Utc::now().timestamp();
 
             // Build executor config for spawned task
             let executor_config = self.build_spawn_config(agent);
@@ -407,7 +420,7 @@ impl AgentExecutor {
                                             e.consecutive_failures.saturating_add(1)
                                     })
                                     .or_insert(super::ErrorProbeEntry {
-                                        last_attempt: timestamp,
+                                        last_attempt: admitted_at,
                                         consecutive_failures: 1,
                                     });
                                 tracing::info!(

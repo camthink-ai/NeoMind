@@ -807,27 +807,35 @@ impl AgentExecutor {
         let (mut decision_process, mut execution_result) =
             tool_result::build_tool_result(agent, data_collected, loop_output);
 
-        // Vision-undetermined Partial (D2 / PR3):
-        // 1) ViaVisionTool and every vision call failed, or
-        // 2) Images were present but the conclusion admits vision never ran.
-        // Both land as ExecutionStatus::Partial with stop_reason =
+        // Vision-undetermined Partial (D2 / PR3 / NM-388):
+        // 1) At least one vision call ran and every vision call failed, or
+        // 2) ViaVisionTool with images but no successful vision call (zero
+        //    calls used to Complete because vision_tools_all_failed([]) is
+        //    false — "未发现人员" without looking), or
+        // 3) Images were present but the conclusion admits vision never ran.
+        // All land as ExecutionStatus::Partial with stop_reason =
         // vision_tools_failed — not Completed (false "现场正常") and not a
         // hard Err (so the finish path can emit Partial + Failure notify).
         let vision_calls_failed =
             vision_path::vision_tools_all_failed(&execution_result.actions_executed);
+        let vision_never_confirmed = vision_path::vision_required_unconfirmed(
+            vision_exec_path,
+            &execution_result.actions_executed,
+        );
         let conclusion_admits_blind = has_embeddable_images
             && vision_path::conclusion_admits_vision_failure_for_path(
                 &decision_process.conclusion,
                 vision_exec_path,
             );
-        if vision_calls_failed || conclusion_admits_blind {
+        if vision_calls_failed || vision_never_confirmed || conclusion_admits_blind {
             tracing::warn!(
                 agent_id = %agent.id,
                 vision_path = ?vision_exec_path,
                 vision_calls_failed,
+                vision_never_confirmed,
                 conclusion_admits_blind,
                 actions = execution_result.actions_executed.len(),
-                "Vision tools failed / conclusion admits blind run — Partial undetermined"
+                "Vision tools failed / never confirmed / conclusion admits blind — Partial undetermined"
             );
             vision_path::mark_vision_tools_failed(&mut decision_process, &mut execution_result);
         }

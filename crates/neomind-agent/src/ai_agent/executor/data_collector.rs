@@ -1215,7 +1215,7 @@ impl AgentExecutor {
             // The report is the input whenever it can be read; with no
             // storage to read it from, the event value is all there is.
             if let Some(input) = self
-                .device_report_snapshot(agent, &event_data.source.source_id)
+                .device_report_snapshot(agent, &event_data.source.source_id, Some(event_data))
                 .await?
             {
                 return Ok(input);
@@ -1437,7 +1437,7 @@ impl AgentExecutor {
     const REPORT_SKEW_SECS: i64 = 2;
 
     /// Input for a run whose trigger covers a WHOLE device: the device's
-    /// latest report.
+    /// report that matches the triggering event (NM-389).
     ///
     /// One uplink is split into one event per metric, and the first matching
     /// one starts the run. Building the run around that single event made a
@@ -1451,14 +1451,23 @@ impl AgentExecutor {
     /// uplink, images read by value, `_raw` left out once its fields are
     /// already split into metrics.
     ///
+    /// Binding (not "whatever is latest"): when `trigger` carries a field
+    /// value and/or report timestamp, the snapshot prefers that uplink —
+    /// matching the trigger value in storage, else the cluster around the
+    /// trigger timestamp. A later report B must not replace A's frame for
+    /// an A-triggered run. Manual "Run now" (empty field / unbound ts)
+    /// still means latest device state by product intent.
+    ///
     /// `None` when the report cannot be read at all (no time-series storage,
     /// nothing stored for the device): the event value is then all there is,
     /// and the caller falls back to it. A skip is reserved for a device that
-    /// does report a picture nobody can read.
+    /// does report a picture nobody can read, or when a bound trigger report
+    /// cannot be recovered after a newer uplink replaced "latest".
     async fn device_report_snapshot(
         &self,
         agent: &AiAgent,
         device_id: &str,
+        trigger: Option<&EventTriggerData>,
     ) -> AgentResult<Option<EventInput>> {
         let Some(storage) = self.time_series_storage.clone() else {
             return Ok(None);
@@ -1486,17 +1495,71 @@ impl AgentExecutor {
             return Ok(None);
         }
         let names: Vec<&str> = metrics.iter().map(String::as_str).collect();
-        let latest = storage
-            .query_latest_batch(&storage_key, &names)
-            .await
-            .unwrap_or_default();
-        let Some(report_ts) = latest.values().map(|point| point.timestamp).max() else {
-            return Ok(None);
+
+        let bound = self
+            .resolve_trigger_bound_report_ts(&storage, &storage_key, trigger)
+            .await;
+
+        let (report_points, report_ts, binding): (
+            Vec<(String, neomind_storage::timeseries::DataPoint)>,
+            i64,
+            &'static str,
+        ) = match bound {
+            Some(bound_ts) => {
+                let start = bound_ts - Self::REPORT_SKEW_SECS;
+                let end = bound_ts + Self::REPORT_SKEW_SECS;
+                let ranged = storage
+                    .query_range_batch(&storage_key, &names, start, end)
+                    .await
+                    .unwrap_or_default();
+                let mut points: Vec<(String, neomind_storage::timeseries::DataPoint)> = Vec::new();
+                for (name, result) in ranged {
+                    // Prefer the point closest to bound_ts within the window.
+                    if let Some(point) = result.points.into_iter().min_by_key(|p| {
+                        (p.timestamp - bound_ts).unsigned_abs()
+                    }) {
+                        points.push((name, point));
+                    }
+                }
+                if points.is_empty() {
+                    return Ok(Some(EventInput::Skipped {
+                        code: "trigger_report_unavailable",
+                        detail: format!(
+                            "triggering report at ts={bound_ts} could not be recovered \
+                             (newer uplink may have replaced latest; per-frame patrol \
+                             should bind image_data)"
+                        ),
+                    }));
+                }
+                let report_ts = points
+                    .iter()
+                    .map(|(_, p)| p.timestamp)
+                    .max()
+                    .unwrap_or(bound_ts);
+                (points, report_ts, "trigger_bound")
+            }
+            None => {
+                let latest = storage
+                    .query_latest_batch(&storage_key, &names)
+                    .await
+                    .unwrap_or_default();
+                let Some(report_ts) = latest.values().map(|point| point.timestamp).max() else {
+                    return Ok(None);
+                };
+                let points: Vec<(String, neomind_storage::timeseries::DataPoint)> = latest
+                    .into_iter()
+                    .filter(|(_, point)| {
+                        (point.timestamp - report_ts).abs() <= Self::REPORT_SKEW_SECS
+                    })
+                    .collect();
+                (points, report_ts, "latest")
+            }
         };
 
-        let mut report: Vec<(&String, &neomind_storage::timeseries::DataPoint)> = latest
+        let mut report: Vec<(&String, &neomind_storage::timeseries::DataPoint)> = report_points
             .iter()
             .filter(|(_, point)| (point.timestamp - report_ts).abs() <= Self::REPORT_SKEW_SECS)
+            .map(|(name, point)| (name, point))
             .collect();
         report.sort_by(|a, b| a.0.cmp(b.0));
 
@@ -1571,7 +1634,7 @@ impl AgentExecutor {
             }
         }
 
-        let images = data
+        let mut images = data
             .iter()
             .filter(|d| {
                 d.values
@@ -1580,6 +1643,20 @@ impl AgentExecutor {
                     .unwrap_or(false)
             })
             .count();
+        // Prefer a trigger-carried frame when the doorbell itself is the
+        // image and the timeseries cluster somehow lacked readable bytes
+        // (or only held a path we cannot resolve). Per-frame patrol must
+        // still bind `image_data`; this is the recovery path for A after B.
+        if images == 0 {
+            if let Some(trigger) = trigger {
+                if let Some(frame) =
+                    Self::trigger_carried_image_entry(device_id, trigger, report_ts)
+                {
+                    data.push(frame);
+                    images = 1;
+                }
+            }
+        }
         // The report carries a picture and none of it could be read: a blind
         // run would only invent findings.
         if images == 0 && !unreadable_images.is_empty() {
@@ -1640,14 +1717,175 @@ impl AgentExecutor {
             agent_id = %agent.id,
             device_id = %device_id,
             report_ts,
+            binding,
             metrics_in_report = report.len(),
             images,
             unreadable_images = ?unreadable_images,
             other_items = data.len() - images,
-            "[COLLECT] Whole-device trigger — input is the device's latest report"
+            "[COLLECT] Whole-device trigger — input is the trigger-bound device report"
         );
 
         Ok(Some(EventInput::Data(data)))
+    }
+
+    /// Resolve the uplink timestamp for a whole-device trigger.
+    ///
+    /// Preference order:
+    /// 1. Timeseries point whose value matches the trigger field value
+    ///    (frame URL / image_id / scalar) — strongest bind to report A.
+    /// 2. Trigger event timestamp when it looks like a real report stamp
+    ///    (non-zero; not a synthetic "Run now" empty-field doorbell).
+    /// 3. `None` → caller uses latest (manual / unbound).
+    async fn resolve_trigger_bound_report_ts(
+        &self,
+        storage: &neomind_storage::TimeSeriesStore,
+        storage_key: &str,
+        trigger: Option<&EventTriggerData>,
+    ) -> Option<i64> {
+        let trigger = trigger?;
+        let field = trigger.source.field.trim();
+        let has_field = !field.is_empty();
+
+        if has_field {
+            if let Some(ts) = Self::find_report_ts_matching_trigger_value(
+                storage,
+                storage_key,
+                field,
+                &trigger.value,
+                trigger.timestamp,
+            )
+            .await
+            {
+                return Some(ts);
+            }
+        }
+
+        // Empty-field synthetic "Run now" uses wall-clock now and means
+        // latest by product intent — do not bind to that instant.
+        if !has_field {
+            return None;
+        }
+        if trigger.timestamp > 0 {
+            return Some(trigger.timestamp);
+        }
+        None
+    }
+
+    /// Scan near the trigger timestamp for a datapoint whose value equals
+    /// the doorbell value (image path, image_id, …).
+    async fn find_report_ts_matching_trigger_value(
+        storage: &neomind_storage::TimeSeriesStore,
+        storage_key: &str,
+        field: &str,
+        value: &neomind_core::MetricValue,
+        hint_ts: i64,
+    ) -> Option<i64> {
+        let target = trigger_value_as_json(value);
+        if target.is_null() {
+            return None;
+        }
+        // Wide enough to survive collection delay after a later uplink, but
+        // still anchored on the trigger hint when present.
+        let (start, end) = if hint_ts > 0 {
+            (
+                hint_ts - 600,
+                hint_ts + Self::REPORT_SKEW_SECS.max(5),
+            )
+        } else {
+            let now = chrono::Utc::now().timestamp();
+            (now - 3600, now + Self::REPORT_SKEW_SECS)
+        };
+        let result = storage
+            .query_range(storage_key, field, start, end, Some(64))
+            .await
+            .ok()?;
+        // Prefer the newest match at or before hint_ts (A before B), else
+        // any match closest to the hint.
+        let mut best: Option<(i64, i64)> = None; // (abs_delta, ts)
+        for point in result.points {
+            if !json_values_equivalent(&point.value, &target) {
+                continue;
+            }
+            let delta = if hint_ts > 0 {
+                (point.timestamp - hint_ts).unsigned_abs() as i64
+            } else {
+                0
+            };
+            match best {
+                None => best = Some((delta, point.timestamp)),
+                Some((d, _)) if delta < d => best = Some((delta, point.timestamp)),
+                Some((d, ts)) if delta == d && point.timestamp < ts => {
+                    // Same distance: prefer the earlier uplink (A over B).
+                    best = Some((delta, point.timestamp));
+                }
+                _ => {}
+            }
+        }
+        best.map(|(_, ts)| ts)
+    }
+
+    /// Build a DataCollected image entry from the trigger payload itself.
+    fn trigger_carried_image_entry(
+        device_id: &str,
+        trigger: &EventTriggerData,
+        report_ts: i64,
+    ) -> Option<DataCollected> {
+        let field = trigger.source.field.trim();
+        if field.is_empty() {
+            return None;
+        }
+        let value = trigger_value_as_json(&trigger.value);
+        match classify_image_value(field, &value) {
+            ImageValue::Extracted { url, base64, mime } => {
+                let mut values = serde_json::json!({
+                    "_is_image": true,
+                    "_is_event_data": true,
+                    "timestamp": report_ts,
+                    "points_count": 1,
+                });
+                if let Some(u) = url {
+                    values["image_url"] = serde_json::json!(u);
+                    if u.chars().count() <= 300 {
+                        values["value"] = serde_json::json!(u);
+                    }
+                }
+                if let Some(b) = base64 {
+                    values["image_base64"] = serde_json::json!(b);
+                }
+                if let Some(m) = mime {
+                    values["image_mime_type"] = serde_json::json!(m);
+                }
+                Some(DataCollected {
+                    source: format!("{device_id}:{field}"),
+                    data_type: field.to_string(),
+                    timestamp: report_ts,
+                    values,
+                })
+            }
+            ImageValue::NotImage | ImageValue::Unreadable => None,
+        }
+    }
+}
+
+fn trigger_value_as_json(value: &neomind_core::MetricValue) -> serde_json::Value {
+    match value {
+        neomind_core::MetricValue::Float(v) => serde_json::json!(*v),
+        neomind_core::MetricValue::Integer(v) => serde_json::json!(*v),
+        neomind_core::MetricValue::Boolean(v) => serde_json::json!(*v),
+        neomind_core::MetricValue::String(v) => serde_json::json!(v),
+        neomind_core::MetricValue::Json(v) => v.clone(),
+    }
+}
+
+fn json_values_equivalent(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    if a == b {
+        return true;
+    }
+    // String doorbell vs JSON string stored under the metric.
+    match (a, b) {
+        (serde_json::Value::String(sa), serde_json::Value::String(sb)) => sa == sb,
+        (serde_json::Value::Number(na), serde_json::Value::Number(nb)) => na == nb,
+        _ => false,
     }
 }
 

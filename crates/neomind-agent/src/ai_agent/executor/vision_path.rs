@@ -330,6 +330,23 @@ pub(crate) fn vision_tools_all_failed(actions: &[neomind_storage::ActionExecuted
     saw_vision
 }
 
+/// True when at least one vision tool call succeeded this run.
+pub(crate) fn vision_tools_any_success(actions: &[neomind_storage::ActionExecuted]) -> bool {
+    actions
+        .iter()
+        .any(|a| is_vision_tool_name(&a.target) && a.success)
+}
+
+/// ViaVisionTool runs that never confirm a successful vision call must not
+/// settle as business Completed (Dongpingshan / NM-388): zero calls used to
+/// pass because [`vision_tools_all_failed`] is false on an empty action list.
+pub(crate) fn vision_required_unconfirmed(
+    path: VisionExecutionPath,
+    actions: &[neomind_storage::ActionExecuted],
+) -> bool {
+    matches!(path, VisionExecutionPath::ViaVisionTool) && !vision_tools_any_success(actions)
+}
+
 /// Rewrite conclusion / stop_reason / success_rate for a vision-undetermined run.
 ///
 /// Strips a trailing `Verdict: criteria met` so Judgment notify cannot fire on
@@ -715,7 +732,28 @@ mod tests {
             success: true,
             ..vision_fail.clone()
         };
-        assert!(!vision_tools_all_failed(&[vision_ok, vision_fail]));
+        assert!(!vision_tools_all_failed(&[vision_ok.clone(), vision_fail]));
+        assert!(vision_tools_any_success(std::slice::from_ref(&vision_ok)));
+        assert!(!vision_tools_any_success(&[]));
+        assert!(!vision_tools_any_success(std::slice::from_ref(&echo_ok)));
+
+        // NM-388: ViaVisionTool + zero/non-vision success → unconfirmed.
+        assert!(vision_required_unconfirmed(
+            VisionExecutionPath::ViaVisionTool,
+            &[]
+        ));
+        assert!(vision_required_unconfirmed(
+            VisionExecutionPath::ViaVisionTool,
+            std::slice::from_ref(&echo_ok)
+        ));
+        assert!(!vision_required_unconfirmed(
+            VisionExecutionPath::ViaVisionTool,
+            std::slice::from_ref(&vision_ok)
+        ));
+        assert!(!vision_required_unconfirmed(
+            VisionExecutionPath::InlineMultimodal,
+            &[]
+        ));
     }
 
     #[test]

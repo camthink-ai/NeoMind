@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Post-`v1.3.3`: whole-device event snapshots + vision `Partial`, Chat agent create/tool gating, chat truncation/receipt honesty, frontend auth + first-paint budget, then post-merge HIGH/MEDIUM closures (#33/#34). Product version **1.3.4** across Cargo/Web/Tauri/locks. Extension SDK stays **0.8.1** (unchanged).
 
 ### Upgrade notes
-- **Whole-device event runs see the full device report**: an empty-field device trigger (or Run now on a device-bound event agent) pulls the current metric snapshot — including `image_data` — instead of racing the first arriving field alone; MQTT/Webhook adapters write the whole batch before emitting events so the snapshot is already on disk.
-- **Vision undetermined is `Partial`, not Completed/Failed**: when every vision tool fails or the conclusion admits a blind run, the record is `ExecutionStatus::Partial` (WS `success=false`, no event replay, cooldown kept); Judgment `message send` is blocked mid-loop once vision has already failed, and on Partial recovery probes the agent stays `Error` until a Completed run.
+- **Whole-device event runs see the trigger-bound device report**: an empty-field device trigger (or Run now on a device-bound event agent) pulls the metric snapshot for that uplink — including `image_data` — instead of racing the first arriving field alone; field doorbells bind by trigger value/timestamp so a later report B cannot replace A's frame. Manual/unbound Run now still means latest device state; per-frame patrol should bind `image_data`. MQTT/Webhook adapters write the whole batch before emitting events so the snapshot is already on disk.
+- **Vision undetermined is `Partial`, not Completed/Failed**: when every vision tool fails, ViaVisionTool never confirms a successful vision call (including zero calls), or the conclusion admits a blind run, the record is `ExecutionStatus::Partial` (WS `success=false`, no event replay, cooldown kept); Judgment `message send` is blocked mid-loop once vision has already failed, and on Partial recovery probes the agent stays `Error` until a Completed run.
 - **Judgment alerts need `shell`**: `notify.on=judgment` with `tool_config.enabled=false` or an allowlist that omits `shell` is a hard 400 on create/update (CLI `--no-tools` / `--allowed-tools` match); speak guidance is injected only when tools are available and `shell` is allowed (case-insensitive).
 - **Zero-tool / filtered-tools runs stay honest**: empty allowlists skip text-protocol tool parse; non-empty sets refuse rewritten tools outside the allowlist; zero-tool agents keep user/knowledge/journal history without advertising `memory`.
 - **Write outcomes stay uncertain on gateway blips**: frontend writes that get 502/503/504 report "outcome unknown" and are never auto-retried; JWT sessions clear only on 401 (aligned with API-key auth); login passwords are no longer stored.
@@ -26,6 +26,8 @@ Post-`v1.3.3`: whole-device event snapshots + vision `Partial`, Chat agent creat
 - Frontend first-paint bundle budgets, cold-start measure, and route-pass `smoke-chunks.mjs`.
 
 ### Fixed — agent / runtime / notify
+- **ViaVisionTool cannot Complete without a successful vision call** (NM-388): zero calls or only non-vision tools + a "未发现人员" conclusion settle as Partial / undetermined; multimodal inline path still Completes.
+- **Whole-device snapshot binds the triggering report** (NM-389): collection prefers trigger field value / report timestamp over absolute latest so A-triggered runs keep A's frame after B lands.
 - **Text-protocol calls honor `filtered_tools`**: invent-and-block still records when judgment strips web tools; Judgment same-batch vision+send and ViaVisionTool blind send are denied until vision succeeds.
 - **Overflow retries rebuild `LlmInput`**: context-overflow compact no longer resends the pre-compact prompt; Focused/Free string fields truncate instead of dumping raw base64 into the prompt.
 - **Permanent event failures keep their cooldown**: only transport/timeout/rate-limit clears the 60s dedup key for replay.
@@ -45,6 +47,7 @@ Post-`v1.3.3`: whole-device event snapshots + vision `Partial`, Chat agent creat
 
 ### Test
 - Judgment gate: mid-loop vision-failed deny, same-batch / blind ViaVisionTool blocks, invent-block after web filter, invoke Partial status string.
+- ViaVisionTool zero-call / non-vision-only "未发现人员" → Partial; multimodal inline still Completes; whole-device A-then-B bind keeps A's frame.
 - Partial / input_summary / monitor-analyst warning mapping; CLI/API judgment×tools hard conflicts; summarization trim + inject dedupe; frontend retry 503 outcomeUnknown.
 - `python3 scripts/extract_changelog.py --version 1.3.4 --check` gates this section.
 
