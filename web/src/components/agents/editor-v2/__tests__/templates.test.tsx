@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   seedDailyBrief,
   seedScheduledPatrol,
+  seedMeterInspect,
   seedEventReview,
   inferTemplateId,
   TASK_TEMPLATES,
@@ -12,11 +13,16 @@ import {
 import { emptyDraft } from '../defaults'
 
 describe('task templates', () => {
-  it('exports three featured templates', () => {
+  it('exports working-only presets (no disabled stubs)', () => {
     expect(TASK_TEMPLATES.map((t) => t.id)).toEqual([
       'daily_brief',
-      'scheduled_patrol',
+      'meter_inspect',
       'event_review',
+      'weekly',
+      'shift',
+      'patrol',
+      'qa',
+      'custom',
     ])
   })
 
@@ -32,7 +38,13 @@ describe('task templates', () => {
     expect(d.preset).toBe('daily_brief')
   })
 
-  it('patrol seeds hourly interval + tools disabled', () => {
+  it('meter inspect seeds interval + tools disabled', () => {
+    const d = seedMeterInspect()
+    expect(d.trigger).toEqual({ kind: 'interval', every_secs: 15 * 60 })
+    expect(d.tool_policy).toBe('disabled')
+  })
+
+  it('scheduled patrol alias seeds hourly interval + tools disabled', () => {
     const d = seedScheduledPatrol()
     expect(d.trigger).toEqual({ kind: 'interval', every_secs: 3600 })
     expect(d.tool_policy).toBe('disabled')
@@ -55,7 +67,7 @@ describe('task templates', () => {
     expect(inferTemplateId({ kind: 'cron', expr: '0 8 * * *', timezone: 'Asia/Shanghai' })).toBe(
       'daily_brief',
     )
-    expect(inferTemplateId({ kind: 'interval', every_secs: 600 })).toBe('scheduled_patrol')
+    expect(inferTemplateId({ kind: 'interval', every_secs: 600 })).toBe('meter_inspect')
     expect(inferTemplateId({ kind: 'event', filter: {} })).toBe('event_review')
   })
 })

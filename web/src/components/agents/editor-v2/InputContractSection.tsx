@@ -74,7 +74,6 @@ export function InputContractSection({ value, onChange, className }: InputContra
     <EditorSection
       title={t('editorV2.input.title')}
       meta={t('editorV2.input.count', { count: requirements.length })}
-      description={t('editorV2.input.sectionHint')}
       className={cn(className)}
       data-section="input"
       actions={

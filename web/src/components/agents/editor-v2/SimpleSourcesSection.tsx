@@ -2,7 +2,7 @@
  * Plain-language source picker — devices + extensions as chips.
  * Writes InputRequirement entries with sensible freshness defaults.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -91,8 +91,6 @@ export function SimpleSourcesSection({
     }
   }, [])
 
-  const selectedCount = useMemo(() => requirements.length, [requirements])
-
   const toggleDevice = (device: Device) => {
     const id = device.device_id || device.id
     if (isDeviceSelected(requirements, id)) {
@@ -135,10 +133,6 @@ export function SimpleSourcesSection({
 
   return (
     <div className={cn('space-y-4', className)} data-section="sources-simple">
-      <p className="text-xs text-muted-foreground">
-        {t('editorV2.sources.selected', { count: selectedCount })}
-      </p>
-
       {noCatalog ? (
         <p className="text-sm text-muted-foreground">{t('editorV2.sources.emptyCatalog')}</p>
       ) : (

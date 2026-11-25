@@ -54,14 +54,9 @@ export function SimpleNotifySection({ value, onChange, className }: SimpleNotify
   return (
     <div className={cn('space-y-4', className)} data-section="notify-simple">
       <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5">
-        <div className="min-w-0 space-y-0.5">
-          <Label htmlFor="simple-notify-complete" className="text-sm font-medium">
-            {t('editorV2.notifySimple.onComplete')}
-          </Label>
-          <p className="text-xs text-muted-foreground">
-            {t('editorV2.notifySimple.onCompleteDesc')}
-          </p>
-        </div>
+        <Label htmlFor="simple-notify-complete" className="text-sm font-medium">
+          {t('editorV2.notifySimple.onComplete')}
+        </Label>
         <Switch
           id="simple-notify-complete"
           checked={!!policy.on_complete}
@@ -70,14 +65,9 @@ export function SimpleNotifySection({ value, onChange, className }: SimpleNotify
       </div>
 
       <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5">
-        <div className="min-w-0 space-y-0.5">
-          <Label htmlFor="simple-notify-failure" className="text-sm font-medium">
-            {t('editorV2.notifySimple.onFailure')}
-          </Label>
-          <p className="text-xs text-muted-foreground">
-            {t('editorV2.notifySimple.onFailureDesc')}
-          </p>
-        </div>
+        <Label htmlFor="simple-notify-failure" className="text-sm font-medium">
+          {t('editorV2.notifySimple.onFailure')}
+        </Label>
         <Switch
           id="simple-notify-failure"
           checked={!!policy.on_failure}

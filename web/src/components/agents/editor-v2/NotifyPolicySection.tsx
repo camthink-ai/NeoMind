@@ -37,24 +37,19 @@ export function normalizeNotify(value?: NotifyPolicy | null): NotifyPolicy {
 function FlagRow({
   id,
   label,
-  description,
   checked,
   onCheckedChange,
 }: {
   id: string
   label: string
-  description: string
   checked: boolean
   onCheckedChange: (v: boolean) => void
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 rounded-md border border-border px-3 py-2.5">
-      <div className="min-w-0 space-y-0.5">
-        <Label htmlFor={id} className="text-sm font-medium text-foreground">
-          {label}
-        </Label>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
+    <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5">
+      <Label htmlFor={id} className="text-sm font-medium text-foreground">
+        {label}
+      </Label>
       <Switch id={id} checked={checked} onCheckedChange={onCheckedChange} />
     </div>
   )
@@ -71,14 +66,10 @@ export function NotifyPolicySection({ value, onChange, className }: NotifyPolicy
   return (
     <EditorSection
       title={t('editorV2.notify.title')}
-      description={t('editorV2.notify.sectionHint')}
       className={cn(className)}
       data-section="notify"
     >
-      <FormField
-        label={t('editorV2.notify.channels')}
-        helpText={t('editorV2.notify.channelsHint')}
-      >
+      <FormField label={t('editorV2.notify.channels')}>
         <Input
           value={policy.channels.join(', ')}
           onChange={(e) =>
@@ -98,28 +89,24 @@ export function NotifyPolicySection({ value, onChange, className }: NotifyPolicy
         <FlagRow
           id="notify-on-complete"
           label={t('editorV2.notify.onComplete')}
-          description={t('editorV2.notify.onCompleteDesc')}
           checked={!!policy.on_complete}
           onCheckedChange={(on_complete) => patch({ on_complete })}
         />
         <FlagRow
           id="notify-on-alert"
           label={t('editorV2.notify.onAlert')}
-          description={t('editorV2.notify.onAlertDesc')}
           checked={!!policy.on_alert}
           onCheckedChange={(on_alert) => patch({ on_alert })}
         />
         <FlagRow
           id="notify-on-failure"
           label={t('editorV2.notify.onFailure')}
-          description={t('editorV2.notify.onFailureDesc')}
           checked={!!policy.on_failure}
           onCheckedChange={(on_failure) => patch({ on_failure })}
         />
         <FlagRow
           id="notify-pending"
           label={t('editorV2.notify.pendingConfirmation')}
-          description={t('editorV2.notify.pendingConfirmationDesc')}
           checked={!!policy.pending_confirmation}
           onCheckedChange={(pending_confirmation) => patch({ pending_confirmation })}
         />

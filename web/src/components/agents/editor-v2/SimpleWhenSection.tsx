@@ -85,7 +85,7 @@ export function SimpleWhenSection({ value, onChange, className }: SimpleWhenSect
       </FormField>
 
       {mode === 'daily' && value.kind === 'cron' && (
-        <FormField label={t('editorV2.when.hour')} helpText={t('editorV2.when.hourHint')}>
+        <FormField label={t('editorV2.when.hour')}>
           <Select
             value={String(hourFromCron(value.expr))}
             onValueChange={(h) =>
@@ -111,10 +111,7 @@ export function SimpleWhenSection({ value, onChange, className }: SimpleWhenSect
       )}
 
       {mode === 'interval' && value.kind === 'interval' && (
-        <FormField
-          label={t('editorV2.when.everyMinutes')}
-          helpText={t('editorV2.when.everyMinutesHint')}
-        >
+        <FormField label={t('editorV2.when.everyMinutes')}>
           <Input
             type="number"
             min={1}
@@ -128,13 +125,6 @@ export function SimpleWhenSection({ value, onChange, className }: SimpleWhenSect
             }
           />
         </FormField>
-      )}
-
-      {mode === 'event' && (
-        <p className="text-sm text-muted-foreground">{t('editorV2.when.eventHint')}</p>
-      )}
-      {mode === 'manual' && (
-        <p className="text-sm text-muted-foreground">{t('editorV2.when.manualHint')}</p>
       )}
     </div>
   )

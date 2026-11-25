@@ -820,19 +820,30 @@
     "prompt": "任务说明",
     "templates": {
       "title": "任务类型",
-      "hint": "选一个起点，会预填运行方式与安全默认值（工具关闭）。",
       "pickFirst": "请先选择一种任务类型。",
       "daily_brief": {
-        "name": "每日简报",
-        "desc": "每天固定时间汇总，适合天气、电价、日报。"
+        "name": "每日简报"
       },
-      "scheduled_patrol": {
-        "name": "定时巡检",
-        "desc": "按间隔检查设备或扩展数据。"
+      "meter_inspect": {
+        "name": "数据监控"
       },
       "event_review": {
-        "name": "事件复核",
-        "desc": "有匹配事件时再审一眼。"
+        "name": "事件复核"
+      },
+      "weekly": {
+        "name": "周报"
+      },
+      "shift": {
+        "name": "短周期巡检"
+      },
+      "patrol": {
+        "name": "定时巡检"
+      },
+      "qa": {
+        "name": "数据问答"
+      },
+      "custom": {
+        "name": "自定义"
       }
     },
     "when": {
@@ -858,7 +869,7 @@
       "selected": "已选 {{count}} 个来源",
       "devices": "设备",
       "extensions": "扩展",
-      "emptyCatalog": "暂无设备或扩展。可先接入设备，或之后在高级中手动添加。"
+      "emptyCatalog": "暂无设备或扩展"
     },
     "notifySimple": {
       "title": "通知（可选）",
@@ -868,7 +879,7 @@
       "onFailure": "失败时通知",
       "onFailureDesc": "运行失败时提醒",
       "channels": "通知通道",
-      "noChannels": "还没有通道 — 可到消息页配置。"
+      "noChannels": "暂无通道"
     },
     "planLine": {
       "label": "将按：",

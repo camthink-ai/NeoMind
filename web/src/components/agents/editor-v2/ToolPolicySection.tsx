@@ -52,11 +52,10 @@ export function ToolPolicySection({ value, onChange, className }: ToolPolicySect
   return (
     <EditorSection
       title={t('editorV2.tools.title')}
-      description={t('editorV2.tools.sectionHint')}
       className={cn(className)}
       data-section="tool-policy"
     >
-      <FormField label={t('editorV2.tools.mode')} helpText={t('editorV2.tools.hint')}>
+      <FormField label={t('editorV2.tools.mode')}>
         <Select value={mode} onValueChange={(v) => setMode(v as PolicyMode)}>
           <SelectTrigger className="h-10">
             <SelectValue />
@@ -70,10 +69,7 @@ export function ToolPolicySection({ value, onChange, className }: ToolPolicySect
       </FormField>
 
       {mode === 'scoped' && (
-        <FormField
-          label={t('editorV2.tools.allowedTools')}
-          helpText={t('editorV2.tools.allowedToolsHint')}
-        >
+        <FormField label={t('editorV2.tools.allowedTools')}>
           <Input
             value={toolsText(value)}
             onChange={(e) => {

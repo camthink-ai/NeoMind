@@ -86,11 +86,10 @@ export function LiveSummaryPanel({ draft, templateId, className }: LiveSummaryPa
       )}
       data-section="live-summary"
     >
-      <header className="space-y-1">
+      <header>
         <h2 className="text-sm font-semibold tracking-tight text-foreground">
           {t('editorV2.summary.title')}
         </h2>
-        <p className="text-xs text-muted-foreground">{t('editorV2.summary.hint')}</p>
       </header>
 
       <PlanConfirmLine draft={draft} className="bg-card" />

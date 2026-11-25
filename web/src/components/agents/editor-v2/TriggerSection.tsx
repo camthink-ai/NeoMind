@@ -57,7 +57,6 @@ export function TriggerSection({ value, onChange, className, first }: TriggerSec
     <EditorSection
       first={first}
       title={t('editorV2.trigger.title')}
-      description={t('editorV2.trigger.sectionHint')}
       className={cn(className)}
       data-section="trigger"
     >
@@ -77,10 +76,7 @@ export function TriggerSection({ value, onChange, className, first }: TriggerSec
 
       {value.kind === 'cron' && (
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField
-            label={t('editorV2.trigger.expr')}
-            helpText={t('editorV2.trigger.exprHint')}
-          >
+          <FormField label={t('editorV2.trigger.expr')}>
             <Input
               value={value.expr}
               onChange={(e) => onChange({ ...value, expr: e.target.value })}
@@ -88,10 +84,7 @@ export function TriggerSection({ value, onChange, className, first }: TriggerSec
               className="font-mono text-sm"
             />
           </FormField>
-          <FormField
-            label={t('editorV2.trigger.timezone')}
-            helpText={t('editorV2.trigger.timezoneHint')}
-          >
+          <FormField label={t('editorV2.trigger.timezone')}>
             <Input
               value={value.timezone}
               onChange={(e) => onChange({ ...value, timezone: e.target.value })}
@@ -115,14 +108,6 @@ export function TriggerSection({ value, onChange, className, first }: TriggerSec
             }
           />
         </FormField>
-      )}
-
-      {value.kind === 'manual' && (
-        <p className="text-sm text-muted-foreground">{t('editorV2.trigger.manualHint')}</p>
-      )}
-
-      {value.kind === 'event' && (
-        <p className="text-sm text-muted-foreground">{t('editorV2.trigger.eventHint')}</p>
       )}
     </EditorSection>
   )

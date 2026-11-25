@@ -7,7 +7,6 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, RefreshCw, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { textNano } from '@/design-system/tokens/typography'
 import { cn } from '@/lib/utils'
 import { agentsApi } from '@/lib/api/agents'
 import type { AgentSpecDraft, EffectivePlan, ToolPolicy } from '@/types'
@@ -98,9 +97,6 @@ export function EffectivePlanPreview({
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {t('editorV2.planPreview.title')}
           </h3>
-          <p className={cn('mt-0.5 text-muted-foreground', textNano)}>
-            {t('editorV2.planPreview.hint')}
-          </p>
         </div>
         <Button
           type="button"

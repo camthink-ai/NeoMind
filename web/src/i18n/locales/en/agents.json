@@ -820,19 +820,30 @@
     "prompt": "Mission",
     "templates": {
       "title": "Task type",
-      "hint": "A starting point that prefills schedule and safe defaults (tools off).",
       "pickFirst": "Pick a task type to continue.",
       "daily_brief": {
-        "name": "Daily brief",
-        "desc": "Runs at a fixed time each day — weather, tariff, status digests."
+        "name": "Daily brief"
       },
-      "scheduled_patrol": {
-        "name": "Scheduled patrol",
-        "desc": "Checks devices or extensions on an interval."
+      "meter_inspect": {
+        "name": "Data monitor"
       },
       "event_review": {
-        "name": "Event review",
-        "desc": "Takes a second look when a matching event fires."
+        "name": "Event review"
+      },
+      "weekly": {
+        "name": "Weekly report"
+      },
+      "shift": {
+        "name": "Shift check"
+      },
+      "patrol": {
+        "name": "Patrol"
+      },
+      "qa": {
+        "name": "Data Q&A"
+      },
+      "custom": {
+        "name": "Custom"
       }
     },
     "when": {
@@ -858,7 +869,7 @@
       "selected": "{{count}} sources selected",
       "devices": "Devices",
       "extensions": "Extensions",
-      "emptyCatalog": "No devices or extensions yet. Add some, or configure sources under Advanced."
+      "emptyCatalog": "No devices or extensions yet"
     },
     "notifySimple": {
       "title": "Notify (optional)",
@@ -868,7 +879,7 @@
       "onFailure": "Notify on failure",
       "onFailureDesc": "Alert when a run fails",
       "channels": "Channels",
-      "noChannels": "No channels yet — configure them on the Messages page."
+      "noChannels": "No channels yet"
     },
     "planLine": {
       "label": "Will run:",
