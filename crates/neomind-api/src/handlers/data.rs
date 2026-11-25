@@ -296,21 +296,18 @@ async fn collect_extension_sources_parallel(state: &ServerState) -> Vec<UnifiedD
 /// per field, id `ai:{agent_id}:{field}` — exactly how the executor publishes
 /// them, so the dashboard picker binds to the live namespace.
 async fn collect_ai_sources(state: &ServerState, sources: &mut Vec<UnifiedDataSourceInfo>) {
-    let agents = state
-        .agents
-        .agent_store
-        .query_agents(neomind_storage::AgentFilter::default())
-        .await
-        .unwrap_or_default();
-
-    for agent in agents {
+    // V2-only: read AgentSpec.output from the hosted runtime (no AiAgent map).
+    let Ok(rt) = state.require_clean_slate().await else {
+        return;
+    };
+    for (agent, _plan) in rt.list() {
         // Any agent with an output contract, not just the L0 ones: since M2-2 a
         // reasoning agent publishes its fields too, and a field the picker
         // refuses to list is a field nothing can bind to.
-        let Some(schema) = agent.output_schema else {
+        if agent.output.fields.is_empty() {
             continue;
-        };
-        for field in schema {
+        }
+        for field in &agent.output.fields {
             sources.push(UnifiedDataSourceInfo {
                 id: format!("ai:{}:{}", agent.id, field.name),
                 source_type: "ai".to_string(),
@@ -322,12 +319,8 @@ async fn collect_ai_sources(state: &ServerState, sources: &mut Vec<UnifiedDataSo
                 // semantics, often a sentence: it rides in `description`
                 // (picker tooltips) instead of masquerading as a label.
                 field_display_name: field.name.clone(),
-                data_type: match field.field_type {
-                    neomind_storage::OperatorFieldType::Number => "number".to_string(),
-                    neomind_storage::OperatorFieldType::Boolean => "boolean".to_string(),
-                    _ => "string".to_string(),
-                },
-                unit: field.unit.clone(),
+                data_type: "string".to_string(),
+                unit: None,
                 description: field.description.clone(),
                 current_value: None,
                 last_update: None,

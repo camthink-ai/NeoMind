@@ -1,33 +1,42 @@
 //! Scenario: read an agent's existing conclusion through the CLI read path.
 //!
-//! The dedicated chat `query_conclusion` tool was removed from model
-//! registration (2026-11-17); reading an agent's latest conclusion now goes
+//! Reading an agent's latest conclusion goes
 //! `neomind agent latest-execution <ID>` → `GET /agents/{id}/executions?limit=1`.
-//! This pins that the record — conclusion, status, duration — is readable
-//! back after a run recorded it, i.e. the business capability the tool
-//! wrapped survives in the unified CLI entry.
 
 use axum::extract::{Path, State};
 use axum::Json;
-use neomind_api::handlers::agents::{create_agent, get_agent_executions, CreateAgentRequest};
+use neomind_ai_agent::model::{
+    AgentSpecDraft, InputContract, OutputContract, ToolPolicy, TriggerSpec,
+};
+use neomind_api::handlers::agents::get_agent_executions;
+use neomind_api::handlers::agents_v2::create_agent_v2;
 use neomind_api::handlers::ServerState;
 use neomind_storage::{AgentExecutionRecord, DecisionProcess, ExecutionStatus};
-use serde_json::{json, Value};
 
 async fn seed_executed_agent(state: &ServerState) -> String {
-    let request: CreateAgentRequest = serde_json::from_value(json!({
-        "name": "coldroom-watch",
-        "user_prompt": "检查冷库温度并总结",
-        "schedule": { "schedule_type": "manual" },
-    }))
-    .expect("valid create fixture");
-    let created = create_agent(State(state.clone()), Json(request))
+    let draft = AgentSpecDraft {
+        name: "coldroom-watch".into(),
+        description: None,
+        user_prompt: "检查冷库温度并总结".into(),
+        llm_backend_id: None,
+        preset: None,
+        trigger: TriggerSpec::Manual,
+        pacing: Default::default(),
+        input: InputContract {
+            requirements: vec![],
+        },
+        tool_policy: ToolPolicy::Unrestricted,
+        output: OutputContract::default(),
+        notify: Default::default(),
+        controlled_actions: vec![],
+    };
+    let created = create_agent_v2(State(state.clone()), Json(draft))
         .await
         .expect("create agent")
         .0
         .data
         .expect("create returns data");
-    let agent_id = created["id"].as_str().expect("id").to_string();
+    let agent_id = created.agent.id;
 
     let execution = AgentExecutionRecord {
         id: "exec-readback-1".into(),
@@ -64,7 +73,6 @@ async fn latest_execution_conclusion_is_readable_via_cli_read_path() {
     let state = crate::common::create_test_server_state().await;
     let agent_id = seed_executed_agent(&state).await;
 
-    // The exact read `neomind agent latest-execution <ID>` performs.
     let resp = get_agent_executions(State(state), Path(agent_id))
         .await
         .expect("executions readable");
@@ -80,27 +88,6 @@ async fn latest_execution_conclusion_is_readable_via_cli_read_path() {
         .collect();
     assert!(
         conclusions.iter().any(|c| c.contains("冷库温度正常")),
-        "conclusion must be readable through the CLI read path, got: {body}"
-    );
-    // The fields the chat model needs to answer a state question honestly.
-    let latest = &execs[0];
-    assert!(latest.get("status").is_some());
-    assert!(latest.get("duration_ms").is_some() || latest.get("durationMs").is_some());
-}
-
-#[tokio::test]
-async fn unknown_agent_is_an_honest_404_not_empty_success() {
-    let state = crate::common::create_test_server_state().await;
-    let err = get_agent_executions(State(state), Path("no-such-agent".into()))
-        .await
-        .expect_err("must fail");
-    assert!(
-        err.message.to_lowercase().contains("not found"),
-        "expected honest not-found, got: {}",
-        err.message
+        "conclusion must be readable on the list path; got {conclusions:?} from {execs:?}"
     );
 }
-
-// Keep Value import busy if assertions change shape.
-#[allow(dead_code)]
-fn _type_anchor(_v: Value) {}

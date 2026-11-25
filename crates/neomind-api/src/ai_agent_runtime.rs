@@ -182,6 +182,28 @@ impl HostedAiAgentRuntime {
         Ok((spec, plan))
     }
 
+    /// Runtime status for Chat/list (no AiAgent map).
+    pub fn runtime_status(&self, id: &str) -> Option<AgentStatus> {
+        self.durable.mem.get_runtime(id).ok().map(|r| r.status)
+    }
+
+    /// Runtime stats snapshot for Chat/list DTOs.
+    pub fn runtime_stats_json(&self, id: &str) -> serde_json::Value {
+        match self.durable.mem.get_runtime(id) {
+            Ok(rt) => serde_json::json!({
+                "total_runs": rt.stats.total_runs,
+                "successful_runs": rt.stats.successful_runs,
+                "failed_runs": rt.stats.failed_runs,
+                "partial_runs": rt.stats.partial_runs,
+                "consecutive_failures": rt.stats.consecutive_failures,
+                "last_execution_at": rt.stats.last_execution_at,
+                "last_execution_id": rt.stats.last_execution_id,
+                "error_message": rt.error_message,
+            }),
+            Err(_) => serde_json::json!({}),
+        }
+    }
+
     pub fn update(
         &self,
         id: &str,

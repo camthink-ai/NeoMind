@@ -13,11 +13,15 @@ use serde_json::json;
 /// UUIDs; users and the AI agent naturally refer to them by name.
 async fn resolve_agent_id(client: &ApiClient, id_or_name: &str) -> Result<String> {
     // Fast path: already a valid id.
-    if client.get(&format!("/agents/{}", id_or_name)).await.is_ok() {
+    if client
+        .get(&format!("/agents/v2/{}", id_or_name))
+        .await
+        .is_ok()
+    {
         return Ok(id_or_name.to_string());
     }
     // Slow path: list + match by name.
-    if let Ok(data) = client.get("/agents").await {
+    if let Ok(data) = client.get("/agents/v2").await {
         let agents = data
             .as_array()
             .or_else(|| data.get("agents").and_then(|v| v.as_array()))
@@ -30,13 +34,14 @@ async fn resolve_agent_id(client: &ApiClient, id_or_name: &str) -> Result<String
         if let Some(agents) = agents {
             let want = id_or_name.to_lowercase();
             for a in agents {
-                let name_matches = a
+                let agent = a.get("agent").unwrap_or(a);
+                let name_matches = agent
                     .get("name")
                     .and_then(|n| n.as_str())
                     .map(|s| s.to_lowercase() == want)
                     .unwrap_or(false);
                 if name_matches {
-                    if let Some(id) = a.get("id").and_then(|i| i.as_str()) {
+                    if let Some(id) = agent.get("id").and_then(|i| i.as_str()) {
                         return Ok(id.to_string());
                     }
                 }
@@ -51,7 +56,7 @@ async fn resolve_agent_id(client: &ApiClient, id_or_name: &str) -> Result<String
 /// Returns id, name, status, schedule type, execution mode, and stats per agent.
 /// Full agent config is available via `neomind agent get <id>`.
 pub async fn list_agents(client: &ApiClient) -> Result<CliResponse> {
-    let data = client.get("/agents").await?;
+    let data = client.get("/agents/v2").await?;
 
     let agents = data
         .as_array()
@@ -72,10 +77,11 @@ pub async fn list_agents(client: &ApiClient) -> Result<CliResponse> {
     let summary: Vec<serde_json::Value> = agents
         .iter()
         .map(|a| {
+            let a = a.get("agent").unwrap_or(a);
             // No optimistic defaults — missing fields stay null / absent.
             let schedule_type = a
-                .get("schedule")
-                .and_then(|s| s.get("schedule_type"))
+                .get("trigger")
+                .and_then(|t| t.get("kind"))
                 .cloned()
                 .or_else(|| a.get("schedule_type").cloned())
                 .unwrap_or(serde_json::Value::Null);
@@ -111,7 +117,7 @@ pub async fn list_agents(client: &ApiClient) -> Result<CliResponse> {
 /// Get agent by ID
 pub async fn get_agent(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let id = resolve_agent_id(client, id).await?;
-    let data = client.get(&format!("/agents/{}", id)).await?;
+    let data = client.get(&format!("/agents/v2/{}", id)).await?;
     Ok(CliResponse::success(data, "Agent retrieved"))
 }
 
@@ -937,8 +943,9 @@ pub async fn update_agent(
     // existing notify so judgment×no-tools / judgment×no-shell still conflict.
     let existing_notify_owned;
     let notify_for_tools = if (no_tools || allowed_tools.is_some()) && notify.is_none() {
-        let existing = client.get(&format!("/agents/{}", id)).await?;
-        existing_notify_owned = existing.get("notify").cloned().map(|v| v.to_string());
+        let existing = client.get(&format!("/agents/v2/{}", id)).await?;
+        let agent = existing.get("agent").unwrap_or(&existing);
+        existing_notify_owned = agent.get("notify").cloned().map(|v| v.to_string());
         existing_notify_owned.as_deref()
     } else {
         notify
@@ -986,11 +993,28 @@ pub async fn update_agent(
         }
         body["schedule"] = schedule;
     } else if event_filter.is_some() || timezone.is_some() {
-        let existing = client.get(&format!("/agents/{}", id)).await?;
-        let mut schedule = existing
-            .get("schedule")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
+        let existing = client.get(&format!("/agents/v2/{}", id)).await?;
+        let agent = existing.get("agent").unwrap_or(&existing);
+        // Reconstruct a v1-ish schedule object from TriggerSpec for partial merge.
+        let mut schedule = match agent.get("trigger") {
+            Some(t) if t.get("kind").and_then(|k| k.as_str()) == Some("interval") => json!({
+                "schedule_type": "interval",
+                "interval_seconds": t.get("every_secs").cloned().unwrap_or(json!(300)),
+            }),
+            Some(t) if t.get("kind").and_then(|k| k.as_str()) == Some("cron") => json!({
+                "schedule_type": "cron",
+                "cron_expression": t.get("expr").cloned().unwrap_or(json!("0 * * * *")),
+                "timezone": t.get("timezone").cloned().unwrap_or(json!("UTC")),
+            }),
+            Some(t) if t.get("kind").and_then(|k| k.as_str()) == Some("manual") => json!({
+                "schedule_type": "manual",
+            }),
+            Some(t) => json!({
+                "schedule_type": "event",
+                "event_filter": t.get("filter").cloned().unwrap_or(json!({})),
+            }),
+            None => json!({ "schedule_type": "event" }),
+        };
         if let Some(ef) = event_filter {
             schedule["event_filter"] = json!(ef);
         }
@@ -1084,7 +1108,78 @@ pub async fn update_agent(
         body["commands"] = parsed;
     }
 
-    let data = client.put(&format!("/agents/{}", id), &body).await?;
+    // Compile remaining v1 keys into an AgentSpecPatch for PUT /agents/v2/:id.
+    let mut patch = json!({});
+    if let Some(v) = body.get("name") {
+        patch["name"] = v.clone();
+    }
+    if let Some(v) = body.get("description") {
+        patch["description"] = v.clone();
+    }
+    if let Some(v) = body.get("user_prompt") {
+        patch["user_prompt"] = v.clone();
+    }
+    if let Some(v) = body.get("llm_backend_id") {
+        patch["llm_backend_id"] = v.clone();
+    }
+    if let Some(v) = body.get("tool_policy") {
+        patch["tool_policy"] = v.clone();
+    }
+    if let Some(v) = body.get("input") {
+        patch["input"] = v.clone();
+    }
+    if let Some(v) = body.get("notify") {
+        patch["notify"] = notify_for_v2_draft(v.clone());
+    }
+    // tool_config → tool_policy when explicit tool_policy absent
+    if patch.get("tool_policy").is_none() {
+        if let Some(tc) = body.get("tool_config") {
+            if tc.get("enabled") == Some(&json!(false)) {
+                patch["tool_policy"] = json!("disabled");
+            } else if let Some(list) = tc.get("allowed_tools").and_then(|a| a.as_array()) {
+                if !list.is_empty() {
+                    patch["tool_policy"] = json!({
+                        "scoped": { "allowed_tools": list, "allowed_commands": [] }
+                    });
+                }
+            }
+        }
+    }
+    if let Some(sched) = body.get("schedule") {
+        let st = sched
+            .get("schedule_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("event");
+        let trigger = match st {
+            "interval" => json!({
+                "kind": "interval",
+                "every_secs": sched.get("interval_seconds").and_then(|v| v.as_u64()).unwrap_or(300)
+            }),
+            "cron" => json!({
+                "kind": "cron",
+                "expr": sched.get("cron_expression").and_then(|v| v.as_str()).unwrap_or("0 * * * *"),
+                "timezone": sched.get("timezone").and_then(|v| v.as_str()).unwrap_or("UTC"),
+            }),
+            "manual" => json!({ "kind": "manual" }),
+            _ => json!({
+                "kind": "event",
+                "filter": sched.get("event_filter").cloned().unwrap_or(json!({}))
+            }),
+        };
+        patch["trigger"] = trigger;
+    }
+    if let Some(schema) = body.get("output_schema").and_then(|v| v.as_array()) {
+        let fields: Vec<_> = schema
+            .iter()
+            .filter_map(|f| {
+                let name = f.get("name")?.as_str()?;
+                Some(json!({ "name": name, "depends_on": [], "description": f.get("description") }))
+            })
+            .collect();
+        patch["output"] = json!({ "fields": fields, "publish": body.get("execution_mode") == Some(&json!("structured")) });
+    }
+
+    let data = client.put(&format!("/agents/v2/{}", id), &patch).await?;
     Ok(CliResponse::success(
         data.clone(),
         message_with_warnings("Agent updated".to_string(), &data),

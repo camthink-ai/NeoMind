@@ -74,23 +74,25 @@ async fn seed_rule_transform_agent(state: &ServerState) -> (String, String, Stri
         .await
         .unwrap();
 
-    let body = serde_json::json!({
-        "name": "巡检代理",
-        "user_prompt": "巡检",
-        "schedule": { "schedule_type": "manual" },
-        "execution_mode": "free",
-    });
-    let request: neomind_api::handlers::agents::CreateAgentRequest =
-        serde_json::from_value(body).expect("valid agent fixture");
-    let agent_id = neomind_api::handlers::agents::create_agent(State(state.clone()), Json(request))
-        .await
-        .expect("create agent")
-        .0
-        .data
-        .expect("payload")["id"]
-        .as_str()
-        .expect("id")
-        .to_string();
+    let draft: neomind_ai_agent::model::AgentSpecDraft =
+        serde_json::from_value(serde_json::json!({
+            "name": "巡检代理",
+            "user_prompt": "巡检",
+            "trigger": { "kind": "manual" },
+            "input": { "requirements": [] },
+            "tool_policy": "unrestricted",
+            "output": { "fields": [], "publish": false },
+        }))
+        .expect("valid agent draft");
+    let agent_id =
+        neomind_api::handlers::agents_v2::create_agent_v2(State(state.clone()), Json(draft))
+            .await
+            .expect("create agent")
+            .0
+            .data
+            .expect("payload")
+            .agent
+            .id;
 
     (rule_id, "xf-avg".into(), agent_id)
 }
