@@ -396,10 +396,84 @@ function resolveInput(form: AgentEditorFormState, carry?: AgentSpecV2Carry): Inp
       return carry.input
     }
   }
-  // Old editor mutated resources without a full InputContract mapping —
-  // prefer carry/previous over inventing a lossy reconstruction.
+  // Resources changed (or no carry): build a best-effort InputContract so
+  // Chat/analyst create stubs can reach POST /agents/v2 without a silent empty input.
+  if (form.resources?.length) {
+    return resourcesToInput(form.resources)
+  }
   if (carry?.input) return carry.input
   return { requirements: [] }
+}
+
+/** Best-effort ResourceRequest[] → InputContract for V2 create/update stubs. */
+export function resourcesToInput(resources: ResourceRequest[] | undefined): InputContract {
+  if (!resources?.length) return { requirements: [] }
+  const requirements: InputRequirement[] = []
+  for (const [i, r] of resources.entries()) {
+    const req = resourceToRequirement(r, i)
+    if (req) requirements.push(req)
+  }
+  return { requirements }
+}
+
+function resourceToRequirement(r: ResourceRequest, index: number): InputRequirement | null {
+  const key = r.name || `r${index}`
+  const base = {
+    key,
+    params: (r.config as Record<string, unknown>) ?? {},
+    timeout_secs: 10,
+    result_type: 'structured_json' as const,
+    freshness: { kind: 'any' as const },
+    on_missing: 'report_stale' as const,
+  }
+  switch (r.resource_type) {
+    case 'device':
+      return { ...base, source: { kind: 'whole_device', device_id: r.resource_id } }
+    case 'metric': {
+      const [device_id, field] = r.resource_id.split(/:(.+)/)
+      return {
+        ...base,
+        source: {
+          kind: 'device_metric',
+          device_id: device_id || r.resource_id,
+          field: field || 'value',
+        },
+      }
+    }
+    case 'extension_metric':
+    case 'extension_tool': {
+      const id =
+        typeof r.config?.extension_id === 'string'
+          ? r.config.extension_id
+          : r.resource_id.replace(/^extension:/, '').split(':')[0]
+      return {
+        ...base,
+        source: { kind: 'extension_instance', id },
+        operation:
+          typeof r.config?.command_name === 'string'
+            ? r.config.command_name
+            : typeof r.config?.operation === 'string'
+              ? r.config.operation
+              : undefined,
+      }
+    }
+    case 'data_stream': {
+      const [agent_id, field] = r.resource_id.split(/:(.+)/)
+      return {
+        ...base,
+        source: {
+          kind: 'upstream_ai',
+          agent_id: agent_id || r.resource_id,
+          field: field || 'value',
+        },
+      }
+    }
+    case 'command':
+      // Commands become controlled_actions / tool allowlists, not input reads.
+      return null
+    default:
+      return { ...base, source: { kind: 'whole_device', device_id: r.resource_id } }
+  }
 }
 
 function resolveToolPolicy(form: AgentEditorFormState, carry?: AgentSpecV2Carry): ToolPolicy {

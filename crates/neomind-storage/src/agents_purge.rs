@@ -7,9 +7,8 @@
 use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 
-use crate::agents_v2::{
-    ensure_v2_tables, migrate_agents_v1_to_v2, table_exists_agents_v1, AgentStoreV2,
-};
+use crate::agents_migrate::migrate_agents_v1_to_v2;
+use crate::agents_v2::{ensure_v2_tables, table_exists_agents_v1, AgentStoreV2};
 use crate::Error;
 
 const RUNTIME_META_TABLE: TableDefinition<&str, &str> = TableDefinition::new("agent_runtime_meta");

@@ -14,7 +14,7 @@ use crate::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InventoryDisposition {
-    /// Safe to map with [`crate::agents_v2::map_agent_v1_to_v2`] as-is.
+    /// Safe to map with [`crate::agents_migrate::map_agent_v1_to_v2`] as-is.
     AutoMigrate,
     /// Needs human review (vision/SameReport, judgment, multi-tool, …).
     ManualFix,
