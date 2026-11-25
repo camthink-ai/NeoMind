@@ -578,19 +578,8 @@ fn collect_image_parts(
                 .unwrap_or("unknown")
         ));
 
-        // Try to get image URL first
-        if let Some(url) = d.values.get("image_url").and_then(|v| v.as_str()) {
-            if !url.is_empty() {
-                image_parts.push((
-                    d.source.clone(),
-                    d.data_type.clone(),
-                    ImageContent::Url(url.to_string()),
-                ));
-                continue;
-            }
-        }
-
-        // Fall back to base64 data
+        // Prefer bytes when present — relative `/api/images/…` is provenance
+        // only and must not displace base64 for remote/multimodal send.
         if let Some(base64) = d.values.get("image_base64").and_then(|v| v.as_str()) {
             if !base64.is_empty() {
                 // Prefer stored mime → fall back to magic-prefix
@@ -644,6 +633,7 @@ fn collect_image_parts(
                             d.data_type.clone(),
                             ImageContent::Base64(clean, mime.to_string()),
                         ));
+                        continue;
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -652,9 +642,19 @@ fn collect_image_parts(
                             error = %e,
                             "Skipping invalid base64 image data"
                         );
-                        continue;
                     }
                 }
+            }
+        }
+
+        // Absolute HTTP(S) only when no usable bytes were attached.
+        if let Some(url) = d.values.get("image_url").and_then(|v| v.as_str()) {
+            if url.starts_with("http://") || url.starts_with("https://") {
+                image_parts.push((
+                    d.source.clone(),
+                    d.data_type.clone(),
+                    ImageContent::Url(url.to_string()),
+                ));
             }
         }
     }

@@ -896,14 +896,19 @@ pub(crate) fn build_tool_messages(
                 .unwrap_or(false)
         })
         .filter_map(|d| {
-            // HTTP(S) image URL form → pass through as an image_url part.
+            // Prefer decodable bytes when present. Relative `/api/images/…`
+            // paths are provenance for local tools — remote VLMs cannot fetch
+            // them, so never let a non-empty relative URL skip base64.
+            if let Some((b64, mime)) = clean_collected_image_base64(d) {
+                return Some(ContentPart::image_base64(b64, mime));
+            }
+            // Absolute HTTP(S) only when we have no bytes to send.
             if let Some(url) = d.values.get("image_url").and_then(|v| v.as_str()) {
-                if !url.is_empty() {
+                if url.starts_with("http://") || url.starts_with("https://") {
                     return Some(ContentPart::image_url(url.to_string()));
                 }
             }
-            // base64 form → clean + validate (shared with bound_image_data_url).
-            clean_collected_image_base64(d).map(|(b64, mime)| ContentPart::image_base64(b64, mime))
+            None
         })
         .collect();
 
@@ -1384,6 +1389,54 @@ mod tests {
             build_tool_system_prompt(&agent, &[], None, &cfg, None, VisionExecutionPath::None);
         assert!(!prompt.contains("## Vision Path (IMPORTANT)"));
         assert!(!prompt.contains("**Images**:"));
+    }
+
+    /// Relative `/api/images/…` provenance must not displace fixture bytes in
+    /// the multimodal assemble path (NM-389): when both are present, the
+    /// ContentPart is base64 and round-trips to the original fill bytes.
+    #[test]
+    fn build_tool_messages_prefers_bytes_over_relative_image_url() {
+        let mut raw = vec![0xFF, 0xD8, 0xFF, 0xE0];
+        raw.extend(std::iter::repeat_n(b'A', 2048));
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&raw);
+        let path = "/api/images/test-device-001/image/frame_a.jpg";
+        let dc = DataCollected {
+            source: "device:cam:image_data".into(),
+            data_type: "image_data".into(),
+            values: serde_json::json!({
+                "_is_image": true,
+                "image_url": path,
+                "image_base64": b64,
+                "image_mime_type": "image/jpeg",
+                "value": path,
+            }),
+            timestamp: 1,
+        };
+        let msgs = build_tool_messages("sys", &[dc], true);
+        let user = msgs
+            .iter()
+            .find(|m| m.role == MessageRole::User)
+            .expect("user");
+        let parts = match &user.content {
+            Content::Parts(p) => p,
+            other => panic!("expected multimodal parts, got {other:?}"),
+        };
+        let image = parts.iter().find(|p| p.is_image()).expect("image part");
+        match image {
+            ContentPart::ImageBase64 { data, .. } => {
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(data)
+                    .expect("decode");
+                assert_eq!(
+                    decoded, raw,
+                    "assembled part must equal the fixture bytes exactly"
+                );
+            }
+            ContentPart::ImageUrl { url, .. } => {
+                panic!("must not send relative URL as the vision part: {url}");
+            }
+            ContentPart::Text { .. } => unreachable!(),
+        }
     }
 
     /// `bound_image_data_url` must turn a collected device image (base64 form)

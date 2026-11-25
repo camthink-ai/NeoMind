@@ -3479,6 +3479,7 @@ impl ServerState {
                         device_id,
                         metric,
                         value,
+                        timestamp,
                         is_virtual,
                         ..
                     } => {
@@ -3499,7 +3500,9 @@ impl ServerState {
                             continue;
                         }
                         if let Err(e) = executor
-                            .check_and_trigger_data_event("device", device_id, metric, &value)
+                            .check_and_trigger_data_event(
+                                "device", device_id, metric, &value, timestamp,
+                            )
                             .await
                         {
                             tracing::debug!("No agent triggered for device event: {}", e);
@@ -3509,6 +3512,7 @@ impl ServerState {
                         extension_id,
                         output_name,
                         value,
+                        timestamp,
                         ..
                     } => {
                         if let Err(e) = executor
@@ -3517,6 +3521,7 @@ impl ServerState {
                                 extension_id,
                                 output_name,
                                 &value,
+                                timestamp,
                             )
                             .await
                         {

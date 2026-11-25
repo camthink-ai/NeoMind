@@ -1215,7 +1215,7 @@ impl AgentExecutor {
             // The report is the input whenever it can be read; with no
             // storage to read it from, the event value is all there is.
             if let Some(input) = self
-                .device_report_snapshot(agent, &event_data.source.source_id)
+                .device_report_snapshot(agent, &event_data.source.source_id, Some(event_data))
                 .await?
             {
                 return Ok(input);
@@ -1437,7 +1437,7 @@ impl AgentExecutor {
     const REPORT_SKEW_SECS: i64 = 2;
 
     /// Input for a run whose trigger covers a WHOLE device: the device's
-    /// latest report.
+    /// report that matches the triggering event (NM-389).
     ///
     /// One uplink is split into one event per metric, and the first matching
     /// one starts the run. Building the run around that single event made a
@@ -1451,14 +1451,23 @@ impl AgentExecutor {
     /// uplink, images read by value, `_raw` left out once its fields are
     /// already split into metrics.
     ///
+    /// Binding (not "whatever is latest"): when `trigger` carries a field
+    /// value and/or report timestamp, the snapshot prefers that uplink —
+    /// matching the trigger value in storage, else the cluster around the
+    /// trigger timestamp. A later report B must not replace A's frame for
+    /// an A-triggered run. Manual "Run now" (empty field / unbound ts)
+    /// still means latest device state by product intent.
+    ///
     /// `None` when the report cannot be read at all (no time-series storage,
     /// nothing stored for the device): the event value is then all there is,
     /// and the caller falls back to it. A skip is reserved for a device that
-    /// does report a picture nobody can read.
+    /// does report a picture nobody can read, or when a bound trigger report
+    /// cannot be recovered after a newer uplink replaced "latest".
     async fn device_report_snapshot(
         &self,
         agent: &AiAgent,
         device_id: &str,
+        trigger: Option<&EventTriggerData>,
     ) -> AgentResult<Option<EventInput>> {
         let Some(storage) = self.time_series_storage.clone() else {
             return Ok(None);
@@ -1486,17 +1495,89 @@ impl AgentExecutor {
             return Ok(None);
         }
         let names: Vec<&str> = metrics.iter().map(String::as_str).collect();
-        let latest = storage
-            .query_latest_batch(&storage_key, &names)
-            .await
-            .unwrap_or_default();
-        let Some(report_ts) = latest.values().map(|point| point.timestamp).max() else {
-            return Ok(None);
+
+        let bound = self
+            .resolve_trigger_bound_report_ts(&storage, &storage_key, trigger)
+            .await;
+
+        // `image_anchor_ts`: for trigger-bound runs, timeseries images may
+        // only attach when their stamp equals this exact second (same-uplink
+        // identity). Nearest-within-±2s is not enough — that silently pulls
+        // B's frame onto A's scalar trigger (NM-389 review).
+        let (report_points, report_ts, binding, image_anchor_ts): (
+            Vec<(String, neomind_storage::timeseries::DataPoint)>,
+            i64,
+            &'static str,
+            Option<i64>,
+        ) = match bound {
+            Some(bound_ts) => {
+                let start = bound_ts - Self::REPORT_SKEW_SECS;
+                let end = bound_ts + Self::REPORT_SKEW_SECS;
+                let ranged = storage
+                    .query_range_batch(&storage_key, &names, start, end)
+                    .await
+                    .unwrap_or_default();
+                let mut points: Vec<(String, neomind_storage::timeseries::DataPoint)> = Vec::new();
+                for (name, result) in ranged {
+                    // Prefer the point closest to bound_ts within the window
+                    // (scalars / sidecar metrics). Images are filtered later
+                    // against `image_anchor_ts`.
+                    if let Some(point) = result
+                        .points
+                        .into_iter()
+                        .min_by_key(|p| (p.timestamp - bound_ts).unsigned_abs())
+                    {
+                        points.push((name, point));
+                    }
+                }
+                if points.is_empty() {
+                    return Ok(Some(EventInput::Skipped {
+                        code: "trigger_report_unavailable",
+                        detail: format!(
+                            "triggering report at ts={bound_ts} could not be recovered \
+                             (newer uplink may have replaced latest; per-frame patrol \
+                             should bind image_data)"
+                        ),
+                    }));
+                }
+                let report_ts = points
+                    .iter()
+                    .map(|(_, p)| p.timestamp)
+                    .max()
+                    .unwrap_or(bound_ts);
+                (points, report_ts, "trigger_bound", Some(bound_ts))
+            }
+            None => {
+                let latest = storage
+                    .query_latest_batch(&storage_key, &names)
+                    .await
+                    .unwrap_or_default();
+                let Some(report_ts) = latest.values().map(|point| point.timestamp).max() else {
+                    return Ok(None);
+                };
+                let points: Vec<(String, neomind_storage::timeseries::DataPoint)> = latest
+                    .into_iter()
+                    .filter(|(_, point)| {
+                        (point.timestamp - report_ts).abs() <= Self::REPORT_SKEW_SECS
+                    })
+                    .collect();
+                // Manual / unbound "latest" keeps cluster semantics.
+                (points, report_ts, "latest", None)
+            }
         };
 
-        let mut report: Vec<(&String, &neomind_storage::timeseries::DataPoint)> = latest
+        // Trigger-carried usable frame wins over any timeseries nearest-pick
+        // (same-second A/B overwrite leaves only B on disk for the metric key,
+        // but the event still holds A's URL/bytes).
+        let trigger_frame = trigger.and_then(|t| {
+            Self::trigger_carried_image_entry(device_id, t, image_anchor_ts.unwrap_or(report_ts))
+        });
+        let prefer_trigger_frame = trigger_frame.is_some();
+
+        let mut report: Vec<(&String, &neomind_storage::timeseries::DataPoint)> = report_points
             .iter()
             .filter(|(_, point)| (point.timestamp - report_ts).abs() <= Self::REPORT_SKEW_SECS)
+            .map(|(name, point)| (name, point))
             .collect();
         report.sort_by(|a, b| a.0.cmp(b.0));
 
@@ -1504,6 +1585,7 @@ impl AgentExecutor {
         let mut data = Vec::new();
         let mut seen_frames: Vec<String> = Vec::new();
         let mut unreadable_images = Vec::new();
+        let mut rejected_nearby_image = false;
         for (name, point) in &report {
             let name = name.as_str();
             // `_raw` is the uplink envelope; once its fields are metrics it
@@ -1523,8 +1605,46 @@ impl AgentExecutor {
             };
             match classify_image_value(name, &point.value) {
                 ImageValue::NotImage => data.push(entry),
-                ImageValue::Unreadable => unreadable_images.push(name.to_string()),
+                ImageValue::Unreadable => {
+                    if prefer_trigger_frame {
+                        // Trigger owns the frame; ignore timeseries unreadables.
+                        continue;
+                    }
+                    unreadable_images.push(name.to_string());
+                }
                 ImageValue::Extracted { url, base64, mime } => {
+                    if prefer_trigger_frame {
+                        // Do not let a later/overwritten timeseries image
+                        // replace the trigger-carried frame.
+                        continue;
+                    }
+                    if let Some(anchor) = image_anchor_ts {
+                        // Second-level time alone is not same-report identity.
+                        // Co-stamped report_id=A next to image B is also not
+                        // enough — the *image point* must itself prove it
+                        // belongs to A (URL/metadata embeds A, or a co-stamped
+                        // `_raw` envelope immutably pairs A with this image).
+                        let trigger_is_report_id = trigger
+                            .map(|t| is_report_id_metric(t.source.field.trim()))
+                            .unwrap_or(false);
+                        let trigger_id =
+                            trigger.and_then(|t| match trigger_value_as_json(&t.value) {
+                                serde_json::Value::String(s) if !s.is_empty() => Some(s),
+                                other => other.as_str().map(str::to_string),
+                            });
+                        let linked = trigger_is_report_id
+                            && point.timestamp == anchor
+                            && trigger_id.as_ref().is_some_and(|id| {
+                                report_id_values_at(&report, anchor)
+                                    .iter()
+                                    .any(|v| v.as_str() == Some(id.as_str()))
+                                    && image_point_belongs_to_report_id(point, id, &report)
+                            });
+                        if !linked {
+                            rejected_nearby_image = true;
+                            continue;
+                        }
+                    }
                     // One frame often arrives under several metrics
                     // (`image_data`, `__webhook_image`, …): attach it once.
                     let frame = url
@@ -1571,7 +1691,7 @@ impl AgentExecutor {
             }
         }
 
-        let images = data
+        let mut images = data
             .iter()
             .filter(|d| {
                 d.values
@@ -1580,8 +1700,25 @@ impl AgentExecutor {
                     .unwrap_or(false)
             })
             .count();
-        // The report carries a picture and none of it could be read: a blind
-        // run would only invent findings.
+        if let Some(frame) = trigger_frame {
+            data.push(frame);
+            images = 1;
+        } else if images == 0 && binding == "trigger_bound" && rejected_nearby_image {
+            // Nearby frame exists but is not same-uplink identity — keep
+            // scalars, record that vision cannot use that picture.
+            data.push(DataCollected {
+                source: device_id.to_string(),
+                data_type: "frame_status".to_string(),
+                timestamp: image_anchor_ts.unwrap_or(report_ts),
+                values: serde_json::json!({
+                    "status": "unconfirmed",
+                    "message": "本次画面无法确定",
+                    "_frame_unconfirmed": true,
+                }),
+            });
+        }
+        // Same-uplink picture present but unreadable: blind run would invent
+        // findings (trigger-carried frame already handled above).
         if images == 0 && !unreadable_images.is_empty() {
             return Ok(Some(EventInput::Skipped {
                 code: "report_image_unreadable",
@@ -1640,15 +1777,385 @@ impl AgentExecutor {
             agent_id = %agent.id,
             device_id = %device_id,
             report_ts,
+            binding,
             metrics_in_report = report.len(),
             images,
             unreadable_images = ?unreadable_images,
             other_items = data.len() - images,
-            "[COLLECT] Whole-device trigger — input is the device's latest report"
+            "[COLLECT] Whole-device trigger — input is the trigger-bound device report"
         );
 
         Ok(Some(EventInput::Data(data)))
     }
+
+    /// Resolve the uplink timestamp for a whole-device trigger.
+    ///
+    /// Preference order:
+    /// 1. Timeseries point whose value matches the trigger field value
+    ///    (frame URL / image_id / scalar) — strongest bind to report A.
+    /// 2. Trigger event timestamp when it looks like a real report stamp
+    ///    (non-zero; not a synthetic "Run now" empty-field doorbell).
+    /// 3. `None` → caller uses latest (manual / unbound).
+    async fn resolve_trigger_bound_report_ts(
+        &self,
+        storage: &neomind_storage::TimeSeriesStore,
+        storage_key: &str,
+        trigger: Option<&EventTriggerData>,
+    ) -> Option<i64> {
+        let trigger = trigger?;
+        let field = trigger.source.field.trim();
+        let has_field = !field.is_empty();
+
+        if has_field {
+            if let Some(ts) = Self::find_report_ts_matching_trigger_value(
+                storage,
+                storage_key,
+                field,
+                &trigger.value,
+                trigger.timestamp,
+            )
+            .await
+            {
+                return Some(ts);
+            }
+        }
+
+        // Empty-field synthetic "Run now" uses wall-clock now and means
+        // latest by product intent — do not bind to that instant.
+        if !has_field {
+            return None;
+        }
+        if trigger.timestamp > 0 {
+            return Some(trigger.timestamp);
+        }
+        None
+    }
+
+    /// Scan near the trigger timestamp for a datapoint whose value equals
+    /// the doorbell value (image path, image_id, …).
+    async fn find_report_ts_matching_trigger_value(
+        storage: &neomind_storage::TimeSeriesStore,
+        storage_key: &str,
+        field: &str,
+        value: &neomind_core::MetricValue,
+        hint_ts: i64,
+    ) -> Option<i64> {
+        let target = trigger_value_as_json(value);
+        if target.is_null() {
+            return None;
+        }
+        // Wide enough to survive collection delay after a later uplink, but
+        // still anchored on the trigger hint when present.
+        let (start, end) = if hint_ts > 0 {
+            (hint_ts - 600, hint_ts + Self::REPORT_SKEW_SECS.max(5))
+        } else {
+            let now = chrono::Utc::now().timestamp();
+            (now - 3600, now + Self::REPORT_SKEW_SECS)
+        };
+        let result = storage
+            .query_range(storage_key, field, start, end, Some(64))
+            .await
+            .ok()?;
+        // Prefer the newest match at or before hint_ts (A before B), else
+        // any match closest to the hint.
+        let mut best: Option<(i64, i64)> = None; // (abs_delta, ts)
+        for point in result.points {
+            if !json_values_equivalent(&point.value, &target) {
+                continue;
+            }
+            let delta = if hint_ts > 0 {
+                (point.timestamp - hint_ts).unsigned_abs() as i64
+            } else {
+                0
+            };
+            match best {
+                None => best = Some((delta, point.timestamp)),
+                Some((d, _)) if delta < d => best = Some((delta, point.timestamp)),
+                Some((d, ts)) if delta == d && point.timestamp < ts => {
+                    // Same distance: prefer the earlier uplink (A over B).
+                    best = Some((delta, point.timestamp));
+                }
+                _ => {}
+            }
+        }
+        best.map(|(_, ts)| ts)
+    }
+
+    /// Build a DataCollected image entry from the trigger payload itself.
+    fn trigger_carried_image_entry(
+        device_id: &str,
+        trigger: &EventTriggerData,
+        report_ts: i64,
+    ) -> Option<DataCollected> {
+        let field = trigger.source.field.trim();
+        if field.is_empty() {
+            return None;
+        }
+        let value = trigger_value_as_json(&trigger.value);
+        let extracted = match classify_image_value(field, &value) {
+            ImageValue::Extracted { url, base64, mime } => {
+                // `/api/images/` extraction clears `url` after loading bytes;
+                // keep the original reference beside the base64.
+                let url = url.or_else(|| keep_internal_image_reference(&value));
+                Some((field.to_string(), url, base64, mime))
+            }
+            ImageValue::NotImage | ImageValue::Unreadable => {
+                // Whole-device doorbells often arrive on `_raw`: the envelope
+                // carries image_data — treat that as the trigger-carried frame
+                // so we do not fall back to timeseries nearest-pick.
+                extract_image_from_raw_envelope(field, &value)
+                    .map(|(url, base64, mime)| ("image_data".to_string(), url, base64, mime))
+            }
+        }?;
+        let (data_type, url, base64, mime) = extracted;
+        let mut values = serde_json::json!({
+            "_is_image": true,
+            "_is_event_data": true,
+            "timestamp": report_ts,
+            "points_count": 1,
+        });
+        if let Some(u) = url {
+            values["image_url"] = serde_json::json!(u);
+            if u.chars().count() <= 300 {
+                values["value"] = serde_json::json!(u);
+            }
+        }
+        if let Some(b) = base64 {
+            values["image_base64"] = serde_json::json!(b);
+        }
+        if let Some(m) = mime {
+            values["image_mime_type"] = serde_json::json!(m);
+        }
+        Some(DataCollected {
+            source: format!("{device_id}:{data_type}"),
+            data_type,
+            timestamp: report_ts,
+            values,
+        })
+    }
+}
+
+/// Pull a usable frame out of a `_raw` uplink envelope when the doorbell is
+/// the envelope itself (not a split image metric).
+fn extract_image_from_raw_envelope(
+    field: &str,
+    value: &serde_json::Value,
+) -> Option<(Option<String>, Option<String>, Option<String>)> {
+    if field != "_raw" {
+        return None;
+    }
+    let obj = match value {
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok()?,
+        serde_json::Value::Object(_) => value.clone(),
+        _ => return None,
+    };
+    let image_val = obj.get("image_data")?;
+    match classify_image_value("image_data", image_val) {
+        ImageValue::Extracted { url, base64, mime } => {
+            let url = url.or_else(|| keep_internal_image_reference(image_val));
+            Some((url, base64, mime))
+        }
+        ImageValue::NotImage | ImageValue::Unreadable => None,
+    }
+}
+
+/// Preserve a NeoMind `/api/images/…` path when extraction resolved it to bytes.
+fn keep_internal_image_reference(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .filter(|s| s.starts_with("/api/images/"))
+        .map(str::to_string)
+}
+
+fn trigger_value_as_json(value: &neomind_core::MetricValue) -> serde_json::Value {
+    match value {
+        neomind_core::MetricValue::Float(v) => serde_json::json!(*v),
+        neomind_core::MetricValue::Integer(v) => serde_json::json!(*v),
+        neomind_core::MetricValue::Boolean(v) => serde_json::json!(*v),
+        neomind_core::MetricValue::String(v) => serde_json::json!(v),
+        neomind_core::MetricValue::Json(v) => v.clone(),
+    }
+}
+
+fn json_values_equivalent(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    if a == b {
+        return true;
+    }
+    // String doorbell vs JSON string stored under the metric.
+    match (a, b) {
+        (serde_json::Value::String(sa), serde_json::Value::String(sb)) => sa == sb,
+        (serde_json::Value::Number(na), serde_json::Value::Number(nb)) => na == nb,
+        _ => false,
+    }
+}
+
+/// Metrics that identify a device uplink / report (not the frame bytes).
+fn is_report_id_metric(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower == "metadata.image_id"
+        || lower == "image_id"
+        || lower.ends_with(".image_id")
+        || lower == "report_id"
+        || lower.ends_with(".report_id")
+}
+
+fn report_id_values_at(
+    report: &[(&String, &neomind_storage::timeseries::DataPoint)],
+    anchor_ts: i64,
+) -> Vec<serde_json::Value> {
+    report
+        .iter()
+        .filter(|(name, point)| point.timestamp == anchor_ts && is_report_id_metric(name))
+        .map(|(_, point)| point.value.clone())
+        .collect()
+}
+
+/// True when the image point itself is immutably tied to `report_id`
+/// (not merely co-stamped with a sibling report_id metric).
+///
+/// Accepts only: (1) structured ID **exact** equality on the image record /
+/// its metadata; or (2) a co-stamped `_raw` envelope whose report_id is an
+/// exact match **and** whose image ref equals this point after normalize
+/// (or the embedded bytes are identical). Never substring-match IDs in
+/// URLs (`cam-12` must not own `cam-123`).
+fn image_point_belongs_to_report_id(
+    point: &neomind_storage::timeseries::DataPoint,
+    report_id: &str,
+    report: &[(&String, &neomind_storage::timeseries::DataPoint)],
+) -> bool {
+    if report_id.is_empty() {
+        return false;
+    }
+    if image_record_id_equals(&point.value, point.metadata.as_ref(), report_id) {
+        return true;
+    }
+    report
+        .iter()
+        .filter(|(name, p)| name.as_str() == "_raw" && p.timestamp == point.timestamp)
+        .any(|(_, raw)| raw_envelope_links_image_to_id(&raw.value, &point.value, report_id))
+}
+
+/// Structured ID fields on the image record itself (exact string equality).
+fn image_record_id_equals(
+    image_value: &serde_json::Value,
+    metadata: Option<&serde_json::Value>,
+    report_id: &str,
+) -> bool {
+    let id_keys = ["image_id", "report_id"];
+    if let serde_json::Value::Object(obj) = image_value {
+        for key in id_keys {
+            if obj.get(key).and_then(|v| v.as_str()) == Some(report_id) {
+                return true;
+            }
+        }
+        if let Some(nested) = obj.get("metadata") {
+            for key in id_keys {
+                if nested.get(key).and_then(|v| v.as_str()) == Some(report_id) {
+                    return true;
+                }
+            }
+        }
+    }
+    if let Some(meta) = metadata {
+        for key in id_keys {
+            if meta.get(key).and_then(|v| v.as_str()) == Some(report_id) {
+                return true;
+            }
+        }
+        if let Some(nested) = meta.get("metadata") {
+            for key in id_keys {
+                if nested.get(key).and_then(|v| v.as_str()) == Some(report_id) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn normalize_image_ref(value: &serde_json::Value) -> Option<String> {
+    let raw = match value {
+        serde_json::Value::String(s) => Some(s.as_str()),
+        serde_json::Value::Object(obj) => ["image_url", "image_data", "url", "path", "value"]
+            .iter()
+            .find_map(|k| obj.get(*k).and_then(|v| v.as_str())),
+        _ => None,
+    }?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(
+        trimmed
+            .split(['?', '#'])
+            .next()
+            .unwrap_or(trimmed)
+            .to_string(),
+    )
+}
+
+fn image_bytes_identical(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    fn b64(v: &serde_json::Value) -> Option<&str> {
+        match v {
+            serde_json::Value::Object(obj) => obj
+                .get("image_base64")
+                .or_else(|| obj.get("base64"))
+                .or_else(|| obj.get("data"))
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty()),
+            serde_json::Value::String(s) if s.starts_with("data:image/") => {
+                s.split(',').nth(1).filter(|p| !p.is_empty())
+            }
+            _ => None,
+        }
+    }
+    match (b64(a), b64(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
+fn image_refs_equal_normalized_or_bytes_identical(
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+) -> bool {
+    if json_values_equivalent(a, b) {
+        return true;
+    }
+    if let (Some(na), Some(nb)) = (normalize_image_ref(a), normalize_image_ref(b)) {
+        if na == nb {
+            return true;
+        }
+    }
+    image_bytes_identical(a, b)
+}
+
+fn raw_envelope_links_image_to_id(
+    raw_value: &serde_json::Value,
+    image_value: &serde_json::Value,
+    report_id: &str,
+) -> bool {
+    let obj = match raw_value {
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok(),
+        serde_json::Value::Object(_) => Some(raw_value.clone()),
+        _ => None,
+    };
+    let Some(obj) = obj else {
+        return false;
+    };
+    let envelope_id = obj
+        .pointer("/metadata/image_id")
+        .or_else(|| obj.get("image_id"))
+        .or_else(|| obj.get("report_id"))
+        .and_then(|v| v.as_str());
+    // Exact ID equality only — never substring.
+    if envelope_id != Some(report_id) {
+        return false;
+    }
+    let Some(envelope_image) = obj.get("image_data") else {
+        return false;
+    };
+    image_refs_equal_normalized_or_bytes_identical(envelope_image, image_value)
 }
 
 /// Extract image data from a metric value.
