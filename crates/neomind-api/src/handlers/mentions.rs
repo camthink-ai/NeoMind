@@ -13,8 +13,6 @@ use crate::handlers::common::{ok, HandlerResult};
 use crate::handlers::ServerState;
 use crate::models::error::ErrorResponse;
 use crate::models::ChatReference;
-use neomind_storage::agents::AgentFilter;
-
 const DEFAULT_LIMIT: usize = 20;
 const MAX_LIMIT: usize = 50;
 
@@ -357,30 +355,32 @@ async fn collect_transforms(
 }
 
 async fn collect_agents(state: &ServerState, q: &str) -> Result<Vec<(i32, MentionItem)>, String> {
-    let agents = state
-        .agents
-        .agent_store
-        .query_agents(AgentFilter::default())
-        .await
-        .map_err(|e| format!("query failed: {e}"))?;
+    // V2-only: list via HostedAiAgentRuntime (no AiAgent query_agents).
+    let Ok(rt) = state.require_clean_slate().await else {
+        return Ok(Vec::new());
+    };
     let mut out = Vec::new();
-    for agent in agents {
-        let label = if agent.name.is_empty() {
-            agent.id.clone()
+    for (spec, _plan) in rt.list() {
+        let label = if spec.name.is_empty() {
+            spec.id.clone()
         } else {
-            agent.name.clone()
+            spec.name.clone()
         };
-        let Some(score) = match_score(&label, &agent.id, q) else {
+        let Some(score) = match_score(&label, &spec.id, q) else {
             continue;
         };
+        let status = rt
+            .runtime_status(&spec.id)
+            .map(|s| format!("{s:?}").to_lowercase())
+            .unwrap_or_else(|| "unknown".into());
         out.push((
             score,
             MentionItem {
                 r#type: "agent".into(),
-                id: agent.id.clone(),
+                id: spec.id.clone(),
                 label,
-                short_id: short_id(&agent.id),
-                hint: Some(format!("{:?}", agent.status).to_lowercase()),
+                short_id: short_id(&spec.id),
+                hint: Some(status),
                 duplicate_name: false,
             },
         ));

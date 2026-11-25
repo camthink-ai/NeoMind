@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::server::ServerState;
 use neomind_devices::adapter::ConnectionStatus;
-use neomind_storage::AgentFilter;
+use neomind_storage::AgentStoreV2;
 
 /// Suggestion item with enhanced metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,17 +405,22 @@ async fn generate_recent_operation_suggestions(state: &ServerState) -> Vec<Sugge
 async fn generate_pattern_based_suggestions(state: &ServerState) -> Vec<SuggestionItem> {
     let mut pattern_suggestions = Vec::new();
 
-    let store = &state.agents.agent_store;
-    let agents = match store.query_agents(AgentFilter::default()).await {
-        Ok(a) => a,
-        Err(_) => return pattern_suggestions,
+    // V2-only: journal lives under AgentStoreV2 memory rows.
+    let Ok(v2) = AgentStoreV2::from_arc(state.agents.agent_store.db()) else {
+        return pattern_suggestions;
+    };
+    let Ok(specs) = v2.list_specs() else {
+        return pattern_suggestions;
     };
 
     let mut high_confidence_patterns: Vec<(String, f32)> = Vec::new();
 
     // Use recent journal outcomes as pattern-like insights
-    for agent in agents {
-        for record in agent.memory.journal.records.iter().rev().take(3) {
+    for spec in specs {
+        let Ok(Some(memory)) = v2.get_memory(&spec.id) else {
+            continue;
+        };
+        for record in memory.journal.records.iter().rev().take(3) {
             if !record.outcome.is_empty() {
                 high_confidence_patterns.push((record.outcome.clone(), 0.8));
             }

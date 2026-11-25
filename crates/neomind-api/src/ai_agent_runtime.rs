@@ -1122,9 +1122,9 @@ mod tests {
         let store = AgentStore::open(&path).unwrap();
         {
             let db = store.db();
-            assert!(neomind_storage::is_v2_only(&*db).unwrap());
+            assert!(neomind_storage::is_v2_only(&db).unwrap());
             assert!(
-                !neomind_storage::agents_v2::table_exists_agents_v1(&*db).unwrap_or(true),
+                !neomind_storage::agents_v2::table_exists_agents_v1(&db).unwrap_or(true),
                 "v1 agents table must be absent on empty v2_only DB"
             );
         }

@@ -53,7 +53,6 @@ pub async fn collect_referenced_image_files(
     session_store: &neomind_storage::SessionStore,
     agent_store: &neomind_storage::AgentStore,
 ) -> std::collections::HashSet<String> {
-    use neomind_storage::AgentFilter;
     const MARKER: &str = "/api/images/";
     let mut referenced = std::collections::HashSet::new();
 
@@ -69,17 +68,16 @@ pub async fn collect_referenced_image_files(
         }
     }
 
-    if let Ok(agents) = agent_store
-        .query_agents(AgentFilter {
-            status: None,
-            ..Default::default()
-        })
-        .await
-    {
-        for agent in &agents {
-            for record in &agent.memory.journal.records {
-                if record.outcome.contains(MARKER) {
-                    extract_image_refs(&record.outcome, &mut referenced);
+    // V2-only: scan AgentStoreV2 journal memory (no AiAgent query_agents).
+    if let Ok(v2) = neomind_storage::AgentStoreV2::from_arc(agent_store.db()) {
+        if let Ok(specs) = v2.list_specs() {
+            for spec in specs {
+                if let Ok(Some(memory)) = v2.get_memory(&spec.id) {
+                    for record in &memory.journal.records {
+                        if record.outcome.contains(MARKER) {
+                            extract_image_refs(&record.outcome, &mut referenced);
+                        }
+                    }
                 }
             }
         }

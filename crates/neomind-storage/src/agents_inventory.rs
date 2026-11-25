@@ -5,9 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::agents::{
-    AgentFilter, AgentStore, AiAgent, ExecutionMode, NotifyOn, ResourceType, ScheduleType,
-};
+use crate::agents::{AgentStore, AiAgent, ExecutionMode, NotifyOn, ResourceType, ScheduleType};
+use crate::agents_migrate::map_agent_v2_to_v1;
+use crate::agents_v2::AgentStoreV2;
 use crate::Error;
 
 /// Disposition for the purge对照表.
@@ -188,19 +188,23 @@ fn row_from_agent(agent: &AiAgent) -> InventoryRow {
     }
 }
 
-/// Scan `agents.redb` into an inventory report (uses AgentStore dual-read).
+/// Scan `agents.redb` into an inventory report (V2 specs + migrate map).
 pub async fn inventory_agents_db(path: &std::path::Path) -> Result<InventoryReport, Error> {
     let store = AgentStore::open(path)?;
-    let agents = store
-        .query_agents(AgentFilter {
-            status: None,
-            schedule_type: None,
-            start_time: None,
-            end_time: None,
-            limit: None,
-            offset: None,
-        })
-        .await?;
+    let v2 = AgentStoreV2::from_arc(store.db())?;
+    let specs = v2.list_specs()?;
+    let mut agents = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let runtime = v2.get_runtime(&spec.id)?;
+        let memory = v2.get_memory(&spec.id)?.unwrap_or_default();
+        let messages = v2.get_user_messages(&spec.id)?.unwrap_or_default();
+        agents.push(map_agent_v2_to_v1(
+            &spec,
+            runtime.as_ref(),
+            Some(memory),
+            messages,
+        ));
+    }
     let mut rows: Vec<_> = agents.iter().map(row_from_agent).collect();
     rows.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
     let auto_migrate = rows

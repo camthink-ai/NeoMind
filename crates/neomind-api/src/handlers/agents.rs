@@ -1944,23 +1944,10 @@ pub async fn list_agent_tools(State(state): State<ServerState>) -> HandlerResult
 #[cfg(test)]
 mod config_warning_tests {
     use super::*;
-    use neomind_core::datasource::DataSourceId;
     use neomind_storage::{
         AgentMemory, AgentNotify, AgentSchedule, AgentStats, AgentStatus, AgentToolConfig, AiAgent,
         ExecutionMode, NotifyOn, ResourceType, ScheduleType,
     };
-
-    /// Convert AgentStatus to PascalCase string (matching existing API contract).
-    fn status_to_string(status: &AgentStatus) -> &'static str {
-        match status {
-            AgentStatus::Active => "Active",
-            AgentStatus::Paused => "Paused",
-            AgentStatus::Stopped => "Stopped",
-            AgentStatus::Error => "Error",
-            AgentStatus::Executing => "Executing",
-            AgentStatus::Completed => "Completed",
-        }
-    }
 
     /// Convert ExecutionMode to lowercase string.
     fn execution_mode_to_string(mode: &ExecutionMode) -> &'static str {
@@ -1971,16 +1958,6 @@ mod config_warning_tests {
         }
     }
 
-    /// Convert ExecutionStatus to PascalCase string (matching existing API contract).
-    fn execution_status_to_string(status: &ExecutionStatus) -> &'static str {
-        match status {
-            ExecutionStatus::Running => "Running",
-            ExecutionStatus::Completed => "Completed",
-            ExecutionStatus::Failed => "Failed",
-            ExecutionStatus::Partial => "Partial",
-        }
-    }
-
     /// Convert ScheduleType to lowercase string (matching serde snake_case)
     fn schedule_type_to_string(schedule_type: &ScheduleType) -> &'static str {
         match schedule_type {
@@ -1988,18 +1965,6 @@ mod config_warning_tests {
             ScheduleType::Cron => "cron",
             ScheduleType::Event => "event",
             ScheduleType::Manual => "manual",
-        }
-    }
-
-    /// Convert ResourceType to lowercase string (matching serde snake_case)
-    fn resource_type_to_string(resource_type: &ResourceType) -> &'static str {
-        match resource_type {
-            ResourceType::Device => "device",
-            ResourceType::Metric => "metric",
-            ResourceType::Command => "command",
-            ResourceType::DataStream => "data_stream",
-            ResourceType::ExtensionTool => "extension_tool",
-            ResourceType::ExtensionMetric => "extension_metric",
         }
     }
 
@@ -2157,56 +2122,6 @@ mod config_warning_tests {
             body["warnings"] = json!(warnings);
         }
         body
-    }
-
-    /// Infer resource type from resource_id string.
-    ///
-    /// This function uses DataSourceId parsing to determine the resource type
-    /// in a type-safe manner, avoiding fragile string-based inference.
-    ///
-    /// # Important Note on Ambiguity
-    /// When resource_type is not explicitly specified, the following rules apply:
-    /// - "extension:id:field" with field containing "." -> ExtensionMetric (nested data field)
-    /// - "extension:id:field" without "." -> ExtensionMetric (simple metric, default)
-    /// - "extension:id" -> ExtensionTool (extension reference without field)
-    ///
-    /// Users SHOULD specify resource_type explicitly to avoid ambiguity.
-    ///
-    /// # Returns
-    /// Inferred ResourceType, or Device as default fallback
-    fn infer_resource_type_from_id(resource_id: &str) -> ResourceType {
-        // Try parsing as standard DataSourceId (three-part format: type:id:field)
-        if let Some(ds_id) = DataSourceId::parse(resource_id) {
-            match ds_id.source_type {
-                neomind_core::datasource::DataSourceType::Device => ResourceType::Metric,
-                neomind_core::datasource::DataSourceType::Extension => {
-                    // Extension with a field: "extension:id:field"
-                    // Default to ExtensionMetric for data query compatibility
-                    // Use ExtensionTool explicitly if you want command execution
-                    ResourceType::ExtensionMetric
-                }
-                neomind_core::datasource::DataSourceType::Transform => ResourceType::DataStream,
-                // An agent's published field, bound as an input to another agent.
-                neomind_core::datasource::DataSourceType::Ai => ResourceType::Metric,
-            }
-        } else if let Some(_ds_id) = DataSourceId::parse_extension_command(resource_id) {
-            // Four-part format: extension:id:command:field
-            // Always ExtensionMetric for data queries
-            ResourceType::ExtensionMetric
-        } else if resource_id.starts_with("extension:") {
-            // Count parts to distinguish
-            let parts: Vec<&str> = resource_id.split(':').collect();
-            if parts.len() == 2 {
-                // "extension:id" -> ExtensionTool (extension reference, no field)
-                ResourceType::ExtensionTool
-            } else {
-                // "extension:id:..." with more parts -> default to ExtensionMetric
-                ResourceType::ExtensionMetric
-            }
-        } else {
-            // Default fallback for device-like resources
-            ResourceType::Device
-        }
     }
 
     fn base_agent() -> AiAgent {

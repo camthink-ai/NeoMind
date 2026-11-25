@@ -5,8 +5,9 @@
 
 use std::sync::Arc;
 
+use neomind_ai_agent::AgentStatus;
 use neomind_core::llm::backend::{GenerationParams, LlmInput, LlmRuntime};
-use neomind_storage::{AgentFilter, AgentStore, MarkdownMemoryStore, SessionStore};
+use neomind_storage::{AgentStore, AgentStoreV2, MarkdownMemoryStore, SessionStore};
 
 use super::types::ServerState;
 
@@ -79,31 +80,27 @@ pub async fn gather_system_context(state: &ServerState) -> String {
         }
     }
 
-    // === Agents (skip Stopped) ===
+    // === Agents (skip Stopped) — V2 runtime list ===
     {
-        let agent_store = &state.agents.agent_store;
-        match agent_store
-            .query_agents(AgentFilter {
-                status: None,
-                ..Default::default()
-            })
-            .await
-        {
-            Ok(agents) => {
-                let active: Vec<_> = agents
-                    .iter()
-                    .filter(|a| a.status != neomind_storage::AgentStatus::Stopped)
+        match state.require_clean_slate().await {
+            Ok(rt) => {
+                let active: Vec<_> = rt
+                    .list()
+                    .into_iter()
+                    .filter(|(spec, _)| {
+                        !matches!(rt.runtime_status(&spec.id), Some(AgentStatus::Stopped))
+                    })
                     .collect();
                 if !active.is_empty() {
                     let mut lines = vec!["### Agents".to_string()];
-                    for agent in active {
-                        lines.push(format!("- {}", agent.name));
+                    for (spec, _) in active {
+                        lines.push(format!("- {}", spec.name));
                     }
                     sections.push(lines.join("\n"));
                 }
             }
             Err(e) => {
-                tracing::debug!(error = %e, "Failed to query agents for system context");
+                tracing::debug!(error = %e, "Failed to list agents for system context");
             }
         }
     }
@@ -309,29 +306,26 @@ pub async fn summarize_agent_context(
     llm: &Arc<dyn LlmRuntime>,
     memory_store: &MarkdownMemoryStore,
 ) -> Result<(), String> {
-    let agents = agent_store
-        .query_agents(AgentFilter {
-            status: None,
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| format!("Failed to query agents: {}", e))?;
+    // V2-only: specs + journal memory via AgentStoreV2 (no AiAgent query).
+    let v2 = AgentStoreV2::from_arc(agent_store.db())
+        .map_err(|e| format!("Failed to open AgentStoreV2: {}", e))?;
+    let specs = v2
+        .list_specs()
+        .map_err(|e| format!("Failed to list agent specs: {}", e))?;
 
-    let active: Vec<_> = agents
-        .iter()
-        .filter(|a| a.status != neomind_storage::AgentStatus::Stopped)
-        .collect();
-
-    if active.is_empty() {
+    if specs.is_empty() {
         return Ok(());
     }
 
-    // Collect recent execution records from active agents
+    // Collect recent execution records from agents with journal entries
     let mut agent_data = String::new();
-    for agent in active {
-        let records: Vec<_> = agent.memory.journal.records.iter().rev().take(5).collect();
+    for spec in &specs {
+        let Ok(Some(memory)) = v2.get_memory(&spec.id) else {
+            continue;
+        };
+        let records: Vec<_> = memory.journal.records.iter().rev().take(5).collect();
         if !records.is_empty() {
-            agent_data.push_str(&format!("### {}\n", agent.name));
+            agent_data.push_str(&format!("### {}\n", spec.name));
             for record in records {
                 // Combine outcome + action_taken for richer context
                 let mut text = String::new();
