@@ -150,19 +150,75 @@ fn command_runs_message_send(command: &str, depth: usize) -> bool {
     if argv_runs_message_send(&argv) {
         return true;
     }
-    let program = program_name(&argv[0]);
+    // `sudo sh -c "…"`, `env FOO=1 bash -c "…"`: peel wrappers so the
+    // inner pass-through shell still opens its `-c` operand.
+    let peeled = peel_wrappers(&argv);
+    if peeled.is_empty() {
+        return false;
+    }
+    let program = program_name(&peeled[0]);
     if PASS_THROUGH_SHELLS.contains(&program) {
         // `sh -c '<line>'`: the operand is a command line of its own.
-        return match shell_c_operand(&argv) {
+        return match shell_c_operand(peeled) {
             Some(operand) => command_line_runs_message_send(operand, depth + 1),
             None => false,
         };
     }
     if program == "eval" {
-        return command_line_runs_message_send(&argv[1..].join(" "), depth + 1);
+        return command_line_runs_message_send(&peeled[1..].join(" "), depth + 1);
     }
     // It runs whatever its argument says — quoted or not.
     INTERPRETERS.contains(&program) && message_send_words_in(command, true)
+}
+
+/// Drop leading `sudo` / `env` / `nohup` / … (and their flags / `VAR=val`)
+/// so `sudo sh -c "neomind message send …"` still reaches the shell path.
+fn peel_wrappers(argv: &[String]) -> &[String] {
+    let mut i = 0usize;
+    while i < argv.len() {
+        if is_env_assignment(&argv[i]) {
+            i += 1;
+            continue;
+        }
+        let program = program_name(&argv[i]);
+        if !WRAPPERS.contains(&program) {
+            break;
+        }
+        i += 1;
+        while i < argv.len() {
+            let arg = &argv[i];
+            if is_env_assignment(arg) {
+                i += 1;
+                continue;
+            }
+            if !(arg.starts_with('-') && arg.len() > 1) {
+                break;
+            }
+            // `--user=neo` already carries its value.
+            if arg.starts_with("--") && arg.contains('=') {
+                i += 1;
+                continue;
+            }
+            let takes_value = matches!(
+                arg.as_str(),
+                "-u" | "-g"
+                    | "-h"
+                    | "-C"
+                    | "-D"
+                    | "--user"
+                    | "--group"
+                    | "--host"
+                    | "--close-from"
+                    | "--prompt"
+                    | "--other-user"
+            );
+            i += 1;
+            if takes_value && i < argv.len() {
+                i += 1;
+            }
+        }
+    }
+    &argv[i..]
 }
 
 /// `neomind message send` as three adjacent argv tokens, wherever it sits
@@ -172,11 +228,13 @@ fn command_runs_message_send(command: &str, depth: usize) -> bool {
 /// neomind (`"$(which neomind)"`).
 fn argv_runs_message_send(argv: &[String]) -> bool {
     let is_neomind = |token: &str| program_name(token) == "neomind";
+    let is_message = |token: &str| program_name(token) == "message";
+    let is_send = |token: &str| program_name(token) == "send";
     argv.windows(3)
-        .any(|w| is_neomind(&w[0]) && w[1] == "message" && w[2] == "send")
+        .any(|w| is_neomind(&w[0]) && is_message(&w[1]) && is_send(&w[2]))
         || argv.windows(2).enumerate().any(|(i, w)| {
-            w[0] == "message"
-                && w[1] == "send"
+            is_message(&w[0])
+                && is_send(&w[1])
                 && (i == 0
                     || WRAPPERS.contains(&program_name(&argv[i - 1]))
                     || is_env_assignment(&argv[i - 1])
@@ -186,17 +244,31 @@ fn argv_runs_message_send(argv: &[String]) -> bool {
 
 /// The command string of `sh -c '<line>'` (option clusters such as `-lc`
 /// count). `None` for `sh script.sh`: the operand is a file, not a line.
+///
+/// Also accepts `sh -c -- '<line>'` and `sh -- -c '<line>'` — models and
+/// wrappers often emit the end-of-options marker around `-c`.
 fn shell_c_operand(argv: &[String]) -> Option<&str> {
     let mut args = argv.iter().skip(1);
+    let mut end_opts = false;
     while let Some(arg) = args.next() {
-        if arg == "--" {
-            return args.next().map(String::as_str);
+        if !end_opts && arg == "--" {
+            end_opts = true;
+            continue;
         }
-        if arg.starts_with('-') && arg.len() > 1 {
+        if !end_opts && arg.starts_with('-') && arg.len() > 1 {
             if arg.contains('c') {
-                return args.next().map(String::as_str);
+                let next = args.next()?;
+                // `sh -c -- 'cmd'`: `--` is end-of-options before the script.
+                if next == "--" {
+                    return args.next().map(String::as_str);
+                }
+                return Some(next.as_str());
             }
             continue;
+        }
+        // After `--`, a bare `-c` is still the familiar flag some wrappers emit.
+        if end_opts && (arg == "-c" || (arg.starts_with('-') && arg.contains('c'))) {
+            return args.next().map(String::as_str);
         }
         return None;
     }
@@ -239,12 +311,26 @@ fn shell_commands(line: &str) -> Vec<&str> {
             '"' if !in_single => in_double = !in_double,
             '`' if !in_single => {
                 let from = i + 1;
-                let to = skip_past(&mut chars, line.len(), |c| c == '`');
+                // skip_past lands past the closing backtick; keep it out of
+                // the nested command so a trailing `` ` `` does not stick to
+                // the last argv token.
+                let past = skip_past(&mut chars, line.len(), |c| c == '`');
+                let to = if past > from
+                    && line.is_char_boundary(past - 1)
+                    && &line[past - 1..past] == "`"
+                {
+                    past - 1
+                } else {
+                    past
+                };
                 nested.push(&line[from..to]);
             }
             '$' if !in_single && chars.peek().is_some_and(|(_, n)| *n == '(') => {
                 chars.next();
                 let from = i + 2;
+                // skip_parens returns the index of `)`, not past it — so the
+                // nested slice never ends in a trailing `)` that would turn
+                // `send` into `send)`.
                 let to = skip_parens(&mut chars, line.len());
                 nested.push(&line[from..to]);
             }
@@ -308,7 +394,9 @@ fn skip_past(
     end
 }
 
-/// Index just past the `)` closing a `$(…)` whose `(` is already consumed.
+/// Index of the `)` closing a `$(…)` whose `(` is already consumed (or `end`
+/// if unbalanced). Callers slice `from..to` so the `)` stays out of the
+/// nested command.
 fn skip_parens(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>, end: usize) -> usize {
     let mut depth = 1usize;
     let mut in_single = false;
@@ -324,7 +412,7 @@ fn skip_parens(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>, end: 
             ')' if !in_single => {
                 depth -= 1;
                 if depth == 0 {
-                    return i + 1;
+                    return i;
                 }
             }
             _ => {}
@@ -799,9 +887,16 @@ mod tests {
             r#"sh -c "neomind message send --title t --body b""#,
             "bash -c 'neomind message send --title t --body b'",
             "sh -lc 'neomind message send --title t'",
+            r#"sh -c -- "neomind message send --title t""#,
+            r#"sh -- -c "neomind message send --title t""#,
             r#"eval "neomind message send --title t""#,
             r#"sudo neomind message send --title t"#,
             r#"sudo -u neo neomind message send --title t"#,
+            // Wrappers around a pass-through shell — peel before `-c`.
+            r#"sudo sh -c "neomind message send --title t""#,
+            r#"sudo -u neo bash -c 'neomind message send --title t'"#,
+            r#"env neomind message send --title t"#,
+            r#"env FOO=1 sh -c "neomind message send --title t""#,
             r#"NEOMIND_JSON=1 timeout 30 neomind message send --title t"#,
             r#"/usr/local/bin/neomind message send --title t"#,
             // Shell syntax around the command.
@@ -810,6 +905,8 @@ mod tests {
             "if true; then neomind message send --title t; fi",
             "neomind message send --title t &",
             // Substitutions run as commands of their own, quotes or not.
+            // Bare `$(neomind message send)` must not keep the closing `)`.
+            r#"echo "$(neomind message send)""#,
             r#"echo "$(neomind message send --title t)""#,
             "echo `neomind message send --title t`",
             r#""$(which neomind)" message send --title t"#,

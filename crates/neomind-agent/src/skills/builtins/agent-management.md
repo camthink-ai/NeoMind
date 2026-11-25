@@ -256,6 +256,7 @@ neomind agent create \
   [--execution-mode <focused|free|structured>] [--output-schema '<json>'] \
   [--notify '{"channels":["name"],"on":"failure|always|judgment"}'] \
   [--no-tools | --allowed-tools <list|all>] \
+  [--llm-backend '<backend_id>'] \
   [--device-ids 'id1,id2'] [--metrics '<json>'] [--commands '<json>'] [--resources '<json>']
 ```
 
@@ -286,6 +287,7 @@ neomind agent list              # All agents
 ```bash
 neomind agent update <ID> --prompt 'New task'
 neomind agent update <ID> --event-filter '{"sources":[{"type":"device","id":"<id>"}]}' --timezone 'Asia/Shanghai'
+neomind agent update <ID> --llm-backend <available_backend>
 neomind agent update <ID> --allowed-tools all   # reverse a prior --no-tools
 neomind agent update <ID> --no-tools
 ```

@@ -592,6 +592,11 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
                 summary: "Cron timezone (e.g. Asia/Shanghai); merges into existing schedule",
             },
             DomainParamSummary {
+                name: "--no-tools",
+                required: false,
+                summary: "Disable all tools (conflicts with `--allowed-tools` and judgment notify)",
+            },
+            DomainParamSummary {
                 name: "--allowed-tools",
                 required: false,
                 summary: "Comma-separated allowlist; `all` restores every tool after `--no-tools`",
