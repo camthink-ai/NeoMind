@@ -14,7 +14,7 @@ use neomind_ai_agent::coordinator::{
 use neomind_ai_agent::error::{AgentError, Result as AgentResult};
 use neomind_ai_agent::input::InputPipeline;
 use neomind_ai_agent::model::{
-    AgentRuntimeRecord, AgentSpec, AgentSpecDraft, AgentSpecPatch, AgentStats, AgentStatus,
+    AgentSpec, AgentSpecDraft, AgentSpecPatch, AgentStatus,
     EffectivePlan, RunResponse,
 };
 use neomind_ai_agent::persist::{persist_spec, DurableAgentStore};
@@ -22,9 +22,8 @@ use neomind_ai_agent::ports::{ClockPort, NotifyPort, SourceReadPort, SystemClock
 use neomind_ai_agent::runner::SinglePassRunner;
 use neomind_ai_agent::service::AgentApplicationService;
 use neomind_ai_agent::side_effects::{Notifier, SideEffectBoundary};
-use neomind_ai_agent::storage_bridge::{record_to_spec, runtime_to_storage, status_from_storage};
-use neomind_storage::agents_v2::{map_agent_v1_to_v2, AgentStoreV2};
-use neomind_storage::{AgentStore, AiAgent};
+use neomind_storage::agents_v2::AgentStoreV2;
+use neomind_storage::AgentStore;
 
 use crate::agent_ports::{
     HostAgentDeps, HostLlmPort, HostNotifyPort, HostSideEffectPort, HostSourceReadPort,
@@ -149,57 +148,15 @@ impl HostedAiAgentRuntime {
         self.durable.mem.get_spec(id).is_ok()
     }
 
-    /// Map a legacy v1 [`AiAgent`] into the clean-slate hot set (+ optional v2
-    /// mirror).
-    ///
-    /// **Purge path:** prefer [`Self::create`] / [`Self::update`] with
-    /// `AgentSpecDraft` (POST `/agents/v2`). After `agent_runtime=v2_only`,
-    /// legacy POST `/agents` is refused; this ingest remains only for
-    /// invoke/status of rows already mapped during the offline migration.
-    pub fn ingest_v1_agent(&self, agent: &AiAgent) -> AgentResult<()> {
-        let (rec, rt_rec, _, _) = map_agent_v1_to_v2(agent);
-        let spec = record_to_spec(&rec).map_err(AgentError::Other)?;
-        let now = self.clock.now_ms();
-        // Hot set only — do NOT go through DurableAgentStore::save_spec /
-        // mirror_spec: those re-encode via `spec_to_record` and wipe
-        // `v1_compat` (resources, output_schema, parsed_intent, …).
-        self.durable.mem.save_spec(spec, now)?;
-        let runtime = AgentRuntimeRecord {
-            agent_id: rt_rec.agent_id,
-            status: status_from_storage(rt_rec.status),
-            stats: AgentStats {
-                total_runs: rt_rec.stats.total_runs,
-                successful_runs: rt_rec.stats.successful_runs,
-                failed_runs: rt_rec.stats.failed_runs,
-                partial_runs: rt_rec.stats.partial_runs,
-                skipped_daily_limit: rt_rec.stats.skipped_daily_limit,
-                skipped_permit_timeout: rt_rec.stats.skipped_permit_timeout,
-                consecutive_failures: rt_rec.stats.consecutive_failures,
-                runs_today: rt_rec.stats.runs_today,
-                quota_day: rt_rec.stats.quota_day,
-                last_execution_at: rt_rec.stats.last_execution_at,
-                last_execution_id: rt_rec.stats.last_execution_id,
-            },
-            error_message: rt_rec.error_message,
-            next_probe_at: rt_rec.next_probe_at,
-            updated_at: rt_rec.updated_at,
-        };
-        self.durable.mem.set_runtime(runtime.clone())?;
-        if let Some(v2) = &self.durable.v2 {
-            v2.save_spec(&rec)
-                .map_err(|e| AgentError::Other(e.to_string()))?;
-            v2.set_runtime(&runtime_to_storage(&runtime))
-                .map_err(|e| AgentError::Other(e.to_string()))?;
-        }
-        Ok(())
+    /// Ensure `id` is in the hot set by loading from durable V2 (no AiAgent map).
+    pub fn ensure_loaded(&self, id: &str) -> AgentResult<()> {
+        self.durable.ensure_loaded(id, self.clock.now_ms())
     }
 
-    /// Ensure a legacy agent id is present in the hot set (ingest if missing).
-    pub fn ensure_v1_agent(&self, agent: &AiAgent) -> AgentResult<()> {
-        if self.has_agent(&agent.id) {
-            return Ok(());
-        }
-        self.ingest_v1_agent(agent)
+    /// Force-refresh hot set from durable V2 after a store write that bypassed
+    /// [`Self::create`] / [`Self::update`].
+    pub fn reload_from_v2(&self, id: &str) -> AgentResult<()> {
+        self.durable.reload_from_v2(id, self.clock.now_ms())
     }
 
     /// Update hot-set + durable runtime status (Active/Paused/…).
@@ -1131,5 +1088,32 @@ mod tests {
             "stale weather must block action: {:?}",
             exec.deliveries
         );
+    }
+
+    #[tokio::test]
+    async fn empty_v2_only_db_boots_hosted_runtime_without_v1() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("agents.redb");
+        let report = neomind_storage::purge_agents_to_v2_only(&path).unwrap();
+        assert_eq!(report.v2_specs_after, 0);
+        assert!(!report.had_v1_table);
+
+        let store = AgentStore::open(&path).unwrap();
+        {
+            let db = store.db();
+            assert!(neomind_storage::is_v2_only(&*db).unwrap());
+            assert!(
+                !neomind_storage::agents_v2::table_exists_agents_v1(&*db).unwrap_or(true),
+                "v1 agents table must be absent on empty v2_only DB"
+            );
+        }
+
+        let (deps, _, _) = test_deps().await;
+        let runtime = HostedAiAgentRuntime::build(store, deps).unwrap();
+        assert!(runtime.list().is_empty());
+        // create → ensure_loaded path (no ingest): draft round-trip
+        let (spec, _) = runtime.create(local_brief_draft("gate-empty")).unwrap();
+        runtime.ensure_loaded(&spec.id).unwrap();
+        assert!(runtime.has_agent(&spec.id));
     }
 }

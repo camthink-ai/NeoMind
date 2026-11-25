@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use neomind_agent::llm_backends::get_instance_manager;
 use neomind_storage::{
-    AgentExecutionRecord, AgentFilter, AgentMemory, AgentSchedule, AgentStats, AgentStatus,
-    AiAgent, ExecutionMode, ExecutionStatus, ResourceType, ScheduleType, UserMessage,
+    AgentExecutionRecord, AgentFilter, AgentMemory, AgentStatus, AiAgent, ExecutionMode,
+    ExecutionStatus, ResourceType, ScheduleType, UserMessage,
 };
 
 /// Map a store error to a response WITHOUT lying about the status: a
@@ -1277,320 +1277,14 @@ pub async fn get_agent(
     )
 )]
 pub async fn create_agent(
-    State(state): State<ServerState>,
-    Json(request): Json<CreateAgentRequest>,
+    State(_state): State<ServerState>,
+    Json(_request): Json<CreateAgentRequest>,
 ) -> HandlerResult<Value> {
-    use crate::validator::{
-        validate_required_string, validate_string_length, validate_usize_range,
-    };
-
-    // After offline `neomind agent migrate-v2-only`, refuse legacy create so
-    // Chat/CLI must compile to AgentSpecDraft → POST /agents/v2.
-    if neomind_storage::is_v2_only(&*state.agent_store().db()).unwrap_or(false) {
-        return Err(ErrorResponse::bad_request(
-            "This NeoMind is V2-only: create agents with POST /api/agents/v2 \
-             or `neomind agent create-v2 --draft <AgentSpecDraft>` (legacy POST /agents disabled).",
-        ));
-    }
-
-    // Validate required fields
-    validate_required_string(&request.name, "name")?;
-    validate_string_length(&request.name, "name", 1, 100)?;
-    validate_required_string(&request.user_prompt, "user_prompt")?;
-    validate_string_length(&request.user_prompt, "user_prompt", 1, 10000)?;
-
-    // Validate description if provided
-    if let Some(ref desc) = request.description {
-        validate_string_length(desc, "description", 0, 500)?;
-    }
-
-    // Validate system_prompt if provided
-    if let Some(ref sp) = request.system_prompt {
-        validate_string_length(sp, "system_prompt", 1, 4000)?;
-    }
-
-    // Validate max_chain_depth (executor clamps to [1,30]; reject values that
-    // would silently disable tool chaining (0) or get silently clamped (>30))
-    if let Some(depth) = request.max_chain_depth {
-        validate_usize_range(depth, "max_chain_depth", 1, 30)?;
-    }
-    // Validate context_window_size (executor clamps scale to [0.5,5.0] which
-    // corresponds to [5,50]; allow up to 100 for forward-compat with larger
-    // context models, reject 0 which would zero out history budget)
-    if let Some(cw) = request.context_window_size {
-        validate_usize_range(cw, "context_window_size", 1, 100)?;
-    }
-
-    // Validate schedule type. "manual" is first-class (manual-only, never
-    // auto-scheduled) — the editor's on-demand strategy compiles to it.
-    if !["interval", "cron", "event", "manual"].contains(&request.schedule.schedule_type.as_str()) {
-        return Err(ErrorResponse::bad_request(format!(
-            "Invalid schedule type: {} (must be 'interval', 'cron', 'event', or 'manual')",
-            request.schedule.schedule_type
-        )));
-    }
-
-    // Validate cron expression when schedule type is cron
-    if request.schedule.schedule_type == "cron" {
-        match &request.schedule.cron_expression {
-            None => {
-                return Err(ErrorResponse::validation(
-                    "cron_expression is required when schedule_type is 'cron'",
-                ));
-            }
-            Some(expr) => {
-                if let Err(e) = neomind_core::cron::normalize(expr).parse::<cron::Schedule>() {
-                    return Err(ErrorResponse::bad_request(format!(
-                        "Invalid cron expression '{}': {}",
-                        expr, e
-                    )));
-                }
-            }
-        }
-    }
-
-    // Validate interval_seconds when schedule type is interval
-    if request.schedule.schedule_type == "interval" {
-        match request.schedule.interval_seconds {
-            // Some(0) is the legacy on-demand encoding: a manual-only agent that
-            // never auto-schedules (the scheduler maps it to a never-due
-            // next_execution). Previously rejected here, which made the
-            // frontend's "on-demand" option fail with 400 on create while
-            // the read path still interpreted stored 0 as on-demand.
-            Some(0) => {}
-            None => {
-                return Err(ErrorResponse::validation(
-                    "interval_seconds is required when schedule_type is 'interval'",
-                ).with_hint(
-                    "CLI: --schedule-type interval --schedule-config <SECONDS>, e.g. --schedule-config 300 for a 5-minute interval. A non-numeric --schedule-config is silently dropped by older CLI builds — pass a plain number.",
-                ));
-            }
-            Some(secs) if secs < 10 => {
-                return Err(ErrorResponse::validation(
-                    "interval_seconds must be at least 10 seconds",
-                )
-                .with_hint("Pass --schedule-config 10 or higher (seconds)."));
-            }
-            _ => {}
-        }
-    }
-
-    // Validate llm_backend_id if explicitly provided (non-default)
-    if let Some(ref backend_id) = request.llm_backend_id {
-        if backend_id != "default" && !backend_id.is_empty() {
-            let manager = get_instance_manager().map_err(|e| {
-                ErrorResponse::internal(format!("Failed to get LLM backend manager: {}", e))
-            })?;
-            if manager.get_instance(backend_id).is_none() {
-                return Err(ErrorResponse::bad_request(format!(
-                    "LLM backend '{}' not found",
-                    backend_id
-                )));
-            }
-        }
-    }
-
-    // Convert request to storage types
-    let schedule_type = match request.schedule.schedule_type.as_str() {
-        "interval" => ScheduleType::Interval,
-        "cron" => ScheduleType::Cron,
-        "event" => ScheduleType::Event,
-        "manual" => ScheduleType::Manual,
-        _ => {
-            return Err(ErrorResponse::bad_request(format!(
-                "Invalid schedule type: {}",
-                request.schedule.schedule_type
-            )));
-        }
-    };
-
-    let schedule = AgentSchedule {
-        schedule_type,
-        interval_seconds: request.schedule.interval_seconds,
-        cron_expression: request.schedule.cron_expression,
-        event_filter: request.schedule.event_filter,
-        timezone: request.schedule.timezone,
-    };
-
-    // Build resources
-    let mut resources = Vec::new();
-    use neomind_storage::{AgentResource, ResourceType};
-
-    // Handle new resources format (preferred)
-    if let Some(ref req_resources) = request.resources {
-        // New format provided - use it exclusively (ignore legacy format to avoid duplicates)
-        for req_resource in req_resources {
-            let resource_type = match req_resource.resource_type.as_str() {
-                "device" | "Device" => ResourceType::Device,
-                "metric" | "Metric" => ResourceType::Metric,
-                "command" | "Command" => ResourceType::Command,
-                "extension_metric" | "ExtensionMetric" => ResourceType::ExtensionMetric,
-                "extension_tool" | "ExtensionTool" => ResourceType::ExtensionTool,
-                "data_stream" | "DataStream" => ResourceType::DataStream,
-                _ => {
-                    // Use type-safe inference based on DataSourceId parsing
-                    infer_resource_type_from_id(&req_resource.resource_id)
-                }
-            };
-
-            resources.push(AgentResource {
-                resource_type,
-                resource_id: req_resource.resource_id.clone(),
-                name: req_resource.name.clone(),
-                config: req_resource.config.clone().unwrap_or_default(),
-            });
-        }
-    } else {
-        // No new format - handle legacy format for backward compatibility
-        for device_id in &request.device_ids {
-            resources.push(AgentResource {
-                resource_type: ResourceType::Device,
-                resource_id: device_id.clone(),
-                name: device_id.clone(),
-                config: json!({}),
-            });
-        }
-
-        for metric in &request.metrics {
-            // Build config, merging data_collection settings if provided
-            let mut config_json = json!({
-                "device_id": metric.device_id,
-                "metric_name": metric.metric_name,
-            });
-
-            // Merge data_collection config if provided
-            if let Some(ref metric_config) = metric.config {
-                if let Some(data_collection) = metric_config.get("data_collection") {
-                    config_json["data_collection"] = data_collection.clone();
-                }
-            }
-
-            resources.push(AgentResource {
-                resource_type: ResourceType::Metric,
-                resource_id: format!("{}:{}", metric.device_id, metric.metric_name),
-                name: metric.display_name.clone(),
-                config: config_json,
-            });
-        }
-
-        for command in &request.commands {
-            resources.push(AgentResource {
-                resource_type: ResourceType::Command,
-                resource_id: format!("{}:{}", command.device_id, command.command_name),
-                name: command.display_name.clone(),
-                config: json!({
-                    "device_id": command.device_id,
-                    "command_name": command.command_name,
-                    "parameters": command.parameters,
-                }),
-            });
-        }
-    }
-
-    // Map the editor's mode string. A `focused` agent may bind no resources:
-    // "focused" now means "no commands and no output contract" — the plainest
-    // agent there is — so requiring a binding here rejected the form's most
-    // basic path.
-    let execution_mode = match request.execution_mode.as_deref() {
-        Some("free") | Some("react") => neomind_storage::agents::ExecutionMode::Free,
-        Some("structured") => neomind_storage::agents::ExecutionMode::Structured,
-        _ => neomind_storage::agents::ExecutionMode::Focused,
-    };
-
-    // Create the agent
-    let agent = AiAgent {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: request.name.clone(),
-        description: request.description.clone(),
-        // Deprecated dead field — always false (see AiAgent docs).
-        enable_tool_chaining: false,
-        user_prompt: request.user_prompt,
-        llm_backend_id: {
-            // Auto-lock to the current active backend so the agent
-            // won't be affected by future chat model switches.
-            // Each agent keeps its own independent LLM backend.
-            match request.llm_backend_id.as_deref() {
-                None | Some("default") => get_instance_manager()
-                    .ok()
-                    .and_then(|m| m.get_active_instance())
-                    .map(|inst| inst.id),
-                Some(id) => Some(id.to_string()),
-            }
-        },
-        parsed_intent: None,
-        resources,
-        schedule,
-        status: AgentStatus::Active,
-        priority: request.priority.unwrap_or(128), // Default middle priority (0-255 range)
-        created_at: chrono::Utc::now().timestamp(),
-        updated_at: chrono::Utc::now().timestamp(),
-        last_execution_at: None,
-        stats: AgentStats::default(),
-        memory: AgentMemory::default(),
-        error_message: None,
-        system_prompt: request.system_prompt,
-        max_retries: 0,
-        consecutive_failures: 0,
-        output_schema: request.output_schema,
-        operator_config: request.operator_config,
-        memory_mode: request.memory_mode,
-        notify: Some(
-            request
-                .notify
-                .unwrap_or_else(crate::agent_defaults::default_agent_notify),
-        ),
-        conversation_history: Default::default(),
-        user_messages: Default::default(),
-        conversation_summary: Default::default(),
-        context_window_size: request.context_window_size.unwrap_or(10),
-        max_chain_depth: request
-            .max_chain_depth
-            .unwrap_or(neomind_storage::DEFAULT_MAX_CHAIN_DEPTH),
-        tool_config: request.tool_config,
-        execution_mode,
-        max_tokens_per_run: request.max_tokens_per_run,
-    };
-
-    if let Some(msg) = judgment_tool_config_conflict(&agent) {
-        return Err(ErrorResponse::bad_request(msg));
-    }
-
-    // Save to storage
-    let store = &state.agents.agent_store;
-    store
-        .save_agent(&agent)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to save agent: {}", e)))?;
-
-    // Initialize knowledge file at creation time (not first execution)
-    // This gives the agent immediate context for its first run.
-    // Stateless (Tool-memory) agents skip it: their inference path never
-    // loads knowledge files (MemoryMode::Tool = no history in the prompt),
-    // so the file would be dead weight the detail panel shows as "unused".
-    let stateless = agent.effective_memory_mode() == neomind_storage::MemoryMode::Tool;
-    if !stateless {
-        init_agent_knowledge_file(&state, &agent).await;
-    }
-
-    // Hot-set the clean-slate runtime so Cron/Interval/Event ticks see it.
-    if let Ok(rt) = state.require_clean_slate().await {
-        if let Err(e) = rt.ingest_v1_agent(&agent) {
-            tracing::warn!(
-                agent_id = %agent.id,
-                error = %e,
-                "Failed to ingest agent into clean-slate runtime after create"
-            );
-        }
-    }
-
-    tracing::info!(
-        "Created AI Agent: {} ({}) llm_backend_id={}",
-        agent.name,
-        agent.id,
-        agent.llm_backend_id.as_deref().unwrap_or("default")
-    );
-
-    ok(agent_mutation_response(&agent, true))
+    // Production create is V2-only. Chat/`neomind agent create` compiles flags
+    // into AgentSpecDraft → POST /agents/v2 (see cli-ops create_agent).
+    Err(ErrorResponse::bad_request(
+        "Legacy POST /api/agents is disabled: create with POST /api/agents/v2          or `neomind agent create` / `create-v2` (AgentSpecDraft).",
+    ))
 }
 
 /// Initialize the agent's knowledge file at creation time.
@@ -2122,17 +1816,17 @@ pub async fn update_agent(
         sync_task_understanding_mission(&state, &agent, &prompt_before).await;
     }
 
-    // Refresh clean-slate hot set (trigger/pacing/status).
+    // Refresh hot set from durable V2 (save_agent already wrote five tables).
     if let Ok(rt) = state.require_clean_slate().await {
-        if let Err(e) = rt.ingest_v1_agent(&agent) {
+        if let Err(e) = rt.reload_from_v2(&id) {
             tracing::warn!(
-                agent_id = %agent.id,
+                agent_id = %id,
                 error = %e,
-                "Failed to ingest agent into clean-slate runtime after update"
+                "Failed to reload agent into clean-slate runtime after update"
             );
         }
     }
-    let _ = has_schedule_update; // schedule lives in the ingested TriggerSpec
+    let _ = has_schedule_update; // schedule lives in TriggerSpec after V2 reload
 
     tracing::info!("Updated AI Agent: {}", id);
 
@@ -2223,7 +1917,7 @@ pub async fn execute_agent(
         .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
 
     let rt = state.require_clean_slate().await?;
-    rt.ensure_v1_agent(&agent)
+    rt.ensure_loaded(&id)
         .map_err(|e| ErrorResponse::internal(format!("Failed to load agent into runtime: {e}")))?;
 
     let execution_id = uuid::Uuid::new_v4().to_string();
@@ -2294,8 +1988,9 @@ pub async fn test_agent(
         .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
 
     let rt = state.require_clean_slate().await?;
-    rt.ensure_v1_agent(&agent)
+    rt.ensure_loaded(&id)
         .map_err(|e| ErrorResponse::internal(format!("Failed to load agent into runtime: {e}")))?;
+    let _ = agent;
 
     let resp = rt
         .dry_run(&id)
@@ -2351,105 +2046,113 @@ pub async fn test_agent_preview(
     State(state): State<ServerState>,
     Json(request): Json<TestPreviewRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    use neomind_storage::{
-        AgentMemory, AgentResource, AgentSchedule, AgentStats, AgentStatus, ScheduleType,
+    use neomind_ai_agent::model::{
+        AgentSpecDraft, FreshnessPolicy, InputContract, InputModality, InputRequirement,
+        InputSourceRef, MissingPolicy, OutputContract, OutputField, PacingPolicy, ToolPolicy,
+        TriggerSpec,
     };
 
-    let resources = request
-        .resources
-        .iter()
-        .map(|r| {
-            let resource_type = match r.resource_type.as_str() {
-                "device" | "Device" => ResourceType::Device,
-                "metric" | "Metric" => ResourceType::Metric,
-                "command" | "Command" => ResourceType::Command,
-                "extension_metric" | "ExtensionMetric" => ResourceType::ExtensionMetric,
-                "extension_tool" | "ExtensionTool" => ResourceType::ExtensionTool,
-                "data_stream" | "DataStream" => ResourceType::DataStream,
-                _ => infer_resource_type_from_id(&r.resource_id),
-            };
-            AgentResource {
-                resource_type,
-                resource_id: r.resource_id.clone(),
-                name: r.name.clone(),
-                config: r.config.clone().unwrap_or_default(),
+    // Map preview resources → InputContract (no AiAgent / ingest).
+    let mut requirements = Vec::new();
+    for (i, r) in request.resources.iter().enumerate() {
+        let key = if r.name.is_empty() {
+            format!("r{i}")
+        } else {
+            r.name.clone()
+        };
+        let source = match r.resource_type.as_str() {
+            "device" | "Device" => InputSourceRef::WholeDevice {
+                device_id: r.resource_id.clone(),
+            },
+            "metric" | "Metric" => {
+                let mut parts = r.resource_id.splitn(2, ':');
+                let device_id = parts.next().unwrap_or(&r.resource_id).to_string();
+                let field = parts.next().unwrap_or("value").to_string();
+                InputSourceRef::DeviceMetric { device_id, field }
             }
-        })
-        .collect();
+            "extension_metric" | "ExtensionMetric" | "extension_tool" | "ExtensionTool" => {
+                InputSourceRef::ExtensionInstance {
+                    id: r.resource_id.clone(),
+                }
+            }
+            _ => InputSourceRef::WholeDevice {
+                device_id: r.resource_id.clone(),
+            },
+        };
+        requirements.push(InputRequirement {
+            key,
+            source,
+            operation: None,
+            params: r.config.clone().unwrap_or_else(|| json!({})),
+            auth_scope: None,
+            timeout_secs: 10,
+            result_type: InputModality::StructuredJson,
+            freshness: FreshnessPolicy::Any,
+            on_missing: MissingPolicy::ReportStale,
+        });
+    }
 
-    let now = chrono::Utc::now().timestamp();
-    let transient = AiAgent {
-        id: "preview".to_string(),
-        name: "Preview".to_string(),
+    let tool_policy = match request.tool_config.as_ref() {
+        Some(tc) if !tc.enabled => ToolPolicy::Disabled,
+        Some(tc) if !tc.allowed_tools.is_empty() => ToolPolicy::Scoped {
+            allowed_tools: tc.allowed_tools.clone(),
+            allowed_commands: vec![],
+        },
+        _ => ToolPolicy::Unrestricted,
+    };
+
+    let output = if let Some(schema) = request.output_schema.as_ref() {
+        OutputContract {
+            fields: schema
+                .iter()
+                .map(|f| OutputField {
+                    name: f.name.clone(),
+                    depends_on: vec![],
+                    description: f.description.clone(),
+                })
+                .collect(),
+            publish: false,
+        }
+    } else {
+        OutputContract::default()
+    };
+
+    let draft = AgentSpecDraft {
+        name: "Preview".into(),
         description: None,
         user_prompt: request.user_prompt,
         llm_backend_id: request.llm_backend_id,
-        parsed_intent: None,
-        resources,
-        schedule: AgentSchedule {
-            schedule_type: ScheduleType::Manual,
-            cron_expression: None,
-            interval_seconds: None,
-            event_filter: None,
-            timezone: None,
-        },
-        status: AgentStatus::Active,
-        priority: 128,
-        created_at: now,
-        updated_at: now,
-        last_execution_at: None,
-        stats: AgentStats::default(),
-        memory: AgentMemory::default(),
-        conversation_history: Default::default(),
-        user_messages: Default::default(),
-        conversation_summary: None,
-        context_window_size: 10,
-        enable_tool_chaining: false,
-        max_chain_depth: 5,
-        tool_config: request.tool_config,
-        system_prompt: None,
-        max_retries: 0,
-        consecutive_failures: 0,
-        output_schema: request.output_schema,
-        operator_config: request.operator_config,
-        memory_mode: None,
-        notify: None,
-        max_tokens_per_run: None,
-        // Mode follows the request; structured stays the default so the
-        // original dry-run contract is unchanged for existing callers.
-        execution_mode: match request.execution_mode.as_deref() {
-            Some("free") | Some("react") => neomind_storage::agents::ExecutionMode::Free,
-            Some("focused") | None | Some("") => {
-                // Focused IS the dry-run for plain prompts; structured is
-                // requested explicitly by name.
-                neomind_storage::agents::ExecutionMode::Focused
-            }
-            Some("structured") => neomind_storage::agents::ExecutionMode::Structured,
-            Some(other) => {
-                return Err(ErrorResponse::bad_request(format!(
-                    "Unknown execution_mode '{}' (free | focused | structured)",
-                    other
-                )))
-            }
-        },
-        error_message: None,
+        preset: None,
+        trigger: TriggerSpec::Manual,
+        pacing: PacingPolicy::default(),
+        input: InputContract { requirements },
+        tool_policy,
+        output,
+        notify: Default::default(),
+        controlled_actions: vec![],
     };
 
+    let mode_label = request
+        .execution_mode
+        .clone()
+        .unwrap_or_else(|| "focused".into());
+
     let rt = state.require_clean_slate().await?;
-    // Transient preview: ingest → dry-run → delete (nothing persisted formally).
-    rt.ingest_v1_agent(&transient)
+    let (spec, _) = rt
+        .create(draft)
         .map_err(|e| ErrorResponse::internal(format!("Failed to build preview agent: {e}")))?;
+    let preview_id = spec.id.clone();
     let resp = rt
-        .dry_run(&transient.id)
+        .dry_run(&preview_id)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {e}")))?;
-    let _ = rt.delete(&transient.id);
+    let _ = rt.delete(&preview_id);
 
     ok(serde_json::to_value(resp).unwrap_or_else(|_| {
         json!({
-            "agent_id": transient.id,
+            "agent_id": preview_id,
             "dry_run": true,
-            "mode": format!("{:?}", transient.execution_mode),
+            "mode": mode_label,
         })
     }))
 }
@@ -2493,7 +2196,7 @@ pub async fn invoke_agent(
         .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
 
     let rt = state.require_clean_slate().await?;
-    rt.ensure_v1_agent(&agent)
+    rt.ensure_loaded(&id)
         .map_err(|e| ErrorResponse::internal(format!("Failed to load agent into runtime: {e}")))?;
 
     let agent_name = agent.name.clone();
@@ -2753,7 +2456,8 @@ pub async fn set_agent_status(
         .map_err(|e| ErrorResponse::internal(format!("Failed to update status: {}", e)))?;
 
     if let Ok(rt) = state.require_clean_slate().await {
-        let _ = rt.ensure_v1_agent(&agent);
+        let _ = rt.ensure_loaded(&id);
+        let _ = agent;
         let cs_status = neomind_ai_agent::storage_bridge::status_from_storage(new_status);
         if let Err(e) = rt.set_agent_status(&id, cs_status) {
             tracing::warn!(

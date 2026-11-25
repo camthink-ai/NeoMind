@@ -464,6 +464,9 @@ fn message_with_warnings(base: String, data: &serde_json::Value) -> String {
 }
 
 /// Create a new agent
+///
+/// Compiles CLI flags into an [`AgentSpecDraft`]-shaped JSON body and POSTs
+/// `/agents/v2` (legacy POST `/agents` is refused on the production binary).
 #[allow(clippy::too_many_arguments)]
 pub async fn create_agent(
     client: &ApiClient,
@@ -492,180 +495,53 @@ pub async fn create_agent(
     tool_policy: Option<&str>,
     input: Option<&str>,
 ) -> Result<CliResponse> {
+    let _ = (memory_mode, max_chain_depth, priority, context_window_size, commands);
+
     let schedule_type_val = schedule_type.unwrap_or("event");
-    let mut schedule = json!({
-        "schedule_type": schedule_type_val,
-    });
-    match schedule_type_val {
+    let trigger = match schedule_type_val {
         "interval" => {
-            if let Some(config) = schedule_config {
-                // Parse failure must ERROR, not silently drop: the dropped
-                // field made the API reject with "interval_seconds is
-                // required" while the caller DID pass --schedule-config —
-                // an unexplainable error (same silent-drop family as the
-                // update-component id/type strip).
-                match config.parse::<u64>() {
-                    Ok(secs) => schedule["interval_seconds"] = json!(secs),
+            let secs = match schedule_config {
+                Some(config) => match config.parse::<u64>() {
+                    Ok(s) => s,
                     Err(_) => {
                         return Ok(CliResponse::error(
                             format!(
-                                "--schedule-config '{}' is not a plain number of SECONDS — pass e.g. --schedule-config 300 for a 5-minute interval",
-                                config
+                                "--schedule-config '{config}' is not a plain number of SECONDS — pass e.g. --schedule-config 300 for a 5-minute interval"
                             ),
                             "INVALID_SCHEDULE_CONFIG",
                         ))
                     }
-                }
-            }
+                },
+                None => 300,
+            };
+            json!({ "kind": "interval", "every_secs": secs })
         }
         "cron" => {
-            if let Some(config) = schedule_config {
-                schedule["cron_expression"] = json!(config);
-            }
+            let expr = schedule_config.unwrap_or("0 * * * *").to_string();
+            let tz = timezone.unwrap_or("UTC").to_string();
+            json!({ "kind": "cron", "expr": expr, "timezone": tz })
         }
-        _ => {}
-    }
-    if let Some(ef) = event_filter {
-        schedule["event_filter"] = json!(ef);
-    }
-    if let Some(tz) = timezone {
-        schedule["timezone"] = json!(tz);
-    }
+        "manual" => json!({ "kind": "manual" }),
+        _ => {
+            // event (default)
+            let filter = if let Some(ef) = event_filter {
+                json!(ef)
+            } else {
+                json!({})
+            };
+            json!({ "kind": "event", "filter": filter })
+        }
+    };
 
-    // Default aligned with the API's (focused = the plainest agent); the
-    // editor, CLI and API now agree on one default.
     let exec_mode = execution_mode.unwrap_or("focused");
     let has_resources = resources.is_some()
         || device_ids.map(|d| !d.is_empty()).unwrap_or(false)
         || metrics.is_some()
-        || commands.is_some()
         || input_has_requirements(input);
 
-    let tool_config = match resolve_tool_config_flags(no_tools, allowed_tools, notify) {
-        Ok(v) => v,
-        Err(resp) => return Ok(resp),
-    };
-
-    let mut body = json!({
-        "name": name,
-        "user_prompt": user_prompt,
-        "schedule": schedule,
-        "execution_mode": exec_mode,
-    });
-    if let Some(tc) = tool_config {
-        body["tool_config"] = tc;
-    }
-    if let Some(schema_json) = output_schema {
-        let parsed: serde_json::Value = crate::json_arg::parse_json_arg(schema_json).map_err(|e| {
-            anyhow::anyhow!(
-                "--output-schema is not valid JSON: {} — expected an array of fields, e.g. a status enum field",
-                e
-            )
-        })?;
-        body["output_schema"] = parsed;
-    }
-    if let Some(mm) = memory_mode {
-        anyhow::ensure!(
-            mm == "tool" || mm == "assistant",
-            "--memory-mode must be 'tool' or 'assistant' (got '{}')",
-            mm
-        );
-        body["memory_mode"] = json!(mm);
-    }
-    if let Some(notify_json) = notify {
-        match parse_notify_arg(notify_json) {
-            Ok(parsed) => body["notify"] = notify_for_v1_body(parsed),
-            Err(resp) => return Ok(resp),
-        }
-    }
-    if let Err(resp) = attach_v2_optional_fields(&mut body, tool_policy, input) {
-        return Ok(resp);
-    }
-
-    if let Some(desc) = description {
-        body["description"] = json!(desc);
-    }
-    if let Some(backend) = llm_backend {
-        body["llm_backend_id"] = json!(backend);
-    }
-    if let Some(prompt) = system_prompt {
-        body["system_prompt"] = json!(prompt);
-    }
-    if let Some(ids) = device_ids {
-        let id_list: Vec<&str> = ids
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if !id_list.is_empty() {
-            body["device_ids"] = json!(id_list);
-        }
-    }
-    if let Some(res_str) = resources {
-        // Malformed JSON must FAIL, not silently drop the binding — the agent
-        // would be created without its resources while the caller believes it
-        // succeeded (focused-validation bypass / free-mode degradation).
-        let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(res_str) {
-            Ok(v) => v,
-            Err(e) => {
-                return Ok(CliResponse::error_with_suggestion(
-                    format!("Invalid JSON in --resources: {e}"),
-                    "INVALID_JSON",
-                    "Pass a JSON array, e.g. --resources '[{\"type\":\"device\",\"id\":\"device-001\"}]'",
-                ));
-            }
-        };
-        body["resources"] = parsed;
-    }
-    if let Some(mcd) = max_chain_depth {
-        body["max_chain_depth"] = json!(mcd);
-    }
-    if let Some(p) = priority {
-        body["priority"] = json!(p);
-    }
-    if let Some(cws) = context_window_size {
-        body["context_window_size"] = json!(cws);
-    }
-    if let Some(metrics_str) = metrics {
-        // Malformed JSON must FAIL, not silently drop the binding — the agent
-        // would be created without its resources while the caller believes it
-        // succeeded (focused-validation bypass / free-mode degradation).
-        let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(metrics_str) {
-            Ok(v) => v,
-            Err(e) => {
-                return Ok(CliResponse::error_with_suggestion(
-                    format!("Invalid JSON in --metrics: {e}"),
-                    "INVALID_JSON",
-                    "Pass a JSON array, e.g. --metrics '[{\"type\":\"device\",\"id\":\"device-001\"}]'",
-                ));
-            }
-        };
-        body["metrics"] = parsed;
-    }
-    if let Some(commands_str) = commands {
-        // Malformed JSON must FAIL, not silently drop the binding — the agent
-        // would be created without its resources while the caller believes it
-        // succeeded (focused-validation bypass / free-mode degradation).
-        let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(commands_str) {
-            Ok(v) => v,
-            Err(e) => {
-                return Ok(CliResponse::error_with_suggestion(
-                    format!("Invalid JSON in --commands: {e}"),
-                    "INVALID_JSON",
-                    "Pass a JSON array, e.g. --commands '[{\"type\":\"device\",\"id\":\"device-001\"}]'",
-                ));
-            }
-        };
-        body["commands"] = parsed;
-    }
-
-    // focused mode requires resources
     if exec_mode == "focused" && !has_resources {
-        // Surface a concrete invocation so the caller can self-correct instead
-        // of retrying blind. Matches the data_push error_with_suggestion gold
-        // standard.
         return Ok(CliResponse::error_with_suggestion(
-            "Focused mode requires --resources, --device-ids, --metrics, or --commands to bind at least one resource.",
+            "Focused mode requires --resources, --device-ids, --metrics, or --input-requirements to bind at least one source.",
             "FOCUSED_REQUIRES_RESOURCES",
             "Either bind devices (`--device-ids sensor-001`, `--metrics '[…]'`, or `--resources '[…]'`) OR switch \
              off focused with `--execution-mode free` (multi-round) / `manual` schedule for \
@@ -673,9 +549,233 @@ pub async fn create_agent(
         ));
     }
 
-    let data = client.post("/agents", &body).await?;
+    // tool_policy: explicit flag wins; else --no-tools / --allowed-tools; else unrestricted.
+    let resolved_tool_policy = if let Some(raw) = tool_policy {
+        match parse_tool_policy_arg(raw) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        }
+    } else if no_tools {
+        if notify_on_is_judgment(notify) {
+            return Ok(CliResponse::error_with_suggestion(
+                "--no-tools conflicts with --notify on=judgment (judgment alerts need shell to send messages).",
+                "NO_TOOLS_CONFLICTS_WITH_JUDGMENT_NOTIFY",
+                "Use `--allowed-tools shell` with judgment notify, or switch notify to `always`/`failure` with `--no-tools`.",
+            ));
+        }
+        json!("disabled")
+    } else if let Some(raw) = allowed_tools {
+        let trimmed = raw.trim();
+        if trimmed.eq_ignore_ascii_case("all") {
+            json!("unrestricted")
+        } else {
+            let list: Vec<String> = trimmed
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if notify_on_is_judgment(notify)
+                && !list.iter().any(|t| t.eq_ignore_ascii_case("shell"))
+            {
+                return Ok(CliResponse::error_with_suggestion(
+                    "--allowed-tools without `shell` conflicts with --notify on=judgment (judgment alerts need shell to send messages).",
+                    "ALLOWED_TOOLS_OMITS_SHELL_FOR_JUDGMENT",
+                    "Include `shell` in --allowed-tools, or switch notify to `always`/`failure`.",
+                ));
+            }
+            json!({ "scoped": { "allowed_tools": list, "allowed_commands": [] } })
+        }
+    } else {
+        json!("unrestricted")
+    };
+
+    // InputContract: --input-requirements wins; else compile device/metric/resource flags.
+    let input_contract = if let Some(raw) = input {
+        match parse_input_arg(raw) {
+            Ok(v) => v,
+            Err(resp) => return Ok(resp),
+        }
+    } else {
+        let mut requirements = Vec::new();
+        if let Some(ids) = device_ids {
+            for id in ids.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                requirements.push(json!({
+                    "key": id,
+                    "source": { "kind": "whole_device", "device_id": id },
+                    "params": {},
+                    "timeout_secs": 10,
+                    "result_type": "structured_json",
+                    "freshness": { "kind": "any" },
+                    "on_missing": "report_stale",
+                }));
+            }
+        }
+        if let Some(metrics_str) = metrics {
+            let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(metrics_str) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Ok(CliResponse::error_with_suggestion(
+                        format!("Invalid JSON in --metrics: {e}"),
+                        "INVALID_JSON",
+                        "Pass a JSON array, e.g. --metrics '[{\"device_id\":\"d1\",\"metric_name\":\"temp\"}]'",
+                    ));
+                }
+            };
+            if let Some(arr) = parsed.as_array() {
+                for (i, m) in arr.iter().enumerate() {
+                    let device_id = m
+                        .get("device_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let field = m
+                        .get("metric_name")
+                        .or_else(|| m.get("field"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("value");
+                    let key = m
+                        .get("display_name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("{device_id}:{field}"));
+                    let _ = i;
+                    requirements.push(json!({
+                        "key": key,
+                        "source": { "kind": "device_metric", "device_id": device_id, "field": field },
+                        "params": {},
+                        "timeout_secs": 10,
+                        "result_type": "metric",
+                        "freshness": { "kind": "any" },
+                        "on_missing": "report_stale",
+                    }));
+                }
+            }
+        }
+        if let Some(res_str) = resources {
+            let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(res_str) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Ok(CliResponse::error_with_suggestion(
+                        format!("Invalid JSON in --resources: {e}"),
+                        "INVALID_JSON",
+                        "Pass a JSON array, e.g. --resources '[{\"resource_type\":\"device\",\"resource_id\":\"device-001\",\"name\":\"cam\"}]'",
+                    ));
+                }
+            };
+            if let Some(arr) = parsed.as_array() {
+                for (i, r) in arr.iter().enumerate() {
+                    let rtype = r
+                        .get("resource_type")
+                        .or_else(|| r.get("type"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("device");
+                    let rid = r
+                        .get("resource_id")
+                        .or_else(|| r.get("id"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let key = r
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("r{i}"));
+                    let source = match rtype {
+                        "metric" | "Metric" => {
+                            let mut parts = rid.splitn(2, ':');
+                            let device_id = parts.next().unwrap_or(rid);
+                            let field = parts.next().unwrap_or("value");
+                            json!({ "kind": "device_metric", "device_id": device_id, "field": field })
+                        }
+                        "extension_metric" | "ExtensionMetric" | "extension_tool" | "ExtensionTool" => {
+                            json!({ "kind": "extension_instance", "id": rid })
+                        }
+                        _ => json!({ "kind": "whole_device", "device_id": rid }),
+                    };
+                    requirements.push(json!({
+                        "key": key,
+                        "source": source,
+                        "params": r.get("config").cloned().unwrap_or_else(|| json!({})),
+                        "timeout_secs": 10,
+                        "result_type": "structured_json",
+                        "freshness": { "kind": "any" },
+                        "on_missing": "report_stale",
+                    }));
+                }
+            }
+        }
+        json!({ "requirements": requirements })
+    };
+
+    let notify_policy = if let Some(raw) = notify {
+        match parse_notify_arg(raw) {
+            Ok(parsed) => notify_for_v2_draft(parsed),
+            Err(resp) => return Ok(resp),
+        }
+    } else {
+        json!({
+            "channels": [],
+            "on_complete": false,
+            "on_alert": false,
+            "alert_depends_on": [],
+            "on_failure": true,
+            "pending_confirmation": false,
+        })
+    };
+
+    let output = if let Some(schema_json) = output_schema {
+        let parsed: serde_json::Value = crate::json_arg::parse_json_arg(schema_json).map_err(|e| {
+            anyhow::anyhow!(
+                "--output-schema is not valid JSON: {} — expected an array of fields",
+                e
+            )
+        })?;
+        let fields = if let Some(arr) = parsed.as_array() {
+            arr.iter()
+                .filter_map(|f| {
+                    let name = f.get("name")?.as_str()?;
+                    Some(json!({
+                        "name": name,
+                        "depends_on": [],
+                        "description": f.get("description").cloned().unwrap_or(json!(null)),
+                    }))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![]
+        };
+        json!({ "fields": fields, "publish": exec_mode == "structured" })
+    } else {
+        json!({ "fields": [], "publish": false })
+    };
+
+    let prompt = if let Some(sp) = system_prompt {
+        format!("{sp}\n\n{user_prompt}")
+    } else {
+        user_prompt.to_string()
+    };
+
+    let mut draft = json!({
+        "name": name,
+        "user_prompt": prompt,
+        "trigger": trigger,
+        "pacing": {},
+        "input": input_contract,
+        "tool_policy": resolved_tool_policy,
+        "output": output,
+        "notify": notify_policy,
+        "controlled_actions": [],
+    });
+    if let Some(desc) = description {
+        draft["description"] = json!(desc);
+    }
+    if let Some(backend) = llm_backend {
+        draft["llm_backend_id"] = json!(backend);
+    }
+
+    let data = client.post("/agents/v2", &draft).await?;
     let agent_id = data
-        .get("id")
+        .get("agent")
+        .and_then(|a| a.get("id"))
+        .or_else(|| data.get("id"))
         .or_else(|| data.get("data").and_then(|d| d.get("id")))
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
@@ -690,6 +790,60 @@ pub async fn create_agent(
         message_with_warnings(base, &data),
     ))
 }
+
+/// Project v1 `on` notify JSON onto NotifyPolicy wire shape for POST /agents/v2.
+pub fn notify_for_v2_draft(parsed: serde_json::Value) -> serde_json::Value {
+    if parsed.get("on_complete").is_some()
+        || parsed.get("on_alert").is_some()
+        || parsed.get("on_failure").is_some()
+    {
+        let mut out = parsed.clone();
+        if let Some(obj) = out.as_object_mut() {
+            obj.entry("channels".to_string()).or_insert(json!([]));
+            obj.entry("on_complete".to_string()).or_insert(json!(false));
+            obj.entry("on_alert".to_string()).or_insert(json!(false));
+            obj.entry("on_failure".to_string()).or_insert(json!(false));
+            obj.entry("alert_depends_on".to_string())
+                .or_insert(json!([]));
+            obj.entry("pending_confirmation".to_string())
+                .or_insert(json!(false));
+            obj.remove("on");
+        }
+        return out;
+    }
+    let channels = parsed.get("channels").cloned().unwrap_or_else(|| json!([]));
+    let on = parsed
+        .get("on")
+        .and_then(|v| v.as_str())
+        .unwrap_or("failure");
+    match on {
+        "always" => json!({
+            "channels": channels,
+            "on_complete": true,
+            "on_alert": false,
+            "alert_depends_on": [],
+            "on_failure": true,
+            "pending_confirmation": false,
+        }),
+        "judgment" => json!({
+            "channels": channels,
+            "on_complete": false,
+            "on_alert": true,
+            "alert_depends_on": [],
+            "on_failure": false,
+            "pending_confirmation": false,
+        }),
+        _ => json!({
+            "channels": channels,
+            "on_complete": false,
+            "on_alert": false,
+            "alert_depends_on": [],
+            "on_failure": true,
+            "pending_confirmation": false,
+        }),
+    }
+}
+
 
 /// What to do after creating an agent, given how it is scheduled.
 ///
@@ -1339,9 +1493,17 @@ mod tests {
             .expect_err("mixed");
         assert_eq!(mixed.code.as_deref(), Some("NOTIFY_SHAPE_MIXED"));
 
-        let projected = notify_for_v1_body(v2);
+        let projected = notify_for_v1_body(v2.clone());
         assert_eq!(projected["on"], json!("always"));
         assert_eq!(projected["channels"], json!(["test-channel"]));
+
+        let v2_draft = notify_for_v2_draft(v1);
+        assert_eq!(v2_draft["on_complete"], json!(true));
+        assert_eq!(v2_draft["on_failure"], json!(true));
+        assert!(v2_draft.get("on").is_none());
+        let from_v2 = notify_for_v2_draft(v2);
+        assert_eq!(from_v2["on_complete"], json!(true));
+        assert!(from_v2.get("on").is_none());
     }
 
     #[test]

@@ -194,6 +194,51 @@ impl DurableAgentStore {
         Ok(())
     }
 
+    /// Load `id` from durable V2 into the hot set if missing (no AiAgent map).
+    pub fn ensure_loaded(&self, id: &str, now_ms: i64) -> Result<()> {
+        if self.mem.get_spec(id).is_ok() {
+            return Ok(());
+        }
+        self.reload_from_v2(id, now_ms)
+    }
+
+    /// Always refresh hot-set spec+runtime from durable V2 (after legacy save/update).
+    pub fn reload_from_v2(&self, id: &str, now_ms: i64) -> Result<()> {
+        let Some(v2) = &self.v2 else {
+            return Err(AgentError::NotFound(id.into()));
+        };
+        let rec = v2
+            .get_spec(id)
+            .map_err(|e| AgentError::Other(e.to_string()))?
+            .ok_or_else(|| AgentError::NotFound(id.into()))?;
+        let spec = record_to_spec(&rec).map_err(AgentError::Other)?;
+        self.mem.save_spec(spec, now_ms)?;
+        if let Ok(Some(rt)) = v2.get_runtime(id) {
+            let mapped = AgentRuntimeRecord {
+                agent_id: rt.agent_id,
+                status: status_from_storage(rt.status),
+                stats: crate::model::AgentStats {
+                    total_runs: rt.stats.total_runs,
+                    successful_runs: rt.stats.successful_runs,
+                    failed_runs: rt.stats.failed_runs,
+                    partial_runs: rt.stats.partial_runs,
+                    skipped_daily_limit: rt.stats.skipped_daily_limit,
+                    skipped_permit_timeout: rt.stats.skipped_permit_timeout,
+                    consecutive_failures: rt.stats.consecutive_failures,
+                    runs_today: rt.stats.runs_today,
+                    quota_day: rt.stats.quota_day,
+                    last_execution_at: rt.stats.last_execution_at,
+                    last_execution_id: rt.stats.last_execution_id,
+                },
+                error_message: rt.error_message,
+                next_probe_at: rt.next_probe_at,
+                updated_at: rt.updated_at,
+            };
+            self.mem.set_runtime(mapped)?;
+        }
+        Ok(())
+    }
+
     pub fn mirror_execution(&self, exec: &AgentExecutionRecord) -> Result<()> {
         self.mem.save_execution(exec.clone())?;
         if let Some(v2) = &self.v2 {

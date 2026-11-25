@@ -182,10 +182,16 @@ mod tests {
         assert_eq!(report.runtime_mark, RUNTIME_V2_ONLY);
         assert_eq!(report.v2_specs_after, 0);
 
+        // Empty V2-only gate: five tables present, zero specs, no agents table.
+        // Drop the Database handle before AgentStoreV2::open (redb exclusive lock).
         {
             let db = Database::open(&path).unwrap();
             assert!(is_v2_only(&db).unwrap());
             assert!(!table_exists_agents_v1(&db).unwrap());
+        }
+        {
+            let v2 = AgentStoreV2::open(&path).unwrap();
+            assert!(v2.list_specs().unwrap().is_empty());
         }
 
         let again = purge_agents_to_v2_only(&path).unwrap();
