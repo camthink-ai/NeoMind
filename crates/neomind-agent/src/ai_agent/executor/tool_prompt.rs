@@ -1427,9 +1427,9 @@ mod tests {
                 let decoded = base64::engine::general_purpose::STANDARD
                     .decode(data)
                     .expect("decode");
-                assert!(
-                    decoded.iter().skip(4).any(|b| *b == b'A'),
-                    "assembled part must carry fixture fill bytes"
+                assert_eq!(
+                    decoded, raw,
+                    "assembled part must equal the fixture bytes exactly"
                 );
             }
             ContentPart::ImageUrl { url, .. } => {

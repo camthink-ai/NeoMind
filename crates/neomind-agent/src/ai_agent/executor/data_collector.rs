@@ -2012,6 +2012,12 @@ fn report_id_values_at(
 
 /// True when the image point itself is immutably tied to `report_id`
 /// (not merely co-stamped with a sibling report_id metric).
+///
+/// Accepts only: (1) structured ID **exact** equality on the image record /
+/// its metadata; or (2) a co-stamped `_raw` envelope whose report_id is an
+/// exact match **and** whose image ref equals this point after normalize
+/// (or the embedded bytes are identical). Never substring-match IDs in
+/// URLs (`cam-12` must not own `cam-123`).
 fn image_point_belongs_to_report_id(
     point: &neomind_storage::timeseries::DataPoint,
     report_id: &str,
@@ -2020,46 +2026,108 @@ fn image_point_belongs_to_report_id(
     if report_id.is_empty() {
         return false;
     }
-    if image_payload_references_id(&point.value, point.metadata.as_ref(), report_id) {
+    if image_record_id_equals(&point.value, point.metadata.as_ref(), report_id) {
         return true;
     }
-    // Whole-report sibling: co-stamped `_raw` envelope embeds both this
-    // image reference and the report id (camera uplink shape).
     report
         .iter()
         .filter(|(name, p)| name.as_str() == "_raw" && p.timestamp == point.timestamp)
         .any(|(_, raw)| raw_envelope_links_image_to_id(&raw.value, &point.value, report_id))
 }
 
-fn image_payload_references_id(
+/// Structured ID fields on the image record itself (exact string equality).
+fn image_record_id_equals(
     image_value: &serde_json::Value,
     metadata: Option<&serde_json::Value>,
     report_id: &str,
 ) -> bool {
-    let mut haystacks: Vec<String> = match image_value {
-        serde_json::Value::String(s) => vec![s.clone()],
-        serde_json::Value::Object(obj) => ["image_url", "image_data", "url", "path", "value"]
-            .iter()
-            .filter_map(|k| obj.get(*k).and_then(|v| v.as_str()).map(str::to_string))
-            .collect(),
-        _ => Vec::new(),
-    };
+    let id_keys = ["image_id", "report_id"];
+    if let serde_json::Value::Object(obj) = image_value {
+        for key in id_keys {
+            if obj.get(key).and_then(|v| v.as_str()) == Some(report_id) {
+                return true;
+            }
+        }
+        if let Some(nested) = obj.get("metadata") {
+            for key in id_keys {
+                if nested.get(key).and_then(|v| v.as_str()) == Some(report_id) {
+                    return true;
+                }
+            }
+        }
+    }
     if let Some(meta) = metadata {
-        for key in ["image_id", "report_id", "metadata.image_id"] {
-            if let Some(v) = meta.get(key).and_then(|v| v.as_str()) {
-                haystacks.push(v.to_string());
+        for key in id_keys {
+            if meta.get(key).and_then(|v| v.as_str()) == Some(report_id) {
+                return true;
             }
         }
         if let Some(nested) = meta.get("metadata") {
-            if let Some(v) = nested.get("image_id").and_then(|v| v.as_str()) {
-                haystacks.push(v.to_string());
+            for key in id_keys {
+                if nested.get(key).and_then(|v| v.as_str()) == Some(report_id) {
+                    return true;
+                }
             }
         }
-        if let Some(s) = meta.as_str() {
-            haystacks.push(s.to_string());
+    }
+    false
+}
+
+fn normalize_image_ref(value: &serde_json::Value) -> Option<String> {
+    let raw = match value {
+        serde_json::Value::String(s) => Some(s.as_str()),
+        serde_json::Value::Object(obj) => ["image_url", "image_data", "url", "path", "value"]
+            .iter()
+            .find_map(|k| obj.get(*k).and_then(|v| v.as_str())),
+        _ => None,
+    }?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(
+        trimmed
+            .split(['?', '#'])
+            .next()
+            .unwrap_or(trimmed)
+            .to_string(),
+    )
+}
+
+fn image_bytes_identical(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    fn b64(v: &serde_json::Value) -> Option<&str> {
+        match v {
+            serde_json::Value::Object(obj) => obj
+                .get("image_base64")
+                .or_else(|| obj.get("base64"))
+                .or_else(|| obj.get("data"))
+                .and_then(|x| x.as_str())
+                .filter(|s| !s.is_empty()),
+            serde_json::Value::String(s) if s.starts_with("data:image/") => {
+                s.split(',').nth(1).filter(|p| !p.is_empty())
+            }
+            _ => None,
         }
     }
-    haystacks.iter().any(|h| h.contains(report_id))
+    match (b64(a), b64(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
+fn image_refs_equal_normalized_or_bytes_identical(
+    a: &serde_json::Value,
+    b: &serde_json::Value,
+) -> bool {
+    if json_values_equivalent(a, b) {
+        return true;
+    }
+    if let (Some(na), Some(nb)) = (normalize_image_ref(a), normalize_image_ref(b)) {
+        if na == nb {
+            return true;
+        }
+    }
+    image_bytes_identical(a, b)
 }
 
 fn raw_envelope_links_image_to_id(
@@ -2080,17 +2148,14 @@ fn raw_envelope_links_image_to_id(
         .or_else(|| obj.get("image_id"))
         .or_else(|| obj.get("report_id"))
         .and_then(|v| v.as_str());
+    // Exact ID equality only — never substring.
     if envelope_id != Some(report_id) {
         return false;
     }
     let Some(envelope_image) = obj.get("image_data") else {
         return false;
     };
-    json_values_equivalent(envelope_image, image_value)
-        || match (envelope_image.as_str(), image_value.as_str()) {
-            (Some(a), Some(b)) => a == b || a.contains(b) || b.contains(a),
-            _ => false,
-        }
+    image_refs_equal_normalized_or_bytes_identical(envelope_image, image_value)
 }
 
 /// Extract image data from a metric value.

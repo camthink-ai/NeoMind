@@ -356,40 +356,81 @@ pub(crate) fn has_frame_unconfirmed(data: &[DataCollected]) -> bool {
         .any(|d| d.values.get("_frame_unconfirmed").and_then(|v| v.as_bool()) == Some(true))
 }
 
-/// Whether this agent task actually needs a confirmed frame for settle.
+/// Whether this agent task has a **create-time / structured** vision
+/// requirement (NM-389). Prompt keyword scans (摄像头 / 照片 / …) are not
+/// used — they false-positive on "只读取摄像头温度，不分析图片" and
+/// false-negative on "判断入口是否有人" with a numeric device id.
 ///
-/// `_frame_unconfirmed` is written at collect time for whole-device triggers;
-/// non-vision tasks (plain temperature) must still Complete on their scalar
-/// input even when a same-second orphan image was rejected.
-pub(crate) fn task_needs_vision(agent: &neomind_storage::AiAgent) -> bool {
-    let prompt = agent.user_prompt.to_ascii_lowercase();
-    if prompt.contains("image")
-        || prompt.contains("vision")
-        || prompt.contains("camera")
-        || prompt.contains("photo")
-        || prompt.contains("frame")
-        || agent.user_prompt.contains("图片")
-        || agent.user_prompt.contains("看图")
-        || agent.user_prompt.contains("摄像头")
-        || agent.user_prompt.contains("画面")
-        || agent.user_prompt.contains("照片")
-    {
+/// Vision is required when any of:
+/// 1. `tool_config.allowed_tools` explicitly lists `vision` (and the tool is
+///    available this run),
+/// 2. a bound resource names an image metric field (exact),
+/// 3. the event filter names an image metric field (exact).
+pub(crate) fn task_needs_vision(
+    agent: &neomind_storage::AiAgent,
+    vision_tool_available: bool,
+) -> bool {
+    if agent_explicitly_allows_vision(agent) && vision_tool_available {
         return true;
     }
-    if let Some(filter) = agent.schedule.event_filter.as_deref() {
-        let lower = filter.to_ascii_lowercase();
-        if lower.contains("image") || lower.contains("frame") {
-            return true;
-        }
+    if agent_binds_image_metric(agent) {
+        return true;
     }
+    if event_filter_names_image_field(agent) {
+        return true;
+    }
+    false
+}
+
+fn agent_explicitly_allows_vision(agent: &neomind_storage::AiAgent) -> bool {
+    match &agent.tool_config {
+        Some(cfg) if cfg.enabled && !cfg.allowed_tools.is_empty() => cfg
+            .allowed_tools
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case("vision")),
+        // Empty allowlist = all tools — not a create-time vision confirmation.
+        _ => false,
+    }
+}
+
+/// Exact image metric field names (not device names containing "camera").
+fn is_image_metric_field(field: &str) -> bool {
+    let f = field.trim();
+    if f.is_empty() {
+        return false;
+    }
+    let lower = f.to_ascii_lowercase();
+    lower == "image_data"
+        || lower == "image"
+        || lower == "__webhook_image"
+        || lower == "image_base64"
+        || lower.ends_with(".image_data")
+        || lower.ends_with(".image")
+}
+
+fn resource_image_field(resource_id: &str) -> &str {
+    resource_id
+        .rsplit_once(':')
+        .map(|(_, field)| field)
+        .unwrap_or(resource_id)
+}
+
+fn agent_binds_image_metric(agent: &neomind_storage::AiAgent) -> bool {
     agent.resources.iter().any(|r| {
-        let id = r.resource_id.to_ascii_lowercase();
-        let name = r.name.to_ascii_lowercase();
-        id.contains("image")
-            || name.contains("image")
-            || id.contains("camera")
-            || name.contains("camera")
+        is_image_metric_field(resource_image_field(&r.resource_id))
+            || is_image_metric_field(&r.name)
     })
+}
+
+fn event_filter_names_image_field(agent: &neomind_storage::AiAgent) -> bool {
+    let Some(filter) = agent.schedule.parsed_event_filter() else {
+        return false;
+    };
+    filter
+        .any
+        .iter()
+        .chain(filter.all.iter())
+        .any(|src| src.field.as_deref().is_some_and(is_image_metric_field))
 }
 
 /// Rewrite conclusion / stop_reason / success_rate for a vision-undetermined run.
@@ -844,5 +885,79 @@ mod tests {
         assert!(!dp.conclusion.contains("criteria met"));
         assert_eq!(er.success_rate, 0.0);
         assert!(er.summary.to_lowercase().contains("vision"));
+    }
+
+    #[test]
+    fn task_needs_vision_uses_structured_contract_not_prompt_keywords() {
+        use neomind_storage::{
+            AgentMemory, AgentSchedule, AgentStats, AgentStatus, AgentToolConfig, AiAgent,
+            ExecutionJournal, ExecutionMode, ScheduleType,
+        };
+        let base = |prompt: &str| AiAgent {
+            id: "v".into(),
+            name: "v".into(),
+            description: None,
+            user_prompt: prompt.into(),
+            llm_backend_id: None,
+            parsed_intent: None,
+            resources: vec![],
+            schedule: AgentSchedule {
+                schedule_type: ScheduleType::Event,
+                interval_seconds: None,
+                cron_expression: None,
+                timezone: None,
+                event_filter: Some(r#"{"any":[{"type":"device","id":"200366"}]}"#.into()),
+            },
+            status: AgentStatus::Active,
+            priority: 128,
+            created_at: 0,
+            updated_at: 0,
+            last_execution_at: None,
+            stats: AgentStats {
+                total_executions: 0,
+                successful_executions: 0,
+                failed_executions: 0,
+                avg_duration_ms: 0,
+                last_duration_ms: None,
+            },
+            memory: AgentMemory {
+                journal: ExecutionJournal::default(),
+                knowledge_files: vec![],
+                updated_at: 0,
+            },
+            conversation_history: vec![],
+            user_messages: vec![],
+            conversation_summary: None,
+            context_window_size: 5,
+            tool_config: None,
+            execution_mode: ExecutionMode::Free,
+            error_message: None,
+            system_prompt: None,
+            max_retries: 0,
+            consecutive_failures: 0,
+            output_schema: None,
+            operator_config: None,
+            memory_mode: None,
+            notify: None,
+            enable_tool_chaining: false,
+            max_chain_depth: 3,
+            max_tokens_per_run: None,
+        };
+
+        // Camera in prompt alone is not a vision contract.
+        let temp = base("只读取摄像头温度，不分析图片");
+        assert!(!task_needs_vision(&temp, true));
+
+        // Person check + explicit vision allowlist = create-time confirmation.
+        let mut person = base("判断入口是否有人");
+        person.tool_config = Some(AgentToolConfig {
+            enabled: true,
+            allowed_tools: vec!["vision".into()],
+        });
+        assert!(task_needs_vision(&person, true));
+        assert!(
+            !task_needs_vision(&person, false),
+            "allowlist without an available vision tool is not enough"
+        );
     }
 }

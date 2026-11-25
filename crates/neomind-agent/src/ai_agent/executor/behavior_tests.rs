@@ -5555,7 +5555,9 @@ async fn whole_device_scalar_same_second_b_settles_partial_no_person_alert() {
         id: format!("patrol-scalar-{}", uuid::Uuid::new_v4().simple()),
         name: "vision-required-patrol".into(),
         description: None,
-        user_prompt: "巡检摄像头画面；发现人员则告警，否则报告现场正常".into(),
+        // No camera/照片 keywords — create-time vision confirmation is the
+        // explicit `vision` allowlist below (structured input contract).
+        user_prompt: "判断入口是否有人".into(),
         llm_backend_id: None,
         parsed_intent: Some(neomind_storage::ParsedIntent {
             intent_type: neomind_storage::IntentType::Monitoring,
@@ -5570,6 +5572,7 @@ async fn whole_device_scalar_same_second_b_settles_partial_no_person_alert() {
             interval_seconds: None,
             cron_expression: None,
             timezone: None,
+            // Numeric device id, whole-device filter, no image field / resource.
             event_filter: whole_device_filter(),
         },
         status: AgentStatus::Active,
@@ -5593,7 +5596,10 @@ async fn whole_device_scalar_same_second_b_settles_partial_no_person_alert() {
         user_messages: vec![],
         conversation_summary: None,
         context_window_size: 5,
-        tool_config: None,
+        tool_config: Some(neomind_storage::AgentToolConfig {
+            enabled: true,
+            allowed_tools: vec!["vision".into()],
+        }),
         execution_mode: ExecutionMode::Free,
         error_message: None,
         system_prompt: None,
@@ -5727,7 +5733,14 @@ async fn whole_device_plain_temp_still_completes() {
     agent.schedule.schedule_type = ScheduleType::Event;
     agent.schedule.event_filter = whole_device_filter();
     agent.execution_mode = ExecutionMode::Free;
-    agent.user_prompt = "读温度并报告现场正常".into();
+    // Mentions 摄像头 but explicitly not analyzing images — keyword scan
+    // would false-positive; structured contract (no vision allowlist / no
+    // image metric binding) must keep Completes.
+    agent.user_prompt = "只读取摄像头温度，不分析图片".into();
+    agent.tool_config = Some(neomind_storage::AgentToolConfig {
+        enabled: true,
+        allowed_tools: vec!["echo".into()],
+    });
     executor.store().save_agent(&agent).await.expect("seed");
     executor.set_tool_registry(registry);
 
@@ -5758,7 +5771,7 @@ async fn whole_device_plain_temp_still_completes() {
     assert_eq!(
         record.status,
         neomind_storage::ExecutionStatus::Completed,
-        "non-vision task must ignore orphan same-sec frame; error={:?}",
+        "temp-only structured contract must ignore orphan same-sec frame; error={:?}",
         record.error
     );
     let stored = executor
@@ -5768,6 +5781,114 @@ async fn whole_device_plain_temp_still_completes() {
         .expect("get")
         .expect("exists");
     assert_eq!(stored.stats.successful_executions, 1);
+
+    std::env::remove_var("NEOMIND_DATA_DIR");
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+/// NM-389: `cam-12` must not own a same-second `cam-123` image via URL/ID
+/// substring contains. Final model request must carry no B bytes.
+#[serial_test::serial]
+#[tokio::test]
+async fn whole_device_report_id_cam12_does_not_own_cam123_image() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "neomind_test_cam12_vs_cam123_{}",
+        uuid::Uuid::new_v4()
+    ));
+    crate::testing_helpers::setup_test_image_dir(&data_dir).expect("image dir");
+    let frame_b_path = data_dir.join("images/test-device-001/image/cam-123_frame.jpg");
+    std::fs::create_dir_all(frame_b_path.parent().unwrap()).expect("mkdir");
+    let mut bytes_b = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_b.extend(std::iter::repeat_n(b'B', 2048));
+    std::fs::write(&frame_b_path, &bytes_b).expect("write B");
+    std::env::set_var("NEOMIND_DATA_DIR", data_dir.to_str().unwrap());
+
+    // URL contains "cam-123" — substring of "cam-12" must NOT link.
+    let url_b = "/api/images/test-device-001/image/cam-123_frame.jpg";
+    let ts = chrono::Utc::now().timestamp() - 14;
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    let store = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(store.clone());
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.user_prompt = "判断入口是否有人".into();
+    agent.tool_config = Some(neomind_storage::AgentToolConfig {
+        enabled: true,
+        allowed_tools: vec!["vision".into()],
+    });
+    executor.store().save_agent(&agent).await.expect("seed");
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(StubVisionTool));
+    executor.set_tool_registry(Arc::new(registry));
+
+    seed_report(
+        &store,
+        ts,
+        &[("metadata.image_id", serde_json::json!("cam-12"))],
+    )
+    .await;
+    // Orphan B: URL embeds cam-123; structured id on the image is cam-123.
+    let key = format!("device:{CAM}");
+    store
+        .write(
+            &key,
+            "image_data",
+            TsPoint {
+                timestamp: ts,
+                value: serde_json::json!(url_b),
+                quality: None,
+                metadata: Some(serde_json::json!({ "image_id": "cam-123" })),
+            },
+        )
+        .await
+        .expect("seed B");
+    store.flush().expect("flush B");
+
+    let rt = MockLlmRuntime::new(vec![MockResponse::text("现场正常")])
+        .with_function_calling()
+        .with_supports_images();
+    let rt_handle = rt.clone();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+    executor.set_llm_runtime(rt_dyn).await;
+
+    let record = executor
+        .execute_agent(
+            agent.clone(),
+            Some(event_for("metadata.image_id", "cam-12", ts)),
+            None,
+        )
+        .await
+        .expect("Partial path Ok");
+    assert_eq!(
+        record.status,
+        neomind_storage::ExecutionStatus::Partial,
+        "unprovable cam-12 ownership must Partial; error={:?}",
+        record.error
+    );
+
+    let dump = serde_json::to_string(&rt_handle.captured_messages()).unwrap_or_default();
+    assert!(
+        !dump.contains("cam-123_frame") && !dump.contains(&"B".repeat(32)),
+        "model request must not carry cam-123 / B bytes"
+    );
+    use base64::Engine;
+    for msg in rt_handle.captured_messages() {
+        let s = msg.to_string();
+        for chunk in s.split('"') {
+            if chunk.len() < 1024 {
+                continue;
+            }
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(chunk) {
+                assert!(
+                    !bytes.iter().skip(4).any(|b| *b == b'B'),
+                    "request must not decode to B's frame"
+                );
+            }
+        }
+    }
 
     std::env::remove_var("NEOMIND_DATA_DIR");
     let _ = std::fs::remove_dir_all(&data_dir);

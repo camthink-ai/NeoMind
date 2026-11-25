@@ -830,7 +830,7 @@ impl AgentExecutor {
                 vision_exec_path,
             );
         let frame_unconfirmed = vision_path::has_frame_unconfirmed(data_collected)
-            && vision_path::task_needs_vision(agent);
+            && vision_path::task_needs_vision(agent, vision_tool_available);
         if vision_calls_failed
             || vision_never_confirmed
             || conclusion_admits_blind
