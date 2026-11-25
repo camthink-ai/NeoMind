@@ -1284,6 +1284,15 @@ pub async fn create_agent(
         validate_required_string, validate_string_length, validate_usize_range,
     };
 
+    // After offline `neomind agent migrate-v2-only`, refuse legacy create so
+    // Chat/CLI must compile to AgentSpecDraft → POST /agents/v2.
+    if neomind_storage::is_v2_only(&*state.agent_store().db()).unwrap_or(false) {
+        return Err(ErrorResponse::bad_request(
+            "This NeoMind is V2-only: create agents with POST /api/agents/v2 \
+             or `neomind agent create-v2 --draft <AgentSpecDraft>` (legacy POST /agents disabled).",
+        ));
+    }
+
     // Validate required fields
     validate_required_string(&request.name, "name")?;
     validate_string_length(&request.name, "name", 1, 100)?;

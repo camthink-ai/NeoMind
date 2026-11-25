@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 neomind-core = { path = "../neomind-core" }
 neomind-devices = { path = "../neomind-devices" }
+neomind-storage = { path = "../neomind-storage" }
 reqwest = { workspace = true, features = ["multipart"] }
 tokio = { workspace = true }
 serde = { workspace = true }

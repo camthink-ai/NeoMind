@@ -1014,6 +1014,65 @@ pub async fn plan_preview_agent(client: &ApiClient, draft_json: &str) -> Result<
     ))
 }
 
+/// Create via V2 draft (POST `/agents/v2`) — Chat/cutover primary path.
+pub async fn create_agent_v2(client: &ApiClient, draft_json: &str) -> Result<CliResponse> {
+    let draft = crate::json_arg::parse_json_arg(draft_json).map_err(|e| {
+        anyhow::anyhow!("--draft is not valid JSON: {e} — expected an AgentSpecDraft object.")
+    })?;
+    let data = client.post("/agents/v2", &draft).await?;
+    let id = data
+        .get("agent")
+        .and_then(|a| a.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
+    Ok(CliResponse::success(
+        data.clone(),
+        message_with_warnings(format!("Agent created via V2 (id: {id})"), &data),
+    ))
+}
+
+/// Offline inventory对照表 from a local agents.redb.
+pub async fn inventory_agents_local(db: &str, out: Option<&str>) -> Result<CliResponse> {
+    let path = std::path::Path::new(db);
+    if !path.exists() {
+        return Ok(CliResponse::error(
+            format!("agents.redb not found at {db} — pass --db or use the empty scaffold."),
+            "NOT_FOUND",
+        ));
+    }
+    let report = neomind_storage::inventory_agents_db(path)
+        .await
+        .map_err(|e| anyhow::anyhow!("inventory failed: {e}"))?;
+    let md = report.to_markdown_table();
+    if let Some(out_path) = out {
+        std::fs::write(out_path, &md)
+            .map_err(|e| anyhow::anyhow!("write inventory markdown: {e}"))?;
+    }
+    Ok(CliResponse::success(
+        serde_json::to_value(&report).unwrap_or_default(),
+        md,
+    ))
+}
+
+/// Offline V2-only purge migration.
+pub async fn migrate_v2_only_local(db: &str, report_path: Option<&str>) -> Result<CliResponse> {
+    let path = std::path::Path::new(db);
+    let report = neomind_storage::purge_agents_to_v2_only(path)
+        .map_err(|e| anyhow::anyhow!("migrate-v2-only failed: {e}"))?;
+    let value = serde_json::to_value(&report).unwrap_or_default();
+    if let Some(p) = report_path {
+        std::fs::write(p, serde_json::to_string_pretty(&value).unwrap_or_default())
+            .map_err(|e| anyhow::anyhow!("write purge report: {e}"))?;
+    }
+    Ok(CliResponse::success(
+        value,
+        format!(
+            "V2-only purge complete (already={} migrated={} specs={})",
+            report.already_v2_only, report.v1_rows_migrated, report.v2_specs_after
+        ),
+    ))
+}
+
 /// Authorized dry-run / structured test for a saved agent.
 ///
 /// POST `/agents/{id}/test` — existing structured L0 path. Prefer

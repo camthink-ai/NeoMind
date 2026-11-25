@@ -61,6 +61,19 @@ export const agentsApi = {
     }),
 
   /**
+   * Create via AgentSpec v2 (V2-only cutover path).
+   * POST /api/agents/v2
+   */
+  createAgentV2: (draft: import('@/types').AgentSpecDraft) =>
+    fetchAPI<{ agent: import('@/types').AgentSpec; effective_plan: import('@/types').EffectivePlan }>(
+      '/agents/v2',
+      {
+        method: 'POST',
+        body: JSON.stringify(draft),
+      },
+    ),
+
+  /**
    * Update an AI Agent
    * PUT /api/agents/:id
    */
@@ -69,6 +82,19 @@ export const agentsApi = {
       method: 'PUT',
       body: JSON.stringify(req),
     }),
+
+  /**
+   * Partial update via AgentSpec v2 patch.
+   * PUT /api/agents/v2/:id
+   */
+  updateAgentV2: (id: string, patch: import('@/types').AgentSpecPatch) =>
+    fetchAPI<{ agent: import('@/types').AgentSpec; effective_plan: import('@/types').EffectivePlan }>(
+      `/agents/v2/${id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      },
+    ),
 
   /**
    * Save-before dry run for a structured agent (transient, nothing persisted)

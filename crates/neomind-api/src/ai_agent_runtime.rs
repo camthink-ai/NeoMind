@@ -150,8 +150,12 @@ impl HostedAiAgentRuntime {
     }
 
     /// Map a legacy v1 [`AiAgent`] into the clean-slate hot set (+ optional v2
-    /// mirror). Used by `/api/agents` create/update/status so Cron/Interval/
-    /// Event ticks and invoke share one runtime after schema v2.
+    /// mirror).
+    ///
+    /// **Purge path:** prefer [`Self::create`] / [`Self::update`] with
+    /// `AgentSpecDraft` (POST `/agents/v2`). After `agent_runtime=v2_only`,
+    /// legacy POST `/agents` is refused; this ingest remains only for
+    /// invoke/status of rows already mapped during the offline migration.
     pub fn ingest_v1_agent(&self, agent: &AiAgent) -> AgentResult<()> {
         let (rec, rt_rec, _, _) = map_agent_v1_to_v2(agent);
         let spec = record_to_spec(&rec).map_err(AgentError::Other)?;

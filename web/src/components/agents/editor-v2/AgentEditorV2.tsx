@@ -18,12 +18,10 @@ import { FormField } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { AgentExecutionEvidencePanel } from '@/components/agents/AgentExecutionEvidencePanel'
-import { v2SpecToFormState } from '@/lib/api/agentV2Adapter'
 import type {
   AgentSpecDraft,
   AiAgentDetail,
   AgentExecutionDetail,
-  CreateAgentRequest,
   NotifyPolicy,
 } from '@/types'
 import { defaultDailyBriefDraft, detailToV2Draft } from './defaults'
@@ -40,27 +38,8 @@ export interface AgentEditorV2Props {
   agent?: AiAgentDetail
   /** Optional evidence for the preserved evidence panel. */
   evidenceDetail?: AgentExecutionDetail | null
-  /**
-   * Called with a legacy CreateAgentRequest projected from the v2 draft
-   * so the existing agents page save path keeps working.
-   */
-  onSave: (data: CreateAgentRequest) => Promise<void>
-}
-
-function draftToLegacyRequest(draft: AgentSpecDraft): CreateAgentRequest {
-  const form = v2SpecToFormState(draft)
-  return {
-    name: form.name,
-    description: form.description,
-    user_prompt: form.user_prompt,
-    llm_backend_id: form.llm_backend_id,
-    schedule: form.schedule,
-    resources: form.resources,
-    notify: form.notify,
-    tool_config: form.tool_config,
-    output_schema: form.output_schema,
-    execution_mode: 'structured',
-  }
+  /** Save the v2 draft directly (POST/PUT `/agents/v2`) — no legacy projection. */
+  onSave: (draft: AgentSpecDraft) => Promise<void>
 }
 
 export function AgentEditorV2({
@@ -86,7 +65,7 @@ export function AgentEditorV2({
   const handleSave = async () => {
     setSaving(true)
     try {
-      await onSave(draftToLegacyRequest(draft))
+      await onSave(draft)
       onOpenChange(false)
     } finally {
       setSaving(false)
