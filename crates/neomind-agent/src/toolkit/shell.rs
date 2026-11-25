@@ -4865,7 +4865,7 @@ mod p0_2_envelope_help_session_tests {
                             },
                             "meta": {"timestamp": 1}
                         }),
-                        "/api/agents/agent-1" => json!({
+                        "/api/agents/v2/agent-1" => json!({
                             "success": true,
                             "data": {"id": "agent-1", "name": "Monitor", "status": "active"},
                             "meta": {"timestamp": 1}
