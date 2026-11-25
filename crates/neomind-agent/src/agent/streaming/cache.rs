@@ -81,9 +81,6 @@ pub(crate) fn is_tool_cacheable(_name: &str, _arguments: &Value) -> bool {
     false
 }
 
-/// Minimum size (bytes) for a result to be considered large enough to strip base64 from.
-pub(crate) const BASE64_STRIP_THRESHOLD: usize = 4096;
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,0 +1,15 @@
+[package]
+name = "neomind-llm-loop"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+neomind-core = { path = "../neomind-core" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
+uuid = { workspace = true }

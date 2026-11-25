@@ -31,7 +31,7 @@ pub mod streaming;
 pub mod task_continuity;
 pub mod token_calibration;
 pub mod tokenizer;
-pub mod tool_parser;
+pub use neomind_llm_loop::tool_parser;
 pub mod tool_profile;
 pub mod types;
 

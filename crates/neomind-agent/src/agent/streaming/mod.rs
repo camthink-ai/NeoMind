@@ -23,7 +23,6 @@ mod guard;
 mod intent;
 mod resolve;
 mod result_format;
-mod sanitize;
 mod stream_core;
 mod stream_multimodal;
 mod thinking;
@@ -141,8 +140,10 @@ where
 }
 
 // Re-exports for internal crate use and test access
+pub(crate) use neomind_llm_loop::result_sanitizer::{
+    sanitize_tool_result_for_prompt, truncate_result_utf8,
+};
 pub(crate) use resolve::{resolve_cached_arguments, try_cached_file_read};
-pub(crate) use sanitize::{sanitize_tool_result_for_prompt, truncate_result_utf8};
 
 #[cfg(test)]
 mod stall_tests {
@@ -216,7 +217,7 @@ mod stall_tests {
 }
 
 #[cfg(test)]
-use sanitize::{humanize_bytes, is_large_base64_string};
+use neomind_llm_loop::result_sanitizer::{humanize_bytes, is_large_base64_string};
 #[cfg(test)]
 use tool_detect::detect_json_tool_calls;
 
