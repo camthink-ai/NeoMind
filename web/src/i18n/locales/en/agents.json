@@ -805,14 +805,20 @@
   "executionNotFound": "Execution Not Found",
   "noAgentsNoBackendDesc": "Agents need an AI model to run. Download the built-in model (offline, no API key) — or configure your own backend first.",
   "editorV2": {
-    "titleCreate": "Create Agent (v2)",
-    "titleEdit": "Edit Agent (v2)",
-    "dailyBriefHint": "Orthogonal AgentSpec v2 editor — seeded for daily-brief style configs (cron + timezone, input requirements, tool policy, three-way notify).",
+    "titleCreate": "Create Agent",
+    "titleEdit": "Edit Agent",
+    "subtitle": "Configure when it runs, what it may read, tools, and notifications.",
+    "dailyBriefHint": "Configure when it runs, what it may read, tools, and notifications.",
+    "basicsTitle": "Basics",
+    "basicsHint": "Name the agent and describe the mission it should carry out.",
+    "footerHint": "Changes apply on save.",
+    "save": "Save agent",
     "name": "Name",
     "description": "Description",
     "prompt": "Mission prompt",
     "trigger": {
-      "title": "Trigger",
+      "title": "When it runs",
+      "sectionHint": "Choose the schedule or event that starts a run.",
       "kind": "Trigger type",
       "cron": "Cron",
       "interval": "Interval",
@@ -827,7 +833,8 @@
       "eventHint": "Fires when the event filter matches"
     },
     "input": {
-      "title": "Input requirements",
+      "title": "What it may read",
+      "sectionHint": "Authorized sources the host reads before the model runs.",
       "count": "{{count}} sources",
       "empty": "No input requirements yet — add extension or device reads",
       "key": "Key",
@@ -850,7 +857,8 @@
       "disabledHint": "Host InputPipeline still reads authorized sources"
     },
     "notify": {
-      "title": "Notify policy",
+      "title": "Notifications",
+      "sectionHint": "Where and when operators hear from this agent.",
       "channels": "Channels",
       "channelsHint": "Comma-separated channel ids; empty = silent",
       "onComplete": "On complete",
@@ -865,7 +873,7 @@
     "plan": {
       "title": "Effective plan",
       "run": "Preview",
-      "hint": "Static plan only — zero external reads, zero delivery",
+      "hint": "Read-only summary of how this config will run.",
       "trigger": "Trigger",
       "timezone": "Timezone",
       "reads": "Authorized reads",
@@ -874,7 +882,7 @@
     "planPreview": {
       "title": "Effective plan",
       "refresh": "Refresh",
-      "hint": "Static preview from POST /api/agents/v2/plan-preview — zero external reads",
+      "hint": "Read-only summary — no live reads or delivery.",
       "empty": "No preview yet",
       "error": "Preview failed",
       "triggerSummary": "Trigger",
@@ -887,9 +895,10 @@
       "warnings": "Warnings"
     },
     "tools": {
-      "title": "Tool policy",
+      "title": "Tools",
+      "sectionHint": "What the model may call during a run.",
       "mode": "Mode",
-      "hint": "Daily-brief configs typically disable model tools",
+      "hint": "Daily briefs usually keep model tools off.",
       "disabled": "Disabled",
       "unrestricted": "Unrestricted",
       "scoped": "Scoped",

@@ -2,14 +2,13 @@
  * Notify policy section — on_complete / on_alert / on_failure + channels.
  */
 import { useTranslation } from 'react-i18next'
-import { Bell } from 'lucide-react'
 import { FormField } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
-import { cardBase } from '@/design-system/tokens/size'
 import { cn } from '@/lib/utils'
 import type { NotifyPolicy } from '@/types'
+import { EditorSection } from './EditorSection'
 
 export interface NotifyPolicySectionProps {
   value: NotifyPolicy
@@ -49,7 +48,7 @@ function FlagRow({
   onCheckedChange: (v: boolean) => void
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
+    <div className="flex items-start justify-between gap-3 rounded-md border border-border px-3 py-2.5">
       <div className="min-w-0 space-y-0.5">
         <Label htmlFor={id} className="text-sm font-medium text-foreground">
           {label}
@@ -70,14 +69,12 @@ export function NotifyPolicySection({ value, onChange, className }: NotifyPolicy
   }
 
   return (
-    <section className={cn(cardBase, 'p-4 space-y-4', className)} data-section="notify">
-      <header className="flex items-center gap-2">
-        <Bell className="h-4 w-4 text-muted-foreground" />
-        <h3 className="text-sm font-medium text-foreground">
-          {t('editorV2.notify.title')}
-        </h3>
-      </header>
-
+    <EditorSection
+      title={t('editorV2.notify.title')}
+      description={t('editorV2.notify.sectionHint')}
+      className={cn(className)}
+      data-section="notify"
+    >
       <FormField
         label={t('editorV2.notify.channels')}
         helpText={t('editorV2.notify.channelsHint')}
@@ -127,6 +124,6 @@ export function NotifyPolicySection({ value, onChange, className }: NotifyPolicy
           onCheckedChange={(pending_confirmation) => patch({ pending_confirmation })}
         />
       </div>
-    </section>
+    </EditorSection>
   )
 }

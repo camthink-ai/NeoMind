@@ -1,12 +1,12 @@
 /**
- * EffectivePlan preview panel — POST /api/agents/v2/plan-preview (static, zero reads).
- * Accepts an optional `previewFn` so tests can mock without hitting the network.
+ * EffectivePlan preview — quiet secondary summary (not a competing card).
+ * POST /api/agents/v2/plan-preview (static, zero reads).
+ * Accepts optional `previewFn` so tests can mock without hitting the network.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Eye, Loader2, RefreshCw, AlertTriangle } from 'lucide-react'
+import { Loader2, RefreshCw, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { cardBase } from '@/design-system/tokens/size'
 import { textNano } from '@/design-system/tokens/typography'
 import { cn } from '@/lib/utils'
 import { agentsApi } from '@/lib/api/agents'
@@ -30,6 +30,23 @@ function toolPolicyLabel(policy: ToolPolicy, t: (k: string) => string): string {
   if (policy === 'unrestricted') return t('editorV2.tools.unrestricted')
   const tools = policy.scoped.allowed_tools?.join(', ') || '—'
   return `${t('editorV2.tools.scoped')}: ${tools}`
+}
+
+function SummaryRow({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <div className="space-y-0.5">
+      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="text-sm text-foreground break-words">{children}</dd>
+    </div>
+  )
 }
 
 export function EffectivePlanPreview({
@@ -69,21 +86,27 @@ export function EffectivePlanPreview({
 
   return (
     <aside
-      className={cn(cardBase, 'p-4 space-y-3', className)}
+      className={cn(
+        'rounded-lg border border-dashed border-border bg-muted-20 p-4 space-y-3',
+        className,
+      )}
       data-section="plan-preview"
       data-loading={loading ? 'true' : 'false'}
     >
       <header className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Eye className="h-4 w-4 text-muted-foreground" />
-          <h3 className="text-sm font-medium text-foreground">
+        <div className="min-w-0">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {t('editorV2.planPreview.title')}
           </h3>
+          <p className={cn('mt-0.5 text-muted-foreground', textNano)}>
+            {t('editorV2.planPreview.hint')}
+          </p>
         </div>
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="sm"
+          className="shrink-0 text-muted-foreground"
           onClick={() => {
             if (debounceMs <= 0) void runPreview()
             else setTick((n) => n + 1)
@@ -99,10 +122,6 @@ export function EffectivePlanPreview({
         </Button>
       </header>
 
-      <p className={cn('text-muted-foreground', textNano)}>
-        {t('editorV2.planPreview.hint')}
-      </p>
-
       {error && (
         <div
           className="flex items-start gap-2 rounded-md border border-error-light bg-error-light px-3 py-2 text-xs text-error"
@@ -114,57 +133,40 @@ export function EffectivePlanPreview({
       )}
 
       {plan && !error && (
-        <dl className="space-y-2 text-sm" data-testid="plan-preview-body">
-          <div>
-            <dt className="text-xs text-muted-foreground">{t('editorV2.planPreview.triggerSummary')}</dt>
-            <dd className="font-mono text-xs break-all">{plan.trigger_summary}</dd>
-          </div>
+        <dl className="space-y-3" data-testid="plan-preview-body">
+          <SummaryRow label={t('editorV2.planPreview.triggerSummary')}>
+            <span className="font-mono text-xs">{plan.trigger_summary}</span>
+          </SummaryRow>
           {plan.timezone != null && plan.timezone !== '' && (
-            <div>
-              <dt className="text-xs text-muted-foreground">{t('editorV2.planPreview.timezone')}</dt>
-              <dd>{plan.timezone}</dd>
-            </div>
+            <SummaryRow label={t('editorV2.planPreview.timezone')}>
+              {plan.timezone}
+            </SummaryRow>
           )}
-          <div>
-            <dt className="text-xs text-muted-foreground">{t('editorV2.planPreview.toolPolicy')}</dt>
-            <dd>{toolPolicyLabel(plan.tool_policy, t)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">{t('editorV2.planPreview.reads')}</dt>
-            <dd>
-              {plan.authorized_reads.length === 0 ? (
-                <span className="text-muted-foreground">{t('editorV2.planPreview.noReads')}</span>
-              ) : (
-                <ul className="mt-1 space-y-1">
-                  {plan.authorized_reads.map((r) => (
-                    <li key={r.key} className="font-mono text-xs">
-                      {r.key} → {r.source_id}
-                      {r.operation ? ` / ${r.operation}` : ''}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">{t('editorV2.planPreview.externalReads')}</dt>
-            <dd className="font-mono text-xs">
-              weather={plan.external_read_counts.weather} tariff=
-              {plan.external_read_counts.tariff} other=
-              {plan.external_read_counts.other}
-            </dd>
-          </div>
+          <SummaryRow label={t('editorV2.planPreview.toolPolicy')}>
+            {toolPolicyLabel(plan.tool_policy, t)}
+          </SummaryRow>
+          <SummaryRow label={t('editorV2.planPreview.reads')}>
+            {plan.authorized_reads.length === 0 ? (
+              <span className="text-muted-foreground">{t('editorV2.planPreview.noReads')}</span>
+            ) : (
+              <ul className="mt-0.5 space-y-1">
+                {plan.authorized_reads.map((r) => (
+                  <li key={r.key} className="font-mono text-xs text-muted-foreground">
+                    {r.key} → {r.source_id}
+                    {r.operation ? ` / ${r.operation}` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </SummaryRow>
           {plan.warnings && plan.warnings.length > 0 && (
-            <div>
-              <dt className="text-xs text-muted-foreground">{t('editorV2.planPreview.warnings')}</dt>
-              <dd>
-                <ul className="mt-1 space-y-1 text-warning text-xs">
-                  {plan.warnings.map((w) => (
-                    <li key={w}>{w}</li>
-                  ))}
-                </ul>
-              </dd>
-            </div>
+            <SummaryRow label={t('editorV2.planPreview.warnings')}>
+              <ul className="mt-0.5 space-y-1 text-warning text-xs">
+                {plan.warnings.map((w) => (
+                  <li key={w}>{w}</li>
+                ))}
+              </ul>
+            </SummaryRow>
           )}
         </dl>
       )}

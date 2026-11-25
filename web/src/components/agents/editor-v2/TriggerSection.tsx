@@ -3,7 +3,6 @@
  * Speaks AgentSpec v2 TriggerSpec directly.
  */
 import { useTranslation } from 'react-i18next'
-import { Clock } from '@/design-system/icons'
 import { FormField } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
@@ -13,9 +12,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { cardBase } from '@/design-system/tokens/size'
 import { cn } from '@/lib/utils'
 import type { TriggerSpec } from '@/types'
+import { EditorSection } from './EditorSection'
 
 export interface TriggerSectionProps {
   value: TriggerSpec
@@ -53,14 +52,12 @@ export function TriggerSection({ value, onChange, className }: TriggerSectionPro
   }
 
   return (
-    <section className={cn(cardBase, 'p-4 space-y-4', className)} data-section="trigger">
-      <header className="flex items-center gap-2">
-        <Clock className="h-4 w-4 text-muted-foreground" />
-        <h3 className="text-sm font-medium text-foreground">
-          {t('editorV2.trigger.title')}
-        </h3>
-      </header>
-
+    <EditorSection
+      title={t('editorV2.trigger.title')}
+      description={t('editorV2.trigger.sectionHint')}
+      className={cn(className)}
+      data-section="trigger"
+    >
       <FormField label={t('editorV2.trigger.kind')}>
         <Select value={value.kind} onValueChange={(k) => setKind(k as TriggerKind)}>
           <SelectTrigger className="h-10">
@@ -124,6 +121,6 @@ export function TriggerSection({ value, onChange, className }: TriggerSectionPro
       {value.kind === 'event' && (
         <p className="text-sm text-muted-foreground">{t('editorV2.trigger.eventHint')}</p>
       )}
-    </section>
+    </EditorSection>
   )
 }
