@@ -25,6 +25,7 @@ test-utils = ["neomind-storage/test-utils"]
 
 [dependencies]
 neomind-core = { path = "../neomind-core" }
+neomind-llm-loop = { path = "../neomind-llm-loop" }
 neomind-cli-ops = { path = "../neomind-cli-ops" }
 neomind-devices = { path = "../neomind-devices" }
 neomind-storage = { path = "../neomind-storage" }

@@ -8,8 +8,8 @@ use serde_json::Value;
 use std::sync::OnceLock;
 use uuid::Uuid;
 
-use super::types::ToolCall;
-use crate::error::Result;
+use crate::types::ToolCall;
+use neomind_core::error::Result;
 
 /// Pre-compiled regex for removing code-block-wrapped tool call arrays from responses.
 fn code_block_array_re() -> &'static Regex {
@@ -1000,6 +1000,59 @@ pub fn is_degenerate_final_output(content: &str) -> bool {
         },
         Err(_) => false,
     }
+}
+
+/// Targeted guidance when the LLM hallucinates a tool name that doesn't exist.
+///
+/// LLMs trained on many agent frameworks often invent a `message`/`notify`/`alert`
+/// tool, or try to call a neomind CLI *domain* (`device`, `dashboard`, ...) as if
+/// it were a standalone tool. Rather than returning a bare "not found", redirect
+/// them to the real mechanism (`shell` → `neomind <domain> ...`) so they
+/// self-correct next round. Returns None for names with no specific hint
+/// (caller falls back to listing the actually-available tools).
+pub fn hallucinated_tool_hint(tool_name: &str) -> Option<String> {
+    let lower = tool_name.to_lowercase();
+    // 1. Message/alert family — give the exact send syntax (most common hallucination).
+    if matches!(
+        lower.as_str(),
+        "message"
+            | "notify"
+            | "notification"
+            | "alert"
+            | "send_message"
+            | "send_notification"
+            | "send_alert"
+    ) {
+        return Some(format!(
+            " There is NO `{}` tool. To send notifications or alerts, use the `shell` tool with: \
+             `neomind message send --title \"<title>\" --body \"<body>\" --severity \
+             <info|warning|error|critical>`.",
+            tool_name
+        ));
+    }
+    // 2. neomind CLI domains used as tool names — redirect to shell.
+    //    (Reuses the canonical domain list `CLI_DOMAINS` to stay in sync.)
+    if crate::types::CLI_DOMAINS.contains(&lower.as_str()) {
+        return Some(format!(
+            " There is NO `{}` tool — `{}` is a neomind CLI domain. Use the `shell` tool: \
+             `neomind {} <action>` (e.g. `neomind {} list`, or `neomind {} --help` for all actions).",
+            tool_name, tool_name, lower, lower, lower
+        ));
+    }
+    // 3. A full `neomind <...>` command emitted as a tool name. Small/weak models
+    //    do this when they can't map intent -> shell(command=...): they emit the
+    //    whole command (e.g. "neomind device list") as the tool name with empty
+    //    args, get NotFound, and loop. Redirect verbatim so they recover in one
+    //    round instead of looping.
+    if lower.trim_start().starts_with("neomind ") {
+        let cmd = tool_name.trim();
+        return Some(format!(
+            " There is NO `{}` tool — that is a shell command. Re-issue it via the `shell` tool \
+             with arguments {{\"command\": \"{cmd}\"}}.",
+            tool_name
+        ));
+    }
+    None
 }
 
 #[cfg(test)]

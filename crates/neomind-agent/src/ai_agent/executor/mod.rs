@@ -189,7 +189,7 @@ mod response_parser;
 mod structured;
 mod tool_loop;
 mod tool_prompt;
-pub(crate) mod tool_result; // pub(crate): hallucinated_tool_hint reused by chat streaming path
+pub(crate) mod tool_result;
 mod vision_path;
 
 // Re-export public types

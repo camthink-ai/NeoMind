@@ -2977,6 +2977,7 @@ dependencies = [
  "neomind-cli-ops",
  "neomind-core",
  "neomind-devices",
+ "neomind-llm-loop",
  "neomind-messages",
  "neomind-rules",
  "neomind-storage",
@@ -3262,6 +3263,17 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+]
+
+[[package]]
+name = "neomind-llm-loop"
+version = "1.3.4"
+dependencies = [
+ "neomind-core",
+ "regex",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

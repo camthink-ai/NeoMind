@@ -949,22 +949,9 @@ impl AgentMessage {
     }
 }
 
-/// Tool call from LLM.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    /// Tool name
-    pub name: String,
-    /// Call ID
-    pub id: String,
-    /// Arguments
-    pub arguments: Value,
-    /// Execution result (populated after tool execution)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    /// Round number for multi-round tool calling (1-based)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub round: Option<usize>,
-}
+/// Tool call from LLM. Lives in `neomind-llm-loop` (shared with the standalone
+/// agent runtime); re-exported so existing paths are unchanged.
+pub use neomind_llm_loop::types::ToolCall;
 
 /// Agent response.
 #[derive(Debug, Clone, Serialize, Deserialize)]

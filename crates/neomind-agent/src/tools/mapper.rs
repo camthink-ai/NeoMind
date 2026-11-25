@@ -278,21 +278,7 @@ pub fn resolve_domain_name(input: &str) -> String {
     input.to_string()
 }
 
-/// CLI domain names that should be routed to shell when the registry can't find them.
-pub const CLI_DOMAINS: &[&str] = &[
-    "message",
-    "device",
-    "rule",
-    "agent",
-    "transform",
-    "dashboard",
-    "widget",
-    "llm",
-    "system",
-    "extension",
-    "connector",
-    "push",
-];
+pub use neomind_llm_loop::types::CLI_DOMAINS;
 
 /// Convert a CLI domain tool call into a `neomind` CLI command for shell execution.
 ///

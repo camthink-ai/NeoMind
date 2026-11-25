@@ -1,4 +1,9 @@
-use super::cache::BASE64_STRIP_THRESHOLD;
+//! Tool-result sanitizing for prompts: base64/image stripping and UTF-8-safe
+//! truncation. Moved verbatim from `neomind-agent/src/agent/streaming/sanitize.rs`
+//! (M0 extraction).
+
+/// Minimum size (bytes) for a result to be considered large enough to strip base64 from.
+pub(crate) const BASE64_STRIP_THRESHOLD: usize = 4096;
 
 // ---------------------------------------------------------------------------
 // Base64 / image stripping for tool result display
@@ -11,7 +16,7 @@ use super::cache::BASE64_STRIP_THRESHOLD;
 /// - For JSON results: walks the tree and replaces base64/image strings with `[image data, {size}]`
 /// - For text with `data:image/...` URLs: replaces URLs with size markers
 /// - Preserves all non-binary data (numbers, text, metadata)
-pub(crate) fn sanitize_tool_result_for_prompt(result: &str) -> String {
+pub fn sanitize_tool_result_for_prompt(result: &str) -> String {
     // Fast path: small results without base64 indicators pass through
     if result.len() < BASE64_STRIP_THRESHOLD
         && !result.contains("base64")
@@ -98,7 +103,7 @@ pub(crate) fn strip_base64_from_json_value(value: &mut serde_json::Value) -> boo
 }
 
 /// Check if a string looks like large base64 data (>10KB, valid base64 alphabet).
-pub(crate) fn is_large_base64_string(s: &str) -> bool {
+pub fn is_large_base64_string(s: &str) -> bool {
     if s.len() <= 10_000 {
         return false;
     }
@@ -128,7 +133,7 @@ pub(crate) fn replace_data_image_urls(text: &str) -> String {
 }
 
 /// Format byte count as human-readable string (e.g., "2.3MB", "512B").
-pub(crate) fn humanize_bytes(bytes: usize) -> String {
+pub fn humanize_bytes(bytes: usize) -> String {
     const KB: usize = 1024;
     const MB: usize = 1024 * KB;
     if bytes >= MB {
@@ -145,7 +150,7 @@ pub(crate) fn humanize_bytes(bytes: usize) -> String {
 ///
 /// Uses byte length as a fast-path: if byte length <= max_chars, char count
 /// is guaranteed to be within limit too (each char is at least 1 byte).
-pub(crate) fn truncate_result_utf8(result: &str, max_chars: usize) -> String {
+pub fn truncate_result_utf8(result: &str, max_chars: usize) -> String {
     // Fast path: byte length <= max_chars means char count <= max_chars
     if result.len() <= max_chars {
         return result.to_string();

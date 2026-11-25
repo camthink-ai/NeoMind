@@ -20,7 +20,6 @@ use super::intent::{
 };
 use super::resolve::resolve_cached_arguments;
 use super::result_format::format_tool_results;
-use super::sanitize::sanitize_tool_result_for_prompt;
 use super::thinking::cleanup_thinking_content;
 use super::tool_detect::detect_json_tool_calls;
 use super::tool_exec::{execute_tool_with_retry, shell_policy_block};
@@ -29,6 +28,7 @@ use crate::agent::tool_parser::{
     is_degenerate_final_output, parse_tool_calls, remove_tool_calls_from_response,
 };
 use crate::agent::types::{AgentEvent, AgentInternalState, AgentMessage, ToolCall};
+use neomind_llm_loop::result_sanitizer::sanitize_tool_result_for_prompt;
 // No stuck-loop breaker in the chat path — the user is watching and can
 // abort manually. (The scheduled-agent path brakes via cross-round dedup →
 // AllDuplicate; StuckDetector was removed in 0.9.20 — it was unreachable
@@ -2532,7 +2532,7 @@ pub(super) fn drive_react_stream(
                                 // CLI domain as the tool name. Redirect to `shell` so they recover
                                 // next round instead of looping. No-op for real tool names.
                                 if let Some(hint) =
-                                    crate::ai_agent::executor::tool_result::hallucinated_tool_hint(&name)
+                                    neomind_llm_loop::tool_parser::hallucinated_tool_hint(&name)
                                 {
                                     error_msg.push_str(&hint);
                                 }
