@@ -347,6 +347,15 @@ pub(crate) fn vision_required_unconfirmed(
     matches!(path, VisionExecutionPath::ViaVisionTool) && !vision_tools_any_success(actions)
 }
 
+/// Collector could not prove the triggering report's frame (NM-389). Must
+/// demote settle to Partial even when the model invents "现场正常" with no
+/// embeddable image (path would otherwise be [`VisionExecutionPath::None`]
+/// and skip the ViaVisionTool gate).
+pub(crate) fn has_frame_unconfirmed(data: &[DataCollected]) -> bool {
+    data.iter()
+        .any(|d| d.values.get("_frame_unconfirmed").and_then(|v| v.as_bool()) == Some(true))
+}
+
 /// Rewrite conclusion / stop_reason / success_rate for a vision-undetermined run.
 ///
 /// Strips a trailing `Verdict: criteria met` so Judgment notify cannot fire on
@@ -754,6 +763,22 @@ mod tests {
             VisionExecutionPath::InlineMultimodal,
             &[]
         ));
+
+        // NM-389: collector marker must be readable for settle demotion.
+        let unconfirmed = neomind_storage::DataCollected {
+            source: "cam".into(),
+            data_type: "frame_status".into(),
+            timestamp: 1,
+            values: serde_json::json!({ "_frame_unconfirmed": true }),
+        };
+        let ok = neomind_storage::DataCollected {
+            source: "cam".into(),
+            data_type: "temperature".into(),
+            timestamp: 1,
+            values: serde_json::json!({ "value": 21.5 }),
+        };
+        assert!(has_frame_unconfirmed(&[unconfirmed]));
+        assert!(!has_frame_unconfirmed(&[ok]));
     }
 
     #[test]

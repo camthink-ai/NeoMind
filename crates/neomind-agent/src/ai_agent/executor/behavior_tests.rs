@@ -5432,10 +5432,320 @@ async fn whole_device_scalar_trigger_rejects_nearby_later_frame() {
         status.values.get("message").and_then(|v| v.as_str()),
         Some("本次画面无法确定")
     );
+    assert_eq!(
+        status
+            .values
+            .get("_frame_unconfirmed")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
     assert!(data.iter().any(|d| d.data_type == "temperature"));
 
     std::env::remove_var("NEOMIND_DATA_DIR");
     let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+/// NM-389: temp A at T with no image; image B lands in the *same second*.
+/// Second-level time alone is not same-report identity — A's collect must
+/// not attach B (keep `_frame_unconfirmed`).
+#[serial_test::serial]
+#[tokio::test]
+async fn whole_device_scalar_same_second_image_is_not_same_report() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "neomind_test_whole_device_scalar_same_sec_{}",
+        uuid::Uuid::new_v4()
+    ));
+    crate::testing_helpers::setup_test_image_dir(&data_dir).expect("image dir");
+    let frame_b_path = data_dir.join("images/test-device-001/image/frame_b_same_sec.jpg");
+    std::fs::create_dir_all(frame_b_path.parent().unwrap()).expect("mkdir");
+    let mut bytes_b = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_b.extend(std::iter::repeat_n(b'B', 2048));
+    std::fs::write(&frame_b_path, &bytes_b).expect("write B");
+    std::env::set_var("NEOMIND_DATA_DIR", data_dir.to_str().unwrap());
+
+    let url_b = "/api/images/test-device-001/image/frame_b_same_sec.jpg";
+    let ts = chrono::Utc::now().timestamp() - 20;
+
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let store = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(store.clone());
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+
+    seed_report(&store, ts, &[("temperature", serde_json::json!(21.5))]).await;
+    // Same second as A — must still not be treated as A's frame.
+    seed_report(&store, ts, &[("image_data", serde_json::json!(url_b))]).await;
+
+    let event_a = event_for("temperature", "21.5", ts);
+    let input = executor
+        .collect_data_with_event(&agent, &event_a)
+        .await
+        .expect("collect A");
+    let EventInput::Data(data) = &input else {
+        panic!("scalar A should still yield Data, got {input:?}");
+    };
+    let frames: Vec<_> = data
+        .iter()
+        .filter(|d| d.values.get("_is_image").and_then(|v| v.as_bool()) == Some(true))
+        .collect();
+    assert!(
+        frames.is_empty(),
+        "same-second B must not attach to temp A: {frames:?}"
+    );
+    let status = data
+        .iter()
+        .find(|d| d.data_type == "frame_status")
+        .expect("unconfirmed frame_status");
+    assert_eq!(
+        status
+            .values
+            .get("_frame_unconfirmed")
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+
+    std::env::remove_var("NEOMIND_DATA_DIR");
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+/// NM-389 E2E: A temp-only, B image same second, delay until B is stored,
+/// then process A. Scripted model says "现场正常". Assert: model request has
+/// no B bytes; settle 无法判定 / Partial; success count unchanged; person
+/// alerts 0.
+#[serial_test::serial]
+#[tokio::test]
+async fn whole_device_scalar_same_second_b_settles_partial_no_person_alert() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "neomind_test_whole_device_scalar_e2e_{}",
+        uuid::Uuid::new_v4()
+    ));
+    crate::testing_helpers::setup_test_image_dir(&data_dir).expect("image dir");
+    let frame_b_path = data_dir.join("images/test-device-001/image/frame_b_e2e.jpg");
+    std::fs::create_dir_all(frame_b_path.parent().unwrap()).expect("mkdir");
+    let mut bytes_b = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_b.extend(std::iter::repeat_n(b'B', 2048));
+    std::fs::write(&frame_b_path, &bytes_b).expect("write B");
+    std::env::set_var("NEOMIND_DATA_DIR", data_dir.to_str().unwrap());
+
+    let url_b = "/api/images/test-device-001/image/frame_b_e2e.jpg";
+    let ts = chrono::Utc::now().timestamp() - 15;
+
+    let message_manager = Arc::new(neomind_messages::MessageManager::new());
+    let store = AgentStore::memory().expect("store");
+    let config = AgentExecutorConfig {
+        store: store.clone(),
+        time_series_storage: None,
+        device_service: None,
+        event_bus: None,
+        message_manager: Some(message_manager.clone()),
+        llm_runtime: None,
+        llm_backend_store: None,
+        extension_registry: None,
+        tool_registry: None,
+        memory_store: None,
+        backend_semaphores: None,
+        skill_registry: None,
+        execution_semaphore: None,
+    };
+    let mut executor = AgentExecutor::new(config).await.expect("executor");
+    let ts_store = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(ts_store.clone());
+
+    let agent = AiAgent {
+        id: format!("patrol-scalar-{}", uuid::Uuid::new_v4().simple()),
+        name: "vision-required-patrol".into(),
+        description: None,
+        user_prompt: "巡检摄像头画面；发现人员则告警，否则报告现场正常".into(),
+        llm_backend_id: None,
+        parsed_intent: Some(neomind_storage::ParsedIntent {
+            intent_type: neomind_storage::IntentType::Monitoring,
+            target_metrics: vec![],
+            conditions: vec![],
+            actions: vec![],
+            confidence: 0.9,
+        }),
+        resources: vec![],
+        schedule: AgentSchedule {
+            schedule_type: ScheduleType::Event,
+            interval_seconds: None,
+            cron_expression: None,
+            timezone: None,
+            event_filter: whole_device_filter(),
+        },
+        status: AgentStatus::Active,
+        priority: 128,
+        created_at: 0,
+        updated_at: 0,
+        last_execution_at: None,
+        stats: AgentStats {
+            total_executions: 0,
+            successful_executions: 3, // must stay 3 after Partial
+            failed_executions: 0,
+            avg_duration_ms: 0,
+            last_duration_ms: Some(0),
+        },
+        memory: AgentMemory {
+            journal: ExecutionJournal::default(),
+            knowledge_files: vec![],
+            updated_at: 0,
+        },
+        conversation_history: vec![],
+        user_messages: vec![],
+        conversation_summary: None,
+        context_window_size: 5,
+        tool_config: None,
+        execution_mode: ExecutionMode::Free,
+        error_message: None,
+        system_prompt: None,
+        max_retries: 0,
+        consecutive_failures: 0,
+        output_schema: None,
+        operator_config: None,
+        memory_mode: None,
+        notify: Some(neomind_storage::AgentNotify {
+            channels: vec![],
+            on: neomind_storage::NotifyOn::Failure,
+        }),
+        enable_tool_chaining: false,
+        max_chain_depth: 3,
+        max_tokens_per_run: None,
+    };
+    store.save_agent(&agent).await.expect("seed");
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(StubVisionTool));
+    executor.set_tool_registry(Arc::new(registry));
+
+    // Multimodal so a leaked B frame would appear as image bytes in the
+    // request — the gate under test is that B never reaches the model.
+    let rt = MockLlmRuntime::new(vec![MockResponse::text("现场正常")])
+        .with_function_calling()
+        .with_supports_images();
+    let rt_handle = rt.clone();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+    executor.set_llm_runtime(rt_dyn).await;
+
+    // A first (temp only), then B's image in the same second — process A only
+    // after B is already stored (the race the review called out).
+    seed_report(&ts_store, ts, &[("temperature", serde_json::json!(21.5))]).await;
+    seed_report(&ts_store, ts, &[("image_data", serde_json::json!(url_b))]).await;
+
+    let event_a = event_for("temperature", "21.5", ts);
+    let record = executor
+        .execute_agent(agent.clone(), Some(event_a), None)
+        .await
+        .expect("Partial path returns Ok");
+
+    assert_eq!(
+        record.status,
+        neomind_storage::ExecutionStatus::Partial,
+        "error={:?}",
+        record.error
+    );
+    assert!(
+        record.decision_process.conclusion.contains("无法判定")
+            || record
+                .decision_process
+                .conclusion
+                .contains("本次画面无法确定"),
+        "settle must be 无法判定, got {}",
+        record.decision_process.conclusion
+    );
+    assert_eq!(
+        record.decision_process.stop_reason,
+        super::vision_path::VISION_TOOLS_FAILED_STOP_REASON
+    );
+
+    let dump = serde_json::to_string(&rt_handle.captured_messages()).unwrap_or_default();
+    assert!(
+        !dump.contains("frame_b_e2e") && !dump.contains(&"B".repeat(32)),
+        "model request must not carry B's path or fill bytes"
+    );
+    // Decoded multimodal / base64 payloads must not contain B's JPEG fill.
+    use base64::Engine;
+    for msg in rt_handle.captured_messages() {
+        let s = msg.to_string();
+        for chunk in s.split('"') {
+            if chunk.len() < 1024 {
+                continue;
+            }
+            if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(chunk) {
+                assert!(
+                    !bytes.iter().skip(4).any(|b| *b == b'B'),
+                    "model request must not decode to B's frame bytes"
+                );
+            }
+        }
+    }
+
+    let stored = store
+        .get_agent(&agent.id)
+        .await
+        .expect("get")
+        .expect("exists");
+    assert_eq!(
+        stored.stats.successful_executions, 3,
+        "Partial must not bump success"
+    );
+
+    let person_alerts = message_manager
+        .list_messages()
+        .await
+        .into_iter()
+        .filter(|m| {
+            let hay = format!("{} {}", m.title, m.message);
+            hay.contains("人员") || hay.to_lowercase().contains("person")
+        })
+        .count();
+    assert_eq!(person_alerts, 0, "no person alerts on unconfirmed frame");
+
+    std::env::remove_var("NEOMIND_DATA_DIR");
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+/// Positive control for NM-389 E2E: a plain temperature whole-device task
+/// (no competing image) with the same scripted "现场正常" still Completes.
+#[serial_test::serial]
+#[tokio::test]
+async fn whole_device_plain_temp_still_completes() {
+    let (mut executor, mut agent, registry) = build_harness().await;
+    let store = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(store.clone());
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.user_prompt = "读温度并报告现场正常".into();
+    executor.store().save_agent(&agent).await.expect("seed");
+    executor.set_tool_registry(registry);
+
+    let ts = chrono::Utc::now().timestamp() - 10;
+    seed_report(&store, ts, &[("temperature", serde_json::json!(22.0))]).await;
+
+    let rt = MockLlmRuntime::new(vec![MockResponse::text("现场正常")]).with_function_calling();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+    executor.set_llm_runtime(rt_dyn).await;
+
+    let record = executor
+        .execute_agent(
+            agent.clone(),
+            Some(event_for("temperature", "22.0", ts)),
+            None,
+        )
+        .await
+        .expect("plain temp Completes");
+    assert_eq!(
+        record.status,
+        neomind_storage::ExecutionStatus::Completed,
+        "error={:?}",
+        record.error
+    );
+    let stored = executor
+        .store()
+        .get_agent(&agent.id)
+        .await
+        .expect("get")
+        .expect("exists");
+    assert_eq!(stored.stats.successful_executions, 1);
 }
 
 /// The snapshot is for triggers that cover the WHOLE device only. A trigger

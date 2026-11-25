@@ -807,12 +807,14 @@ impl AgentExecutor {
         let (mut decision_process, mut execution_result) =
             tool_result::build_tool_result(agent, data_collected, loop_output);
 
-        // Vision-undetermined Partial (D2 / PR3 / NM-388):
+        // Vision-undetermined Partial (D2 / PR3 / NM-388 / NM-389):
         // 1) At least one vision call ran and every vision call failed, or
         // 2) ViaVisionTool with images but no successful vision call (zero
         //    calls used to Complete because vision_tools_all_failed([]) is
         //    false — "未发现人员" without looking), or
-        // 3) Images were present but the conclusion admits vision never ran.
+        // 3) Images were present but the conclusion admits vision never ran, or
+        // 4) Collector marked `_frame_unconfirmed` (trigger frame ownership
+        //    unprovable — must not Complete on a scripted "现场正常").
         // All land as ExecutionStatus::Partial with stop_reason =
         // vision_tools_failed — not Completed (false "现场正常") and not a
         // hard Err (so the finish path can emit Partial + Failure notify).
@@ -827,17 +829,34 @@ impl AgentExecutor {
                 &decision_process.conclusion,
                 vision_exec_path,
             );
-        if vision_calls_failed || vision_never_confirmed || conclusion_admits_blind {
+        let frame_unconfirmed = vision_path::has_frame_unconfirmed(data_collected);
+        if vision_calls_failed
+            || vision_never_confirmed
+            || conclusion_admits_blind
+            || frame_unconfirmed
+        {
             tracing::warn!(
                 agent_id = %agent.id,
                 vision_path = ?vision_exec_path,
                 vision_calls_failed,
                 vision_never_confirmed,
                 conclusion_admits_blind,
+                frame_unconfirmed,
                 actions = execution_result.actions_executed.len(),
-                "Vision tools failed / never confirmed / conclusion admits blind — Partial undetermined"
+                "Vision tools failed / never confirmed / frame unconfirmed / conclusion admits blind — Partial undetermined"
             );
             vision_path::mark_vision_tools_failed(&mut decision_process, &mut execution_result);
+            if frame_unconfirmed && !decision_process.conclusion.contains("无法判定") {
+                // NM-389: ownership of the trigger frame is unprovable —
+                // settle as 无法判定 even when the model invents "现场正常".
+                decision_process.conclusion = format!(
+                    "无法判定 / Undetermined (本次画面无法确定): {}",
+                    decision_process
+                        .conclusion
+                        .trim_start_matches("未判定 / Undetermined (vision tools failed):")
+                        .trim()
+                );
+            }
         }
 
         Ok((decision_process, execution_result, vision_exec_path.label()))

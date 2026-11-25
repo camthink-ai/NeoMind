@@ -1619,9 +1619,27 @@ impl AgentExecutor {
                         continue;
                     }
                     if let Some(anchor) = image_anchor_ts {
-                        if point.timestamp != anchor {
-                            // Same ±2s window but not the triggering uplink —
-                            // attaching it would mis-feed vision (NM-389).
+                        // Second-level time alone is not same-report identity
+                        // (temp A then image B in the same second must not
+                        // feed B). Only a report-id doorbell
+                        // (metadata.image_id / …) whose value is co-stamped
+                        // with the image may attach timeseries frames.
+                        let trigger_is_report_id = trigger
+                            .map(|t| is_report_id_metric(t.source.field.trim()))
+                            .unwrap_or(false);
+                        let trigger_id =
+                            trigger.and_then(|t| match trigger_value_as_json(&t.value) {
+                                serde_json::Value::String(s) if !s.is_empty() => Some(s),
+                                other => other.as_str().map(str::to_string),
+                            });
+                        let linked = trigger_is_report_id
+                            && point.timestamp == anchor
+                            && trigger_id.as_ref().is_some_and(|id| {
+                                report_id_values_at(&report, anchor)
+                                    .iter()
+                                    .any(|v| v.as_str() == Some(id.as_str()))
+                            });
+                        if !linked {
                             rejected_nearby_image = true;
                             continue;
                         }
@@ -1873,36 +1891,79 @@ impl AgentExecutor {
             return None;
         }
         let value = trigger_value_as_json(&trigger.value);
-        match classify_image_value(field, &value) {
+        let extracted = match classify_image_value(field, &value) {
             ImageValue::Extracted { url, base64, mime } => {
-                let mut values = serde_json::json!({
-                    "_is_image": true,
-                    "_is_event_data": true,
-                    "timestamp": report_ts,
-                    "points_count": 1,
-                });
-                if let Some(u) = url {
-                    values["image_url"] = serde_json::json!(u);
-                    if u.chars().count() <= 300 {
-                        values["value"] = serde_json::json!(u);
-                    }
-                }
-                if let Some(b) = base64 {
-                    values["image_base64"] = serde_json::json!(b);
-                }
-                if let Some(m) = mime {
-                    values["image_mime_type"] = serde_json::json!(m);
-                }
-                Some(DataCollected {
-                    source: format!("{device_id}:{field}"),
-                    data_type: field.to_string(),
-                    timestamp: report_ts,
-                    values,
-                })
+                // `/api/images/` extraction clears `url` after loading bytes;
+                // keep the original reference beside the base64.
+                let url = url.or_else(|| keep_internal_image_reference(&value));
+                Some((field.to_string(), url, base64, mime))
             }
-            ImageValue::NotImage | ImageValue::Unreadable => None,
+            ImageValue::NotImage | ImageValue::Unreadable => {
+                // Whole-device doorbells often arrive on `_raw`: the envelope
+                // carries image_data — treat that as the trigger-carried frame
+                // so we do not fall back to timeseries nearest-pick.
+                extract_image_from_raw_envelope(field, &value)
+                    .map(|(url, base64, mime)| ("image_data".to_string(), url, base64, mime))
+            }
+        }?;
+        let (data_type, url, base64, mime) = extracted;
+        let mut values = serde_json::json!({
+            "_is_image": true,
+            "_is_event_data": true,
+            "timestamp": report_ts,
+            "points_count": 1,
+        });
+        if let Some(u) = url {
+            values["image_url"] = serde_json::json!(u);
+            if u.chars().count() <= 300 {
+                values["value"] = serde_json::json!(u);
+            }
         }
+        if let Some(b) = base64 {
+            values["image_base64"] = serde_json::json!(b);
+        }
+        if let Some(m) = mime {
+            values["image_mime_type"] = serde_json::json!(m);
+        }
+        Some(DataCollected {
+            source: format!("{device_id}:{data_type}"),
+            data_type,
+            timestamp: report_ts,
+            values,
+        })
     }
+}
+
+/// Pull a usable frame out of a `_raw` uplink envelope when the doorbell is
+/// the envelope itself (not a split image metric).
+fn extract_image_from_raw_envelope(
+    field: &str,
+    value: &serde_json::Value,
+) -> Option<(Option<String>, Option<String>, Option<String>)> {
+    if field != "_raw" {
+        return None;
+    }
+    let obj = match value {
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok()?,
+        serde_json::Value::Object(_) => value.clone(),
+        _ => return None,
+    };
+    let image_val = obj.get("image_data")?;
+    match classify_image_value("image_data", image_val) {
+        ImageValue::Extracted { url, base64, mime } => {
+            let url = url.or_else(|| keep_internal_image_reference(image_val));
+            Some((url, base64, mime))
+        }
+        ImageValue::NotImage | ImageValue::Unreadable => None,
+    }
+}
+
+/// Preserve a NeoMind `/api/images/…` path when extraction resolved it to bytes.
+fn keep_internal_image_reference(value: &serde_json::Value) -> Option<String> {
+    value
+        .as_str()
+        .filter(|s| s.starts_with("/api/images/"))
+        .map(str::to_string)
 }
 
 fn trigger_value_as_json(value: &neomind_core::MetricValue) -> serde_json::Value {
@@ -1925,6 +1986,27 @@ fn json_values_equivalent(a: &serde_json::Value, b: &serde_json::Value) -> bool 
         (serde_json::Value::Number(na), serde_json::Value::Number(nb)) => na == nb,
         _ => false,
     }
+}
+
+/// Metrics that identify a device uplink / report (not the frame bytes).
+fn is_report_id_metric(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower == "metadata.image_id"
+        || lower == "image_id"
+        || lower.ends_with(".image_id")
+        || lower == "report_id"
+        || lower.ends_with(".report_id")
+}
+
+fn report_id_values_at(
+    report: &[(&String, &neomind_storage::timeseries::DataPoint)],
+    anchor_ts: i64,
+) -> Vec<serde_json::Value> {
+    report
+        .iter()
+        .filter(|(name, point)| point.timestamp == anchor_ts && is_report_id_metric(name))
+        .map(|(_, point)| point.value.clone())
+        .collect()
 }
 
 /// Extract image data from a metric value.

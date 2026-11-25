@@ -27,7 +27,7 @@ Post-`v1.3.3`: whole-device event snapshots + vision `Partial`, Chat agent creat
 
 ### Fixed — agent / runtime / notify
 - **ViaVisionTool cannot Complete without a successful vision call** (NM-388): zero calls or only non-vision tools + a "未发现人员" conclusion settle as Partial / undetermined; multimodal inline path still Completes.
-- **Whole-device snapshot binds the triggering report** (NM-389): collection prefers trigger field value / report timestamp over absolute latest; when the event carries a usable frame that frame wins (same-second overwrite); scalar triggers only attach same-second uplink images, else record `本次画面无法确定` instead of a nearby wrong frame.
+- **Whole-device snapshot binds the triggering report** (NM-389): collection prefers trigger field value / report timestamp over absolute latest; when the event carries a usable frame that frame wins (same-second overwrite); scalar triggers never treat a same-second stored image as the same report without a report-id sibling (`metadata.image_id` doorbell co-stamped with the frame) — otherwise `_frame_unconfirmed` settles Partial / `无法判定` (no success bump, no person alert) even if the model says `现场正常`.
 - **Text-protocol calls honor `filtered_tools`**: invent-and-block still records when judgment strips web tools; Judgment same-batch vision+send and ViaVisionTool blind send are denied until vision succeeds.
 - **Overflow retries rebuild `LlmInput`**: context-overflow compact no longer resends the pre-compact prompt; Focused/Free string fields truncate instead of dumping raw base64 into the prompt.
 - **Permanent event failures keep their cooldown**: only transport/timeout/rate-limit clears the 60s dedup key for replay.
@@ -47,7 +47,7 @@ Post-`v1.3.3`: whole-device event snapshots + vision `Partial`, Chat agent creat
 
 ### Test
 - Judgment gate: mid-loop vision-failed deny, same-batch / blind ViaVisionTool blocks, invent-block after web filter, invoke Partial status string.
-- ViaVisionTool zero-call / non-vision-only "未发现人员" → Partial; multimodal inline still Completes; whole-device A-then-B / same-second overwrite keep A's frame; scalar A rejects nearby B+1s image.
+- ViaVisionTool zero-call / non-vision-only "未发现人员" → Partial; multimodal inline still Completes; whole-device A-then-B / same-second overwrite keep A's frame; scalar A rejects same-second / nearby B image + E2E Partial on scripted `现场正常`; plain temp Completes.
 - Partial / input_summary / monitor-analyst warning mapping; CLI/API judgment×tools hard conflicts; summarization trim + inject dedupe; frontend retry 503 outcomeUnknown.
 - `python3 scripts/extract_changelog.py --version 1.3.4 --check` gates this section.
 
