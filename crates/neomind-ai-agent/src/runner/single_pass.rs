@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use super::alert::{alert_from_model_text, evidence_shows_overload};
+use super::structured::{extract_json_object, project_output_fields, structured_system_addon};
 use super::{build_evidence_prompt, AgentRunner, RunOutcome};
 use crate::error::{AgentError, Result};
 use crate::model::{AgentSpec, EvidenceDetail, EvidenceQuality, EvidenceReport, ToolPolicy};
@@ -47,24 +48,28 @@ impl AgentRunner for SinglePassRunner {
         if uses_local_template(spec) {
             let brief = compose_local_brief(spec, evidence);
             let alert = evidence_shows_overload(evidence);
+            let structured_result = structured_from_text(&brief, spec);
             return Ok(RunOutcome {
                 brief_text: Some(brief.clone()),
                 conclusion: Some(brief),
+                structured_result,
                 alert_criteria_met: alert,
                 status_hint: None,
             });
         }
 
         let user = build_evidence_prompt(&spec.user_prompt, evidence);
+        let mut system = String::from(
+            "You are a managed NeoMind agent. Cite evidence keys. Mark missing deps. \
+             End with exactly `Verdict: criteria met` only when alert criteria are met.",
+        );
+        system.push_str(&structured_system_addon(&spec.output.fields));
         let resp = self
             .llm
             .complete(
                 LlmRequest {
                     backend_id: spec.llm_backend_id.clone(),
-                    system:
-                        "You are a managed NeoMind agent. Cite evidence keys. Mark missing deps. \
-                         End with exactly `Verdict: criteria met` only when alert criteria are met."
-                            .into(),
+                    system,
                     user,
                     tools_enabled,
                 },
@@ -76,14 +81,24 @@ impl AgentRunner for SinglePassRunner {
         // Model path: business verdict drives alert (through frozen deps /
         // evidence gates later). Overload heuristics are local-template only.
         let alert = alert_from_model_text(&resp.text) || resp.alert_criteria_met;
+        let structured_result = structured_from_text(&resp.text, spec);
 
         Ok(RunOutcome {
             brief_text: Some(resp.text.clone()),
             conclusion: Some(resp.text),
+            structured_result,
             alert_criteria_met: alert,
             status_hint: None,
         })
     }
+}
+
+fn structured_from_text(text: &str, spec: &AgentSpec) -> Option<serde_json::Value> {
+    if spec.output.fields.is_empty() {
+        return None;
+    }
+    let raw = extract_json_object(text)?;
+    Some(project_output_fields(&raw, &spec.output.fields))
 }
 
 fn compose_local_brief(spec: &AgentSpec, evidence: &EvidenceReport) -> String {

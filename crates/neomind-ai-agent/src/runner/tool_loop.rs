@@ -100,9 +100,17 @@ impl AgentRunner for ToolLoopRunner {
             break;
         }
 
+        let structured_result = if spec.output.fields.is_empty() {
+            None
+        } else {
+            super::extract_json_object(&last_text)
+                .map(|raw| super::project_output_fields(&raw, &spec.output.fields))
+        };
+
         Ok(RunOutcome {
             brief_text: Some(last_text.clone()),
             conclusion: Some(last_text),
+            structured_result,
             alert_criteria_met: alert,
             status_hint: None,
         })

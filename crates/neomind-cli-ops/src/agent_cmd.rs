@@ -1335,13 +1335,29 @@ pub async fn test_agent(client: &ApiClient, id: &str) -> Result<CliResponse> {
 /// continues and names the poll command instead of reading as an error.
 pub fn invoke_outcome_message(data: &serde_json::Value, agent_id: &str) -> String {
     if data.get("still_executing").and_then(|v| v.as_bool()) == Some(true) {
-        format!(
+        return format!(
             "Agent run started and still executing in the background — it will finish and record \
              its result. Poll with: neomind agent latest-execution {agent_id}"
-        )
-    } else {
-        "Agent invoked".to_string()
+        );
     }
+    // Prefer structured JSON (legacy Structured parity), then conclusion text.
+    if let Some(sr) = data
+        .pointer("/execution/structured_result")
+        .or_else(|| data.get("structured_result"))
+    {
+        if !sr.is_null() {
+            return format!("Agent invoked — structured_result={sr}");
+        }
+    }
+    if let Some(c) = data
+        .pointer("/execution/conclusion")
+        .or_else(|| data.get("conclusion"))
+        .and_then(|v| v.as_str())
+    {
+        let preview: String = c.chars().take(160).collect();
+        return format!("Agent invoked — conclusion={preview}");
+    }
+    "Agent invoked".to_string()
 }
 
 /// Get agent memory
@@ -1386,6 +1402,13 @@ pub async fn get_agent_executions(
 /// Get latest agent execution
 pub async fn get_latest_execution(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let id = resolve_agent_id(client, id).await?;
+    // Prefer V2 latest-execution (full record + structured_result).
+    if let Ok(data) = client
+        .get(&format!("/agents/v2/{id}/latest-execution"))
+        .await
+    {
+        return Ok(CliResponse::success(data, "Latest execution retrieved"));
+    }
     let path = format!("/agents/{}/executions?limit=1", id);
     let data = client.get(&path).await?;
     Ok(CliResponse::success(data, "Latest execution retrieved"))
@@ -1660,9 +1683,25 @@ mod invoke_outcome_tests {
     #[test]
     fn finished_renders_neutral_message() {
         let msg = invoke_outcome_message(
-            &json!({"status": "Completed", "conclusion": "ok", "still_executing": false}),
+            &json!({"status": "Completed", "still_executing": false}),
             "agent-7",
         );
         assert_eq!(msg, "Agent invoked");
+    }
+
+    #[test]
+    fn finished_with_structured_result_surfaces_json() {
+        let msg = invoke_outcome_message(
+            &json!({
+                "execution": {
+                    "structured_result": {"temp": 21.5},
+                    "conclusion": "ignored when structured present"
+                },
+                "still_executing": false
+            }),
+            "agent-7",
+        );
+        assert!(msg.contains("structured_result"), "{msg}");
+        assert!(msg.contains("21.5"), "{msg}");
     }
 }

@@ -109,6 +109,10 @@ pub struct AgentExecutionRecord {
     pub brief_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conclusion: Option<String>,
+    /// Structured JSON fields from the run (OutputContract projection).
+    /// Readable like legacy Structured mode via API/CLI/Chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_result: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default)]

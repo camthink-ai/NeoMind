@@ -177,6 +177,7 @@ impl AgentApplicationService {
             deliveries: vec![],
             brief_text: None,
             conclusion: None,
+            structured_result: None,
             error: None,
             alert_verdict: None,
         };
@@ -192,6 +193,7 @@ impl AgentApplicationService {
                 exec.error = Some(e.to_string());
                 exec.conclusion = None;
                 exec.brief_text = None;
+                exec.structured_result = None;
                 exec.alert_verdict = Some(crate::model::AlertVerdict::InsufficientEvidence);
             }
         }
@@ -293,6 +295,12 @@ impl AgentApplicationService {
                 "missing: {}",
                 exec.evidence.missing_keys.join(", ")
             ));
+        }
+        if let Some(sr) = &exec.structured_result {
+            lines.push(format!("structured_result={sr}"));
+        } else if let Some(c) = &exec.conclusion {
+            let preview: String = c.chars().take(240).collect();
+            lines.push(format!("conclusion={preview}"));
         }
         let notify_n = exec
             .deliveries

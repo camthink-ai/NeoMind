@@ -239,6 +239,11 @@ impl HostedAiAgentRuntime {
         self.service.explain_last(id)
     }
 
+    /// Latest formal execution (includes `structured_result` when present).
+    pub fn latest_formal(&self, id: &str) -> Option<neomind_ai_agent::model::AgentExecutionRecord> {
+        self.service.latest_formal(id)
+    }
+
     fn mirror_spec(&self, spec: &AgentSpec) -> AgentResult<()> {
         if let Some(v2) = &self.durable.v2 {
             let rt = self.durable.mem.get_runtime(&spec.id)?;
