@@ -20,11 +20,13 @@ export interface TriggerSectionProps {
   value: TriggerSpec
   onChange: (next: TriggerSpec) => void
   className?: string
+  /** First section inside a FormSurface */
+  first?: boolean
 }
 
 type TriggerKind = TriggerSpec['kind']
 
-export function TriggerSection({ value, onChange, className }: TriggerSectionProps) {
+export function TriggerSection({ value, onChange, className, first }: TriggerSectionProps) {
   const { t } = useTranslation('agents')
 
   const setKind = (kind: TriggerKind) => {
@@ -53,6 +55,7 @@ export function TriggerSection({ value, onChange, className }: TriggerSectionPro
 
   return (
     <EditorSection
+      first={first}
       title={t('editorV2.trigger.title')}
       description={t('editorV2.trigger.sectionHint')}
       className={cn(className)}

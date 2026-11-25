@@ -1,14 +1,42 @@
 /**
- * Seed drafts for the v2 editor — mirrors tests/fixtures/agent-contract/v2/daily-brief.json.
+ * Seed drafts for the v2 editor — empty create canvas + legacy projection.
+ * Task templates live in templates.ts (user mental model).
  */
-import type { AgentSpecDraft, AiAgentDetail } from '@/types'
+import type { AgentSpecDraft, AiAgentDetail, NotifyPolicy } from '@/types'
 import {
   scheduleToTrigger,
   toolConfigToPolicy,
   legacyNotifyToPolicy,
 } from '@/lib/api/agentV2Adapter'
 
-/** Zero-device weather + tariff daily brief (Asia/Shanghai 09:00). */
+const QUIET_NOTIFY: NotifyPolicy = {
+  channels: [],
+  on_complete: false,
+  on_alert: false,
+  alert_depends_on: [],
+  on_failure: true,
+  pending_confirmation: false,
+}
+
+/** Blank canvas before the operator picks a task template. */
+export function emptyDraft(): AgentSpecDraft {
+  return {
+    name: '',
+    description: '',
+    user_prompt: '',
+    trigger: { kind: 'manual' },
+    pacing: { failure_threshold: 3 },
+    input: { requirements: [] },
+    tool_policy: 'disabled',
+    output: { fields: [], publish: false },
+    notify: { ...QUIET_NOTIFY },
+    controlled_actions: [],
+  }
+}
+
+/**
+ * Filled daily-brief fixture for tests. Create UX uses templates.ts instead.
+ */
 export function defaultDailyBriefDraft(): AgentSpecDraft {
   return {
     name: 'daily-brief',

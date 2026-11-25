@@ -807,18 +807,98 @@
   "editorV2": {
     "titleCreate": "创建智能体",
     "titleEdit": "编辑智能体",
-    "subtitle": "配置何时运行、可读取的数据、工具与通知。",
-    "dailyBriefHint": "配置何时运行、可读取的数据、工具与通知。",
-    "basicsTitle": "基本信息",
-    "basicsHint": "命名智能体，并写清它要完成的任务。",
+    "subtitle": "先选任务类型，再填写名称、任务与何时运行。",
+    "dailyBriefHint": "先选任务类型，再填写名称、任务与何时运行。",
+    "basicsTitle": "任务",
+    "basicsHint": "给智能体起名，并写清它要做的事。",
+    "namePlaceholder": "例如：车间每日简报",
+    "promptPlaceholder": "用自然语言描述它要完成的任务…",
     "footerHint": "保存后生效。",
     "save": "保存智能体",
     "name": "名称",
     "description": "描述",
-    "prompt": "任务提示词",
-    "trigger": {
+    "prompt": "任务说明",
+    "templates": {
+      "title": "任务类型",
+      "hint": "选一个起点，会预填运行方式与安全默认值（工具关闭）。",
+      "pickFirst": "请先选择一种任务类型。",
+      "daily_brief": {
+        "name": "每日简报",
+        "desc": "每天固定时间汇总，适合天气、电价、日报。"
+      },
+      "scheduled_patrol": {
+        "name": "定时巡检",
+        "desc": "按间隔检查设备或扩展数据。"
+      },
+      "event_review": {
+        "name": "事件复核",
+        "desc": "有匹配事件时再审一眼。"
+      }
+    },
+    "when": {
       "title": "何时运行",
-      "sectionHint": "选择启动一次运行的时间表或事件。",
+      "hint": "用简单选项设定时间表；完整 Cron 在高级里。",
+      "mode": "方式",
+      "daily": "每天固定时刻",
+      "interval": "每隔一段时间",
+      "event": "有事件时",
+      "manual": "仅手动运行",
+      "hour": "每天几点",
+      "hourHint": "本地时区 Asia/Shanghai",
+      "hourOption": "{{hour}}:00",
+      "everyMinutes": "间隔（分钟）",
+      "everyMinutesHint": "例如 60 表示每小时",
+      "eventHint": "匹配到事件时触发（过滤条件可在高级中细化）。",
+      "manualHint": "不会自动调度，只能手动点运行。"
+    },
+    "sources": {
+      "title": "读取哪些数据",
+      "hint": "点选设备或扩展；用普通人能看懂的名字。",
+      "loading": "正在加载设备与扩展…",
+      "selected": "已选 {{count}} 个来源",
+      "devices": "设备",
+      "extensions": "扩展",
+      "emptyCatalog": "暂无设备或扩展。可先接入设备，或之后在高级中手动添加。"
+    },
+    "notifySimple": {
+      "title": "通知（可选）",
+      "hint": "需要时再打开；默认失败才提醒。",
+      "onComplete": "完成时通知",
+      "onCompleteDesc": "每次成功跑完都发一条",
+      "onFailure": "失败时通知",
+      "onFailureDesc": "运行失败时提醒",
+      "channels": "通知通道",
+      "noChannels": "还没有通道 — 可到消息页配置。"
+    },
+    "planLine": {
+      "label": "将按：",
+      "sep": " · ",
+      "dailyAt": "每天 {{time}}",
+      "everyMinutes": "每 {{count}} 分钟",
+      "onEvent": "事件触发",
+      "manual": "仅手动",
+      "reads": "读取 {{count}} 个来源",
+      "toolsOff": "工具关闭",
+      "toolsOn": "工具不限",
+      "toolsScoped": "工具白名单",
+      "notifyComplete": "完成时通知",
+      "notifyFailure": "失败时通知",
+      "notifySilent": "不主动通知"
+    },
+    "advanced": {
+      "title": "高级",
+      "trigger": "触发（高级）",
+      "triggerHint": "原始 Cron、时区与事件过滤。",
+      "input": "输入契约（高级）",
+      "inputHint": "键名、操作、Lookback 等工程师选项。",
+      "tools": "工具策略",
+      "toolsHint": "模型可调用的工具范围。",
+      "notify": "通知策略（高级）",
+      "notifyHint": "告警依赖、待确认等细节。"
+    },
+    "trigger": {
+      "title": "触发（Cron / 事件）",
+      "sectionHint": "原始调度表达式；日常请用上方「何时运行」。",
       "kind": "触发类型",
       "cron": "Cron",
       "interval": "间隔",
@@ -833,8 +913,8 @@
       "eventHint": "匹配事件过滤条件时触发"
     },
     "input": {
-      "title": "可读数据",
-      "sectionHint": "运行前宿主按授权读取的来源。",
+      "title": "输入契约",
+      "sectionHint": "键名、操作与新鲜度策略。",
       "count": "{{count}} 个来源",
       "empty": "尚无输入要求 — 可添加扩展或设备读取",
       "key": "键名",
@@ -857,7 +937,7 @@
       "disabledHint": "宿主 InputPipeline 仍会按授权读取来源"
     },
     "notify": {
-      "title": "通知",
+      "title": "通知策略",
       "sectionHint": "何时、通过哪些通道通知运维。",
       "channels": "通道",
       "channelsHint": "逗号分隔的通道 ID；空表示静默",
@@ -895,7 +975,7 @@
       "warnings": "警告"
     },
     "tools": {
-      "title": "工具",
+      "title": "工具策略",
       "sectionHint": "运行中模型可调用的能力。",
       "mode": "模式",
       "hint": "日报类配置通常关闭模型工具。",
