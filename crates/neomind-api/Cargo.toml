@@ -48,6 +48,7 @@ socket2 = "0.5"
 neomind-core = { path = "../neomind-core" }
 neomind-extension-sdk = { path = "../neomind-extension-sdk" }
 neomind-agent = { path = "../neomind-agent", features = ["cloud", "llamacpp"] }
+neomind-ai-agent = { path = "../neomind-ai-agent" }
 neomind-devices = { path = "../neomind-devices", features = ["embedded-broker"] }
 neomind-rules = { path = "../neomind-rules" }
 neomind-messages = { path = "../neomind-messages", features = ["webhook", "email", "telegram", "wecom", "dingtalk", "slack", "feishu"] }
@@ -92,6 +93,7 @@ rand = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 async-trait = { workspace = true }
+tokio-util = { version = "0.7", features = ["rt"] }
 get_if_addrs = "0.5"
 base64 = { workspace = true }
 async-stream = { workspace = true }

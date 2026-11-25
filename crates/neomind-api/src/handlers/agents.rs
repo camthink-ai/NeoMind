@@ -705,6 +705,14 @@ pub struct CreateAgentRequest {
     /// stops with reason `token-budget` and synthesizes a conclusion.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_tokens_per_run: Option<u64>,
+    /// Clean-slate ToolPolicy (additive; ignored by the v1 create path until
+    /// schema-v2 cutover). Accepted so CLI `--tool-policy` is not silently dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_policy: Option<serde_json::Value>,
+    /// Clean-slate InputContract (additive; ignored by the v1 create path until
+    /// schema-v2 cutover). Accepted so CLI `--input-requirements` is not silently dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<serde_json::Value>,
 }
 
 /// Resource request in the new unified format.
@@ -810,6 +818,12 @@ pub struct UpdateAgentRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<AgentToolConfigMirror>)]
     pub tool_config: Option<neomind_storage::AgentToolConfig>,
+    /// Clean-slate ToolPolicy (additive; ignored by the v1 update path until cutover).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_policy: Option<serde_json::Value>,
+    /// Clean-slate InputContract (additive; ignored by the v1 update path until cutover).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<serde_json::Value>,
 }
 
 /// Resource in update request (new format).
@@ -835,6 +849,10 @@ pub struct ExecuteAgentRequest {
     /// Structured data from the caller (e.g., {"image_base64": "..."})
     #[serde(default)]
     pub data: Option<serde_json::Value>,
+    /// When true, run an authorized dry-run / structured test instead of a
+    /// formal invoke (no formal history / notify for the clean-slate path).
+    #[serde(default)]
+    pub dry_run: bool,
 }
 
 // ============================================================================
@@ -1180,7 +1198,7 @@ pub async fn list_agents(
                     let execution_id = point
                         .metadata
                         .as_ref()
-                        .and_then(|m| m.get(neomind_agent::EXECUTION_ID_KEY))
+                        .and_then(|m| m.get(neomind_ai_agent::EXECUTION_ID_KEY))
                         .and_then(|v| v.as_str())
                         .map(str::to_string);
                     let state = OutputFieldStateDto {
@@ -1510,7 +1528,7 @@ pub async fn create_agent(
         notify: Some(
             request
                 .notify
-                .unwrap_or_else(neomind_agent::ai_agent::default_agent_notify),
+                .unwrap_or_else(crate::agent_defaults::default_agent_notify),
         ),
         conversation_history: Default::default(),
         user_messages: Default::default(),
@@ -1545,22 +1563,14 @@ pub async fn create_agent(
         init_agent_knowledge_file(&state, &agent).await;
     }
 
-    // Schedule the agent if it's interval/cron type (not event-triggered)
-    if agent.schedule.schedule_type != neomind_storage::ScheduleType::Event {
-        if let Ok(manager) = state.get_or_init_agent_manager().await {
-            if let Err(e) = manager.scheduler().schedule_agent(agent.clone()).await {
-                tracing::warn!(
-                    agent_id = %agent.id,
-                    error = %e,
-                    "Failed to schedule agent after creation"
-                );
-            } else {
-                tracing::info!(
-                    agent_id = %agent.id,
-                    schedule_type = ?agent.schedule.schedule_type,
-                    "Agent scheduled successfully"
-                );
-            }
+    // Hot-set the clean-slate runtime so Cron/Interval/Event ticks see it.
+    if let Ok(rt) = state.require_clean_slate().await {
+        if let Err(e) = rt.ingest_v1_agent(&agent) {
+            tracing::warn!(
+                agent_id = %agent.id,
+                error = %e,
+                "Failed to ingest agent into clean-slate runtime after create"
+            );
         }
     }
 
@@ -2103,33 +2113,17 @@ pub async fn update_agent(
         sync_task_understanding_mission(&state, &agent, &prompt_before).await;
     }
 
-    // Reschedule the agent if schedule changed or if agent is active (interval/cron type)
-    // This ensures scheduled agents pick up the new schedule
-    if has_schedule_update || agent.schedule.schedule_type != neomind_storage::ScheduleType::Event {
-        if let Ok(manager) = state.get_or_init_agent_manager().await {
-            // First unschedule the old schedule
-            let _ = manager.scheduler().unschedule_agent(&agent.id).await;
-
-            // Then reschedule with the new configuration (if active and not event-triggered)
-            if agent.status == neomind_storage::AgentStatus::Active
-                && agent.schedule.schedule_type != neomind_storage::ScheduleType::Event
-            {
-                if let Err(e) = manager.scheduler().schedule_agent(agent.clone()).await {
-                    tracing::warn!(
-                        agent_id = %agent.id,
-                        error = %e,
-                        "Failed to reschedule agent after update"
-                    );
-                } else {
-                    tracing::info!(
-                        agent_id = %agent.id,
-                        schedule_type = ?agent.schedule.schedule_type,
-                        "Agent rescheduled successfully after update"
-                    );
-                }
-            }
+    // Refresh clean-slate hot set (trigger/pacing/status).
+    if let Ok(rt) = state.require_clean_slate().await {
+        if let Err(e) = rt.ingest_v1_agent(&agent) {
+            tracing::warn!(
+                agent_id = %agent.id,
+                error = %e,
+                "Failed to ingest agent into clean-slate runtime after update"
+            );
         }
     }
+    let _ = has_schedule_update; // schedule lives in the ingested TriggerSpec
 
     tracing::info!("Updated AI Agent: {}", id);
 
@@ -2162,24 +2156,15 @@ pub async fn delete_agent(
         .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
         .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
 
-    // Get or initialize the agent manager to properly unschedule the agent
-    // This is critical for:
-    // 1. Removing scheduled tasks (interval/cron agents)
-    // 2. Preventing event-triggered agents from executing
-    // 3. Checking if the agent is currently executing (prevent file cleanup race)
-    if let Ok(manager) = state.get_or_init_agent_manager().await {
-        // Use the manager's delete_agent which properly unschedules
-        manager
-            .delete_agent(&id)
-            .await
-            .map_err(|e| ErrorResponse::internal(format!("Failed to unschedule agent: {}", e)))?;
-    } else {
-        // Fallback: just delete from storage if manager is not available
-        store
-            .delete_agent(&id)
-            .await
-            .map_err(|e| ErrorResponse::internal(format!("Failed to delete agent: {}", e)))?;
+    // Drop from clean-slate hot set first so Cron/Event ticks stop immediately.
+    if let Ok(rt) = state.require_clean_slate().await {
+        let _ = rt.delete(&id);
     }
+
+    store
+        .delete_agent(&id)
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to delete agent: {}", e)))?;
 
     // Clean up agent memory files (knowledge files, custom files).
     // Note: There is a small race window if the agent is mid-execution.
@@ -2220,54 +2205,37 @@ pub async fn execute_agent(
     Path(id): Path<String>,
     Json(request): Json<ExecuteAgentRequest>,
 ) -> HandlerResult<Value> {
-    // Get or initialize the agent manager
-    let agent_manager = state
-        .get_or_init_agent_manager()
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent manager: {}", e)))?;
-
-    // Verify the agent exists before spawning background execution
-    let agent = agent_manager
-        .executor()
-        .store()
+    let _ = request; // Caller payload is not yet plumbed into clean-slate submit.
+    let store = &state.agents.agent_store;
+    let agent = store
         .get_agent(&id)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
         .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
+
+    let rt = state.require_clean_slate().await?;
+    rt.ensure_v1_agent(&agent)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to load agent into runtime: {e}")))?;
 
     let execution_id = uuid::Uuid::new_v4().to_string();
     let agent_name = agent.name.clone();
     let eid_clone = execution_id.clone();
     let aid_clone = id.clone();
 
-    // Build invocation input from request
-    let invocation_input = if request.input.is_some() || request.data.is_some() {
-        Some(neomind_agent::AgentInput {
-            content: request.input.clone(),
-            data: request.data.clone(),
-            source: Some("api".to_string()),
-        })
-    } else {
-        None
-    };
-
-    // Spawn execution in background — API returns immediately
     tokio::spawn(async move {
         tracing::info!(
             execution_id = %eid_clone,
             agent_id = %aid_clone,
             "Background agent execution started"
         );
-        match agent_manager
-            .execute_agent_now(&aid_clone, invocation_input)
+        match rt
+            .submit(&aid_clone, neomind_ai_agent::SubmitSource::Manual)
             .await
         {
-            Ok(summary) => {
+            Ok(resp) => {
                 tracing::info!(
-                    execution_id = %summary.execution_id,
+                    execution_id = %resp.execution.as_ref().map(|e| e.id.as_str()).unwrap_or("-"),
                     agent_id = %aid_clone,
-                    status = ?summary.status,
-                    duration_ms = summary.duration_ms,
                     "Background agent execution completed"
                 );
             }
@@ -2309,35 +2277,28 @@ pub async fn test_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let agent_manager = state
-        .get_or_init_agent_manager()
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent manager: {}", e)))?;
-
-    let agent = agent_manager
-        .executor()
-        .store()
+    let store = &state.agents.agent_store;
+    let agent = store
         .get_agent(&id)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
         .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
 
-    if !matches!(
-        agent.execution_mode,
-        neomind_storage::agents::ExecutionMode::Structured
-    ) {
-        return Err(ErrorResponse::bad_request(
-            "Dry-run is only available for structured (L0) agents",
-        ));
-    }
+    let rt = state.require_clean_slate().await?;
+    rt.ensure_v1_agent(&agent)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to load agent into runtime: {e}")))?;
 
-    let result = agent_manager
-        .executor()
-        .dry_run_structured(&agent)
+    let resp = rt
+        .dry_run(&id)
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {}", e)))?;
+        .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {e}")))?;
 
-    ok(result)
+    ok(serde_json::to_value(resp).unwrap_or_else(|_| {
+        json!({
+            "agent_id": id,
+            "dry_run": true,
+        })
+    }))
 }
 
 /// Dry-run WITHOUT an agent: builds a transient structured agent from the
@@ -2465,50 +2426,23 @@ pub async fn test_agent_preview(
         error_message: None,
     };
 
-    let agent_manager = state
-        .get_or_init_agent_manager()
+    let rt = state.require_clean_slate().await?;
+    // Transient preview: ingest → dry-run → delete (nothing persisted formally).
+    rt.ingest_v1_agent(&transient)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to build preview agent: {e}")))?;
+    let resp = rt
+        .dry_run(&transient.id)
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent manager: {}", e)))?;
+        .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {e}")))?;
+    let _ = rt.delete(&transient.id);
 
-    // Focused/Free previews run the real execution path (collect → reason →
-    // contract step) on the transient agent; nothing is published or
-    // journaled — dry-run stays side-effect-free by construction here.
-    let result = match transient.execution_mode {
-        neomind_storage::agents::ExecutionMode::Structured => agent_manager
-            .executor()
-            .dry_run_structured(&transient)
-            .await
-            .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {}", e)))?,
-        mode => {
-            let mut preview_agent = transient.clone();
-            preview_agent.execution_mode = mode;
-            let executor = agent_manager.executor();
-            // Reasoning preview: reuse dry_run_structured's side-effect
-            // discipline — run execute_internal-shaped logic WITHOUT
-            // publish/journal. The simplest side-effect-free approximation
-            // is the structured inference over the collected context when a
-            // contract exists; without a contract the preview returns the
-            // collected context and a prose conclusion attempt.
-            match executor.dry_run_structured(&preview_agent).await {
-                Ok(v) => v,
-                Err(e) => {
-                    // No contract on a reasoning preview is not an error —
-                    // report what a run would see instead of failing.
-                    if e.to_string().contains("output_schema") {
-                        serde_json::json!({
-                            "agent_id": preview_agent.id,
-                            "mode": format!("{:?}", mode),
-                            "note": "reasoning preview without an output contract — run 试跑 on the saved agent for the full loop",
-                        })
-                    } else {
-                        return Err(ErrorResponse::internal(format!("Dry-run failed: {}", e)));
-                    }
-                }
-            }
-        }
-    };
-
-    ok(result)
+    ok(serde_json::to_value(resp).unwrap_or_else(|_| {
+        json!({
+            "agent_id": transient.id,
+            "dry_run": true,
+            "mode": format!("{:?}", transient.execution_mode),
+        })
+    }))
 }
 
 /// Invoke an AI Agent synchronously — waits for execution to complete and returns results.
@@ -2530,22 +2464,6 @@ pub async fn invoke_agent(
     Path(id): Path<String>,
     Json(request): Json<ExecuteAgentRequest>,
 ) -> HandlerResult<Value> {
-    let agent_manager = state
-        .get_or_init_agent_manager()
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent manager: {}", e)))?;
-
-    // Verify the agent exists
-    let agent = agent_manager
-        .executor()
-        .store()
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
-    let agent_name = agent.name.clone();
-
     // Validate input payload size to prevent resource exhaustion
     const MAX_INPUT_SIZE: usize = 100_000; // 100KB
     if let Some(ref input) = request.input {
@@ -2558,89 +2476,41 @@ pub async fn invoke_agent(
         }
     }
 
-    // Build invocation input
-    let invocation_input = if request.input.is_some() || request.data.is_some() {
-        Some(neomind_agent::AgentInput {
-            content: request.input.clone(),
-            data: request.data.clone(),
-            source: Some("api".to_string()),
-        })
-    } else {
-        None
-    };
+    let store = &state.agents.agent_store;
+    let agent = store
+        .get_agent(&id)
+        .await
+        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
+        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
 
-    // Run the execution in its own task so a slow agent is not killed by
-    // this handler's patience window. Previously the 60s timeout DROPPED
-    // the inline execution future — the run died mid-flight with no
-    // execution record and no journal entry (a ghost execution the agent
-    // could never learn from). Now the timeout only bounds how long the
-    // CALLER waits: past it the JoinHandle is dropped (= detached, not
-    // aborted) and the run continues to completion in the background,
-    // writing its execution record + journal as usual.
-    let mgr = agent_manager.clone();
+    let rt = state.require_clean_slate().await?;
+    rt.ensure_v1_agent(&agent)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to load agent into runtime: {e}")))?;
+
+    let agent_name = agent.name.clone();
+    let dry_run = request.dry_run;
     let run_agent_id = id.clone();
-    let handle =
-        tokio::spawn(async move { mgr.execute_agent_now(&run_agent_id, invocation_input).await });
+    let rt_run = rt.clone();
 
     // Wait up to 60s for the result; longer runs keep going in background.
+    let handle = tokio::spawn(async move {
+        if dry_run {
+            rt_run.dry_run(&run_agent_id).await
+        } else {
+            rt_run.invoke(&run_agent_id).await
+        }
+    });
     let timeout = std::time::Duration::from_secs(60);
     let result = tokio::time::timeout(timeout, handle).await;
 
     match result {
-        Ok(Ok(Ok(summary))) => {
-            // Fetch execution by ID (not "latest") to avoid race condition under concurrent load
-            let execution = agent_manager
-                .executor()
-                .store()
-                .get_execution(&summary.execution_id)
-                .await
-                .map_err(|e| ErrorResponse::internal(format!("Failed to get execution: {}", e)))?;
-
-            let (conclusion, confidence, actions) = match &execution {
-                Some(record) => {
-                    let conclusion = record.decision_process.conclusion.clone();
-                    let confidence = record.decision_process.confidence;
-                    let actions: Vec<serde_json::Value> = record
-                        .decision_process
-                        .decisions
-                        .iter()
-                        .map(|d| {
-                            serde_json::json!({
-                                "action": d.action,
-                                "reasoning": d.rationale,
-                                "description": d.description,
-                            })
-                        })
-                        .collect();
-                    (conclusion, confidence, actions)
-                }
-                None => (summary.summary.clone(), None, vec![]),
-            };
-
-            // Prefer the persisted record status (Completed / Failed / Partial)
-            // — hardcoding "Completed" lied about vision-undetermined Partial
-            // and Failed runs that still returned Ok(summary).
-            let status = execution
-                .as_ref()
-                .map(|r| execution_status_to_string(&r.status))
-                .unwrap_or(if summary.has_error {
-                    "Failed"
-                } else {
-                    "Completed"
-                });
-
-            ok(json!({
-                "execution_id": summary.execution_id,
+        Ok(Ok(Ok(resp))) => ok(serde_json::to_value(resp).unwrap_or_else(|_| {
+            json!({
                 "agent_id": id,
                 "agent_name": agent_name,
-                "status": status,
-                "duration_ms": summary.duration_ms,
-                "conclusion": conclusion,
-                "confidence": confidence,
-                "actions": actions,
-                "has_error": summary.has_error,
-            }))
-        }
+                "dry_run": dry_run,
+            })
+        })),
         Ok(Ok(Err(e))) => Err(ErrorResponse::new(
             "AGENT_EXECUTION_FAILED",
             format!("Agent '{}' execution failed: {}", agent_name, e),
@@ -2650,20 +2520,15 @@ pub async fn invoke_agent(
             "Agent '{}' execution task panicked: {}",
             agent_name, join_err
         ))),
-        Err(_elapsed) => {
-            // Still executing in the background (detached task). The caller
-            // polls; the run itself will complete normally — record +
-            // journal are written either way.
-            ok(json!({
-                "agent_id": id,
-                "agent_name": agent_name,
-                "status": "Executing",
-                "still_executing": true,
-                "message": "Execution is still running in the background and will complete with a full record.",
-                "poll_execution": format!("/api/agents/{}/executions?limit=1", id),
-                "poll_command": format!("neomind agent executions {} --limit 1", id),
-            }))
-        }
+        Err(_elapsed) => ok(json!({
+            "agent_id": id,
+            "agent_name": agent_name,
+            "status": "Executing",
+            "still_executing": true,
+            "message": "Execution is still running in the background and will complete with a full record.",
+            "poll_execution": format!("/api/agents/{}/executions?limit=1", id),
+            "poll_command": format!("neomind agent executions {} --limit 1", id),
+        })),
     }
 }
 
@@ -2866,18 +2731,29 @@ pub async fn set_agent_status(
         }
     };
 
-    // Use the agent manager (not raw store) so the scheduler is synced:
-    // - Paused/Stopped → unscheduled
-    // - Active → rescheduled
-    let manager = state
-        .get_or_init_agent_manager()
+    let store = &state.agents.agent_store;
+    let agent = store
+        .get_agent(&id)
         .await
-        .map_err(|e| ErrorResponse::internal(format!("Agent manager not available: {}", e)))?;
+        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
+        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
 
-    manager
-        .update_agent_status(&id, new_status)
+    store
+        .update_agent_status(&id, new_status, None)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to update status: {}", e)))?;
+
+    if let Ok(rt) = state.require_clean_slate().await {
+        let _ = rt.ensure_v1_agent(&agent);
+        let cs_status = neomind_ai_agent::storage_bridge::status_from_storage(new_status);
+        if let Err(e) = rt.set_agent_status(&id, cs_status) {
+            tracing::warn!(
+                agent_id = %id,
+                error = %e,
+                "Failed to sync status into clean-slate runtime"
+            );
+        }
+    }
 
     tracing::debug!("Updated AI Agent {} status to: {}", id, status_str);
 
@@ -3245,58 +3121,54 @@ pub struct ValidateCronResponse {
     )
 )]
 pub async fn validate_cron_expression(
-    State(state): State<ServerState>,
+    State(_state): State<ServerState>,
     Json(request): Json<ValidateCronRequest>,
 ) -> HandlerResult<Value> {
-    use neomind_agent::ai_agent::{AgentScheduler, SchedulerConfig};
+    use chrono::Utc;
+    use chrono_tz::Tz;
+    use cron::Schedule;
+    use std::str::FromStr;
 
-    // Get the scheduler from agent manager
-    let agent_manager = match state.get_or_init_agent_manager().await {
-        Ok(manager) => manager,
-        Err(_e) => {
-            // Create a temporary scheduler for validation
-            let scheduler = AgentScheduler::new(SchedulerConfig::default())
-                .await
-                .map_err(|e| {
-                    ErrorResponse::internal(format!("Failed to create scheduler: {}", e))
-                })?;
-            return validate_with_scheduler(&scheduler, &request);
+    let normalized = neomind_core::cron::normalize(&request.expression);
+    let schedule = match Schedule::from_str(&normalized) {
+        Ok(s) => s,
+        Err(e) => {
+            return ok(json!(ValidateCronResponse {
+                valid: false,
+                error: Some(e.to_string()),
+                next_executions: None,
+                description: None,
+            }));
         }
     };
 
-    let scheduler = agent_manager.scheduler();
-    validate_with_scheduler(scheduler, &request)
-}
+    let tz_str = request.timezone.as_deref().unwrap_or("UTC");
+    let now = Utc::now();
+    let datetime = match tz_str.parse::<Tz>() {
+        Ok(tz) => now.with_timezone(&tz).fixed_offset(),
+        Err(_) => now.fixed_offset(),
+    };
 
-fn validate_with_scheduler(
-    scheduler: &neomind_agent::ai_agent::AgentScheduler,
-    request: &ValidateCronRequest,
-) -> HandlerResult<Value> {
-    let tz = request.timezone.as_deref();
-
-    match scheduler.validate_cron(&request.expression, tz) {
-        Ok(next_executions) => {
-            let execution_strings: Vec<String> = next_executions
-                .iter()
-                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
-                .collect();
-
-            let description = describe_cron_expression(&request.expression);
-
-            ok(json!(ValidateCronResponse {
-                valid: true,
-                error: None,
-                next_executions: Some(execution_strings),
-                description,
-            }))
+    let mut next_executions = Vec::with_capacity(5);
+    let mut upcoming = schedule.after(&datetime);
+    for _ in 0..5 {
+        if let Some(next) = upcoming.next() {
+            next_executions.push(
+                next.with_timezone(&Utc)
+                    .format("%Y-%m-%d %H:%M:%S UTC")
+                    .to_string(),
+            );
+        } else {
+            break;
         }
-        Err(e) => ok(json!(ValidateCronResponse {
-            valid: false,
-            error: Some(e.to_string()),
-            next_executions: None,
-            description: None,
-        })),
     }
+
+    ok(json!(ValidateCronResponse {
+        valid: true,
+        error: None,
+        next_executions: Some(next_executions),
+        description: describe_cron_expression(&request.expression),
+    }))
 }
 
 /// Validate that an LLM backend is available and working.

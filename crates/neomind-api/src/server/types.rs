@@ -79,7 +79,6 @@ use neomind_rules::{
 use neomind_storage::dashboards::DashboardStore;
 use neomind_storage::frontend_components::FrontendComponentStore;
 use neomind_storage::instances::InstanceStore;
-use neomind_storage::llm_backends::LlmBackendStore;
 
 use crate::automation::{
     store::SharedAutomationStore, transform::TransformEngine, AutoOnboardManager,
@@ -93,8 +92,8 @@ use crate::auth_users::AuthUserState;
 use crate::config::LlmSettingsRequest;
 use crate::rate_limit::{RateLimitConfig, RateLimiter};
 use crate::server::state::{
-    AgentManager, AgentState, AuthState, AutomationState, CoreState, DeviceState,
-    ExtensionMetricsStorage, ExtensionRegistryAdapter, ExtensionState, ExtensionStore,
+    AgentState, AuthState, AutomationState, CoreState, DeviceState, ExtensionMetricsStorage,
+    ExtensionRegistryAdapter, ExtensionState, ExtensionStore,
 };
 
 #[cfg(feature = "embedded-broker")]
@@ -263,9 +262,8 @@ pub struct ServerState {
     pub internal_proxy_secret: Arc<String>,
 
     /// IM bridge router (lazy-initialized by `start_im_router` at startup).
-    /// Mirrors `agents.agent_manager`'s `Arc<RwLock<Option<…>>>` lazy-init
-    /// pattern, but lives on `ServerState` directly because the IM bridge is
-    /// a cross-cutting concern (events + agents + messages), not agent-only.
+    /// Lives on `ServerState` directly because the IM bridge is a
+    /// cross-cutting concern (events + agents + messages), not agent-only.
     pub im_router:
         Arc<tokio::sync::RwLock<Option<Arc<neomind_messages::im_bridge::router::ImRouter>>>>,
 
@@ -675,11 +673,6 @@ impl ServerState {
     pub fn agent_store(&self) -> Arc<neomind_storage::AgentStore> {
         self.agents.agent_store.clone()
     }
-
-    /// Get agent manager (backward compatibility).
-    pub fn agent_manager(&self) -> Arc<tokio::sync::RwLock<Option<AgentManager>>> {
-        self.agents.agent_manager.clone()
-    }
 }
 
 impl ServerState {
@@ -1003,6 +996,9 @@ impl ServerState {
         // holder at invocation time.
         let session_manager_holder: crate::capability_providers::SessionManagerHolder =
             Arc::new(tokio::sync::RwLock::new(None));
+        // Late-bound clean-slate runtime — filled after AgentStore opens below.
+        let clean_slate_holder: crate::server::state::CleanSlateHolder =
+            Arc::new(tokio::sync::RwLock::new(None));
         {
             use crate::capability_providers::CompositeCapabilityProvider;
             use neomind_core::extension::CapabilityServices;
@@ -1039,6 +1035,7 @@ impl ServerState {
                     .unwrap_or_else(|| Arc::new(neomind_core::EventBus::new())),
                 event_dispatcher,
                 session_manager_holder.clone(),
+                clean_slate_holder.clone(),
             ));
 
             extensions.set_capability_provider(composite_provider).await;
@@ -1189,13 +1186,37 @@ impl ServerState {
         let agents = AgentState::new(
             Arc::new(session_manager),
             agent_store,
-            Arc::new(tokio::sync::RwLock::new(None)),
             system_memory_store,
+            clean_slate_holder.clone(),
         );
 
         // Late-bind SessionManager into the ChatStream capability holder so
         // ChatStream invocations from isolated extensions can resolve it.
         *session_manager_holder.write().await = Some(agents.session_manager.clone());
+
+        // Build clean-slate HostedAiAgentRuntime on the shared agents.redb
+        // with production host ports (LLM / telemetry / notify / side-effects).
+        let host_deps = crate::agent_ports::HostAgentDeps::new(
+            core.message_manager.clone(),
+            devices.telemetry.clone(),
+            devices.service.clone(),
+            extensions.registry.clone(),
+            extensions.metrics_storage.clone(),
+        );
+        match crate::ai_agent_runtime::build_hosted_runtime(agents.agent_store.clone(), host_deps) {
+            Ok(runtime) => {
+                runtime.start();
+                *clean_slate_holder.write().await = Some(runtime);
+                tracing::info!("Clean-slate HostedAiAgentRuntime ready");
+            }
+            Err(e) => {
+                tracing::warn!(
+                    category = "agent",
+                    error = %e,
+                    "Failed to build clean-slate HostedAiAgentRuntime — v2 routes unavailable"
+                );
+            }
+        }
 
         // ========== Build AUTH STATE ==========
         let auth = AuthState {
@@ -1502,11 +1523,34 @@ impl ServerState {
             neomind_storage::MemoryConfig::default(),
         ));
 
+        // Same clean-slate host as production: event/invoke/CRUD tests need
+        // `require_clean_slate()` after M3 deleted AiAgentManager.
+        let clean_slate_holder: crate::server::state::CleanSlateHolder =
+            Arc::new(tokio::sync::RwLock::new(None));
+        let host_deps = crate::agent_ports::HostAgentDeps::new(
+            core.message_manager.clone(),
+            devices.telemetry.clone(),
+            devices.service.clone(),
+            extensions.registry.clone(),
+            extensions.metrics_storage.clone(),
+        );
+        match crate::ai_agent_runtime::build_hosted_runtime(agent_store.clone(), host_deps) {
+            Ok(runtime) => {
+                *clean_slate_holder.write().await = Some(runtime);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Clean-slate runtime unavailable in test state — event/invoke tests will fail"
+                );
+            }
+        }
+
         let agents = AgentState::new(
             Arc::new(session_manager),
             agent_store,
-            Arc::new(tokio::sync::RwLock::new(None)),
             system_memory_store,
+            clean_slate_holder,
         );
 
         // ========== Build AUTH STATE ==========
@@ -2642,29 +2686,29 @@ impl ServerState {
 
         // Wire agent trigger callback for rule TriggerAgent actions
         {
-            let agent_manager = self.agents.agent_manager.clone();
+            let clean_slate = self.agents.clean_slate.clone();
             let rule_engine = self.automation.rule_engine.clone();
             let callback: neomind_rules::AgentTriggerCallback = Arc::new(
-                move |agent_id: String, input: Option<String>, data: Option<serde_json::Value>| {
-                    let agent_manager = agent_manager.clone();
+                move |agent_id: String,
+                      _input: Option<String>,
+                      _data: Option<serde_json::Value>| {
+                    let clean_slate = clean_slate.clone();
                     Box::pin(async move {
-                        let mgr_guard = agent_manager.read().await;
-                        if let Some(mgr) = mgr_guard.as_ref() {
-                            let agent_input = if input.is_some() || data.is_some() {
-                                Some(neomind_agent::AgentInput {
-                                    content: input,
-                                    data,
-                                    source: Some("rule_engine".to_string()),
-                                })
-                            } else {
-                                None
-                            };
-                            match mgr.execute_agent_now(&agent_id, agent_input).await {
-                                Ok(_) => Ok(()),
-                                Err(e) => Err(format!("Failed to trigger agent: {}", e)),
-                            }
-                        } else {
-                            Err("Agent manager not initialized".to_string())
+                        let guard = clean_slate.read().await;
+                        let Some(rt) = guard.as_ref() else {
+                            return Err("Clean-slate agent runtime not initialized".to_string());
+                        };
+                        if !rt.has_agent(&agent_id) {
+                            return Err(format!(
+                                "Agent not found in clean-slate runtime: {agent_id}"
+                            ));
+                        }
+                        match rt
+                            .submit(&agent_id, neomind_ai_agent::SubmitSource::Rule)
+                            .await
+                        {
+                            Ok(_) => Ok(()),
+                            Err(e) => Err(format!("Failed to trigger agent: {e}")),
                         }
                     })
                 },
@@ -3072,114 +3116,36 @@ impl ServerState {
         }
     }
 
-    /// Get or initialize the AI Agent manager.
-    pub async fn get_or_init_agent_manager(
+    /// Resolve the clean-slate hosted runtime (required for all managed-agent
+    /// invoke / schedule / event paths after M3 deleted `AiAgentManager`).
+    pub async fn require_clean_slate(
         &self,
-    ) -> Result<AgentManager, crate::models::ErrorResponse> {
-        let mgr_guard = self.agents.agent_manager.read().await;
-        if let Some(mgr) = mgr_guard.as_ref() {
-            return Ok(mgr.clone());
-        }
-        drop(mgr_guard);
-
-        // Initialize the manager
-        let mut mgr_guard = self.agents.agent_manager.write().await;
-        if let Some(mgr) = mgr_guard.as_ref() {
-            return Ok(mgr.clone());
-        }
-
-        // Reuse the TimeSeriesStore that's already opened by DeviceService
-        // We can't reopen telemetry.redb because redb doesn't support opening the same
-        // file multiple times in the same process
-        //
-        // WAIT for the deferred persistent load first: inner_store() pins the
-        // Arc for the executor's lifetime, and capturing the startup
-        // placeholder meant every AI-agent write landed in a throwaway
-        // memory store — values looked fine until the restart wiped them.
-        self.devices.telemetry.wait_for_storage_load().await;
-        let time_series_store = Some(self.devices.telemetry.inner_store());
-
-        // Unified LLM runtime for agents: resolve the ACTIVE backend through
-        // the platform instance manager — the single factory/cache/
-        // capability-detection path shared with the chat side (M0-2). The
-        // per-backend construction match that used to live here had drifted
-        // from the manager and was removed.
-        let llm_runtime = match neomind_agent::get_instance_manager() {
-            Ok(manager) => match manager.get_active_runtime().await {
-                Ok(runtime) => Some(runtime),
-                Err(e) => {
-                    tracing::info!(category = "ai", error = %e, "No active LLM backend for agents");
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::warn!(category = "ai", error = %e, "Instance manager unavailable");
-                None
-            }
-        };
-
-        let has_llm = llm_runtime.is_some();
-        let has_time_series = time_series_store.is_some();
-
-        // Open LLM backend store for per-agent backend lookup
-        let llm_backend_store = match LlmBackendStore::open(neomind_core::paths::store_path(
-            "llm_backends.redb",
-        )) {
-            Ok(store) => Some(store),
-            Err(e) => {
-                tracing::warn!(category = "storage", error = %e, "Failed to open LlmBackendStore");
-                None
-            }
-        };
-
-        let executor_config = neomind_agent::ai_agent::AgentExecutorConfig {
-            store: self.agents.agent_store.clone(),
-            time_series_storage: time_series_store,
-            device_service: Some(self.devices.service.clone()),
-            extension_registry: Some(self.extensions.registry.clone()),
-            event_bus: self.core.event_bus.clone(),
-            message_manager: Some(self.core.message_manager.clone()),
-            llm_runtime,
-            llm_backend_store,
-            tool_registry: self.agents.session_manager.get_tool_registry().await,
-            memory_store: Some(self.agents.system_memory_store.clone()),
-            backend_semaphores: None,
-            skill_registry: Some(self.agents.session_manager.skill_registry()),
-            // Populated inside AiAgentManager::new from the scheduler.
-            execution_semaphore: None,
-        };
-
-        let manager = neomind_agent::ai_agent::AiAgentManager::new(executor_config)
+    ) -> Result<Arc<crate::ai_agent_runtime::HostedAiAgentRuntime>, crate::models::ErrorResponse>
+    {
+        self.agents
+            .clean_slate
+            .read()
             .await
-            .map_err(|e| {
-                crate::models::ErrorResponse::internal(format!(
-                    "Failed to create agent manager: {}",
-                    e
-                ))
-            })?;
-
-        *mgr_guard = Some(manager.clone());
-
-        tracing::info!(has_llm, has_time_series, "AI Agent manager initialized");
-        Ok(manager)
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| {
+                crate::models::ErrorResponse::internal(
+                    "Clean-slate agent runtime not initialized".to_string(),
+                )
+            })
     }
 
-    /// Start the AI Agent manager scheduler.
+    /// Start the clean-slate Cron/Interval scheduler.
     pub async fn start_agent_manager(&self) -> Result<(), crate::models::ErrorResponse> {
-        let manager = self.get_or_init_agent_manager().await?;
-
-        // Inject the latest tool registry into the executor.
-        // init_tools() may have triggered get_or_init_agent_manager() before the registry was built,
-        // so the executor's tool_registry was None. Now the registry is ready, update it.
-        if let Some(registry) = self.agents.session_manager.get_tool_registry().await {
-            manager.update_tool_registry(registry);
+        if let Some(rt) = self.agents.clean_slate.read().await.as_ref() {
+            rt.start();
+            tracing::info!("Clean-slate scheduler owns agent ticks");
+            Ok(())
+        } else {
+            Err(crate::models::ErrorResponse::internal(
+                "Clean-slate agent runtime not initialized".to_string(),
+            ))
         }
-
-        manager.start().await.map_err(|e| {
-            crate::models::ErrorResponse::internal(format!("Failed to start agent manager: {}", e))
-        })?;
-        tracing::info!("AI Agent manager scheduler started");
-        Ok(())
     }
 
     /// Start the IM bridge router.
@@ -3410,7 +3376,7 @@ impl ServerState {
     /// Initialize AI Agent event listener.
     ///
     /// Starts a background task that listens for device events and triggers
-    /// event-scheduled agents.
+    /// event-scheduled agents via the clean-slate coordinator.
     pub async fn init_agent_events(&self) {
         // Prevent duplicate initialization
         if self
@@ -3421,10 +3387,10 @@ impl ServerState {
             return;
         }
 
-        let manager = match self.get_or_init_agent_manager().await {
-            Ok(m) => m,
+        let runtime = match self.require_clean_slate().await {
+            Ok(rt) => rt,
             Err(e) => {
-                tracing::warn!("Agent event listener not started: {}", e);
+                tracing::warn!("Agent event listener not started: {}", e.message);
                 return;
             }
         };
@@ -3437,12 +3403,10 @@ impl ServerState {
             }
         };
 
-        let executor = manager.executor().clone();
-        let store = executor.store().clone();
+        let store = self.agents.agent_store.clone();
+        let rt_for_status = runtime.clone();
 
         // Cleanup agents stuck in Executing status on startup.
-        // On a fresh startup, NO agent can be executing — so unconditionally
-        // reset all Executing agents to Active to prevent permanent stuck states.
         tokio::spawn(async move {
             if let Ok(agents) = store
                 .query_agents(neomind_storage::AgentFilter {
@@ -3464,33 +3428,29 @@ impl ServerState {
                             Some("Server restarted - status reset".to_string()),
                         )
                         .await;
+                    let _ = rt_for_status
+                        .set_agent_status(&agent.id, neomind_ai_agent::AgentStatus::Active);
                 }
             }
         });
+
+        let bridge = Arc::new(crate::agent_events::AgentEventBridge::new(runtime));
 
         tokio::spawn(async move {
             let mut rx = event_bus.subscribe();
             tracing::info!("Agent event listener started - monitoring for event-triggered agents");
 
             while let Some((event, _metadata)) = rx.recv().await {
-                // Unified data source event handling for agent triggers
                 match event {
                     neomind_core::NeoMindEvent::DeviceMetric {
                         device_id,
                         metric,
-                        value,
                         timestamp,
                         is_virtual,
                         ..
                     } => {
-                        // Virtual metrics (ai:<agent>:<field>, transform aliases)
-                        // must NOT re-trigger event agents: an agent listening
-                        // on a wildcard or on another agent's output would be
-                        // re-fired by its own publish, forming an unbounded
-                        // self/mutual-trigger loop that burns an LLM call
-                        // every cooldown expiry. Real-device feedback loops
-                        // (a command changing a physical reading) still work —
-                        // those arrive with is_virtual unset/false.
+                        // Virtual metrics must NOT re-trigger event agents
+                        // (feedback-loop guard).
                         if is_virtual.unwrap_or(false) {
                             tracing::debug!(
                                 device_id = %device_id,
@@ -3499,36 +3459,21 @@ impl ServerState {
                             );
                             continue;
                         }
-                        if let Err(e) = executor
-                            .check_and_trigger_data_event(
-                                "device", device_id, metric, &value, timestamp,
-                            )
-                            .await
-                        {
-                            tracing::debug!("No agent triggered for device event: {}", e);
-                        }
+                        bridge
+                            .check_and_trigger("device", &device_id, &metric, timestamp)
+                            .await;
                     }
                     neomind_core::NeoMindEvent::ExtensionOutput {
                         extension_id,
                         output_name,
-                        value,
                         timestamp,
                         ..
                     } => {
-                        if let Err(e) = executor
-                            .check_and_trigger_data_event(
-                                "extension",
-                                extension_id,
-                                output_name,
-                                &value,
-                                timestamp,
-                            )
-                            .await
-                        {
-                            tracing::debug!("No agent triggered for extension event: {}", e);
-                        }
+                        bridge
+                            .check_and_trigger("extension", &extension_id, &output_name, timestamp)
+                            .await;
                     }
-                    _ => {} // Ignore other events
+                    _ => {}
                 }
             }
         });

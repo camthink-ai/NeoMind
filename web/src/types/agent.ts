@@ -642,3 +642,241 @@ export interface AgentToolCatalogItem {
   /** True when this tool is hidden from the LLM (disabled via Extensions page). */
   disabled?: boolean
 }
+
+// =============================================================================
+// Agent contract v2 (clean-slate) — mirrors crates/neomind-ai-agent/src/model
+// Temporary until M3 rewrites the editor against these types directly.
+// =============================================================================
+
+/** Official task-family preset id. */
+export type AgentPresetId = 'daily_brief' | 'partial_meter' | 'event_vision' | 'custom'
+
+export type InputModality =
+  | 'metric'
+  | 'time_series'
+  | 'structured_json'
+  | 'text'
+  | 'image'
+  | 'caller_input'
+
+export type InputSourceRef =
+  | { kind: 'device_metric'; device_id: string; field: string }
+  | { kind: 'whole_device'; device_id: string }
+  | { kind: 'extension_instance'; id: string }
+  | { kind: 'upstream_ai'; agent_id: string; field: string }
+  | { kind: 'caller_payload' }
+
+export type FreshnessPolicy =
+  | { kind: 'same_report' }
+  | { kind: 'latest_within'; max_age_secs: number }
+  | { kind: 'lookback_window'; lookback_secs: number; max_points: number }
+  | { kind: 'any' }
+
+export type MissingPolicy = 'undetermined' | 'report_stale' | 'skip' | 'ignore'
+
+export interface InputRequirement {
+  key: string
+  source: InputSourceRef
+  operation?: string
+  params?: Record<string, unknown>
+  auth_scope?: string
+  timeout_secs: number
+  result_type: InputModality
+  freshness: FreshnessPolicy
+  on_missing: MissingPolicy
+}
+
+export interface InputContract {
+  requirements: InputRequirement[]
+}
+
+/** Externally-tagged ToolPolicy (unit variants are bare strings). */
+export type ToolPolicy =
+  | 'disabled'
+  | 'unrestricted'
+  | { scoped: { allowed_tools: string[]; allowed_commands?: string[] } }
+
+export interface OutputFieldV2 {
+  name: string
+  depends_on?: string[]
+  description?: string
+}
+
+export interface OutputContract {
+  fields: OutputFieldV2[]
+  publish?: boolean
+}
+
+/** Three-way notify policy (complete / alert / failure). */
+export interface NotifyPolicy {
+  channels: string[]
+  on_complete?: boolean
+  on_alert?: boolean
+  alert_depends_on?: string[]
+  on_failure?: boolean
+  pending_confirmation?: boolean
+}
+
+export type TriggerSpec =
+  | { kind: 'cron'; expr: string; timezone: string }
+  | { kind: 'interval'; every_secs: number }
+  | { kind: 'event'; filter?: unknown }
+  | { kind: 'manual' }
+
+export interface PacingPolicy {
+  burst_merge_secs?: number
+  min_interval_secs?: number
+  max_runs_per_day?: number
+  failure_threshold?: number
+}
+
+export interface ControlledAction {
+  name: string
+  destination: string
+  depends_on?: string[]
+  idempotent?: boolean
+  params?: Record<string, unknown>
+}
+
+/** Create/update request DTO (no id / config_version). */
+export interface AgentSpecDraft {
+  name: string
+  description?: string
+  user_prompt: string
+  llm_backend_id?: string
+  preset?: AgentPresetId
+  trigger: TriggerSpec
+  pacing?: PacingPolicy
+  input: InputContract
+  tool_policy: ToolPolicy
+  output?: OutputContract
+  notify?: NotifyPolicy
+  controlled_actions?: ControlledAction[]
+}
+
+/** Frozen static configuration for a managed agent. */
+export interface AgentSpec extends AgentSpecDraft {
+  id: string
+  config_version: number
+  created_at: number
+  updated_at: number
+}
+
+/** Partial update: omitted fields keep previous values. */
+export interface AgentSpecPatch {
+  name?: string
+  description?: string | null
+  user_prompt?: string
+  llm_backend_id?: string | null
+  preset?: AgentPresetId | null
+  trigger?: TriggerSpec
+  pacing?: PacingPolicy
+  input?: InputContract
+  tool_policy?: ToolPolicy
+  output?: OutputContract
+  notify?: NotifyPolicy
+  controlled_actions?: ControlledAction[]
+}
+
+export interface PlanRead {
+  key: string
+  source_id: string
+  operation?: string | null
+  auth_scope?: string | null
+  capability_class: string
+}
+
+export interface ExternalReadCounts {
+  weather: number
+  tariff: number
+  other: number
+}
+
+/** Static EffectivePlan — zero external reads, zero side effects. */
+export interface EffectivePlan {
+  agent_id: string
+  config_version: number
+  trigger_summary: string
+  timezone?: string | null
+  authorized_reads: PlanRead[]
+  tool_policy: ToolPolicy
+  notify: NotifyPolicy
+  controlled_actions: ControlledAction[]
+  warnings?: string[]
+  external_read_counts: ExternalReadCounts
+}
+
+export type EvidenceQuality =
+  | 'fresh'
+  | 'stale'
+  | 'missing'
+  | { error: { reason: string } }
+
+export type EvidenceDetail =
+  | { kind: 'vision'; image_source_field: string; vision_path: string }
+  | { kind: 'time_series'; points: number; value?: unknown }
+  | { kind: 'structured'; value: unknown }
+  | { kind: 'text'; text: string }
+
+export interface EvidenceItem {
+  key: string
+  source_id: string
+  result_type: InputModality
+  observed_at?: number | null
+  valid_window?: [number, number] | null
+  fetched_at: number
+  quality: EvidenceQuality
+  binding_proof: string
+  detail?: EvidenceDetail | null
+}
+
+export interface EvidenceReport {
+  items: EvidenceItem[]
+  missing_keys?: string[]
+  skip_reason?: string | null
+}
+
+/**
+ * Opaque v2 fields the legacy editor cannot fully express. Stashed by
+ * `v2SpecToFormState` and restored by `formStateToV2Draft` so a name-only
+ * edit does not wipe inputs / notify / tool_policy / timezone.
+ */
+export interface AgentSpecV2Carry {
+  preset?: AgentPresetId
+  trigger: TriggerSpec
+  pacing?: PacingPolicy
+  input: InputContract
+  tool_policy: ToolPolicy
+  output?: OutputContract
+  notify?: NotifyPolicy
+  controlled_actions?: ControlledAction[]
+}
+
+/**
+ * Legacy-editor form shape used by the M2 temporary adapter. Compatible with
+ * CreateAgentRequest fields the old editor already mutates, plus `v2Carry`.
+ */
+export interface AgentEditorFormState {
+  name: string
+  description?: string
+  user_prompt: string
+  llm_backend_id?: string
+  schedule: AgentScheduleRequest
+  resources?: ResourceRequest[]
+  device_ids?: string[]
+  metrics?: MetricSelectionRequest[]
+  commands?: CommandSelectionRequest[]
+  execution_mode?: AgentExecutionMode
+  system_prompt?: string
+  output_schema?: OperatorField[]
+  operator_config?: OperatorConfig
+  memory_mode?: AgentMemoryMode
+  /** Legacy notify (`on: failure|always|judgment`). */
+  notify?: AgentNotify
+  tool_config?: AgentToolConfig
+  max_chain_depth?: number
+  priority?: number
+  context_window_size?: number
+  /** Round-trip bag for v2-only / lossy fields. */
+  v2Carry?: AgentSpecV2Carry
+}

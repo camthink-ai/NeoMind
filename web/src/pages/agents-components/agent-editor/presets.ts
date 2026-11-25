@@ -1,10 +1,9 @@
 // Starting points, not forks. A preset fills the form and everything it fills
-// stays visible and editable; it never sets the execution mode directly (the
-// derivation does its job on the filled form) and never touches resources —
-// binding your own devices, cameras included, is your part of the work.
+// stays visible and editable. Execution mode is explicit per preset (no
+// derivation) and never touches resources — binding your own devices, cameras
+// included, is your part of the work.
 
-import type { OperatorField } from '@/types'
-import { deriveExecutionMode } from './derivation'
+import type { AgentExecutionMode, OperatorField } from '@/types'
 import {
   Activity,
   AlertTriangle,
@@ -73,6 +72,8 @@ export interface AgentPreset {
    */
   featured?: boolean
   fill: {
+    /** Explicit runtime mode — no derivation from autonomy/contract. */
+    executionMode: AgentExecutionMode
     /** Whether the agent may work things out itself (the autonomy switch). */
     autonomy: boolean
     /**
@@ -116,6 +117,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     icon: Camera,
     featured: true,
     fill: {
+      executionMode: 'structured',
       autonomy: false,
       memoryMode: 'tool',
       outputSchema: (t) => [
@@ -140,6 +142,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     icon: Activity,
     featured: true,
     fill: {
+      executionMode: 'structured',
       autonomy: false,
       memoryMode: 'tool',
       outputSchema: (t) => [
@@ -167,6 +170,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     icon: Zap,
     featured: true,
     fill: {
+      executionMode: 'free',
       autonomy: true,
       memoryMode: 'assistant',
       schedule: { type: 'reactive' },
@@ -180,6 +184,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     icon: Clock,
     featured: true,
     fill: {
+      executionMode: 'focused',
       autonomy: false,
       memoryMode: 'assistant',
       schedule: { type: 'timer', subType: 'daily', hour: 9 },
@@ -195,6 +200,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     key: 'event',
     icon: AlertTriangle,
     fill: {
+      executionMode: 'structured',
       autonomy: false,
       memoryMode: 'tool',
       outputSchema: (t) => [
@@ -214,12 +220,12 @@ export const AGENT_PRESETS: AgentPreset[] = [
   },
   {
     // S3: several sources, several rounds, and a conclusion that outlives the
-    // run. Autonomy wins over the contract in the derivation, so this is a
-    // `free` agent that publishes — the shape `smart` cannot reach, because
-    // its conclusion is prose nothing downstream can bind to.
+    // run. Explicit free + contract — publishes fields while still able to
+    // investigate; the shape `smart` cannot reach (prose-only conclusion).
     key: 'rootCause',
     icon: Radar,
     fill: {
+      executionMode: 'free',
       autonomy: true,
       memoryMode: 'assistant',
       outputSchema: (t) => [
@@ -250,6 +256,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     key: 'weekly',
     icon: Calendar,
     fill: {
+      executionMode: 'focused',
       autonomy: false,
       memoryMode: 'assistant',
       schedule: { type: 'timer', subType: 'weekly', weekday: 1, hour: 9 },
@@ -264,6 +271,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     key: 'shift',
     icon: Gauge,
     fill: {
+      executionMode: 'focused',
       autonomy: false,
       memoryMode: 'tool',
       schedule: { type: 'timer', subType: 'interval', intervalMinutes: 30 },
@@ -271,15 +279,14 @@ export const AGENT_PRESETS: AgentPreset[] = [
     },
   },
   {
-    // free × timer — the one derivation×schedule cell the original nine did
-    // not cover: an autonomous agent on a clock. Unattended periodic
-    // inspection that may also REMEDIATE (restart a device, resend a
-    // command) and verify the fix — the IoT "night shift" nobody staffs.
-    // `judgment` for the same reason as `smart`: an agent that acts must
-    // neither spam every round nor stay silent through a failed fix.
+    // free × timer — unattended periodic inspection that may also REMEDIATE
+    // (restart a device, resend a command) and verify the fix. `judgment` for
+    // the same reason as `smart`: an agent that acts must neither spam every
+    // round nor stay silent through a failed fix.
     key: 'patrol',
     icon: ShieldCheck,
     fill: {
+      executionMode: 'free',
       autonomy: true,
       memoryMode: 'assistant',
       schedule: { type: 'timer', subType: 'interval', intervalMinutes: 30 },
@@ -295,6 +302,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     key: 'qa',
     icon: Search,
     fill: {
+      executionMode: 'focused',
       autonomy: false,
       memoryMode: 'tool',
       schedule: { type: 'on-demand' },
@@ -306,6 +314,7 @@ export const AGENT_PRESETS: AgentPreset[] = [
     key: 'advanced',
     icon: Settings2,
     fill: {
+      executionMode: 'free',
       autonomy: true,
       memoryMode: 'assistant',
       schedule: { type: 'on-demand' },
@@ -337,12 +346,7 @@ export type PresetNextStep = 'sources' | 'trigger' | 'optional'
  * (reactive AND structured) reads as `sources`: one binding covers both.
  */
 export function nextStepFor(preset: AgentPreset): PresetNextStep {
-  const mode = deriveExecutionMode({
-    hasDeviceCommands: false,
-    canActAutonomously: preset.fill.autonomy,
-    hasOutputContract: (preset.fill.outputSchema?.((k) => k) ?? []).length > 0,
-  })
-  if (mode === 'structured') return 'sources'
+  if (preset.fill.executionMode === 'structured') return 'sources'
   if (preset.fill.schedule.type === 'reactive') return 'trigger'
   return 'optional'
 }

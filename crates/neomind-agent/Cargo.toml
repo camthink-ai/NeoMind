@@ -93,6 +93,3 @@ serial_test = "3"
 version = "4"
 features = ["chrono", "uuid"]
 
-[[test]]
-name = "scheduler_cancellation_test"
-required-features = ["test-utils"]

@@ -121,6 +121,7 @@
     "toolsFilterAllSources": "全部来源",
     "outputFields": "输出字段",
     "viewEvidence": "查看依据",
+    "evidenceBrowseHint": "打开某次执行可浏览它读了什么、写了什么，以及动作投递结果。",
     "outputFieldsHint": "每个字段都是平台数据源（ai:{agent}:{field}）——可在仪表盘、规则、数据推送中绑定使用。",
     "fieldType": {
       "number": "数值",
@@ -802,5 +803,98 @@
     "saving": "保存中"
   },
   "executionNotFound": "未找到执行记录",
-  "noAgentsNoBackendDesc": "Agent 需要 AI 模型才能运行。先下载内置模型（离线可用、无需 API key），或配置你自己的后端。"
+  "noAgentsNoBackendDesc": "Agent 需要 AI 模型才能运行。先下载内置模型（离线可用、无需 API key），或配置你自己的后端。",
+  "editorV2": {
+    "titleCreate": "创建智能体（v2）",
+    "titleEdit": "编辑智能体（v2）",
+    "dailyBriefHint": "正交的 AgentSpec v2 编辑器 — 面向日报类配置（cron + 时区、输入契约、工具策略、三路通知）。",
+    "name": "名称",
+    "description": "描述",
+    "prompt": "任务提示词",
+    "trigger": {
+      "title": "触发",
+      "kind": "触发类型",
+      "cron": "Cron",
+      "interval": "间隔",
+      "event": "事件",
+      "manual": "手动",
+      "expr": "Cron 表达式",
+      "exprHint": "标准 5 段 cron，例如 0 9 * * * 表示每天 09:00",
+      "timezone": "时区",
+      "timezoneHint": "IANA 时区，如 Asia/Shanghai",
+      "everySecs": "间隔（秒）",
+      "manualHint": "仅在手动调用时运行 — 不会自动调度",
+      "eventHint": "匹配事件过滤条件时触发"
+    },
+    "input": {
+      "title": "输入契约",
+      "count": "{{count}} 个来源",
+      "empty": "尚无输入要求 — 可添加扩展或设备读取",
+      "key": "键名",
+      "auth": "授权范围",
+      "source": "来源",
+      "extensionId": "扩展实例 ID",
+      "operation": "操作",
+      "add": "添加要求",
+      "remove": "移除要求",
+      "addSoon": "完整来源选择器将在编辑器切流后提供"
+    },
+    "toolPolicy": {
+      "title": "模型工具",
+      "kind": "策略",
+      "disabled": "禁用",
+      "unrestricted": "不限制",
+      "scoped": "白名单",
+      "allowedTools": "允许的工具",
+      "allowedToolsHint": "逗号分隔的工具名",
+      "disabledHint": "宿主 InputPipeline 仍会按授权读取来源"
+    },
+    "notify": {
+      "title": "通知策略",
+      "channels": "通道",
+      "channelsHint": "逗号分隔的通道 ID；空表示静默",
+      "onComplete": "完成时",
+      "onCompleteDesc": "运行成功结束时通知",
+      "onAlert": "告警时",
+      "onAlertDesc": "触发告警条件时通知",
+      "onFailure": "失败时",
+      "onFailureDesc": "运行失败时通知",
+      "pendingConfirmation": "待确认",
+      "pendingConfirmationDesc": "判断路径 — 发送前需确认"
+    },
+    "plan": {
+      "title": "生效计划",
+      "run": "预览",
+      "hint": "仅静态计划 — 零外部读取、零投递",
+      "trigger": "触发",
+      "timezone": "时区",
+      "reads": "授权读取",
+      "externalReads": "外部读取计数"
+    },
+    "planPreview": {
+      "title": "生效计划",
+      "refresh": "刷新",
+      "hint": "来自 POST /api/agents/v2/plan-preview 的静态预览 — 零外部读取",
+      "empty": "尚无预览",
+      "error": "预览失败",
+      "triggerSummary": "触发",
+      "timezone": "时区",
+      "toolPolicy": "工具",
+      "reads": "授权读取",
+      "authorizedReads": "授权读取",
+      "noReads": "无",
+      "externalReads": "外部读取计数（静态预览必须为 0）",
+      "warnings": "警告"
+    },
+    "tools": {
+      "title": "工具策略",
+      "mode": "模式",
+      "hint": "日报类配置通常禁用模型工具",
+      "disabled": "禁用",
+      "unrestricted": "不限制",
+      "scoped": "白名单",
+      "allowedTools": "允许的工具",
+      "allowedToolsHint": "逗号分隔的工具名"
+    }
+  }
 }

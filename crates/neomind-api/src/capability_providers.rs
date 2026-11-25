@@ -1187,17 +1187,22 @@ impl ExtensionCapabilityProvider for StorageCapabilityProvider {
 // Agent Capability Provider
 // ============================================================================
 
-use neomind_agent::ai_agent::AiAgentManager;
 use neomind_storage::AgentStore;
+
+use crate::server::state::CleanSlateHolder;
 
 /// Provider for agent-related capabilities
 pub struct AgentCapabilityProvider {
     services: CapabilityServices,
+    clean_slate: CleanSlateHolder,
 }
 
 impl AgentCapabilityProvider {
-    pub fn new(services: CapabilityServices) -> Self {
-        Self { services }
+    pub fn new(services: CapabilityServices, clean_slate: CleanSlateHolder) -> Self {
+        Self {
+            services,
+            clean_slate,
+        }
     }
 
     async fn handle_agent_trigger(&self, params: &Value) -> Result<Value, CapabilityError> {
@@ -1208,34 +1213,37 @@ impl AgentCapabilityProvider {
 
         let _input = params.get("input").cloned().unwrap_or(json!({}));
 
-        // Try to get the agent manager
-        let agent_manager: Option<std::sync::Arc<AiAgentManager>> =
-            self.services.get::<AiAgentManager>(keys::AGENT_MANAGER);
-
-        if let Some(manager) = agent_manager {
-            // Execute the agent using the real agent manager
-            match manager.execute_agent_now(agent_id, None).await {
-                Ok(summary) => Ok(json!({
-                    "success": true,
-                    "agent_id": agent_id,
-                    "execution_id": summary.execution_id,
-                    "status": format!("{:?}", summary.status),
-                    "duration_ms": summary.duration_ms,
-                    "summary": summary.summary,
-                })),
-                Err(e) => Ok(json!({
-                    "success": false,
-                    "agent_id": agent_id,
-                    "error": e.to_string(),
-                })),
-            }
-        } else {
-            // Fallback when agent manager is not available
-            Ok(json!({
+        let guard = self.clean_slate.read().await;
+        let Some(rt) = guard.as_ref() else {
+            return Ok(json!({
                 "success": false,
                 "agent_id": agent_id,
-                "error": "Agent manager not available",
-            }))
+                "error": "Clean-slate agent runtime not available",
+            }));
+        };
+        if !rt.has_agent(agent_id) {
+            return Ok(json!({
+                "success": false,
+                "agent_id": agent_id,
+                "error": "Agent not found in clean-slate runtime",
+            }));
+        }
+        match rt
+            .submit(agent_id, neomind_ai_agent::SubmitSource::Extension)
+            .await
+        {
+            Ok(resp) => Ok(json!({
+                "success": true,
+                "agent_id": agent_id,
+                "execution_id": resp.execution.as_ref().map(|e| e.id.clone()),
+                "status": resp.execution.as_ref().map(|e| format!("{:?}", e.status)),
+                "dry_run": resp.dry_run,
+            })),
+            Err(e) => Ok(json!({
+                "success": false,
+                "agent_id": agent_id,
+                "error": e.to_string(),
+            })),
         }
     }
 
@@ -1245,9 +1253,6 @@ impl AgentCapabilityProvider {
         // Try to get the agent store
         let agent_store: Option<std::sync::Arc<AgentStore>> =
             self.services.get::<AgentStore>(keys::AGENT_STORE);
-
-        let agent_manager: Option<std::sync::Arc<AiAgentManager>> =
-            self.services.get::<AiAgentManager>(keys::AGENT_MANAGER);
 
         if let Some(id) = agent_id {
             // Get specific agent status
@@ -1278,70 +1283,39 @@ impl AgentCapabilityProvider {
                     "error": "Agent store not available",
                 }))
             }
-        } else {
-            // List all agents
-            if let Some(manager) = &agent_manager {
-                match manager
-                    .list_agents(neomind_storage::AgentFilter::default())
-                    .await
-                {
-                    Ok(agents) => {
-                        let agent_list: Vec<Value> = agents
-                            .iter()
-                            .map(|a| {
-                                json!({
-                                    "id": a.id,
-                                    "name": a.name,
-                                    "status": format!("{:?}", a.status),
-                                })
+        } else if let Some(store) = &agent_store {
+            match store
+                .query_agents(neomind_storage::AgentFilter::default())
+                .await
+            {
+                Ok(agents) => {
+                    let agent_list: Vec<Value> = agents
+                        .iter()
+                        .map(|a| {
+                            json!({
+                                "id": a.id,
+                                "name": a.name,
+                                "status": format!("{:?}", a.status),
                             })
-                            .collect();
+                        })
+                        .collect();
 
-                        Ok(json!({
-                            "success": true,
-                            "agents": agent_list,
-                            "count": agent_list.len(),
-                        }))
-                    }
-                    Err(e) => Ok(json!({
-                        "success": false,
-                        "error": e.to_string(),
-                    })),
+                    Ok(json!({
+                        "success": true,
+                        "agents": agent_list,
+                        "count": agent_list.len(),
+                    }))
                 }
-            } else if let Some(store) = &agent_store {
-                match store
-                    .query_agents(neomind_storage::AgentFilter::default())
-                    .await
-                {
-                    Ok(agents) => {
-                        let agent_list: Vec<Value> = agents
-                            .iter()
-                            .map(|a| {
-                                json!({
-                                    "id": a.id,
-                                    "name": a.name,
-                                    "status": format!("{:?}", a.status),
-                                })
-                            })
-                            .collect();
-
-                        Ok(json!({
-                            "success": true,
-                            "agents": agent_list,
-                            "count": agent_list.len(),
-                        }))
-                    }
-                    Err(e) => Ok(json!({
-                        "success": false,
-                        "error": e.to_string(),
-                    })),
-                }
-            } else {
-                Ok(json!({
+                Err(e) => Ok(json!({
                     "success": false,
-                    "error": "Agent store not available",
-                }))
+                    "error": e.to_string(),
+                })),
             }
+        } else {
+            Ok(json!({
+                "success": false,
+                "error": "Agent store not available",
+            }))
         }
     }
 }
@@ -2270,6 +2244,7 @@ pub async fn register_builtin_providers(
     services: CapabilityServices,
     event_bus: Arc<EventBus>,
     session_manager_holder: SessionManagerHolder,
+    clean_slate: CleanSlateHolder,
 ) {
     register_builtin_providers_with_dispatcher(
         context,
@@ -2277,6 +2252,7 @@ pub async fn register_builtin_providers(
         event_bus,
         None,
         session_manager_holder,
+        clean_slate,
     )
     .await;
 }
@@ -2288,6 +2264,7 @@ pub async fn register_builtin_providers_with_dispatcher(
     event_bus: Arc<EventBus>,
     event_dispatcher: Option<std::sync::Arc<neomind_core::extension::EventDispatcher>>,
     session_manager_holder: SessionManagerHolder,
+    clean_slate: CleanSlateHolder,
 ) {
     // Clone event_bus for ChatStream provider before it's moved into EventCapabilityProvider.
     let event_bus_for_chat = event_bus.clone();
@@ -2329,7 +2306,7 @@ pub async fn register_builtin_providers_with_dispatcher(
         .register_provider("neomind-api::storage".to_string(), storage_provider)
         .await;
 
-    let agent_provider = Arc::new(AgentCapabilityProvider::new(services));
+    let agent_provider = Arc::new(AgentCapabilityProvider::new(services, clean_slate));
     context
         .register_provider("neomind-api::agent".to_string(), agent_provider)
         .await;
@@ -2405,6 +2382,7 @@ impl CompositeCapabilityProvider {
         event_bus: Arc<EventBus>,
         event_dispatcher: Option<std::sync::Arc<neomind_core::extension::EventDispatcher>>,
         session_manager_holder: SessionManagerHolder,
+        clean_slate: CleanSlateHolder,
     ) -> Self {
         let mut composite = Self::new();
 
@@ -2447,7 +2425,7 @@ impl CompositeCapabilityProvider {
             .providers
             .insert("neomind-api::storage".to_string(), storage_provider);
 
-        let agent_provider = Arc::new(AgentCapabilityProvider::new(services));
+        let agent_provider = Arc::new(AgentCapabilityProvider::new(services, clean_slate));
         composite
             .providers
             .insert("neomind-api::agent".to_string(), agent_provider);

@@ -508,12 +508,17 @@ export function AgentDetailPanel({
               </>
             )}
             {section === 'history' && (
-              <AgentExecutionTimeline
-                            executions={executions}
-                            loading={executionsLoading}
-                            agentId={agent.id}
-                            onViewExecutionDetail={onViewExecutionDetail}
-                          />
+              <>
+                <p className="text-xs text-muted-foreground">
+                  {t('agents:detail.evidenceBrowseHint')}
+                </p>
+                <AgentExecutionTimeline
+                  executions={executions}
+                  loading={executionsLoading}
+                  agentId={agent.id}
+                  onViewExecutionDetail={onViewExecutionDetail}
+                />
+              </>
             )}
             {section === 'memory' && (
               <>

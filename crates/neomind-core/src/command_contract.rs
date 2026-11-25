@@ -548,12 +548,22 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
                 required: false,
                 summary: "Comma-separated allowlist (e.g. `shell`); `all` restores every tool",
             },
+            DomainParamSummary {
+                name: "--tool-policy",
+                required: false,
+                summary: "Clean-slate tool policy: disabled|unrestricted|scoped JSON (additive)",
+            },
+            DomainParamSummary {
+                name: "--input-requirements",
+                required: false,
+                summary: "Clean-slate InputContract JSON `{\"requirements\":[...]}` (additive)",
+            },
         ],
         shell_example: DomainShellExample {
             command: "neomind agent create --name \"Sensor Monitor\" --prompt \"Check sensor anomalies\" --every 10m --execution-mode free",
             params_json: None,
         },
-        guidance: "Required `--name` + `--prompt` + schedule (`--every 10m` or `--schedule-type interval --schedule-config \"600\"` seconds). Default execution-mode is focused and needs `--device-ids`/`--resources`/`--metrics`/`--commands`; for unbound create→invoke→delete use `--execution-mode free`. Use `--no-tools` for text-only or `--allowed-tools shell` for judgment alerts (never both; never `--no-tools` with `--notify on=judgment`). Prefer `--every` over inventing JSON schedule-config objects.",
+        guidance: "Required `--name` + `--prompt` + schedule (`--every 10m` or `--schedule-type interval --schedule-config \"600\"` seconds). Default execution-mode is focused and needs `--device-ids`/`--resources`/`--metrics`/`--commands`; for unbound create→invoke→delete use `--execution-mode free`. Use `--no-tools` for text-only or `--allowed-tools shell` for judgment alerts (never both; never `--no-tools` with `--notify on=judgment`). Clean-slate additive: `--tool-policy`, `--input-requirements`, and `--notify` with on_complete/on_alert/on_failure. Prefer `--every` over inventing JSON schedule-config objects. Chat workflow: `plan-preview` → create → test/`invoke --dry-run` → invoke.",
     },
     DomainCommandContract {
         domain: "agent",
@@ -629,7 +639,44 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
             command: "neomind agent invoke agent-001 \"Check sensors now\"",
             params_json: None,
         },
-        guidance: "Invoke with positional `<ID>` and optional positional input string — never `--input` or `--prompt` (create/update flags). If it returns `Executing`, poll `agent latest-execution <ID>`.",
+        guidance: "Invoke with positional `<ID>` and optional positional input string — never `--input` or `--prompt` (create/update flags; use `--input-requirements` only on create/update). `--dry-run` is an authorized trial without formal history. If it returns `Executing`, poll `agent latest-execution <ID>`.",
+    },
+    DomainCommandContract {
+        domain: "agent",
+        action: "plan-preview",
+        side_effect: DomainCommandSideEffect::ReadOnly,
+        primary_json: Some(PrimaryJsonSpec {
+            flag: "--draft",
+            kind: ExpectedJsonKind::Object,
+        }),
+        key_params: &[DomainParamSummary {
+            name: "--draft",
+            required: true,
+            summary: "AgentSpecDraft JSON (static EffectivePlan; zero external reads)",
+        }],
+        shell_example: DomainShellExample {
+            command: "neomind agent plan-preview",
+            params_json: Some(
+                r#"{"name":"daily-brief","user_prompt":"Summarize weather","trigger":{"kind":"manual"},"input":{"requirements":[]},"tool_policy":"disabled"}"#,
+            ),
+        },
+        guidance: "Static config preview only — POST /api/agents/v2/plan-preview; no reads, no side effects, no create. Chat workflow: plan-preview → create → test/`invoke --dry-run` → invoke. Response includes `effective_plan`.",
+    },
+    DomainCommandContract {
+        domain: "agent",
+        action: "test",
+        side_effect: DomainCommandSideEffect::Mutating,
+        primary_json: None,
+        key_params: &[DomainParamSummary {
+            name: "<id>",
+            required: true,
+            summary: "Agent ID (positional; dry-run / structured test)",
+        }],
+        shell_example: DomainShellExample {
+            command: "neomind agent test agent-001",
+            params_json: None,
+        },
+        guidance: "Authorized trial for a saved agent. Prefer `agent invoke --dry-run` for the clean-slate dry-run envelope; formal history stays on `agent invoke` without `--dry-run`.",
     },
     DomainCommandContract {
         domain: "agent",
@@ -1124,6 +1171,7 @@ mod tests {
             ("agent", "create"),
             ("agent", "update"),
             ("agent", "invoke"),
+            ("agent", "test"),
             ("agent", "delete"),
             ("widget", "create"),
             ("widget", "install"),
@@ -1140,6 +1188,7 @@ mod tests {
             ("extension", "status"),
             ("extension", "logs"),
             ("settings", "retention"),
+            ("agent", "plan-preview"),
         ];
         for (domain, action) in required_mutating {
             let c = find_domain_command_contract(domain, action)

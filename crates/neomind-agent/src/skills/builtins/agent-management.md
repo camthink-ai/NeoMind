@@ -13,7 +13,7 @@ triggers:
   keywords: [agent, 代理, AI代理, agent create, 创建代理, agent control, schedule, cron, interval, manual, 监控, agent invoke, 调用代理, agent memory, 代理记忆, agent execution, 代理执行, 定时任务, scheduled task, agent schedule, agent update, 按需, 手动执行, job, jobs, ai job, AI job, AI任务, AI 任务, ai task, AI task, AI 任务, task, 巡检, 巡检任务, 盯盘, 盯着, 帮我盯, 帮我盯着, 定时检查, 定期检查, 例行检查, 自动检查, 每天检查, 定时跑, 跑个任务, 建个任务, 每天自动, 定期执行, keep an eye, check regularly, watch for, run daily, recurring task, set up a job, make a task, create a task, is it ok, is it okay, ok right now, okay right now, 还好吗, 还好么, 正常吗, 正常不, 怎么样了, 现在怎样, latest execution, 最新结论, query conclusion]
   tool_target:
     - tool: agent
-      actions: [list, get, create, update, delete, control, invoke, memory, executions, latest-execution, conversation, send-message]
+      actions: [list, get, plan-preview, create, update, delete, control, test, invoke, memory, executions, latest-execution, conversation, send-message]
 anti_triggers:
   keywords: [device, 设备, rule, 规则, dashboard, 仪表盘, extension develop]
 ---
@@ -27,17 +27,20 @@ Choose focused for one-pass analysis, free for tool-driven tasks, structured for
 Choose manual for on-demand work, interval for elapsed periods, cron for local-time schedules, event for telemetry triggers. Cron must use the user's timezone; verify schedule and timezone on readback.
 Creation can activate scheduled work immediately. Preserve scope, bindings and notification intent. For schema, bindings, event filters, notification routing and examples, load the relevant reference section.
 After create/update, read back the configuration. Verify run records and conclusion before claiming the requested analysis completed.
+Chat create workflow: `agent plan-preview --draft '{…}'` (static EffectivePlan, zero reads) → `agent create` → `agent test <id>` or `agent invoke --dry-run` (authorized trial, not formal history) → `agent invoke` (formal). Prefer ID + config_version for later edits; do not paste Chat history into `--prompt`.
 
 ## Commands
 | Command | Purpose |
 |---|---|
 | `neomind agent list` | List all agents |
 | `neomind agent get <id>` | Agent details |
+| `neomind agent plan-preview` | Static EffectivePlan from draft (no create) |
 | `neomind agent create` | Create a new agent |
 | `neomind agent update <id>` | Update an agent |
 | `neomind agent delete <id>` | Delete an agent |
 | `neomind agent control <id> <active|paused>` | Control agent status |
-| `neomind agent invoke <id> [input]` | Invoke / run an agent now with input |
+| `neomind agent test <id>` | Dry-run / test a saved agent |
+| `neomind agent invoke <id> [input]` | Invoke / run an agent now with input (`--dry-run` for trial) |
 | `neomind agent memory <id>` | Get agent memory |
 | `neomind agent clear-memory <id>` | Clear agent memory |
 | `neomind agent executions <id>` | Execution history |
@@ -63,11 +66,13 @@ All agent operations go through `shell`. Always RUN the command yourself and rep
 |---|---|
 | `neomind agent list` | List all agents |
 | `neomind agent get <id>` | Agent details |
+| `neomind agent plan-preview` | Static EffectivePlan from draft (no create) |
 | `neomind agent create` | Create a new agent |
 | `neomind agent update <id>` | Update an agent |
 | `neomind agent delete <id>` | Delete an agent |
 | `neomind agent control <id> <active|paused>` | Control agent status |
-| `neomind agent invoke <id> [input]` | Invoke / run an agent now with input |
+| `neomind agent test <id>` | Dry-run / test a saved agent |
+| `neomind agent invoke <id> [input]` | Invoke / run an agent now (`--dry-run` for trial) |
 | `neomind agent memory <id>` | Get agent memory |
 | `neomind agent clear-memory <id>` | Clear agent memory |
 | `neomind agent executions <id>` | Execution history |

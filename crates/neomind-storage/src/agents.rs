@@ -36,12 +36,20 @@ pub enum TestHookState {
 
 /// AI Agent store for persisting autonomous agents.
 pub struct AgentStore {
-    /// redb database
+    /// redb database (shared with [`crate::agents_v2::AgentStoreV2`] during cutover).
     db: Arc<Database>,
     /// Per-instance deterministic-interleaving test hook (test builds only).
     /// Arc-cloned stores share the hook; separate stores are isolated.
     #[cfg(test)]
     pub(crate) test_hook: SharedTestHook,
+}
+
+impl AgentStore {
+    /// Shared redb handle — used to open [`crate::agents_v2::AgentStoreV2`] on the
+    /// same `agents.redb` without a second file.
+    pub fn db(&self) -> Arc<Database> {
+        self.db.clone()
+    }
 }
 
 /// An AI Agent definition.
@@ -196,7 +204,7 @@ fn default_priority() -> u8 {
 }
 
 /// Parsed intent from user's natural language description.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParsedIntent {
     /// Intent type
     pub intent_type: IntentType,
@@ -227,7 +235,7 @@ pub enum IntentType {
 }
 
 /// A resource selected by the agent.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentResource {
     /// Resource type
     pub resource_type: ResourceType,
@@ -1073,19 +1081,46 @@ impl AgentStore {
     }
 
     fn from_db(db: Database) -> Result<Arc<Self>, Error> {
-        // Rollback guard: refuse databases stamped by a newer build (see schema.rs).
+        // Plan §2.3: when CURRENT_SCHEMA_VERSION >= 2, migrate (delete legacy
+        // `agents`) BEFORE stamping. While version stays 1, only soft-copy.
+        let stored = crate::schema::read_version(&db)
+            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2
+            && stored.unwrap_or(0) < 2
+            && crate::agents_v2::table_exists_agents_v1(&db).unwrap_or(false)
+        {
+            crate::agents_v2::migrate_agents_v1_to_v2(&db)
+                .map_err(|e| Error::Storage(format!("agents v1→v2 migrate: {e}")))?;
+        }
         crate::schema::check_or_stamp(&db)
             .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
+        let db = Arc::new(db);
         let write_txn = db.begin_write()?;
 
-        // Create tables if they don't exist
-        write_txn.open_table(AGENTS_TABLE)?;
+        // Legacy tables: still created while schema=1 (and after migrate the
+        // `agents` table is gone so open_table recreates an empty shell only
+        // if migrate did not run — migrate deletes it; open below no-ops when
+        // CURRENT_SCHEMA_VERSION>=2 after migrate removed the table... actually
+        // open_table creates if missing, so post-migrate we avoid re-creating
+        // the legacy definition table).
+        if crate::schema::CURRENT_SCHEMA_VERSION < 2 {
+            write_txn.open_table(AGENTS_TABLE)?;
+        }
         write_txn.open_table(AGENT_EXECUTIONS_TABLE)?;
         write_txn.open_table(AGENT_MEMORY_TABLE)?;
         write_txn.commit()?;
 
+        if crate::schema::CURRENT_SCHEMA_VERSION < 2 {
+            if let Err(e) = crate::agents_v2::copy_agents_v1_to_v2_keep_legacy(&db) {
+                tracing::warn!(category = "storage", error = %e, "agents soft-copy v1→v2 failed");
+            }
+        } else {
+            // Ensure five-table layout exists even on a fresh DB stamped at 2.
+            crate::agents_v2::ensure_v2_tables(&db)?;
+        }
+
         Ok(Arc::new(Self {
-            db: Arc::new(db),
+            db,
             #[cfg(test)]
             test_hook: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::agents::TestHookState::Disarmed,
@@ -1113,6 +1148,15 @@ impl AgentStore {
 
     /// Save an agent to the store.
     pub async fn save_agent(&self, agent: &AiAgent) -> Result<(), Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            let (spec, runtime, messages, memory) = crate::agents_v2::map_agent_v1_to_v2(agent);
+            v2.save_spec(&spec)?;
+            v2.set_runtime(&runtime)?;
+            v2.save_user_messages(&agent.id, &messages)?;
+            v2.save_memory(&agent.id, &memory)?;
+            return Ok(());
+        }
         let write_txn = self.db.begin_write()?;
         #[cfg(test)]
         self.test_hook_point();
@@ -1136,8 +1180,14 @@ impl AgentStore {
 
     /// Get an agent by ID.
     pub async fn get_agent(&self, id: &str) -> Result<Option<AiAgent>, Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            return self.get_agent_from_v2(id);
+        }
         let read_txn = self.db.begin_read()?;
-        let table = read_txn.open_table(AGENTS_TABLE)?;
+        let table = match read_txn.open_table(AGENTS_TABLE) {
+            Ok(t) => t,
+            Err(_) => return self.get_agent_from_v2(id),
+        };
 
         match table.get(id)? {
             Some(bytes) => {
@@ -1146,8 +1196,24 @@ impl AgentStore {
 
                 Ok(Some(agent))
             }
-            None => Ok(None),
+            None => self.get_agent_from_v2(id),
         }
+    }
+
+    fn get_agent_from_v2(&self, id: &str) -> Result<Option<AiAgent>, Error> {
+        let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+        let Some(spec) = v2.get_spec(id)? else {
+            return Ok(None);
+        };
+        let runtime = v2.get_runtime(id)?;
+        let memory = v2.get_memory(id)?.unwrap_or_default();
+        let messages = v2.get_user_messages(id)?.unwrap_or_default();
+        Ok(Some(crate::agents_v2::map_agent_v2_to_v1(
+            &spec,
+            runtime.as_ref(),
+            Some(memory),
+            messages,
+        )))
     }
 
     /// Query agents with filters.
@@ -1156,14 +1222,20 @@ impl AgentStore {
         // blocks the executor thread; push it onto the blocking pool. Only
         // the database handle is needed.
         let db = self.db.clone();
-        tokio::task::spawn_blocking(move || Self::query_agents_impl(&db, filter))
+        tokio::task::spawn_blocking(move || Self::query_agents_impl(db, filter))
             .await
             .map_err(|e| Error::Storage(format!("query_agents join error: {}", e)))?
     }
 
-    fn query_agents_impl(db: &Database, filter: AgentFilter) -> Result<Vec<AiAgent>, Error> {
+    fn query_agents_impl(db: Arc<Database>, filter: AgentFilter) -> Result<Vec<AiAgent>, Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            return Self::query_agents_v2_impl(&db, filter);
+        }
         let read_txn = db.begin_read()?;
-        let table = read_txn.open_table(AGENTS_TABLE)?;
+        let table = match read_txn.open_table(AGENTS_TABLE) {
+            Ok(t) => t,
+            Err(_) => return Self::query_agents_v2_impl(&db, filter),
+        };
 
         let mut agents = Vec::new();
 
@@ -1201,6 +1273,41 @@ impl AgentStore {
         Ok(agents)
     }
 
+    fn query_agents_v2_impl(
+        db: &Arc<Database>,
+        filter: AgentFilter,
+    ) -> Result<Vec<AiAgent>, Error> {
+        let v2 = crate::agents_v2::AgentStoreV2::from_arc(db.clone())?;
+        let specs = v2.list_specs()?;
+        let mut agents = Vec::new();
+        for spec in specs {
+            let runtime = v2.get_runtime(&spec.id)?;
+            let memory = v2.get_memory(&spec.id)?.unwrap_or_default();
+            let messages = v2.get_user_messages(&spec.id)?.unwrap_or_default();
+            let agent = crate::agents_v2::map_agent_v2_to_v1(
+                &spec,
+                runtime.as_ref(),
+                Some(memory),
+                messages,
+            );
+            if Self::matches_agent_filter(&agent, &filter) {
+                agents.push(agent);
+            }
+        }
+        agents.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
+        if let Some(offset) = filter.offset {
+            if offset < agents.len() {
+                agents = agents.into_iter().skip(offset).collect();
+            } else {
+                agents.clear();
+            }
+        }
+        if let Some(limit) = filter.limit {
+            agents.truncate(limit);
+        }
+        Ok(agents)
+    }
+
     /// Update agent status.
     pub async fn update_agent_status(
         &self,
@@ -1208,6 +1315,14 @@ impl AgentStore {
         status: AgentStatus,
         error_message: Option<String>,
     ) -> Result<(), Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            let now = chrono::Utc::now().timestamp();
+            #[cfg(test)]
+            self.test_hook_point();
+            v2.apply_runtime_status(id, status, error_message, now)?;
+            return Ok(());
+        }
         // Atomic read-modify-write in ONE write transaction: a concurrent
         // delete either commits first (row gone -> no re-create, same as the
         // old no-op) or afterwards (removes the updated row). The previous
@@ -1240,6 +1355,15 @@ impl AgentStore {
         id: &str,
         consecutive_failures: u32,
     ) -> Result<(), Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            if let Some(mut rt) = v2.get_runtime(id)? {
+                rt.stats.consecutive_failures = consecutive_failures;
+                rt.updated_at = chrono::Utc::now().timestamp();
+                v2.set_runtime(&rt)?;
+            }
+            return Ok(());
+        }
         // Atomic RMW, one write transaction (see update_agent_status).
         let write_txn = self.db.begin_write()?;
         #[cfg(test)]
@@ -1267,6 +1391,15 @@ impl AgentStore {
         id: &str,
         parsed_intent: Option<ParsedIntent>,
     ) -> Result<(), Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            if let Some(mut spec) = v2.get_spec(id)? {
+                spec.v1_compat.parsed_intent = parsed_intent;
+                spec.updated_at = chrono::Utc::now().timestamp();
+                v2.save_spec(&spec)?;
+            }
+            return Ok(());
+        }
         // Atomic RMW, one write transaction (see update_agent_status).
         let write_txn = self.db.begin_write()?;
         #[cfg(test)]
@@ -1291,6 +1424,15 @@ impl AgentStore {
     /// Update agent memory after execution.
     /// First reads the agent, then updates both tables in a single write transaction.
     pub async fn update_agent_memory(&self, id: &str, memory: AgentMemory) -> Result<(), Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            // Silent no-op when the agent is gone — same as the v1 RMW path.
+            if v2.get_spec(id)?.is_none() {
+                return Ok(());
+            }
+            v2.save_memory(id, &memory)?;
+            return Ok(());
+        }
         // Atomic RMW over BOTH tables in one write transaction. If the agent
         // row is gone (concurrent delete), neither the agent row nor an
         // orphan memory row may be written — the old shape wrote the memory
@@ -1328,6 +1470,17 @@ impl AgentStore {
         success: bool,
         duration_ms: u64,
     ) -> Result<(), Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            let now = chrono::Utc::now().timestamp();
+            let _ = duration_ms; // v2 runtime row has no avg_duration yet
+            #[cfg(test)]
+            self.test_hook_point();
+            // Single-write conditional field update — never rewrites status,
+            // so a concurrent pause cannot be revived by a stale stats settle.
+            v2.apply_runtime_stats_tick(id, success, now)?;
+            return Ok(());
+        }
         // Atomic RMW, one write transaction (see update_agent_status): reads
         // the agent row AND the latest memory inside the same transaction, so
         // neither a concurrent delete can be overwritten nor updates lost.
@@ -1375,6 +1528,11 @@ impl AgentStore {
 
     /// Delete an agent by ID.
     pub async fn delete_agent(&self, id: &str) -> Result<(), Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            let _ = v2.delete_agent_rows(id)?;
+            return Ok(());
+        }
         let write_txn = self.db.begin_write()?;
         #[cfg(test)]
         self.test_hook_point();
@@ -2266,6 +2424,61 @@ mod tests {
     /// Release the paused hook on this store.
     fn release_hook(store: &AgentStore) {
         *store.test_hook.lock().unwrap() = crate::agents::TestHookState::Disarmed;
+    }
+
+    /// Concurrent stats ticks must both land (single-write txn serializes).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn v2_stats_concurrent_counts_both_kept() {
+        let store = test_store();
+        let id = "stats-concurrent";
+        store.save_agent(&race_agent(id)).await.unwrap();
+        let (sa, sb) = (store.clone(), store.clone());
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
+        let (b1, b2) = (barrier.clone(), barrier.clone());
+        let ta = tokio::spawn(async move {
+            b1.wait().await;
+            sa.update_agent_stats(id, true, 10).await.unwrap();
+        });
+        let tb = tokio::spawn(async move {
+            b2.wait().await;
+            sb.update_agent_stats(id, true, 20).await.unwrap();
+        });
+        let _ = tokio::join!(ta, tb);
+        let v2 = crate::agents_v2::AgentStoreV2::from_arc(store.db()).unwrap();
+        let rt = v2.get_runtime(id).unwrap().expect("runtime");
+        assert_eq!(rt.stats.total_runs, 2, "both stats ticks must apply");
+        assert_eq!(rt.stats.successful_runs, 2);
+    }
+
+    /// A stats settle must not revive a concurrent pause (field-conditional update).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn v2_stats_settle_does_not_revive_pause() {
+        let store = test_store();
+        let id = "stats-no-revive";
+        store.save_agent(&race_agent(id)).await.unwrap();
+
+        arm_hook(&store);
+        let s_stats = store.clone();
+        let stats_task = tokio::spawn(async move {
+            s_stats.update_agent_stats(id, true, 5).await.unwrap();
+        });
+        wait_hook_paused(&store);
+        store
+            .update_agent_status(id, AgentStatus::Paused, None)
+            .await
+            .unwrap();
+        release_hook(&store);
+        stats_task.await.unwrap();
+
+        let v2 = crate::agents_v2::AgentStoreV2::from_arc(store.db()).unwrap();
+        let rt = v2.get_runtime(id).unwrap().expect("runtime");
+        assert_eq!(
+            rt.status,
+            AgentStatus::Paused,
+            "stats settle must not rewrite status back to Active"
+        );
+        assert_eq!(rt.stats.total_runs, 1);
+        assert_eq!(rt.stats.successful_runs, 1);
     }
 
     /// Barrier-started delete-vs-update race on the SAME id, N iterations.

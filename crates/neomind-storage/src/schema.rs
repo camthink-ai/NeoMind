@@ -25,10 +25,24 @@ use redb::{Database, TableDefinition};
 /// Bump ONLY for changes older code cannot safely read — e.g. a field
 /// changing meaning where serde defaults would paper over real data loss.
 /// Additive fields with `#[serde(default)]` do not need a bump.
-pub const CURRENT_SCHEMA_VERSION: u64 = 1;
+/// Schema v2: agents.redb uses five tables; startup migrates/deletes legacy
+/// `agents` when present (see [`crate::agents::AgentStore::from_db`]).
+pub const CURRENT_SCHEMA_VERSION: u64 = 2;
 
 const SCHEMA_META_TABLE: TableDefinition<&str, u64> = TableDefinition::new("schema_meta");
 const VERSION_KEY: &str = "version";
+
+/// Read the stamped schema version, if any. `None` means unstamped / no meta table.
+pub fn read_version(db: &Database) -> Result<Option<u64>, String> {
+    let read = db.begin_read().map_err(|e| e.to_string())?;
+    match read.open_table(SCHEMA_META_TABLE) {
+        Ok(table) => Ok(table
+            .get(VERSION_KEY)
+            .map_err(|e| e.to_string())?
+            .map(|v| v.value())),
+        Err(_) => Ok(None),
+    }
+}
 
 /// Check the database's schema stamp against this build, and stamp it if
 /// missing or older.
@@ -37,16 +51,7 @@ const VERSION_KEY: &str = "version";
 /// — callers must treat this as fatal for that database, not fall back to a
 /// default-value store handle, or the first save would destroy the new data.
 pub fn check_or_stamp(db: &Database) -> Result<(), String> {
-    let stored: Option<u64> = {
-        let read = db.begin_read().map_err(|e| e.to_string())?;
-        match read.open_table(SCHEMA_META_TABLE) {
-            Ok(table) => table
-                .get(VERSION_KEY)
-                .map_err(|e| e.to_string())?
-                .map(|v| v.value()),
-            Err(_) => None, // table not created yet → unstamped database
-        }
-    };
+    let stored = read_version(db)?;
 
     match stored {
         Some(v) if v > CURRENT_SCHEMA_VERSION => Err(format!(
@@ -56,7 +61,8 @@ pub fn check_or_stamp(db: &Database) -> Result<(), String> {
         )),
         Some(_) | None => {
             // Stamp (idempotent). One-shot migrations keyed on
-            // `stored < CURRENT_SCHEMA_VERSION` would run here; none exist yet.
+            // `stored < CURRENT_SCHEMA_VERSION` run in the caller (AgentStore::from_db
+            // for agents v1→v2) before this stamp.
             let write = db.begin_write().map_err(|e| e.to_string())?;
             {
                 let mut table = write

@@ -327,6 +327,14 @@ pub const PRIMARY_JSON_SPECS: &[(&str, &str, PrimaryJsonSpec)] = &[
         },
     ),
     (
+        "agent",
+        "plan-preview",
+        PrimaryJsonSpec {
+            flag: "--draft",
+            kind: ExpectedJsonKind::Object,
+        },
+    ),
+    (
         "push",
         "create",
         PrimaryJsonSpec {

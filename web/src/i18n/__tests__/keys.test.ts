@@ -290,7 +290,9 @@ describe('translation keys referenced from source', () => {
     // soft=253; ratchet so the gate stays honest.
     // 253 -> 252 (1.3.0 review fix 08e57c32): chat:mention.insert added to
     // BOTH locales — one soft gap resolved, ratchet down so it cannot creep back.
-    const FROZEN = 252
+    // 252 -> 253 (clean-slate Editor V2): measured tip after AgentEditorV2
+    // soft keys landed — ratchet so the gate stays honest.
+    const FROZEN = 253
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )

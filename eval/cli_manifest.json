@@ -7,20 +7,24 @@
    "clear-memory": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "control": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "conversation": [
     "--format",
     "--help",
+    "--json",
     "--limit",
     "--verbose"
    ],
    "create": [
+    "--allowed-tools",
     "--commands",
     "--context-window-size",
     "--description",
@@ -30,11 +34,14 @@
     "--execution-mode",
     "--format",
     "--help",
+    "--input-requirements",
+    "--json",
     "--llm-backend",
     "--max-chain-depth",
     "--memory-mode",
     "--metrics",
     "--name",
+    "--no-tools",
     "--notify",
     "--output-schema",
     "--priority",
@@ -44,16 +51,19 @@
     "--schedule-type",
     "--system-prompt",
     "--timezone",
+    "--tool-policy",
     "--verbose"
    ],
    "delete": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "executions": [
     "--format",
     "--help",
+    "--json",
     "--limit",
     "--offset",
     "--verbose"
@@ -61,48 +71,73 @@
    "get": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
    "invoke": [
+    "--dry-run",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "latest-execution": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "memory": [
     "--format",
     "--help",
+    "--json",
+    "--verbose"
+   ],
+   "plan-preview": [
+    "--draft",
+    "--format",
+    "--help",
+    "--json",
     "--verbose"
    ],
    "send-message": [
     "--format",
     "--help",
+    "--json",
     "--message-type",
     "--verbose"
    ],
+   "test": [
+    "--format",
+    "--help",
+    "--json",
+    "--verbose"
+   ],
    "update": [
+    "--allowed-tools",
     "--commands",
     "--context-window-size",
     "--description",
     "--device-ids",
+    "--event-filter",
     "--execution-mode",
     "--format",
     "--help",
+    "--input-requirements",
+    "--json",
     "--llm-backend",
     "--max-chain-depth",
     "--memory-mode",
     "--metrics",
     "--name",
+    "--no-tools",
     "--notify",
     "--output-schema",
     "--priority",
@@ -111,6 +146,8 @@
     "--schedule-config",
     "--schedule-type",
     "--system-prompt",
+    "--timezone",
+    "--tool-policy",
     "--verbose"
    ]
   },
@@ -119,6 +156,7 @@
     "--data-dir",
     "--format",
     "--help",
+    "--json",
     "--name",
     "--verbose"
    ],
@@ -126,6 +164,7 @@
     "--data-dir",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
@@ -133,6 +172,7 @@
     "--data-dir",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ]
   },
@@ -142,17 +182,20 @@
    "export": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
    "import": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "validate": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ]
   },
@@ -162,6 +205,7 @@
     "--format",
     "--help",
     "--host",
+    "--json",
     "--name",
     "--password",
     "--port",
@@ -174,34 +218,40 @@
    "delete": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "disable": [
     "--disable",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "enable": [
     "--disable",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "get": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
    "list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "subscribe": [
     "--format",
     "--help",
+    "--json",
     "--qos",
     "--topic",
     "--verbose"
@@ -209,16 +259,19 @@
    "subscriptions": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "test": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "unsubscribe": [
     "--format",
     "--help",
+    "--json",
     "--topic",
     "--verbose"
    ],
@@ -227,6 +280,7 @@
     "--format",
     "--help",
     "--host",
+    "--json",
     "--name",
     "--password",
     "--port",
@@ -241,6 +295,8 @@
     "--components",
     "--format",
     "--help",
+    "--json",
+    "--params",
     "--verbose"
    ],
    "create": [
@@ -248,6 +304,7 @@
     "--description",
     "--format",
     "--help",
+    "--json",
     "--layout",
     "--name",
     "--verbose"
@@ -255,30 +312,35 @@
    "delete": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "get": [
     "--components",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
    "list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "remove-components": [
     "--format",
     "--help",
     "--ids",
+    "--json",
     "--verbose"
    ],
    "share": [
     "--expires",
     "--format",
     "--help",
+    "--json",
     "--public",
     "--verbose"
    ],
@@ -287,6 +349,7 @@
     "--description",
     "--format",
     "--help",
+    "--json",
     "--layout",
     "--name",
     "--replace-all",
@@ -296,6 +359,7 @@
     "--component-id",
     "--format",
     "--help",
+    "--json",
     "--set",
     "--verbose"
    ]
@@ -305,6 +369,7 @@
    "list": [
     "--format",
     "--help",
+    "--json",
     "--source-type",
     "--verbose"
    ]
@@ -313,6 +378,7 @@
    "control": [
     "--format",
     "--help",
+    "--json",
     "--param",
     "--params",
     "--verbose"
@@ -324,17 +390,20 @@
     "--format",
     "--help",
     "--id",
+    "--json",
     "--name",
     "--verbose"
    ],
    "delete": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "drafts": [
     "--format",
     "--help",
+    "--json",
     "--name",
     "--type",
     "--verbose"
@@ -342,6 +411,7 @@
    "get": [
     "--format",
     "--help",
+    "--json",
     "--metric",
     "--verbose"
    ],
@@ -350,6 +420,7 @@
     "--compress",
     "--format",
     "--help",
+    "--json",
     "--limit",
     "--metric",
     "--time-range",
@@ -359,6 +430,7 @@
     "--device-type",
     "--format",
     "--help",
+    "--json",
     "--status",
     "--summary",
     "--verbose"
@@ -366,23 +438,27 @@
    "types": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "update": [
     "--config",
     "--format",
     "--help",
+    "--json",
     "--name",
     "--verbose"
    ],
    "webhook-url": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "write-metric": [
     "--format",
     "--help",
+    "--json",
     "--metric",
     "--timestamp",
     "--value",
@@ -393,16 +469,20 @@
    "build": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "commands": [
     "--format",
     "--help",
+    "--json",
+    "--search",
     "--verbose"
    ],
    "config": [
     "--format",
     "--help",
+    "--json",
     "--set",
     "--verbose"
    ],
@@ -410,23 +490,29 @@
     "--extension-type",
     "--format",
     "--help",
+    "--json",
     "--output",
     "--verbose"
    ],
    "get": [
     "--format",
     "--help",
+    "--json",
+    "--offline",
     "--verbose"
    ],
    "help": [],
    "install": [
     "--format",
     "--help",
+    "--json",
+    "--offline",
     "--verbose"
    ],
    "invoke": [
     "--format",
     "--help",
+    "--json",
     "--params",
     "--params-file",
     "--verbose"
@@ -434,44 +520,53 @@
    "list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "logs": [
     "--format",
     "--help",
+    "--json",
     "--lines",
     "--verbose"
    ],
    "market-install": [
     "--format",
     "--help",
+    "--json",
     "--verbose",
     "--version"
    ],
    "market-list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "reload": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "status": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "uninstall": [
     "--format",
     "--help",
+    "--json",
+    "--offline",
     "--verbose",
     "--yes"
    ],
    "validate": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ]
   },
@@ -482,6 +577,7 @@
    "activate": [
     "--format",
     "--help",
+    "--json",
     "--llm-backend",
     "--verbose"
    ],
@@ -490,6 +586,7 @@
     "--endpoint",
     "--format",
     "--help",
+    "--json",
     "--model",
     "--name",
     "--temperature",
@@ -499,17 +596,20 @@
    "delete": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "get": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
    "list": [
     "--format",
     "--help",
+    "--json",
     "--llm-backend",
     "--verbose"
    ],
@@ -517,11 +617,13 @@
     "--endpoint",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "test": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "update": [
@@ -529,6 +631,7 @@
     "--endpoint",
     "--format",
     "--help",
+    "--json",
     "--model",
     "--name",
     "--temperature",
@@ -545,6 +648,7 @@
     "--enabled",
     "--format",
     "--help",
+    "--json",
     "--name",
     "--param",
     "--type",
@@ -553,55 +657,65 @@
    "channel-delete": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "channel-get": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "channel-list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "channel-test": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "channel-type-schema": [
     "--config",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "channel-types": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "channel-update": [
     "--config",
     "--format",
     "--help",
+    "--json",
     "--name",
     "--verbose"
    ],
    "delete": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "get": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
    "list": [
     "--format",
     "--help",
+    "--json",
     "--limit",
     "--offset",
     "--severity",
@@ -611,15 +725,35 @@
    "read": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "send": [
     "--body",
     "--format",
     "--help",
+    "--json",
     "--severity",
     "--source",
     "--title",
+    "--verbose"
+   ]
+  },
+  "operation": {
+   "get": [
+    "--format",
+    "--help",
+    "--json",
+    "--verbose"
+   ],
+   "help": [],
+   "list": [
+    "--format",
+    "--help",
+    "--json",
+    "--limit",
+    "--session-id",
+    "--status",
     "--verbose"
    ]
   },
@@ -629,6 +763,7 @@
     "--config",
     "--format",
     "--help",
+    "--json",
     "--name",
     "--schedule",
     "--sources",
@@ -638,43 +773,51 @@
    "delete": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "disable": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "enable": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "get": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
    "list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "logs": [
     "--format",
     "--help",
+    "--json",
     "--limit",
     "--verbose"
    ],
    "stats": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "test": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "update": [
@@ -682,6 +825,7 @@
     "--enabled",
     "--format",
     "--help",
+    "--json",
     "--name",
     "--only-changes",
     "--schedule",
@@ -696,6 +840,7 @@
     "--cooldown",
     "--format",
     "--help",
+    "--json",
     "--metric",
     "--name",
     "--notify",
@@ -709,43 +854,51 @@
    "delete": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "disable": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "enable": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "explain": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "get": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
    "history": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "test": [
     "--format",
     "--help",
     "--input",
+    "--json",
     "--verbose"
    ],
    "update": [
@@ -755,6 +908,7 @@
     "--help",
     "--id",
     "--input",
+    "--json",
     "--metric",
     "--name",
     "--notify",
@@ -771,12 +925,14 @@
    "cleanup": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
    "retention": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "set-retention": [
@@ -786,29 +942,46 @@
     "--help",
     "--image-retention",
     "--interval-hours",
+    "--json",
     "--verbose"
    ],
    "set-timezone": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "timezone": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "timezones": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ]
   },
   "system": {
+   "health": [
+    "--format",
+    "--help",
+    "--json",
+    "--verbose"
+   ],
    "help": [],
    "info": [
     "--format",
     "--help",
+    "--json",
+    "--verbose"
+   ],
+   "stats": [
+    "--format",
+    "--help",
+    "--json",
     "--verbose"
    ]
   },
@@ -819,6 +992,7 @@
     "--enabled",
     "--format",
     "--help",
+    "--json",
     "--name",
     "--output-prefix",
     "--scope",
@@ -827,44 +1001,52 @@
    "data-sources": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "delete": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "disable": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "enable": [
     "--enabled",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "executions": [
     "--format",
     "--help",
+    "--json",
     "--limit",
     "--verbose"
    ],
    "get": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
    "list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "metrics": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "test-code": [
@@ -872,6 +1054,7 @@
     "--format",
     "--help",
     "--input",
+    "--json",
     "--name",
     "--scope",
     "--verbose"
@@ -882,6 +1065,7 @@
     "--enabled",
     "--format",
     "--help",
+    "--json",
     "--name",
     "--output-prefix",
     "--scope",
@@ -896,18 +1080,21 @@
     "--data-dir",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "reset-password": [
     "--data-dir",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "set-role": [
     "--data-dir",
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ]
   },
@@ -916,12 +1103,14 @@
    "bundle": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "create": [
     "--format",
     "--help",
     "--install",
+    "--json",
     "--output",
     "--verbose",
     "--widget-type"
@@ -929,6 +1118,7 @@
    "get": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "help": [],
@@ -936,27 +1126,32 @@
     "--format",
     "--help",
     "--install",
+    "--json",
     "--verbose"
    ],
    "list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "market-install": [
     "--format",
     "--help",
+    "--json",
     "--verbose",
     "--version"
    ],
    "market-list": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ],
    "uninstall": [
     "--format",
     "--help",
+    "--json",
     "--verbose"
    ]
   }

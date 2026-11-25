@@ -139,10 +139,13 @@ where
     }
 }
 
-// Re-exports for internal crate use and test access
+// Re-exports for unit tests in this module (production paths import directly).
+#[cfg(test)]
 pub(crate) use neomind_llm_loop::result_sanitizer::{
     sanitize_tool_result_for_prompt, truncate_result_utf8,
 };
+#[cfg(test)]
+#[allow(unused_imports)] // exercised by resolve.rs tests via crate path in some builds
 pub(crate) use resolve::{resolve_cached_arguments, try_cached_file_read};
 
 #[cfg(test)]

@@ -130,6 +130,255 @@ fn notify_on_is_judgment(notify: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
+/// Parse `--notify` JSON in either v1 (`on`) or v2 (`on_complete`/`on_alert`/`on_failure`) shape.
+///
+/// v1 remains the default Chat/CLI path; v2 fields are accepted additively so
+/// clean-slate agents can round-trip without a second flag. Mixed shapes that
+/// set both `on` and any v2 bool are rejected so the server never has to guess.
+#[allow(clippy::result_large_err)]
+pub fn parse_notify_arg(raw: &str) -> Result<serde_json::Value, CliResponse> {
+    let parsed = crate::json_arg::parse_json_arg(raw).map_err(|e| {
+        CliResponse::error(
+            format!(
+                "--notify is not valid JSON: {e} — expected v1 \
+                 {{\"channels\":[\"IM\"],\"on\":\"failure|always|judgment\"}} or v2 \
+                 {{\"channels\":[\"IM\"],\"on_complete\":true,\"on_alert\":false,\"on_failure\":true}}."
+            ),
+            "INVALID_NOTIFY_JSON",
+        )
+    })?;
+    let obj = parsed.as_object().ok_or_else(|| {
+        CliResponse::error("--notify must be a JSON object.", "INVALID_NOTIFY_JSON")
+    })?;
+
+    let has_v1 = obj.contains_key("on");
+    let has_v2 = [
+        "on_complete",
+        "on_alert",
+        "on_failure",
+        "alert_depends_on",
+        "pending_confirmation",
+    ]
+    .iter()
+    .any(|k| obj.contains_key(*k));
+    if has_v1 && has_v2 {
+        return Err(CliResponse::error_with_suggestion(
+            "--notify mixes v1 `on` with v2 on_complete/on_alert/on_failure fields.",
+            "NOTIFY_SHAPE_MIXED",
+            "Use either {\"channels\":[...],\"on\":\"failure|always|judgment\"} or \
+             {\"channels\":[...],\"on_complete\":bool,\"on_alert\":bool,\"on_failure\":bool}.",
+        ));
+    }
+    if has_v1 {
+        let on = obj.get("on").and_then(|v| v.as_str()).unwrap_or("");
+        if !matches!(
+            on.to_ascii_lowercase().as_str(),
+            "failure" | "always" | "judgment"
+        ) {
+            return Err(CliResponse::error(
+                format!(
+                    "--notify.on must be failure|always|judgment (got '{on}'). \"judgment\" routes \
+                     nothing and lets the task decide whether to speak."
+                ),
+                "INVALID_NOTIFY_ON",
+            ));
+        }
+        return Ok(parsed);
+    }
+    if has_v2 {
+        for key in [
+            "on_complete",
+            "on_alert",
+            "on_failure",
+            "pending_confirmation",
+        ] {
+            if let Some(v) = obj.get(key) {
+                if !v.is_boolean() && !v.is_null() {
+                    return Err(CliResponse::error(
+                        format!("--notify.{key} must be a boolean when present."),
+                        "INVALID_NOTIFY_V2_FIELD",
+                    ));
+                }
+            }
+        }
+        return Ok(parsed);
+    }
+    // Bare channels-only object is valid (API defaults on=failure / v2 defaults).
+    Ok(parsed)
+}
+
+/// Parse `--tool-policy`: shorthand `disabled` / `unrestricted`, or Scoped JSON.
+///
+/// Wire shape matches `ToolPolicy`'s default externally-tagged serde:
+/// `"disabled"` | `"unrestricted"` | `{"scoped":{"allowed_tools":[...],"allowed_commands":[...]}}`.
+/// Also accepts a friendly `{"kind":"scoped",...}` object and normalizes it.
+#[allow(clippy::result_large_err)]
+pub fn parse_tool_policy_arg(raw: &str) -> Result<serde_json::Value, CliResponse> {
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("disabled") {
+        return Ok(json!("disabled"));
+    }
+    if trimmed.eq_ignore_ascii_case("unrestricted") {
+        return Ok(json!("unrestricted"));
+    }
+    let parsed = crate::json_arg::parse_json_arg(trimmed).map_err(|e| {
+        CliResponse::error(
+            format!(
+                "--tool-policy is not valid: {e} — use `disabled`, `unrestricted`, or \
+                 {{\"scoped\":{{\"allowed_tools\":[\"shell\"],\"allowed_commands\":[]}}}}."
+            ),
+            "INVALID_TOOL_POLICY",
+        )
+    })?;
+    if parsed.is_string() {
+        let s = parsed.as_str().unwrap_or("");
+        if matches!(s, "disabled" | "unrestricted") {
+            return Ok(parsed);
+        }
+        return Err(CliResponse::error(
+            format!("--tool-policy string must be disabled|unrestricted (got '{s}')."),
+            "INVALID_TOOL_POLICY",
+        ));
+    }
+    if let Some(obj) = parsed.as_object() {
+        // Already externally tagged: {"scoped": {...}}
+        if let Some(scoped) = obj.get("scoped") {
+            let mut inner = scoped.as_object().cloned().unwrap_or_default();
+            inner
+                .entry("allowed_tools".to_string())
+                .or_insert(json!([]));
+            inner
+                .entry("allowed_commands".to_string())
+                .or_insert(json!([]));
+            return Ok(json!({ "scoped": inner }));
+        }
+        // Friendly {"kind":"scoped", ...} → normalize
+        if obj.get("kind").and_then(|v| v.as_str()) == Some("scoped")
+            || obj.contains_key("allowed_tools")
+        {
+            let allowed_tools = obj
+                .get("allowed_tools")
+                .cloned()
+                .unwrap_or_else(|| json!([]));
+            let allowed_commands = obj
+                .get("allowed_commands")
+                .cloned()
+                .unwrap_or_else(|| json!([]));
+            return Ok(json!({
+                "scoped": {
+                    "allowed_tools": allowed_tools,
+                    "allowed_commands": allowed_commands,
+                }
+            }));
+        }
+        return Err(CliResponse::error(
+            "--tool-policy object must be {\"scoped\":{...}} or {\"kind\":\"scoped\",...}.",
+            "INVALID_TOOL_POLICY",
+        ));
+    }
+    Err(CliResponse::error(
+        "--tool-policy must be `disabled`, `unrestricted`, or a scoped JSON object.",
+        "INVALID_TOOL_POLICY",
+    ))
+}
+
+/// Parse `--input-requirements` as an InputContract (`{"requirements":[...]}`)
+/// or a bare requirements array.
+#[allow(clippy::result_large_err)]
+pub fn parse_input_arg(raw: &str) -> Result<serde_json::Value, CliResponse> {
+    let parsed = crate::json_arg::parse_json_arg(raw).map_err(|e| {
+        CliResponse::error(
+            format!(
+                "--input-requirements is not valid JSON: {e} — expected \
+                 {{\"requirements\":[{{\"key\":\"...\",\"source\":{{...}},...}}]}}."
+            ),
+            "INVALID_INPUT_JSON",
+        )
+    })?;
+    if let Some(arr) = parsed.as_array() {
+        return Ok(json!({ "requirements": arr }));
+    }
+    if let Some(obj) = parsed.as_object() {
+        if !obj.contains_key("requirements") {
+            return Err(CliResponse::error(
+                "--input-requirements object must include a `requirements` array.",
+                "INVALID_INPUT_JSON",
+            ));
+        }
+        if !obj
+            .get("requirements")
+            .map(|v| v.is_array())
+            .unwrap_or(false)
+        {
+            return Err(CliResponse::error(
+                "--input-requirements.requirements must be a JSON array.",
+                "INVALID_INPUT_JSON",
+            ));
+        }
+        return Ok(parsed);
+    }
+    Err(CliResponse::error(
+        "--input-requirements must be an object with `requirements` or a bare requirements array.",
+        "INVALID_INPUT_JSON",
+    ))
+}
+
+/// Attach optional clean-slate (v2) fields to a create/update body without
+/// removing v1 keys. Returns an error response when a flag fails to parse.
+#[allow(clippy::result_large_err)]
+pub fn attach_v2_optional_fields(
+    body: &mut serde_json::Value,
+    tool_policy: Option<&str>,
+    input: Option<&str>,
+) -> Result<(), CliResponse> {
+    if let Some(raw) = tool_policy {
+        body["tool_policy"] = parse_tool_policy_arg(raw)?;
+    }
+    if let Some(raw) = input {
+        body["input"] = parse_input_arg(raw)?;
+    }
+    Ok(())
+}
+
+/// Map a parsed notify object onto the v1 `AgentNotify` wire shape for the
+/// default create/update path. v2 three-way fields are projected so they are
+/// not silently dropped by `AgentNotify` (which only declares `on`).
+///
+/// Full NotifyPolicy is preserved on `agent plan-preview` / v2 endpoints.
+pub fn notify_for_v1_body(parsed: serde_json::Value) -> serde_json::Value {
+    if parsed.get("on").is_some() {
+        return parsed;
+    }
+    let channels = parsed.get("channels").cloned().unwrap_or_else(|| json!([]));
+    let on_complete = parsed
+        .get("on_complete")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let on_alert = parsed
+        .get("on_alert")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let on = if on_alert {
+        "judgment"
+    } else if on_complete {
+        "always"
+    } else {
+        "failure"
+    };
+    json!({ "channels": channels, "on": on })
+}
+
+fn input_has_requirements(input: Option<&str>) -> bool {
+    input
+        .and_then(|raw| parse_input_arg(raw).ok())
+        .and_then(|v| {
+            v.get("requirements")
+                .and_then(|r| r.as_array())
+                .map(|a| !a.is_empty())
+        })
+        .unwrap_or(false)
+}
+
 /// Resolve CLI `--no-tools` / `--allowed-tools` into an API `tool_config` payload.
 ///
 /// Returns `Ok(None)` when neither flag is set (leave API default). Conflicts
@@ -192,12 +441,26 @@ fn message_with_warnings(base: String, data: &serde_json::Value) -> String {
     let warnings = data
         .get("warnings")
         .and_then(|v| v.as_array())
+        .or_else(|| {
+            data.get("effective_plan")
+                .and_then(|p| p.get("warnings"))
+                .and_then(|v| v.as_array())
+        })
         .map(|arr| arr.iter().filter_map(|w| w.as_str()).collect::<Vec<_>>())
         .unwrap_or_default();
-    if warnings.is_empty() {
-        return base;
+    let mut msg = if warnings.is_empty() {
+        base
+    } else {
+        format!("{base} Warnings: {}", warnings.join("; "))
+    };
+    if let Some(plan) = data.get("effective_plan") {
+        if let Some(summary) = plan.get("trigger_summary").and_then(|v| v.as_str()) {
+            msg = format!("{msg} effective_plan: {summary}");
+        } else {
+            msg = format!("{msg} effective_plan: present");
+        }
     }
-    format!("{base} Warnings: {}", warnings.join("; "))
+    msg
 }
 
 /// Create a new agent
@@ -226,6 +489,8 @@ pub async fn create_agent(
     max_chain_depth: Option<usize>,
     priority: Option<u8>,
     context_window_size: Option<usize>,
+    tool_policy: Option<&str>,
+    input: Option<&str>,
 ) -> Result<CliResponse> {
     let schedule_type_val = schedule_type.unwrap_or("event");
     let mut schedule = json!({
@@ -273,7 +538,8 @@ pub async fn create_agent(
     let has_resources = resources.is_some()
         || device_ids.map(|d| !d.is_empty()).unwrap_or(false)
         || metrics.is_some()
-        || commands.is_some();
+        || commands.is_some()
+        || input_has_requirements(input);
 
     let tool_config = match resolve_tool_config_flags(no_tools, allowed_tools, notify) {
         Ok(v) => v,
@@ -307,16 +573,13 @@ pub async fn create_agent(
         body["memory_mode"] = json!(mm);
     }
     if let Some(notify_json) = notify {
-        let parsed: serde_json::Value =
-            crate::json_arg::parse_json_arg(notify_json).map_err(|e| {
-                anyhow::anyhow!(
-                    "--notify is not valid JSON: {} — expected an object like \
-                 {{\"channels\":[\"IM\"],\"on\":\"failure|always|judgment\"}}. \"judgment\" routes \
-                 nothing and lets the task decide whether to speak.",
-                    e
-                )
-            })?;
-        body["notify"] = parsed;
+        match parse_notify_arg(notify_json) {
+            Ok(parsed) => body["notify"] = notify_for_v1_body(parsed),
+            Err(resp) => return Ok(resp),
+        }
+    }
+    if let Err(resp) = attach_v2_optional_fields(&mut body, tool_policy, input) {
+        return Ok(resp);
     }
 
     if let Some(desc) = description {
@@ -482,6 +745,8 @@ pub async fn update_agent(
     max_chain_depth: Option<usize>,
     priority: Option<u8>,
     context_window_size: Option<usize>,
+    tool_policy: Option<&str>,
+    input: Option<&str>,
 ) -> Result<CliResponse> {
     let id = resolve_agent_id(client, id).await?;
     let mut body = json!({});
@@ -584,8 +849,13 @@ pub async fn update_agent(
         body["memory_mode"] = json!(mm);
     }
     if let Some(notify_json) = notify {
-        body["notify"] = crate::json_arg::parse_json_arg(notify_json)
-            .map_err(|e| anyhow::anyhow!("--notify is not valid JSON: {}", e))?;
+        match parse_notify_arg(notify_json) {
+            Ok(parsed) => body["notify"] = notify_for_v1_body(parsed),
+            Err(resp) => return Ok(resp),
+        }
+    }
+    if let Err(resp) = attach_v2_optional_fields(&mut body, tool_policy, input) {
+        return Ok(resp);
     }
     if let Some(ids) = device_ids {
         let id_list: Vec<&str> = ids
@@ -683,21 +953,80 @@ pub async fn control_agent(client: &ApiClient, id: &str, status: &str) -> Result
 /// receives the endpoint's structured answer — a finished run's conclusion,
 /// or `status: "Executing"` for a run that continues in the background. A
 /// client-side timeout must never read as "the execution failed".
+///
+/// When `dry_run` is true, posts to `/agents/{id}/invoke` with `dry_run: true`
+/// (authorized trial; API routes to the dry-run / structured-test path). Formal
+/// invoke remains the default when the flag is omitted.
 pub async fn invoke_agent(
     client: &ApiClient,
     id: &str,
     input: Option<&str>,
 ) -> Result<CliResponse> {
+    invoke_agent_with_options(client, id, input, false).await
+}
+
+pub async fn invoke_agent_with_options(
+    client: &ApiClient,
+    id: &str,
+    input: Option<&str>,
+    dry_run: bool,
+) -> Result<CliResponse> {
     let id = resolve_agent_id(client, id).await?;
-    let body = match input {
+    let mut body = match input {
         Some(text) => json!({ "input": text }),
         None => json!({}),
     };
+    if dry_run {
+        body["dry_run"] = json!(true);
+    }
     let data = client
         .post_timeout(&format!("/agents/{}/invoke", id), &body, 70)
         .await?;
-    let message = invoke_outcome_message(&data, &id);
+    let message = if dry_run {
+        message_with_warnings(
+            format!("Agent dry-run completed (id: {id}; not written to formal history)"),
+            &data,
+        )
+    } else {
+        invoke_outcome_message(&data, &id)
+    };
     Ok(CliResponse::success(data, &message))
+}
+
+/// Static EffectivePlan preview from an AgentSpecDraft (zero external reads).
+///
+/// POST `/agents/v2/plan-preview` with `{ "draft": ... }`. Does not create an agent.
+pub async fn plan_preview_agent(client: &ApiClient, draft_json: &str) -> Result<CliResponse> {
+    let draft = crate::json_arg::parse_json_arg(draft_json).map_err(|e| {
+        anyhow::anyhow!(
+            "--draft is not valid JSON: {e} — expected an AgentSpecDraft object \
+             (name, user_prompt, trigger, input, tool_policy, notify, …)."
+        )
+    })?;
+    let body = json!({ "draft": draft });
+    let data = client.post("/agents/v2/plan-preview", &body).await?;
+    Ok(CliResponse::success(
+        data.clone(),
+        message_with_warnings(
+            "Agent plan preview (static; zero external reads)".into(),
+            &data,
+        ),
+    ))
+}
+
+/// Authorized dry-run / structured test for a saved agent.
+///
+/// POST `/agents/{id}/test` — existing structured L0 path. Prefer
+/// `agent invoke --dry-run` for the clean-slate dry-run envelope once cut over.
+pub async fn test_agent(client: &ApiClient, id: &str) -> Result<CliResponse> {
+    let id = resolve_agent_id(client, id).await?;
+    let data = client
+        .post_timeout(&format!("/agents/{}/test", id), &json!({}), 70)
+        .await?;
+    Ok(CliResponse::success(
+        data.clone(),
+        message_with_warnings(format!("Agent test/dry-run completed (id: {id})"), &data),
+    ))
 }
 
 /// Render the invoke outcome for the caller. "Still executing" is a
@@ -932,6 +1261,69 @@ mod tests {
         let data = json!({"warnings": ["a", "b"]});
         let msg = message_with_warnings("Agent updated".into(), &data);
         assert!(msg.contains("Warnings: a; b"), "{msg}");
+    }
+
+    #[test]
+    fn notify_accepts_v1_on_and_v2_three_way() {
+        let v1 = parse_notify_arg(r#"{"channels":["IM"],"on":"always"}"#).expect("v1");
+        assert_eq!(v1["on"], json!("always"));
+
+        let v2 = parse_notify_arg(
+            r#"{"channels":["test-channel"],"on_complete":true,"on_alert":false,"on_failure":true}"#,
+        )
+        .expect("v2");
+        assert_eq!(v2["on_complete"], json!(true));
+        assert_eq!(v2["on_alert"], json!(false));
+        assert_eq!(v2["on_failure"], json!(true));
+
+        let mixed = parse_notify_arg(r#"{"channels":["IM"],"on":"failure","on_complete":true}"#)
+            .expect_err("mixed");
+        assert_eq!(mixed.code.as_deref(), Some("NOTIFY_SHAPE_MIXED"));
+
+        let projected = notify_for_v1_body(v2);
+        assert_eq!(projected["on"], json!("always"));
+        assert_eq!(projected["channels"], json!(["test-channel"]));
+    }
+
+    #[test]
+    fn tool_policy_and_input_attach_without_dropping_v1_keys() {
+        let mut body = json!({
+            "name": "x",
+            "user_prompt": "y",
+            "execution_mode": "focused",
+            "schedule": {"schedule_type": "manual"},
+            "tool_config": {"enabled": false, "allowed_tools": []},
+        });
+        attach_v2_optional_fields(
+            &mut body,
+            Some("disabled"),
+            Some(r#"{"requirements":[{"key":"weather_now","source":{"kind":"extension_instance","id":"weather_cn"},"timeout_secs":10,"result_type":"structured_json","freshness":{"kind":"any"},"on_missing":"report_stale"}]}"#),
+        )
+        .expect("attach");
+        assert_eq!(body["tool_policy"], json!("disabled"));
+        assert!(body["input"]["requirements"].as_array().unwrap().len() == 1);
+        // v1 path untouched
+        assert_eq!(body["execution_mode"], json!("focused"));
+        assert_eq!(body["tool_config"]["enabled"], json!(false));
+    }
+
+    #[test]
+    fn effective_plan_surfaces_in_cli_message() {
+        let data = json!({
+            "effective_plan": {
+                "trigger_summary": "cron 0 9 * * * Asia/Shanghai",
+                "warnings": ["pending_confirmation:channel"]
+            }
+        });
+        let msg = message_with_warnings("Agent created".into(), &data);
+        assert!(
+            msg.contains("effective_plan: cron 0 9 * * * Asia/Shanghai"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("Warnings: pending_confirmation:channel"),
+            "{msg}"
+        );
     }
 }
 

@@ -1722,11 +1722,13 @@ pub enum AgentCommand {
         /// recent history). Omit to derive from the mode.
         #[arg(long)]
         memory_mode: Option<String>,
-        /// Notification routing (JSON): {"channels":["name"],"on":"failure|always|judgment"}.
+        /// Notification routing (JSON). v1 (default): {"channels":["name"],"on":"failure|always|judgment"}.
         ///   failure (default): only when the run failed — silence is health
         ///   always: every run
         ///   judgment: send nothing on the agent's behalf; it decides in its own
         ///     prompt whether to speak (use for "only tell me if it matters")
+        /// v2 (clean-slate, additive): {"channels":["name"],"on_complete":true,"on_alert":false,"on_failure":true}.
+        /// Do not mix `on` with on_complete/on_alert/on_failure.
         /// Example: --notify '{"channels":["telegram:main"],"on":"always"}'
         #[arg(long)]
         notify: Option<String>,
@@ -1738,6 +1740,15 @@ pub enum AgentCommand {
         /// every tool after --no-tools. Conflicts with --no-tools.
         #[arg(long)]
         allowed_tools: Option<String>,
+        /// Clean-slate tool policy (additive; v1 still uses --no-tools/--allowed-tools).
+        /// Shorthand: `disabled` | `unrestricted`, or scoped JSON
+        /// `{"scoped":{"allowed_tools":["shell"],"allowed_commands":[]}}`.
+        #[arg(long)]
+        tool_policy: Option<String>,
+        /// Clean-slate input contract JSON: `{"requirements":[...]}` (or a bare
+        /// requirements array). Additive alongside --resources/--metrics.
+        #[arg(long = "input-requirements")]
+        input_requirements: Option<String>,
         /// Device IDs to bind (comma-separated). Used in focused mode.
         /// Example: --device-ids "device-001,device-002"
         #[arg(long)]
@@ -1806,7 +1817,8 @@ pub enum AgentCommand {
         /// New memory axis: "tool" | "assistant".
         #[arg(long)]
         memory_mode: Option<String>,
-        /// New notification routing (JSON): {"channels":[...],"on":"failure|always|judgment"}.
+        /// New notification routing (JSON): v1 {"channels":[...],"on":"failure|always|judgment"}
+        /// or v2 {"channels":[...],"on_complete":bool,"on_alert":bool,"on_failure":bool}.
         /// `judgment` routes nothing and lets the task decide whether to speak.
         #[arg(long)]
         notify: Option<String>,
@@ -1818,6 +1830,12 @@ pub enum AgentCommand {
         /// every tool after --no-tools. Conflicts with --no-tools.
         #[arg(long)]
         allowed_tools: Option<String>,
+        /// Clean-slate tool policy (additive). See `agent create --tool-policy`.
+        #[arg(long)]
+        tool_policy: Option<String>,
+        /// Clean-slate input contract JSON (additive). See `agent create --input-requirements`.
+        #[arg(long = "input-requirements")]
+        input_requirements: Option<String>,
         /// Event filter JSON (event schedule). Merged into the existing schedule
         /// when --schedule-type is omitted.
         #[arg(long)]
@@ -1887,6 +1905,10 @@ pub enum AgentCommand {
     /// the response says `Executing`, and the result lands with
     /// `agent latest-execution <ID>`.
     ///
+    /// Use `--dry-run` for an authorized read-only trial (no formal history /
+    /// notify). Chat workflow: `plan-preview` → `create` → `test`/`invoke --dry-run`
+    /// → `invoke`.
+    ///
     /// Workflow: `agent invoke <ID> ["your question"]` → immediate response,
     /// or `Executing` → `agent latest-execution <ID>`.
     ///
@@ -1897,6 +1919,32 @@ pub enum AgentCommand {
         id: String,
         /// Optional extra input for this run only.
         input: Option<String>,
+        /// Authorized dry-run: reads + analysis only; no formal history or notify.
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+    },
+    /// Static EffectivePlan preview from a draft (zero external reads).
+    ///
+    /// Does not create or run an agent. Pass an AgentSpecDraft JSON via `--draft`.
+    /// Chat workflow step 1: preview → create → test/dry-run → invoke.
+    ///
+    /// Example: `neomind agent plan-preview --draft '{"name":"daily-brief",...}'`
+    #[command(name = "plan-preview")]
+    PlanPreview {
+        /// AgentSpecDraft JSON (name, user_prompt, trigger, input, tool_policy, notify, …).
+        #[arg(long)]
+        draft: String,
+    },
+    /// Dry-run / test a saved agent (authorized reads; no formal history for v2 dry-run).
+    ///
+    /// Structured (L0) agents use the existing `/agents/{id}/test` path.
+    /// Prefer `agent invoke` with the dry-run flag for the clean-slate envelope.
+    ///
+    /// Example: `neomind agent test agent-001`
+    Test {
+        /// Agent ID.
+        #[arg(required = true)]
+        id: String,
     },
     /// Get agent memory.
     ///
@@ -3415,5 +3463,55 @@ mod agent_invoke_input_tests {
     #[test]
     fn invoke_requires_id() {
         assert!(parse(&["agent", "invoke"]).is_err());
+    }
+
+    #[test]
+    fn invoke_dry_run_flag_parses() {
+        let args =
+            Args::try_parse_from(["neomind", "agent", "invoke", "agent-001", "--dry-run"]).unwrap();
+        match args.command {
+            Command::Agent {
+                agent_cmd: AgentCommand::Invoke { dry_run, input, .. },
+            } => {
+                assert!(dry_run);
+                assert!(input.is_none());
+            }
+            other => panic!("expected Invoke, got {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod agent_plan_preview_tests {
+    use super::{AgentCommand, Args, Command};
+    use clap::Parser;
+
+    #[test]
+    fn plan_preview_requires_draft() {
+        assert!(Args::try_parse_from(["neomind", "agent", "plan-preview"]).is_err());
+    }
+
+    #[test]
+    fn plan_preview_parses_draft_json() {
+        let draft = r#"{"name":"daily-brief","user_prompt":"x","trigger":{"kind":"manual"},"input":{"requirements":[]},"tool_policy":"disabled"}"#;
+        let args =
+            Args::try_parse_from(["neomind", "agent", "plan-preview", "--draft", draft]).unwrap();
+        match args.command {
+            Command::Agent {
+                agent_cmd: AgentCommand::PlanPreview { draft: d },
+            } => assert!(d.contains("daily-brief")),
+            other => panic!("expected PlanPreview, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_test_parses_id() {
+        let args = Args::try_parse_from(["neomind", "agent", "test", "agent-001"]).unwrap();
+        match args.command {
+            Command::Agent {
+                agent_cmd: AgentCommand::Test { id },
+            } => assert_eq!(id, "agent-001"),
+            other => panic!("expected Test, got {other:?}"),
+        }
     }
 }

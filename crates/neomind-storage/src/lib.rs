@@ -45,6 +45,7 @@
 //! ```
 
 pub mod agents;
+pub mod agents_v2;
 pub mod atomic_write;
 pub mod backup;
 pub mod business;
@@ -102,6 +103,11 @@ pub use agents::{
     KnowledgeFileRef, MemoryMode, NotificationSent, NotifyOn, OperatorConfig, OperatorField,
     OperatorFieldType, ParsedIntent, ReasoningStep, ResourceType, ScheduleType, UserMessage,
     DEFAULT_MAX_CHAIN_DEPTH,
+};
+
+pub use agents_v2::{
+    copy_agents_v1_to_v2_keep_legacy, ensure_v2_tables, migrate_agents_v1_to_v2,
+    table_exists_agents_v1, AgentStoreV2,
 };
 
 pub use device_registry::DeviceRegistryStore;

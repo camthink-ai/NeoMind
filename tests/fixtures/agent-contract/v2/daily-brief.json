@@ -1,0 +1,94 @@
+{
+  "sample": "daily-brief",
+  "schema_hint": "agent-contract/v2",
+  "draft": {
+    "name": "daily-brief",
+    "description": "Zero-device weather + tariff daily brief",
+    "user_prompt": "Summarize today's weather and time-of-use electricity price for the operator.",
+    "preset": "daily_brief",
+    "trigger": {
+      "kind": "cron",
+      "expr": "0 9 * * *",
+      "timezone": "Asia/Shanghai"
+    },
+    "pacing": {
+      "failure_threshold": 3
+    },
+    "input": {
+      "requirements": [
+        {
+          "key": "weather_now",
+          "source": { "kind": "extension_instance", "id": "weather_cn" },
+          "operation": "current",
+          "params": { "city": "Shanghai" },
+          "auth_scope": "extension:weather:read",
+          "timeout_secs": 10,
+          "result_type": "structured_json",
+          "freshness": { "kind": "latest_within", "max_age_secs": 3600 },
+          "on_missing": "report_stale"
+        },
+        {
+          "key": "tariff_today",
+          "source": { "kind": "extension_instance", "id": "tariff_tou" },
+          "operation": "tou_today",
+          "params": { "region": "CN-SH" },
+          "auth_scope": "extension:tariff:read",
+          "timeout_secs": 10,
+          "result_type": "structured_json",
+          "freshness": { "kind": "any" },
+          "on_missing": "report_stale"
+        }
+      ]
+    },
+    "tool_policy": "disabled",
+    "output": {
+      "fields": [
+        {
+          "name": "brief",
+          "depends_on": ["weather_now", "tariff_today"],
+          "description": "Human-readable daily brief"
+        }
+      ],
+      "publish": false
+    },
+    "notify": {
+      "channels": ["test-channel"],
+      "on_complete": true,
+      "on_alert": false,
+      "alert_depends_on": [],
+      "on_failure": true,
+      "pending_confirmation": false
+    },
+    "controlled_actions": []
+  },
+  "must_roundtrip": [
+    "id",
+    "trigger.expr",
+    "trigger.timezone",
+    "input.requirements",
+    "tool_policy",
+    "notify.channels"
+  ],
+  "source_fixtures": {
+    "weather_a": {
+      "summary": "晴 22°C",
+      "temp_c": 22,
+      "condition": "sunny"
+    },
+    "weather_b": {
+      "summary": "多云 18°C",
+      "temp_c": 18,
+      "condition": "cloudy"
+    },
+    "tariff_a": {
+      "peaks": [{ "start": "08:00", "end": "11:00", "price": 1.2 }],
+      "off_peak_price": 0.4,
+      "currency": "CNY"
+    },
+    "tariff_b": {
+      "peaks": [{ "start": "18:00", "end": "21:00", "price": 1.5 }],
+      "off_peak_price": 0.35,
+      "currency": "CNY"
+    }
+  }
+}

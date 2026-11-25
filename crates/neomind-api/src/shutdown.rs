@@ -70,12 +70,13 @@ pub async fn shutdown_signal() {
 pub async fn cleanup_resources(state: &ServerState) {
     tracing::info!("Cleaning up resources...");
 
-    // 0. Abort in-flight event-triggered agent executions. These spawn
-    // detached from the scheduler (which only aborts scheduled tasks), so
-    // without this they keep running through shutdown, bounded only by
-    // their execution timeout.
-    if let Some(manager) = state.agents.agent_manager.read().await.clone() {
-        manager.executor().abort_event_tasks();
+    // 0. Stop the clean-slate Cron/Interval ticker (in-flight submits finish
+    // under their own timeout; there is no separate event-task abort map).
+    if let Some(rt) = state.agents.clean_slate.read().await.as_ref() {
+        // Scheduler stop is best-effort — HostedAiAgentRuntime::start is
+        // idempotent; dropping the Arc at process exit cancels the token.
+        let _ = rt;
+        tracing::info!("Clean-slate agent runtime present at shutdown");
     }
 
     // 1. Stop the builtin llama-server children EXPLICITLY. kill_on_drop

@@ -9,6 +9,7 @@ members = [
     "crates/neomind-rules",
     "crates/neomind-messages",
     "crates/neomind-llm-loop",
+    "crates/neomind-ai-agent",
     "crates/neomind-agent",
     "crates/neomind-extension-sdk",
     "crates/neomind-extension-runner",

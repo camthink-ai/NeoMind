@@ -1,0 +1,61 @@
+{
+  "sample": "partial-meter",
+  "schema_hint": "agent-contract/v2",
+  "draft": {
+    "name": "partial-meter",
+    "description": "Multi-source: meter overload alert + weather-gated control",
+    "user_prompt": "Diagnose meter overload; attribute heat only when weather is available.",
+    "preset": "partial_meter",
+    "trigger": { "kind": "manual" },
+    "input": {
+      "requirements": [
+        {
+          "key": "meter_15m",
+          "source": { "kind": "device_metric", "device_id": "meter-1", "field": "power_kw" },
+          "params": { "lookback_secs": 900 },
+          "auth_scope": "device:meter-1:read",
+          "timeout_secs": 5,
+          "result_type": "time_series",
+          "freshness": { "kind": "lookback_window", "lookback_secs": 900, "max_points": 60 },
+          "on_missing": "undetermined"
+        },
+        {
+          "key": "weather",
+          "source": { "kind": "extension_instance", "id": "weather_cn" },
+          "operation": "current",
+          "params": {},
+          "auth_scope": "extension:weather:read",
+          "timeout_secs": 5,
+          "result_type": "structured_json",
+          "freshness": { "kind": "latest_within", "max_age_secs": 1800 },
+          "on_missing": "report_stale"
+        }
+      ]
+    },
+    "tool_policy": "disabled",
+    "output": {
+      "fields": [
+        { "name": "overload", "depends_on": ["meter_15m"] },
+        { "name": "heat_attribution", "depends_on": ["meter_15m", "weather"] }
+      ],
+      "publish": false
+    },
+    "notify": {
+      "channels": ["test-channel"],
+      "on_complete": false,
+      "on_alert": true,
+      "alert_depends_on": ["meter_15m"],
+      "on_failure": true,
+      "pending_confirmation": false
+    },
+    "controlled_actions": [
+      {
+        "name": "adjust_load",
+        "destination": "ext-write-1",
+        "depends_on": ["meter_15m", "weather"],
+        "idempotent": false,
+        "params": { "action": "shed" }
+      }
+    ]
+  }
+}

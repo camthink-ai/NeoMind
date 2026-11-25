@@ -78,8 +78,11 @@ describe('api surface (post-split composition)', () => {
   // (`confirmAssociationDraft`, POST .../confirm-association).
   // 285 -> 286 when AI enable split from run enable
   // (`setExtensionAiEnabled`, PATCH /extensions/:id/ai-enabled).
-  it('member count grows only by deliberate additions (286)', () => {
+  // 286 -> 287 when clean-slate Editor V2 added `planPreviewV2`
+  // (POST /api/agents/v2/plan-preview).
+  it('member count grows only by deliberate additions (287)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(286)
+    expect(keys.length).toBe(287)
   })
 })
+

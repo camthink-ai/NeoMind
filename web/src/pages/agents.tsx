@@ -12,6 +12,7 @@ import { useStore } from "@/store"
 import { useDataVersion } from "@/hooks/useDataVersion"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
+import { AgentEditorV2 } from "@/components/agents/editor-v2"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
 import { PageTabsBar, PageTabsContent, Pagination, SearchInput } from "@/components/shared"
@@ -35,12 +36,11 @@ import {
 import { debounce } from "@/lib/utils/async"
 import type { ToolSourceFilter } from "./agents-components/ToolsPanel"
 import { EmptyState } from "@/components/shared/EmptyState"
-import type { AiAgent, AiAgentDetail, Device, DeviceType, Extension, UnifiedDataSourceInfo } from "@/types"
+import type { AiAgent, AiAgentDetail } from "@/types"
 import type { AgentExecutionStartedEvent, AgentExecutionCompletedEvent, AgentThinkingEvent } from "@/lib/events"
 
 // Import components
 import { AgentCard } from "./agents-components/AgentCard"
-import { AgentEditorFullScreen } from "./agents-components/AgentEditorFullScreen"
 import { ExecutionDetailDialog } from "./agents-components/ExecutionDetailDialog"
 import { AgentDetailPanel } from "./agents-components/AgentDetailPanel"
 import { MemoryPanel, MemoryPanelRef } from "./agents-components/MemoryPanel"
@@ -167,12 +167,6 @@ export function AgentsPage() {
   const lastThinkingUpdateRef = useRef(0)
   const pendingThinkingRef = useRef<Record<string, string>>({})
 
-  // Resources for dialogs
-  const [devices, setDevices] = useState<Device[]>([])
-  const [deviceTypes, setDeviceTypes] = useState<DeviceType[]>([])
-  const [extensions, setExtensions] = useState<Extension[]>([])
-  const [unifiedDataSources, _setUnifiedDataSources] = useState<UnifiedDataSourceInfo[]>([])
-
   // Fetch agents list only (fast)
   const loadItems = useCallback(async () => {
     setLoading(true)
@@ -189,29 +183,6 @@ export function AgentsPage() {
       setLoading(false)
     }
   }, [])
-
-  // Lazy-load editor resources (devices, extensions, data sources) when opening editor
-  const [editorResourcesLoaded, setEditorResourcesLoaded] = useState(false)
-  const editorLoadingRef = useRef(false)
-  const loadEditorResources = useCallback(async () => {
-    if (editorResourcesLoaded || editorLoadingRef.current) return
-    editorLoadingRef.current = true
-    try {
-      const [devicesData, typesResult, extData] = await Promise.all([
-        api.getDevices().catch((): { devices: Device[] } => ({ devices: [] })),
-        api.getDeviceTypes().catch((): { device_types: DeviceType[] } => ({ device_types: [] })),
-        api.listExtensions().catch((): Extension[] => []),
-      ])
-
-      setDevices(devicesData.devices || [])
-      setDeviceTypes(typesResult.device_types || [])
-      setExtensions(extData)
-      setEditorResourcesLoaded(true)
-    } catch (error) {
-      editorLoadingRef.current = false
-      handleError(error, { operation: 'Load editor resources', showToast: false })
-    }
-  }, [editorResourcesLoaded, handleError])
 
   // Load items on mount
   const dataVersion = useDataVersion('agents', 'skills')
@@ -369,16 +340,12 @@ export function AgentsPage() {
   const handleCreate = () => {
     setEditingAgent(undefined)
     setShowAgentDialog(true)
-    loadEditorResources()
   }
 
   const handleEdit = async (agent: AiAgent) => {
     try {
       setShowAgentDialog(true)
-      const [detail] = await Promise.all([
-        api.getAgent(agent.id),
-        loadEditorResources(),
-      ])
+      const detail = await api.getAgent(agent.id)
       setEditingAgent(detail)
     } catch (error) {
       setShowAgentDialog(false)
@@ -463,7 +430,7 @@ export function AgentsPage() {
       setShowAgentDialog(false)
       setEditingAgent(undefined)
       await loadItems()
-      // Toast is shown by AgentEditorFullScreen — don't duplicate here
+      // Toast is shown by AgentEditorV2 — don't duplicate here
     } catch (error) {
       handleError(error, { operation: 'Save agent', showToast: false })
       throw error
@@ -494,7 +461,6 @@ export function AgentsPage() {
     setDetailDialogOpen(false)
     setEditingAgent(agent)
     setShowAgentDialog(true)
-    loadEditorResources()
   }
 
   // Note: detail data is loaded solely by handleViewDetail. The dialog's only
@@ -712,15 +678,11 @@ export function AgentsPage() {
         />
       </PageTabsContent>
 
-      {/* Agent Editor Full Screen */}
-      <AgentEditorFullScreen
+      {/* Agent Editor — AgentEditorV2 is the only create/edit surface (M3) */}
+      <AgentEditorV2
         open={showAgentDialog}
         onOpenChange={setShowAgentDialog}
         agent={editingAgent}
-        devices={devices}
-        deviceTypes={deviceTypes}
-        extensions={extensions}
-        unifiedDataSources={unifiedDataSources}
         onSave={handleSave}
       />
 

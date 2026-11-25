@@ -35,12 +35,6 @@
 //! ```
 
 pub mod agent;
-pub mod ai_agent;
-
-/// Telemetry-metadata key carrying the id of the run that produced a published
-/// AI field. The executor writes it and the API reads it, so it is part of this
-/// crate's surface rather than a private detail of the module that defines it.
-pub use ai_agent::executor::EXECUTION_ID_KEY;
 pub mod context;
 pub mod error;
 pub mod image_utils;
@@ -58,8 +52,6 @@ pub mod tools;
 
 // Re-export commonly used types
 pub use agent::{Agent, AgentConfig, AgentEvent, AgentMessage, LlmBackend};
-// Re-export commonly used types
-pub use ai_agent::AgentInput;
 pub use error::{NeoMindError, Result};
 pub use session::{CreateSessionOptions, SessionManager};
 

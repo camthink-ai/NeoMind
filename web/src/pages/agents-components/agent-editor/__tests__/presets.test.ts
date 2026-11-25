@@ -1,43 +1,36 @@
 import { describe, it, expect } from 'vitest'
 import { AGENT_PRESETS, FEATURED_PRESETS, nextStepFor, type PresetNextStep } from '../presets'
-import { deriveExecutionMode } from '../derivation'
+import type { AgentExecutionMode } from '@/types'
 import en from '@/i18n/locales/en/agents.json'
 import zh from '@/i18n/locales/zh/agents.json'
 
-describe('AGENT_PRESETS × deriveExecutionMode', () => {
-  it('every preset derives the mode it was designed for (resources unbound)', () => {
-    const expectMode: Record<string, Parameters<typeof deriveExecutionMode>[0] & { mode: string }> = {
-      image: { hasDeviceCommands: false, canActAutonomously: false, hasOutputContract: true, mode: 'structured' },
-      monitor: { hasDeviceCommands: false, canActAutonomously: false, hasOutputContract: true, mode: 'structured' },
-      event: { hasDeviceCommands: false, canActAutonomously: false, hasOutputContract: true, mode: 'structured' },
-      smart: { hasDeviceCommands: false, canActAutonomously: true, hasOutputContract: false, mode: 'free' },
-      rootCause: { hasDeviceCommands: false, canActAutonomously: true, hasOutputContract: true, mode: 'free' },
-      scheduled: { hasDeviceCommands: false, canActAutonomously: false, hasOutputContract: false, mode: 'focused' },
-      weekly: { hasDeviceCommands: false, canActAutonomously: false, hasOutputContract: false, mode: 'focused' },
-      shift: { hasDeviceCommands: false, canActAutonomously: false, hasOutputContract: false, mode: 'focused' },
-      advanced: { hasDeviceCommands: false, canActAutonomously: true, hasOutputContract: false, mode: 'free' },
-      patrol: { hasDeviceCommands: false, canActAutonomously: true, hasOutputContract: false, mode: 'free' },
-      qa: { hasDeviceCommands: false, canActAutonomously: false, hasOutputContract: false, mode: 'focused' },
+describe('AGENT_PRESETS explicit executionMode', () => {
+  it('every preset declares the mode it was designed for', () => {
+    const expectMode: Record<string, AgentExecutionMode> = {
+      image: 'structured',
+      monitor: 'structured',
+      event: 'structured',
+      smart: 'free',
+      rootCause: 'free',
+      scheduled: 'focused',
+      weekly: 'focused',
+      shift: 'focused',
+      advanced: 'free',
+      patrol: 'free',
+      qa: 'focused',
     }
     for (const preset of AGENT_PRESETS) {
-      const spec = expectMode[preset.key]
-      expect(spec, `preset ${preset.key} has a spec`).toBeTruthy()
-      const schema = preset.fill.outputSchema?.((k) => k) ?? []
-      const derived = deriveExecutionMode({
-        hasDeviceCommands: spec.hasDeviceCommands,
-        canActAutonomously: preset.fill.autonomy,
-        hasOutputContract: schema.length > 0,
-      })
-      expect(derived, `preset ${preset.key} should derive ${spec.mode}`).toBe(spec.mode)
+      expect(preset.fill.executionMode, `preset ${preset.key}`).toBe(expectMode[preset.key])
     }
   })
 
   it('rootCause is the one preset that both acts and publishes — S3', () => {
-    // `smart` reaches `free`, but its conclusion is prose nothing downstream
+    // `smart` is free, but its conclusion is prose nothing downstream
     // can bind to; `monitor` publishes but cannot investigate. Only this
     // combination produces a conclusion that is also a data source.
     const rc = AGENT_PRESETS.find((p) => p.key === 'rootCause')!
     expect(rc.fill.autonomy).toBe(true)
+    expect(rc.fill.executionMode).toBe('free')
     expect((rc.fill.outputSchema?.((k) => k) ?? []).length).toBeGreaterThan(0)
   })
 
@@ -46,6 +39,7 @@ describe('AGENT_PRESETS × deriveExecutionMode', () => {
     // a field-bearing image agent derived to a text-only path that truncated
     // the base64 into garbage. The gap closed; the preset now ships fields.
     const image = AGENT_PRESETS.find((p) => p.key === 'image')
+    expect(image?.fill.executionMode).toBe('structured')
     expect((image?.fill.outputSchema?.((k) => k) ?? []).length).toBeGreaterThan(0)
   })
 
@@ -119,9 +113,10 @@ describe('notification routing the presets do set', () => {
 
   it('Focused presets default tool_config off so create does not soft-warn no-tools', () => {
     // API soft-warns Focused + unrestricted tools + no commands. These four
-    // derive to focused with no output contract — seed enabled:false.
+    // are focused with no output contract — seed enabled:false.
     for (const key of ['scheduled', 'weekly', 'shift', 'qa'] as const) {
       const p = AGENT_PRESETS.find((x) => x.key === key)!
+      expect(p.fill.executionMode).toBe('focused')
       expect(p.fill.toolConfig, `preset ${key}`).toEqual({ enabled: false })
     }
     for (const p of AGENT_PRESETS) {
@@ -178,6 +173,7 @@ describe('the next step a preset leaves open', () => {
     // half of what they need.
     const event = AGENT_PRESETS.find((p) => p.key === 'event')!
     expect(event.fill.schedule.type).toBe('reactive')
+    expect(event.fill.executionMode).toBe('structured')
     expect(nextStepFor(event)).toBe('sources')
   })
 

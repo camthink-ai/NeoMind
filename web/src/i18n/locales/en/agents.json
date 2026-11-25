@@ -121,6 +121,7 @@
     "toolsFilterAllSources": "All sources",
     "outputFields": "Output fields",
     "viewEvidence": "See what it read",
+    "evidenceBrowseHint": "Open a run to browse what it read, what it wrote, and how actions were delivered.",
     "outputFieldsHint": "Each field is a platform data source (ai:{agent}:{field}) — bind it on dashboards, rules and data-push.",
     "fieldType": {
       "number": "number",
@@ -802,5 +803,98 @@
     "saving": "Saving"
   },
   "executionNotFound": "Execution Not Found",
-  "noAgentsNoBackendDesc": "Agents need an AI model to run. Download the built-in model (offline, no API key) — or configure your own backend first."
+  "noAgentsNoBackendDesc": "Agents need an AI model to run. Download the built-in model (offline, no API key) — or configure your own backend first.",
+  "editorV2": {
+    "titleCreate": "Create Agent (v2)",
+    "titleEdit": "Edit Agent (v2)",
+    "dailyBriefHint": "Orthogonal AgentSpec v2 editor — seeded for daily-brief style configs (cron + timezone, input requirements, tool policy, three-way notify).",
+    "name": "Name",
+    "description": "Description",
+    "prompt": "Mission prompt",
+    "trigger": {
+      "title": "Trigger",
+      "kind": "Trigger type",
+      "cron": "Cron",
+      "interval": "Interval",
+      "event": "Event",
+      "manual": "Manual",
+      "expr": "Cron expression",
+      "exprHint": "Standard 5-field cron, e.g. 0 9 * * * for 09:00 daily",
+      "timezone": "Timezone",
+      "timezoneHint": "IANA timezone, e.g. Asia/Shanghai",
+      "everySecs": "Every (seconds)",
+      "manualHint": "Runs only when invoked — never auto-scheduled",
+      "eventHint": "Fires when the event filter matches"
+    },
+    "input": {
+      "title": "Input requirements",
+      "count": "{{count}} sources",
+      "empty": "No input requirements yet — add extension or device reads",
+      "key": "Key",
+      "auth": "Auth scope",
+      "source": "Source",
+      "extensionId": "Extension instance id",
+      "operation": "Operation",
+      "add": "Add requirement",
+      "remove": "Remove requirement",
+      "addSoon": "Full source picker lands with editor cutover"
+    },
+    "toolPolicy": {
+      "title": "Model tools",
+      "kind": "Policy",
+      "disabled": "Disabled",
+      "unrestricted": "Unrestricted",
+      "scoped": "Scoped allowlist",
+      "allowedTools": "Allowed tools",
+      "allowedToolsHint": "Comma-separated tool names",
+      "disabledHint": "Host InputPipeline still reads authorized sources"
+    },
+    "notify": {
+      "title": "Notify policy",
+      "channels": "Channels",
+      "channelsHint": "Comma-separated channel ids; empty = silent",
+      "onComplete": "On complete",
+      "onCompleteDesc": "Notify when a run finishes successfully",
+      "onAlert": "On alert",
+      "onAlertDesc": "Notify when an alert condition fires",
+      "onFailure": "On failure",
+      "onFailureDesc": "Notify when a run fails",
+      "pendingConfirmation": "Pending confirmation",
+      "pendingConfirmationDesc": "Judgment path — confirm before send"
+    },
+    "plan": {
+      "title": "Effective plan",
+      "run": "Preview",
+      "hint": "Static plan only — zero external reads, zero delivery",
+      "trigger": "Trigger",
+      "timezone": "Timezone",
+      "reads": "Authorized reads",
+      "externalReads": "External read counts"
+    },
+    "planPreview": {
+      "title": "Effective plan",
+      "refresh": "Refresh",
+      "hint": "Static preview from POST /api/agents/v2/plan-preview — zero external reads",
+      "empty": "No preview yet",
+      "error": "Preview failed",
+      "triggerSummary": "Trigger",
+      "timezone": "Timezone",
+      "toolPolicy": "Tools",
+      "reads": "Authorized reads",
+      "authorizedReads": "Authorized reads",
+      "noReads": "None",
+      "externalReads": "External read counts (must stay 0 in static preview)",
+      "warnings": "Warnings"
+    },
+    "tools": {
+      "title": "Tool policy",
+      "mode": "Mode",
+      "hint": "Daily-brief configs typically disable model tools",
+      "disabled": "Disabled",
+      "unrestricted": "Unrestricted",
+      "scoped": "Scoped",
+      "allowedTools": "Allowed tools",
+      "allowedToolsHint": "Comma-separated tool names"
+    }
+  }
 }

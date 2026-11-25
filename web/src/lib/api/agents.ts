@@ -3,6 +3,20 @@ import type { AiAgentDetail, AgentMemory, AgentToolCatalogItem, AgentStats, Agen
 import type { SkillSummary, SkillDetail } from '@/types/skill'
 import { fetchAPI } from "./client"
 
+// M2 temporary form ↔ v2 AgentSpec translation (deleted in M3 with the old editor).
+export {
+  formStateToV2Draft,
+  v2SpecToFormState,
+  applyFormPatchToV2Draft,
+  triggerToSchedule,
+  scheduleToTrigger,
+  toolPolicyToConfig,
+  toolConfigToPolicy,
+  notifyPolicyToLegacy,
+  legacyNotifyToPolicy,
+} from './agentV2Adapter'
+export type { AgentSpecLike } from './agentV2Adapter'
+
 export const agentsApi = {
   // ========== AI Agents API ==========
   // Matches backend: crates/api/src/handlers/agents.rs
@@ -65,6 +79,19 @@ export const agentsApi = {
       method: 'POST',
       body: JSON.stringify(req),
     }),
+
+  /**
+   * Static EffectivePlan preview for AgentSpec v2 drafts (zero external reads).
+   * POST /api/agents/v2/plan-preview
+   */
+  planPreviewV2: (draft: import('@/types').AgentSpecDraft) =>
+    fetchAPI<{ effective_plan: import('@/types').EffectivePlan; dry_run: boolean }>(
+      '/agents/v2/plan-preview',
+      {
+        method: 'POST',
+        body: JSON.stringify({ draft }),
+      },
+    ),
 
   /**
    * Delete an AI Agent

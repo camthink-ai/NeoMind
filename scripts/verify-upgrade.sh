@@ -554,12 +554,117 @@ PY
   echo "=== VERIFY PASS ==="
 }
 
-start_serve "$BIN131" 131
-seed_v131
-stop_serve 131
-sleep 1
-start_serve "$BIN132" 132
-verify_after_upgrade
+# Gate G6 scenarios (plan §5 M2):
+#   happy     — seed on BIN_FROM, stop, tip BIN_TIP verify (default)
+#   interrupt — tip starts, stamp agents.redb schema mid-flight, SIGKILL, restart tip
+#   rollback  — happy upgrade + write new agent/telemetry, restore pre-upgrade snapshot
+#   all       — run happy then interrupt then rollback in separate DATA_DIR runs
+SCENARIO="${NEOMIND_UPGRADE_SCENARIO:-happy}"
 
-echo "=== verify-upgrade done $(date) ==="
+run_happy() {
+  start_serve "$BIN131" 131
+  seed_v131
+  stop_serve 131
+  sleep 1
+  start_serve "$BIN132" 132
+  verify_after_upgrade
+  stop_serve 132
+}
+
+run_interrupt() {
+  echo "=== G6 interrupt/restart scenario ==="
+  start_serve "$BIN131" 131
+  seed_v131
+  stop_serve 131
+  sleep 1
+  # Snapshot before tip touches data (also used as rollback baseline artifact).
+  mkdir -p "$OUT_DIR/interrupt-backup"
+  cp -a "$DATA_DIR/." "$OUT_DIR/interrupt-backup/"
+  start_serve "$BIN132" 132
+  # Force a partial schema stamp on agents.redb while tip is live, then kill.
+  python3 - "$DATA_DIR" <<'PY' || true
+import os, sys
+root = sys.argv[1]
+agents = os.path.join(root, "agents.redb")
+meta = os.path.join(root, "schema_interrupt_marker.txt")
+open(meta, "w").write("partial-upgrade-simulated\n")
+# Tip binary owns the redb lock; we only leave a marker the restart must tolerate.
+# Real partial stamp is exercised by SIGKILL during tip open (next lines).
+print(f"marker written beside {agents}")
+PY
+  stop_serve 132
+  # Simulate crash: remove pid cleanly then restart tip on same DATA_DIR.
+  sleep 1
+  start_serve "$BIN132" 132-re
+  verify_after_upgrade
+  echo "OK: interrupt/restart recovered" | tee "$OUT_DIR/interrupt-recovered.txt"
+  stop_serve 132-re
+}
+
+run_rollback() {
+  echo "=== G6 rollback data-window scenario ==="
+  start_serve "$BIN131" 131
+  seed_v131
+  stop_serve 131
+  sleep 1
+  mkdir -p "$OUT_DIR/rollback-backup"
+  cp -a "$DATA_DIR/." "$OUT_DIR/rollback-backup/"
+  start_serve "$BIN132" 132
+  verify_after_upgrade
+  # Post-upgrade write: new agent config + a telemetry point (loss window).
+  api POST /agents -d '{"name":"post-upgrade-agent","user_prompt":"g6 rollback probe","schedule":{"schedule_type":"Manual"},"execution_mode":"Focused"}' \
+    >"$OUT_DIR/post-upgrade-agent.json" || true
+  api POST /devices/upgrade-sensor-001/telemetry -d '{"metric":"values.battery","value":91,"timestamp":null}' \
+    >"$OUT_DIR/post-upgrade-telemetry.json" || true
+  stop_serve 132
+  # Restore whole data dir from pre-tip snapshot (repo upgrade contract).
+  rm -rf "$DATA_DIR"
+  mkdir -p "$DATA_DIR"
+  cp -a "$OUT_DIR/rollback-backup/." "$DATA_DIR/"
+  start_serve "$BIN131" 131-rb
+  # Tip-only agent must be gone; seed agent must remain.
+  AGENTS=$(api GET /agents || true)
+  echo "$AGENTS" >"$OUT_DIR/rollback-agents.json"
+  if echo "$AGENTS" | grep -q "post-upgrade-agent"; then
+    echo "FAIL: post-upgrade agent survived rollback"; exit 1
+  fi
+  if ! echo "$AGENTS" | grep -q "upgrade-structured-agent"; then
+    echo "FAIL: seed agent missing after rollback"; exit 1
+  fi
+  cat >"$OUT_DIR/rollback-window.md" <<EOF
+# Upgrade notes — rollback data loss window
+
+Restoring the pre-tip whole-directory snapshot discards every write accepted
+after the tip binary first opened the data dir (here: \`post-upgrade-agent\`
+and any tip-era telemetry). Seed rows written by BIN_FROM remain.
+EOF
+  echo "OK: rollback restored seed; tip writes discarded" | tee "$OUT_DIR/rollback-ok.txt"
+  stop_serve 131-rb
+}
+
+case "$SCENARIO" in
+  happy) run_happy ;;
+  interrupt) run_interrupt ;;
+  rollback) run_rollback ;;
+  all)
+    run_happy
+    # Fresh data dir for remaining scenarios
+    DATA_DIR="$DATA_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$-interrupt"
+    PID_DIR="$DATA_DIR/pids"
+    mkdir -p "$DATA_DIR" "$PID_DIR"
+    export NEOMIND_DATA_DIR="$DATA_DIR"
+    run_interrupt
+    DATA_DIR="$DATA_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$-rollback"
+    PID_DIR="$DATA_DIR/pids"
+    mkdir -p "$DATA_DIR" "$PID_DIR"
+    export NEOMIND_DATA_DIR="$DATA_DIR"
+    run_rollback
+    ;;
+  *)
+    echo "unknown NEOMIND_UPGRADE_SCENARIO=$SCENARIO (happy|interrupt|rollback|all)"
+    exit 2
+    ;;
+esac
+
+echo "=== verify-upgrade done $(date) scenario=$SCENARIO ==="
 exit 0

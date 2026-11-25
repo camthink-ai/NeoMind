@@ -787,6 +787,8 @@ pub async fn run_agent_cmd_with_context(
             notify,
             no_tools,
             allowed_tools,
+            tool_policy,
+            input_requirements,
             device_ids,
             resources,
             metrics,
@@ -826,6 +828,8 @@ pub async fn run_agent_cmd_with_context(
                 max_chain_depth,
                 priority,
                 context_window_size,
+                tool_policy.as_deref(),
+                input_requirements.as_deref(),
             )
             .await?
         }
@@ -840,6 +844,8 @@ pub async fn run_agent_cmd_with_context(
             schedule_config,
             no_tools,
             allowed_tools,
+            tool_policy,
+            input_requirements,
             event_filter,
             timezone,
             execution_mode,
@@ -879,12 +885,18 @@ pub async fn run_agent_cmd_with_context(
                 max_chain_depth,
                 priority,
                 context_window_size,
+                tool_policy.as_deref(),
+                input_requirements.as_deref(),
             )
             .await?
         }
         AgentCommand::Delete { id } => delete_agent(&client, &id).await?,
         AgentCommand::Control { id, status } => control_agent(&client, &id, &status).await?,
-        AgentCommand::Invoke { id, input } => invoke_agent(&client, &id, input.as_deref()).await?,
+        AgentCommand::Invoke { id, input, dry_run } => {
+            invoke_agent_with_options(&client, &id, input.as_deref(), dry_run).await?
+        }
+        AgentCommand::PlanPreview { draft } => plan_preview_agent(&client, &draft).await?,
+        AgentCommand::Test { id } => test_agent(&client, &id).await?,
         AgentCommand::Memory { id } => get_agent_memory(&client, &id).await?,
         AgentCommand::ClearMemory { id } => clear_agent_memory(&client, &id).await?,
         AgentCommand::Executions { id, limit, offset } => {

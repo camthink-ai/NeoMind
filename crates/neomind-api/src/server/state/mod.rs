@@ -15,7 +15,7 @@ mod core_state;
 mod device_state;
 mod extension_state;
 
-pub use agent_state::{AgentManager, AgentState};
+pub use agent_state::{AgentState, CleanSlateHolder};
 pub use auth_state::AuthState;
 pub use automation_state::AutomationState;
 pub use core_state::CoreState;
