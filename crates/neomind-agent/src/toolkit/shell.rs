@@ -93,7 +93,7 @@ const DOMAIN_INDEX: &str = r#"
 
 [neomind CLI domain index — the exact subcommands that exist (one line per domain; `neomind <domain> --help` for flags)]
 - device: list get create update delete history latest control <ID> <CMD> types write-metric webhook-url drafts (write-metric writes/simulates a data point — the way to feed a virtual-device test report; no broker or connection involved)
-- agent: list get create update delete control <ID> <active|paused> invoke test plan-preview memory clear-memory executions <ID> latest-execution conversation <ID> send-message <ID> (talking to an agent, NOT `message`; "is X OK right now" → `agent list` then `latest-execution <ID>`, not device/system)
+- agent: list get create create-v2 update delete control <ID> <active|paused> invoke test plan-preview inventory migrate-v2-only memory clear-memory executions <ID> latest-execution conversation <ID> send-message <ID> (talking to an agent, NOT `message`; "is X OK right now" → `agent list` then `latest-execution <ID>`, not device/system; create compiles flags to V2 draft — prefer create-v2 with an AgentSpecDraft JSON when you already have one)
 - rule: list get create update delete enable disable test history explain
 - dashboard: list get create update delete add-components update-component remove-components share (ADD widgets → add-components (append); TWEAK one widget → update-component; `update --components` replaces ALL and needs --replace-all — almost never what you want; `dashboard get <ID>` first to see layout/ids)
 - connector: list get create update delete enable disable test subscribe subscriptions unsubscribe (external MQTT data ingestion / subscriptions; outbound webhook or MQTT data targets use push)
@@ -3791,7 +3791,8 @@ mod dispatch_edge_tests {
                     .filter(|t| {
                         !t.starts_with('<')
                             && !t.starts_with('`')
-                            && t.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+                            && t.chars()
+                                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
                     })
                     .collect();
                 let where_ = if level == 0 {

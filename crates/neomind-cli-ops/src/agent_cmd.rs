@@ -495,7 +495,13 @@ pub async fn create_agent(
     tool_policy: Option<&str>,
     input: Option<&str>,
 ) -> Result<CliResponse> {
-    let _ = (memory_mode, max_chain_depth, priority, context_window_size, commands);
+    let _ = (
+        memory_mode,
+        max_chain_depth,
+        priority,
+        context_window_size,
+        commands,
+    );
 
     let schedule_type_val = schedule_type.unwrap_or("event");
     let trigger = match schedule_type_val {
@@ -685,7 +691,8 @@ pub async fn create_agent(
                             let field = parts.next().unwrap_or("value");
                             json!({ "kind": "device_metric", "device_id": device_id, "field": field })
                         }
-                        "extension_metric" | "ExtensionMetric" | "extension_tool" | "ExtensionTool" => {
+                        "extension_metric" | "ExtensionMetric" | "extension_tool"
+                        | "ExtensionTool" => {
                             json!({ "kind": "extension_instance", "id": rid })
                         }
                         _ => json!({ "kind": "whole_device", "device_id": rid }),
@@ -722,12 +729,13 @@ pub async fn create_agent(
     };
 
     let output = if let Some(schema_json) = output_schema {
-        let parsed: serde_json::Value = crate::json_arg::parse_json_arg(schema_json).map_err(|e| {
-            anyhow::anyhow!(
-                "--output-schema is not valid JSON: {} — expected an array of fields",
-                e
-            )
-        })?;
+        let parsed: serde_json::Value =
+            crate::json_arg::parse_json_arg(schema_json).map_err(|e| {
+                anyhow::anyhow!(
+                    "--output-schema is not valid JSON: {} — expected an array of fields",
+                    e
+                )
+            })?;
         let fields = if let Some(arr) = parsed.as_array() {
             arr.iter()
                 .filter_map(|f| {
@@ -843,7 +851,6 @@ pub fn notify_for_v2_draft(parsed: serde_json::Value) -> serde_json::Value {
         }),
     }
 }
-
 
 /// What to do after creating an agent, given how it is scheduled.
 ///

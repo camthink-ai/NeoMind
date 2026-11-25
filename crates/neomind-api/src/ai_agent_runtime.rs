@@ -14,8 +14,7 @@ use neomind_ai_agent::coordinator::{
 use neomind_ai_agent::error::{AgentError, Result as AgentResult};
 use neomind_ai_agent::input::InputPipeline;
 use neomind_ai_agent::model::{
-    AgentSpec, AgentSpecDraft, AgentSpecPatch, AgentStatus,
-    EffectivePlan, RunResponse,
+    AgentSpec, AgentSpecDraft, AgentSpecPatch, AgentStatus, EffectivePlan, RunResponse,
 };
 use neomind_ai_agent::persist::{persist_spec, DurableAgentStore};
 use neomind_ai_agent::ports::{ClockPort, NotifyPort, SourceReadPort, SystemClock};

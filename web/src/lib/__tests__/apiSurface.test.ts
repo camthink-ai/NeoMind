@@ -80,9 +80,11 @@ describe('api surface (post-split composition)', () => {
   // (`setExtensionAiEnabled`, PATCH /extensions/:id/ai-enabled).
   // 286 -> 287 when clean-slate Editor V2 added `planPreviewV2`
   // (POST /api/agents/v2/plan-preview).
-  it('member count grows only by deliberate additions (287)', () => {
+  // 287 -> 289 when V1 purge tip1 added `createAgentV2` + `updateAgentV2`
+  // (POST/PUT /api/agents/v2).
+  it('member count grows only by deliberate additions (289)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(287)
+    expect(keys.length).toBe(289)
   })
 })
 
