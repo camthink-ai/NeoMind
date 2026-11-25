@@ -915,6 +915,17 @@ pub async fn update_agent(
     tool_policy: Option<&str>,
     input: Option<&str>,
 ) -> Result<CliResponse> {
+    // V1-only knobs — AgentSpecPatch has no home for these (create already
+    // discards the same set). Keep the CLI flags for help/compat, do not put
+    // them on the wire (deny_unknown_fields is off; they would vanish silently).
+    let _ = (
+        memory_mode,
+        max_chain_depth,
+        priority,
+        context_window_size,
+        commands,
+    );
+
     let id = resolve_agent_id(client, id).await?;
     let mut body = json!({});
     if let Some(n) = name {
@@ -1030,12 +1041,11 @@ pub async fn update_agent(
         body["output_schema"] = crate::json_arg::parse_json_arg(schema_json)
             .map_err(|e| anyhow::anyhow!("--output-schema is not valid JSON: {}", e))?;
     }
-    if let Some(mm) = memory_mode {
-        body["memory_mode"] = json!(mm);
-    }
     if let Some(notify_json) = notify {
         match parse_notify_arg(notify_json) {
-            Ok(parsed) => body["notify"] = notify_for_v1_body(parsed),
+            // V2 PUT — store NotifyPolicy shape on the intermediate body so the
+            // patch copy below does not re-project from a v1 AgentNotify blob.
+            Ok(parsed) => body["notify"] = notify_for_v2_draft(parsed),
             Err(resp) => return Ok(resp),
         }
     }
@@ -1066,15 +1076,6 @@ pub async fn update_agent(
         };
         body["resources"] = parsed;
     }
-    if let Some(mcd) = max_chain_depth {
-        body["max_chain_depth"] = json!(mcd);
-    }
-    if let Some(p) = priority {
-        body["priority"] = json!(p);
-    }
-    if let Some(cws) = context_window_size {
-        body["context_window_size"] = json!(cws);
-    }
     if let Some(metrics_str) = metrics {
         // Malformed JSON must FAIL, not silently drop the binding — the agent
         // would be created without its resources while the caller believes it
@@ -1091,24 +1092,8 @@ pub async fn update_agent(
         };
         body["metrics"] = parsed;
     }
-    if let Some(commands_str) = commands {
-        // Malformed JSON must FAIL, not silently drop the binding — the agent
-        // would be created without its resources while the caller believes it
-        // succeeded (focused-validation bypass / free-mode degradation).
-        let parsed: serde_json::Value = match crate::json_arg::parse_json_arg(commands_str) {
-            Ok(v) => v,
-            Err(e) => {
-                return Ok(CliResponse::error_with_suggestion(
-                    format!("Invalid JSON in --commands: {e}"),
-                    "INVALID_JSON",
-                    "Pass a JSON array, e.g. --commands '[{\"type\":\"device\",\"id\":\"device-001\"}]'",
-                ));
-            }
-        };
-        body["commands"] = parsed;
-    }
 
-    // Compile remaining v1 keys into an AgentSpecPatch for PUT /agents/v2/:id.
+    // Compile remaining keys into an AgentSpecPatch for PUT /agents/v2/:id.
     let mut patch = json!({});
     if let Some(v) = body.get("name") {
         patch["name"] = v.clone();
@@ -1129,7 +1114,8 @@ pub async fn update_agent(
         patch["input"] = v.clone();
     }
     if let Some(v) = body.get("notify") {
-        patch["notify"] = notify_for_v2_draft(v.clone());
+        // Already NotifyPolicy-shaped (see notify_for_v2_draft above).
+        patch["notify"] = v.clone();
     }
     // tool_config → tool_policy when explicit tool_policy absent
     if patch.get("tool_policy").is_none() {

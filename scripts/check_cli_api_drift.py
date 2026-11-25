@@ -23,7 +23,13 @@ import sys
 
 FIELD = re.compile(r"^\s*(?:pub\s+)?([a-z_][a-z0-9_]*)\s*:", re.M)
 BODY_KEY = re.compile(r'body\["([a-z_][a-z0-9_]*)"\]')
-STRUCT_HEAD = re.compile(r"^\s*(?:pub\s+)?struct\s+\w*(?:Request|Config)\w*\s*\{", re.M)
+# Request/Config: classic HTTP DTOs. Draft/Patch/Spec: clean-slate agent
+# (AgentSpecDraft / AgentSpecPatch / AgentSpec) — CLI create/update now POST/PUT
+# those shapes after the V1 CreateAgentRequest purge.
+STRUCT_HEAD = re.compile(
+    r"^\s*(?:pub\s+)?struct\s+\w*(?:Request|Config|Draft|Patch|Spec)\w*\s*\{",
+    re.M,
+)
 
 
 def production_only(src: str) -> str:
