@@ -20,6 +20,9 @@
 #   NEOMIND_EXPECT_VERSION    default 1.3.4
 #
 # Isolated: STRICT_DATA_DIR + private ports. Never touches :29375 / :29385 / :18788.
+# If the chosen HTTP/MQTT port is already listening, exit non-zero (no takeover).
+# Cleanup only SIGTERM/SIGKILL PIDs this run started and recorded under DATA_DIR/pids
+# — never kill by port of an unrelated listener.
 #
 # Deletes nothing. Each run works in a data directory of its own,
 # <NEOMIND_UPGRADE_DATA_DIR>/run-<time>-<pid>, so a wrong value for that
@@ -47,7 +50,10 @@ MQTT_PORT="${NEOMIND_UPGRADE_MQTT_PORT:-19500}"
 EXPECT_VERSION="${NEOMIND_EXPECT_VERSION:-1.3.4}"
 
 DATA_DIR="$DATA_ROOT/run-$(date +%Y%m%d-%H%M%S)-$$"
-mkdir -p "$OUT_DIR" "$DATA_DIR"
+# PIDs for cleanup live under this run's DATA_DIR only — never reuse a shared
+# OUT_DIR pidfile that another process (or an earlier run) may have written.
+PID_DIR="$DATA_DIR/pids"
+mkdir -p "$OUT_DIR" "$DATA_DIR" "$PID_DIR"
 LOG="$OUT_DIR/verify-upgrade.log"
 : >"$LOG"
 exec > >(tee -a "$LOG") 2>&1
@@ -67,32 +73,51 @@ if [[ "$BIN131" == "$BIN132" ]]; then
   echo "seed and tip binaries resolve to the same path — set NEOMIND_BIN_133 + NEOMIND_BIN_134"; exit 2
 fi
 
+port_listening() {
+  local port="$1"
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1
+}
+
+# Refuse to take over an already-bound port. Must run before any serve start
+# and before cleanup is armed, so a busy port never reaches stop_serve.
+assert_ports_free() {
+  if port_listening "$HTTP_PORT"; then
+    echo "HTTP port $HTTP_PORT already in use — refusing to start (will not take over)"
+    exit 2
+  fi
+  if port_listening "$MQTT_PORT"; then
+    echo "MQTT port $MQTT_PORT already in use — refusing to start (will not take over)"
+    exit 2
+  fi
+}
+
+assert_ports_free
+
+# Only TERM/KILL PIDs this run started and recorded in PID_DIR.
+# Never kill by port — an unrelated listener on the test port must survive.
 stop_serve() {
   local tag="$1"
-  local pidfile="$OUT_DIR/serve-${tag}.pid"
-  if [[ -f "$pidfile" ]]; then
-    local pid
-    pid=$(cat "$pidfile")
-    if kill -0 "$pid" 2>/dev/null; then
-      echo "stopping $tag pid=$pid (SIGTERM)"
-      kill -TERM "$pid" || true
-      local deadline=$((SECONDS + 30))
-      while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
-        sleep 0.3
-      done
-      if kill -0 "$pid" 2>/dev/null; then
-        echo "force kill $tag"
-        kill -KILL "$pid" || true
-      fi
-    fi
-    rm -f "$pidfile"
+  local pidfile="$PID_DIR/serve-${tag}.pid"
+  if [[ ! -f "$pidfile" ]]; then
+    return 0
   fi
-  local p
-  p=$(lsof -nP -iTCP:"$HTTP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)
-  if [[ -n "${p:-}" ]]; then
-    echo "leftover listener $p on :$HTTP_PORT — killing"
-    kill -TERM "$p" || true
-    sleep 1
+  local pid
+  pid=$(cat "$pidfile")
+  rm -f "$pidfile"
+  if [[ -z "${pid:-}" ]] || ! [[ "$pid" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "stopping $tag pid=$pid (SIGTERM)"
+    kill -TERM "$pid" || true
+    local deadline=$((SECONDS + 30))
+    while kill -0 "$pid" 2>/dev/null && (( SECONDS < deadline )); do
+      sleep 0.3
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "force kill $tag"
+      kill -KILL "$pid" || true
+    fi
   fi
 }
 
@@ -172,13 +197,19 @@ wait_health() {
 start_serve() {
   local bin="$1" tag="$2"
   local srv_log="$OUT_DIR/serve-${tag}.log"
+  local pidfile="$PID_DIR/serve-${tag}.pid"
   : >"$srv_log"
+  # Re-check immediately before bind — still refuse takeover; never clear the port.
+  if port_listening "$HTTP_PORT"; then
+    echo "HTTP port $HTTP_PORT became busy before starting $tag — refusing to start"
+    exit 2
+  fi
   (
     cd "$DATA_DIR"
     exec "$bin" serve --host 127.0.0.1 --port "$HTTP_PORT"
   ) >"$srv_log" 2>&1 &
-  echo $! >"$OUT_DIR/serve-${tag}.pid"
-  echo "started $tag pid=$(cat "$OUT_DIR/serve-${tag}.pid") log=$srv_log"
+  echo $! >"$pidfile"
+  echo "started $tag pid=$(cat "$pidfile") log=$srv_log"
   wait_health
 }
 
