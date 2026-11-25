@@ -4473,6 +4473,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "toml 0.8.2",
  "tower-http",
  "tracing",
@@ -4704,6 +4705,7 @@ version = "1.3.4"
 dependencies = [
  "anyhow",
  "chrono",
+ "leaky-bucket",
  "neomind-api",
  "neomind-cli-ops",
  "reqwest 0.12.28",

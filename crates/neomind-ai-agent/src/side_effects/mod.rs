@@ -188,6 +188,7 @@ impl SideEffectBoundary {
         Ok(exec)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn settle_notify(
         &self,
         exec: &mut AgentExecutionRecord,
