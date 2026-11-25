@@ -5703,11 +5703,24 @@ async fn whole_device_scalar_same_second_b_settles_partial_no_person_alert() {
     let _ = std::fs::remove_dir_all(&data_dir);
 }
 
-/// Positive control for NM-389 E2E: a plain temperature whole-device task
-/// (no competing image) with the same scripted "现场正常" still Completes.
+/// Positive control for NM-389: same input as the vision-patrol Partial case
+/// (temp A + same-second orphan image B) but a **non-vision** temp task must
+/// still Complete — `_frame_unconfirmed` does not demote settle.
 #[serial_test::serial]
 #[tokio::test]
 async fn whole_device_plain_temp_still_completes() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "neomind_test_plain_temp_with_orphan_b_{}",
+        uuid::Uuid::new_v4()
+    ));
+    crate::testing_helpers::setup_test_image_dir(&data_dir).expect("image dir");
+    let frame_b_path = data_dir.join("images/test-device-001/image/frame_b_orphan.jpg");
+    std::fs::create_dir_all(frame_b_path.parent().unwrap()).expect("mkdir");
+    let mut bytes_b = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_b.extend(std::iter::repeat_n(b'B', 2048));
+    std::fs::write(&frame_b_path, &bytes_b).expect("write B");
+    std::env::set_var("NEOMIND_DATA_DIR", data_dir.to_str().unwrap());
+
     let (mut executor, mut agent, registry) = build_harness().await;
     let store = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
     executor.set_time_series_storage(store.clone());
@@ -5720,6 +5733,15 @@ async fn whole_device_plain_temp_still_completes() {
 
     let ts = chrono::Utc::now().timestamp() - 10;
     seed_report(&store, ts, &[("temperature", serde_json::json!(22.0))]).await;
+    seed_report(
+        &store,
+        ts,
+        &[(
+            "image_data",
+            serde_json::json!("/api/images/test-device-001/image/frame_b_orphan.jpg"),
+        )],
+    )
+    .await;
 
     let rt = MockLlmRuntime::new(vec![MockResponse::text("现场正常")]).with_function_calling();
     let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
@@ -5736,7 +5758,7 @@ async fn whole_device_plain_temp_still_completes() {
     assert_eq!(
         record.status,
         neomind_storage::ExecutionStatus::Completed,
-        "error={:?}",
+        "non-vision task must ignore orphan same-sec frame; error={:?}",
         record.error
     );
     let stored = executor
@@ -5746,6 +5768,195 @@ async fn whole_device_plain_temp_still_completes() {
         .expect("get")
         .expect("exists");
     assert_eq!(stored.stats.successful_executions, 1);
+
+    std::env::remove_var("NEOMIND_DATA_DIR");
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+/// NM-389: report_id=A co-stamped with orphan image B (B did not update
+/// report_id) must not feed B — image point itself must prove ownership.
+#[serial_test::serial]
+#[tokio::test]
+async fn whole_device_report_id_a_plus_orphan_image_b_stays_unconfirmed() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "neomind_test_report_id_orphan_b_{}",
+        uuid::Uuid::new_v4()
+    ));
+    crate::testing_helpers::setup_test_image_dir(&data_dir).expect("image dir");
+    let frame_b_path = data_dir.join("images/test-device-001/image/frame_b_orphan_id.jpg");
+    std::fs::create_dir_all(frame_b_path.parent().unwrap()).expect("mkdir");
+    let mut bytes_b = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_b.extend(std::iter::repeat_n(b'B', 2048));
+    std::fs::write(&frame_b_path, &bytes_b).expect("write B");
+    std::env::set_var("NEOMIND_DATA_DIR", data_dir.to_str().unwrap());
+
+    let url_b = "/api/images/test-device-001/image/frame_b_orphan_id.jpg";
+    let ts = chrono::Utc::now().timestamp() - 12;
+
+    let (mut executor, mut agent, _registry) = build_harness().await;
+    let store = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(store.clone());
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+
+    // A: report_id only. B: image only, same second — classic wrong link.
+    seed_report(
+        &store,
+        ts,
+        &[("metadata.image_id", serde_json::json!("cam01_A"))],
+    )
+    .await;
+    seed_report(&store, ts, &[("image_data", serde_json::json!(url_b))]).await;
+
+    let event_a = event_for("metadata.image_id", "cam01_A", ts);
+    let input = executor
+        .collect_data_with_event(&agent, &event_a)
+        .await
+        .expect("collect A");
+    let EventInput::Data(data) = &input else {
+        panic!("A should still yield Data, got {input:?}");
+    };
+    let frames: Vec<_> = data
+        .iter()
+        .filter(|d| d.values.get("_is_image").and_then(|v| v.as_bool()) == Some(true))
+        .collect();
+    assert!(
+        frames.is_empty(),
+        "orphan B must not attach via co-stamped report_id alone: {frames:?}"
+    );
+    let status = data
+        .iter()
+        .find(|d| d.data_type == "frame_status")
+        .expect("unconfirmed frame_status");
+    assert_eq!(
+        status.values.get("message").and_then(|v| v.as_str()),
+        Some("本次画面无法确定")
+    );
+
+    std::env::remove_var("NEOMIND_DATA_DIR");
+    let _ = std::fs::remove_dir_all(&data_dir);
+}
+
+/// NM-389: relative `/api/images/…` provenance must not displace fixture
+/// bytes — the mock vision/multimodal backend's actual request carries
+/// decodable JPEG fill bytes from the in-site path.
+#[serial_test::serial]
+#[tokio::test]
+async fn multimodal_backend_request_carries_fixture_bytes_not_relative_url() {
+    let data_dir = std::env::temp_dir().join(format!(
+        "neomind_test_multimodal_bytes_{}",
+        uuid::Uuid::new_v4()
+    ));
+    crate::testing_helpers::setup_test_image_dir(&data_dir).expect("image dir");
+    let frame_path = data_dir.join("images/test-device-001/image/frame_bytes_a.jpg");
+    std::fs::create_dir_all(frame_path.parent().unwrap()).expect("mkdir");
+    let mut bytes_a = vec![0xFF, 0xD8, 0xFF, 0xE0];
+    bytes_a.extend(std::iter::repeat_n(b'A', 2048));
+    std::fs::write(&frame_path, &bytes_a).expect("write A");
+    std::env::set_var("NEOMIND_DATA_DIR", data_dir.to_str().unwrap());
+
+    let url = "/api/images/test-device-001/image/frame_bytes_a.jpg";
+    let ts = chrono::Utc::now().timestamp() - 8;
+
+    let (mut executor, mut agent, _) = build_harness().await;
+    let store = neomind_storage::TimeSeriesStore::memory().expect("memory timeseries");
+    executor.set_time_series_storage(store.clone());
+    agent.schedule.schedule_type = ScheduleType::Event;
+    agent.schedule.event_filter = whole_device_filter();
+    agent.execution_mode = ExecutionMode::Free;
+    agent.user_prompt = "用 vision 分析摄像头画面".into();
+    executor.store().save_agent(&agent).await.expect("seed");
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(StubVisionTool));
+    executor.set_tool_registry(Arc::new(registry));
+
+    seed_report(
+        &store,
+        ts,
+        &[
+            ("metadata.image_id", serde_json::json!("cam01_A")),
+            ("image_data", serde_json::json!(url)),
+            (
+                "_raw",
+                serde_json::json!(format!(
+                    r#"{{"metadata":{{"image_id":"cam01_A"}},"image_data":"{url}"}}"#
+                )),
+            ),
+        ],
+    )
+    .await;
+
+    let rt = MockLlmRuntime::new(vec![MockResponse::text("现场正常")])
+        .with_function_calling()
+        .with_supports_images();
+    let rt_handle = rt.clone();
+    let rt_dyn: Arc<dyn LlmRuntime> = Arc::new(rt);
+    executor.set_llm_runtime(rt_dyn).await;
+
+    let record = executor
+        .execute_agent(agent.clone(), Some(event_for("image_data", url, ts)), None)
+        .await
+        .expect("run");
+    assert_eq!(
+        record.status,
+        neomind_storage::ExecutionStatus::Completed,
+        "error={:?}",
+        record.error
+    );
+
+    let captured = rt_handle.captured_messages();
+    assert!(!captured.is_empty(), "mock backend must see a request");
+    use base64::Engine;
+    let mut saw_fixture_bytes = false;
+    let dump = serde_json::to_string(&captured).unwrap_or_default();
+    // Prefer structured image_base64 / data fields from the actual request.
+    fn walk(v: &serde_json::Value, found: &mut bool) {
+        match v {
+            serde_json::Value::Object(map) => {
+                if let Some(data) = map.get("data").and_then(|d| d.as_str()) {
+                    if data.len() >= 1024 {
+                        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) {
+                            if bytes.iter().skip(4).any(|b| *b == b'A') {
+                                *found = true;
+                            }
+                        }
+                    }
+                }
+                if let Some(b64) = map.get("image_base64").and_then(|d| d.as_str()) {
+                    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64) {
+                        if bytes.iter().skip(4).any(|b| *b == b'A') {
+                            *found = true;
+                        }
+                    }
+                }
+                for child in map.values() {
+                    walk(child, found);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for child in items {
+                    walk(child, found);
+                }
+            }
+            _ => {}
+        }
+    }
+    walk(&serde_json::Value::Array(captured), &mut saw_fixture_bytes);
+    assert!(
+        saw_fixture_bytes,
+        "mock vision backend request must carry fixture fill-A bytes"
+    );
+    // Relative path may appear as provenance text, but must not be the only
+    // image part (image_url ContentPart with relative path).
+    assert!(
+        !dump.contains(r#""url":"/api/images/test-device-001/image/frame_bytes_a.jpg""#)
+            || saw_fixture_bytes,
+        "relative URL alone must not replace bytes"
+    );
+
+    std::env::remove_var("NEOMIND_DATA_DIR");
+    let _ = std::fs::remove_dir_all(&data_dir);
 }
 
 /// The snapshot is for triggers that cover the WHOLE device only. A trigger

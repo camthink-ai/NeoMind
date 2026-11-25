@@ -356,6 +356,42 @@ pub(crate) fn has_frame_unconfirmed(data: &[DataCollected]) -> bool {
         .any(|d| d.values.get("_frame_unconfirmed").and_then(|v| v.as_bool()) == Some(true))
 }
 
+/// Whether this agent task actually needs a confirmed frame for settle.
+///
+/// `_frame_unconfirmed` is written at collect time for whole-device triggers;
+/// non-vision tasks (plain temperature) must still Complete on their scalar
+/// input even when a same-second orphan image was rejected.
+pub(crate) fn task_needs_vision(agent: &neomind_storage::AiAgent) -> bool {
+    let prompt = agent.user_prompt.to_ascii_lowercase();
+    if prompt.contains("image")
+        || prompt.contains("vision")
+        || prompt.contains("camera")
+        || prompt.contains("photo")
+        || prompt.contains("frame")
+        || agent.user_prompt.contains("图片")
+        || agent.user_prompt.contains("看图")
+        || agent.user_prompt.contains("摄像头")
+        || agent.user_prompt.contains("画面")
+        || agent.user_prompt.contains("照片")
+    {
+        return true;
+    }
+    if let Some(filter) = agent.schedule.event_filter.as_deref() {
+        let lower = filter.to_ascii_lowercase();
+        if lower.contains("image") || lower.contains("frame") {
+            return true;
+        }
+    }
+    agent.resources.iter().any(|r| {
+        let id = r.resource_id.to_ascii_lowercase();
+        let name = r.name.to_ascii_lowercase();
+        id.contains("image")
+            || name.contains("image")
+            || id.contains("camera")
+            || name.contains("camera")
+    })
+}
+
 /// Rewrite conclusion / stop_reason / success_rate for a vision-undetermined run.
 ///
 /// Strips a trailing `Verdict: criteria met` so Judgment notify cannot fire on

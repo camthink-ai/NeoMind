@@ -1619,11 +1619,11 @@ impl AgentExecutor {
                         continue;
                     }
                     if let Some(anchor) = image_anchor_ts {
-                        // Second-level time alone is not same-report identity
-                        // (temp A then image B in the same second must not
-                        // feed B). Only a report-id doorbell
-                        // (metadata.image_id / …) whose value is co-stamped
-                        // with the image may attach timeseries frames.
+                        // Second-level time alone is not same-report identity.
+                        // Co-stamped report_id=A next to image B is also not
+                        // enough — the *image point* must itself prove it
+                        // belongs to A (URL/metadata embeds A, or a co-stamped
+                        // `_raw` envelope immutably pairs A with this image).
                         let trigger_is_report_id = trigger
                             .map(|t| is_report_id_metric(t.source.field.trim()))
                             .unwrap_or(false);
@@ -1638,6 +1638,7 @@ impl AgentExecutor {
                                 report_id_values_at(&report, anchor)
                                     .iter()
                                     .any(|v| v.as_str() == Some(id.as_str()))
+                                    && image_point_belongs_to_report_id(point, id, &report)
                             });
                         if !linked {
                             rejected_nearby_image = true;
@@ -2007,6 +2008,89 @@ fn report_id_values_at(
         .filter(|(name, point)| point.timestamp == anchor_ts && is_report_id_metric(name))
         .map(|(_, point)| point.value.clone())
         .collect()
+}
+
+/// True when the image point itself is immutably tied to `report_id`
+/// (not merely co-stamped with a sibling report_id metric).
+fn image_point_belongs_to_report_id(
+    point: &neomind_storage::timeseries::DataPoint,
+    report_id: &str,
+    report: &[(&String, &neomind_storage::timeseries::DataPoint)],
+) -> bool {
+    if report_id.is_empty() {
+        return false;
+    }
+    if image_payload_references_id(&point.value, point.metadata.as_ref(), report_id) {
+        return true;
+    }
+    // Whole-report sibling: co-stamped `_raw` envelope embeds both this
+    // image reference and the report id (camera uplink shape).
+    report
+        .iter()
+        .filter(|(name, p)| name.as_str() == "_raw" && p.timestamp == point.timestamp)
+        .any(|(_, raw)| raw_envelope_links_image_to_id(&raw.value, &point.value, report_id))
+}
+
+fn image_payload_references_id(
+    image_value: &serde_json::Value,
+    metadata: Option<&serde_json::Value>,
+    report_id: &str,
+) -> bool {
+    let mut haystacks: Vec<String> = match image_value {
+        serde_json::Value::String(s) => vec![s.clone()],
+        serde_json::Value::Object(obj) => ["image_url", "image_data", "url", "path", "value"]
+            .iter()
+            .filter_map(|k| obj.get(*k).and_then(|v| v.as_str()).map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    };
+    if let Some(meta) = metadata {
+        for key in ["image_id", "report_id", "metadata.image_id"] {
+            if let Some(v) = meta.get(key).and_then(|v| v.as_str()) {
+                haystacks.push(v.to_string());
+            }
+        }
+        if let Some(nested) = meta.get("metadata") {
+            if let Some(v) = nested.get("image_id").and_then(|v| v.as_str()) {
+                haystacks.push(v.to_string());
+            }
+        }
+        if let Some(s) = meta.as_str() {
+            haystacks.push(s.to_string());
+        }
+    }
+    haystacks.iter().any(|h| h.contains(report_id))
+}
+
+fn raw_envelope_links_image_to_id(
+    raw_value: &serde_json::Value,
+    image_value: &serde_json::Value,
+    report_id: &str,
+) -> bool {
+    let obj = match raw_value {
+        serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok(),
+        serde_json::Value::Object(_) => Some(raw_value.clone()),
+        _ => None,
+    };
+    let Some(obj) = obj else {
+        return false;
+    };
+    let envelope_id = obj
+        .pointer("/metadata/image_id")
+        .or_else(|| obj.get("image_id"))
+        .or_else(|| obj.get("report_id"))
+        .and_then(|v| v.as_str());
+    if envelope_id != Some(report_id) {
+        return false;
+    }
+    let Some(envelope_image) = obj.get("image_data") else {
+        return false;
+    };
+    json_values_equivalent(envelope_image, image_value)
+        || match (envelope_image.as_str(), image_value.as_str()) {
+            (Some(a), Some(b)) => a == b || a.contains(b) || b.contains(a),
+            _ => false,
+        }
 }
 
 /// Extract image data from a metric value.

@@ -813,8 +813,8 @@ impl AgentExecutor {
         //    calls used to Complete because vision_tools_all_failed([]) is
         //    false — "未发现人员" without looking), or
         // 3) Images were present but the conclusion admits vision never ran, or
-        // 4) Collector marked `_frame_unconfirmed` (trigger frame ownership
-        //    unprovable — must not Complete on a scripted "现场正常").
+        // 4) Collector marked `_frame_unconfirmed` *and* the task needs
+        //    vision (plain temp tasks ignore orphan same-second frames).
         // All land as ExecutionStatus::Partial with stop_reason =
         // vision_tools_failed — not Completed (false "现场正常") and not a
         // hard Err (so the finish path can emit Partial + Failure notify).
@@ -829,7 +829,8 @@ impl AgentExecutor {
                 &decision_process.conclusion,
                 vision_exec_path,
             );
-        let frame_unconfirmed = vision_path::has_frame_unconfirmed(data_collected);
+        let frame_unconfirmed = vision_path::has_frame_unconfirmed(data_collected)
+            && vision_path::task_needs_vision(agent);
         if vision_calls_failed
             || vision_never_confirmed
             || conclusion_admits_blind
