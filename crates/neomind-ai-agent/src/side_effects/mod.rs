@@ -13,7 +13,7 @@ use crate::model::{
     ActionDeliveryRecord, AgentExecutionRecord, AgentSpec, AlertVerdict, DeliveryState,
     EvidenceQuality, EvidenceReport, ExecutionStatus, NotifyPolicy,
 };
-use crate::ports::{ClockPort, SideEffectPort};
+use crate::ports::{ClockPort, SideEffectPort, SideEffectReceipt};
 use crate::store::InMemoryAgentStore;
 
 pub struct SideEffectBoundary {
@@ -37,95 +37,64 @@ impl SideEffectBoundary {
 
         // on_complete
         if should_notify_complete(&spec.notify, &exec) {
+            let body = exec
+                .brief_text
+                .clone()
+                .or_else(|| exec.conclusion.clone())
+                .unwrap_or_default();
+            let fp = format!("on_complete:{}", exec.id);
+            let subject = format!("Agent {} completed", spec.name);
             for ch in &spec.notify.channels {
-                let fp = format!("on_complete:{}", exec.id);
-                let claimed = self.store.try_claim_delivery(ActionDeliveryRecord {
-                    execution_id: exec.id.clone(),
-                    destination: ch.clone(),
-                    action_fingerprint: fp.clone(),
-                    depends_on: vec![],
-                    idempotent: true,
-                    state: DeliveryState::IntentPending,
-                })?;
-                if claimed {
-                    match self
-                        .notifier
-                        .deliver(
-                            ch,
-                            &format!("Agent {} completed", spec.name),
-                            exec.brief_text
-                                .as_deref()
-                                .or(exec.conclusion.as_deref())
-                                .unwrap_or(""),
-                            &exec.id,
-                        )
-                        .await
-                    {
-                        Ok(()) => {
-                            self.store.update_delivery_state(
-                                &exec.id,
-                                ch,
-                                &fp,
-                                DeliveryState::Accepted,
-                            )?;
-                            exec.deliveries.push(ActionDeliveryRecord {
-                                execution_id: exec.id.clone(),
-                                destination: ch.clone(),
-                                action_fingerprint: fp,
-                                depends_on: vec![],
-                                idempotent: true,
-                                state: DeliveryState::Accepted,
-                            });
-                        }
-                        Err(e) => {
-                            self.store.update_delivery_state(
-                                &exec.id,
-                                ch,
-                                &fp,
-                                DeliveryState::Rejected {
-                                    reason: e.to_string(),
-                                },
-                            )?;
-                        }
-                    }
-                }
+                self.settle_notify(&mut exec, ch, &fp, &subject, &body, vec![], true)
+                    .await?;
             }
         }
 
         // on_alert
         if should_notify_alert(&spec.notify, &exec) {
+            let body = exec.conclusion.clone().unwrap_or_else(|| "alert".into());
+            let fp = format!("on_alert:{}", exec.id);
+            let subject = format!("Agent {} alert", spec.name);
+            let deps = spec.notify.alert_depends_on.clone();
             for ch in &spec.notify.channels {
-                let fp = format!("on_alert:{}", exec.id);
-                let claimed = self.store.try_claim_delivery(ActionDeliveryRecord {
-                    execution_id: exec.id.clone(),
-                    destination: ch.clone(),
-                    action_fingerprint: fp.clone(),
-                    depends_on: spec.notify.alert_depends_on.clone(),
-                    idempotent: true,
-                    state: DeliveryState::IntentPending,
-                })?;
-                if claimed {
-                    let _ = self
-                        .notifier
-                        .deliver(
-                            ch,
-                            &format!("Agent {} alert", spec.name),
-                            exec.conclusion.as_deref().unwrap_or("alert"),
-                            &exec.id,
-                        )
-                        .await;
-                    self.store
-                        .update_delivery_state(&exec.id, ch, &fp, DeliveryState::Accepted)?;
-                    exec.deliveries.push(ActionDeliveryRecord {
-                        execution_id: exec.id.clone(),
-                        destination: ch.clone(),
-                        action_fingerprint: fp,
-                        depends_on: spec.notify.alert_depends_on.clone(),
-                        idempotent: true,
-                        state: DeliveryState::Accepted,
-                    });
-                }
+                self.settle_notify(&mut exec, ch, &fp, &subject, &body, deps.clone(), true)
+                    .await?;
             }
+        }
+
+        // on_failure — notify only; never control-writes
+        if should_notify_failure(&spec.notify, &exec) {
+            let body = exec
+                .error
+                .clone()
+                .unwrap_or_else(|| "execution failed".into());
+            let fp = format!("on_failure:{}", exec.id);
+            let subject = format!("Agent {} failed", spec.name);
+            for ch in &spec.notify.channels {
+                self.settle_notify(&mut exec, ch, &fp, &subject, &body, vec![], true)
+                    .await?;
+            }
+        }
+
+        // Failed / Skipped: zero control writes. Still record Rejected receipts so
+        // the execution row shows why nothing was sent (Partial evaluates deps).
+        if !allows_controlled_actions(exec.status) {
+            for action in &spec.controlled_actions {
+                exec.deliveries.push(ActionDeliveryRecord {
+                    execution_id: exec.id.clone(),
+                    destination: action.destination.clone(),
+                    action_fingerprint: format!("{}:forbidden", action.name),
+                    depends_on: action.depends_on.clone(),
+                    idempotent: action.idempotent,
+                    state: DeliveryState::Rejected {
+                        reason: format!(
+                            "execution status {:?} forbids controlled actions",
+                            exec.status
+                        ),
+                    },
+                });
+            }
+            return Ok(exec);
         }
 
         // controlled actions — frozen depends_on from spec
@@ -155,42 +124,129 @@ impl SideEffectBoundary {
             if !claimed {
                 continue;
             }
+            // Pre-send durable intent: IntentPending is already claimed in the
+            // store before the external call. Mirror onto the execution row and
+            // persist so a crash mid-invoke surfaces as IntentPending →
+            // OutcomeUnknown on recover (receiver count stays 1).
+            exec.deliveries.push(ActionDeliveryRecord {
+                execution_id: exec.id.clone(),
+                destination: action.destination.clone(),
+                action_fingerprint: fp.clone(),
+                depends_on: action.depends_on.clone(),
+                idempotent: action.idempotent,
+                state: DeliveryState::IntentPending,
+            });
+            if !action.idempotent {
+                self.store.save_execution(exec.clone())?;
+            }
+
             match self
                 .side_effects
                 .invoke(&action.destination, &action.name, &action.params, &exec.id)
                 .await
             {
-                Ok(()) => {
+                Ok(receipt) => {
+                    let state = match receipt {
+                        SideEffectReceipt::Accepted => DeliveryState::Accepted,
+                        SideEffectReceipt::Confirmed => DeliveryState::Confirmed,
+                    };
                     self.store.update_delivery_state(
                         &exec.id,
                         &action.destination,
                         &fp,
-                        DeliveryState::Accepted,
+                        state.clone(),
                     )?;
-                    exec.deliveries.push(ActionDeliveryRecord {
-                        execution_id: exec.id.clone(),
-                        destination: action.destination.clone(),
-                        action_fingerprint: fp,
-                        depends_on: action.depends_on.clone(),
-                        idempotent: action.idempotent,
-                        state: DeliveryState::Accepted,
-                    });
+                    if let Some(rec) = exec
+                        .deliveries
+                        .iter_mut()
+                        .find(|d| d.action_fingerprint == fp && d.destination == action.destination)
+                    {
+                        rec.state = state;
+                    }
                 }
                 Err(e) => {
+                    let state = DeliveryState::Rejected {
+                        reason: e.to_string(),
+                    };
                     self.store.update_delivery_state(
                         &exec.id,
                         &action.destination,
                         &fp,
-                        DeliveryState::Rejected {
-                            reason: e.to_string(),
-                        },
+                        state.clone(),
                     )?;
+                    if let Some(rec) = exec
+                        .deliveries
+                        .iter_mut()
+                        .find(|d| d.action_fingerprint == fp && d.destination == action.destination)
+                    {
+                        rec.state = state;
+                    }
                 }
             }
         }
 
         Ok(exec)
     }
+
+    async fn settle_notify(
+        &self,
+        exec: &mut AgentExecutionRecord,
+        channel: &str,
+        fingerprint: &str,
+        subject: &str,
+        body: &str,
+        depends_on: Vec<String>,
+        idempotent: bool,
+    ) -> Result<()> {
+        let claimed = self.store.try_claim_delivery(ActionDeliveryRecord {
+            execution_id: exec.id.clone(),
+            destination: channel.into(),
+            action_fingerprint: fingerprint.into(),
+            depends_on: depends_on.clone(),
+            idempotent,
+            state: DeliveryState::IntentPending,
+        })?;
+        if !claimed {
+            return Ok(());
+        }
+        // Durable intent before the external notify call.
+        exec.deliveries.push(ActionDeliveryRecord {
+            execution_id: exec.id.clone(),
+            destination: channel.into(),
+            action_fingerprint: fingerprint.into(),
+            depends_on: depends_on.clone(),
+            idempotent,
+            state: DeliveryState::IntentPending,
+        });
+
+        let state = match self
+            .notifier
+            .deliver(channel, subject, body, &exec.id)
+            .await
+        {
+            Ok(()) => DeliveryState::Accepted,
+            Err(e) => DeliveryState::Rejected {
+                reason: e.to_string(),
+            },
+        };
+        self.store
+            .update_delivery_state(&exec.id, channel, fingerprint, state.clone())?;
+        if let Some(rec) = exec
+            .deliveries
+            .iter_mut()
+            .find(|d| d.action_fingerprint == fingerprint && d.destination == channel)
+        {
+            rec.state = state;
+        }
+        Ok(())
+    }
+}
+
+fn allows_controlled_actions(status: ExecutionStatus) -> bool {
+    matches!(
+        status,
+        ExecutionStatus::Completed | ExecutionStatus::Partial
+    )
 }
 
 fn should_notify_complete(policy: &NotifyPolicy, exec: &AgentExecutionRecord) -> bool {
@@ -216,6 +272,13 @@ fn should_notify_alert(policy: &NotifyPolicy, exec: &AgentExecutionRecord) -> bo
     matches!(exec.alert_verdict, Some(AlertVerdict::CriteriaMet))
 }
 
+fn should_notify_failure(policy: &NotifyPolicy, exec: &AgentExecutionRecord) -> bool {
+    if policy.pending_confirmation || policy.channels.is_empty() || !policy.on_failure {
+        return false;
+    }
+    matches!(exec.status, ExecutionStatus::Failed) && !exec.is_probe
+}
+
 pub fn deps_fresh(evidence: &EvidenceReport, depends_on: &[String]) -> bool {
     if depends_on.is_empty() {
         return evidence.missing_keys.is_empty()
@@ -239,6 +302,8 @@ pub fn deps_fresh(evidence: &EvidenceReport, depends_on: &[String]) -> bool {
 #[derive(Clone, Default)]
 pub struct FakeSideEffectPort {
     inner: std::sync::Arc<std::sync::Mutex<Vec<(String, String, String)>>>,
+    /// When true, successful invokes report [`SideEffectReceipt::Confirmed`].
+    confirm: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FakeSideEffectPort {
@@ -253,6 +318,11 @@ impl FakeSideEffectPort {
     pub fn calls(&self) -> Vec<(String, String, String)> {
         self.inner.lock().expect("lock").clone()
     }
+
+    pub fn set_confirm(&self, confirm: bool) {
+        self.confirm
+            .store(confirm, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 #[async_trait::async_trait]
@@ -263,12 +333,16 @@ impl SideEffectPort for FakeSideEffectPort {
         action: &str,
         params: &serde_json::Value,
         execution_id: &str,
-    ) -> Result<()> {
+    ) -> Result<SideEffectReceipt> {
         self.inner.lock().expect("lock").push((
             destination.into(),
             action.into(),
             format!("{execution_id}:{params}"),
         ));
-        Ok(())
+        if self.confirm.load(std::sync::atomic::Ordering::SeqCst) {
+            Ok(SideEffectReceipt::Confirmed)
+        } else {
+            Ok(SideEffectReceipt::Accepted)
+        }
     }
 }

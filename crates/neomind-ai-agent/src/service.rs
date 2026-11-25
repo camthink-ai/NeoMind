@@ -197,12 +197,23 @@ impl AgentApplicationService {
         }
         exec.finished_at = self.clock.now_ms();
 
+        // Persist the execution skeleton before settle so non-idempotent
+        // IntentPending claims are restart-visible (formal history upserts by id).
+        if !dry_run {
+            self.store.save_execution(exec.clone())?;
+        }
+
         let exec = self.side_effects.settle(&spec, exec, dry_run).await?;
 
         if !dry_run {
             self.store.save_execution(exec.clone())?;
             let mut rt = self.store.get_runtime(id)?;
+            let tz = crate::coordinator::quota::quota_timezone(&spec.pacing, &spec.trigger);
+            crate::coordinator::quota::roll_quota_day(&mut rt.stats, self.clock.now_ms(), &tz);
             rt.stats.total_runs += 1;
+            if !matches!(exec.status, crate::model::ExecutionStatus::Skipped) {
+                rt.stats.runs_today = rt.stats.runs_today.saturating_add(1);
+            }
             match exec.status {
                 crate::model::ExecutionStatus::Completed => {
                     rt.stats.successful_runs += 1;
@@ -380,7 +391,7 @@ fn validate_keys_and_deps(keys: &[String], deps: &[String], key_refs: &[&str]) -
 }
 
 pub fn plan_from_spec(spec: &AgentSpec) -> EffectivePlan {
-    let (trigger_summary, timezone) = match &spec.trigger {
+    let (trigger_summary, trigger_tz) = match &spec.trigger {
         TriggerSpec::Cron { expr, timezone } => (
             format!("cron `{expr}` ({timezone})"),
             Some(timezone.clone()),
@@ -389,6 +400,13 @@ pub fn plan_from_spec(spec: &AgentSpec) -> EffectivePlan {
         TriggerSpec::Event { .. } => ("event".into(), None),
         TriggerSpec::Manual => ("manual".into(), None),
     };
+    // Preview timezone prefers pacing.timezone (quota window), then cron TZ.
+    let timezone = spec
+        .pacing
+        .timezone
+        .clone()
+        .filter(|s| !s.is_empty())
+        .or(trigger_tz);
     let authorized_reads = spec
         .input
         .requirements

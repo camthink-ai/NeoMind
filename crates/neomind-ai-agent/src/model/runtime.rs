@@ -22,6 +22,12 @@ pub struct AgentStats {
     pub skipped_daily_limit: u64,
     pub skipped_permit_timeout: u64,
     pub consecutive_failures: u32,
+    /// Formal auto-trigger runs counted against [`crate::model::PacingPolicy::max_runs_per_day`].
+    #[serde(default)]
+    pub runs_today: u64,
+    /// Business-day key (`YYYY-MM-DD`) for [`Self::runs_today`] in the agent's quota timezone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_day: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_execution_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

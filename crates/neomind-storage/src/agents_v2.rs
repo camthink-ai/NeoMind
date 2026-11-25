@@ -87,6 +87,8 @@ pub struct PacingPolicy {
     pub min_interval_secs: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_runs_per_day: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     #[serde(default = "default_failure_threshold")]
     pub failure_threshold: u32,
 }
@@ -198,6 +200,10 @@ pub struct AgentStatsV2 {
     pub skipped_permit_timeout: u64,
     #[serde(default)]
     pub consecutive_failures: u32,
+    #[serde(default)]
+    pub runs_today: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_day: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_execution_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -384,6 +390,7 @@ fn map_pacing(agent: &AiAgent) -> PacingPolicy {
             burst_merge_secs: Some(cfg.debounce_secs),
             min_interval_secs: cfg.event_cooldown_secs,
             max_runs_per_day: cfg.max_calls_per_day,
+            timezone: None,
             failure_threshold: u32::from(cfg.consecutive_failure_threshold),
         },
         None => PacingPolicy::default(),
@@ -424,6 +431,8 @@ fn map_stats(
         skipped_daily_limit: 0,
         skipped_permit_timeout: 0,
         consecutive_failures,
+        runs_today: 0,
+        quota_day: None,
         last_execution_at,
         last_execution_id: None,
     }
@@ -1002,6 +1011,53 @@ impl AgentStoreV2 {
         }
         write.commit()?;
         Ok(())
+    }
+
+    /// Mark every `IntentPending` delivery as `OutcomeUnknown` (crash / restart).
+    ///
+    /// Does not resend — receiver count must stay at whatever already landed.
+    pub fn recover_stale_intents(&self) -> Result<Vec<ActionDeliveryRecord>> {
+        let write = self.db.begin_write()?;
+        let mut out = Vec::new();
+        {
+            let mut table = write.open_table(AGENT_EXECUTIONS_TABLE)?;
+            let keys: Vec<String> = table
+                .iter()?
+                .filter_map(|e| e.ok().map(|(k, _)| k.value().to_string()))
+                .collect();
+            for key in keys {
+                let existing = {
+                    let Some(guard) = table.get(key.as_str())? else {
+                        continue;
+                    };
+                    guard.value().to_vec()
+                };
+                let mut exec: AgentExecutionRecordV2 = match serde_json::from_slice(&existing) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        tracing::warn!("skip corrupt agent_executions row on recover: {e}");
+                        continue;
+                    }
+                };
+                let mut changed = false;
+                for d in &mut exec.deliveries {
+                    if matches!(d.state, DeliveryState::IntentPending) {
+                        d.state = DeliveryState::OutcomeUnknown {
+                            reason: "crashed_before_receipt".into(),
+                        };
+                        out.push(d.clone());
+                        changed = true;
+                    }
+                }
+                if changed {
+                    let bytes = serde_json::to_vec(&exec)
+                        .map_err(|e| Error::Serialization(e.to_string()))?;
+                    table.insert(key.as_str(), bytes.as_slice())?;
+                }
+            }
+        }
+        write.commit()?;
+        Ok(out)
     }
 
     // ── Memory / user messages ──────────────────────────────────────────────

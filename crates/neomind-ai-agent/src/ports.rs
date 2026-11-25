@@ -172,6 +172,19 @@ pub trait NotifyPort: Send + Sync {
     ) -> Result<()>;
 }
 
+/// What a successful controlled-action invoke actually proves.
+///
+/// Broker/extension acceptance is **not** a device acknowledgment — only
+/// [`SideEffectReceipt::Confirmed`] may be surfaced as "device executed".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SideEffectReceipt {
+    /// Gateway / extension / adapter accepted the request; device ACK absent.
+    Accepted,
+    /// Device explicitly acknowledged (or physical effect verified).
+    Confirmed,
+}
+
 /// Device/extension write port for controlled actions.
 #[async_trait]
 pub trait SideEffectPort: Send + Sync {
@@ -181,7 +194,7 @@ pub trait SideEffectPort: Send + Sync {
         action: &str,
         params: &serde_json::Value,
         execution_id: &str,
-    ) -> Result<()>;
+    ) -> Result<SideEffectReceipt>;
 }
 
 /// Clock port for deterministic tests.

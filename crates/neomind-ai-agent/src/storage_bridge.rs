@@ -110,6 +110,8 @@ pub fn runtime_to_storage(rt: &AgentRuntimeRecord) -> StorageRuntime {
             skipped_daily_limit: rt.stats.skipped_daily_limit,
             skipped_permit_timeout: rt.stats.skipped_permit_timeout,
             consecutive_failures: rt.stats.consecutive_failures,
+            runs_today: rt.stats.runs_today,
+            quota_day: rt.stats.quota_day.clone(),
             last_execution_at: rt.stats.last_execution_at,
             last_execution_id: rt.stats.last_execution_id.clone(),
         },
@@ -156,6 +158,7 @@ fn pacing_to_storage(p: &PacingPolicy) -> StoragePacing {
         burst_merge_secs: p.burst_merge_secs,
         min_interval_secs: p.min_interval_secs,
         max_runs_per_day: p.max_runs_per_day,
+        timezone: p.timezone.clone(),
         failure_threshold: p.failure_threshold,
     }
 }
@@ -165,6 +168,7 @@ fn pacing_from_storage(p: &StoragePacing) -> PacingPolicy {
         burst_merge_secs: p.burst_merge_secs,
         min_interval_secs: p.min_interval_secs,
         max_runs_per_day: p.max_runs_per_day,
+        timezone: p.timezone.clone(),
         failure_threshold: p.failure_threshold,
     }
 }
