@@ -11,8 +11,6 @@ export interface EditorSectionProps {
   meta?: ReactNode
   /** Optional trailing actions (e.g. Add) */
   actions?: ReactNode
-  /** Optional short hint under the title */
-  description?: string
   children: ReactNode
   className?: string
   /** data-section attribute for tests / a11y */
@@ -25,7 +23,6 @@ export function EditorSection({
   title,
   meta,
   actions,
-  description,
   children,
   className,
   'data-section': dataSection,
@@ -41,7 +38,7 @@ export function EditorSection({
       data-section={dataSection}
     >
       <header className="mb-4 flex items-start justify-between gap-3">
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
             <h3 className="text-base font-semibold tracking-tight text-foreground">
               {title}
@@ -50,9 +47,6 @@ export function EditorSection({
               <span className="text-xs text-muted-foreground">{meta}</span>
             ) : null}
           </div>
-          {description ? (
-            <p className="text-sm text-muted-foreground">{description}</p>
-          ) : null}
         </div>
         {actions ? <div className="shrink-0">{actions}</div> : null}
       </header>

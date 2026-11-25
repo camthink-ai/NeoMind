@@ -811,8 +811,8 @@
     "dailyBriefHint": "Pick a task type, then name, mission, and when it runs.",
     "basicsTitle": "Mission",
     "basicsHint": "Name the agent and describe what it should do.",
-    "namePlaceholder": "e.g. Floor daily brief",
-    "promptPlaceholder": "Describe the job in plain language…",
+    "namePlaceholder": "Name",
+    "promptPlaceholder": "Mission",
     "footerHint": "Changes apply on save.",
     "save": "Save agent",
     "name": "Name",
@@ -847,7 +847,7 @@
       }
     },
     "when": {
-      "title": "When it runs",
+      "title": "When",
       "hint": "Simple schedule picks; raw cron lives under Advanced.",
       "mode": "Mode",
       "daily": "Every day at…",
@@ -863,7 +863,7 @@
       "manualHint": "Never auto-scheduled — run it yourself."
     },
     "sources": {
-      "title": "What it may read",
+      "title": "Sources",
       "hint": "Tap devices or extensions by their plain names.",
       "loading": "Loading devices and extensions…",
       "selected": "{{count}} sources selected",
@@ -872,7 +872,7 @@
       "emptyCatalog": "No devices or extensions yet"
     },
     "notifySimple": {
-      "title": "Notify (optional)",
+      "title": "Notify",
       "hint": "Off unless you need it; failures stay on by default.",
       "onComplete": "Notify on complete",
       "onCompleteDesc": "Send a message after every successful run",
@@ -908,7 +908,7 @@
       "notifyHint": "Alert deps, pending confirmation, etc."
     },
     "trigger": {
-      "title": "Trigger (cron / event)",
+      "title": "Trigger",
       "sectionHint": "Raw schedule expressions — prefer When it runs above.",
       "kind": "Trigger type",
       "cron": "Cron",
@@ -924,7 +924,7 @@
       "eventHint": "Fires when the event filter matches"
     },
     "input": {
-      "title": "Input contract",
+      "title": "Input",
       "sectionHint": "Keys, operations, and freshness.",
       "count": "{{count}} sources",
       "empty": "No input requirements yet — add extension or device reads",
@@ -948,7 +948,7 @@
       "disabledHint": "Host InputPipeline still reads authorized sources"
     },
     "notify": {
-      "title": "Notify policy",
+      "title": "Notify",
       "sectionHint": "Where and when operators hear from this agent.",
       "channels": "Channels",
       "channelsHint": "Comma-separated channel ids; empty = silent",
@@ -986,7 +986,7 @@
       "warnings": "Warnings"
     },
     "tools": {
-      "title": "Tool policy",
+      "title": "Tools",
       "sectionHint": "What the model may call during a run.",
       "mode": "Mode",
       "hint": "Daily briefs usually keep model tools off.",
@@ -1000,32 +1000,32 @@
       "title": "Live summary",
       "hint": "Updates as you edit on the left.",
       "template": "Task type",
-      "noTemplate": "Not selected yet",
+      "noTemplate": "—",
       "name": "Name",
       "mission": "Mission",
       "when": "When",
       "sources": "Sources",
-      "noSources": "No sources yet",
+      "noSources": "—",
       "tools": "Tools",
       "notify": "Notify",
-      "empty": "(empty)",
+      "empty": "—",
       "model": "Model",
       "modelActive": "Global default",
-      "output": "Structured output",
+      "output": "Output",
       "outputOff": "Off"
     },
     "model": {
       "label": "Model",
-      "useActive": "Use global default",
+      "useActive": "Global default",
       "useActiveNamed": "Global default ({{name}})"
     },
     "output": {
-      "title": "Structured output",
+      "title": "Output",
       "enabled": "JSON fields",
       "fields": "Field names",
       "add": "Add",
       "remove": "Remove field",
-      "namePlaceholder": "e.g. status"
+      "namePlaceholder": "field"
     }
   }
 }

@@ -80,9 +80,7 @@ export function SimpleNotifySection({ value, onChange, className }: SimpleNotify
           <p className="text-sm font-medium text-foreground">
             {t('editorV2.notifySimple.channels')}
           </p>
-          {channels.length === 0 ? (
-            <p className="text-xs text-muted-foreground">{t('editorV2.notifySimple.noChannels')}</p>
-          ) : (
+          {channels.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {channels.map((ch) => {
                 const on = policy.channels.includes(ch.name)

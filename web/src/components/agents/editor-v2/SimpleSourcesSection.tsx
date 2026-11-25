@@ -123,77 +123,68 @@ export function SimpleSourcesSection({
   if (loading) {
     return (
       <div className={cn('flex items-center gap-2 text-sm text-muted-foreground', className)}>
-        <Loader2 className="h-4 w-4 animate-spin" />
-        {t('editorV2.sources.loading')}
+        <Loader2 className="h-4 w-4 animate-spin" aria-label={t('editorV2.sources.loading')} />
       </div>
     )
   }
 
-  const noCatalog = devices.length === 0 && extensions.length === 0
-
   return (
     <div className={cn('space-y-4', className)} data-section="sources-simple">
-      {noCatalog ? (
-        <p className="text-sm text-muted-foreground">{t('editorV2.sources.emptyCatalog')}</p>
-      ) : (
-        <>
-          {devices.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {t('editorV2.sources.devices')}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {devices.map((d) => {
-                  const id = d.device_id || d.id
-                  const on = isDeviceSelected(requirements, id)
-                  return (
-                    <Button
-                      key={id}
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => toggleDevice(d)}
-                      className={cn(
-                        on && 'border-primary bg-muted text-foreground',
-                        !on && 'text-muted-foreground',
-                      )}
-                    >
-                      {d.name || id}
-                    </Button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
+      {devices.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {t('editorV2.sources.devices')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {devices.map((d) => {
+              const id = d.device_id || d.id
+              const on = isDeviceSelected(requirements, id)
+              return (
+                <Button
+                  key={id}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => toggleDevice(d)}
+                  className={cn(
+                    on && 'border-primary bg-muted text-foreground',
+                    !on && 'text-muted-foreground',
+                  )}
+                >
+                  {d.name || id}
+                </Button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
-          {extensions.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {t('editorV2.sources.extensions')}
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {extensions.map((ext) => {
-                  const on = isExtSelected(requirements, ext.id)
-                  return (
-                    <Button
-                      key={ext.id}
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => toggleExtension(ext)}
-                      className={cn(
-                        on && 'border-primary bg-muted text-foreground',
-                        !on && 'text-muted-foreground',
-                      )}
-                    >
-                      {ext.name || ext.id}
-                    </Button>
-                  )
-                })}
-              </div>
-            </div>
-          )}
-        </>
+      {extensions.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {t('editorV2.sources.extensions')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {extensions.map((ext) => {
+              const on = isExtSelected(requirements, ext.id)
+              return (
+                <Button
+                  key={ext.id}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => toggleExtension(ext)}
+                  className={cn(
+                    on && 'border-primary bg-muted text-foreground',
+                    !on && 'text-muted-foreground',
+                  )}
+                >
+                  {ext.name || ext.id}
+                </Button>
+              )
+            })}
+          </div>
+        </div>
       )}
     </div>
   )

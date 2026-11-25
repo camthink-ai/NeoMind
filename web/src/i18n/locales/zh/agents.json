@@ -811,8 +811,8 @@
     "dailyBriefHint": "先选任务类型，再填写名称、任务与何时运行。",
     "basicsTitle": "任务",
     "basicsHint": "给智能体起名，并写清它要做的事。",
-    "namePlaceholder": "例如：车间每日简报",
-    "promptPlaceholder": "用自然语言描述它要完成的任务…",
+    "namePlaceholder": "名称",
+    "promptPlaceholder": "任务说明",
     "footerHint": "保存后生效。",
     "save": "保存智能体",
     "name": "名称",
@@ -847,7 +847,7 @@
       }
     },
     "when": {
-      "title": "何时运行",
+      "title": "何时",
       "hint": "用简单选项设定时间表；完整 Cron 在高级里。",
       "mode": "方式",
       "daily": "每天固定时刻",
@@ -863,7 +863,7 @@
       "manualHint": "不会自动调度，只能手动点运行。"
     },
     "sources": {
-      "title": "读取哪些数据",
+      "title": "读取",
       "hint": "点选设备或扩展；用普通人能看懂的名字。",
       "loading": "正在加载设备与扩展…",
       "selected": "已选 {{count}} 个来源",
@@ -872,7 +872,7 @@
       "emptyCatalog": "暂无设备或扩展"
     },
     "notifySimple": {
-      "title": "通知（可选）",
+      "title": "通知",
       "hint": "需要时再打开；默认失败才提醒。",
       "onComplete": "完成时通知",
       "onCompleteDesc": "每次成功跑完都发一条",
@@ -908,7 +908,7 @@
       "notifyHint": "告警依赖、待确认等细节。"
     },
     "trigger": {
-      "title": "触发（Cron / 事件）",
+      "title": "触发",
       "sectionHint": "原始调度表达式；日常请用上方「何时运行」。",
       "kind": "触发类型",
       "cron": "Cron",
@@ -924,7 +924,7 @@
       "eventHint": "匹配事件过滤条件时触发"
     },
     "input": {
-      "title": "输入契约",
+      "title": "输入",
       "sectionHint": "键名、操作与新鲜度策略。",
       "count": "{{count}} 个来源",
       "empty": "尚无输入要求 — 可添加扩展或设备读取",
@@ -948,7 +948,7 @@
       "disabledHint": "宿主 InputPipeline 仍会按授权读取来源"
     },
     "notify": {
-      "title": "通知策略",
+      "title": "通知",
       "sectionHint": "何时、通过哪些通道通知运维。",
       "channels": "通道",
       "channelsHint": "逗号分隔的通道 ID；空表示静默",
@@ -986,7 +986,7 @@
       "warnings": "警告"
     },
     "tools": {
-      "title": "工具策略",
+      "title": "工具",
       "sectionHint": "运行中模型可调用的能力。",
       "mode": "模式",
       "hint": "日报类配置通常关闭模型工具。",
@@ -1000,32 +1000,32 @@
       "title": "实时摘要",
       "hint": "左侧改动会即时反映在这里。",
       "template": "任务类型",
-      "noTemplate": "尚未选择",
+      "noTemplate": "—",
       "name": "名称",
       "mission": "任务说明",
       "when": "何时运行",
       "sources": "读取来源",
-      "noSources": "尚未选择来源",
+      "noSources": "—",
       "tools": "工具",
       "notify": "通知",
-      "empty": "（未填写）",
+      "empty": "—",
       "model": "模型",
       "modelActive": "全局默认",
-      "output": "结构化输出",
-      "outputOff": "未启用"
+      "output": "输出",
+      "outputOff": "关"
     },
     "model": {
       "label": "模型",
-      "useActive": "使用全局默认",
+      "useActive": "全局默认",
       "useActiveNamed": "全局默认（{{name}}）"
     },
     "output": {
-      "title": "结构化输出",
-      "enabled": "输出 JSON 字段",
+      "title": "输出",
+      "enabled": "JSON 字段",
       "fields": "字段名",
       "add": "添加",
       "remove": "删除字段",
-      "namePlaceholder": "例如 status"
+      "namePlaceholder": "字段名"
     }
   }
 }

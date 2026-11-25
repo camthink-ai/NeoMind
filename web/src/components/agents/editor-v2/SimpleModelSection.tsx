@@ -27,7 +27,6 @@ export interface SimpleModelSectionProps {
 export function SimpleModelSection({ value, onChange, className }: SimpleModelSectionProps) {
   const { t } = useTranslation('agents')
   const [backends, setBackends] = useState<LlmBackendInstance[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -36,13 +35,9 @@ export function SimpleModelSection({ value, onChange, className }: SimpleModelSe
       .then((resp) => {
         if (cancelled) return
         setBackends(resp.backends ?? [])
-        setActiveId(resp.active_id ?? null)
       })
       .catch(() => {
-        if (!cancelled) {
-          setBackends([])
-          setActiveId(null)
-        }
+        if (!cancelled) setBackends([])
       })
     return () => {
       cancelled = true
@@ -62,13 +57,7 @@ export function SimpleModelSection({ value, onChange, className }: SimpleModelSe
             <SelectValue placeholder={t('editorV2.model.useActive')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={ACTIVE_VALUE}>
-              {activeId
-                ? t('editorV2.model.useActiveNamed', {
-                    name: backends.find((b) => b.id === activeId)?.name ?? activeId,
-                  })
-                : t('editorV2.model.useActive')}
-            </SelectItem>
+            <SelectItem value={ACTIVE_VALUE}>{t('editorV2.model.useActive')}</SelectItem>
             {backends.map((b) => (
               <SelectItem key={b.id} value={b.id}>
                 {b.name}

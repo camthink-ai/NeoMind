@@ -74,13 +74,6 @@ export function SimpleOutputSection({ value, onChange, className }: SimpleOutput
 
       {enabled && (
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-medium text-foreground">{t('editorV2.output.fields')}</p>
-            <Button type="button" variant="outline" size="sm" onClick={addField}>
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-              {t('editorV2.output.add')}
-            </Button>
-          </div>
           <ul className="space-y-2">
             {contract.fields.map((field, index) => (
               <li key={index} className="flex items-center gap-2">
@@ -103,6 +96,10 @@ export function SimpleOutputSection({ value, onChange, className }: SimpleOutput
               </li>
             ))}
           </ul>
+          <Button type="button" variant="outline" size="sm" onClick={addField}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            {t('editorV2.output.add')}
+          </Button>
         </div>
       )}
     </div>

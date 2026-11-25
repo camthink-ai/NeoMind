@@ -83,9 +83,7 @@ export function InputContractSection({ value, onChange, className }: InputContra
         </Button>
       }
     >
-      {requirements.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t('editorV2.input.empty')}</p>
-      ) : (
+      {requirements.length > 0 && (
         <ul className="space-y-3">
           {requirements.map((req, index) => (
             <li
@@ -140,11 +138,6 @@ export function InputContractSection({ value, onChange, className }: InputContra
                   </FormField>
                 )}
               </div>
-              {req.auth_scope && (
-                <p className="text-xs text-muted-foreground">
-                  {t('editorV2.input.auth')}: {req.auth_scope}
-                </p>
-              )}
             </li>
           ))}
         </ul>
