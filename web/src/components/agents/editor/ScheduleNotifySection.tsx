@@ -377,7 +377,7 @@ export function ScheduleNotifySection({
                       <SelectContent>
                         {[0, 5, 10, 15, 20, 30, 45].map((m) => (
                           <SelectItem key={m} value={String(m)}>
-                            :{String(m).padStart(2, '0')}
+                            {String(m).padStart(2, '0')}
                           </SelectItem>
                         ))}
                       </SelectContent>
