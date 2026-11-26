@@ -372,29 +372,30 @@ export function UnifiedInputsSection({
 
                 {/* Collapsible policy & key drawer */}
                 {isExpanded && (
-                  <div className="grid gap-3 border-t border-border bg-muted-20 px-3.5 py-3 sm:grid-cols-2 lg:grid-cols-3">
-                    <div className="space-y-1">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        {t('editorV2.input.key')}
-                      </span>
-                      <Input
-                        value={req.key}
-                        onChange={(e) => updateAt(index, { key: e.target.value })}
-                        aria-label={t('editorV2.input.key')}
-                        className="h-9 font-mono text-xs"
-                      />
-                    </div>
+                  <div className="space-y-3 bg-muted-20 px-3.5 py-3">
+                    {/* Primary 3-column stable row: Key, Freshness kind, On missing */}
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="space-y-1">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {t('editorV2.input.key')}
+                        </span>
+                        <Input
+                          value={req.key}
+                          onChange={(e) => updateAt(index, { key: e.target.value })}
+                          aria-label={t('editorV2.input.key')}
+                          className="h-9 font-mono text-xs"
+                        />
+                      </div>
 
-                    <div className="space-y-1">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        {t('editorV2.picker.freshness')}
-                      </span>
-                      <div className="flex items-center gap-1.5">
+                      <div className="space-y-1">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {t('editorV2.picker.freshness')}
+                        </span>
                         <Select
                           value={req.freshness?.kind ?? 'any'}
                           onValueChange={(v) => setFreshnessKind(index, v as FreshnessPolicy['kind'])}
                         >
-                          <SelectTrigger className="h-9 flex-1 text-xs">
+                          <SelectTrigger className="h-9 text-xs">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -404,124 +405,158 @@ export function UnifiedInputsSection({
                             <SelectItem value="any">{t('detail.freshnessAny')}</SelectItem>
                           </SelectContent>
                         </Select>
-                        {req.freshness?.kind === 'latest_within' && (
-                          <div className="flex items-center gap-1">
-                            <Input
-                              type="number"
-                              min={1}
-                              value={req.freshness.max_age_secs}
-                              onChange={(e) =>
-                                updateAt(index, {
-                                  freshness: {
-                                    kind: 'latest_within',
-                                    max_age_secs: Math.max(1, Number(e.target.value) || 60),
-                                  },
-                                })
-                              }
-                              aria-label={t('editorV2.picker.maxAgeSecs')}
-                              className="h-9 w-20 text-xs tabular-nums"
-                            />
-                            <span className="text-xs text-muted-foreground">{t('editorV2.picker.secsUnit')}</span>
-                          </div>
-                        )}
                       </div>
-                      {req.freshness?.kind === 'lookback_window' && (
-                        <div className="flex items-center gap-1.5 pt-1">
-                          <Input
-                            type="number"
-                            min={60}
-                            value={req.freshness.lookback_secs}
-                            onChange={(e) =>
-                              updateAt(index, {
-                                freshness: {
-                                  kind: 'lookback_window',
-                                  lookback_secs: Math.max(60, Number(e.target.value) || 3600),
-                                  max_points:
-                                    req.freshness.kind === 'lookback_window'
-                                      ? req.freshness.max_points
-                                      : 60,
-                                },
-                              })
-                            }
-                            aria-label={t('editorV2.picker.lookbackSecs')}
-                            className="h-9 w-20 text-xs tabular-nums"
-                          />
-                          <span className="text-xs text-muted-foreground">{t('editorV2.picker.secsUnit')}</span>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={req.freshness.max_points}
-                            onChange={(e) =>
-                              updateAt(index, {
-                                freshness: {
-                                  kind: 'lookback_window',
-                                  lookback_secs:
-                                    req.freshness.kind === 'lookback_window'
-                                      ? req.freshness.lookback_secs
-                                      : 3600,
-                                  max_points: Math.max(1, Number(e.target.value) || 60),
-                                },
-                              })
-                            }
-                            aria-label={t('editorV2.picker.maxPoints')}
-                            className="h-9 w-16 text-xs tabular-nums"
-                          />
-                          <span className="text-xs text-muted-foreground">{t('editorV2.picker.ptsUnit')}</span>
-                        </div>
-                      )}
-                    </div>
 
-                    <div className="space-y-1">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        {t('editorV2.picker.onMissing')}
-                      </span>
-                      <Select
-                        value={req.on_missing ?? 'report_stale'}
-                        onValueChange={(v) => updateAt(index, { on_missing: v as MissingPolicy })}
-                      >
-                        <SelectTrigger className="h-9 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="report_stale">{t('detail.missingReportStale')}</SelectItem>
-                          <SelectItem value="undetermined">{t('detail.missingUndetermined')}</SelectItem>
-                          <SelectItem value="skip">{t('detail.missingSkip')}</SelectItem>
-                          <SelectItem value="ignore">{t('detail.missingIgnore')}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {req.source.kind === 'extension_instance' && (
                       <div className="space-y-1">
                         <span className="text-xs font-medium text-muted-foreground">
-                          {t('editorV2.picker.extensionOp')}
+                          {t('editorV2.picker.onMissing')}
                         </span>
-                        {extMatch?.commands && extMatch.commands.length > 0 ? (
-                          <Select
-                            value={req.operation || '__default__'}
-                            onValueChange={(v) =>
-                              updateAt(index, { operation: v === '__default__' ? undefined : v })
-                            }
-                          >
-                            <SelectTrigger className="h-9 font-mono text-xs">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="__default__">{t('editorV2.picker.extensionDefaultOp')}</SelectItem>
-                              {extMatch.commands.map((cmd) => (
-                                <SelectItem key={cmd.id} value={cmd.id}>
-                                  {cmd.display_name || cmd.id}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <Input
-                            value={req.operation ?? ''}
-                            onChange={(e) => updateAt(index, { operation: e.target.value || undefined })}
-                            placeholder="current"
-                            className="h-9 font-mono text-xs"
-                          />
+                        <Select
+                          value={req.on_missing ?? 'report_stale'}
+                          onValueChange={(v) => updateAt(index, { on_missing: v as MissingPolicy })}
+                        >
+                          <SelectTrigger className="h-9 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="report_stale">{t('detail.missingReportStale')}</SelectItem>
+                            <SelectItem value="undetermined">{t('detail.missingUndetermined')}</SelectItem>
+                            <SelectItem value="skip">{t('detail.missingSkip')}</SelectItem>
+                            <SelectItem value="ignore">{t('detail.missingIgnore')}</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    {/* Secondary parameter row (never shifts the 3-column controls above) */}
+                    {(req.freshness?.kind === 'latest_within' ||
+                      req.freshness?.kind === 'lookback_window' ||
+                      req.source.kind === 'extension_instance') && (
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {req.freshness?.kind === 'latest_within' && (
+                          <div className="space-y-1">
+                            <span className="text-xs text-muted-foreground">
+                              {t('editorV2.picker.maxAgeSecs')}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <Input
+                                type="number"
+                                min={1}
+                                value={req.freshness.max_age_secs}
+                                onChange={(e) =>
+                                  updateAt(index, {
+                                    freshness: {
+                                      kind: 'latest_within',
+                                      max_age_secs: Math.max(1, Number(e.target.value) || 60),
+                                    },
+                                  })
+                                }
+                                aria-label={t('editorV2.picker.maxAgeSecs')}
+                                className="h-9 text-xs tabular-nums"
+                              />
+                              <span className="shrink-0 text-xs text-muted-foreground">
+                                {t('editorV2.picker.secsUnit')}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {req.freshness?.kind === 'lookback_window' && (
+                          <>
+                            <div className="space-y-1">
+                              <span className="text-xs text-muted-foreground">
+                                {t('editorV2.picker.lookbackSecs')}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <Input
+                                  type="number"
+                                  min={60}
+                                  value={req.freshness.lookback_secs}
+                                  onChange={(e) =>
+                                    updateAt(index, {
+                                      freshness: {
+                                        kind: 'lookback_window',
+                                        lookback_secs: Math.max(60, Number(e.target.value) || 3600),
+                                        max_points:
+                                          req.freshness.kind === 'lookback_window'
+                                            ? req.freshness.max_points
+                                            : 60,
+                                      },
+                                    })
+                                  }
+                                  aria-label={t('editorV2.picker.lookbackSecs')}
+                                  className="h-9 text-xs tabular-nums"
+                                />
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                  {t('editorV2.picker.secsUnit')}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <span className="text-xs text-muted-foreground">
+                                {t('editorV2.picker.maxPoints')}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  value={req.freshness.max_points}
+                                  onChange={(e) =>
+                                    updateAt(index, {
+                                      freshness: {
+                                        kind: 'lookback_window',
+                                        lookback_secs:
+                                          req.freshness.kind === 'lookback_window'
+                                            ? req.freshness.lookback_secs
+                                            : 3600,
+                                        max_points: Math.max(1, Number(e.target.value) || 60),
+                                      },
+                                    })
+                                  }
+                                  aria-label={t('editorV2.picker.maxPoints')}
+                                  className="h-9 text-xs tabular-nums"
+                                />
+                                <span className="shrink-0 text-xs text-muted-foreground">
+                                  {t('editorV2.picker.ptsUnit')}
+                                </span>
+                              </div>
+                            </div>
+                          </>
+                        )}
+
+                        {req.source.kind === 'extension_instance' && (
+                          <div className="space-y-1">
+                            <span className="text-xs text-muted-foreground">
+                              {t('editorV2.picker.extensionOp')}
+                            </span>
+                            {extMatch?.commands && extMatch.commands.length > 0 ? (
+                              <Select
+                                value={req.operation || '__default__'}
+                                onValueChange={(v) =>
+                                  updateAt(index, { operation: v === '__default__' ? undefined : v })
+                                }
+                              >
+                                <SelectTrigger className="h-9 font-mono text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__default__">{t('editorV2.picker.extensionDefaultOp')}</SelectItem>
+                                  {extMatch.commands.map((cmd) => (
+                                    <SelectItem key={cmd.id} value={cmd.id}>
+                                      {cmd.display_name || cmd.id}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Input
+                                value={req.operation ?? ''}
+                                onChange={(e) => updateAt(index, { operation: e.target.value || undefined })}
+                                placeholder="current"
+                                className="h-9 font-mono text-xs"
+                              />
+                            )}
+                          </div>
                         )}
                       </div>
                     )}
