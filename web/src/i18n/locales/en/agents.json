@@ -911,6 +911,9 @@
       "qa": {
         "name": "Data Q&A"
       },
+      "vision": {
+        "name": "Vision check"
+      },
       "custom": {
         "name": "Custom"
       }

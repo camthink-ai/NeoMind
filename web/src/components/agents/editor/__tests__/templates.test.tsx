@@ -3,18 +3,21 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  seedVision,
   seedDailyBrief,
   seedScheduledPatrol,
   seedMeterInspect,
   seedEventReview,
+  seedQa,
   inferTemplateId,
   TASK_TEMPLATES,
 } from '../templates'
 import { emptyDraft } from '../defaults'
 
 describe('task templates', () => {
-  it('exports working-only presets (no disabled stubs)', () => {
+  it('exports working-only presets including vision', () => {
     expect(TASK_TEMPLATES.map((t) => t.id)).toEqual([
+      'vision',
       'daily_brief',
       'meter_inspect',
       'event_review',
@@ -24,6 +27,22 @@ describe('task templates', () => {
       'qa',
       'custom',
     ])
+  })
+
+  it('vision seeds 5m interval + alert notify + published structured output', () => {
+    const d = seedVision()
+    expect(d.trigger).toEqual({ kind: 'interval', every_secs: 5 * 60 })
+    expect(d.notify?.on_alert).toBe(true)
+    expect(d.output?.publish).toBe(true)
+    expect(d.output?.fields.map((f) => f.name)).toEqual(['status', 'summary'])
+  })
+
+  it('qa seeds scoped query_data tool policy', () => {
+    const d = seedQa()
+    expect(d.trigger.kind).toBe('manual')
+    expect(d.tool_policy).toEqual({
+      scoped: { allowed_tools: ['query_data'], allowed_commands: [] },
+    })
   })
 
   it('daily brief seeds cron 09:00 + tools disabled + complete notify', () => {

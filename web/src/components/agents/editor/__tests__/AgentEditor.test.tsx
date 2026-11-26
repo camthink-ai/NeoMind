@@ -113,7 +113,7 @@ describe('AgentEditor unified BuilderShell UX', () => {
     expect(saveBtn).toBeDisabled()
 
     // Clicking a template seeds localized name + prompt immediately
-    fireEvent.click(screen.getByRole('button', { name: 'agents:editorV2.templates.daily_brief.name' }))
+    fireEvent.click(screen.getByRole('button', { name: /agents:editorV2\.templates\.daily_brief\.name/ }))
     const nameInput = screen.getByPlaceholderText('agents:editorV2.namePlaceholder') as HTMLInputElement
     const promptInput = screen.getByPlaceholderText('agents:editorV2.promptPlaceholder') as HTMLTextAreaElement
     expect(nameInput.value).toBe('agents:editorV2.templates.daily_brief.name')
@@ -123,7 +123,7 @@ describe('AgentEditor unified BuilderShell UX', () => {
     // Customizing name/prompt preserves them when switching templates
     fireEvent.change(nameInput, { target: { value: 'My Custom Agent' } })
     fireEvent.change(promptInput, { target: { value: 'Custom prompt check.' } })
-    fireEvent.click(screen.getByRole('button', { name: 'agents:editorV2.templates.meter_inspect.name' }))
+    fireEvent.click(screen.getByRole('button', { name: /agents:editorV2\.templates\.meter_inspect\.name/ }))
     expect(nameInput.value).toBe('My Custom Agent')
     expect(promptInput.value).toBe('Custom prompt check.')
 

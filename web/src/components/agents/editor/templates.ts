@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   Calendar,
   Clock,
+  Eye,
   Gauge,
   Radar,
   Search,
@@ -25,6 +26,7 @@ import { emptyDraft } from './defaults'
 type Icon = ComponentType<{ className?: string; style?: CSSProperties }>
 
 export type TaskTemplateId =
+  | 'vision'
   | 'daily_brief'
   | 'meter_inspect'
   | 'event_review'
@@ -43,6 +45,8 @@ export interface TaskTemplate {
   promptKey: string
   /** Existing i18n key under agents:creator.preset.* for short subtitle. */
   descKey: string
+  /** Prefer a multimodal / vision-capable LLM backend when auto-selecting. */
+  requiresVision?: boolean
   seed: () => AgentSpecDraft
 }
 
@@ -60,6 +64,11 @@ const COMPLETE_NOTIFY: NotifyPolicy = {
   on_complete: true,
 }
 
+const ALERT_NOTIFY: NotifyPolicy = {
+  ...QUIET_NOTIFY,
+  on_alert: true,
+}
+
 function baseSeed(
   partial: Partial<AgentSpecDraft> &
     Pick<AgentSpecDraft, 'trigger' | 'preset' | 'name' | 'user_prompt'>,
@@ -73,11 +82,30 @@ function baseSeed(
   }
 }
 
-function fields(...items: { name: string; description: string }[]): OutputContract {
+function fields(
+  publish: boolean,
+  ...items: { name: string; description: string }[]
+): OutputContract {
   return {
     fields: items.map((f) => ({ name: f.name, description: f.description, depends_on: [] })),
-    publish: false,
+    publish,
   }
+}
+
+export function seedVision(): AgentSpecDraft {
+  return baseSeed({
+    name: '',
+    user_prompt: '',
+    preset: 'event_vision',
+    trigger: { kind: 'interval', every_secs: 5 * 60 },
+    notify: ALERT_NOTIFY,
+    pacing: { min_interval_secs: 60, failure_threshold: 3 },
+    output: fields(
+      true,
+      { name: 'status', description: 'Normal or abnormal verdict' },
+      { name: 'summary', description: 'Key visual observations' },
+    ),
+  })
 }
 
 export function seedDailyBrief(): AgentSpecDraft {
@@ -87,7 +115,7 @@ export function seedDailyBrief(): AgentSpecDraft {
     preset: 'daily_brief',
     trigger: { kind: 'cron', expr: '0 9 * * *', timezone: 'Asia/Shanghai' },
     notify: COMPLETE_NOTIFY,
-    output: fields({ name: 'brief', description: 'Human-readable daily brief' }),
+    output: fields(false, { name: 'brief', description: 'Human-readable daily brief' }),
   })
 }
 
@@ -98,7 +126,10 @@ export function seedMeterInspect(): AgentSpecDraft {
     user_prompt: '',
     preset: 'partial_meter',
     trigger: { kind: 'interval', every_secs: 15 * 60 },
+    notify: ALERT_NOTIFY,
+    pacing: { min_interval_secs: 300, max_runs_per_day: 96, failure_threshold: 3 },
     output: fields(
+      true,
       { name: 'status', description: 'Overall status' },
       { name: 'anomaly_count', description: 'Number of anomalies detected' },
     ),
@@ -121,7 +152,10 @@ export function seedEventReview(): AgentSpecDraft {
     user_prompt: '',
     preset: 'event_vision',
     trigger: { kind: 'event', filter: {} },
+    notify: ALERT_NOTIFY,
+    pacing: { burst_merge_secs: 15, min_interval_secs: 60, max_runs_per_day: 200, failure_threshold: 3 },
     output: fields(
+      true,
       { name: 'status', description: 'Event verdict' },
       { name: 'detail', description: 'Short explanation' },
     ),
@@ -135,7 +169,7 @@ export function seedWeekly(): AgentSpecDraft {
     preset: 'custom',
     trigger: { kind: 'cron', expr: '0 9 * * 1', timezone: 'Asia/Shanghai' },
     notify: COMPLETE_NOTIFY,
-    output: fields({ name: 'report', description: 'Weekly summary' }),
+    output: fields(false, { name: 'report', description: 'Weekly summary' }),
   })
 }
 
@@ -145,7 +179,9 @@ export function seedShift(): AgentSpecDraft {
     user_prompt: '',
     preset: 'custom',
     trigger: { kind: 'interval', every_secs: 30 * 60 },
-    output: fields({ name: 'delta', description: 'What changed since last look' }),
+    notify: ALERT_NOTIFY,
+    pacing: { min_interval_secs: 600, failure_threshold: 3 },
+    output: fields(true, { name: 'delta', description: 'What changed since last look' }),
   })
 }
 
@@ -154,8 +190,11 @@ export function seedPatrol(): AgentSpecDraft {
     name: '',
     user_prompt: '',
     preset: 'custom',
-    trigger: { kind: 'interval', every_secs: 30 * 60 },
+    trigger: { kind: 'interval', every_secs: 60 * 60 },
+    notify: ALERT_NOTIFY,
+    pacing: { min_interval_secs: 1800, max_runs_per_day: 24, failure_threshold: 3 },
     output: fields(
+      false,
       { name: 'status', description: 'Patrol status' },
       { name: 'findings', description: 'Notable findings' },
     ),
@@ -168,6 +207,7 @@ export function seedQa(): AgentSpecDraft {
     user_prompt: '',
     preset: 'custom',
     trigger: { kind: 'manual' },
+    tool_policy: { scoped: { allowed_tools: ['query_data'], allowed_commands: [] } },
   })
 }
 
@@ -181,6 +221,16 @@ export function seedCustom(): AgentSpecDraft {
 }
 
 export const TASK_TEMPLATES: TaskTemplate[] = [
+  {
+    id: 'vision',
+    preset: 'event_vision',
+    icon: Eye,
+    nameKey: 'editorV2.templates.vision.name',
+    promptKey: 'creator.preset.image.prompt',
+    descKey: 'creator.preset.image.desc',
+    requiresVision: true,
+    seed: seedVision,
+  },
   {
     id: 'daily_brief',
     preset: 'daily_brief',

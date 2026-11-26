@@ -265,13 +265,17 @@ export function AgentEditor({
       const nextPrompt = canReplacePrompt ? localizedPrompt : prev.user_prompt
       if (canReplaceName) templateSeededNameRef.current = localizedName
       if (canReplacePrompt) templateSeededPromptRef.current = localizedPrompt
+      const autoVisionBackend =
+        tmpl.requiresVision && !prev.llm_backend_id
+          ? backends.find((b) => b.capabilities?.supports_multimodal)?.id
+          : undefined
       return {
         ...seed,
         name: nextName,
         user_prompt: nextPrompt,
         description: prev.description?.trim() ? prev.description : seed.description,
         input: (prev.input?.requirements?.length ?? 0) > 0 ? prev.input : seed.input,
-        llm_backend_id: prev.llm_backend_id ?? seed.llm_backend_id,
+        llm_backend_id: prev.llm_backend_id ?? autoVisionBackend ?? seed.llm_backend_id,
       }
     })
     setFieldErrors({})
@@ -404,7 +408,7 @@ export function AgentEditor({
             </p>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
           {TASK_TEMPLATES.map((tmpl) => {
             const Icon = tmpl.icon
             const selected = templateId === tmpl.id
@@ -415,14 +419,21 @@ export function AgentEditor({
                 onClick={() => applyTemplate(tmpl.id)}
                 title={t(`agents:${tmpl.descKey}`)}
                 className={cn(
-                  'flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors',
+                  'flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-colors',
                   selected
-                    ? 'border-primary bg-primary-light text-primary font-medium'
-                    : 'border-border bg-card text-foreground hover:border-muted-foreground',
+                    ? 'border-primary bg-primary-light text-primary'
+                    : 'border-border bg-card text-foreground hover:bg-muted-30',
                 )}
               >
-                <Icon className="h-4 w-4 shrink-0 opacity-75" />
-                <span className="truncate text-xs">{t(`agents:${tmpl.nameKey}`)}</span>
+                <Icon className="mt-0.5 h-4 w-4 shrink-0 opacity-80" />
+                <div className="min-w-0 flex-1">
+                  <div className={cn('truncate text-xs', selected ? 'font-semibold' : 'font-medium')}>
+                    {t(`agents:${tmpl.nameKey}`)}
+                  </div>
+                  <div className="mt-0.5 truncate text-nano text-muted-foreground">
+                    {t(`agents:${tmpl.descKey}`)}
+                  </div>
+                </div>
               </button>
             )
           })}
