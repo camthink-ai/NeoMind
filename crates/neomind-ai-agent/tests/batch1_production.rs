@@ -93,6 +93,7 @@ async fn item2_failed_forbids_controlled_actions() {
         deliveries: vec![],
         brief_text: None,
         conclusion: None,
+        structured_result: None,
         error: Some("boom".into()),
         alert_verdict: None,
     };
@@ -149,6 +150,7 @@ async fn item2_skipped_and_probe_zero_writes() {
         deliveries: vec![],
         brief_text: None,
         conclusion: None,
+        structured_result: None,
         error: None,
         alert_verdict: None,
     };
@@ -174,6 +176,7 @@ async fn item2_skipped_and_probe_zero_writes() {
         deliveries: vec![],
         brief_text: Some("ok".into()),
         conclusion: None,
+        structured_result: None,
         error: None,
         alert_verdict: None,
     };

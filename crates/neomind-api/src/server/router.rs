@@ -942,6 +942,10 @@ pub fn create_router_with_state(state: ServerState) -> Router {
             "/api/agents/v2/:id/explain-last",
             get(agents_v2::explain_last_agent_v2),
         )
+        .route(
+            "/api/agents/v2/:id/latest-execution",
+            get(agents_v2::latest_execution_agent_v2),
+        )
         .route("/api/agents/:id", get(agents::get_agent))
         .route("/api/agents/:id", put(agents::update_agent))
         .route("/api/agents/:id", delete(agents::delete_agent))

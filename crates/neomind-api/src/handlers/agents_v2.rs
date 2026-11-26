@@ -14,7 +14,7 @@ use neomind_ai_agent::model::{
 };
 use neomind_ai_agent::service::plan_from_spec;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::common::{ok, HandlerResult};
 use crate::ai_agent_runtime::HostedAiAgentRuntime;
@@ -123,6 +123,12 @@ pub async fn agent_v2_schema() -> HandlerResult<Value> {
         "schema_version_runtime": 2,
         "schema_version_target": 2,
         "samples": ["daily-brief", "partial-meter", "unknown-delivery", "legacy-history"],
+        "fields": {
+            "llm_backend_id": "Optional backend id on AgentSpec / Draft / Patch — HostLlmPort resolves it (omit/null = active backend). Exposed for editor (#46) model picker.",
+            "output.fields": "Named structured JSON keys extracted after each run into execution.structured_result",
+            "output.publish": "When true, published as ai:{agent_id}:{field} (publish path may follow in a later tip)",
+            "execution.structured_result": "Persisted JSON object on AgentExecutionRecord / RunResponse.execution — API/CLI/Chat readable like legacy Structured"
+        },
         "operations": {
             "plan_preview": "POST /api/agents/v2/plan-preview",
             "create": "POST /api/agents/v2",
@@ -132,7 +138,8 @@ pub async fn agent_v2_schema() -> HandlerResult<Value> {
             "delete": "DELETE /api/agents/v2/:id",
             "invoke": "POST /api/agents/v2/:id/invoke",
             "dry_run": "POST /api/agents/v2/:id/dry-run",
-            "explain_last": "GET /api/agents/v2/:id/explain-last"
+            "explain_last": "GET /api/agents/v2/:id/explain-last",
+            "latest_execution": "GET /api/agents/v2/:id/latest-execution"
         }
     }))
 }
@@ -234,6 +241,20 @@ pub async fn explain_last_agent_v2(
         agent_id: id,
         explanation,
     })
+}
+
+/// GET /api/agents/v2/:id/latest-execution — full V2 execution incl. structured_result.
+pub async fn latest_execution_agent_v2(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> HandlerResult<Value> {
+    let rt = require_runtime(&state).await?;
+    let Some(exec) = rt.latest_formal(&id) else {
+        return Err(ErrorResponse::not_found(format!(
+            "No formal execution for agent {id}"
+        )));
+    };
+    ok(serde_json::to_value(exec).unwrap_or(json!({})))
 }
 
 /// Placeholder type export so OpenAPI / future handlers share RunResponse.

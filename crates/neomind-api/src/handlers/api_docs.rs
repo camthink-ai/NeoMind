@@ -1313,6 +1313,11 @@ pub static ROUTES: &[RouteDoc] = &[
     },
     RouteDoc {
         method: "GET",
+        path: "/api/agents/v2/:id/latest-execution",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "GET",
         path: "/api/agents/:id",
         auth: "jwt-or-api-key",
     },

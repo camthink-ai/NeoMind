@@ -1,7 +1,8 @@
 //! Scenario: read an agent's existing conclusion through the CLI read path.
 //!
 //! Reading an agent's latest conclusion goes
-//! `neomind agent latest-execution <ID>` → `GET /agents/{id}/executions?limit=1`.
+//! `neomind agent latest-execution <ID>` → `GET /agents/v2/{id}/latest-execution`
+//! (list path `GET /agents/{id}/executions` also reads V2 formal rows).
 
 use axum::extract::{Path, State};
 use axum::Json;
@@ -11,7 +12,8 @@ use neomind_ai_agent::model::{
 use neomind_api::handlers::agents::get_agent_executions;
 use neomind_api::handlers::agents_v2::create_agent_v2;
 use neomind_api::handlers::ServerState;
-use neomind_storage::{AgentExecutionRecord, DecisionProcess, ExecutionStatus};
+use neomind_storage::agents_v2::{AgentExecutionRecordV2, ExecutionStatusV2};
+use neomind_storage::AgentStoreV2;
 
 async fn seed_executed_agent(state: &ServerState) -> String {
     let draft = AgentSpecDraft {
@@ -38,33 +40,27 @@ async fn seed_executed_agent(state: &ServerState) -> String {
         .expect("create returns data");
     let agent_id = created.agent.id;
 
-    let execution = AgentExecutionRecord {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let execution = AgentExecutionRecordV2 {
         id: "exec-readback-1".into(),
         agent_id: agent_id.clone(),
-        timestamp: chrono::Utc::now().timestamp(),
-        trigger_type: "manual".into(),
-        status: ExecutionStatus::Completed,
-        decision_process: DecisionProcess {
-            situation_analysis: "冷库温度 4.2°C,处于正常范围".into(),
-            data_collected: vec![],
-            reasoning_steps: vec![],
-            decisions: vec![],
-            conclusion: "冷库温度正常,无需处理".into(),
-            confidence: Some(0.9),
-            stop_reason: String::new(),
-            tokens_used: 0,
-        },
-        result: None,
-        duration_ms: 1500,
+        config_version: created.agent.config_version,
+        status: ExecutionStatusV2::Completed,
+        started_at: now_ms - 1500,
+        finished_at: now_ms,
+        is_probe: false,
+        dry_run: false,
+        stale_config: None,
+        evidence: serde_json::json!({}),
+        deliveries: vec![],
+        brief_text: Some("冷库温度 4.2°C,处于正常范围".into()),
+        conclusion: Some("冷库温度正常,无需处理".into()),
+        structured_result: None,
         error: None,
-        input_summary: None,
+        alert_verdict: None,
     };
-    state
-        .agents
-        .agent_store
-        .save_execution(&execution)
-        .await
-        .expect("seed execution");
+    let v2 = AgentStoreV2::from_arc(state.agents.agent_store.db()).expect("open AgentStoreV2");
+    v2.save_execution(&execution).expect("seed V2 execution");
     agent_id
 }
 

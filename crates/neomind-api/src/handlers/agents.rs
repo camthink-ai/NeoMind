@@ -109,6 +109,9 @@ struct AgentExecutionDto {
     /// agent last conclude" (CLI `agent latest-execution`, chat via shell)
     /// must not need a second round-trip per record to see it.
     conclusion: String,
+    /// Structured JSON fields (V2 OutputContract projection), when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    structured_result: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     confidence: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -332,6 +335,7 @@ impl From<AgentExecutionRecord> for AgentExecutionDto {
             status: execution_status_to_string(&record.status).to_string(),
             duration_ms: record.duration_ms,
             conclusion: record.decision_process.conclusion,
+            structured_result: None,
             confidence: record.decision_process.confidence,
             error: record.error,
             input_summary: record.input_summary.map(|s| ExecutionInputSummaryDto {
@@ -342,6 +346,48 @@ impl From<AgentExecutionRecord> for AgentExecutionDto {
                 skip_reason: s.skip_reason,
             }),
         }
+    }
+}
+
+fn dto_from_v2_execution(
+    record: neomind_storage::agents_v2::AgentExecutionRecordV2,
+) -> AgentExecutionDto {
+    let duration_ms = record.finished_at.saturating_sub(record.started_at).max(0) as u64;
+    let conclusion = record
+        .conclusion
+        .clone()
+        .or(record.brief_text.clone())
+        .unwrap_or_default();
+    let status = match record.status {
+        neomind_storage::agents_v2::ExecutionStatusV2::Completed => "Completed",
+        neomind_storage::agents_v2::ExecutionStatusV2::Partial => "Partial",
+        neomind_storage::agents_v2::ExecutionStatusV2::Skipped => "Skipped",
+        neomind_storage::agents_v2::ExecutionStatusV2::Failed => "Failed",
+    };
+    let confidence = record
+        .structured_result
+        .as_ref()
+        .and_then(|v| v.get("confidence"))
+        .and_then(|c| c.as_f64())
+        .map(|f| f as f32);
+    AgentExecutionDto {
+        id: record.id,
+        agent_id: record.agent_id,
+        timestamp: format_datetime(record.finished_at / 1000),
+        trigger_type: if record.is_probe {
+            "probe".into()
+        } else if record.dry_run {
+            "dry_run".into()
+        } else {
+            "schedule".into()
+        },
+        status: status.into(),
+        duration_ms,
+        conclusion,
+        structured_result: record.structured_result,
+        confidence,
+        error: record.error,
+        input_summary: None,
     }
 }
 
@@ -1116,21 +1162,26 @@ pub async fn get_agent_executions(
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
     let _rt = require_v2_agent(&state, &id).await?;
-    let store = &state.agents.agent_store;
 
-    // Get executions — return empty list on storage error instead of 500
-    let executions = match store.get_agent_executions(&id, 50).await {
-        Ok(execs) => execs,
-        Err(e) => {
-            tracing::warn!("Failed to query executions for agent {}: {}", id, e);
-            Vec::new()
-        }
-    };
-
-    let dtos: Vec<AgentExecutionDto> = executions
-        .into_iter()
-        .map(AgentExecutionDto::from)
-        .collect();
+    // V2-only: formal executions from AgentStoreV2 (includes structured_result).
+    let dtos: Vec<AgentExecutionDto> =
+        match neomind_storage::AgentStoreV2::from_arc(state.agents.agent_store.db()) {
+            Ok(v2) => match v2.list_formal_executions(&id) {
+                Ok(rows) => rows
+                    .into_iter()
+                    .take(50)
+                    .map(dto_from_v2_execution)
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!("Failed to query V2 executions for agent {}: {}", id, e);
+                    Vec::new()
+                }
+            },
+            Err(e) => {
+                tracing::warn!("Failed to open AgentStoreV2 for executions: {}", e);
+                Vec::new()
+            }
+        };
 
     ok(json!({
         "agent_id": id,
@@ -1157,6 +1208,26 @@ pub async fn get_execution(
     State(state): State<ServerState>,
     Path((_id, execution_id)): Path<(String, String)>,
 ) -> HandlerResult<Value> {
+    // Prefer V2 execution row (structured_result); fall back to legacy table.
+    if let Ok(v2) = neomind_storage::AgentStoreV2::from_arc(state.agents.agent_store.db()) {
+        if let Ok(Some(row)) = v2.get_execution(&execution_id) {
+            let structured = row.structured_result.clone();
+            let dto = dto_from_v2_execution(row);
+            return ok(json!({
+                "id": dto.id,
+                "agent_id": dto.agent_id,
+                "timestamp": dto.timestamp,
+                "trigger_type": dto.trigger_type,
+                "status": dto.status,
+                "duration_ms": dto.duration_ms,
+                "conclusion": dto.conclusion,
+                "structured_result": structured,
+                "confidence": dto.confidence,
+                "error": dto.error,
+            }));
+        }
+    }
+
     let store = &state.agents.agent_store;
 
     // Direct lookup by execution ID — avoids fetching 100 records

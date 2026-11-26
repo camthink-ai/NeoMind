@@ -279,6 +279,9 @@ pub struct AgentExecutionRecordV2 {
     pub brief_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conclusion: Option<String>,
+    /// Structured JSON fields (OutputContract projection); optional for older rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_result: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1169,6 +1172,7 @@ mod tests {
             deliveries: Vec::new(),
             brief_text: Some("ok".into()),
             conclusion: None,
+            structured_result: None,
             error: None,
             alert_verdict: None,
         };

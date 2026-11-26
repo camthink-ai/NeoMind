@@ -99,6 +99,7 @@ pub fn persist_execution(v2: &AgentStoreV2, exec: &AgentExecutionRecord) -> Resu
             .collect(),
         brief_text: exec.brief_text.clone(),
         conclusion: exec.conclusion.clone(),
+        structured_result: exec.structured_result.clone(),
         error: exec.error.clone(),
         alert_verdict: exec.alert_verdict.as_ref().map(|v| format!("{v:?}")),
     };

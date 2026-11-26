@@ -4,11 +4,13 @@ pub mod alert;
 pub mod hooks;
 mod prompt_builder;
 pub mod single_pass;
+pub mod structured;
 mod tool_loop;
 
 pub use alert::{alert_from_model_text, evidence_shows_overload, value_shows_overload};
 pub use prompt_builder::build_evidence_prompt;
 pub use single_pass::{SinglePassRunner, LOCAL_BRIEF_BACKEND};
+pub use structured::{extract_json_object, project_output_fields, structured_system_addon};
 pub use tool_loop::ToolLoopRunner;
 
 use async_trait::async_trait;
@@ -32,6 +34,8 @@ pub trait AgentRunner: Send + Sync {
 pub struct RunOutcome {
     pub brief_text: Option<String>,
     pub conclusion: Option<String>,
+    /// Projected JSON object for [`crate::model::OutputContract::fields`].
+    pub structured_result: Option<serde_json::Value>,
     pub alert_criteria_met: bool,
     pub status_hint: Option<crate::model::ExecutionStatus>,
 }
@@ -40,6 +44,7 @@ pub struct RunOutcome {
 pub fn apply_outcome(mut exec: AgentExecutionRecord, outcome: RunOutcome) -> AgentExecutionRecord {
     exec.brief_text = outcome.brief_text;
     exec.conclusion = outcome.conclusion.clone();
+    exec.structured_result = outcome.structured_result;
     // Alert verdict is independent of Partial: on_alert uses alert_depends_on,
     // so CriteriaMet is valid even when unrelated sources are missing.
     if outcome.alert_criteria_met {
