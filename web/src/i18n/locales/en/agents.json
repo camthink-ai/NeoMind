@@ -890,6 +890,8 @@
     "templates": {
       "title": "Task templates",
       "pickFirst": "Pick a task template to continue.",
+      "confirmTitle": "Apply \"{{name}}\" template?",
+      "confirmDesc": "Templates are pre-fill presets only. Applying it will overwrite the current trigger, tool policy, output, and notification settings.",
       "daily_brief": {
         "name": "Daily brief"
       },

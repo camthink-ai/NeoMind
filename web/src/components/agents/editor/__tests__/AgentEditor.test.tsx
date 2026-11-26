@@ -5,6 +5,7 @@ import { AgentEditor } from '../AgentEditor'
 import { specToDraft } from '../defaults'
 
 const mockTestAgentPreview = vi.fn()
+const mockConfirm = vi.fn(async (_opts?: unknown) => true)
 
 vi.mock('@/hooks/useMobile', () => ({
   useIsMobile: () => false,
@@ -13,6 +14,10 @@ vi.mock('@/hooks/useMobile', () => ({
 
 vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
+}))
+
+vi.mock('@/hooks/use-confirm', () => ({
+  confirm: (opts?: unknown) => mockConfirm(opts),
 }))
 
 vi.mock('@/lib/api', () => ({
@@ -207,5 +212,33 @@ describe('AgentEditor unified BuilderShell UX', () => {
     await waitFor(() => {
       expect(screen.queryByText('agents:editorV2.picker.title')).toBeNull()
     })
+  })
+
+  it('does not pre-select a template on edit and asks confirmation before applying one', async () => {
+    const existingAgent = {
+      id: 'edit-1',
+      name: 'Existing Agent',
+      user_prompt: 'Keep my prompt',
+      preset: 'daily_brief',
+      trigger: { kind: 'cron', expr: '0 9 * * *', timezone: 'Asia/Shanghai' },
+      tool_policy: 'disabled',
+      input: { requirements: [] },
+      output: { fields: [], publish: false },
+      notify: { channels: [], on_complete: false, on_alert: false, on_failure: true, pending_confirmation: false },
+    } as unknown as AgentSpec
+
+    mockConfirm.mockResolvedValueOnce(false)
+    const { baseElement } = render(
+      <AgentEditor open agent={existingAgent} onOpenChange={vi.fn()} onSave={vi.fn()} />,
+    )
+
+    // No template button is pre-highlighted when editing
+    const templatesSection = baseElement.querySelector('[data-section="templates"]')
+    expect(templatesSection?.querySelector('.bg-primary-light')).toBeNull()
+
+    // Clicking a template asks confirmation; cancelling preserves existing agent untouched
+    fireEvent.click(screen.getByRole('button', { name: /agents:editorV2\.templates\.meter_inspect\.name/ }))
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalledTimes(1))
+    expect(templatesSection?.querySelector('.bg-primary-light')).toBeNull()
   })
 })

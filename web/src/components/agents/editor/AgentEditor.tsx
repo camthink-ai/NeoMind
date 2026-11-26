@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { AgentExecutionEvidencePanel } from '@/components/agents/AgentExecutionEvidencePanel'
 import { useToast } from '@/hooks/use-toast'
+import { confirm } from '@/hooks/use-confirm'
 import { showErrorToast } from '@/lib/error-messages'
 import { validateLength, validateRequired } from '@/lib/form-validation'
 import { api } from '@/lib/api'
@@ -53,7 +54,6 @@ import { ActionsOutputSection } from './ActionsOutputSection'
 import { ScheduleNotifySection } from './ScheduleNotifySection'
 import {
   TASK_TEMPLATES,
-  inferTemplateId,
   type TaskTemplateId,
 } from './templates'
 
@@ -188,7 +188,7 @@ export function AgentEditor({
     if (agent) {
       const next = specToDraft(agent)
       setDraft(next)
-      setTemplateId(inferTemplateId(next.trigger, next.preset))
+      setTemplateId(null)
     } else {
       setDraft(emptyDraft())
       setTemplateId(null)
@@ -256,12 +256,21 @@ export function AgentEditor({
     setDraft((prev) => ({ ...prev, ...partial }))
   }
 
-  const applyTemplate = (id: TaskTemplateId) => {
+  const applyTemplate = async (id: TaskTemplateId) => {
     const tmpl = TASK_TEMPLATES.find((x) => x.id === id)
     if (!tmpl) return
-    const seed = tmpl.seed()
     const localizedName = t(`agents:${tmpl.nameKey}`)
     const localizedPrompt = t(`agents:${tmpl.promptKey}`)
+
+    if (agent) {
+      const ok = await confirm({
+        title: t('agents:editorV2.templates.confirmTitle', { name: localizedName }),
+        description: t('agents:editorV2.templates.confirmDesc'),
+      })
+      if (!ok) return
+    }
+
+    const seed = tmpl.seed()
 
     setDraft((prev) => {
       const prevName = (prev.name ?? '').trim()
@@ -396,7 +405,7 @@ export function AgentEditor({
               <button
                 key={tmpl.id}
                 type="button"
-                onClick={() => applyTemplate(tmpl.id)}
+                onClick={() => void applyTemplate(tmpl.id)}
                 title={t(`agents:${tmpl.descKey}`)}
                 className={cn(
                   'flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
