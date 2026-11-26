@@ -16,8 +16,7 @@ use crate::model::{
 ///
 /// Production installs this via [`crate::persist::DurableAgentStore::with_v2`] so
 /// pre-send `IntentPending` rows land in the same redb the next process opens.
-pub type ExecutionPersistFn =
-    Arc<dyn Fn(&AgentExecutionRecord) -> Result<()> + Send + Sync>;
+pub type ExecutionPersistFn = Arc<dyn Fn(&AgentExecutionRecord) -> Result<()> + Send + Sync>;
 
 #[derive(Clone, Default)]
 pub struct InMemoryAgentStore {

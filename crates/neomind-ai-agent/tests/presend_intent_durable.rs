@@ -1,16 +1,16 @@
 //! NM-403: pre-send IntentPending must land in the same redb restart opens.
 //!
-//! Acceptance: receiver gets the command → kill process mid-invoke → reopen the
-//! same DB → receive count stays 1 and the delivery is OutcomeUnknown.
+//! Acceptance (in-process): receiver gets the command → `invoke.abort()` while
+//! the side-effect hangs after accept → drop store → reopen the same DB →
+//! receive count stays 1 and the delivery is `OutcomeUnknown`.
+//! This is **not** an OS process kill; a hard-kill gate is optional follow-up.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use neomind_ai_agent::input::{CountingSourcePort, InputPipeline};
-use neomind_ai_agent::model::{
-    daily_brief_draft, ControlledAction, DeliveryState, NotifyPolicy,
-};
+use neomind_ai_agent::model::{daily_brief_draft, ControlledAction, DeliveryState, NotifyPolicy};
 use neomind_ai_agent::persist::DurableAgentStore;
 use neomind_ai_agent::ports::{
     FixedClock, LocalBriefLlm, NotifyPort, SideEffectPort, SideEffectReceipt, SourceReadResult,
@@ -21,7 +21,7 @@ use neomind_ai_agent::side_effects::{Notifier, SideEffectBoundary};
 use neomind_storage::agents_v2::{AgentStoreV2, DeliveryState as V2DeliveryState};
 use neomind_storage::AgentStore;
 
-/// Counts accepts, signals the test, then hangs (process-death stand-in).
+/// Counts accepts, signals the test, then hangs so the task can be aborted.
 struct AcceptThenHang {
     hits: Arc<AtomicU64>,
     accepted: Arc<tokio::sync::Notify>,
@@ -38,8 +38,8 @@ impl SideEffectPort for AcceptThenHang {
     ) -> neomind_ai_agent::Result<SideEffectReceipt> {
         self.hits.fetch_add(1, Ordering::SeqCst);
         self.accepted.notify_waiters();
-        // Device already accepted; process dies before durable mirror of the
-        // receipt (and before any post-send update_delivery_state).
+        // Device already accepted; hang so the test can `invoke.abort()` before
+        // post-send update_delivery_state / final mirror.
         std::future::pending::<()>().await;
         unreachable!()
     }
@@ -100,7 +100,7 @@ fn seed_brief(sources: &CountingSourcePort, now: i64) {
 }
 
 #[tokio::test]
-async fn pre_send_intent_survives_kill_restart_receiver_count_one() {
+async fn pre_send_intent_survives_abort_reopen_receiver_count_one() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("agents.redb");
     let now = 1_700_000_000_000i64;
@@ -173,20 +173,24 @@ async fn pre_send_intent_survives_kill_restart_receiver_count_one() {
         }
         assert_eq!(hits.load(Ordering::SeqCst), 1, "receiver got the command");
 
-        // Kill mid-invoke (after device accept, before post-send receipt persist).
+        // Abort the in-process invoke task after accept (not an OS process kill).
         invoke.abort();
         let _ = invoke.await;
 
-        // Prove IntentPending is already on disk before process exit.
+        // Prove IntentPending is already on disk before drop/reopen.
         let v2_live = durable.v2.as_ref().expect("v2");
         let formal = v2_live.list_formal_executions(&agent_id).unwrap();
-        assert_eq!(formal.len(), 1, "pre-send save must have written formal exec");
+        assert_eq!(
+            formal.len(),
+            1,
+            "pre-send save must have written formal exec"
+        );
         assert!(
             formal[0]
                 .deliveries
                 .iter()
                 .any(|d| matches!(d.state, V2DeliveryState::IntentPending)),
-            "IntentPending must be durable before kill: {:?}",
+            "IntentPending must be durable before abort/reopen: {:?}",
             formal[0].deliveries
         );
 
