@@ -37,6 +37,7 @@ import { debounce } from "@/lib/utils/async"
 import type { ToolSourceFilter } from "./agents-components/ToolsPanel"
 import { EmptyState } from "@/components/shared/EmptyState"
 import type { AiAgent, AiAgentDetail } from "@/types"
+import { useAgentV2EditSession } from "./agents-components/useAgentV2EditSession"
 import type { AgentExecutionStartedEvent, AgentExecutionCompletedEvent, AgentThinkingEvent } from "@/lib/events"
 
 // Import components
@@ -99,7 +100,6 @@ export function AgentsPage() {
   }
 
   // Dialog states
-  const [showAgentDialog, setShowAgentDialog] = useState(false)
   const [executionDetailOpen, setExecutionDetailOpen] = useState(false)
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
 
@@ -107,9 +107,19 @@ export function AgentsPage() {
   const [detailAgentId, setDetailAgentId] = useState('')
   const [detailExecutionId, setDetailExecutionId] = useState('')
 
-  // Editing states
-  const [editingAgent, setEditingAgent] = useState<AiAgentDetail | undefined>(undefined)
   const [selectedAgent, setSelectedAgent] = useState<AiAgentDetail | null>(null)
+
+  // Race-safe V2 edit/create session (unified entry; ignores late GETs)
+  const editSession = useAgentV2EditSession({
+    getAgentV2: (id) => api.getAgentV2(id),
+    updateAgentV2: (id, patch) => api.updateAgentV2(id, patch),
+    createAgentV2: (draft) => api.createAgentV2(draft),
+    onSaved: () => loadItems(),
+    onLoadError: (error) => {
+      handleError(error, { operation: 'Load agent details', showToast: false })
+      showErrorToast(toast, error, tCommon('failed'))
+    },
+  })
 
   // Data state
   const [agents, setAgents] = useState<AiAgent[]>([])
@@ -338,20 +348,11 @@ export function AgentsPage() {
 
   // Handlers
   const handleCreate = () => {
-    setEditingAgent(undefined)
-    setShowAgentDialog(true)
+    editSession.openCreate()
   }
 
-  const handleEdit = async (agent: AiAgent) => {
-    try {
-      setShowAgentDialog(true)
-      const detail = await api.getAgent(agent.id)
-      setEditingAgent(detail)
-    } catch (error) {
-      setShowAgentDialog(false)
-      handleError(error, { operation: 'Load agent details', showToast: false })
-      showErrorToast(toast, error, tCommon('failed'))
-    }
+  const handleEdit = (agent: AiAgent) => {
+    void editSession.openEdit(agent.id)
   }
 
   const handleDelete = async (agent: AiAgent) => {
@@ -422,29 +423,7 @@ export function AgentsPage() {
 
   const handleSave = async (draft: import('@/types').AgentSpecDraft) => {
     try {
-      if (editingAgent) {
-        // Name + full contract replace via v2 patch (omit id/config_version).
-        const { name, description, user_prompt, llm_backend_id, preset, trigger, pacing, input, tool_policy, output, notify, controlled_actions } = draft
-        await api.updateAgentV2(editingAgent.id, {
-          name,
-          description,
-          user_prompt,
-          llm_backend_id,
-          preset,
-          trigger,
-          pacing,
-          input,
-          tool_policy,
-          output,
-          notify,
-          controlled_actions,
-        })
-      } else {
-        await api.createAgentV2(draft)
-      }
-      setShowAgentDialog(false)
-      setEditingAgent(undefined)
-      await loadItems()
+      await editSession.save(draft)
       // Toast is shown by AgentEditorV2 — don't duplicate here
     } catch (error) {
       handleError(error, { operation: 'Save agent', showToast: false })
@@ -471,11 +450,10 @@ export function AgentsPage() {
     }
   }
 
-  // Edit from detail: close detail first to avoid scroll-through bug
+  // Edit from detail: same race-safe openEdit as the card entry point
   const handleEditFromDetail = (agent: AiAgentDetail) => {
     setDetailDialogOpen(false)
-    setEditingAgent(agent)
-    setShowAgentDialog(true)
+    void editSession.openEdit(agent.id)
   }
 
   // Note: detail data is loaded solely by handleViewDetail. The dialog's only
@@ -695,9 +673,10 @@ export function AgentsPage() {
 
       {/* Agent Editor — AgentEditorV2 is the only create/edit surface (M3) */}
       <AgentEditorV2
-        open={showAgentDialog}
-        onOpenChange={setShowAgentDialog}
-        agent={editingAgent}
+        open={editSession.open}
+        onOpenChange={editSession.onOpenChange}
+        agent={editSession.editingAgent}
+        loading={editSession.loading}
         onSave={handleSave}
       />
 

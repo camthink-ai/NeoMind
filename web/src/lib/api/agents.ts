@@ -101,6 +101,16 @@ export const agentsApi = {
     fetchAPI<AiAgentDetail>(`/agents/${id}`, options),
 
   /**
+   * Load full AgentSpec v2 (edit seed — preserves requirements / actions / deps).
+   * GET /api/agents/v2/:id
+   */
+  getAgentV2: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<{ agent: import('@/types').AgentSpec; effective_plan: import('@/types').EffectivePlan }>(
+      `/agents/v2/${id}`,
+      options,
+    ),
+
+  /**
    * Create an agent (legacy CreateAgentRequest shape → POST /agents/v2).
    * Prefer createAgentV2 when the caller already has an AgentSpecDraft.
    */
