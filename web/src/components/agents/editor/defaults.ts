@@ -41,7 +41,12 @@ export function emptyDraft(): AgentSpecDraft {
     trigger: { kind: 'manual' },
     pacing: { failure_threshold: 3 },
     input: { requirements: [] },
-    tool_policy: 'disabled',
+    tool_policy: {
+      scoped: {
+        allowed_tools: ['shell', 'web_search', 'web_fetch'],
+        allowed_commands: [],
+      },
+    },
     output: { fields: [], publish: false },
     notify: { ...QUIET_NOTIFY },
     controlled_actions: [],

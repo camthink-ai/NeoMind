@@ -219,6 +219,12 @@ export function seedCustom(): AgentSpecDraft {
     user_prompt: '',
     preset: 'custom',
     trigger: { kind: 'manual' },
+    tool_policy: {
+      scoped: {
+        allowed_tools: ['shell', 'web_search', 'web_fetch'],
+        allowed_commands: [],
+      },
+    },
   })
 }
 
