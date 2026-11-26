@@ -78,3 +78,7 @@ path = "tests/hold_round6_acceptance.rs"
 [[test]]
 name = "batch1_production"
 path = "tests/batch1_production.rs"
+
+[[test]]
+name = "presend_intent_durable"
+path = "tests/presend_intent_durable.rs"

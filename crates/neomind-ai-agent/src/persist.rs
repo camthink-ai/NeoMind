@@ -140,6 +140,12 @@ impl DurableAgentStore {
         }
         let mem = InMemoryAgentStore::new();
         load_from_v2(&v2, &mem, now_ms)?;
+        // Production hot path (`HostedAiAgentRuntime`) injects `durable.mem` into
+        // SideEffectBoundary / AgentApplicationService. Wire save_execution so
+        // pre-send IntentPending is flushed to the same redb restart reopens —
+        // not mem-only until mirror_after_run.
+        let v2_persist = v2.clone();
+        mem.set_execution_persist(Arc::new(move |exec| persist_execution(&v2_persist, exec)));
         Ok(Self {
             mem,
             v2: Some(v2),

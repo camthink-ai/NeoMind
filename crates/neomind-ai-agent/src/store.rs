@@ -12,6 +12,12 @@ use crate::model::{
     AgentStatus, DeliveryState,
 };
 
+/// Optional durable sink invoked after a successful in-memory `save_execution`.
+///
+/// Production installs this via [`crate::persist::DurableAgentStore::with_v2`] so
+/// pre-send `IntentPending` rows land in the same redb the next process opens.
+pub type ExecutionPersistFn = Arc<dyn Fn(&AgentExecutionRecord) -> Result<()> + Send + Sync>;
+
 #[derive(Clone, Default)]
 pub struct InMemoryAgentStore {
     inner: Arc<Mutex<StoreInner>>,
@@ -29,6 +35,8 @@ struct StoreInner {
     knowledge: HashMap<String, String>,
     #[allow(dead_code)]
     user_messages: HashMap<String, Vec<String>>,
+    /// When set (hosted V2), every `save_execution` mirrors to durable storage.
+    execution_persist: Option<ExecutionPersistFn>,
 }
 
 fn delivery_key(execution_id: &str, destination: &str, fingerprint: &str) -> String {
@@ -38,6 +46,11 @@ fn delivery_key(execution_id: &str, destination: &str, fingerprint: &str) -> Str
 impl InMemoryAgentStore {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Install a durable mirror for `save_execution` (shared across clones).
+    pub fn set_execution_persist(&self, persist: ExecutionPersistFn) {
+        self.inner.lock().expect("store lock").execution_persist = Some(persist);
     }
 
     pub fn save_spec(&self, spec: AgentSpec, now_ms: i64) -> Result<AgentSpec> {
@@ -103,18 +116,25 @@ impl InMemoryAgentStore {
     }
 
     pub fn save_execution(&self, exec: AgentExecutionRecord) -> Result<()> {
-        let mut g = self.inner.lock().expect("store lock");
-        let agent_id = exec.agent_id.clone();
-        let id = exec.id.clone();
-        let dry_run = exec.dry_run;
-        g.executions.insert(id.clone(), exec);
-        // Formal history is idempotent by execution ID — re-saving the same
-        // row (pre-settle skeleton → post-settle receipt) must not duplicate.
-        if !dry_run {
-            let hist = g.formal_history.entry(agent_id).or_default();
-            if !hist.iter().any(|existing| existing == &id) {
-                hist.push(id);
+        let persist = {
+            let mut g = self.inner.lock().expect("store lock");
+            let agent_id = exec.agent_id.clone();
+            let id = exec.id.clone();
+            let dry_run = exec.dry_run;
+            g.executions.insert(id.clone(), exec.clone());
+            // Formal history is idempotent by execution ID — re-saving the same
+            // row (pre-settle skeleton → post-settle receipt) must not duplicate.
+            if !dry_run {
+                let hist = g.formal_history.entry(agent_id).or_default();
+                if !hist.iter().any(|existing| existing == &id) {
+                    hist.push(id);
+                }
             }
+            g.execution_persist.clone()
+        };
+        // Persist outside the mem lock so a durable write cannot deadlock.
+        if let Some(persist) = persist {
+            persist(&exec)?;
         }
         Ok(())
     }
