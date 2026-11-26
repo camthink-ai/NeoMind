@@ -561,7 +561,7 @@ export function SourcePickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col gap-3">
+      <DialogContent className="z-[110] max-w-2xl max-h-[80vh] flex flex-col gap-3 overflow-hidden">
         <DialogHeader>
           <DialogTitle>{t('editorV2.picker.title')}</DialogTitle>
         </DialogHeader>

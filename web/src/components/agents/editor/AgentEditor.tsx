@@ -174,10 +174,15 @@ export function AgentEditor({
 
   // Sync draft when dialog opens or agent finishes loading
   useEffect(() => {
-    if (!open || loading) return
+    if (!open) {
+      setSourcePickerOpen(false)
+      return
+    }
+    if (loading) return
     setFieldErrors({})
     setDryRunResult(null)
     setDryRunError(null)
+    setSourcePickerOpen(false)
     templateSeededNameRef.current = null
     templateSeededPromptRef.current = null
     if (agent) {
@@ -624,7 +629,13 @@ export function AgentEditor({
     <>
       <BuilderShell
         open={open}
-        onOpenChange={onOpenChange}
+        onOpenChange={(next) => {
+          if (!next && sourcePickerOpen) {
+            setSourcePickerOpen(false)
+            return
+          }
+          onOpenChange(next)
+        }}
         accent="indigo"
         title={
           loading || agent

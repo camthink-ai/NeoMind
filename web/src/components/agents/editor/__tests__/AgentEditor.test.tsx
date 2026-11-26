@@ -189,4 +189,23 @@ describe('AgentEditor unified BuilderShell UX', () => {
     expect(screen.getByDisplayValue('Partial Agent')).toBeTruthy()
     expect(screen.getByTestId('agent-editor-save')).not.toBeDisabled()
   })
+
+  it('opens SourcePickerDialog above FullScreenDialog (z-[110]) and guards Escape from closing editor', async () => {
+    const onOpenChange = vi.fn()
+    render(<AgentEditor open onOpenChange={onOpenChange} onSave={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'editorV2.picker.addSource' }))
+
+    const pickerTitle = await screen.findByText('editorV2.picker.title')
+    const dialogEl = pickerTitle.closest('[role="dialog"]')
+    expect(dialogEl).toBeTruthy()
+    expect(dialogEl?.className).toContain('z-[110]')
+
+    // Pressing Escape while picker is open closes only the picker, not AgentEditor
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(onOpenChange).not.toHaveBeenCalled()
+    await waitFor(() => {
+      expect(screen.queryByText('editorV2.picker.title')).toBeNull()
+    })
+  })
 })
