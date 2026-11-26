@@ -7,7 +7,7 @@
 import { useState } from 'react'
 import { Link, useInRouterContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Calendar, Check, Clock, MousePointerClick, Zap } from 'lucide-react'
+import { Bell, Calendar, Check, Clock, MessageSquare, MousePointerClick, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -642,9 +642,11 @@ export function ScheduleNotifySection({
         )}
 
         {/* Channels: built-in IM + configured message channels */}
-        <div className="space-y-1.5">
+        <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <Label className="text-xs text-muted-foreground">{t('editorV2.notifySimple.channels')}</Label>
+            <Label className="text-xs font-medium text-muted-foreground">
+              {t('editorV2.notifySimple.channels')}
+            </Label>
             {inRouter ? (
               <Link to="/messages" className="text-xs text-primary hover:underline">
                 {t('creator.notify.configureChannels')}
@@ -655,24 +657,32 @@ export function ScheduleNotifySection({
               </a>
             )}
           </div>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-2">
             {(() => {
               const imOn = safeNotify.channels.includes('IM')
               return (
-                <Button
+                <button
                   type="button"
-                  size="xs"
-                  variant="outline"
                   onClick={() => toggleChannel('IM')}
                   title={t('editorV2.notifyUnified.imHint')}
                   className={cn(
-                    'gap-1',
-                    imOn ? 'border-primary bg-primary-light text-primary' : 'text-muted-foreground',
+                    'inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors',
+                    imOn
+                      ? 'border-primary bg-primary-light text-primary'
+                      : 'border-border bg-card text-foreground hover:bg-muted-30',
                   )}
                 >
-                  {imOn && <Check className="h-3 w-3" />}
-                  {t('editorV2.notifyUnified.imBuiltin')}
-                </Button>
+                  <span
+                    className={cn(
+                      'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+                      imOn ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
+                    )}
+                  >
+                    <Check className="h-3 w-3" />
+                  </span>
+                  <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                  <span>{t('editorV2.notifyUnified.imBuiltin')}</span>
+                </button>
               )
             })()}
             {channels
@@ -680,21 +690,34 @@ export function ScheduleNotifySection({
               .map((ch) => {
                 const on = safeNotify.channels.includes(ch.name)
                 return (
-                  <Button
+                  <button
                     key={ch.name}
                     type="button"
-                    size="xs"
-                    variant="outline"
                     onClick={() => toggleChannel(ch.name)}
                     className={cn(
-                      'gap-1',
-                      on ? 'border-primary bg-primary-light text-primary' : 'text-muted-foreground',
+                      'inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors',
+                      on
+                        ? 'border-primary bg-primary-light text-primary'
+                        : 'border-border bg-card text-foreground hover:bg-muted-30',
                       !ch.enabled && 'opacity-50',
                     )}
                   >
-                    {on && <Check className="h-3 w-3" />}
-                    {ch.name}
-                  </Button>
+                    <span
+                      className={cn(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+                        on ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
+                      )}
+                    >
+                      <Check className="h-3 w-3" />
+                    </span>
+                    <Bell className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                    <span>{ch.name}</span>
+                    {ch.channel_type && (
+                      <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-nano text-muted-foreground">
+                        {ch.channel_type}
+                      </span>
+                    )}
+                  </button>
                 )
               })}
           </div>
