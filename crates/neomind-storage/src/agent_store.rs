@@ -109,6 +109,10 @@ pub struct OutputContract {
     pub publish: bool,
 }
 
+fn default_config_version() -> u64 {
+    1
+}
+
 /// Frozen static configuration written to `agent_specs`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentSpecRecord {
@@ -131,6 +135,7 @@ pub struct AgentSpecRecord {
     pub notify: NotifyPolicy,
     #[serde(default)]
     pub controlled_actions: Vec<serde_json::Value>,
+    #[serde(default = "default_config_version")]
     pub config_version: u64,
     pub created_at: i64,
     pub updated_at: i64,
@@ -214,6 +219,7 @@ pub struct ActionDeliveryRecord {
 pub struct AgentExecutionRow {
     pub id: String,
     pub agent_id: String,
+    #[serde(default = "default_config_version")]
     pub config_version: u64,
     pub status: AgentExecutionStatus,
     pub started_at: i64,

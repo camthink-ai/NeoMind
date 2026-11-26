@@ -8,7 +8,7 @@
  */
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Plus, Trash2, Zap } from 'lucide-react'
 import { Button, IconButton } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -322,69 +322,104 @@ export function ActionsOutputSection({
         {controlledActions.length === 0 ? (
           <p className="text-xs text-muted-foreground">{t('editorV2.actions.empty')}</p>
         ) : (
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {controlledActions.map((action, idx) => (
               <div
                 key={idx}
-                className="space-y-2 rounded-lg border border-border bg-muted-20 p-3"
+                className="space-y-3 rounded-lg border border-border bg-card p-3.5"
               >
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Input
-                    value={action.name}
-                    onChange={(e) => updateAction(idx, { name: e.target.value })}
-                    placeholder={t('editorV2.actions.namePlaceholder')}
-                    className="h-8 text-xs"
-                  />
-                  <div className="flex items-center gap-1.5">
+                {/* Header row: icon + title + delete */}
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-warning-light text-warning">
+                    <Zap className="h-3.5 w-3.5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {action.name.trim() || `${t('editorV2.actions.title')} #${idx + 1}`}
+                    </div>
+                    {action.destination.trim() && (
+                      <div className="truncate font-mono text-nano text-muted-foreground">
+                        {action.destination}
+                      </div>
+                    )}
+                  </div>
+                  <IconButton
+                    type="button"
+                    size="sm"
+                    className="shrink-0 text-muted-foreground hover:text-error"
+                    onClick={() => removeAction(idx)}
+                    aria-label={t('editorV2.actions.remove')}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </IconButton>
+                </div>
+
+                {/* Quick device command picker */}
+                {deviceCommandOptions.length > 0 && (
+                  <Select
+                    value={
+                      deviceCommandOptions.some((o) => o.destination === action.destination)
+                        ? action.destination
+                        : ''
+                    }
+                    onValueChange={(dest) => {
+                      const picked = deviceCommandOptions.find((o) => o.destination === dest)
+                      updateAction(idx, {
+                        destination: dest,
+                        name: action.name.trim() ? action.name : picked?.commandName || dest,
+                      })
+                    }}
+                  >
+                    <SelectTrigger className="h-9 text-xs">
+                      <SelectValue placeholder={t('editorV2.actions.pickCommand')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {deviceCommandOptions.map((opt) => (
+                        <SelectItem key={opt.destination} value={opt.destination}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+
+                {/* Name + Destination fields */}
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">
+                      {t('editorV2.actions.actionName')}
+                    </span>
+                    <Input
+                      value={action.name}
+                      onChange={(e) => updateAction(idx, { name: e.target.value })}
+                      placeholder={t('editorV2.actions.namePlaceholder')}
+                      className="h-9 text-xs"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">
+                      {t('editorV2.actions.actionDestination')}
+                    </span>
                     <Input
                       value={action.destination}
                       onChange={(e) => updateAction(idx, { destination: e.target.value })}
                       placeholder={t('editorV2.actions.destinationPlaceholder')}
-                      className="h-8 flex-1 font-mono text-xs"
+                      className="h-9 font-mono text-xs"
                     />
-                    <IconButton
-                      type="button"
-                      size="sm"
-                      className="shrink-0 text-muted-foreground hover:text-error"
-                      onClick={() => removeAction(idx)}
-                      aria-label={t('editorV2.actions.remove')}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </IconButton>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  {deviceCommandOptions.length > 0 && (
-                    <Select
-                      value=""
-                      onValueChange={(dest) => {
-                        const picked = deviceCommandOptions.find((o) => o.destination === dest)
-                        updateAction(idx, {
-                          destination: dest,
-                          name: action.name.trim() ? action.name : picked?.commandName || dest,
-                        })
-                      }}
-                    >
-                      <SelectTrigger className="h-7 w-52 text-xs">
-                        <SelectValue placeholder={t('editorV2.actions.pickCommand')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {deviceCommandOptions.map((opt) => (
-                          <SelectItem key={opt.destination} value={opt.destination}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )}
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Switch
-                      checked={Boolean(action.idempotent)}
-                      onCheckedChange={(idempotent) => updateAction(idx, { idempotent })}
-                    />
+
+                {/* Idempotent toggle */}
+                <div className="flex items-center justify-between gap-3 rounded-md bg-muted-20 px-3 py-2">
+                  <span className="text-xs text-muted-foreground">
                     {t('editorV2.actions.idempotent')}
-                  </label>
+                  </span>
+                  <Switch
+                    checked={Boolean(action.idempotent)}
+                    onCheckedChange={(idempotent) => updateAction(idx, { idempotent })}
+                  />
                 </div>
+
                 <AdvancedDependsOn
                   selected={action.depends_on ?? []}
                   inputKeys={inputKeys}

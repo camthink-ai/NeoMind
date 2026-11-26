@@ -1159,10 +1159,12 @@
       "title": "受控动作",
       "add": "添加动作",
       "empty": "未配置受控动作。",
+      "actionName": "动作名称",
+      "actionDestination": "目标指令",
       "namePlaceholder": "动作名称（如 重启风机）",
       "destinationPlaceholder": "目标（如 device:fan-01:restart）",
       "pickCommand": "选择设备指令…",
-      "idempotent": "幂等",
+      "idempotent": "幂等执行（允许重试）",
       "dependsOn": "依赖输入键",
       "remove": "移除动作"
     },
