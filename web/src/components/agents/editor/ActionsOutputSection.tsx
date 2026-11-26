@@ -47,46 +47,41 @@ function AdvancedDependsOn({
   if (inputKeys.length === 0) return null
 
   return (
-    <div className="pt-1">
+    <div className="flex flex-wrap items-center gap-1.5">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        title={t('editorV2.notifyUnified.dependsOnHint')}
+        className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-nano text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground"
       >
-        {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         <span>{t('editorV2.notifyUnified.advancedDependsOn')}</span>
         {selected.length > 0 && (
-          <span className="rounded bg-primary-light px-1.5 py-0.5 font-mono text-nano text-primary">
+          <span className="rounded bg-primary-light px-1 font-mono text-nano text-primary">
             {selected.length}
           </span>
         )}
       </button>
-      {open && (
-        <div className="mt-2 space-y-1.5">
-          <p className="text-xs text-muted-foreground">{t('editorV2.notifyUnified.dependsOnHint')}</p>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {inputKeys.map((k) => {
-              const on = selected.includes(k)
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => onToggle(k)}
-                  className={cn(
-                    'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs transition-colors',
-                    on
-                      ? 'border-primary bg-primary-light text-primary font-medium'
-                      : 'border-border bg-muted-20 text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {on && <Check className="h-3 w-3" />}
-                  {k}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
+      {open &&
+        inputKeys.map((k) => {
+          const on = selected.includes(k)
+          return (
+            <button
+              key={k}
+              type="button"
+              onClick={() => onToggle(k)}
+              className={cn(
+                'inline-flex h-6 items-center gap-1 rounded border px-1.5 font-mono text-nano transition-colors',
+                on
+                  ? 'border-primary bg-primary-light text-primary font-medium'
+                  : 'border-border bg-muted-20 text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {on && <Check className="h-2.5 w-2.5" />}
+              {k}
+            </button>
+          )
+        })}
     </div>
   )
 }
