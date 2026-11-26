@@ -35,6 +35,9 @@ edge-api = { path = "../../crates/neomind-api", package = "neomind-api", feature
 neomind-cli-ops = { path = "../../crates/neomind-cli-ops" }
 tauri-plugin-notification = "2"
 tauri-plugin-blec = "0.8"
+# MSRV pin: leaky-bucket 1.1.3 → parking_lot 0.13 → lock_api 0.5 needs rustc 1.95;
+# rust-toolchain.toml pins 1.92.0. Keep this so `cargo update` cannot re-break Desktop CI.
+leaky-bucket = "=1.1.2"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified, DO NOT REMOVE!!

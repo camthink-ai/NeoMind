@@ -171,6 +171,8 @@ impl HostedAiAgentRuntime {
                 skipped_daily_limit: rt_rec.stats.skipped_daily_limit,
                 skipped_permit_timeout: rt_rec.stats.skipped_permit_timeout,
                 consecutive_failures: rt_rec.stats.consecutive_failures,
+                runs_today: rt_rec.stats.runs_today,
+                quota_day: rt_rec.stats.quota_day,
                 last_execution_at: rt_rec.stats.last_execution_at,
                 last_execution_id: rt_rec.stats.last_execution_id,
             },

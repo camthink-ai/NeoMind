@@ -74,3 +74,7 @@ path = "tests/hold_round5_acceptance.rs"
 [[test]]
 name = "hold_round6_acceptance"
 path = "tests/hold_round6_acceptance.rs"
+
+[[test]]
+name = "batch1_production"
+path = "tests/batch1_production.rs"

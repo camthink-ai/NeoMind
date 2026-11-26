@@ -6,7 +6,7 @@ use super::spec::InputModality;
 
 pub const EXECUTION_ID_KEY: &str = "execution_id";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionStatus {
     Completed,

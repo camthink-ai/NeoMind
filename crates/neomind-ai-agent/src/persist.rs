@@ -40,6 +40,8 @@ pub fn load_from_v2(v2: &AgentStoreV2, mem: &InMemoryAgentStore, now_ms: i64) ->
                     skipped_daily_limit: rt.stats.skipped_daily_limit,
                     skipped_permit_timeout: rt.stats.skipped_permit_timeout,
                     consecutive_failures: rt.stats.consecutive_failures,
+                    runs_today: rt.stats.runs_today,
+                    quota_day: rt.stats.quota_day,
                     last_execution_at: rt.stats.last_execution_at,
                     last_execution_id: rt.stats.last_execution_id,
                 },
@@ -124,6 +126,17 @@ impl DurableAgentStore {
     }
 
     pub fn with_v2(v2: Arc<AgentStoreV2>, now_ms: i64) -> Result<Self> {
+        // Restart recovery: IntentPending → OutcomeUnknown (never auto-resend).
+        match v2.recover_stale_intents() {
+            Ok(recovered) if !recovered.is_empty() => {
+                tracing::warn!(
+                    count = recovered.len(),
+                    "marked stale IntentPending deliveries as OutcomeUnknown"
+                );
+            }
+            Err(e) => tracing::warn!("recover_stale_intents failed: {e}"),
+            _ => {}
+        }
         let mem = InMemoryAgentStore::new();
         load_from_v2(&v2, &mem, now_ms)?;
         Ok(Self {

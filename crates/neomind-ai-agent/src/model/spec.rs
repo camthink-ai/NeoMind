@@ -146,6 +146,9 @@ pub struct PacingPolicy {
     pub min_interval_secs: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_runs_per_day: Option<u32>,
+    /// IANA timezone for the daily quota window (falls back to cron trigger TZ, then UTC).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     #[serde(default = "default_failure_threshold")]
     pub failure_threshold: u32,
 }

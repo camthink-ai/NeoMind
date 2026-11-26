@@ -108,8 +108,13 @@ impl InMemoryAgentStore {
         let id = exec.id.clone();
         let dry_run = exec.dry_run;
         g.executions.insert(id.clone(), exec);
+        // Formal history is idempotent by execution ID — re-saving the same
+        // row (pre-settle skeleton → post-settle receipt) must not duplicate.
         if !dry_run {
-            g.formal_history.entry(agent_id).or_default().push(id);
+            let hist = g.formal_history.entry(agent_id).or_default();
+            if !hist.iter().any(|existing| existing == &id) {
+                hist.push(id);
+            }
         }
         Ok(())
     }

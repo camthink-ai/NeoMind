@@ -57,7 +57,7 @@ pub use mdl_format::{CommandDefinition, MetricDefinition as MdlMetricDefinition}
 pub use registry::{
     ConnectionConfig, DeviceConfig, DeviceRegistry, DeviceTypeMode, DeviceTypeTemplate,
 };
-pub use service::{CommandStatus, DeviceService, ExtensionCommandRouterFn};
+pub use service::{CommandDelivery, CommandStatus, DeviceService, ExtensionCommandRouterFn};
 pub use telemetry::{DataPoint, TimeSeriesStorage};
 
 #[cfg(feature = "embedded-broker")]

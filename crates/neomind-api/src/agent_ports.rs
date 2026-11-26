@@ -13,14 +13,14 @@ use async_trait::async_trait;
 use neomind_ai_agent::error::{AgentError, Result as AgentResult};
 use neomind_ai_agent::ports::{
     LlmBackendCapabilities, LlmPort, LlmRequest, LlmResponse, NotifyPort, SideEffectPort,
-    SourceReadPort, SourceReadResult,
+    SideEffectReceipt, SourceReadPort, SourceReadResult,
 };
 use neomind_ai_agent::runner::alert_from_model_text;
 use neomind_ai_agent::service::{NotifyCounter, WriteCounter};
 use neomind_core::extension::{CommandEffect, ExtensionRegistry};
 use neomind_core::llm::{GenerationParams, LlmInput};
 use neomind_core::Message;
-use neomind_devices::{DeviceService, TimeSeriesStorage};
+use neomind_devices::{CommandDelivery, DeviceService, TimeSeriesStorage};
 use neomind_messages::{Message as NotifyMessage, MessageManager, MessageSeverity};
 use tokio_util::sync::CancellationToken;
 
@@ -645,26 +645,28 @@ impl SideEffectPort for HostSideEffectPort {
         action: &str,
         params: &serde_json::Value,
         _execution_id: &str,
-    ) -> AgentResult<()> {
+    ) -> AgentResult<SideEffectReceipt> {
         self.invoke_count.fetch_add(1, Ordering::SeqCst);
 
         if let Some(ext_id) = destination.strip_prefix("extension:") {
+            // Extension Ok = Accepted, not device ACK.
             self.extension_registry
                 .execute_command(ext_id, action, params)
                 .await
                 .map_err(|e| AgentError::Other(e.to_string()))?;
-            return Ok(());
+            return Ok(SideEffectReceipt::Accepted);
         }
 
         let device_id = destination.strip_prefix("device:").unwrap_or(destination);
         let map = json_to_string_map(params);
 
         if self.device_service.get_device(device_id).is_some() {
-            self.device_service
+            let (_value, delivery) = self
+                .device_service
                 .send_command_reported(device_id, action, map)
                 .await
                 .map_err(|e| AgentError::Other(e.to_string()))?;
-            return Ok(());
+            return Ok(receipt_from_command_delivery(delivery));
         }
 
         if self
@@ -677,14 +679,26 @@ impl SideEffectPort for HostSideEffectPort {
                 .execute_command(destination, action, params)
                 .await
                 .map_err(|e| AgentError::Other(e.to_string()))?;
-            return Ok(());
+            return Ok(SideEffectReceipt::Accepted);
         }
 
-        self.device_service
+        let (_value, delivery) = self
+            .device_service
             .send_command_reported(device_id, action, map)
             .await
             .map_err(|e| AgentError::Other(e.to_string()))?;
-        Ok(())
+        Ok(receipt_from_command_delivery(delivery))
+    }
+}
+
+fn receipt_from_command_delivery(delivery: CommandDelivery) -> SideEffectReceipt {
+    match delivery {
+        CommandDelivery::DeviceAcknowledged | CommandDelivery::PhysicalEffectVerified => {
+            SideEffectReceipt::Confirmed
+        }
+        CommandDelivery::AdapterAccepted { .. } | CommandDelivery::ExtensionAccepted => {
+            SideEffectReceipt::Accepted
+        }
     }
 }
 
