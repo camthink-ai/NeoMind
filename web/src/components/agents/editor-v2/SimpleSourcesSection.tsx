@@ -33,7 +33,7 @@ function deviceReq(device: Device, freshnessSecs: number): InputRequirement {
 }
 
 function extensionReq(ext: Extension, freshnessSecs: number): InputRequirement {
-  const op = ext.commands?.[0]?.name
+  const op = ext.commands?.[0]?.id
   return {
     key: `ext_${ext.id}`.replace(/[^a-zA-Z0-9_]/g, '_'),
     source: { kind: 'extension_instance', id: ext.id },
