@@ -278,6 +278,7 @@ impl AgentApplicationService {
                 &evidence,
                 &execution_id,
                 &options.memory_context.prior_turns,
+                dry_run,
                 CancellationToken::new(),
             )
             .await;

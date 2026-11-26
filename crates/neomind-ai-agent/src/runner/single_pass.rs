@@ -7,7 +7,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::alert::{alert_from_model_text, alert_from_structured_result, evidence_shows_overload};
 use super::structured::{
-    clean_model_response, extract_json_for_fields, project_output_fields, structured_system_addon,
+    clean_model_response, extract_json_for_fields, project_output_fields,
+    structured_system_addon_with_alert,
 };
 use super::{build_evidence_prompt_with_media, AgentRunner, RunOutcome};
 use crate::error::Result;
@@ -43,7 +44,7 @@ impl AgentRunner for SinglePassRunner {
         execution_id: &str,
         cancel: CancellationToken,
     ) -> Result<RunOutcome> {
-        self.run_with_history(spec, evidence, execution_id, &[], cancel)
+        self.run_with_history(spec, evidence, execution_id, &[], false, cancel)
             .await
     }
 
@@ -53,6 +54,7 @@ impl AgentRunner for SinglePassRunner {
         evidence: &EvidenceReport,
         _execution_id: &str,
         prior_turns: &[crate::ports::ConversationTurn],
+        dry_run: bool,
         cancel: CancellationToken,
     ) -> Result<RunOutcome> {
         let (tools_enabled, allowed_tools, allowed_commands) = match &spec.tool_policy {
@@ -100,12 +102,16 @@ impl AgentRunner for SinglePassRunner {
                  Respond directly without <tool_call> tags or function-call wrappers.",
             )
         };
-        if alert_enabled {
+        let expect_json = !spec.output.fields.is_empty();
+        if alert_enabled && !expect_json {
             system.push_str(
                 " End with exactly `Verdict: criteria met` ONLY when an alert/anomaly condition is actually triggered.",
             );
         }
-        system.push_str(&structured_system_addon(&spec.output.fields));
+        system.push_str(&structured_system_addon_with_alert(
+            &spec.output.fields,
+            alert_enabled,
+        ));
         let resp = self
             .llm
             .complete(
@@ -116,7 +122,8 @@ impl AgentRunner for SinglePassRunner {
                     tools_enabled,
                     allowed_tools,
                     allowed_commands,
-                    expect_json: !spec.output.fields.is_empty(),
+                    expect_json,
+                    dry_run,
                     history_turns: prior_turns.to_vec(),
                     images,
                 },
@@ -124,15 +131,31 @@ impl AgentRunner for SinglePassRunner {
             )
             .await?;
 
-        // Model path: combine explicit structured status with text verdict so
-        // explicit `status: "normal"` cannot be overridden by parroted verdict text,
-        // and explicit `status: "alert"` still fires when the model responds with pure JSON.
+        // Model path: inspect unprojected JSON first so an explicit `"alert": true/false`
+        // emitted alongside custom output fields still drives alert_verdict even when
+        // `structured_result` is strictly projected to user-declared fields.
         let text_alert = alert_from_model_text(&resp.text) || resp.alert_criteria_met;
-        let structured_result = structured_from_text(&resp.text, spec);
-        let alert = match structured_result
+        let raw_json = if expect_json {
+            extract_json_for_fields(&resp.text, &spec.output.fields)
+        } else {
+            None
+        };
+        let structured_result = raw_json.as_ref().and_then(|raw| {
+            let projected = project_output_fields(raw, &spec.output.fields);
+            if projected.as_object().is_some_and(|m| m.is_empty()) {
+                None
+            } else {
+                Some(projected)
+            }
+        });
+        let alert = match raw_json
             .as_ref()
             .and_then(alert_from_structured_result)
-        {
+            .or_else(|| {
+                structured_result
+                    .as_ref()
+                    .and_then(alert_from_structured_result)
+            }) {
             Some(explicit) => explicit,
             None => text_alert,
         };

@@ -85,13 +85,13 @@ describe('task templates', () => {
     expect(d.tool_policy).toBe('disabled')
   })
 
-  it('empty draft starts blank, manual, and with default scoped shell + web tools', () => {
+  it('empty draft starts blank, manual, and with default scoped read-only web tools', () => {
     const d = emptyDraft()
     expect(d.name).toBe('')
     expect(d.trigger.kind).toBe('manual')
     expect(d.tool_policy).toEqual({
       scoped: {
-        allowed_tools: ['shell', 'web_search', 'web_fetch'],
+        allowed_tools: ['web_search', 'web_fetch'],
         allowed_commands: [],
       },
     })

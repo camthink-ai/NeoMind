@@ -104,6 +104,18 @@ impl SideEffectBoundary {
         if spec.notify.on_alert
             && !matches!(exec.alert_verdict, Some(AlertVerdict::CriteriaMet))
         {
+            for action in &spec.controlled_actions {
+                exec.deliveries.push(ActionDeliveryRecord {
+                    execution_id: exec.id.clone(),
+                    destination: action.destination.clone(),
+                    action_fingerprint: format!("{}:gated", action.name),
+                    depends_on: action.depends_on.clone(),
+                    idempotent: action.idempotent,
+                    state: DeliveryState::Rejected {
+                        reason: "alert criteria not met".into(),
+                    },
+                });
+            }
             return Ok(exec);
         }
 

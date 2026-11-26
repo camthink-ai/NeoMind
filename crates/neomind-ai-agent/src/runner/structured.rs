@@ -267,7 +267,49 @@ pub fn clean_model_response(text: &str, structured: Option<&Value>) -> String {
         return without_verdict;
     }
 
+    // Mixed prose + fenced ```json ... ``` block: strip the fenced JSON block
+    // when structured fields were already extracted so raw JSON doesn't clutter
+    // the human-readable conclusion.
+    if structured.is_some() && without_verdict.contains("```") {
+        let stripped_prose = strip_fenced_json_blocks(&without_verdict);
+        if !stripped_prose.is_empty() {
+            return stripped_prose;
+        }
+    }
+
     text.to_string()
+}
+
+fn strip_fenced_json_blocks(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(start) = rest.find("```") {
+        let before = &rest[..start];
+        let after = &rest[start + 3..];
+        let (is_json_fence, after_lang) = if let Some(a) = after.strip_prefix("json") {
+            (true, a)
+        } else if let Some(a) = after.strip_prefix("JSON") {
+            (true, a)
+        } else {
+            (false, after)
+        };
+        let Some(end) = after_lang.find("```") else {
+            out.push_str(rest);
+            return out.trim().to_string();
+        };
+        let body = after_lang[..end].trim();
+        let body_is_json = is_json_fence
+            || ((body.starts_with('{') && body.ends_with('}'))
+                && serde_json::from_str::<Value>(body).is_ok());
+        out.push_str(before);
+        if !body_is_json {
+            out.push_str("```");
+            out.push_str(&after[..after.len() - after_lang.len() + end + 3]);
+        }
+        rest = &after_lang[end + 3..];
+    }
+    out.push_str(rest);
+    out.trim().to_string()
 }
 
 fn strip_verdict_marker(s: &str) -> String {
@@ -329,18 +371,36 @@ pub fn project_output_fields(raw: &Value, fields: &[OutputField]) -> Value {
 
 /// System-prompt appendix when the agent declares output fields.
 pub fn structured_system_addon(fields: &[OutputField]) -> String {
+    structured_system_addon_with_alert(fields, false)
+}
+
+/// System-prompt appendix when the agent declares output fields, optionally
+/// requesting an `"alert"` boolean when alert evaluation is enabled and none of
+/// the declared fields already carry alert/status semantics.
+pub fn structured_system_addon_with_alert(fields: &[OutputField], alert_enabled: bool) -> String {
     if fields.is_empty() {
         return String::new();
     }
     let mut lines = String::from(
         "\nAlso respond with exactly ONE plain JSON object (no <tool_call> tags, no function-call wrapper, no markdown fence required) containing these top-level keys:\n",
     );
+    let has_alert_field = fields.iter().any(|f| {
+        matches!(
+            f.name.trim().to_ascii_lowercase().as_str(),
+            "alert" | "is_alert" | "status" | "verdict" | "level" | "severity"
+        )
+    });
     for f in fields {
         lines.push_str(&format!("- \"{}\"", f.name));
         if let Some(d) = &f.description {
             lines.push_str(&format!(" — {d}"));
         }
         lines.push('\n');
+    }
+    if alert_enabled && !has_alert_field {
+        lines.push_str(
+            "- \"alert\" — boolean (true ONLY when an alert/anomaly condition is triggered, false otherwise)\n",
+        );
     }
     lines.push_str(
         "You may include \"confidence\" (0..1). Put the JSON object last so it can be parsed.\n",
@@ -411,5 +471,34 @@ mod tests {
         let projected = project_output_fields(&extracted, &fields);
         assert_eq!(projected["status"], "正常");
         assert_eq!(projected["summary"], "高空俯瞰画面显示大量人群活动。");
+    }
+
+    #[test]
+    fn strips_fenced_json_block_from_mixed_prose_response() {
+        let mixed = "Inspection complete: line 2 is normal.\n```json\n{\"status\": \"normal\", \"summary\": \"ok\"}\n```\n";
+        let structured = extract_json_object(mixed).unwrap();
+        let cleaned = clean_model_response(mixed, Some(&structured));
+        assert!(!cleaned.contains("```"));
+        assert!(!cleaned.contains("\"status\""));
+        assert!(cleaned.contains("Inspection complete: line 2 is normal."));
+    }
+
+    #[test]
+    fn structured_addon_requests_alert_boolean_when_fields_omit_status() {
+        let fields = vec![OutputField {
+            name: "peak_kw".into(),
+            depends_on: vec![],
+            description: Some("Peak power".into()),
+        }];
+        let addon = structured_system_addon_with_alert(&fields, true);
+        assert!(addon.contains("\"alert\""));
+
+        let fields_with_status = vec![OutputField {
+            name: "status".into(),
+            depends_on: vec![],
+            description: None,
+        }];
+        let addon_with_status = structured_system_addon_with_alert(&fields_with_status, true);
+        assert!(!addon_with_status.contains("- \"alert\""));
     }
 }

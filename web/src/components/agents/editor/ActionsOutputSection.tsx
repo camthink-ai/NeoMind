@@ -170,7 +170,7 @@ export function ActionsOutputSection({
     else {
       onToolPolicyChange({
         scoped: {
-          allowed_tools: scopedTools.length > 0 ? scopedTools : ['shell'],
+          allowed_tools: scopedTools.length > 0 ? scopedTools : ['web_search', 'web_fetch'],
           allowed_commands: scopedCommands,
         },
       })
@@ -201,8 +201,19 @@ export function ActionsOutputSection({
     )
   }
 
+  const reindexOpenMap = (prev: Record<number, boolean>, removedIndex: number) => {
+    const next: Record<number, boolean> = {}
+    for (const [k, v] of Object.entries(prev)) {
+      const idx = Number(k)
+      if (idx < removedIndex) next[idx] = v
+      else if (idx > removedIndex) next[idx - 1] = v
+    }
+    return next
+  }
+
   const removeAction = (index: number) => {
     onControlledActionsChange(controlledActions.filter((_, i) => i !== index))
+    setOpenActionDeps((prev) => reindexOpenMap(prev, index))
   }
 
   const toggleActionDep = (index: number, key: string) => {
@@ -519,12 +530,13 @@ export function ActionsOutputSection({
                       type="button"
                       size="sm"
                       className="shrink-0 text-muted-foreground hover:text-error"
-                      onClick={() =>
+                      onClick={() => {
                         onOutputChange({
                           ...outputContract,
                           fields: outputContract.fields.filter((_, i) => i !== index),
                         })
-                      }
+                        setOpenFieldDeps((prev) => reindexOpenMap(prev, index))
+                      }}
                       aria-label={t('editorV2.output.remove')}
                     >
                       <Trash2 className="h-4 w-4" />

@@ -63,6 +63,9 @@ pub struct LlmRequest {
     /// When true, request grammar-constrained JSON object output on tool-less synthesis turns.
     #[serde(default)]
     pub expect_json: bool,
+    /// When true, this is a dry-run/test execution; side-effect tools must be rejected.
+    #[serde(default)]
+    pub dry_run: bool,
     /// Sliding multi-turn task history from recent formal runs (oldest → newest).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub history_turns: Vec<ConversationTurn>,

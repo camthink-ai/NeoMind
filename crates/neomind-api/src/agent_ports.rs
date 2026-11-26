@@ -4,7 +4,7 @@
 //! clean-slate kernel reads real telemetry/extensions, calls the instance
 //! manager LLM, and delivers via MessageManager / DeviceService.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -198,11 +198,18 @@ impl HostLlmPort {
             .as_ref()
             .map(|i| i.thinking_is_integral)
             .unwrap_or(false);
-        // Autonomous agent runs need deterministic threshold/boolean/JSON reasoning;
-        // never inherit high chat temperatures (e.g. llama-server --temp 1.00).
+        // Autonomous structured / tool-calling agent runs need deterministic
+        // threshold/boolean/JSON reasoning; pure free-form prose reports respect
+        // the configured backend temperature (clamped to [0.0, 1.0]).
         let agent_temp = instance_opt
             .as_ref()
-            .map(|i| i.temperature.clamp(0.0, 0.2))
+            .map(|i| {
+                if request.expect_json || request.tools_enabled {
+                    i.temperature.clamp(0.0, 0.2)
+                } else {
+                    i.temperature.clamp(0.0, 1.0)
+                }
+            })
             .unwrap_or(0.2);
         let params = GenerationParams {
             temperature: Some(agent_temp),
@@ -293,7 +300,22 @@ impl HostLlmPort {
 
         let mut final_text = String::new();
         let mut recorded_tool_calls: Vec<ToolCallTrace> = Vec::new();
-        let mut seen_tool_calls: HashSet<String> = HashSet::new();
+        // Track (call_count, last_failed) per tool+args signature: allow one
+        // legitimate re-check if the first call succeeded, but stop repeated
+        // identical failures or 3rd identical calls.
+        let mut seen_tool_calls: HashMap<String, (usize, bool)> = HashMap::new();
+
+        let effective_tool_policy = if !request.tools_enabled {
+            neomind_ai_agent::model::ToolPolicy::Disabled
+        } else if let Some(ref allowed) = request.allowed_tools {
+            neomind_ai_agent::model::ToolPolicy::Scoped {
+                allowed_tools: allowed.clone(),
+                allowed_commands: request.allowed_commands.clone(),
+            }
+        } else {
+            neomind_ai_agent::model::ToolPolicy::Unrestricted
+        };
+        let safety_hooks = neomind_ai_agent::runner::hooks::default_hooks();
 
         for round in 0..max_rounds {
             if round >= 2 {
@@ -449,49 +471,82 @@ impl HostLlmPort {
 
             for (orig_name, args) in calls {
                 let call_key = format!("{orig_name}:{args}");
-                call_summaries.push(format!("{orig_name}({args})"));
+                let trace_args = sanitize_trace_arguments(&args);
+                call_summaries.push(format!("{orig_name}({trace_args})"));
 
                 // Guard against stuck duplicate tool-call loops.
-                if !seen_tool_calls.insert(call_key) {
-                    let msg = format!(
-                        "Duplicate call `{orig_name}` with identical arguments skipped; reuse the earlier result and proceed to the next step or give your final answer."
+                if let Some(&(count, last_failed)) = seen_tool_calls.get(&call_key) {
+                    if last_failed || count >= 2 {
+                        let msg = format!(
+                            "Duplicate call `{orig_name}` with identical arguments skipped; reuse the earlier result and proceed to the next step or give your final answer."
+                        );
+                        recorded_tool_calls.push(ToolCallTrace {
+                            round: round as u32,
+                            name: orig_name.clone(),
+                            arguments: trace_args,
+                            success: false,
+                            result_preview: String::new(),
+                            error: Some(msg.clone()),
+                            duration_ms: 0,
+                        });
+                        tool_results.push(format!("### Tool `{orig_name}` skipped\n{msg}"));
+                        continue;
+                    }
+                }
+
+                // Enforce kernel pre-dispatch hooks (AllowlistHook + SafetyPolicyHook),
+                // including rejecting side-effect tools during dry-run executions.
+                let invocation = neomind_ai_agent::ports::ToolInvocation {
+                    name: orig_name.clone(),
+                    arguments: args.clone(),
+                    extension_id: None,
+                    operation: None,
+                };
+                let capability = classify_host_tool_capability(&orig_name);
+                if let Err(reason) = safety_hooks.iter().try_for_each(|hook| {
+                    hook.before_dispatch(
+                        &invocation,
+                        &capability,
+                        request.dry_run,
+                        &effective_tool_policy,
+                    )
+                }) {
+                    tracing::warn!(
+                        tool = %orig_name,
+                        dry_run = request.dry_run,
+                        reason = %reason,
+                        "Agent tool call rejected by safety hook"
                     );
+                    seen_tool_calls.insert(call_key, (2, true));
                     recorded_tool_calls.push(ToolCallTrace {
                         round: round as u32,
                         name: orig_name.clone(),
-                        arguments: args,
+                        arguments: trace_args,
                         success: false,
                         result_preview: String::new(),
-                        error: Some(msg.clone()),
+                        error: Some(reason.clone()),
                         duration_ms: 0,
                     });
-                    tool_results.push(format!("### Tool `{orig_name}` skipped\n{msg}"));
+                    tool_results.push(format!("### Tool `{orig_name}` rejected\n{reason}"));
                     continue;
                 }
 
                 tracing::info!(tool = %orig_name, round, "Agent executing authorized tool");
 
-                // Optional command allowlist check for shell tool.
+                // Optional command allowlist check for shell tool (rejects metacharacter injection).
                 if orig_name == "shell" && !request.allowed_commands.is_empty() {
                     let cmd_str = args
                         .get("command")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .trim();
-                    let first_tok = cmd_str.split_whitespace().next().unwrap_or("");
-                    let permitted = request
-                        .allowed_commands
-                        .iter()
-                        .any(|allowed| allowed == first_tok || cmd_str.starts_with(allowed.as_str()));
-                    if !permitted {
-                        let reason = format!(
-                            "Command `{first_tok}` is not in allowed_commands (allowed: {}). Proceed with allowed commands or finish.",
-                            request.allowed_commands.join(", ")
-                        );
+                    if let Err(reason) = is_shell_command_allowed(cmd_str, &request.allowed_commands)
+                    {
+                        seen_tool_calls.insert(call_key, (2, true));
                         recorded_tool_calls.push(ToolCallTrace {
                             round: round as u32,
                             name: orig_name.clone(),
-                            arguments: args,
+                            arguments: trace_args,
                             success: false,
                             result_preview: String::new(),
                             error: Some(reason.clone()),
@@ -512,7 +567,7 @@ impl HostLlmPort {
                 };
                 let elapsed_ms = started.elapsed().as_millis() as u64;
 
-                let formatted = match exec_res {
+                let (succeeded, formatted) = match exec_res {
                     Ok(Ok(out)) => {
                         let raw_val = if out.success {
                             out.data.to_string()
@@ -527,15 +582,18 @@ impl HostLlmPort {
                         recorded_tool_calls.push(ToolCallTrace {
                             round: round as u32,
                             name: orig_name.clone(),
-                            arguments: args,
+                            arguments: trace_args,
                             success: out.success,
                             result_preview: truncate_tool_output(&raw_val, 1_500),
                             error: if out.success { None } else { out.error.clone() },
                             duration_ms: elapsed_ms,
                         });
-                        format!(
-                            "### Tool `{orig_name}` result\n{}",
-                            truncate_tool_output(&raw_val, 6_000)
+                        (
+                            out.success,
+                            format!(
+                                "### Tool `{orig_name}` result\n{}",
+                                truncate_tool_output(&raw_val, 6_000)
+                            ),
                         )
                     }
                     Ok(Err(e)) => {
@@ -543,28 +601,31 @@ impl HostLlmPort {
                         recorded_tool_calls.push(ToolCallTrace {
                             round: round as u32,
                             name: orig_name.clone(),
-                            arguments: args,
+                            arguments: trace_args,
                             success: false,
                             result_preview: String::new(),
                             error: Some(err_str.clone()),
                             duration_ms: elapsed_ms,
                         });
-                        format!("### Tool `{orig_name}` error\n{err_str}")
+                        (false, format!("### Tool `{orig_name}` error\n{err_str}"))
                     }
                     Err(_) => {
                         let err_str = "Timed out after 30s".to_string();
                         recorded_tool_calls.push(ToolCallTrace {
                             round: round as u32,
                             name: orig_name.clone(),
-                            arguments: args,
+                            arguments: trace_args,
                             success: false,
                             result_preview: String::new(),
                             error: Some(err_str.clone()),
                             duration_ms: elapsed_ms,
                         });
-                        format!("### Tool `{orig_name}` error\n{err_str}")
+                        (false, format!("### Tool `{orig_name}` error\n{err_str}"))
                     }
                 };
+                let entry = seen_tool_calls.entry(call_key).or_insert((0, false));
+                entry.0 += 1;
+                entry.1 = !succeeded;
                 tool_results.push(formatted);
             }
 
@@ -592,6 +653,133 @@ impl HostLlmPort {
             alert_criteria_met: alert_from_model_text(&final_text),
             tool_calls: recorded_tool_calls,
         })
+    }
+}
+
+/// Classify a host tool's capability class for [`SafetyPolicyHook`].
+///
+/// Known read-only inspection tools are [`CapabilityClass::ReadOnly`] (allowed
+/// during dry-run). Mutating, command-executing, and unrecognized extension
+/// tools default to [`CapabilityClass::SideEffect`] so dry-run rejects them.
+pub(crate) fn classify_host_tool_capability(
+    name: &str,
+) -> neomind_ai_agent::ports::OperationCapability {
+    let lower = name.trim().to_ascii_lowercase();
+    let is_read_only = matches!(
+        lower.as_str(),
+        "file_read"
+            | "read_file"
+            | "list_files"
+            | "search_files"
+            | "grep"
+            | "web_search"
+            | "web_fetch"
+            | "query_data"
+            | "get_device"
+            | "list_devices"
+            | "vision"
+            | "describe_image"
+            | "analyze_image"
+            | "device_read"
+            | "metric_read"
+            | "memory_read"
+            | "get_time"
+            | "datetime"
+    ) || lower.starts_with("get_")
+        || lower.starts_with("list_")
+        || lower.starts_with("read_")
+        || lower.starts_with("query_")
+        || lower.starts_with("search_");
+
+    neomind_ai_agent::ports::OperationCapability {
+        class: if is_read_only {
+            neomind_ai_agent::ports::CapabilityClass::ReadOnly
+        } else {
+            neomind_ai_agent::ports::CapabilityClass::SideEffect
+        },
+        scope: Some(name.to_string()),
+        idempotent: is_read_only,
+    }
+}
+
+/// Strictly validate a shell command against `allowed_commands`.
+///
+/// Rejects shell chaining, substitution, and redirection metacharacters
+/// (`;`, `&`, `|`, `$(`, `` ` ``, `>`, `<`, newlines) so an allowlisted prefix
+/// like `uname` cannot be bypassed with `uname; rm -rf /` or `uname && id`.
+pub(crate) fn is_shell_command_allowed(
+    cmd_str: &str,
+    allowed_commands: &[String],
+) -> Result<(), String> {
+    let trimmed = cmd_str.trim();
+    if trimmed.is_empty() {
+        return Err("Empty shell command is not allowed.".into());
+    }
+    const FORBIDDEN_METACHARS: &[&str] = &[";", "&", "|", "$(", "`", ">", "<", "\n", "\r"];
+    for meta in FORBIDDEN_METACHARS {
+        if trimmed.contains(meta) {
+            return Err(format!(
+                "Shell command rejected: metacharacter `{}` is forbidden when allowed_commands is enforced.",
+                meta.escape_debug()
+            ));
+        }
+    }
+    let first_tok = trimmed.split_whitespace().next().unwrap_or("");
+    let permitted = allowed_commands.iter().any(|raw_allowed| {
+        let allowed = raw_allowed.trim();
+        if allowed.is_empty() {
+            return false;
+        }
+        if allowed.contains(char::is_whitespace) {
+            trimmed == allowed || trimmed.starts_with(&format!("{allowed} "))
+        } else {
+            first_tok == allowed
+        }
+    });
+    if permitted {
+        Ok(())
+    } else {
+        Err(format!(
+            "Command `{first_tok}` is not in allowed_commands (allowed: {}). Proceed with allowed commands or finish.",
+            allowed_commands.join(", ")
+        ))
+    }
+}
+
+/// Sanitize and bound tool arguments before persisting into `ToolCallTrace`.
+pub(crate) fn sanitize_trace_arguments(args: &serde_json::Value) -> serde_json::Value {
+    const MAX_ARG_STR_CHARS: usize = 512;
+    const SENSITIVE_KEYS: &[&str] = &[
+        "token",
+        "password",
+        "passwd",
+        "secret",
+        "api_key",
+        "apikey",
+        "authorization",
+        "cookie",
+        "credential",
+    ];
+    match args {
+        serde_json::Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                let lower = k.to_ascii_lowercase();
+                if SENSITIVE_KEYS.iter().any(|s| lower.contains(s)) {
+                    out.insert(k.clone(), serde_json::Value::String("[REDACTED]".into()));
+                } else {
+                    out.insert(k.clone(), sanitize_trace_arguments(v));
+                }
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(sanitize_trace_arguments).collect())
+        }
+        serde_json::Value::String(s) => {
+            serde_json::Value::String(truncate_tool_output(s, MAX_ARG_STR_CHARS))
+        }
+        other => other.clone(),
     }
 }
 
@@ -1497,5 +1685,74 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "web_search");
         assert_eq!(calls[0].1["query"], "weather");
+    }
+
+    #[test]
+    fn shell_command_allowlist_blocks_metacharacters_and_prefix_spoofing() {
+        let allowed = vec!["uname".to_string(), "git status".to_string()];
+        assert!(is_shell_command_allowed("uname -m", &allowed).is_ok());
+        assert!(is_shell_command_allowed("uname", &allowed).is_ok());
+        assert!(is_shell_command_allowed("git status --short", &allowed).is_ok());
+
+        // Chaining / substitution / redirection must be rejected.
+        assert!(is_shell_command_allowed("uname; rm -rf /", &allowed).is_err());
+        assert!(is_shell_command_allowed("uname && id", &allowed).is_err());
+        assert!(is_shell_command_allowed("uname | cat /etc/passwd", &allowed).is_err());
+        assert!(is_shell_command_allowed("uname $(id)", &allowed).is_err());
+        assert!(is_shell_command_allowed("uname `id`", &allowed).is_err());
+        assert!(is_shell_command_allowed("uname > /tmp/out", &allowed).is_err());
+        assert!(is_shell_command_allowed("uname\nid", &allowed).is_err());
+
+        // Prefix spoofing must be rejected.
+        assert!(is_shell_command_allowed("uname2", &allowed).is_err());
+        assert!(is_shell_command_allowed("git status2", &allowed).is_err());
+        assert!(is_shell_command_allowed("rm -rf /", &allowed).is_err());
+    }
+
+    #[test]
+    fn dry_run_safety_hook_rejects_side_effect_tools_and_allows_readonly() {
+        let hooks = neomind_ai_agent::runner::hooks::default_hooks();
+        let policy = neomind_ai_agent::model::ToolPolicy::Unrestricted;
+
+        let shell_call = neomind_ai_agent::ports::ToolInvocation {
+            name: "shell".into(),
+            arguments: serde_json::json!({"command": "uname"}),
+            extension_id: None,
+            operation: None,
+        };
+        let shell_cap = classify_host_tool_capability("shell");
+        assert!(hooks
+            .iter()
+            .try_for_each(|h| h.before_dispatch(&shell_call, &shell_cap, true, &policy))
+            .is_err());
+        assert!(hooks
+            .iter()
+            .try_for_each(|h| h.before_dispatch(&shell_call, &shell_cap, false, &policy))
+            .is_ok());
+
+        let search_call = neomind_ai_agent::ports::ToolInvocation {
+            name: "web_search".into(),
+            arguments: serde_json::json!({"query": "neomind"}),
+            extension_id: None,
+            operation: None,
+        };
+        let search_cap = classify_host_tool_capability("web_search");
+        assert!(hooks
+            .iter()
+            .try_for_each(|h| h.before_dispatch(&search_call, &search_cap, true, &policy))
+            .is_ok());
+    }
+
+    #[test]
+    fn sanitize_trace_arguments_redacts_secrets_and_truncates_long_strings() {
+        let long_str = "a".repeat(2000);
+        let raw = serde_json::json!({
+            "api_key": "sk-secret-123",
+            "nested": { "Authorization": "Bearer xyz", "query": long_str },
+        });
+        let clean = sanitize_trace_arguments(&raw);
+        assert_eq!(clean["api_key"], "[REDACTED]");
+        assert_eq!(clean["nested"]["Authorization"], "[REDACTED]");
+        assert!(clean["nested"]["query"].as_str().unwrap().len() < 600);
     }
 }

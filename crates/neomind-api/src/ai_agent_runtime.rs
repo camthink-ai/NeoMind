@@ -775,20 +775,28 @@ fn turn_from_exec_record(
             .collect();
         asst_parts.push(format!("Tools used: {}", tool_list.join(", ")));
     }
+    let has_structured = exec
+        .structured_result
+        .as_ref()
+        .is_some_and(|sr| !sr.as_object().is_some_and(|m| m.is_empty()));
     if let Some(sr) = &exec.structured_result {
-        if !sr.as_object().is_some_and(|m| m.is_empty()) {
+        if has_structured {
             asst_parts.push(format!("Output: {}", truncate_chars(&sr.to_string(), 240)));
         }
     }
-    if let Some(c) = exec
-        .conclusion
-        .as_deref()
-        .or(exec.brief_text.as_deref())
-        .or(exec.error.as_deref())
-    {
-        let trimmed = c.trim();
-        if !trimmed.is_empty() {
-            asst_parts.push(format!("Result: {}", truncate_chars(trimmed, 260)));
+    // Prefer verifiable structured Output over free-form prose to minimize
+    // multi-turn hallucination drift; fall back to conclusion when unstructured.
+    if !has_structured {
+        if let Some(c) = exec
+            .conclusion
+            .as_deref()
+            .or(exec.brief_text.as_deref())
+            .or(exec.error.as_deref())
+        {
+            let trimmed = c.trim();
+            if !trimmed.is_empty() {
+                asst_parts.push(format!("Result: {}", truncate_chars(trimmed, 260)));
+            }
         }
     }
     if asst_parts.is_empty() {
@@ -821,7 +829,52 @@ fn turn_from_storage_row(
         .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_else(|| ts_secs.to_string());
 
-    let user = format!("[Prior run {ts} ({})]", row.id);
+    // Mirror `turn_from_exec_record` by extracting compact input summaries from
+    // persisted `row.evidence` so pre-restart and post-restart turns match.
+    let mut input_parts: Vec<String> = Vec::new();
+    if let Ok(evidence) =
+        serde_json::from_value::<neomind_ai_agent::model::EvidenceReport>(row.evidence.clone())
+    {
+        for item in &evidence.items {
+            let brief = match &item.detail {
+                Some(neomind_ai_agent::model::EvidenceDetail::Structured { value }) => {
+                    let ev = neomind_ai_agent::model::EvidenceReport {
+                        items: vec![item.clone()],
+                        missing_keys: vec![],
+                        skip_reason: None,
+                    };
+                    let sanitized = neomind_ai_agent::runner::build_evidence_prompt("", &ev);
+                    sanitized
+                        .lines()
+                        .find(|l| l.starts_with("- "))
+                        .map(|l| truncate_chars(l.trim_start_matches("- "), 180))
+                        .unwrap_or_else(|| truncate_chars(&value.to_string(), 120))
+                }
+                Some(neomind_ai_agent::model::EvidenceDetail::Text { text }) => {
+                    format!("{}: {}", item.key, truncate_chars(text, 120))
+                }
+                Some(neomind_ai_agent::model::EvidenceDetail::TimeSeries { points, .. }) => {
+                    format!("{}: {points} points", item.key)
+                }
+                Some(neomind_ai_agent::model::EvidenceDetail::Vision {
+                    image_source_field,
+                    ..
+                }) => format!("{}: vision({image_source_field})", item.key),
+                None => format!("{}: missing", item.key),
+            };
+            input_parts.push(brief);
+        }
+    }
+
+    let user = if input_parts.is_empty() {
+        format!("[Prior run {ts} ({})]", row.id)
+    } else {
+        format!(
+            "[Prior run {ts} ({})]\nInputs: {}",
+            row.id,
+            truncate_chars(&input_parts.join("; "), 360)
+        )
+    };
     let mut asst_parts: Vec<String> = Vec::new();
     if !row.tool_calls.is_empty() {
         let tool_list: Vec<String> = row
@@ -832,20 +885,26 @@ fn turn_from_storage_row(
             .collect();
         asst_parts.push(format!("Tools used: {}", tool_list.join(", ")));
     }
+    let has_structured = row
+        .structured_result
+        .as_ref()
+        .is_some_and(|sr| !sr.as_object().is_some_and(|m| m.is_empty()));
     if let Some(sr) = &row.structured_result {
-        if !sr.as_object().is_some_and(|m| m.is_empty()) {
+        if has_structured {
             asst_parts.push(format!("Output: {}", truncate_chars(&sr.to_string(), 240)));
         }
     }
-    if let Some(c) = row
-        .conclusion
-        .as_deref()
-        .or(row.brief_text.as_deref())
-        .or(row.error.as_deref())
-    {
-        let trimmed = c.trim();
-        if !trimmed.is_empty() {
-            asst_parts.push(format!("Result: {}", truncate_chars(trimmed, 260)));
+    if !has_structured {
+        if let Some(c) = row
+            .conclusion
+            .as_deref()
+            .or(row.brief_text.as_deref())
+            .or(row.error.as_deref())
+        {
+            let trimmed = c.trim();
+            if !trimmed.is_empty() {
+                asst_parts.push(format!("Result: {}", truncate_chars(trimmed, 260)));
+            }
         }
     }
     if asst_parts.is_empty() {

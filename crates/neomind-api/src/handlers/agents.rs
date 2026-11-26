@@ -1012,10 +1012,25 @@ fn latest_structured_output_for_agent(
     {
         return Some(sr);
     }
+    // O(1) lookup via runtime.stats.last_execution_id to avoid deserializing
+    // the full execution history for every agent on GET /api/agents after restart.
     if let Some(store) = &rt.durable.store {
-        if let Ok(rows) = store.list_formal_executions(agent_id) {
-            if let Some(latest) = rows.into_iter().max_by_key(|r| r.finished_at) {
-                if let Some(sr) = latest
+        let last_exec_id = rt
+            .service
+            .store
+            .get_runtime(agent_id)
+            .ok()
+            .and_then(|r| r.stats.last_execution_id)
+            .or_else(|| {
+                store
+                    .get_runtime(agent_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.stats.last_execution_id)
+            });
+        if let Some(exec_id) = last_exec_id {
+            if let Ok(Some(row)) = store.get_execution(&exec_id) {
+                if let Some(sr) = row
                     .structured_result
                     .filter(|v| v.as_object().is_some_and(|m| !m.is_empty()))
                 {

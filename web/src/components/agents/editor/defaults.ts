@@ -43,7 +43,7 @@ export function emptyDraft(): AgentSpecDraft {
     input: { requirements: [] },
     tool_policy: {
       scoped: {
-        allowed_tools: ['shell', 'web_search', 'web_fetch'],
+        allowed_tools: ['web_search', 'web_fetch'],
         allowed_commands: [],
       },
     },

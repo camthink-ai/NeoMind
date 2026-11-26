@@ -41,18 +41,18 @@ pub fn build_evidence_prompt_with_media(
             parts.push(format_item(item, &mut images, &mut seen_images));
         }
     }
-    if !evidence.missing_keys.is_empty() {
-        parts.push(format!(
-            "\n## Missing\n{}",
+    let missing_section = if !evidence.missing_keys.is_empty() {
+        format!(
+            "\n\n## Missing\n{}\nFor any conclusion that depends on missing keys, state 依据不足 / insufficient evidence.",
             evidence.missing_keys.join(", ")
-        ));
-        parts.push(
-            "For any conclusion that depends on missing keys, state 依据不足 / insufficient evidence."
-                .into(),
-        );
-    }
+        )
+    } else {
+        String::new()
+    };
     let joined = parts.join("\n");
-    let capped = truncate_chars(&joined, MAX_TOTAL_PROMPT_CHARS);
+    let body_budget = MAX_TOTAL_PROMPT_CHARS.saturating_sub(missing_section.chars().count());
+    let mut capped = truncate_chars(&joined, body_budget);
+    capped.push_str(&missing_section);
     (capped, images)
 }
 
@@ -600,16 +600,14 @@ fn push_image(
     mime_type: Option<String>,
     label: Option<String>,
 ) -> bool {
-    // Deduplicate by prefix + suffix + length (fast even for 500KB base64).
-    let sig = if data.len() > 128 {
-        format!(
-            "{}:{}..{}",
-            data.len(),
-            &data[..64],
-            &data[data.len() - 32..]
-        )
-    } else {
-        data.clone()
+    // Deduplicate by UTF-8-safe content hash + byte length (fast even for 500KB base64
+    // and safe for non-ASCII URLs such as `/api/images/中文设备/...`).
+    let sig = {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        data.hash(&mut h);
+        format!("{}:{:016x}", data.len(), h.finish())
     };
     if !seen.insert(sig) {
         // Already attached from another metric (e.g. `image` and `_raw`).
@@ -793,5 +791,49 @@ mod tests {
         assert_eq!(images.len(), 1);
         assert_eq!(images[0].mime_type, None);
         assert_eq!(images[0].data, "/api/images/9999/image/1700000000_abc.jpg");
+    }
+
+    #[test]
+    fn non_ascii_long_image_url_does_not_panic_and_missing_survives_truncation() {
+        let long_cn_url = format!(
+            "/api/images/中文车间摄像头_{}/snapshot_{}.jpg",
+            "东区一号产线".repeat(8),
+            "20261126".repeat(6)
+        );
+        let huge_text = "x".repeat(40_000);
+        let evidence = EvidenceReport {
+            items: vec![
+                EvidenceItem {
+                    key: "cam_cn".into(),
+                    source_id: "device:cn".into(),
+                    result_type: crate::model::InputModality::StructuredJson,
+                    observed_at: Some(1_700_000_000_000),
+                    valid_window: None,
+                    fetched_at: 1_700_000_000_000,
+                    quality: EvidenceQuality::Fresh,
+                    binding_proof: "device:cn:*".into(),
+                    detail: Some(EvidenceDetail::Structured {
+                        value: serde_json::json!({ "image": long_cn_url }),
+                    }),
+                },
+                EvidenceItem {
+                    key: "huge_log".into(),
+                    source_id: "ext:logs".into(),
+                    result_type: crate::model::InputModality::Text,
+                    observed_at: Some(1_700_000_000_000),
+                    valid_window: None,
+                    fetched_at: 1_700_000_000_000,
+                    quality: EvidenceQuality::Fresh,
+                    binding_proof: "ext:logs".into(),
+                    detail: Some(EvidenceDetail::Text { text: huge_text }),
+                },
+            ],
+            missing_keys: vec!["sensor_offline".into()],
+            skip_reason: None,
+        };
+        let (prompt, images) = build_evidence_prompt_with_media(&"p".repeat(35_000), &evidence);
+        assert_eq!(images.len(), 1);
+        assert!(prompt.contains("## Missing"));
+        assert!(prompt.contains("sensor_offline"));
     }
 }

@@ -18,7 +18,7 @@ pub use prompt_builder::{
 pub use single_pass::{SinglePassRunner, LOCAL_BRIEF_BACKEND};
 pub use structured::{
     clean_model_response, extract_json_for_fields, extract_json_object, project_output_fields,
-    structured_system_addon,
+    structured_system_addon, structured_system_addon_with_alert,
 };
 pub use tool_loop::ToolLoopRunner;
 
@@ -38,13 +38,14 @@ pub trait AgentRunner: Send + Sync {
         cancel: CancellationToken,
     ) -> Result<RunOutcome>;
 
-    /// Run with sliding multi-turn task history (defaults to [`Self::run`]).
+    /// Run with sliding multi-turn task history and dry-run flag (defaults to [`Self::run`]).
     async fn run_with_history(
         &self,
         spec: &AgentSpec,
         evidence: &EvidenceReport,
         execution_id: &str,
         _prior_turns: &[crate::ports::ConversationTurn],
+        _dry_run: bool,
         cancel: CancellationToken,
     ) -> Result<RunOutcome> {
         self.run(spec, evidence, execution_id, cancel).await

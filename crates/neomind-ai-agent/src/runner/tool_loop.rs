@@ -75,6 +75,7 @@ impl AgentRunner for ToolLoopRunner {
                         allowed_tools,
                         allowed_commands,
                         expect_json: !spec.output.fields.is_empty(),
+                        dry_run: false,
                         history_turns: Vec::new(),
                         images: images.clone(),
                     },
