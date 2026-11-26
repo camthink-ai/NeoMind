@@ -243,7 +243,7 @@ export function ScheduleNotifySection({
 
         {/* Interval config */}
         {safeTrigger.kind === 'interval' && (
-          <div className="space-y-2.5 rounded-lg border border-border bg-muted-20 p-3">
+          <div className="space-y-3 rounded-lg border border-border bg-muted-20 p-3.5">
             <div className="flex flex-wrap gap-1.5">
               {INTERVAL_PRESETS_MINS.map((mins) => {
                 const active = safeTrigger.every_secs === mins * 60
@@ -253,9 +253,9 @@ export function ScheduleNotifySection({
                     type="button"
                     onClick={() => onTriggerChange({ kind: 'interval', every_secs: mins * 60 })}
                     className={cn(
-                      'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                      'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
                       active
-                        ? 'border-primary bg-primary text-primary-foreground'
+                        ? 'border-primary bg-primary-light text-primary'
                         : 'border-border bg-card text-muted-foreground hover:text-foreground',
                     )}
                   >
@@ -264,7 +264,7 @@ export function ScheduleNotifySection({
                 )
               })}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <Label className="text-xs text-muted-foreground">{t('editorV2.when.everyMinutes')}</Label>
               <Input
                 type="number"
@@ -276,7 +276,7 @@ export function ScheduleNotifySection({
                     every_secs: Math.max(1, Number(e.target.value) || 1) * 60,
                   })
                 }
-                className="h-8 w-24 text-xs tabular-nums"
+                className="h-9 w-24 text-xs tabular-nums"
               />
             </div>
           </div>
@@ -284,8 +284,8 @@ export function ScheduleNotifySection({
 
         {/* Cron config (Daily / Weekly / Custom + Timezone) */}
         {safeTrigger.kind === 'cron' && (
-          <div className="space-y-3 rounded-lg border border-border bg-muted-20 p-3">
-            <div className="flex flex-wrap items-center gap-2">
+          <div className="space-y-3.5 rounded-lg border border-border bg-muted-20 p-3.5">
+            <div className="inline-flex rounded-lg border border-border bg-card p-1 gap-1">
               {([
                 { id: 'daily', label: t('editorV2.schedule.cronDaily') },
                 { id: 'weekly', label: t('editorV2.schedule.cronWeekly') },
@@ -301,10 +301,10 @@ export function ScheduleNotifySection({
                     }
                   }}
                   className={cn(
-                    'rounded-md border px-2.5 py-1 text-xs font-medium transition-colors',
+                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
                     effectiveCronMode === id
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-border bg-card text-muted-foreground hover:text-foreground',
+                      ? 'bg-primary-light text-primary'
+                      : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
                   {label}
@@ -313,7 +313,7 @@ export function ScheduleNotifySection({
             </div>
 
             {effectiveCronMode !== 'custom' ? (
-              <div className="space-y-2.5">
+              <div className="space-y-3">
                 {effectiveCronMode === 'weekly' && (
                   <div className="flex flex-wrap gap-1.5">
                     {[0, 1, 2, 3, 4, 5, 6].map((day) => {
@@ -329,9 +329,9 @@ export function ScheduleNotifySection({
                             updateCronExpr('weekly', cronParsed.minute, cronParsed.hour, nextDays)
                           }}
                           className={cn(
-                            'h-8 min-w-[2.5rem] rounded-md border px-2 text-xs font-medium transition-colors',
+                            'h-9 min-w-[2.75rem] rounded-md border px-2.5 text-xs font-medium transition-colors',
                             on
-                              ? 'border-primary bg-primary text-primary-foreground'
+                              ? 'border-primary bg-primary-light text-primary'
                               : 'border-border bg-card text-muted-foreground hover:text-foreground',
                           )}
                         >
@@ -342,8 +342,8 @@ export function ScheduleNotifySection({
                   </div>
                 )}
 
-                <div className="flex flex-wrap items-center gap-3">
-                  <div className="flex items-center gap-1.5">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{t('editorV2.when.hour')}</Label>
                     <Select
                       value={String(cronParsed.hour)}
@@ -351,7 +351,7 @@ export function ScheduleNotifySection({
                         updateCronExpr(effectiveCronMode, cronParsed.minute, Number(h), cronParsed.weekdays)
                       }
                     >
-                      <SelectTrigger className="h-8 w-24 text-xs">
+                      <SelectTrigger className="h-9 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -363,7 +363,7 @@ export function ScheduleNotifySection({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="space-y-1">
                     <Label className="text-xs text-muted-foreground">{t('editorV2.schedule.minute')}</Label>
                     <Select
                       value={String(cronParsed.minute)}
@@ -371,7 +371,7 @@ export function ScheduleNotifySection({
                         updateCronExpr(effectiveCronMode, Number(m), cronParsed.hour, cronParsed.weekdays)
                       }
                     >
-                      <SelectTrigger className="h-8 w-20 text-xs">
+                      <SelectTrigger className="h-9 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -383,43 +383,64 @@ export function ScheduleNotifySection({
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">{t('editorV2.trigger.timezone')}</Label>
+                    <Select
+                      value={safeTrigger.timezone || 'Asia/Shanghai'}
+                      onValueChange={(timezone) =>
+                        onTriggerChange({ ...safeTrigger, timezone })
+                      }
+                    >
+                      <SelectTrigger className="h-9 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TIMEZONE_IDS.map((tz) => (
+                          <SelectItem key={tz} value={tz}>
+                            {t(`agents:creator.timezones.${tz}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </div>
             ) : (
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">{t('editorV2.trigger.expr')}</Label>
-                <Input
-                  value={safeTrigger.expr}
-                  onChange={(e) =>
-                    onTriggerChange({ ...safeTrigger, expr: e.target.value })
-                  }
-                  placeholder="0 9 * * *"
-                  className="h-8 font-mono text-xs"
-                />
-                <p className="text-xs text-muted-foreground">{t('editorV2.trigger.exprHint')}</p>
+              <div className="grid gap-3 sm:grid-cols-[1fr_14rem]">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">{t('editorV2.trigger.expr')}</Label>
+                  <Input
+                    value={safeTrigger.expr}
+                    onChange={(e) =>
+                      onTriggerChange({ ...safeTrigger, expr: e.target.value })
+                    }
+                    placeholder="0 9 * * *"
+                    className="h-9 font-mono text-xs"
+                  />
+                  <p className="text-xs text-muted-foreground">{t('editorV2.trigger.exprHint')}</p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">{t('editorV2.trigger.timezone')}</Label>
+                  <Select
+                    value={safeTrigger.timezone || 'Asia/Shanghai'}
+                    onValueChange={(timezone) =>
+                      onTriggerChange({ ...safeTrigger, timezone })
+                    }
+                  >
+                    <SelectTrigger className="h-9 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIMEZONE_IDS.map((tz) => (
+                        <SelectItem key={tz} value={tz}>
+                          {t(`agents:creator.timezones.${tz}`)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             )}
-
-            <div className="flex items-center gap-2">
-              <Label className="text-xs text-muted-foreground">{t('editorV2.trigger.timezone')}</Label>
-              <Select
-                value={safeTrigger.timezone || 'Asia/Shanghai'}
-                onValueChange={(timezone) =>
-                  onTriggerChange({ ...safeTrigger, timezone })
-                }
-              >
-                <SelectTrigger className="h-8 w-56 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {TIMEZONE_IDS.map((tz) => (
-                    <SelectItem key={tz} value={tz}>
-                      {t(`agents:creator.timezones.${tz}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
           </div>
         )}
 
@@ -677,11 +698,11 @@ export function ScheduleNotifySection({
               {t('editorV2.notifySimple.channels')}
             </Label>
             {inRouter ? (
-              <Link to="/messages" className="text-xs text-primary hover:underline">
+              <Link to="/messages/channels" className="text-xs text-primary hover:underline">
                 {t('creator.notify.configureChannels')}
               </Link>
             ) : (
-              <a href="/messages" className="text-xs text-primary hover:underline">
+              <a href="/messages/channels" className="text-xs text-primary hover:underline">
                 {t('creator.notify.configureChannels')}
               </a>
             )}
