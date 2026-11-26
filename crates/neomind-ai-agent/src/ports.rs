@@ -46,6 +46,13 @@ pub struct LlmRequest {
     pub system: String,
     pub user: String,
     pub tools_enabled: bool,
+    /// When `tools_enabled` is true: `Some(list)` restricts tool calling to those
+    /// names (non-empty); `None` allows all enabled tools (`ToolPolicy::Unrestricted`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_tools: Option<Vec<String>>,
+    /// Optional command allowlist for command-capable tools (e.g. `shell`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_commands: Vec<String>,
     /// Multimodal image attachments extracted from evidence / caller input.
     /// Kept out of the text prompt so base64 payloads never tokenize into
     /// hundreds of thousands of text tokens.

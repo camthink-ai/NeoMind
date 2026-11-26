@@ -33,9 +33,13 @@ pub fn build_evidence_prompt_with_media(
 
     let sanitized_user_prompt =
         sanitize_text_for_prompt(user_prompt, "prompt", &mut images, &mut seen_images);
-    let mut parts = vec![sanitized_user_prompt, String::new(), "## Evidence".into()];
-    for item in &evidence.items {
-        parts.push(format_item(item, &mut images, &mut seen_images));
+    let mut parts = vec![sanitized_user_prompt];
+    if !evidence.items.is_empty() {
+        parts.push(String::new());
+        parts.push("## Evidence".into());
+        for item in &evidence.items {
+            parts.push(format_item(item, &mut images, &mut seen_images));
+        }
     }
     if !evidence.missing_keys.is_empty() {
         parts.push(format!(

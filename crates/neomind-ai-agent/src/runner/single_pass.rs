@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::alert::{alert_from_model_text, evidence_shows_overload};
 use super::structured::{
-    clean_model_response, extract_json_object, project_output_fields, structured_system_addon,
+    clean_model_response, extract_json_for_fields, project_output_fields, structured_system_addon,
 };
 use super::{build_evidence_prompt_with_media, AgentRunner, RunOutcome};
 use crate::error::Result;
@@ -43,7 +43,18 @@ impl AgentRunner for SinglePassRunner {
         _execution_id: &str,
         cancel: CancellationToken,
     ) -> Result<RunOutcome> {
-        let tools_enabled = !matches!(spec.tool_policy, ToolPolicy::Disabled);
+        let (tools_enabled, allowed_tools, allowed_commands) = match &spec.tool_policy {
+            ToolPolicy::Disabled => (false, None, Vec::new()),
+            ToolPolicy::Scoped {
+                allowed_tools,
+                allowed_commands,
+            } => (
+                true,
+                Some(allowed_tools.clone()),
+                allowed_commands.clone(),
+            ),
+            ToolPolicy::Unrestricted => (true, None, Vec::new()),
+        };
 
         // Explicit local-template mode only — ToolPolicy::Disabled alone still
         // needs a real model call for zero-tool briefs.
@@ -61,11 +72,22 @@ impl AgentRunner for SinglePassRunner {
         }
 
         let (user, images) = build_evidence_prompt_with_media(&spec.user_prompt, evidence);
-        let mut system = String::from(
-            "You are a managed NeoMind agent. Cite evidence keys. Mark missing deps. \
-             Respond directly without <tool_call> tags or function-call wrappers. \
-             End with exactly `Verdict: criteria met` only when alert criteria are met.",
-        );
+        let mut system = if tools_enabled {
+            String::from(
+                "You are a managed NeoMind agent with access to authorized tools. \
+                 Actively call the available tools to query devices, run commands, or fetch live \
+                 information needed to complete the task instead of claiming data is missing. \
+                 Cite evidence keys when provided. Once you have the required results, respond \
+                 directly with your final answer. End with exactly `Verdict: criteria met` only \
+                 when alert criteria are met.",
+            )
+        } else {
+            String::from(
+                "You are a managed NeoMind agent. Cite evidence keys. Mark missing deps. \
+                 Respond directly without <tool_call> tags or function-call wrappers. \
+                 End with exactly `Verdict: criteria met` only when alert criteria are met.",
+            )
+        };
         system.push_str(&structured_system_addon(&spec.output.fields));
         let resp = self
             .llm
@@ -75,6 +97,8 @@ impl AgentRunner for SinglePassRunner {
                     system,
                     user,
                     tools_enabled,
+                    allowed_tools,
+                    allowed_commands,
                     images,
                 },
                 cancel,
@@ -101,8 +125,13 @@ fn structured_from_text(text: &str, spec: &AgentSpec) -> Option<serde_json::Valu
     if spec.output.fields.is_empty() {
         return None;
     }
-    let raw = extract_json_object(text)?;
-    Some(project_output_fields(&raw, &spec.output.fields))
+    let raw = extract_json_for_fields(text, &spec.output.fields)?;
+    let projected = project_output_fields(&raw, &spec.output.fields);
+    if projected.as_object().is_some_and(|m| m.is_empty()) {
+        None
+    } else {
+        Some(projected)
+    }
 }
 
 fn compose_local_brief(spec: &AgentSpec, evidence: &EvidenceReport) -> String {

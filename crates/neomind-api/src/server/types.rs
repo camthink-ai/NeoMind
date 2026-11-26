@@ -1204,7 +1204,8 @@ impl ServerState {
             extensions.registry.clone(),
             extensions.metrics_storage.clone(),
         )
-        .with_memory_store(agents.system_memory_store.clone());
+        .with_memory_store(agents.system_memory_store.clone())
+        .with_session_manager(agents.session_manager.clone());
         if let Some(ref bus) = core.event_bus {
             host_deps = host_deps
                 .with_event_bus(bus.clone())
@@ -1530,7 +1531,7 @@ impl ServerState {
         );
 
         // ========== Build AGENT STATE ==========
-        let session_manager = SessionManager::memory();
+        let session_manager = Arc::new(SessionManager::memory());
         let agent_store = neomind_storage::AgentStore::memory().unwrap();
         let system_memory_store = Arc::new(neomind_storage::MarkdownMemoryStore::with_config(
             Self::fresh_test_memory_dir(),
@@ -1548,7 +1549,8 @@ impl ServerState {
             extensions.registry.clone(),
             extensions.metrics_storage.clone(),
         )
-        .with_memory_store(system_memory_store.clone());
+        .with_memory_store(system_memory_store.clone())
+        .with_session_manager(session_manager.clone());
         if let Some(ref bus) = core.event_bus {
             host_deps = host_deps
                 .with_event_bus(bus.clone())
@@ -1574,7 +1576,7 @@ impl ServerState {
         }
 
         let agents = AgentState::new(
-            Arc::new(session_manager),
+            session_manager,
             agent_store,
             system_memory_store,
             clean_slate_holder,

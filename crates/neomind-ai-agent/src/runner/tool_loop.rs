@@ -56,6 +56,14 @@ impl AgentRunner for ToolLoopRunner {
             if transcript.len() > 48_000 {
                 transcript = neomind_core::llm::compaction::truncate_text(&transcript, 32_000);
             }
+            let (allowed_tools, allowed_commands) = match &spec.tool_policy {
+                ToolPolicy::Scoped {
+                    allowed_tools,
+                    allowed_commands,
+                } => (Some(allowed_tools.clone()), allowed_commands.clone()),
+                ToolPolicy::Unrestricted => (None, Vec::new()),
+                ToolPolicy::Disabled => (None, Vec::new()),
+            };
             let resp = self
                 .llm
                 .complete(
@@ -64,6 +72,8 @@ impl AgentRunner for ToolLoopRunner {
                         system: format!("Managed agent round {round}. Prefer finishing."),
                         user: transcript.clone(),
                         tools_enabled: true,
+                        allowed_tools,
+                        allowed_commands,
                         images: images.clone(),
                     },
                     cancel.clone(),

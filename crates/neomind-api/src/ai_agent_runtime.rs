@@ -80,7 +80,10 @@ impl HostedAiAgentRuntime {
             deps.device_service.clone(),
             deps.extension_registry.clone(),
         ));
-        let llm = Arc::new(HostLlmPort::new());
+        let llm = Arc::new(match deps.session_manager.clone() {
+            Some(sm) => HostLlmPort::with_session_manager(sm),
+            None => HostLlmPort::new(),
+        });
 
         let input = InputPipeline::new(sources.clone() as Arc<dyn SourceReadPort>, clock.clone());
         let runner = Arc::new(SinglePassRunner::new(llm.clone()));

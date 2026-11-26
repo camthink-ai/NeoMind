@@ -14,7 +14,8 @@ pub use prompt_builder::{
 };
 pub use single_pass::{SinglePassRunner, LOCAL_BRIEF_BACKEND};
 pub use structured::{
-    clean_model_response, extract_json_object, project_output_fields, structured_system_addon,
+    clean_model_response, extract_json_for_fields, extract_json_object, project_output_fields,
+    structured_system_addon,
 };
 pub use tool_loop::ToolLoopRunner;
 

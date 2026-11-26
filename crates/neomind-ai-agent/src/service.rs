@@ -436,14 +436,20 @@ impl AgentApplicationService {
         }
         if let Some(err) = &exec.error {
             lines.push(format!("Error: {err}"));
-        } else if let Some(c) = &exec.conclusion {
-            let cleaned = crate::runner::clean_model_response(c, exec.structured_result.as_ref());
-            let preview: String = cleaned.chars().take(240).collect();
-            if !preview.trim().is_empty() {
-                lines.push(format!("Summary: {preview}"));
+        } else {
+            if let Some(sr) = &exec.structured_result {
+                if !sr.as_object().is_some_and(|m| m.is_empty()) {
+                    lines.push(format!("Output: {sr}"));
+                }
             }
-        } else if let Some(sr) = &exec.structured_result {
-            lines.push(format!("Output: {sr}"));
+            if let Some(c) = &exec.conclusion {
+                let cleaned =
+                    crate::runner::clean_model_response(c, exec.structured_result.as_ref());
+                let preview: String = cleaned.chars().take(240).collect();
+                if !preview.trim().is_empty() {
+                    lines.push(format!("Summary: {preview}"));
+                }
+            }
         }
 
         let notify_n = exec

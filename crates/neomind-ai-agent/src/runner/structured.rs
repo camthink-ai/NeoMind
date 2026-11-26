@@ -15,17 +15,22 @@ fn strip_tool_call_tags(text: &str) -> String {
         .to_string()
 }
 
-/// Find the first syntactically balanced `{ ... }` JSON object slice in `s`,
+/// Collect all syntactically balanced top-level `{ ... }` JSON objects in `s`,
 /// ignoring any stray trailing characters (such as model typos like `}}"}}`).
-fn extract_balanced_json_object(s: &str) -> Option<Value> {
+fn extract_all_balanced_json_objects(s: &str) -> Vec<Value> {
     let bytes = s.as_bytes();
+    let mut results = Vec::new();
     let mut start = 0usize;
-    while let Some(rel) = s[start..].find('{') {
+    while start < bytes.len() {
+        let Some(rel) = s[start..].find('{') else {
+            break;
+        };
         let open_idx = start + rel;
         let mut depth = 0usize;
         let mut in_string = false;
         let mut escaped = false;
         let mut i = open_idx;
+        let mut matched_end = None;
         while i < bytes.len() {
             let b = bytes[i];
             if in_string {
@@ -46,7 +51,8 @@ fn extract_balanced_json_object(s: &str) -> Option<Value> {
                             let candidate = &s[open_idx..=i];
                             if let Ok(v) = serde_json::from_str::<Value>(candidate) {
                                 if v.is_object() {
-                                    return Some(v);
+                                    results.push(unwrap_tool_call_envelope(v));
+                                    matched_end = Some(i + 1);
                                 }
                             }
                             break;
@@ -57,9 +63,42 @@ fn extract_balanced_json_object(s: &str) -> Option<Value> {
             }
             i += 1;
         }
-        start = open_idx + 1;
+        start = matched_end.unwrap_or(open_idx + 1);
     }
-    None
+    results
+}
+
+/// Collect all JSON objects from fenced ```json blocks in `s`.
+fn extract_fenced_json_objects(s: &str) -> Vec<Value> {
+    let mut results = Vec::new();
+    let mut rest = s;
+    while let Some(start) = rest.find("```") {
+        let after = &rest[start + 3..];
+        let after = after
+            .strip_prefix("json")
+            .or_else(|| after.strip_prefix("JSON"))
+            .unwrap_or(after)
+            .trim_start();
+        let Some(end) = after.find("```") else {
+            break;
+        };
+        let body = after[..end].trim();
+        if let Ok(v) = serde_json::from_str::<Value>(body) {
+            if v.is_object() {
+                results.push(unwrap_tool_call_envelope(v));
+            } else if let Some(arr) = v.as_array() {
+                for item in arr {
+                    if item.is_object() {
+                        results.push(unwrap_tool_call_envelope(item.clone()));
+                    }
+                }
+            }
+        } else {
+            results.extend(extract_all_balanced_json_objects(body));
+        }
+        rest = &after[end + 3..];
+    }
+    results
 }
 
 /// If a model wrapped its output in a fake tool-call envelope such as
@@ -85,61 +124,88 @@ fn unwrap_tool_call_envelope(v: Value) -> Value {
     v
 }
 
-/// Pull a JSON object from model text (raw object, fenced ```json block, or
-/// hallucinated `<tool_call>{"name": ..., "arguments": {...}}</tool_call>`).
-pub fn extract_json_object(text: &str) -> Option<Value> {
+/// Pull the best JSON object from model text for the declared `fields`.
+///
+/// Prefers the candidate object that matches the most declared output field names
+/// (breaking ties by choosing the **last** object, matching the system prompt's
+/// "Put the JSON object last" instruction).
+pub fn extract_json_for_fields(text: &str, fields: &[OutputField]) -> Option<Value> {
     let stripped = strip_tool_call_tags(text);
     let trimmed = stripped.trim();
 
+    let mut candidates: Vec<Value> = Vec::new();
     if let Ok(v) = serde_json::from_str::<Value>(trimmed) {
         if v.is_object() {
-            return Some(unwrap_tool_call_envelope(v));
-        }
-    }
-    // Fenced block
-    if let Some(start) = trimmed.find("```") {
-        let after = &trimmed[start + 3..];
-        let after = after
-            .strip_prefix("json")
-            .or_else(|| after.strip_prefix("JSON"))
-            .unwrap_or(after)
-            .trim_start();
-        if let Some(end) = after.find("```") {
-            let body = after[..end].trim();
-            if let Ok(v) = serde_json::from_str::<Value>(body) {
-                if v.is_object() {
-                    return Some(unwrap_tool_call_envelope(v));
+            candidates.push(unwrap_tool_call_envelope(v));
+        } else if let Some(arr) = v.as_array() {
+            for item in arr {
+                if item.is_object() {
+                    candidates.push(unwrap_tool_call_envelope(item.clone()));
                 }
             }
-            if let Some(v) = extract_balanced_json_object(body) {
-                return Some(unwrap_tool_call_envelope(v));
-            }
         }
     }
-    // Balanced {...} slice (resilient to stray trailing `"}}` typos)
-    if let Some(v) = extract_balanced_json_object(trimmed) {
-        return Some(unwrap_tool_call_envelope(v));
-    }
-    // Fallback: first '{' .. last '}'
-    if let Some(i) = trimmed.find('{') {
-        if let Some(j) = trimmed.rfind('}') {
-            if j > i {
-                if let Ok(v) = serde_json::from_str::<Value>(&trimmed[i..=j]) {
-                    if v.is_object() {
-                        return Some(unwrap_tool_call_envelope(v));
+    candidates.extend(extract_fenced_json_objects(trimmed));
+    candidates.extend(extract_all_balanced_json_objects(trimmed));
+
+    if candidates.is_empty() {
+        if let Some(i) = trimmed.find('{') {
+            if let Some(j) = trimmed.rfind('}') {
+                if j > i {
+                    if let Ok(v) = serde_json::from_str::<Value>(&trimmed[i..=j]) {
+                        if v.is_object() {
+                            candidates.push(unwrap_tool_call_envelope(v));
+                        }
                     }
                 }
             }
         }
     }
-    None
+
+    if candidates.is_empty() {
+        return None;
+    }
+    if fields.is_empty() {
+        return candidates.into_iter().last();
+    }
+
+    // Pick candidate with highest number of matched declared fields; ties go to later objects.
+    let mut best_idx = candidates.len() - 1;
+    let mut best_score = 0usize;
+    for (idx, cand) in candidates.iter().enumerate() {
+        let score = count_matching_fields(cand, fields);
+        if score >= best_score && score > 0 {
+            best_score = score;
+            best_idx = idx;
+        }
+    }
+    Some(candidates.swap_remove(best_idx))
+}
+
+fn count_matching_fields(val: &Value, fields: &[OutputField]) -> usize {
+    let Some(obj) = val.as_object() else {
+        return 0;
+    };
+    fields
+        .iter()
+        .filter(|f| {
+            obj.contains_key(&f.name)
+                || obj.keys().any(|k| k.eq_ignore_ascii_case(&f.name))
+        })
+        .count()
+}
+
+/// Pull a JSON object from model text (raw object, fenced ```json block, or
+/// hallucinated `<tool_call>{"name": ..., "arguments": {...}}</tool_call>`).
+pub fn extract_json_object(text: &str) -> Option<Value> {
+    extract_json_for_fields(text, &[])
 }
 
 /// Clean a raw model response for human-readable `conclusion` / `brief_text`.
 ///
-/// If the model emitted a `<tool_call>...</tool_call>` wrapper or pure JSON
-/// envelope, extract its human-readable summary/details instead of surfacing
-/// raw XML tool-call syntax to the user.
+/// If the model emitted a `<tool_call>...</tool_call>` wrapper, extract its
+/// human-readable summary/details instead of surfacing raw XML tool-call syntax
+/// to the user.
 pub fn clean_model_response(text: &str, structured: Option<&Value>) -> String {
     let trimmed = text.trim();
     let had_tool_call_tag = trimmed.contains("<tool_call>")
@@ -149,9 +215,7 @@ pub fn clean_model_response(text: &str, structured: Option<&Value>) -> String {
         return text.to_string();
     }
 
-    let extracted = structured
-        .cloned()
-        .or_else(|| extract_json_object(trimmed));
+    let extracted = extract_json_object(trimmed).or_else(|| structured.cloned());
     if let Some(Value::Object(map)) = extracted {
         let mut parts: Vec<String> = Vec::new();
         for key in ["summary", "conclusion", "details", "analysis", "message", "description"] {
@@ -187,7 +251,11 @@ pub fn project_output_fields(raw: &Value, fields: &[OutputField]) -> Value {
     };
     let mut out = Map::new();
     for f in fields {
-        if let Some(v) = obj.get(&f.name) {
+        if let Some(v) = obj.get(&f.name).or_else(|| {
+            obj.iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(&f.name))
+                .map(|(_, v)| v)
+        }) {
             out.insert(f.name.clone(), v.clone());
         }
     }
@@ -260,5 +328,26 @@ mod tests {
         assert!(!cleaned.contains("reactor"));
         assert!(cleaned.contains("高空俯瞰画面显示大量人群在大型建筑广场活动。"));
         assert!(cleaned.contains("地面为浅色石材地砖，无异常。"));
+    }
+
+    #[test]
+    fn extracts_json_followed_by_verdict_text() {
+        let raw_output = r#"{ "status": "正常", "summary": "高空俯瞰画面显示大量人群活动。", "analysis": [ { "key": "人员", "details": "正常" } ], "recommendations": [] } Verdict: 画面正常，人群活动常规，无异常。"#;
+        let fields = vec![
+            OutputField {
+                name: "status".into(),
+                depends_on: vec![],
+                description: None,
+            },
+            OutputField {
+                name: "summary".into(),
+                depends_on: vec![],
+                description: None,
+            },
+        ];
+        let extracted = extract_json_for_fields(raw_output, &fields).expect("should parse json");
+        let projected = project_output_fields(&extracted, &fields);
+        assert_eq!(projected["status"], "正常");
+        assert_eq!(projected["summary"], "高空俯瞰画面显示大量人群活动。");
     }
 }

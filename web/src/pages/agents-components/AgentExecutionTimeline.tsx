@@ -437,6 +437,33 @@ export function AgentExecutionTimeline({
                                   )
                                 })()}
 
+                                {/* ④-b Structured Output Fields (when OutputContract produced JSON fields) */}
+                                {detail.structured_result &&
+                                  Object.keys(detail.structured_result).length > 0 && (
+                                    <TimelineSection
+                                      icon={<Database className="h-4 w-4 text-primary" />}
+                                      title={t('agents:execution.structuredResult', 'Structured Output')}
+                                    >
+                                      <div className="space-y-1.5">
+                                        {Object.entries(detail.structured_result).map(([key, val]) => (
+                                          <div
+                                            key={key}
+                                            className="flex items-start justify-between gap-3 rounded-lg bg-muted-20 px-3 py-2"
+                                          >
+                                            <span className="shrink-0 font-mono text-xs font-medium text-muted-foreground">
+                                              {key}
+                                            </span>
+                                            <span className="min-w-0 text-right text-xs font-medium text-foreground break-words">
+                                              {typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean'
+                                                ? String(val)
+                                                : JSON.stringify(val)}
+                                            </span>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </TimelineSection>
+                                  )}
+
                                 {/* ⑤ Execution Actions — filtered, only device/extension commands */}
                                 {(() => {
                                   const realActions = detail.result?.actions_executed?.filter(

@@ -879,6 +879,9 @@ pub async fn list_agents(
                         .cloned()
                         .unwrap_or(json!(null)),
                 );
+                if let Some(latest_out) = latest_structured_output_for_agent(&rt, &agent.id) {
+                    obj.insert("latest_output".into(), latest_out);
+                }
             }
             row
         })
@@ -965,8 +968,37 @@ pub async fn get_agent(
             "error".into(),
             stats.get("error_message").cloned().unwrap_or(json!(null)),
         );
+        if let Some(latest_out) = latest_structured_output_for_agent(&rt, &id) {
+            obj.insert("latest_output".into(), latest_out);
+        }
     }
     ok(row)
+}
+
+fn latest_structured_output_for_agent(
+    rt: &crate::ai_agent_runtime::HostedAiAgentRuntime,
+    agent_id: &str,
+) -> Option<Value> {
+    if let Some(sr) = rt
+        .latest_formal(agent_id)
+        .and_then(|e| e.structured_result)
+        .filter(|v| v.as_object().is_some_and(|m| !m.is_empty()))
+    {
+        return Some(sr);
+    }
+    if let Some(store) = &rt.durable.store {
+        if let Ok(rows) = store.list_formal_executions(agent_id) {
+            if let Some(latest) = rows.into_iter().max_by_key(|r| r.finished_at) {
+                if let Some(sr) = latest
+                    .structured_result
+                    .filter(|v| v.as_object().is_some_and(|m| !m.is_empty()))
+                {
+                    return Some(sr);
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Build a transient AgentSpec (`config_version = 0`) for static preview without save.

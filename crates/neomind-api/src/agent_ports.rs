@@ -19,6 +19,7 @@ use neomind_ai_agent::runner::alert_from_model_text;
 use neomind_ai_agent::service::{NotifyCounter, WriteCounter};
 use neomind_core::eventbus::EventBus;
 use neomind_core::extension::{CommandEffect, ExtensionRegistry};
+use neomind_core::llm::backend::{sanitize_tool_name, ToolDefinition as CoreToolDefinition};
 use neomind_core::llm::{GenerationParams, LlmError, LlmInput};
 use neomind_core::message::{Content, ContentPart, MessageRole};
 use neomind_core::Message;
@@ -40,6 +41,7 @@ pub struct HostAgentDeps {
     pub event_bus: Option<Arc<EventBus>>,
     pub metric_publisher: Option<Arc<VirtualMetricPublisher>>,
     pub memory_store: Option<Arc<neomind_storage::MarkdownMemoryStore>>,
+    pub session_manager: Option<Arc<neomind_agent::SessionManager>>,
 }
 
 impl HostAgentDeps {
@@ -59,6 +61,7 @@ impl HostAgentDeps {
             event_bus: None,
             metric_publisher: None,
             memory_store: None,
+            session_manager: None,
         }
     }
 
@@ -79,6 +82,14 @@ impl HostAgentDeps {
         self.memory_store = Some(memory_store);
         self
     }
+
+    pub fn with_session_manager(
+        mut self,
+        session_manager: Arc<neomind_agent::SessionManager>,
+    ) -> Self {
+        self.session_manager = Some(session_manager);
+        self
+    }
 }
 
 // ── LLM ─────────────────────────────────────────────────────────────────────
@@ -87,6 +98,7 @@ pub struct HostLlmPort {
     pub request_count: AtomicU64,
     /// Test hook: next `complete` fails like a backend 5xx (no local-brief fake).
     pub force_fail_next: AtomicBool,
+    session_manager: Option<Arc<neomind_agent::SessionManager>>,
 }
 
 impl HostLlmPort {
@@ -94,6 +106,15 @@ impl HostLlmPort {
         Self {
             request_count: AtomicU64::new(0),
             force_fail_next: AtomicBool::new(false),
+            session_manager: None,
+        }
+    }
+
+    pub fn with_session_manager(session_manager: Arc<neomind_agent::SessionManager>) -> Self {
+        Self {
+            request_count: AtomicU64::new(0),
+            force_fail_next: AtomicBool::new(false),
+            session_manager: Some(session_manager),
         }
     }
 
@@ -174,82 +195,405 @@ impl HostLlmPort {
             ..Default::default()
         };
 
+        // Resolve authorized tools from the live ToolRegistry when ToolPolicy enables tools.
+        let (registry_opt, tool_defs, tool_name_map) = if request.tools_enabled {
+            if let Some(ref sm) = self.session_manager {
+                if let Some(registry) = sm.get_tool_registry().await {
+                    let (defs, name_map) =
+                        select_authorized_tools(&registry, request.allowed_tools.as_deref());
+                    (Some(registry), defs, name_map)
+                } else {
+                    (None, Vec::new(), HashMap::new())
+                }
+            } else {
+                (None, Vec::new(), HashMap::new())
+            }
+        } else {
+            (None, Vec::new(), HashMap::new())
+        };
+
+        let mut system_text = request.system.clone();
+        if !tool_defs.is_empty() {
+            system_text.push_str("\n\n## Available Tools\n");
+            for def in &tool_defs {
+                system_text.push_str(&format!("- {}: {}\n", def.name, def.description));
+            }
+        }
+
         let image_parts = resolve_llm_image_parts(&request.images);
         let max_ctx = runtime.max_context_length();
         let user_text = fit_user_prompt_to_context(
             &request.user,
-            request.system.len(),
+            system_text.len(),
             image_parts.len(),
             max_ctx,
             2048,
         );
 
-        let build_input = |text: String, imgs: Vec<ContentPart>| {
-            let user_msg = if imgs.is_empty() {
-                Message::user(text)
+        let initial_user_msg = if image_parts.is_empty() {
+            Message::user(user_text)
+        } else {
+            let mut parts = Vec::with_capacity(1 + image_parts.len());
+            parts.push(ContentPart::text(user_text));
+            parts.extend(image_parts.clone());
+            Message::new(MessageRole::User, Content::Parts(parts))
+        };
+
+        let mut messages = vec![Message::system(system_text.clone()), initial_user_msg];
+
+        const MAX_TOOL_ROUNDS: usize = 6;
+        let max_rounds = if tool_defs.is_empty() {
+            1
+        } else {
+            MAX_TOOL_ROUNDS
+        };
+
+        let mut final_text = String::new();
+
+        for round in 0..max_rounds {
+            let round_tools = if !tool_defs.is_empty() && round + 1 < max_rounds {
+                Some(tool_defs.clone())
             } else {
-                let mut parts = Vec::with_capacity(1 + imgs.len());
-                parts.push(ContentPart::text(text));
-                parts.extend(imgs);
-                Message::new(MessageRole::User, Content::Parts(parts))
+                None
             };
-            LlmInput {
-                messages: vec![Message::system(request.system.clone()), user_msg],
+
+            let input = LlmInput {
+                messages: messages.clone(),
                 params: params.clone(),
                 model: None,
                 stream: false,
-                tools: None,
-            }
-        };
+                tools: round_tools.clone(),
+            };
 
-        let first_input = build_input(user_text, image_parts.clone());
-        let first_result = tokio::select! {
-            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-            result = runtime.generate(first_input) => result,
-        };
+            let first_result = tokio::select! {
+                _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                result = runtime.generate(input) => result,
+            };
 
-        let output = match first_result {
-            Ok(out) => out,
-            Err(LlmError::ContextOverflow {
-                prompt_tokens,
-                max_context,
-            }) => {
-                tracing::warn!(
+            let output = match first_result {
+                Ok(out) => out,
+                Err(LlmError::ContextOverflow {
                     prompt_tokens,
                     max_context,
-                    images = image_parts.len(),
-                    "Agent LLM context overflow; retrying with compacted prompt"
-                );
-                // If images themselves pushed a small context window over the limit,
-                // keep at most 1 image on retry (or drop images if ctx is very small).
-                let retry_imgs = if max_context < 8192 {
-                    Vec::new()
-                } else {
-                    image_parts.into_iter().take(1).collect()
-                };
-                let compact_text = fit_user_prompt_to_context(
-                    &request.user,
-                    request.system.len(),
-                    retry_imgs.len(),
-                    max_context,
-                    2048,
-                );
-                let retry_input = build_input(compact_text, retry_imgs);
-                tokio::select! {
-                    _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-                    result = runtime.generate(retry_input) => {
-                        result.map_err(|e| AgentError::Llm(e.to_string()))?
+                }) => {
+                    tracing::warn!(
+                        prompt_tokens,
+                        max_context,
+                        round,
+                        images = image_parts.len(),
+                        "Agent LLM context overflow; retrying with compacted prompt"
+                    );
+                    let retry_imgs = if max_context < 8192 {
+                        Vec::new()
+                    } else {
+                        image_parts.iter().take(1).cloned().collect()
+                    };
+                    let compact_text = fit_user_prompt_to_context(
+                        &request.user,
+                        system_text.len(),
+                        retry_imgs.len(),
+                        max_context,
+                        2048,
+                    );
+                    let compact_user = if retry_imgs.is_empty() {
+                        Message::user(compact_text)
+                    } else {
+                        let mut parts = Vec::with_capacity(1 + retry_imgs.len());
+                        parts.push(ContentPart::text(compact_text));
+                        parts.extend(retry_imgs);
+                        Message::new(MessageRole::User, Content::Parts(parts))
+                    };
+                    let retry_input = LlmInput {
+                        messages: vec![Message::system(system_text.clone()), compact_user],
+                        params: params.clone(),
+                        model: None,
+                        stream: false,
+                        tools: None,
+                    };
+                    tokio::select! {
+                        _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                        result = runtime.generate(retry_input) => {
+                            result.map_err(|e| AgentError::Llm(e.to_string()))?
+                        }
                     }
                 }
+                Err(e) => return Err(AgentError::Llm(e.to_string())),
+            };
+
+            let calls = if round_tools.is_some() {
+                extract_authorized_tool_calls(&output, &tool_name_map)
+            } else {
+                Vec::new()
+            };
+
+            if calls.is_empty() {
+                final_text = output.text;
+                break;
             }
-            Err(e) => return Err(AgentError::Llm(e.to_string())),
-        };
+
+            let Some(ref registry) = registry_opt else {
+                final_text = output.text;
+                break;
+            };
+
+            let mut call_summaries = Vec::with_capacity(calls.len());
+            let mut tool_results = Vec::with_capacity(calls.len());
+
+            for (orig_name, args) in calls {
+                call_summaries.push(format!("{orig_name}({args})"));
+
+                // Optional command allowlist check for shell tool.
+                if orig_name == "shell" && !request.allowed_commands.is_empty() {
+                    let cmd_str = args
+                        .get("command")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    let first_tok = cmd_str.split_whitespace().next().unwrap_or("");
+                    let permitted = request
+                        .allowed_commands
+                        .iter()
+                        .any(|allowed| allowed == first_tok || cmd_str.starts_with(allowed.as_str()));
+                    if !permitted {
+                        tool_results.push(format!(
+                            "### Tool `{orig_name}` rejected\nCommand `{first_tok}` is not in allowed_commands."
+                        ));
+                        continue;
+                    }
+                }
+
+                let exec_res = tokio::select! {
+                    _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                    res = tokio::time::timeout(
+                        Duration::from_secs(30),
+                        registry.execute(&orig_name, args),
+                    ) => res,
+                };
+
+                let formatted = match exec_res {
+                    Ok(Ok(out)) => {
+                        let raw_val = if out.success {
+                            out.data.to_string()
+                        } else {
+                            serde_json::json!({
+                                "success": false,
+                                "error": out.error,
+                                "data": out.data,
+                            })
+                            .to_string()
+                        };
+                        format!(
+                            "### Tool `{orig_name}` result\n{}",
+                            truncate_tool_output(&raw_val, 6_000)
+                        )
+                    }
+                    Ok(Err(e)) => format!("### Tool `{orig_name}` error\n{e}"),
+                    Err(_) => format!("### Tool `{orig_name}` error\nTimed out after 30s"),
+                };
+                tool_results.push(formatted);
+            }
+
+            messages.push(Message::assistant(format!(
+                "Calling tools: {}",
+                call_summaries.join(", ")
+            )));
+            let follow_up = if round + 2 >= max_rounds {
+                format!(
+                    "## Tool Results\n{}\n\nYou have reached the final round. Synthesize your final answer now without calling more tools.",
+                    tool_results.join("\n\n")
+                )
+            } else {
+                format!(
+                    "## Tool Results\n{}\n\nUse these tool results to continue or provide your final answer.",
+                    tool_results.join("\n\n")
+                )
+            };
+            messages.push(Message::user(follow_up));
+            final_text = output.text;
+        }
 
         Ok(LlmResponse {
-            text: output.text.clone(),
-            alert_criteria_met: alert_from_model_text(&output.text),
+            text: final_text.clone(),
+            alert_criteria_met: alert_from_model_text(&final_text),
         })
     }
+}
+
+fn select_authorized_tools(
+    registry: &neomind_agent::toolkit::ToolRegistry,
+    allowed_tools: Option<&[String]>,
+) -> (Vec<CoreToolDefinition>, HashMap<String, String>) {
+    let mut defs = Vec::new();
+    let mut name_map = HashMap::new();
+    for def in registry.definitions() {
+        if registry.is_disabled(&def.name) {
+            continue;
+        }
+        if let Some(allow) = allowed_tools {
+            if !allow.is_empty() && !allow.iter().any(|a| a.eq_ignore_ascii_case(&def.name)) {
+                continue;
+            }
+        }
+        let sanitized = sanitize_tool_name(&def.name);
+        name_map.insert(def.name.clone(), def.name.clone());
+        name_map.insert(sanitized.clone(), def.name.clone());
+        defs.push(CoreToolDefinition {
+            name: sanitized,
+            description: def.description,
+            parameters: def.parameters,
+        });
+    }
+    (defs, name_map)
+}
+
+/// Extract tool calls from native `LlmOutput.tool_calls` or text-protocol fallbacks
+/// (`<tool_call>...</tool_call>` / JSON array), filtering strictly to authorized tool names.
+fn extract_authorized_tool_calls(
+    output: &neomind_core::llm::LlmOutput,
+    name_map: &HashMap<String, String>,
+) -> Vec<(String, serde_json::Value)> {
+    let mut calls = Vec::new();
+
+    if let Some(ref native) = output.tool_calls {
+        for tc in native {
+            if let Some(name) = tc.get("name").and_then(|v| v.as_str()) {
+                if let Some(orig) = name_map.get(name) {
+                    let args = tc
+                        .get("arguments")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({}));
+                    let args = match args {
+                        serde_json::Value::String(s) => {
+                            serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!({}))
+                        }
+                        other => other,
+                    };
+                    calls.push((orig.clone(), args));
+                }
+            }
+        }
+    }
+
+    if !calls.is_empty() {
+        return calls;
+    }
+
+    // Fallback: parse text-protocol tool calls emitted by models without native tool_calls.
+    let text = output.text.trim();
+    if text.is_empty() {
+        return calls;
+    }
+
+    // 1) <tool_call>{...}</tool_call> blocks
+    let mut search = text;
+    while let Some(start) = search.find("<tool_call>") {
+        let after = &search[start + "<tool_call>".len()..];
+        let body = if let Some(end) = after.find("</tool_call>") {
+            search = &after[end + "</tool_call>".len()..];
+            after[..end].trim()
+        } else {
+            search = "";
+            after.trim()
+        };
+        if let Some(val) = parse_first_json_value(body) {
+            collect_calls_from_json(&val, name_map, &mut calls);
+        }
+    }
+    if !calls.is_empty() {
+        return calls;
+    }
+
+    // 2) JSON array [{"name": "...", "arguments": {...}}] or single {"name": "...", "arguments": {...}}
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
+        collect_calls_from_json(&val, name_map, &mut calls);
+    } else if let Some(i) = text.find('[') {
+        if let Some(j) = text.rfind(']') {
+            if j > i {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text[i..=j]) {
+                    collect_calls_from_json(&val, name_map, &mut calls);
+                }
+            }
+        }
+    }
+    calls
+}
+
+fn parse_first_json_value(s: &str) -> Option<serde_json::Value> {
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(s) {
+        return Some(v);
+    }
+    let start = s.find('{')?;
+    let bytes = s.as_bytes();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, &b) in bytes.iter().enumerate().skip(start) {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+        } else {
+            match b {
+                b'"' => in_string = true,
+                b'{' => depth += 1,
+                b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return serde_json::from_str::<serde_json::Value>(&s[start..=idx]).ok();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+fn collect_calls_from_json(
+    val: &serde_json::Value,
+    name_map: &HashMap<String, String>,
+    out: &mut Vec<(String, serde_json::Value)>,
+) {
+    match val {
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                collect_calls_from_json(item, name_map, out);
+            }
+        }
+        serde_json::Value::Object(obj) => {
+            if let Some(name) = obj.get("name").and_then(|v| v.as_str()) {
+                if let Some(orig) = name_map.get(name) {
+                    let args = obj
+                        .get("arguments")
+                        .or_else(|| obj.get("parameters"))
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!({}));
+                    let args = match args {
+                        serde_json::Value::String(s) => {
+                            serde_json::from_str(&s).unwrap_or_else(|_| serde_json::json!({}))
+                        }
+                        other => other,
+                    };
+                    out.push((orig.clone(), args));
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn truncate_tool_output(s: &str, max_chars: usize) -> String {
+    let total = s.chars().count();
+    if total <= max_chars {
+        return s.to_string();
+    }
+    let kept: String = s.chars().take(max_chars).collect();
+    let dropped = total - max_chars;
+    format!("{kept}... [truncated {dropped} chars]")
 }
 
 fn resolve_llm_image_parts(images: &[LlmImage]) -> Vec<ContentPart> {
@@ -888,5 +1232,53 @@ fn json_to_string_map(params: &serde_json::Value) -> HashMap<String, serde_json:
     match params.as_object() {
         Some(map) => map.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
         None => HashMap::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use neomind_core::llm::{FinishReason, LlmOutput};
+
+    #[test]
+    fn extract_authorized_tool_calls_accepts_native_and_filters_unlisted() {
+        let mut name_map = HashMap::new();
+        name_map.insert("shell".to_string(), "shell".to_string());
+        name_map.insert("web_search".to_string(), "web_search".to_string());
+
+        let out = LlmOutput {
+            text: String::new(),
+            finish_reason: FinishReason::ToolCalls,
+            usage: None,
+            thinking: None,
+            tool_calls: Some(vec![
+                serde_json::json!({"id": "1", "name": "shell", "arguments": {"command": "uname -a"}}),
+                serde_json::json!({"id": "2", "name": "forbidden_tool", "arguments": {}}),
+            ]),
+        };
+
+        let calls = extract_authorized_tool_calls(&out, &name_map);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "shell");
+        assert_eq!(calls[0].1["command"], "uname -a");
+    }
+
+    #[test]
+    fn extract_authorized_tool_calls_parses_text_tool_call_fallback() {
+        let mut name_map = HashMap::new();
+        name_map.insert("web_search".to_string(), "web_search".to_string());
+
+        let out = LlmOutput {
+            text: r#"<tool_call>{"name": "web_search", "arguments": {"query": "weather"}}</tool_call>"#.into(),
+            finish_reason: FinishReason::Stop,
+            usage: None,
+            thinking: None,
+            tool_calls: None,
+        };
+
+        let calls = extract_authorized_tool_calls(&out, &name_map);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "web_search");
+        assert_eq!(calls[0].1["query"], "weather");
     }
 }
