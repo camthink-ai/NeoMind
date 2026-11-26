@@ -12,6 +12,11 @@ import { useTranslation } from "react-i18next"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Badge } from "@/components/ui/badge"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   AlertTriangle,
@@ -290,10 +295,13 @@ export function AgentDetailPanel({
   // Backend id -> human-readable name/model
   const [llmBackends, setLlmBackends] = useState<LlmBackendInstance[]>([])
   const [section, setSection] = useState<'overview' | 'history' | 'memory' | 'messages'>('overview')
+  const [planOpen, setPlanOpen] = useState(false)
   // Bumped by the pinned composer so the message list refetches after a send
   const [messagesVersion, setMessagesVersion] = useState(0)
 
   const agentId = agent?.id
+  const handleErrorRef = useRef(handleError)
+  handleErrorRef.current = handleError
 
   const loadExecutions = useCallback(async (id: string) => {
     setExecutionsLoading(true)
@@ -301,11 +309,11 @@ export function AgentDetailPanel({
       const data = await api.getAgentExecutions(id)
       setExecutions(data.executions || [])
     } catch (error) {
-      handleError(error, { operation: 'Load agent executions', showToast: false })
+      handleErrorRef.current(error, { operation: 'Load agent executions', showToast: false })
     } finally {
       setExecutionsLoading(false)
     }
-  }, [handleError])
+  }, [])
 
   const loadMemory = useCallback(async (id: string) => {
     setMemoryLoading(true)
@@ -313,11 +321,11 @@ export function AgentDetailPanel({
       const data = await api.getAgentMemory(id)
       setMemory(data)
     } catch (error) {
-      handleError(error, { operation: 'Load agent memory', showToast: false })
+      handleErrorRef.current(error, { operation: 'Load agent memory', showToast: false })
     } finally {
       setMemoryLoading(false)
     }
-  }, [handleError])
+  }, [])
 
   const loadExplainLast = useCallback(async (id: string) => {
     try {
@@ -333,10 +341,11 @@ export function AgentDetailPanel({
   useEffect(() => {
     if (!agentId) return
     setExplainLast(null)
+    setPlanOpen((agent?.effective_plan?.warnings?.length ?? 0) > 0)
     void loadExecutions(agentId)
     void loadMemory(agentId)
     void loadExplainLast(agentId)
-  }, [agentId, loadExecutions, loadMemory, loadExplainLast])
+  }, [agentId, agent?.effective_plan?.warnings?.length, loadExecutions, loadMemory, loadExplainLast])
 
   // Backends for id->name resolution
   useEffect(() => {
@@ -529,299 +538,348 @@ export function AgentDetailPanel({
             isMobile ? "px-3 py-3" : "px-5 py-4"
           )}>
             {section === 'overview' && (
-              <>
-                {/* Top metadata strip */}
-                <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className="inline-flex items-center gap-1 rounded-md bg-muted-30 px-1.5 py-0.5">
-                    <RoleIcon className="h-3.5 w-3.5" />
-                    {t(`agents:card.role.${role}`)}
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-md bg-muted-30 px-1.5 py-0.5">
-                    <Wrench className="h-3.5 w-3.5" />
-                    {toolPolicyInfo.label}
-                  </span>
-                  {agent.config_version != null && (
-                    <span className="inline-flex items-center rounded-md bg-muted-30 px-1.5 py-0.5 font-mono">
-                      {t('agents:detail.configVersion', { version: agent.config_version })}
+              <div className="space-y-6">
+                {/* ═══════════════════════════════════════════════════════════
+                    ZONE 1: Runtime Posture (status, stats, explain-last, output)
+                    ═══════════════════════════════════════════════════════════ */}
+                <section className="space-y-3" data-zone="runtime-posture">
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {t('agents:detailZones.runtimePosture')}
                     </span>
-                  )}
-                  {currentStatus === 'Executing' && (
-                    <Badge variant="secondary" className="h-5 px-1.5 text-xs text-info">
-                      {t('agents:status.executing')}
-                    </Badge>
-                  )}
-                  <span className={cn("text-xs text-muted-foreground tabular-nums", isMobile ? "w-full" : "ml-auto")}>
-                    {t('common:updatedAt')} {formatTimestamp(agent.updated_at, false)}
-                    {agent.last_execution_at != null && (
-                      <> · {t('agents:lastExecution')} {formatTimestamp(agent.last_execution_at, false)}</>
+                    <span className="inline-flex items-center gap-1 rounded-md bg-muted-30 px-1.5 py-0.5">
+                      <RoleIcon className="h-3.5 w-3.5" />
+                      {t(`agents:card.role.${role}`)}
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-md bg-muted-30 px-1.5 py-0.5">
+                      <Wrench className="h-3.5 w-3.5" />
+                      {toolPolicyInfo.label}
+                    </span>
+                    {agent.config_version != null && (
+                      <span className="inline-flex items-center rounded-md bg-muted-30 px-1.5 py-0.5 font-mono">
+                        {t('agents:detail.configVersion', { version: agent.config_version })}
+                      </span>
                     )}
-                  </span>
-                </div>
-
-                {/* Runtime stats */}
-                <div className="rounded-2xl border border-border bg-card p-4 md:rounded-lg md:p-3">
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <div>
-                      <div className="text-base font-semibold tabular-nums leading-tight">{formatCount(totalRuns)}</div>
-                      <div className="text-xs text-muted-foreground">{t('agents:detail.executions')}</div>
-                    </div>
-                    <div>
-                      <div className="text-base font-semibold tabular-nums leading-tight text-success">{formatCount(successfulRuns)}</div>
-                      <div className="text-xs text-muted-foreground">{t('agents:detail.success')}</div>
-                    </div>
-                    <div>
-                      <div className={cn(
-                        "text-base font-semibold tabular-nums leading-tight",
-                        failedRuns > 0 ? "text-error" : ""
-                      )}>{formatCount(failedRuns)}</div>
-                      <div className="text-xs text-muted-foreground">{t('agents:detail.failed')}</div>
-                    </div>
-                    <div>
-                      <div className="text-base font-semibold tabular-nums leading-tight">{formatDuration(avgDurationMs)}</div>
-                      <div className="text-xs text-muted-foreground">{t('agents:detail.avgDuration')}</div>
-                    </div>
-                  </div>
-                  {(partialRuns > 0 || runsToday > 0) && (
-                    <div className="mt-2.5 flex flex-wrap items-center gap-3 border-t border-border pt-2 text-xs text-muted-foreground tabular-nums">
-                      {partialRuns > 0 && (
-                        <span>
-                          {t('agents:detail.partialRuns')}: <strong className="font-medium text-warning">{partialRuns}</strong>
-                        </span>
+                    {currentStatus === 'Executing' && (
+                      <Badge variant="secondary" className="h-5 px-1.5 text-xs text-info">
+                        {t('agents:status.executing')}
+                      </Badge>
+                    )}
+                    <span className={cn("text-xs text-muted-foreground tabular-nums", isMobile ? "w-full" : "ml-auto")}>
+                      {t('common:updatedAt')} {formatTimestamp(agent.updated_at, false)}
+                      {agent.last_execution_at != null && (
+                        <> · {t('agents:lastExecution')} {formatTimestamp(agent.last_execution_at, false)}</>
                       )}
-                      {runsToday > 0 && (
-                        <span>
-                          {t('agents:detail.runsToday')}:{' '}
-                          <strong className="font-medium text-foreground">
-                            {runsToday}
-                            {agent.pacing?.max_runs_per_day != null ? ` / ${agent.pacing.max_runs_per_day}` : ''}
-                          </strong>
-                        </span>
+                    </span>
+                  </div>
+
+                  {/* Compact 4-column runtime stats */}
+                  <div className="rounded-xl border border-border bg-card p-3.5">
+                    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                      <div>
+                        <div className="text-base font-semibold tabular-nums leading-tight">{formatCount(totalRuns)}</div>
+                        <div className="text-xs text-muted-foreground">{t('agents:detail.executions')}</div>
+                      </div>
+                      <div>
+                        <div className="text-base font-semibold tabular-nums leading-tight text-success">{formatCount(successfulRuns)}</div>
+                        <div className="text-xs text-muted-foreground">{t('agents:detail.success')}</div>
+                      </div>
+                      <div>
+                        <div className={cn(
+                          "text-base font-semibold tabular-nums leading-tight",
+                          failedRuns > 0 ? "text-error" : ""
+                        )}>{formatCount(failedRuns)}</div>
+                        <div className="text-xs text-muted-foreground">{t('agents:detail.failed')}</div>
+                      </div>
+                      <div>
+                        <div className="text-base font-semibold tabular-nums leading-tight">{formatDuration(avgDurationMs)}</div>
+                        <div className="text-xs text-muted-foreground">{t('agents:detail.avgDuration')}</div>
+                      </div>
+                    </div>
+                    {(partialRuns > 0 || runsToday > 0) && (
+                      <div className="mt-2.5 flex flex-wrap items-center gap-3 border-t border-border pt-2 text-xs text-muted-foreground tabular-nums">
+                        {partialRuns > 0 && (
+                          <span>
+                            {t('agents:detail.partialRuns')}: <strong className="font-medium text-warning">{partialRuns}</strong>
+                          </span>
+                        )}
+                        {runsToday > 0 && (
+                          <span>
+                            {t('agents:detail.runsToday')}:{' '}
+                            <strong className="font-medium text-foreground">
+                              {runsToday}
+                              {agent.pacing?.max_runs_per_day != null ? ` / ${agent.pacing.max_runs_per_day}` : ''}
+                            </strong>
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Explain Last + Latest Structured Output (side-by-side when both present) */}
+                  {(explainLast || hasOutputFields) && (
+                    <div className={cn("grid gap-3", explainLast && hasOutputFields ? "lg:grid-cols-2" : "grid-cols-1")}>
+                      {explainLast && (
+                        <div className="rounded-xl border border-border bg-card p-3.5">
+                          <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            <Info className="h-3.5 w-3.5 text-primary" />
+                            {t('agents:detail.explainLast')}
+                          </h4>
+                          <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+                            {explainLast}
+                          </p>
+                        </div>
+                      )}
+
+                      {hasOutputFields && (
+                        <div className="rounded-xl border border-border bg-card p-3.5 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              <Database className="h-3.5 w-3.5" />
+                              {t('agents:detail.outputFields')}
+                            </h4>
+                            <Badge variant={outputPublish ? 'default' : 'secondary'} className="h-5 px-1.5 text-xs">
+                              {outputPublish ? t('agents:detail.outputPublishOn') : t('agents:detail.outputPublishOff')}
+                            </Badge>
+                          </div>
+                          <div className="space-y-1.5">
+                            {outputFields.map((f) => {
+                              const state = agent.latest_output_state?.[f.name]
+                              const latest = state?.value ?? agent.latest_output?.[f.name]
+                              return (
+                                <div key={f.name} className="border-b border-border py-1.5 last:border-0">
+                                  <div className="flex items-baseline gap-2">
+                                    <span className="font-mono text-xs font-medium">{f.name}</span>
+                                    {f.description && (
+                                      <span className="truncate text-xs text-muted-foreground">{f.description}</span>
+                                    )}
+                                    <span className="ml-auto shrink-0 text-sm font-semibold tabular-nums">
+                                      {latest !== undefined ? String(latest) : '—'}
+                                    </span>
+                                  </div>
+                                  {f.depends_on && f.depends_on.length > 0 && (
+                                    <div className="mt-0.5 text-xs text-muted-foreground">
+                                      {t('agents:detail.outputDependsOn', { deps: f.depends_on.join(', ') })}
+                                    </div>
+                                  )}
+                                  {latest !== undefined && (
+                                    <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                                      {state && <span>{formatRelativeTime(state.at)}</span>}
+                                      {state?.confidence !== undefined && (
+                                        <span>{Math.round(state.confidence * 100)}%</span>
+                                      )}
+                                      {state?.execution_id && (
+                                        <button
+                                          type="button"
+                                          onClick={() => onViewExecutionDetail(agent.id, state.execution_id!)}
+                                          className="ml-auto inline-flex items-center gap-0.5 text-primary transition-colors hover:underline"
+                                        >
+                                          {t('agents:detail.viewEvidence')}
+                                          <ChevronRight className="h-3 w-3" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
                       )}
                     </div>
                   )}
-                </div>
+                </section>
 
-                {/* Explain Last Run */}
-                {explainLast && (
-                  <div className="rounded-2xl border border-border bg-card p-4 md:rounded-lg">
-                    <h4 className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
-                      <Info className="h-4 w-4 text-primary" />
-                      {t('agents:detail.explainLast')}
+                {/* ═══════════════════════════════════════════════════════════
+                    ZONE 2: Active Contract (prompt, 2-col config grid, inputs, collapsible plan)
+                    ═══════════════════════════════════════════════════════════ */}
+                <section className="space-y-3" data-zone="active-contract">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {t('agents:detailZones.activeContract')}
+                  </div>
+
+                  {/* Mission Prompt */}
+                  <div className="rounded-xl border border-border bg-card p-3.5">
+                    <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <FileText className="h-3.5 w-3.5" />
+                      {t('agents:userPrompt')}
                     </h4>
-                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-                      {explainLast}
-                    </p>
-                  </div>
-                )}
-
-                {/* User Prompt */}
-                <DetailSection title={t('agents:userPrompt')} icon={FileText}>
-                  <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-                    {agent.user_prompt || t('agents:card.noDescription')}
-                  </div>
-                </DetailSection>
-
-                {/* Output Contract */}
-                {hasOutputFields && (
-                  <DetailSection title={t('agents:detail.outputFields')} icon={Database}>
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Badge variant={outputPublish ? 'default' : 'secondary'} className="text-xs">
-                          {outputPublish ? t('agents:detail.outputPublishOn') : t('agents:detail.outputPublishOff')}
-                        </Badge>
-                      </div>
-                      <div className="space-y-1">
-                        {outputFields.map((f) => {
-                          const state = agent.latest_output_state?.[f.name]
-                          const latest = state?.value ?? agent.latest_output?.[f.name]
-                          return (
-                            <div key={f.name} className="border-b border-border py-1.5 last:border-0">
-                              <div className="flex items-baseline gap-2">
-                                <span className="font-mono text-xs font-medium">{f.name}</span>
-                                {f.description && (
-                                  <span className="truncate text-xs text-muted-foreground">{f.description}</span>
-                                )}
-                                <span className="ml-auto shrink-0 text-sm font-medium tabular-nums">
-                                  {latest !== undefined ? String(latest) : '—'}
-                                </span>
-                              </div>
-                              {f.depends_on && f.depends_on.length > 0 && (
-                                <div className="mt-0.5 text-xs text-muted-foreground">
-                                  {t('agents:detail.outputDependsOn', { deps: f.depends_on.join(', ') })}
-                                </div>
-                              )}
-                              {latest !== undefined && (
-                                <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                                  {state && <span>{formatRelativeTime(state.at)}</span>}
-                                  {state?.confidence !== undefined && (
-                                    <span>{Math.round(state.confidence * 100)}%</span>
-                                  )}
-                                  {state?.execution_id && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        onViewExecutionDetail(agent.id, state.execution_id!)
-                                      }
-                                      className="ml-auto inline-flex items-center gap-0.5 text-primary transition-colors hover:underline"
-                                    >
-                                      {t('agents:detail.viewEvidence')}
-                                      <ChevronRight className="h-3 w-3" />
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                        {outputPublish && (
-                          <p className="pt-1 text-xs text-muted-foreground">{t('agents:detail.outputFieldsHint')}</p>
-                        )}
-                      </div>
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
+                      {agent.user_prompt || t('agents:card.noDescription')}
                     </div>
-                  </DetailSection>
-                )}
-
-                {/* Trigger, Model, Tool Policy, Notify, Pacing */}
-                <div className="rounded-2xl border border-border bg-card p-4 md:rounded-lg space-y-4">
-                  {/* Trigger */}
-                  <div className="space-y-1.5">
-                    <h4 className="text-sm font-medium">{t('agents:detail.trigger')}</h4>
-                    <InfoRow
-                      label={t('agents:detail.type')}
-                      value={t(`agents:editorV2.trigger.${trigger.kind}`, { defaultValue: trigger.kind })}
-                    />
-                    {trigger.kind === 'interval' && (
-                      <InfoRow
-                        label={t('agents:detail.interval')}
-                        value={formatInterval(trigger.every_secs, t as TFn)}
-                      />
-                    )}
-                    {trigger.kind === 'cron' && (
-                      <>
-                        <InfoRow label={t('agents:detail.cron')} value={trigger.expr} mono />
-                        {trigger.timezone && (
-                          <InfoRow label={t('agents:detail.timezone')} value={trigger.timezone} mono />
-                        )}
-                      </>
-                    )}
-                    {trigger.kind === 'event' && eventFilterStr && (
-                      <InfoRow label={t('agents:detail.eventFilter')} value={eventFilterStr} mono />
-                    )}
-                    {trigger.kind === 'manual' && (
-                      <InfoRow label={t('agents:detail.schedule')} value={t('agents:detail.manualOnly')} />
-                    )}
                   </div>
 
-                  {/* LLM Backend */}
-                  <div className="space-y-1.5 border-t border-border pt-4">
-                    <h4 className="text-sm font-medium">{t('agents:creator.basicInfo.llmBackend')}</h4>
-                    {(() => {
-                      const backend = llmBackends.find((b) => b.id === agent.llm_backend_id)
-                      if (backend) {
-                        return (
+                  {/* Compact 2-column Contract Grid */}
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {/* Card 1: Trigger & Pacing */}
+                    <div className="rounded-xl border border-border bg-card p-3.5 space-y-2">
+                      <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <Gauge className="h-3.5 w-3.5" />
+                        {t('agents:detailZones.triggerAndPacing')}
+                      </h4>
+                      <div className="space-y-0.5">
+                        <InfoRow
+                          label={t('agents:detail.type')}
+                          value={t(`agents:editorV2.trigger.${trigger.kind}`, { defaultValue: trigger.kind })}
+                        />
+                        {trigger.kind === 'interval' && (
+                          <InfoRow
+                            label={t('agents:detail.interval')}
+                            value={formatInterval(trigger.every_secs, t as TFn)}
+                          />
+                        )}
+                        {trigger.kind === 'cron' && (
                           <>
-                            <InfoRow label={t('agents:detail.model')} value={backend.name} />
-                            {backend.model && (
-                              <InfoRow label={t('agents:detail.modelId')} value={backend.model} mono />
+                            <InfoRow label={t('agents:detail.cron')} value={trigger.expr} mono />
+                            {trigger.timezone && (
+                              <InfoRow label={t('agents:detail.timezone')} value={trigger.timezone} mono />
                             )}
                           </>
-                        )
-                      }
-                      return (
-                        <InfoRow
-                          label={t('agents:detail.model')}
-                          value={agent.llm_backend_id
-                            ? `${agent.llm_backend_id.slice(0, 8)}…`
-                            : t('agents:creator.basicInfo.useActiveBackend')}
-                          mono={!!agent.llm_backend_id}
-                        />
-                      )
-                    })()}
-                  </div>
-
-                  {/* Tool Policy */}
-                  <div className="space-y-1.5 border-t border-border pt-4">
-                    <h4 className="flex items-center gap-1.5 text-sm font-medium">
-                      <Shield className="h-3.5 w-3.5 text-muted-foreground" />
-                      {t('agents:detail.toolPolicy')}
-                    </h4>
-                    <InfoRow label={t('agents:detail.type')} value={toolPolicyInfo.label} />
-                    {toolPolicyInfo.allowedTools.length > 0 && (
-                      <InfoRow
-                        label={t('agents:detail.allowedTools')}
-                        value={toolPolicyInfo.allowedTools.join(', ')}
-                        mono
-                      />
-                    )}
-                    {toolPolicyInfo.allowedCommands.length > 0 && (
-                      <InfoRow
-                        label={t('agents:detail.allowedCommands')}
-                        value={toolPolicyInfo.allowedCommands.join(', ')}
-                        mono
-                      />
-                    )}
-                  </div>
-
-                  {/* Notification Policy */}
-                  <div className="space-y-1.5 border-t border-border pt-4">
-                    <h4 className="flex items-center gap-1.5 text-sm font-medium">
-                      <Bell className="h-3.5 w-3.5 text-muted-foreground" />
-                      {t('agents:detail.notifyPolicy')}
-                    </h4>
-                    <InfoRow
-                      label={t('agents:detail.notifyTriggers')}
-                      value={notifyTriggers.length > 0 ? notifyTriggers.join(' · ') : t('agents:detail.notifySilent')}
-                    />
-                    <InfoRow
-                      label={t('agents:detail.notifyChannels')}
-                      value={
-                        notifyInfo.channels.length > 0
-                          ? notifyInfo.channels.join(', ')
-                          : t('agents:detail.notifyChannelsEmpty')
-                      }
-                      mono={notifyInfo.channels.length > 0}
-                    />
-                  </div>
-
-                  {/* Pacing & Guardrails */}
-                  {hasPacingSettings(agent.pacing) && (
-                    <div className="space-y-1.5 border-t border-border pt-4">
-                      <h4 className="flex items-center gap-1.5 text-sm font-medium">
-                        <Gauge className="h-3.5 w-3.5 text-muted-foreground" />
-                        {t('agents:detail.pacing')}
-                      </h4>
-                      {agent.pacing?.burst_merge_secs != null && (
-                        <InfoRow label={t('agents:detail.burstMerge')} value={`${agent.pacing.burst_merge_secs}s`} />
-                      )}
-                      {agent.pacing?.min_interval_secs != null && (
-                        <InfoRow label={t('agents:detail.minInterval')} value={`${agent.pacing.min_interval_secs}s`} />
-                      )}
-                      {agent.pacing?.max_runs_per_day != null && (
-                        <InfoRow label={t('agents:detail.maxRunsPerDay')} value={agent.pacing.max_runs_per_day} />
-                      )}
-                      {agent.pacing?.failure_threshold != null && (
-                        <InfoRow label={t('agents:detail.failureThreshold')} value={agent.pacing.failure_threshold} />
+                        )}
+                        {trigger.kind === 'event' && eventFilterStr && (
+                          <InfoRow label={t('agents:detail.eventFilter')} value={eventFilterStr} mono />
+                        )}
+                        {trigger.kind === 'manual' && (
+                          <InfoRow label={t('agents:detail.schedule')} value={t('agents:detail.manualOnly')} />
+                        )}
+                      </div>
+                      {hasPacingSettings(agent.pacing) && (
+                        <div className="space-y-0.5 border-t border-border pt-2">
+                          {agent.pacing?.burst_merge_secs != null && (
+                            <InfoRow label={t('agents:detail.burstMerge')} value={`${agent.pacing.burst_merge_secs}s`} />
+                          )}
+                          {agent.pacing?.min_interval_secs != null && (
+                            <InfoRow label={t('agents:detail.minInterval')} value={`${agent.pacing.min_interval_secs}s`} />
+                          )}
+                          {agent.pacing?.max_runs_per_day != null && (
+                            <InfoRow label={t('agents:detail.maxRunsPerDay')} value={agent.pacing.max_runs_per_day} />
+                          )}
+                          {agent.pacing?.failure_threshold != null && (
+                            <InfoRow label={t('agents:detail.failureThreshold')} value={agent.pacing.failure_threshold} />
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
 
-                {/* Input Requirements */}
-                <div className="md:rounded-lg md:border md:border-border md:bg-card md:p-4">
-                  <DetailSection title={`${t('agents:detail.inputRequirements')} (${inputRequirements.length})`} icon={Zap}>
+                    {/* Card 2: Model & Tool Policy */}
+                    <div className="rounded-xl border border-border bg-card p-3.5 space-y-2">
+                      <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <Shield className="h-3.5 w-3.5" />
+                        {t('agents:detailZones.modelAndTools')}
+                      </h4>
+                      <div className="space-y-0.5">
+                        {(() => {
+                          const backend = llmBackends.find((b) => b.id === agent.llm_backend_id)
+                          if (backend) {
+                            return (
+                              <>
+                                <InfoRow label={t('agents:detail.model')} value={backend.name} />
+                                {backend.model && (
+                                  <InfoRow label={t('agents:detail.modelId')} value={backend.model} mono />
+                                )}
+                              </>
+                            )
+                          }
+                          return (
+                            <InfoRow
+                              label={t('agents:detail.model')}
+                              value={agent.llm_backend_id
+                                ? `${agent.llm_backend_id.slice(0, 8)}…`
+                                : t('agents:creator.basicInfo.useActiveBackend')}
+                              mono={!!agent.llm_backend_id}
+                            />
+                          )
+                        })()}
+                      </div>
+                      <div className="space-y-0.5 border-t border-border pt-2">
+                        <InfoRow label={t('agents:detail.toolPolicy')} value={toolPolicyInfo.label} />
+                        {toolPolicyInfo.allowedTools.length > 0 && (
+                          <InfoRow
+                            label={t('agents:detail.allowedTools')}
+                            value={toolPolicyInfo.allowedTools.join(', ')}
+                            mono
+                          />
+                        )}
+                        {toolPolicyInfo.allowedCommands.length > 0 && (
+                          <InfoRow
+                            label={t('agents:detail.allowedCommands')}
+                            value={toolPolicyInfo.allowedCommands.join(', ')}
+                            mono
+                          />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Card 3: Notification Policy */}
+                    <div className="rounded-xl border border-border bg-card p-3.5 space-y-2">
+                      <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <Bell className="h-3.5 w-3.5" />
+                        {t('agents:detail.notifyPolicy')}
+                      </h4>
+                      <div className="space-y-0.5">
+                        <InfoRow
+                          label={t('agents:detail.notifyTriggers')}
+                          value={notifyTriggers.length > 0 ? notifyTriggers.join(' · ') : t('agents:detail.notifySilent')}
+                        />
+                        <InfoRow
+                          label={t('agents:detail.notifyChannels')}
+                          value={
+                            notifyInfo.channels.length > 0
+                              ? notifyInfo.channels.join(', ')
+                              : t('agents:detail.notifyChannelsEmpty')
+                          }
+                          mono={notifyInfo.channels.length > 0}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Card 4: Controlled Actions */}
+                    <div className="rounded-xl border border-border bg-card p-3.5 space-y-2">
+                      <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <Workflow className="h-3.5 w-3.5" />
+                        {t('agents:detail.controlledActions')} ({controlledActions.length})
+                      </h4>
+                      {controlledActions.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          {t('agents:detailZones.noControlledActions')}
+                        </p>
+                      ) : (
+                        <div className="space-y-1">
+                          {controlledActions.map((action, idx) => (
+                            <div key={`${action.name}-${idx}`} className="flex flex-wrap items-center gap-1.5 border-b border-border py-1 last:border-0">
+                              <span className="text-xs font-medium text-foreground">{action.name}</span>
+                              <span className="truncate font-mono text-xs text-muted-foreground">{action.destination}</span>
+                              {action.idempotent && (
+                                <Badge variant="secondary" className="ml-auto h-4 px-1 text-[10px]">
+                                  {t('agents:detail.idempotent')}
+                                </Badge>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Input Requirements (compact 2-col grid) */}
+                  <div className="rounded-xl border border-border bg-card p-3.5 space-y-2.5">
+                    <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <Zap className="h-3.5 w-3.5" />
+                      {t('agents:detail.inputRequirements')} ({inputRequirements.length})
+                    </h4>
                     {inputRequirements.length === 0 ? (
                       <p className="text-xs text-muted-foreground">{t('agents:detail.noInputs')}</p>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="grid gap-2 md:grid-cols-2">
                         {inputRequirements.map((req) => (
                           <div key={req.key} className="rounded-lg border border-border bg-muted-20 px-3 py-2">
-                            <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
                               <span className="font-mono text-xs font-medium text-foreground">{req.key}</span>
                               <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
                                 {formatInputSource(req.source)}
                                 {req.operation ? ` / ${req.operation}` : ''}
                               </span>
-                              <Badge variant="outline" className="ml-auto h-5 px-1.5 text-xs">
+                              <Badge variant="outline" className="ml-auto h-4 px-1 text-[10px]">
                                 {req.result_type}
                               </Badge>
                             </div>
@@ -837,69 +895,70 @@ export function AgentDetailPanel({
                         ))}
                       </div>
                     )}
-                  </DetailSection>
-                </div>
-
-                {/* Controlled Actions */}
-                {controlledActions.length > 0 && (
-                  <div className="md:rounded-lg md:border md:border-border md:bg-card md:p-4">
-                    <DetailSection title={`${t('agents:detail.controlledActions')} (${controlledActions.length})`} icon={Workflow}>
-                      <div className="space-y-1.5">
-                        {controlledActions.map((action, idx) => (
-                          <div key={`${action.name}-${idx}`} className="flex flex-wrap items-center gap-2 border-b border-border py-1.5 last:border-0">
-                            <span className="text-sm font-medium text-foreground">{action.name}</span>
-                            <span className="font-mono text-xs text-muted-foreground truncate">{action.destination}</span>
-                            {action.idempotent && (
-                              <Badge variant="secondary" className="ml-auto h-5 px-1.5 text-xs">
-                                {t('agents:detail.idempotent')}
-                              </Badge>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </DetailSection>
                   </div>
-                )}
 
-                {/* Effective Plan */}
-                {effectivePlan && (
-                  <div className="rounded-2xl border border-dashed border-border bg-muted-20 p-4 md:rounded-lg space-y-2.5">
-                    <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      <Sparkles className="h-3.5 w-3.5" />
-                      {t('agents:detail.effectivePlan')}
-                    </h4>
-                    <InfoRow label={t('agents:detail.trigger')} value={effectivePlan.trigger_summary} mono />
-                    {effectivePlan.authorized_reads.length > 0 && (
-                      <div className="space-y-1 pt-1">
-                        <div className="text-xs text-muted-foreground">
-                          {t('agents:detail.authorizedReads')} ({effectivePlan.authorized_reads.length})
-                        </div>
-                        <ul className="space-y-0.5">
-                          {effectivePlan.authorized_reads.map((read) => (
-                            <li key={read.key} className="font-mono text-xs text-muted-foreground">
-                              {read.key} → {read.source_id}
-                              {read.operation ? ` / ${read.operation}` : ''}
-                            </li>
-                          ))}
-                        </ul>
+                  {/* Collapsible Effective Plan (auto-open when warnings exist) */}
+                  {effectivePlan && (
+                    <Collapsible open={planOpen} onOpenChange={setPlanOpen}>
+                      <div className="rounded-xl border border-dashed border-border bg-muted-20">
+                        <CollapsibleTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left"
+                          >
+                            <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              <Sparkles className="h-3.5 w-3.5" />
+                              {t('agents:detail.effectivePlan')}
+                              {effectivePlan.warnings && effectivePlan.warnings.length > 0 && (
+                                <Badge variant="outline" className="ml-1 h-4 border-warning/40 px-1 text-[10px] text-warning">
+                                  {effectivePlan.warnings.length}
+                                </Badge>
+                              )}
+                            </span>
+                            <ChevronDown
+                              className={cn(
+                                'h-4 w-4 text-muted-foreground transition-transform',
+                                planOpen && 'rotate-180',
+                              )}
+                            />
+                          </button>
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="space-y-2.5 border-t border-border px-3.5 pb-3.5 pt-2.5">
+                          <InfoRow label={t('agents:detail.trigger')} value={effectivePlan.trigger_summary} mono />
+                          {effectivePlan.authorized_reads.length > 0 && (
+                            <div className="space-y-1">
+                              <div className="text-xs text-muted-foreground">
+                                {t('agents:detail.authorizedReads')} ({effectivePlan.authorized_reads.length})
+                              </div>
+                              <ul className="space-y-0.5">
+                                {effectivePlan.authorized_reads.map((read) => (
+                                  <li key={read.key} className="font-mono text-xs text-muted-foreground">
+                                    {read.key} → {read.source_id}
+                                    {read.operation ? ` / ${read.operation}` : ''}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {effectivePlan.warnings && effectivePlan.warnings.length > 0 && (
+                            <div className="space-y-1 rounded-md border border-warning/40 bg-warning/5 px-3 py-2">
+                              <div className="flex items-center gap-1.5 text-xs font-medium text-warning">
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                {t('agents:detail.planWarnings')}
+                              </div>
+                              <ul className="space-y-0.5 text-xs text-warning">
+                                {effectivePlan.warnings.map((w, idx) => (
+                                  <li key={idx}>{w}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </CollapsibleContent>
                       </div>
-                    )}
-                    {effectivePlan.warnings && effectivePlan.warnings.length > 0 && (
-                      <div className="space-y-1 rounded-md border border-warning/40 bg-warning/5 px-3 py-2">
-                        <div className="flex items-center gap-1.5 text-xs font-medium text-warning">
-                          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                          {t('agents:detail.planWarnings')}
-                        </div>
-                        <ul className="space-y-0.5 text-xs text-warning">
-                          {effectivePlan.warnings.map((w, idx) => (
-                            <li key={idx}>{w}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </>
+                    </Collapsible>
+                  )}
+                </section>
+              </div>
             )}
             {section === 'history' && (
               <>

@@ -1094,7 +1094,101 @@
       "fields": "字段名",
       "add": "添加",
       "remove": "删除字段",
-      "namePlaceholder": "字段名"
+      "namePlaceholder": "字段名",
+      "descPlaceholder": "字段含义（会注入提示词）",
+      "publish": "发布为平台数据源",
+      "publishHint": "将每个字段发布为 ai:{agent}:{field}，供仪表盘、规则及下游智能体订阅。",
+      "dependsOn": "依赖输入键"
+    },
+    "flow": {
+      "stepWhat": "1. 做什么与看什么",
+      "stepWhatHint": "描述智能体要完成的判断或任务，并绑定它需要读取的数据源。",
+      "stepActions": "2. 怎么行动与输出",
+      "stepActionsHint": "配置模型的工具权限、受控设备动作，以及结构化输出字段。",
+      "stepWhen": "3. 何时运行与通知",
+      "stepWhenHint": "设定触发方式、节流护栏，以及完成/告警/失败时的通知路由。"
+    },
+    "picker": {
+      "addSource": "添加数据源",
+      "title": "选择数据源",
+      "searchPlaceholder": "搜索设备、指标、扩展或上游 AI 指标…",
+      "tabDevices": "设备与指标",
+      "tabExtensions": "扩展",
+      "tabAi": "上游 AI",
+      "wholeDevice": "整台设备",
+      "wholeDeviceAdded": "已绑定整台设备",
+      "metrics": "具体指标",
+      "noDevices": "暂无可用设备",
+      "noExtensions": "暂无可用扩展",
+      "noAiSources": "暂无已发布输出字段的上游智能体",
+      "extensionOp": "调用操作",
+      "extensionDefaultOp": "默认",
+      "selected": "已选",
+      "done": "完成",
+      "emptyBound": "尚未绑定数据源 — 点击「添加数据源」选择设备、指标、扩展或上游 AI 字段。",
+      "freshness": "新鲜度",
+      "freshnessLatestWithinLabel": "有效期内最新",
+      "freshnessLookbackLabel": "回看时间窗",
+      "maxAgeSecs": "有效期（秒）",
+      "lookbackSecs": "回看（秒）",
+      "maxPoints": "最大点数",
+      "onMissing": "缺失策略"
+    },
+    "actions": {
+      "title": "受控动作",
+      "add": "添加动作",
+      "empty": "未配置受控动作。",
+      "namePlaceholder": "动作名称（如 重启风机）",
+      "destinationPlaceholder": "目标（如 device:fan-01:restart）",
+      "pickCommand": "选择设备指令…",
+      "idempotent": "幂等",
+      "dependsOn": "依赖输入键",
+      "remove": "移除动作"
+    },
+    "schedule": {
+      "cronMode": "调度模式",
+      "cronDaily": "每天",
+      "cronWeekly": "每周",
+      "cronCustom": "自定义 Cron",
+      "minute": "分钟",
+      "eventSources": "事件触发来源",
+      "eventAllDevices": "任意设备上报",
+      "eventSelectedCount": "已选 {{count}} 个事件触发源",
+      "eventRawJson": "原始过滤 JSON",
+      "eventFilterPlaceholder": "{\"sources\":[{\"type\":\"device\",\"id\":\"sensor-01\"}]}"
+    },
+    "pacing": {
+      "title": "节流与护栏",
+      "burstMergeSecs": "合并窗口（秒）",
+      "minIntervalSecs": "最小间隔（秒）",
+      "maxRunsPerDay": "每日上限",
+      "failureThreshold": "连续失败熔断"
+    },
+    "notifyUnified": {
+      "imBuiltin": "IM（内置）",
+      "imHint": "推送到已绑定的 IM 会话（Telegram / Slack 等）",
+      "alertDependsOn": "告警依赖输入键"
+    },
+    "dryRun": {
+      "title": "试跑预览结果",
+      "dismiss": "关闭",
+      "noConclusion": "试跑已完成（无文本结论）。",
+      "failed": "试跑失败",
+      "evidenceCount": "{{count}} 条输入证据"
+    },
+    "capability": {
+      "vision": "视觉",
+      "tools": "工具",
+      "thinking": "思考"
     }
+  },
+  "detailZones": {
+    "runtimePosture": "运行态势",
+    "activeContract": "生效契约",
+    "triggerAndPacing": "触发与护栏",
+    "modelAndTools": "模型与工具策略",
+    "outputAndActions": "输出与受控动作",
+    "noOutputFields": "自由文本结论（未配置结构化字段）",
+    "noControlledActions": "未配置受控动作"
   }
 }

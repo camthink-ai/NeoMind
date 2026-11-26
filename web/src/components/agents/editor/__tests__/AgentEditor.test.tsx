@@ -1,20 +1,54 @@
-import { describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { AgentSpec } from '@/types'
 import { AgentEditor } from '../AgentEditor'
 import { specToDraft } from '../defaults'
+
+const mockTestAgentPreview = vi.fn()
 
 vi.mock('@/hooks/useMobile', () => ({
   useIsMobile: () => false,
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }))
 
+vi.mock('@/hooks/use-toast', () => ({
+  useToast: () => ({ toast: vi.fn() }),
+}))
+
 vi.mock('@/lib/api', () => ({
   api: {
     listLlmBackends: vi.fn(async () => ({ backends: [] })),
-    getDevices: vi.fn(async () => ({ devices: [] })),
-    listExtensions: vi.fn(async () => ({ extensions: [] })),
-    listChannels: vi.fn(async () => ({ channels: [] })),
+    getDevices: vi.fn(async () => ({ devices: [], count: 0 })),
+    getDeviceTypes: vi.fn(async () => ({ device_types: [], count: 0 })),
+    listExtensions: vi.fn(async () => []),
+    listAgents: vi.fn(async () => ({ agents: [], count: 0 })),
+    getAgentTools: vi.fn(async () => ({ tools: [], count: 0 })),
+    testAgentPreview: (...args: unknown[]) => mockTestAgentPreview(...args),
+  },
+}))
+
+vi.mock('@/lib/api/agents', () => ({
+  agentsApi: {
+    planPreview: vi.fn(async () => ({
+      effective_plan: {
+        agent_id: 'preview',
+        config_version: 0,
+        trigger_summary: 'manual',
+        authorized_reads: [],
+        tool_policy: 'disabled',
+        notify: { channels: [], on_failure: true },
+        controlled_actions: [],
+        warnings: [],
+        external_read_counts: { weather: 0, tariff: 0, other: 0 },
+      },
+      dry_run: false,
+    })),
+  },
+}))
+
+vi.mock('@/lib/api/channels', () => ({
+  channelsApi: {
+    listMessageChannels: vi.fn(async () => ({ channels: [] })),
   },
 }))
 
@@ -35,37 +69,70 @@ vi.mock('react-i18next', async (importOriginal) => {
   }
 })
 
-describe('AgentEditor create UX', () => {
-  it('shows the form immediately below Task type even before a template is selected', () => {
+describe('AgentEditor unified BuilderShell UX', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockTestAgentPreview.mockResolvedValue({
+      dry_run: true,
+      execution: {
+        status: 'Completed',
+        conclusion: 'Preview passed: all sensors healthy.',
+        structured_result: { status: 'normal' },
+        evidence: { items: [{ key: 'k1' }] },
+      },
+    })
+  })
+
+  it('renders BuilderShell left config rail and 3-step unified workspace immediately on create', () => {
     const { baseElement } = render(
       <AgentEditor open onOpenChange={vi.fn()} onSave={vi.fn()} />,
     )
 
+    // Left config rail
     expect(baseElement.querySelector('[data-section="templates"]')).toBeTruthy()
+    expect(baseElement.querySelector('[data-section="model-picker"]')).toBeTruthy()
+    expect(baseElement.querySelector('[data-section="plan-preview"]')).toBeTruthy()
+
+    // Right 3-step workspace (zero Simple-vs-Advanced duplication)
     expect(baseElement.querySelector('[data-section="basics"]')).toBeTruthy()
-    expect(baseElement.querySelector('[data-section="when"]')).toBeTruthy()
     expect(baseElement.querySelector('[data-section="sources"]')).toBeTruthy()
+    expect(baseElement.querySelector('[data-section="actions-output"]')).toBeTruthy()
+    expect(baseElement.querySelector('[data-section="tool-policy"]')).toBeTruthy()
+    expect(baseElement.querySelector('[data-section="controlled-actions"]')).toBeTruthy()
     expect(baseElement.querySelector('[data-section="output"]')).toBeTruthy()
+    expect(baseElement.querySelector('[data-section="schedule-notify"]')).toBeTruthy()
+    expect(baseElement.querySelector('[data-section="when"]')).toBeTruthy()
+    expect(baseElement.querySelector('[data-section="pacing"]')).toBeTruthy()
     expect(baseElement.querySelector('[data-section="notify"]')).toBeTruthy()
   })
 
-  it('allows saving once name and prompt are filled without requiring a template click, and preserves them when applying a template', () => {
+  it('applies template prompt/name when empty, preserves custom text, and supports pre-save Dry Run', async () => {
     render(<AgentEditor open onOpenChange={vi.fn()} onSave={vi.fn()} />)
 
     const saveBtn = screen.getByTestId('agent-editor-save')
     expect(saveBtn).toBeDisabled()
 
-    const nameInput = screen.getByPlaceholderText('agents:editorV2.namePlaceholder')
-    const promptInput = screen.getByPlaceholderText('agents:editorV2.promptPlaceholder')
-    fireEvent.change(nameInput, { target: { value: 'My Monitor' } })
-    fireEvent.change(promptInput, { target: { value: 'Check sensors every morning.' } })
-
+    // Clicking a template seeds localized name + prompt immediately
+    fireEvent.click(screen.getByRole('button', { name: 'agents:editorV2.templates.daily_brief.name' }))
+    const nameInput = screen.getByPlaceholderText('agents:editorV2.namePlaceholder') as HTMLInputElement
+    const promptInput = screen.getByPlaceholderText('agents:editorV2.promptPlaceholder') as HTMLTextAreaElement
+    expect(nameInput.value).toBe('agents:editorV2.templates.daily_brief.name')
+    expect(promptInput.value).toBe('agents:creator.preset.scheduled.prompt')
     expect(saveBtn).not.toBeDisabled()
 
-    // Clicking a template applies its defaults while preserving typed name/prompt
-    fireEvent.click(screen.getByRole('button', { name: 'agents:editorV2.templates.daily_brief.name' }))
-    expect((nameInput as HTMLInputElement).value).toBe('My Monitor')
-    expect((promptInput as HTMLTextAreaElement).value).toBe('Check sensors every morning.')
+    // Customizing name/prompt preserves them when switching templates
+    fireEvent.change(nameInput, { target: { value: 'My Custom Agent' } })
+    fireEvent.change(promptInput, { target: { value: 'Custom prompt check.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'agents:editorV2.templates.meter_inspect.name' }))
+    expect(nameInput.value).toBe('My Custom Agent')
+    expect(promptInput.value).toBe('Custom prompt check.')
+
+    // Dry Run runs pre-save preview with full draft and displays result
+    fireEvent.click(screen.getByTestId('agent-editor-dry-run'))
+    await waitFor(() => {
+      expect(mockTestAgentPreview).toHaveBeenCalledTimes(1)
+      expect(screen.getByText('Preview passed: all sensors healthy.')).toBeTruthy()
+    })
   })
 
   it('edits an old/legacy-shaped agent without trigger field without crashing', () => {

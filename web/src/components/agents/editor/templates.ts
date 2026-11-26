@@ -39,6 +39,10 @@ export interface TaskTemplate {
   preset: AgentPresetId
   icon: Icon
   nameKey: string
+  /** Existing i18n key under agents:creator.preset.* for realistic default prompt. */
+  promptKey: string
+  /** Existing i18n key under agents:creator.preset.* for short subtitle. */
+  descKey: string
   seed: () => AgentSpecDraft
 }
 
@@ -182,6 +186,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     preset: 'daily_brief',
     icon: Calendar,
     nameKey: 'editorV2.templates.daily_brief.name',
+    promptKey: 'creator.preset.scheduled.prompt',
+    descKey: 'creator.preset.scheduled.desc',
     seed: seedDailyBrief,
   },
   {
@@ -189,6 +195,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     preset: 'partial_meter',
     icon: Activity,
     nameKey: 'editorV2.templates.meter_inspect.name',
+    promptKey: 'creator.preset.monitor.prompt',
+    descKey: 'creator.preset.monitor.desc',
     seed: seedMeterInspect,
   },
   {
@@ -196,6 +204,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     preset: 'event_vision',
     icon: AlertTriangle,
     nameKey: 'editorV2.templates.event_review.name',
+    promptKey: 'creator.preset.event.prompt',
+    descKey: 'creator.preset.event.desc',
     seed: seedEventReview,
   },
   {
@@ -203,6 +213,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     preset: 'custom',
     icon: Clock,
     nameKey: 'editorV2.templates.weekly.name',
+    promptKey: 'creator.preset.weekly.prompt',
+    descKey: 'creator.preset.weekly.desc',
     seed: seedWeekly,
   },
   {
@@ -210,6 +222,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     preset: 'custom',
     icon: Gauge,
     nameKey: 'editorV2.templates.shift.name',
+    promptKey: 'creator.preset.shift.prompt',
+    descKey: 'creator.preset.shift.desc',
     seed: seedShift,
   },
   {
@@ -217,6 +231,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     preset: 'custom',
     icon: Radar,
     nameKey: 'editorV2.templates.patrol.name',
+    promptKey: 'creator.preset.patrol.prompt',
+    descKey: 'creator.preset.patrol.desc',
     seed: seedPatrol,
   },
   {
@@ -224,6 +240,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     preset: 'custom',
     icon: Search,
     nameKey: 'editorV2.templates.qa.name',
+    promptKey: 'creator.preset.qa.prompt',
+    descKey: 'creator.preset.qa.desc',
     seed: seedQa,
   },
   {
@@ -231,6 +249,8 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     preset: 'custom',
     icon: Settings2,
     nameKey: 'editorV2.templates.custom.name',
+    promptKey: 'creator.preset.advanced.prompt',
+    descKey: 'creator.preset.advanced.desc',
     seed: seedCustom,
   },
 ]

@@ -1094,7 +1094,101 @@
       "fields": "Field names",
       "add": "Add",
       "remove": "Remove field",
-      "namePlaceholder": "field"
+      "namePlaceholder": "field",
+      "descPlaceholder": "Description (injected into prompt)",
+      "publish": "Publish as platform data sources",
+      "publishHint": "Expose each field as ai:{agent}:{field} for dashboards, rules, and upstream agents.",
+      "dependsOn": "Depends on inputs"
+    },
+    "flow": {
+      "stepWhat": "1. Mission & Data Sources",
+      "stepWhatHint": "Describe what the agent should judge or do, and bind the data sources it reads.",
+      "stepActions": "2. Actions & Output",
+      "stepActionsHint": "Configure model tool permissions, controlled device actions, and structured output fields.",
+      "stepWhen": "3. Schedule, Guardrails & Notifications",
+      "stepWhenHint": "Control when the agent runs, pacing limits, and where results or alerts are delivered."
+    },
+    "picker": {
+      "addSource": "Add Data Source",
+      "title": "Select Data Sources",
+      "searchPlaceholder": "Search devices, metrics, extensions, or AI metrics...",
+      "tabDevices": "Devices & Metrics",
+      "tabExtensions": "Extensions",
+      "tabAi": "Upstream AI",
+      "wholeDevice": "Whole device",
+      "wholeDeviceAdded": "Whole device bound",
+      "metrics": "Specific metrics",
+      "noDevices": "No devices found",
+      "noExtensions": "No extensions found",
+      "noAiSources": "No upstream AI agents with published output fields",
+      "extensionOp": "Operation",
+      "extensionDefaultOp": "Default",
+      "selected": "Selected",
+      "done": "Done",
+      "emptyBound": "No data sources bound yet — click Add Data Source to select devices, metrics, extensions, or upstream AI fields.",
+      "freshness": "Freshness",
+      "freshnessLatestWithinLabel": "Latest within",
+      "freshnessLookbackLabel": "Lookback window",
+      "maxAgeSecs": "Max age (s)",
+      "lookbackSecs": "Window (s)",
+      "maxPoints": "Max pts",
+      "onMissing": "On missing"
+    },
+    "actions": {
+      "title": "Controlled Actions",
+      "add": "Add Action",
+      "empty": "No controlled actions configured.",
+      "namePlaceholder": "Action name (e.g. Restart Fan)",
+      "destinationPlaceholder": "Destination (e.g. device:fan-01:restart)",
+      "pickCommand": "Pick device command...",
+      "idempotent": "Idempotent",
+      "dependsOn": "Depends on inputs",
+      "remove": "Remove action"
+    },
+    "schedule": {
+      "cronMode": "Schedule pattern",
+      "cronDaily": "Daily",
+      "cronWeekly": "Weekly",
+      "cronCustom": "Custom Cron",
+      "minute": "Minute",
+      "eventSources": "Event trigger sources",
+      "eventAllDevices": "Any device update",
+      "eventSelectedCount": "{{count}} event source(s) selected",
+      "eventRawJson": "Raw filter JSON",
+      "eventFilterPlaceholder": "{\"sources\":[{\"type\":\"device\",\"id\":\"sensor-01\"}]}"
+    },
+    "pacing": {
+      "title": "Pacing & Guardrails",
+      "burstMergeSecs": "Burst merge (s)",
+      "minIntervalSecs": "Min interval (s)",
+      "maxRunsPerDay": "Daily run cap",
+      "failureThreshold": "Failure breaker"
+    },
+    "notifyUnified": {
+      "imBuiltin": "IM (Built-in)",
+      "imHint": "Delivers to bound IM chats (Telegram / Slack / etc.)",
+      "alertDependsOn": "Alert depends on inputs"
+    },
+    "dryRun": {
+      "title": "Dry-Run Preview Result",
+      "dismiss": "Dismiss",
+      "noConclusion": "Completed with no conclusion text.",
+      "failed": "Dry run failed",
+      "evidenceCount": "{{count}} evidence item(s)"
+    },
+    "capability": {
+      "vision": "Vision",
+      "tools": "Tools",
+      "thinking": "Thinking"
     }
+  },
+  "detailZones": {
+    "runtimePosture": "Runtime Posture",
+    "activeContract": "Active Contract",
+    "triggerAndPacing": "Trigger & Pacing",
+    "modelAndTools": "Model & Tool Policy",
+    "outputAndActions": "Output & Controlled Actions",
+    "noOutputFields": "Free-form conclusion (no structured fields)",
+    "noControlledActions": "No controlled actions"
   }
 }

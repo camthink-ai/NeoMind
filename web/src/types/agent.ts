@@ -356,6 +356,8 @@ export interface TestPreviewRequest {
   llm_backend_id?: string
   /** Preview fidelity: run the preview with the same tool gating the saved agent will have. */
   tool_config?: AgentToolConfig
+  /** Full AgentSpecDraft for high-fidelity pre-save dry-run. */
+  draft?: AgentSpecDraft
 }
 
 /**

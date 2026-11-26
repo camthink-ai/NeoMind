@@ -1306,6 +1306,9 @@ pub struct TestPreviewRequest {
     /// previews against the FULL tool set — preview and reality disagree.
     #[serde(default)]
     pub tool_config: Option<neomind_storage::AgentToolConfig>,
+    /// Optional full AgentSpecDraft for high-fidelity pre-save dry-run.
+    #[serde(default)]
+    pub draft: Option<AgentSpecDraft>,
 }
 
 #[utoipa::path(
@@ -1328,90 +1331,102 @@ pub async fn test_agent_preview(
         TriggerSpec,
     };
 
-    // Map preview resources → InputContract (no AiAgent / ingest).
-    let mut requirements = Vec::new();
-    for (i, r) in request.resources.iter().enumerate() {
-        let key = if r.name.is_empty() {
-            format!("r{i}")
-        } else {
-            r.name.clone()
-        };
-        let source = match r.resource_type.as_str() {
-            "device" | "Device" => InputSourceRef::WholeDevice {
-                device_id: r.resource_id.clone(),
-            },
-            "metric" | "Metric" => {
-                let mut parts = r.resource_id.splitn(2, ':');
-                let device_id = parts.next().unwrap_or(&r.resource_id).to_string();
-                let field = parts.next().unwrap_or("value").to_string();
-                InputSourceRef::DeviceMetric { device_id, field }
-            }
-            "extension_metric" | "ExtensionMetric" | "extension_tool" | "ExtensionTool" => {
-                InputSourceRef::ExtensionInstance {
-                    id: r.resource_id.clone(),
-                }
-            }
-            _ => InputSourceRef::WholeDevice {
-                device_id: r.resource_id.clone(),
-            },
-        };
-        requirements.push(InputRequirement {
-            key,
-            source,
-            operation: None,
-            params: r.config.clone().unwrap_or_else(|| json!({})),
-            auth_scope: None,
-            timeout_secs: 10,
-            result_type: InputModality::StructuredJson,
-            freshness: FreshnessPolicy::Any,
-            on_missing: MissingPolicy::ReportStale,
-        });
-    }
-
-    let tool_policy = match request.tool_config.as_ref() {
-        Some(tc) if !tc.enabled => ToolPolicy::Disabled,
-        Some(tc) if !tc.allowed_tools.is_empty() => ToolPolicy::Scoped {
-            allowed_tools: tc.allowed_tools.clone(),
-            allowed_commands: vec![],
-        },
-        _ => ToolPolicy::Unrestricted,
-    };
-
-    let output = if let Some(schema) = request.output_schema.as_ref() {
-        OutputContract {
-            fields: schema
-                .iter()
-                .map(|f| OutputField {
-                    name: f.name.clone(),
-                    depends_on: vec![],
-                    description: f.description.clone(),
-                })
-                .collect(),
-            publish: false,
-        }
-    } else {
-        OutputContract::default()
-    };
-
-    let draft = AgentSpecDraft {
-        name: "Preview".into(),
-        description: None,
-        user_prompt: request.user_prompt,
-        llm_backend_id: request.llm_backend_id,
-        preset: None,
-        trigger: TriggerSpec::Manual,
-        pacing: PacingPolicy::default(),
-        input: InputContract { requirements },
-        tool_policy,
-        output,
-        notify: Default::default(),
-        controlled_actions: vec![],
-    };
-
     let mode_label = request
         .execution_mode
         .clone()
         .unwrap_or_else(|| "focused".into());
+
+    let draft = if let Some(mut supplied) = request.draft {
+        // Preview runs are always manual & non-publishing so they stay side-effect free.
+        supplied.name = if supplied.name.trim().is_empty() {
+            "Preview".into()
+        } else {
+            supplied.name
+        };
+        supplied.trigger = TriggerSpec::Manual;
+        supplied.output.publish = false;
+        supplied
+    } else {
+        // Map preview resources → InputContract (no AiAgent / ingest).
+        let mut requirements = Vec::new();
+        for (i, r) in request.resources.iter().enumerate() {
+            let key = if r.name.is_empty() {
+                format!("r{i}")
+            } else {
+                r.name.clone()
+            };
+            let source = match r.resource_type.as_str() {
+                "device" | "Device" => InputSourceRef::WholeDevice {
+                    device_id: r.resource_id.clone(),
+                },
+                "metric" | "Metric" => {
+                    let mut parts = r.resource_id.splitn(2, ':');
+                    let device_id = parts.next().unwrap_or(&r.resource_id).to_string();
+                    let field = parts.next().unwrap_or("value").to_string();
+                    InputSourceRef::DeviceMetric { device_id, field }
+                }
+                "extension_metric" | "ExtensionMetric" | "extension_tool" | "ExtensionTool" => {
+                    InputSourceRef::ExtensionInstance {
+                        id: r.resource_id.clone(),
+                    }
+                }
+                _ => InputSourceRef::WholeDevice {
+                    device_id: r.resource_id.clone(),
+                },
+            };
+            requirements.push(InputRequirement {
+                key,
+                source,
+                operation: None,
+                params: r.config.clone().unwrap_or_else(|| json!({})),
+                auth_scope: None,
+                timeout_secs: 10,
+                result_type: InputModality::StructuredJson,
+                freshness: FreshnessPolicy::Any,
+                on_missing: MissingPolicy::ReportStale,
+            });
+        }
+
+        let tool_policy = match request.tool_config.as_ref() {
+            Some(tc) if !tc.enabled => ToolPolicy::Disabled,
+            Some(tc) if !tc.allowed_tools.is_empty() => ToolPolicy::Scoped {
+                allowed_tools: tc.allowed_tools.clone(),
+                allowed_commands: vec![],
+            },
+            _ => ToolPolicy::Unrestricted,
+        };
+
+        let output = if let Some(schema) = request.output_schema.as_ref() {
+            OutputContract {
+                fields: schema
+                    .iter()
+                    .map(|f| OutputField {
+                        name: f.name.clone(),
+                        depends_on: vec![],
+                        description: f.description.clone(),
+                    })
+                    .collect(),
+                publish: false,
+            }
+        } else {
+            OutputContract::default()
+        };
+
+        AgentSpecDraft {
+            name: "Preview".into(),
+            description: None,
+            user_prompt: request.user_prompt,
+            llm_backend_id: request.llm_backend_id,
+            preset: None,
+            trigger: TriggerSpec::Manual,
+            pacing: PacingPolicy::default(),
+            input: InputContract { requirements },
+            tool_policy,
+            output,
+            notify: Default::default(),
+            controlled_actions: vec![],
+        }
+    };
 
     let rt = state.require_clean_slate().await?;
     let (spec, _) = rt

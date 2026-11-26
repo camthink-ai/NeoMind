@@ -163,7 +163,7 @@ describe('AgentDetailPanel (AgentSpec contract)', () => {
     expect(agent.resources).toBeUndefined()
     expect(agent.output_schema).toBeUndefined()
 
-    render(
+    const { container } = render(
       <AgentDetailPanel
         agent={agent}
         onEdit={vi.fn()}
@@ -173,6 +173,10 @@ describe('AgentDetailPanel (AgentSpec contract)', () => {
         inlineMode
       />,
     )
+
+    // Two-zone overview structure
+    expect(container.querySelector('[data-zone="runtime-posture"]')).toBeTruthy()
+    expect(container.querySelector('[data-zone="active-contract"]')).toBeTruthy()
 
     // Trigger (cron + timezone)
     expect(screen.getByText('0 9 * * *')).toBeTruthy()
@@ -222,7 +226,7 @@ describe('AgentDetailPanel (AgentSpec contract)', () => {
       effective_plan: undefined,
     })
 
-    render(
+    const { container } = render(
       <AgentDetailPanel
         agent={agent}
         onEdit={vi.fn()}
@@ -232,6 +236,10 @@ describe('AgentDetailPanel (AgentSpec contract)', () => {
         inlineMode
       />,
     )
+
+    // Two-zone overview structure
+    expect(container.querySelector('[data-zone="runtime-posture"]')).toBeTruthy()
+    expect(container.querySelector('[data-zone="active-contract"]')).toBeTruthy()
 
     expect(screen.getByText('agents:detail.manualOnly')).toBeTruthy()
     expect(screen.getByText('agents:detail.noInputs')).toBeTruthy()
