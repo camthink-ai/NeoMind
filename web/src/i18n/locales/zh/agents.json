@@ -805,14 +805,111 @@
   "executionNotFound": "未找到执行记录",
   "noAgentsNoBackendDesc": "Agent 需要 AI 模型才能运行。先下载内置模型（离线可用、无需 API key），或配置你自己的后端。",
   "editorV2": {
-    "titleCreate": "创建智能体（v2）",
-    "titleEdit": "编辑智能体（v2）",
-    "dailyBriefHint": "正交的 AgentSpec v2 编辑器 — 面向日报类配置（cron + 时区、输入契约、工具策略、三路通知）。",
+    "titleCreate": "创建智能体",
+    "titleEdit": "编辑智能体",
+    "subtitle": "左侧编辑，右侧实时预览摘要。",
+    "dailyBriefHint": "先选任务类型，再填写名称、任务与何时运行。",
+    "basicsTitle": "任务",
+    "basicsHint": "给智能体起名，并写清它要做的事。",
+    "namePlaceholder": "名称",
+    "promptPlaceholder": "任务说明",
+    "footerHint": "保存后生效。",
+    "save": "保存智能体",
     "name": "名称",
     "description": "描述",
-    "prompt": "任务提示词",
+    "prompt": "任务说明",
+    "templates": {
+      "title": "任务类型",
+      "pickFirst": "请先选择一种任务类型。",
+      "daily_brief": {
+        "name": "每日简报"
+      },
+      "meter_inspect": {
+        "name": "数据监控"
+      },
+      "event_review": {
+        "name": "事件复核"
+      },
+      "weekly": {
+        "name": "周报"
+      },
+      "shift": {
+        "name": "短周期巡检"
+      },
+      "patrol": {
+        "name": "定时巡检"
+      },
+      "qa": {
+        "name": "数据问答"
+      },
+      "custom": {
+        "name": "自定义"
+      }
+    },
+    "when": {
+      "title": "何时",
+      "hint": "用简单选项设定时间表；完整 Cron 在高级里。",
+      "mode": "方式",
+      "daily": "每天固定时刻",
+      "interval": "每隔一段时间",
+      "event": "有事件时",
+      "manual": "仅手动运行",
+      "hour": "每天几点",
+      "hourHint": "本地时区 Asia/Shanghai",
+      "hourOption": "{{hour}}:00",
+      "everyMinutes": "间隔（分钟）",
+      "everyMinutesHint": "例如 60 表示每小时",
+      "eventHint": "匹配到事件时触发（过滤条件可在高级中细化）。",
+      "manualHint": "不会自动调度，只能手动点运行。"
+    },
+    "sources": {
+      "title": "读取",
+      "hint": "点选设备或扩展；用普通人能看懂的名字。",
+      "loading": "正在加载设备与扩展…",
+      "selected": "已选 {{count}} 个来源",
+      "devices": "设备",
+      "extensions": "扩展",
+      "emptyCatalog": "暂无设备或扩展"
+    },
+    "notifySimple": {
+      "title": "通知",
+      "hint": "需要时再打开；默认失败才提醒。",
+      "onComplete": "完成时通知",
+      "onCompleteDesc": "每次成功跑完都发一条",
+      "onFailure": "失败时通知",
+      "onFailureDesc": "运行失败时提醒",
+      "channels": "通知通道",
+      "noChannels": "暂无通道"
+    },
+    "planLine": {
+      "label": "将按：",
+      "sep": " · ",
+      "dailyAt": "每天 {{time}}",
+      "everyMinutes": "每 {{count}} 分钟",
+      "onEvent": "事件触发",
+      "manual": "仅手动",
+      "reads": "读取 {{count}} 个来源",
+      "toolsOff": "工具关闭",
+      "toolsOn": "工具不限",
+      "toolsScoped": "工具白名单",
+      "notifyComplete": "完成时通知",
+      "notifyFailure": "失败时通知",
+      "notifySilent": "不主动通知"
+    },
+    "advanced": {
+      "title": "高级",
+      "trigger": "触发（高级）",
+      "triggerHint": "原始 Cron、时区与事件过滤。",
+      "input": "输入契约（高级）",
+      "inputHint": "键名、操作、Lookback 等工程师选项。",
+      "tools": "工具策略",
+      "toolsHint": "模型可调用的工具范围。",
+      "notify": "通知策略（高级）",
+      "notifyHint": "告警依赖、待确认等细节。"
+    },
     "trigger": {
       "title": "触发",
+      "sectionHint": "原始调度表达式；日常请用上方「何时运行」。",
       "kind": "触发类型",
       "cron": "Cron",
       "interval": "间隔",
@@ -827,7 +924,8 @@
       "eventHint": "匹配事件过滤条件时触发"
     },
     "input": {
-      "title": "输入契约",
+      "title": "输入",
+      "sectionHint": "键名、操作与新鲜度策略。",
       "count": "{{count}} 个来源",
       "empty": "尚无输入要求 — 可添加扩展或设备读取",
       "key": "键名",
@@ -850,7 +948,8 @@
       "disabledHint": "宿主 InputPipeline 仍会按授权读取来源"
     },
     "notify": {
-      "title": "通知策略",
+      "title": "通知",
+      "sectionHint": "何时、通过哪些通道通知运维。",
       "channels": "通道",
       "channelsHint": "逗号分隔的通道 ID；空表示静默",
       "onComplete": "完成时",
@@ -865,7 +964,7 @@
     "plan": {
       "title": "生效计划",
       "run": "预览",
-      "hint": "仅静态计划 — 零外部读取、零投递",
+      "hint": "只读摘要：按当前配置将如何运行。",
       "trigger": "触发",
       "timezone": "时区",
       "reads": "授权读取",
@@ -874,7 +973,7 @@
     "planPreview": {
       "title": "生效计划",
       "refresh": "刷新",
-      "hint": "来自 POST /api/agents/v2/plan-preview 的静态预览 — 零外部读取",
+      "hint": "只读摘要 — 不触发实际读取或投递。",
       "empty": "尚无预览",
       "error": "预览失败",
       "triggerSummary": "触发",
@@ -887,14 +986,46 @@
       "warnings": "警告"
     },
     "tools": {
-      "title": "工具策略",
+      "title": "工具",
+      "sectionHint": "运行中模型可调用的能力。",
       "mode": "模式",
-      "hint": "日报类配置通常禁用模型工具",
+      "hint": "日报类配置通常关闭模型工具。",
       "disabled": "禁用",
       "unrestricted": "不限制",
       "scoped": "白名单",
       "allowedTools": "允许的工具",
       "allowedToolsHint": "逗号分隔的工具名"
+    },
+    "summary": {
+      "title": "实时摘要",
+      "hint": "左侧改动会即时反映在这里。",
+      "template": "任务类型",
+      "noTemplate": "—",
+      "name": "名称",
+      "mission": "任务说明",
+      "when": "何时运行",
+      "sources": "读取来源",
+      "noSources": "—",
+      "tools": "工具",
+      "notify": "通知",
+      "empty": "—",
+      "model": "模型",
+      "modelActive": "全局默认",
+      "output": "输出",
+      "outputOff": "关"
+    },
+    "model": {
+      "label": "模型",
+      "useActive": "全局默认",
+      "useActiveNamed": "全局默认（{{name}}）"
+    },
+    "output": {
+      "title": "输出",
+      "enabled": "JSON 字段",
+      "fields": "字段名",
+      "add": "添加",
+      "remove": "删除字段",
+      "namePlaceholder": "字段名"
     }
   }
 }

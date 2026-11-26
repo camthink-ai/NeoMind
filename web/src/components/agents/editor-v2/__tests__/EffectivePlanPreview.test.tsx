@@ -16,7 +16,7 @@ vi.mock('react-i18next', async (importOriginal) => {
         const map: Record<string, string> = {
           'editorV2.planPreview.title': 'Effective plan',
           'editorV2.planPreview.refresh': 'Refresh',
-          'editorV2.planPreview.hint': 'Static preview — zero external reads',
+          'editorV2.planPreview.hint': 'Read-only summary — no live reads or delivery.',
           'editorV2.planPreview.error': 'Preview failed',
           'editorV2.planPreview.triggerSummary': 'Trigger',
           'editorV2.planPreview.timezone': 'Timezone',
@@ -91,7 +91,7 @@ describe('EffectivePlanPreview', () => {
     expect(screen.getByText('Asia/Shanghai')).toBeTruthy()
     expect(screen.getByText(/weather_now/)).toBeTruthy()
     expect(screen.getByText(/tariff_today/)).toBeTruthy()
-    expect(screen.getByText(/weather=0/)).toBeTruthy()
+    expect(screen.getByText('Disabled')).toBeTruthy()
   })
 
   it('surfaces preview errors', async () => {

@@ -805,14 +805,111 @@
   "executionNotFound": "Execution Not Found",
   "noAgentsNoBackendDesc": "Agents need an AI model to run. Download the built-in model (offline, no API key) — or configure your own backend first.",
   "editorV2": {
-    "titleCreate": "Create Agent (v2)",
-    "titleEdit": "Edit Agent (v2)",
-    "dailyBriefHint": "Orthogonal AgentSpec v2 editor — seeded for daily-brief style configs (cron + timezone, input requirements, tool policy, three-way notify).",
+    "titleCreate": "Create Agent",
+    "titleEdit": "Edit Agent",
+    "subtitle": "Edit on the left; live summary on the right.",
+    "dailyBriefHint": "Pick a task type, then name, mission, and when it runs.",
+    "basicsTitle": "Mission",
+    "basicsHint": "Name the agent and describe what it should do.",
+    "namePlaceholder": "Name",
+    "promptPlaceholder": "Mission",
+    "footerHint": "Changes apply on save.",
+    "save": "Save agent",
     "name": "Name",
     "description": "Description",
-    "prompt": "Mission prompt",
+    "prompt": "Mission",
+    "templates": {
+      "title": "Task type",
+      "pickFirst": "Pick a task type to continue.",
+      "daily_brief": {
+        "name": "Daily brief"
+      },
+      "meter_inspect": {
+        "name": "Data monitor"
+      },
+      "event_review": {
+        "name": "Event review"
+      },
+      "weekly": {
+        "name": "Weekly report"
+      },
+      "shift": {
+        "name": "Shift check"
+      },
+      "patrol": {
+        "name": "Patrol"
+      },
+      "qa": {
+        "name": "Data Q&A"
+      },
+      "custom": {
+        "name": "Custom"
+      }
+    },
+    "when": {
+      "title": "When",
+      "hint": "Simple schedule picks; raw cron lives under Advanced.",
+      "mode": "Mode",
+      "daily": "Every day at…",
+      "interval": "Every N minutes",
+      "event": "On event",
+      "manual": "Manual only",
+      "hour": "Time of day",
+      "hourHint": "Timezone Asia/Shanghai",
+      "hourOption": "{{hour}}:00",
+      "everyMinutes": "Every (minutes)",
+      "everyMinutesHint": "e.g. 60 = once an hour",
+      "eventHint": "Fires when an event matches (refine filters under Advanced).",
+      "manualHint": "Never auto-scheduled — run it yourself."
+    },
+    "sources": {
+      "title": "Sources",
+      "hint": "Tap devices or extensions by their plain names.",
+      "loading": "Loading devices and extensions…",
+      "selected": "{{count}} sources selected",
+      "devices": "Devices",
+      "extensions": "Extensions",
+      "emptyCatalog": "No devices or extensions yet"
+    },
+    "notifySimple": {
+      "title": "Notify",
+      "hint": "Off unless you need it; failures stay on by default.",
+      "onComplete": "Notify on complete",
+      "onCompleteDesc": "Send a message after every successful run",
+      "onFailure": "Notify on failure",
+      "onFailureDesc": "Alert when a run fails",
+      "channels": "Channels",
+      "noChannels": "No channels yet"
+    },
+    "planLine": {
+      "label": "Will run:",
+      "sep": " · ",
+      "dailyAt": "daily at {{time}}",
+      "everyMinutes": "every {{count}} min",
+      "onEvent": "on event",
+      "manual": "manual only",
+      "reads": "{{count}} sources",
+      "toolsOff": "tools off",
+      "toolsOn": "tools open",
+      "toolsScoped": "tools allowlist",
+      "notifyComplete": "notify on complete",
+      "notifyFailure": "notify on failure",
+      "notifySilent": "silent"
+    },
+    "advanced": {
+      "title": "Advanced",
+      "trigger": "Trigger (advanced)",
+      "triggerHint": "Raw cron, timezone, and event filters.",
+      "input": "Input contract (advanced)",
+      "inputHint": "Keys, operations, lookback windows.",
+      "tools": "Tool policy",
+      "toolsHint": "What the model may call.",
+      "notify": "Notify policy (advanced)",
+      "notifyHint": "Alert deps, pending confirmation, etc."
+    },
     "trigger": {
       "title": "Trigger",
+      "sectionHint": "Raw schedule expressions — prefer When it runs above.",
       "kind": "Trigger type",
       "cron": "Cron",
       "interval": "Interval",
@@ -827,7 +924,8 @@
       "eventHint": "Fires when the event filter matches"
     },
     "input": {
-      "title": "Input requirements",
+      "title": "Input",
+      "sectionHint": "Keys, operations, and freshness.",
       "count": "{{count}} sources",
       "empty": "No input requirements yet — add extension or device reads",
       "key": "Key",
@@ -850,7 +948,8 @@
       "disabledHint": "Host InputPipeline still reads authorized sources"
     },
     "notify": {
-      "title": "Notify policy",
+      "title": "Notify",
+      "sectionHint": "Where and when operators hear from this agent.",
       "channels": "Channels",
       "channelsHint": "Comma-separated channel ids; empty = silent",
       "onComplete": "On complete",
@@ -865,7 +964,7 @@
     "plan": {
       "title": "Effective plan",
       "run": "Preview",
-      "hint": "Static plan only — zero external reads, zero delivery",
+      "hint": "Read-only summary of how this config will run.",
       "trigger": "Trigger",
       "timezone": "Timezone",
       "reads": "Authorized reads",
@@ -874,7 +973,7 @@
     "planPreview": {
       "title": "Effective plan",
       "refresh": "Refresh",
-      "hint": "Static preview from POST /api/agents/v2/plan-preview — zero external reads",
+      "hint": "Read-only summary — no live reads or delivery.",
       "empty": "No preview yet",
       "error": "Preview failed",
       "triggerSummary": "Trigger",
@@ -887,14 +986,46 @@
       "warnings": "Warnings"
     },
     "tools": {
-      "title": "Tool policy",
+      "title": "Tools",
+      "sectionHint": "What the model may call during a run.",
       "mode": "Mode",
-      "hint": "Daily-brief configs typically disable model tools",
+      "hint": "Daily briefs usually keep model tools off.",
       "disabled": "Disabled",
       "unrestricted": "Unrestricted",
       "scoped": "Scoped",
       "allowedTools": "Allowed tools",
       "allowedToolsHint": "Comma-separated tool names"
+    },
+    "summary": {
+      "title": "Live summary",
+      "hint": "Updates as you edit on the left.",
+      "template": "Task type",
+      "noTemplate": "—",
+      "name": "Name",
+      "mission": "Mission",
+      "when": "When",
+      "sources": "Sources",
+      "noSources": "—",
+      "tools": "Tools",
+      "notify": "Notify",
+      "empty": "—",
+      "model": "Model",
+      "modelActive": "Global default",
+      "output": "Output",
+      "outputOff": "Off"
+    },
+    "model": {
+      "label": "Model",
+      "useActive": "Global default",
+      "useActiveNamed": "Global default ({{name}})"
+    },
+    "output": {
+      "title": "Output",
+      "enabled": "JSON fields",
+      "fields": "Field names",
+      "add": "Add",
+      "remove": "Remove field",
+      "namePlaceholder": "field"
     }
   }
 }

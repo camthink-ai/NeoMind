@@ -4,13 +4,12 @@
  */
 import { useTranslation } from 'react-i18next'
 import { Plus, Trash2 } from 'lucide-react'
-import { Activity } from '@/design-system/icons'
 import { Button } from '@/components/ui/button'
 import { FormField } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { cardBase } from '@/design-system/tokens/size'
 import { cn } from '@/lib/utils'
 import type { InputContract, InputRequirement } from '@/types'
+import { EditorSection } from './EditorSection'
 
 export interface InputContractSectionProps {
   value: InputContract
@@ -72,34 +71,27 @@ export function InputContractSection({ value, onChange, className }: InputContra
   }
 
   return (
-    <section className={cn(cardBase, 'p-4 space-y-4', className)} data-section="input">
-      <header className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Activity className="h-4 w-4 text-muted-foreground" />
-          <h3 className="text-sm font-medium text-foreground">
-            {t('editorV2.input.title')}
-          </h3>
-          <span className="text-xs text-muted-foreground">
-            {t('editorV2.input.count', { count: requirements.length })}
-          </span>
-        </div>
+    <EditorSection
+      title={t('editorV2.input.title')}
+      meta={t('agents:editorV2.input.count', { count: requirements.length })}
+      className={cn(className)}
+      data-section="input"
+      actions={
         <Button type="button" variant="outline" size="sm" onClick={addRequirement}>
           <Plus className="h-3.5 w-3.5 mr-1.5" />
           {t('editorV2.input.add')}
         </Button>
-      </header>
-
-      {requirements.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t('editorV2.input.empty')}</p>
-      ) : (
+      }
+    >
+      {requirements.length > 0 && (
         <ul className="space-y-3">
           {requirements.map((req, index) => (
             <li
               key={`${req.key}-${index}`}
-              className="rounded-lg border border-border bg-muted-20 p-3 space-y-3"
+              className="space-y-3 rounded-md border border-border bg-muted-20 p-3"
             >
               <div className="flex items-start justify-between gap-2">
-                <p className="text-xs text-muted-foreground font-mono truncate">
+                <p className="truncate font-mono text-xs text-muted-foreground">
                   {sourceLabel(req)}
                 </p>
                 <Button
@@ -146,15 +138,10 @@ export function InputContractSection({ value, onChange, className }: InputContra
                   </FormField>
                 )}
               </div>
-              {req.auth_scope && (
-                <p className="text-xs text-muted-foreground">
-                  {t('editorV2.input.auth')}: {req.auth_scope}
-                </p>
-              )}
             </li>
           ))}
         </ul>
       )}
-    </section>
+    </EditorSection>
   )
 }

@@ -2,7 +2,6 @@
  * Tool policy section — disabled / unrestricted / scoped allow-list.
  */
 import { useTranslation } from 'react-i18next'
-import { Wrench } from 'lucide-react'
 import { FormField } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
@@ -12,9 +11,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { cardBase } from '@/design-system/tokens/size'
 import { cn } from '@/lib/utils'
 import type { ToolPolicy } from '@/types'
+import { EditorSection } from './EditorSection'
 
 export interface ToolPolicySectionProps {
   value: ToolPolicy
@@ -51,15 +50,12 @@ export function ToolPolicySection({ value, onChange, className }: ToolPolicySect
   }
 
   return (
-    <section className={cn(cardBase, 'p-4 space-y-4', className)} data-section="tool-policy">
-      <header className="flex items-center gap-2">
-        <Wrench className="h-4 w-4 text-muted-foreground" />
-        <h3 className="text-sm font-medium text-foreground">
-          {t('editorV2.tools.title')}
-        </h3>
-      </header>
-
-      <FormField label={t('editorV2.tools.mode')} helpText={t('editorV2.tools.hint')}>
+    <EditorSection
+      title={t('editorV2.tools.title')}
+      className={cn(className)}
+      data-section="tool-policy"
+    >
+      <FormField label={t('editorV2.tools.mode')}>
         <Select value={mode} onValueChange={(v) => setMode(v as PolicyMode)}>
           <SelectTrigger className="h-10">
             <SelectValue />
@@ -73,10 +69,7 @@ export function ToolPolicySection({ value, onChange, className }: ToolPolicySect
       </FormField>
 
       {mode === 'scoped' && (
-        <FormField
-          label={t('editorV2.tools.allowedTools')}
-          helpText={t('editorV2.tools.allowedToolsHint')}
-        >
+        <FormField label={t('editorV2.tools.allowedTools')}>
           <Input
             value={toolsText(value)}
             onChange={(e) => {
@@ -91,6 +84,6 @@ export function ToolPolicySection({ value, onChange, className }: ToolPolicySect
           />
         </FormField>
       )}
-    </section>
+    </EditorSection>
   )
 }
