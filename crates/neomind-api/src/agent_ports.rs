@@ -325,6 +325,7 @@ impl HostLlmPort {
         // legitimate re-check if the first call succeeded, but stop repeated
         // identical failures or 3rd identical calls.
         let mut seen_tool_calls: HashMap<String, (usize, bool)> = HashMap::new();
+        let mut consecutive_rejected_rounds: usize = 0;
 
         let effective_tool_policy = if !request.tools_enabled {
             neomind_ai_agent::model::ToolPolicy::Disabled
@@ -342,11 +343,13 @@ impl HostLlmPort {
             if round >= 2 {
                 compact_tool_loop_messages(&mut messages, max_ctx);
             }
-            let round_tools = if !tool_defs.is_empty() && round + 1 < max_rounds {
-                Some(tool_defs.clone())
-            } else {
-                None
-            };
+            let round_tools =
+                if !tool_defs.is_empty() && round + 1 < max_rounds && consecutive_rejected_rounds < 2
+                {
+                    Some(tool_defs.clone())
+                } else {
+                    None
+                };
 
             let mut round_params = params.clone();
             if request.expect_json && round_tools.is_none() {
@@ -489,6 +492,7 @@ impl HostLlmPort {
 
             let mut call_summaries = Vec::with_capacity(calls.len());
             let mut tool_results = Vec::with_capacity(calls.len());
+            let mut round_any_succeeded = false;
 
             for (orig_name, args) in calls {
                 let call_key = format!("{orig_name}:{args}");
@@ -580,9 +584,13 @@ impl HostLlmPort {
                         continue;
                     }
                     if !request.allowed_commands.is_empty() {
-                        let has_extra_params = args
-                            .get("params")
-                            .is_some_and(|p| !p.is_null() && p != &serde_json::json!({}));
+                        let has_extra_params = args.get("params").is_some_and(|p| match p {
+                            serde_json::Value::Null => false,
+                            serde_json::Value::Array(a) => !a.is_empty(),
+                            serde_json::Value::Object(m) => !m.is_empty(),
+                            serde_json::Value::String(s) => !s.trim().is_empty(),
+                            _ => true,
+                        });
                         let check = if has_extra_params {
                             Err("Shell `params` side-channel is forbidden when allowed_commands is enforced.".into())
                         } else {
@@ -674,7 +682,16 @@ impl HostLlmPort {
                 let entry = seen_tool_calls.entry(call_key).or_insert((0, false));
                 entry.0 += 1;
                 entry.1 = !succeeded;
+                if succeeded {
+                    round_any_succeeded = true;
+                }
                 tool_results.push(formatted);
+            }
+
+            if round_any_succeeded {
+                consecutive_rejected_rounds = 0;
+            } else {
+                consecutive_rejected_rounds += 1;
             }
 
             messages.push(Message::assistant(format!(

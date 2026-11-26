@@ -96,13 +96,20 @@ impl SmartConversationManager {
         false
     }
 
-    /// 检测信息是否不足
+    /// 检测信息是否不足（仅对极短的裸开关指令生效，避免误伤 Agent/规则/工具配置等完整指令）
     fn detect_missing_info(&self, _original: &str, lower: &str) -> Option<String> {
-        // 设备控制相关
-        if lower.contains("打开") || lower.contains("关闭") || lower.contains("开启") {
+        let trimmed = lower.trim();
+        let is_short_bare_control = trimmed.chars().count() <= 8
+            && (trimmed.contains("打开") || trimmed.contains("关闭") || trimmed.contains("开启"))
+            && !trimmed.contains("agent")
+            && !trimmed.contains("工具")
+            && !trimmed.contains("告警")
+            && !trimmed.contains("规则")
+            && !trimmed.contains("通知");
+        if is_short_bare_control {
             // 检查是否指定了位置或具体设备
             let locations = ["客厅", "卧室", "厨房", "浴室", "书房", "阳台"];
-            let has_specific_location = locations.iter().any(|loc| lower.contains(loc));
+            let has_specific_location = locations.iter().any(|loc| trimmed.contains(loc));
 
             // 具体设备名称（包含位置前缀的）
             let specific_devices = [
@@ -114,7 +121,7 @@ impl SmartConversationManager {
                 "筒灯",
                 "射灯",
             ];
-            let has_specific_device = specific_devices.iter().any(|dev| lower.contains(dev));
+            let has_specific_device = specific_devices.iter().any(|dev| trimmed.contains(dev));
 
             if !has_specific_location && !has_specific_device {
                 return Some(

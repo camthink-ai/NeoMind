@@ -96,6 +96,10 @@ pub fn check_expected(
             })
             .to_string(),
         ))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(Box::new(ToolOutput::error(format!(
+            "Target file '{}' does not exist yet — omit `expected` when creating a new file (only pass `expected` when overwriting an existing file you previously read).",
+            path.display()
+        )))),
         Err(e) => Err(Box::new(ToolOutput::error(format!(
             "Could not stat '{}' for the freshness check: {}",
             path.display(),

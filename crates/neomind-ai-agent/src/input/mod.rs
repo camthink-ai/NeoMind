@@ -91,10 +91,30 @@ impl InputPipeline {
                                 missing.push(req.key.clone());
                             }
                             items.push(item);
+                            if is_missing && matches!(req.on_missing, MissingPolicy::Skip) {
+                                return Ok((
+                                    EvidenceReport {
+                                        items,
+                                        missing_keys: missing,
+                                        skip_reason: Some(format!("missing {}", req.key)),
+                                    },
+                                    counts,
+                                ));
+                            }
                         }
                         Err(e) => {
                             missing.push(req.key.clone());
                             items.push(missing_item(req, e.to_string(), self.clock.now_ms()));
+                            if matches!(req.on_missing, MissingPolicy::Skip) {
+                                return Ok((
+                                    EvidenceReport {
+                                        items,
+                                        missing_keys: missing,
+                                        skip_reason: Some(format!("missing {}", req.key)),
+                                    },
+                                    counts,
+                                ));
+                            }
                         }
                     }
                 }
@@ -118,10 +138,30 @@ impl InputPipeline {
                                 missing.push(req.key.clone());
                             }
                             items.push(item);
+                            if is_missing && matches!(req.on_missing, MissingPolicy::Skip) {
+                                return Ok((
+                                    EvidenceReport {
+                                        items,
+                                        missing_keys: missing,
+                                        skip_reason: Some(format!("missing {}", req.key)),
+                                    },
+                                    counts,
+                                ));
+                            }
                         }
                         Err(e) => {
                             missing.push(req.key.clone());
                             items.push(missing_item(req, e.to_string(), self.clock.now_ms()));
+                            if matches!(req.on_missing, MissingPolicy::Skip) {
+                                return Ok((
+                                    EvidenceReport {
+                                        items,
+                                        missing_keys: missing,
+                                        skip_reason: Some(format!("missing {}", req.key)),
+                                    },
+                                    counts,
+                                ));
+                            }
                         }
                     }
                 }
