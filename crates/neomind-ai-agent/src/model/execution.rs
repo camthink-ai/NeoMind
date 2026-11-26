@@ -127,6 +127,38 @@ pub enum AlertVerdict {
     InsufficientEvidence,
 }
 
+/// Caller-supplied text/data for a single invoke (API / rule / SDK).
+///
+/// Applied only to that run's model prompt — never persisted onto AgentSpec.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct CallerInput {
+    /// Free-form question / instruction from the caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    /// Optional structured payload (e.g. image refs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+    /// Invocation source label (e.g. "api", "rule:{id}").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+impl CallerInput {
+    pub fn is_empty(&self) -> bool {
+        let content_empty = self
+            .content
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true);
+        let data_empty = self
+            .data
+            .as_ref()
+            .map(|d| d.is_null() || d.as_object().is_some_and(|o| o.is_empty()))
+            .unwrap_or(true);
+        content_empty && data_empty
+    }
+}
+
 /// Response envelope for preview / dry-run / formal invoke.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunResponse {

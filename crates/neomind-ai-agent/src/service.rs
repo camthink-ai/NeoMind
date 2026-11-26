@@ -10,11 +10,12 @@ use crate::error::{AgentError, Result};
 use crate::input::InputPipeline;
 use crate::model::{
     AgentRuntimeRecord, AgentSpec, AgentSpecDraft, AgentSpecPatch, AgentStats, AgentStatus,
-    EffectivePlan, ExternalReadCounts, PlanRead, ReceiverCounts, RunResponse, ToolPolicy,
-    TriggerSpec,
+    CallerInput, EffectivePlan, EvidenceDetail, EvidenceItem, EvidenceQuality, EvidenceReport,
+    ExternalReadCounts, InputModality, InputSourceRef, PlanRead, ReceiverCounts, RunResponse,
+    ToolPolicy, TriggerSpec,
 };
 use crate::ports::{CapabilityClass, ClockPort};
-use crate::runner::{apply_outcome, AgentRunner};
+use crate::runner::{apply_outcome, prompt_with_caller_input, AgentRunner};
 use crate::side_effects::SideEffectBoundary;
 use crate::store::InMemoryAgentStore;
 
@@ -138,29 +139,56 @@ impl AgentApplicationService {
 
     /// Authorized read-only dry-run; does not enter formal history; notify=0.
     pub async fn dry_run(&self, id: &str) -> Result<RunResponse> {
-        self.execute_inner(id, true, false).await
+        self.execute_inner(id, true, false, None).await
     }
 
     /// Formal invoke — writes history and may notify.
     pub async fn invoke(&self, id: &str) -> Result<RunResponse> {
-        self.execute_inner(id, false, false).await
+        self.invoke_with_caller(id, None).await
     }
 
-    async fn execute_inner(&self, id: &str, dry_run: bool, is_probe: bool) -> Result<RunResponse> {
+    /// Formal invoke with optional this-turn caller text/data (ask path).
+    pub async fn invoke_with_caller(
+        &self,
+        id: &str,
+        caller: Option<CallerInput>,
+    ) -> Result<RunResponse> {
+        self.execute_inner(id, false, false, caller).await
+    }
+
+    async fn execute_inner(
+        &self,
+        id: &str,
+        dry_run: bool,
+        is_probe: bool,
+        caller: Option<CallerInput>,
+    ) -> Result<RunResponse> {
         let spec = self.store.get_spec(id)?;
         let runtime = self.store.get_runtime(id)?;
         if matches!(runtime.status, AgentStatus::Paused | AgentStatus::Stopped) && !dry_run {
             return Err(AgentError::NotRunnable(format!("{:?}", runtime.status)));
         }
 
-        let (evidence, read_counts) = self.input.collect(&spec.input.requirements).await?;
+        let (mut evidence, read_counts) = self.input.collect(&spec.input.requirements).await?;
+        let now = self.clock.now_ms();
+        if let Some(ref c) = caller {
+            merge_caller_into_evidence(&mut evidence, &spec, c, now);
+        }
         let execution_id = format!("exec_{}", &Uuid::new_v4().to_string()[..8]);
-        let started = self.clock.now_ms();
+        let started = now;
         let plan = plan_from_spec(&spec);
+
+        // Run-local prompt only — never mutate the stored AgentSpec.
+        let mut run_spec = spec.clone();
+        if let Some(ref c) = caller {
+            if !c.is_empty() {
+                run_spec.user_prompt = prompt_with_caller_input(&spec.user_prompt, c);
+            }
+        }
 
         let run_result = self
             .runner
-            .run(&spec, &evidence, &execution_id, CancellationToken::new())
+            .run(&run_spec, &evidence, &execution_id, CancellationToken::new())
             .await;
 
         let mut exec = crate::model::AgentExecutionRecord {
@@ -474,5 +502,59 @@ pub fn active_runtime(agent_id: &str, now: i64) -> AgentRuntimeRecord {
         error_message: None,
         next_probe_at: None,
         updated_at: now,
+    }
+}
+
+/// Fill `CallerPayload` requirements from this-turn invoke input.
+fn merge_caller_into_evidence(
+    evidence: &mut EvidenceReport,
+    spec: &AgentSpec,
+    caller: &CallerInput,
+    now: i64,
+) {
+    if caller.is_empty() {
+        return;
+    }
+    let text = caller.content.clone().unwrap_or_default();
+    let detail = if let Some(ref data) = caller.data {
+        if !text.is_empty() {
+            EvidenceDetail::Structured {
+                value: serde_json::json!({ "text": text, "data": data }),
+            }
+        } else {
+            EvidenceDetail::Structured {
+                value: data.clone(),
+            }
+        }
+    } else {
+        EvidenceDetail::Text { text }
+    };
+
+    for req in &spec.input.requirements {
+        if !matches!(req.source, InputSourceRef::CallerPayload) {
+            continue;
+        }
+        evidence.missing_keys.retain(|k| k != &req.key);
+        if let Some(item) = evidence.items.iter_mut().find(|i| i.key == req.key) {
+            item.quality = EvidenceQuality::Fresh;
+            item.fetched_at = now;
+            item.observed_at = Some(now);
+            item.source_id = "caller".into();
+            item.binding_proof = "caller_payload:invoke".into();
+            item.result_type = InputModality::CallerInput;
+            item.detail = Some(detail.clone());
+        } else {
+            evidence.items.push(EvidenceItem {
+                key: req.key.clone(),
+                source_id: "caller".into(),
+                result_type: InputModality::CallerInput,
+                observed_at: Some(now),
+                valid_window: None,
+                fetched_at: now,
+                quality: EvidenceQuality::Fresh,
+                binding_proof: "caller_payload:invoke".into(),
+                detail: Some(detail.clone()),
+            });
+        }
     }
 }

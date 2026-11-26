@@ -196,16 +196,27 @@ export const agentsApi = {
    */
   invokeAgent: (id: string, req?: ExecuteAgentRequest) =>
     fetchAPI<{
-      execution_id: string
-      agent_id: string
-      agent_name: string
-      status: string
-      duration_ms: number
-      conclusion: string
-      confidence: number
-      actions: Array<{ action: string; reasoning: string; description: string }>
-      has_error: boolean
+      /** Legacy flat fields (pre-V2). Prefer nested `execution` when present. */
+      execution_id?: string
+      agent_id?: string
+      agent_name?: string
+      status?: string
+      duration_ms?: number
+      conclusion?: string
+      confidence?: number
+      actions?: Array<{ action: string; reasoning: string; description: string }>
+      has_error?: boolean
       error?: string
+      /** V2 RunResponse nest — sync success returns conclusion here. */
+      execution?: {
+        id: string
+        agent_id?: string
+        status?: string
+        conclusion?: string | null
+        brief_text?: string | null
+        error?: string | null
+      }
+      dry_run?: boolean
       /** Present when the run exceeds the 60s wait window: execution
        * continues in the background; poll poll_execution for the result. */
       still_executing?: boolean

@@ -1103,13 +1103,23 @@ pub async fn invoke_agent(
     let dry_run = request.dry_run;
     let run_agent_id = id.clone();
     let rt_run = rt.clone();
+    // This-turn ask text must reach the model prompt for this invoke only.
+    let caller = if request.input.is_some() || request.data.is_some() {
+        Some(neomind_ai_agent::CallerInput {
+            content: request.input.clone(),
+            data: request.data.clone(),
+            source: Some("api".into()),
+        })
+    } else {
+        None
+    };
 
     // Wait up to 60s for the result; longer runs keep going in background.
     let handle = tokio::spawn(async move {
         if dry_run {
             rt_run.dry_run(&run_agent_id).await
         } else {
-            rt_run.invoke(&run_agent_id).await
+            rt_run.invoke_with_caller(&run_agent_id, caller).await
         }
     });
     let timeout = std::time::Duration::from_secs(60);

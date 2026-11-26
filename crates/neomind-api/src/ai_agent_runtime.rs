@@ -14,7 +14,7 @@ use neomind_ai_agent::coordinator::{
 use neomind_ai_agent::error::{AgentError, Result as AgentResult};
 use neomind_ai_agent::input::InputPipeline;
 use neomind_ai_agent::model::{
-    AgentSpec, AgentSpecDraft, AgentSpecPatch, AgentStatus, EffectivePlan, RunResponse,
+    AgentSpec, AgentSpecDraft, AgentSpecPatch, AgentStatus, CallerInput, EffectivePlan, RunResponse,
 };
 use neomind_ai_agent::persist::{persist_spec, DurableAgentStore};
 use neomind_ai_agent::ports::{ClockPort, NotifyPort, SourceReadPort, SystemClock};
@@ -223,7 +223,19 @@ impl HostedAiAgentRuntime {
     }
 
     pub async fn invoke(&self, id: &str) -> AgentResult<RunResponse> {
-        let resp = self.coordinator.submit(id, SubmitSource::Manual).await?;
+        self.invoke_with_caller(id, None).await
+    }
+
+    /// Manual invoke with optional this-turn ask text / structured payload.
+    pub async fn invoke_with_caller(
+        &self,
+        id: &str,
+        caller: Option<CallerInput>,
+    ) -> AgentResult<RunResponse> {
+        let resp = self
+            .coordinator
+            .submit_with_caller(id, SubmitSource::Manual, caller)
+            .await?;
         self.mirror_after_run(id, &resp)?;
         Ok(resp)
     }

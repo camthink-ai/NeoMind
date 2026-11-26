@@ -67,6 +67,43 @@ function findLastCompletedAi(msgs: AnalystMessage[]): number {
   return -1
 }
 
+/** Prefer decision_process, then top-level conclusion (V2), then list DTO. */
+function conclusionFromDetail(
+  detail?: { decision_process?: { conclusion?: string }; conclusion?: string; brief_text?: string } | null,
+  exec?: { conclusion?: string } | null,
+): string {
+  return (
+    detail?.decision_process?.conclusion ||
+    detail?.conclusion ||
+    detail?.brief_text ||
+    exec?.conclusion ||
+    ''
+  )
+}
+
+/** Sync invoke returns nested RunResponse.execution; legacy was flat. */
+function conclusionFromInvokeResult(result: {
+  execution?: { id?: string; conclusion?: string | null; brief_text?: string | null; error?: string | null }
+  execution_id?: string
+  conclusion?: string
+  message?: string
+  error?: string
+  has_error?: boolean
+}): { execId?: string; content: string; hasError: boolean } {
+  const nested = result.execution
+  const execId = nested?.id || result.execution_id
+  const content =
+    nested?.conclusion ||
+    nested?.brief_text ||
+    result.conclusion ||
+    result.message ||
+    nested?.error ||
+    result.error ||
+    'No result'
+  const hasError = Boolean(result.has_error || nested?.error || result.error)
+  return { execId, content, hasError }
+}
+
 /** Build a compact display string from data values */
 function summarizeData(value: unknown): string {
   if (value === null || value === undefined) return ''
@@ -268,20 +305,20 @@ async function loadHistoryMessages(
       }
     }
 
-    const details: Array<{ exec: typeof sorted[number]; detail: Awaited<ReturnType<typeof api.getExecution>> } | null> = []
+    const details: Array<{
+      exec: typeof sorted[number]
+      detail: Awaited<ReturnType<typeof api.getExecution>> | null
+    }> = []
     for (const exec of nonRunning) {
-      const detail = batchDetails[exec.id]
-      if (detail) {
-        details.push({ exec, detail })
-      }
+      // V2 list already carries conclusion; batch detail may still miss V2 rows.
+      details.push({ exec, detail: batchDetails[exec.id] ?? null })
     }
 
     const messages: AnalystMessage[] = []
     for (const entry of details) {
-      if (!entry) continue
       const { exec, detail } = entry
 
-      const conclusion = detail?.decision_process?.conclusion
+      const conclusion = conclusionFromDetail(detail, exec)
       if (!conclusion) continue
 
       const ts = new Date(exec.timestamp).getTime() || Date.now()
@@ -517,7 +554,7 @@ export function useAnalystSession({
 
         api.getExecution(agentId, exec.id)
           .then((detail) => {
-            const conclusion = detail?.decision_process?.conclusion
+            const conclusion = conclusionFromDetail(detail, exec) || 'No result'
             // Cross-path dedup: skip if this execution was already added (history or live)
             if (seenExecIdsRef.current.has(exec.id)) {
               // Still need to clean up the streaming placeholder
@@ -536,7 +573,7 @@ export function useAnalystSession({
                   : exec.status === 'Partial'
                     ? 'warning'
                     : 'ai',
-              content: conclusion || 'No result',
+              content: conclusion,
               timestamp: Date.now(),
               duration: exec.duration_ms,
             }
@@ -670,11 +707,11 @@ export function useAnalystSession({
           const dedupKey = `exec-${completedData.execution_id}`
           api.getExecution(completedData.agent_id, completedData.execution_id)
             .then((detail) => {
-              const conclusion = detail?.decision_process?.conclusion
+              const conclusion = conclusionFromDetail(detail) || 'No result'
               const aiMsg: AnalystMessage = {
                 id: dedupKey,
                 type: completedData.success ? 'ai' : 'error',
-                content: conclusion || 'No result',
+                content: conclusion,
                 timestamp: Date.now(),
                 duration: completedData.duration_ms,
               }
@@ -1052,25 +1089,45 @@ export function useAnalystSession({
             setIsStreaming(false)
             isStreamingRef.current = false
 
+            // Prefer the invoke that started at/after this ask — a scheduled
+            // run finishing first must not overwrite this turn's answer.
             const pollAgentId = agentId
+            const askStartedAt = startTime
             let tries = 0
             const poll = setInterval(async () => {
               tries += 1
               try {
-                const data = await api.getAgentExecutions(pollAgentId, 1)
-                const latest = (data as unknown as { executions?: Array<Record<string, unknown>> }).executions?.[0]
-                const status = String(latest?.['status'] ?? '')
-                const running = status === 'Running' || status === 'Pending'
-                if (latest && !running) {
+                const data = await api.getAgentExecutions(pollAgentId, 5)
+                const execs = data?.executions ?? []
+                const match =
+                  execs.find((e) => {
+                    const status = String(e.status ?? '')
+                    const running = status === 'Running' || status === 'Pending'
+                    if (running) return false
+                    const ts = new Date(e.timestamp).getTime()
+                    return Number.isFinite(ts) ? ts >= askStartedAt - 1000 : true
+                  }) ?? execs.find((e) => {
+                    const status = String(e.status ?? '')
+                    return status !== 'Running' && status !== 'Pending'
+                  })
+                if (match) {
                   clearInterval(poll)
-                  const dp = latest['decision_process'] as { conclusion?: string } | undefined
                   const conclusion =
-                    dp?.conclusion || String(latest['result'] ?? '') || 'Analysis completed.'
-                  setMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === noticeId ? { ...m, content: conclusion } : m,
-                    ),
-                  )
+                    conclusionFromDetail(null, match) ||
+                    String((match as { result?: unknown }).result ?? '') ||
+                    'Analysis completed.'
+                  const dedupKey = `exec-${match.id}`
+                  addSeenExecId(match.id)
+                  setMessages((prev) => {
+                    if (prev.some((m) => m.id === dedupKey)) {
+                      return prev.filter((m) => m.id !== noticeId)
+                    }
+                    return prev.map((m) =>
+                      m.id === noticeId
+                        ? { ...m, id: dedupKey, content: conclusion }
+                        : m,
+                    )
+                  })
                 }
               } catch { /* transient poll error — keep polling */ }
               if (tries >= 24) clearInterval(poll) // ~4 min at 10s
@@ -1078,7 +1135,7 @@ export function useAnalystSession({
             return
           }
 
-          const execId = result.execution_id as string | undefined
+          const { execId, content, hasError } = conclusionFromInvokeResult(result)
 
           // Register for WS event dedup
           if (execId) addSeenExecId(execId)
@@ -1098,8 +1155,8 @@ export function useAnalystSession({
           const dedupKey = execId ? `exec-${execId}` : nextId()
           const aiMsg: AnalystMessage = {
             id: dedupKey,
-            type: result.has_error ? 'error' : 'ai',
-            content: result.conclusion || result.message || result.error || 'No result',
+            type: hasError ? 'error' : 'ai',
+            content,
             timestamp: Date.now(),
             modelName: config.modelName,
             duration,
