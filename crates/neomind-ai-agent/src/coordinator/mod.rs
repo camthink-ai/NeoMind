@@ -152,8 +152,9 @@ impl ExecutionCoordinator {
             }
         }
 
-        // Scheduled/event/rule submits never carry ask text — only Manual.
-        if !matches!(source, SubmitSource::Manual) {
+        // Scheduled timer submits never carry ask text, while Manual, Event
+        // (`SameReport` anchor metadata), and Rule (`TriggerAgent` context) may.
+        if matches!(source, SubmitSource::Schedule) {
             options.caller = None;
         }
         self.service
