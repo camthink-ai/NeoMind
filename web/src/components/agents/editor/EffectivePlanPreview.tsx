@@ -24,11 +24,14 @@ export interface EffectivePlanPreviewProps {
   className?: string
 }
 
-function toolPolicyLabel(policy: ToolPolicy, t: (k: string) => string): string {
-  if (policy === 'disabled') return t('editorV2.tools.disabled')
+function toolPolicyLabel(policy: ToolPolicy | null | undefined, t: (k: string) => string): string {
+  if (!policy || policy === 'disabled') return t('editorV2.tools.disabled')
   if (policy === 'unrestricted') return t('editorV2.tools.unrestricted')
-  const tools = policy.scoped.allowed_tools?.join(', ') || '—'
-  return `${t('editorV2.tools.scoped')}: ${tools}`
+  if (typeof policy === 'object' && 'scoped' in policy && policy.scoped) {
+    const tools = policy.scoped.allowed_tools?.join(', ') || '—'
+    return `${t('editorV2.tools.scoped')}: ${tools}`
+  }
+  return t('editorV2.tools.disabled')
 }
 
 function SummaryRow({

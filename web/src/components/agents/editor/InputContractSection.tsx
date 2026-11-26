@@ -18,7 +18,8 @@ export interface InputContractSectionProps {
 }
 
 function sourceLabel(req: InputRequirement): string {
-  const src = req.source
+  const src = req?.source
+  if (!src || typeof src !== 'object') return req?.key || '—'
   switch (src.kind) {
     case 'extension_instance':
       return `extension:${src.id}${req.operation ? `/${req.operation}` : ''}`
@@ -47,7 +48,7 @@ function emptyExtensionRequirement(index: number): InputRequirement {
 
 export function InputContractSection({ value, onChange, className }: InputContractSectionProps) {
   const { t } = useTranslation('agents')
-  const requirements = value.requirements ?? []
+  const requirements = value?.requirements ?? []
 
   const updateAt = (index: number, patch: Partial<InputRequirement>) => {
     const next = requirements.map((r, i) => (i === index ? { ...r, ...patch } : r))

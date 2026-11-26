@@ -14,53 +14,56 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import type { TriggerSpec } from '@/types'
+import { normalizeTrigger } from './defaults'
 
 export type SimpleWhenMode = 'daily' | 'interval' | 'event' | 'manual'
 
 export interface SimpleWhenSectionProps {
-  value: TriggerSpec
+  value?: TriggerSpec | null
   onChange: (next: TriggerSpec) => void
   className?: string
 }
 
-export function modeFromTrigger(trigger: TriggerSpec): SimpleWhenMode {
-  if (trigger.kind === 'cron') return 'daily'
-  if (trigger.kind === 'interval') return 'interval'
-  if (trigger.kind === 'event') return 'event'
+export function modeFromTrigger(trigger?: TriggerSpec | null): SimpleWhenMode {
+  const safe = normalizeTrigger(trigger)
+  if (safe.kind === 'cron') return 'daily'
+  if (safe.kind === 'interval') return 'interval'
+  if (safe.kind === 'event') return 'event'
   return 'manual'
 }
 
-function hourFromCron(expr: string): number {
-  const parts = expr.trim().split(/\s+/)
+function hourFromCron(expr?: string): number {
+  const parts = (expr ?? '').trim().split(/\s+/)
   const h = Number(parts[1])
   return Number.isFinite(h) && h >= 0 && h <= 23 ? h : 9
 }
 
-function intervalMinutes(everySecs: number): number {
-  return Math.max(1, Math.round(everySecs / 60))
+function intervalMinutes(everySecs?: number): number {
+  return Math.max(1, Math.round((everySecs ?? 60) / 60))
 }
 
 export function SimpleWhenSection({ value, onChange, className }: SimpleWhenSectionProps) {
   const { t } = useTranslation('agents')
-  const mode = modeFromTrigger(value)
+  const trigger = normalizeTrigger(value)
+  const mode = modeFromTrigger(trigger)
 
   const setMode = (next: SimpleWhenMode) => {
     switch (next) {
       case 'daily':
         onChange({
           kind: 'cron',
-          expr: value.kind === 'cron' ? value.expr : '0 9 * * *',
-          timezone: value.kind === 'cron' ? value.timezone : 'Asia/Shanghai',
+          expr: trigger.kind === 'cron' ? trigger.expr : '0 9 * * *',
+          timezone: trigger.kind === 'cron' ? trigger.timezone : 'Asia/Shanghai',
         })
         break
       case 'interval':
         onChange({
           kind: 'interval',
-          every_secs: value.kind === 'interval' ? value.every_secs : 3600,
+          every_secs: trigger.kind === 'interval' ? trigger.every_secs : 3600,
         })
         break
       case 'event':
-        onChange({ kind: 'event', filter: value.kind === 'event' ? value.filter : {} })
+        onChange({ kind: 'event', filter: trigger.kind === 'event' ? trigger.filter : {} })
         break
       case 'manual':
         onChange({ kind: 'manual' })
@@ -84,15 +87,15 @@ export function SimpleWhenSection({ value, onChange, className }: SimpleWhenSect
         </Select>
       </FormField>
 
-      {mode === 'daily' && value.kind === 'cron' && (
+      {mode === 'daily' && trigger.kind === 'cron' && (
         <FormField label={t('editorV2.when.hour')}>
           <Select
-            value={String(hourFromCron(value.expr))}
+            value={String(hourFromCron(trigger.expr))}
             onValueChange={(h) =>
               onChange({
                 kind: 'cron',
                 expr: `0 ${h} * * *`,
-                timezone: value.timezone || 'Asia/Shanghai',
+                timezone: trigger.timezone || 'Asia/Shanghai',
               })
             }
           >
@@ -110,13 +113,13 @@ export function SimpleWhenSection({ value, onChange, className }: SimpleWhenSect
         </FormField>
       )}
 
-      {mode === 'interval' && value.kind === 'interval' && (
+      {mode === 'interval' && trigger.kind === 'interval' && (
         <FormField label={t('editorV2.when.everyMinutes')}>
           <Input
             type="number"
             min={1}
             className="max-w-xs"
-            value={intervalMinutes(value.every_secs)}
+            value={intervalMinutes(trigger.every_secs)}
             onChange={(e) =>
               onChange({
                 kind: 'interval',

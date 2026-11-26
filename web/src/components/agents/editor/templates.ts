@@ -241,14 +241,15 @@ export function templateById(id: TaskTemplateId | null | undefined): TaskTemplat
 }
 
 export function inferTemplateId(
-  trigger: TriggerSpec,
+  trigger?: TriggerSpec | null,
   preset?: AgentPresetId,
 ): TaskTemplateId | null {
   if (preset === 'daily_brief') return 'daily_brief'
   if (preset === 'partial_meter') return 'meter_inspect'
   if (preset === 'event_vision') return 'event_review'
+  if (!trigger || typeof trigger !== 'object' || !('kind' in trigger)) return 'custom'
   if (trigger.kind === 'cron') {
-    const parts = trigger.expr.trim().split(/\s+/)
+    const parts = (trigger.expr ?? '').trim().split(/\s+/)
     if (parts[4] && parts[4] !== '*') return 'weekly'
     return 'daily_brief'
   }

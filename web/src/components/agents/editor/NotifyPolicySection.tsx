@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
-import type { NotifyPolicy } from '@/types'
+import type { AgentNotify, NotifyPolicy } from '@/types'
 import { EditorSection } from './EditorSection'
 
 export interface NotifyPolicySectionProps {
@@ -25,12 +25,26 @@ const DEFAULT_NOTIFY: NotifyPolicy = {
   pending_confirmation: false,
 }
 
-export function normalizeNotify(value?: NotifyPolicy | null): NotifyPolicy {
+export function normalizeNotify(value?: NotifyPolicy | AgentNotify | null): NotifyPolicy {
+  if (!value || typeof value !== 'object') {
+    return { ...DEFAULT_NOTIFY, channels: [], alert_depends_on: [] }
+  }
+  if ('on' in value) {
+    const channels = Array.isArray(value.channels) ? [...value.channels] : []
+    return {
+      channels,
+      on_complete: value.on === 'always',
+      on_alert: false,
+      alert_depends_on: [],
+      on_failure: value.on === 'failure' || value.on === 'always',
+      pending_confirmation: value.on === 'judgment',
+    }
+  }
   return {
     ...DEFAULT_NOTIFY,
     ...value,
-    channels: [...(value?.channels ?? [])],
-    alert_depends_on: [...(value?.alert_depends_on ?? [])],
+    channels: Array.isArray(value.channels) ? [...value.channels] : [],
+    alert_depends_on: Array.isArray(value.alert_depends_on) ? [...value.alert_depends_on] : [],
   }
 }
 

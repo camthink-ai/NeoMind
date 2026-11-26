@@ -14,10 +14,11 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import type { TriggerSpec } from '@/types'
+import { normalizeTrigger } from './defaults'
 import { EditorSection } from './EditorSection'
 
 export interface TriggerSectionProps {
-  value: TriggerSpec
+  value?: TriggerSpec | null
   onChange: (next: TriggerSpec) => void
   className?: string
   /** First section inside a FormSurface */
@@ -28,24 +29,25 @@ type TriggerKind = TriggerSpec['kind']
 
 export function TriggerSection({ value, onChange, className, first }: TriggerSectionProps) {
   const { t } = useTranslation('agents')
+  const trigger = normalizeTrigger(value)
 
   const setKind = (kind: TriggerKind) => {
     switch (kind) {
       case 'cron':
         onChange({
           kind: 'cron',
-          expr: value.kind === 'cron' ? value.expr : '0 9 * * *',
-          timezone: value.kind === 'cron' ? value.timezone : 'Asia/Shanghai',
+          expr: trigger.kind === 'cron' ? trigger.expr : '0 9 * * *',
+          timezone: trigger.kind === 'cron' ? trigger.timezone : 'Asia/Shanghai',
         })
         break
       case 'interval':
         onChange({
           kind: 'interval',
-          every_secs: value.kind === 'interval' ? value.every_secs : 3600,
+          every_secs: trigger.kind === 'interval' ? trigger.every_secs : 3600,
         })
         break
       case 'event':
-        onChange({ kind: 'event', filter: value.kind === 'event' ? value.filter : {} })
+        onChange({ kind: 'event', filter: trigger.kind === 'event' ? trigger.filter : {} })
         break
       case 'manual':
         onChange({ kind: 'manual' })
@@ -61,7 +63,7 @@ export function TriggerSection({ value, onChange, className, first }: TriggerSec
       data-section="trigger"
     >
       <FormField label={t('editorV2.trigger.kind')}>
-        <Select value={value.kind} onValueChange={(k) => setKind(k as TriggerKind)}>
+        <Select value={trigger.kind} onValueChange={(k) => setKind(k as TriggerKind)}>
           <SelectTrigger className="h-10">
             <SelectValue />
           </SelectTrigger>
@@ -74,32 +76,32 @@ export function TriggerSection({ value, onChange, className, first }: TriggerSec
         </Select>
       </FormField>
 
-      {value.kind === 'cron' && (
+      {trigger.kind === 'cron' && (
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField label={t('editorV2.trigger.expr')}>
             <Input
-              value={value.expr}
-              onChange={(e) => onChange({ ...value, expr: e.target.value })}
+              value={trigger.expr}
+              onChange={(e) => onChange({ ...trigger, expr: e.target.value })}
               placeholder="0 9 * * *"
               className="font-mono text-sm"
             />
           </FormField>
           <FormField label={t('editorV2.trigger.timezone')}>
             <Input
-              value={value.timezone}
-              onChange={(e) => onChange({ ...value, timezone: e.target.value })}
+              value={trigger.timezone}
+              onChange={(e) => onChange({ ...trigger, timezone: e.target.value })}
               placeholder="Asia/Shanghai"
             />
           </FormField>
         </div>
       )}
 
-      {value.kind === 'interval' && (
+      {trigger.kind === 'interval' && (
         <FormField label={t('editorV2.trigger.everySecs')}>
           <Input
             type="number"
             min={1}
-            value={value.every_secs}
+            value={trigger.every_secs}
             onChange={(e) =>
               onChange({
                 kind: 'interval',

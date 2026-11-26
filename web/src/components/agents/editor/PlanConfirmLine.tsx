@@ -5,6 +5,7 @@ import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import type { AgentSpecDraft, ToolPolicy, TriggerSpec } from '@/types'
+import { normalizeTrigger, normalizeToolPolicy } from './defaults'
 import { normalizeNotify } from './NotifyPolicySection'
 
 export interface PlanConfirmLineProps {
@@ -13,27 +14,29 @@ export interface PlanConfirmLineProps {
 }
 
 function triggerPhrase(
-  trigger: TriggerSpec,
+  trigger: TriggerSpec | null | undefined,
   t: (k: string, opts?: Record<string, unknown>) => string,
 ): string {
-  if (trigger.kind === 'cron') {
-    const parts = trigger.expr.trim().split(/\s+/)
+  const safe = normalizeTrigger(trigger)
+  if (safe.kind === 'cron') {
+    const parts = (safe.expr ?? '').trim().split(/\s+/)
     const hour = parts[1] ?? '9'
     return t('agents:editorV2.planLine.dailyAt', {
       time: `${String(hour).padStart(2, '0')}:00`,
     })
   }
-  if (trigger.kind === 'interval') {
-    const mins = Math.max(1, Math.round(trigger.every_secs / 60))
+  if (safe.kind === 'interval') {
+    const mins = Math.max(1, Math.round(safe.every_secs / 60))
     return t('agents:editorV2.planLine.everyMinutes', { count: mins })
   }
-  if (trigger.kind === 'event') return t('editorV2.planLine.onEvent')
+  if (safe.kind === 'event') return t('editorV2.planLine.onEvent')
   return t('editorV2.planLine.manual')
 }
 
-function toolsPhrase(policy: ToolPolicy, t: (k: string) => string): string {
-  if (policy === 'disabled') return t('editorV2.planLine.toolsOff')
-  if (policy === 'unrestricted') return t('editorV2.planLine.toolsOn')
+function toolsPhrase(policy: ToolPolicy | null | undefined, t: (k: string) => string): string {
+  const safe = normalizeToolPolicy(policy)
+  if (safe === 'disabled') return t('editorV2.planLine.toolsOff')
+  if (safe === 'unrestricted') return t('editorV2.planLine.toolsOn')
   return t('editorV2.planLine.toolsScoped')
 }
 

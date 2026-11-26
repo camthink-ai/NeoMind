@@ -101,10 +101,10 @@ export function AgentEditor({
     const seed = tmpl.seed()
     setDraft((prev) => ({
       ...seed,
-      name: prev.name.trim() ? prev.name : seed.name,
-      user_prompt: prev.user_prompt.trim() ? prev.user_prompt : seed.user_prompt,
+      name: (prev.name ?? '').trim() ? prev.name : seed.name,
+      user_prompt: (prev.user_prompt ?? '').trim() ? prev.user_prompt : seed.user_prompt,
       description: prev.description?.trim() ? prev.description : seed.description,
-      input: prev.input.requirements.length ? prev.input : seed.input,
+      input: (prev.input?.requirements?.length ?? 0) > 0 ? prev.input : seed.input,
       llm_backend_id: prev.llm_backend_id ?? seed.llm_backend_id,
     }))
     setTemplateId(id)
@@ -126,8 +126,8 @@ export function AgentEditor({
   const isCreate = !loading && !agent
   const canSave =
     !loading &&
-    draft.name.trim().length > 0 &&
-    draft.user_prompt.trim().length > 0
+    (draft.name ?? '').trim().length > 0 &&
+    (draft.user_prompt ?? '').trim().length > 0
 
   const formColumn = loading ? (
     <div

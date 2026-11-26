@@ -172,11 +172,19 @@ function describeToolPolicy(
       allowedCommands: [],
     }
   }
+  if (typeof policy === 'object' && 'scoped' in policy && policy.scoped) {
+    return {
+      mode: 'scoped',
+      label: t('agents:editorV2.toolPolicy.scoped'),
+      allowedTools: Array.isArray(policy.scoped.allowed_tools) ? policy.scoped.allowed_tools : [],
+      allowedCommands: Array.isArray(policy.scoped.allowed_commands) ? policy.scoped.allowed_commands : [],
+    }
+  }
   return {
-    mode: 'scoped',
-    label: t('agents:editorV2.toolPolicy.scoped'),
-    allowedTools: policy.scoped.allowed_tools || [],
-    allowedCommands: policy.scoped.allowed_commands || [],
+    mode: 'disabled',
+    label: t('agents:editorV2.toolPolicy.disabled'),
+    allowedTools: [],
+    allowedCommands: [],
   }
 }
 

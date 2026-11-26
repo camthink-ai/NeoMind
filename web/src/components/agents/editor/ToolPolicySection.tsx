@@ -13,38 +13,42 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import type { ToolPolicy } from '@/types'
+import { normalizeToolPolicy } from './defaults'
 import { EditorSection } from './EditorSection'
 
 export interface ToolPolicySectionProps {
-  value: ToolPolicy
+  value?: ToolPolicy | null
   onChange: (next: ToolPolicy) => void
   className?: string
 }
 
 type PolicyMode = 'disabled' | 'unrestricted' | 'scoped'
 
-function modeOf(policy: ToolPolicy): PolicyMode {
-  if (policy === 'disabled') return 'disabled'
-  if (policy === 'unrestricted') return 'unrestricted'
+function modeOf(policy?: ToolPolicy | null): PolicyMode {
+  const safe = normalizeToolPolicy(policy)
+  if (safe === 'disabled') return 'disabled'
+  if (safe === 'unrestricted') return 'unrestricted'
   return 'scoped'
 }
 
-function toolsText(policy: ToolPolicy): string {
-  if (typeof policy === 'object' && 'scoped' in policy) {
-    return (policy.scoped.allowed_tools ?? []).join(', ')
+function toolsText(policy?: ToolPolicy | null): string {
+  const safe = normalizeToolPolicy(policy)
+  if (typeof safe === 'object' && 'scoped' in safe) {
+    return (safe.scoped.allowed_tools ?? []).join(', ')
   }
   return ''
 }
 
 export function ToolPolicySection({ value, onChange, className }: ToolPolicySectionProps) {
   const { t } = useTranslation('agents')
-  const mode = modeOf(value)
+  const safe = normalizeToolPolicy(value)
+  const mode = modeOf(safe)
 
   const setMode = (next: PolicyMode) => {
     if (next === 'disabled') onChange('disabled')
     else if (next === 'unrestricted') onChange('unrestricted')
     else {
-      const existing = typeof value === 'object' && 'scoped' in value ? value.scoped.allowed_tools : []
+      const existing = typeof safe === 'object' && 'scoped' in safe ? safe.scoped.allowed_tools : []
       onChange({ scoped: { allowed_tools: [...(existing ?? [])], allowed_commands: [] } })
     }
   }

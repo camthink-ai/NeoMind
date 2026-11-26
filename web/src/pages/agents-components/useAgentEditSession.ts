@@ -75,9 +75,14 @@ export function useAgentEditSession(
     setLoading(true)
     setOpen(true)
     try {
-      const agent = await optionsRef.current.getAgent(id)
+      const raw = await optionsRef.current.getAgent(id)
       if (loadSeqRef.current !== seq) return
-      setEditingAgent(agent)
+      // Unwrap `{ agent, effective_plan }` envelope if an older server responds with one.
+      const unwrapped =
+        raw && typeof raw === 'object' && 'agent' in raw && (raw as { agent?: AgentSpec }).agent
+          ? (raw as unknown as { agent: AgentSpec }).agent
+          : raw
+      setEditingAgent(unwrapped)
     } catch (error) {
       if (loadSeqRef.current !== seq) return
       pendingIdRef.current = null

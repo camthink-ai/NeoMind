@@ -49,13 +49,13 @@ function extensionReq(ext: Extension, freshnessSecs: number): InputRequirement {
 function isDeviceSelected(reqs: InputRequirement[], deviceId: string): boolean {
   return reqs.some(
     (r) =>
-      (r.source.kind === 'whole_device' && r.source.device_id === deviceId) ||
-      (r.source.kind === 'device_metric' && r.source.device_id === deviceId),
+      (r?.source?.kind === 'whole_device' && r.source.device_id === deviceId) ||
+      (r?.source?.kind === 'device_metric' && r.source.device_id === deviceId),
   )
 }
 
 function isExtSelected(reqs: InputRequirement[], extId: string): boolean {
-  return reqs.some((r) => r.source.kind === 'extension_instance' && r.source.id === extId)
+  return reqs.some((r) => r?.source?.kind === 'extension_instance' && r.source.id === extId)
 }
 
 export function SimpleSourcesSection({
@@ -68,7 +68,7 @@ export function SimpleSourcesSection({
   const [devices, setDevices] = useState<Device[]>([])
   const [extensions, setExtensions] = useState<Extension[]>([])
   const [loading, setLoading] = useState(true)
-  const requirements = value.requirements ?? []
+  const requirements = value?.requirements ?? []
 
   useEffect(() => {
     let cancelled = false

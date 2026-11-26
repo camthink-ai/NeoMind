@@ -6,6 +6,7 @@ import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import type { AgentSpecDraft, InputRequirement, ToolPolicy, TriggerSpec } from '@/types'
+import { normalizeTrigger, normalizeToolPolicy } from './defaults'
 import { normalizeNotify } from './NotifyPolicySection'
 import { PlanConfirmLine } from './PlanConfirmLine'
 import { templateById, type TaskTemplateId } from './templates'
@@ -17,32 +18,35 @@ export interface LiveSummaryPanelProps {
 }
 
 function whenLabel(
-  trigger: TriggerSpec,
+  trigger: TriggerSpec | null | undefined,
   t: (k: string, opts?: Record<string, unknown>) => string,
 ): string {
-  if (trigger.kind === 'cron') {
-    const hour = trigger.expr.trim().split(/\s+/)[1] ?? '9'
+  const safe = normalizeTrigger(trigger)
+  if (safe.kind === 'cron') {
+    const hour = (safe.expr ?? '').trim().split(/\s+/)[1] ?? '9'
     return t('agents:editorV2.planLine.dailyAt', {
       time: `${String(hour).padStart(2, '0')}:00`,
     })
   }
-  if (trigger.kind === 'interval') {
+  if (safe.kind === 'interval') {
     return t('agents:editorV2.planLine.everyMinutes', {
-      count: Math.max(1, Math.round(trigger.every_secs / 60)),
+      count: Math.max(1, Math.round(safe.every_secs / 60)),
     })
   }
-  if (trigger.kind === 'event') return t('editorV2.planLine.onEvent')
+  if (safe.kind === 'event') return t('editorV2.planLine.onEvent')
   return t('editorV2.planLine.manual')
 }
 
-function toolsLabel(policy: ToolPolicy, t: (k: string) => string): string {
-  if (policy === 'disabled') return t('editorV2.planLine.toolsOff')
-  if (policy === 'unrestricted') return t('editorV2.planLine.toolsOn')
+function toolsLabel(policy: ToolPolicy | null | undefined, t: (k: string) => string): string {
+  const safe = normalizeToolPolicy(policy)
+  if (safe === 'disabled') return t('editorV2.planLine.toolsOff')
+  if (safe === 'unrestricted') return t('editorV2.planLine.toolsOn')
   return t('editorV2.planLine.toolsScoped')
 }
 
 function sourcePlain(req: InputRequirement): string {
-  const src = req.source
+  const src = req?.source
+  if (!src || typeof src !== 'object') return req?.key || '—'
   switch (src.kind) {
     case 'extension_instance':
       return src.id + (req.operation ? ` / ${req.operation}` : '')
@@ -101,12 +105,12 @@ export function LiveSummaryPanel({ draft, templateId, className }: LiveSummaryPa
           {tmpl ? t(tmpl.nameKey) : t('editorV2.summary.noTemplate')}
         </Row>
         <Row label={t('editorV2.summary.name')}>
-          {draft.name.trim() || (
+          {(draft.name ?? '').trim() || (
             <span className="text-muted-foreground">{t('editorV2.summary.empty')}</span>
           )}
         </Row>
         <Row label={t('editorV2.summary.mission')}>
-          {draft.user_prompt.trim() ? (
+          {(draft.user_prompt ?? '').trim() ? (
             <span className="line-clamp-4 whitespace-pre-wrap">{draft.user_prompt}</span>
           ) : (
             <span className="text-muted-foreground">{t('editorV2.summary.empty')}</span>
@@ -121,11 +125,11 @@ export function LiveSummaryPanel({ draft, templateId, className }: LiveSummaryPa
         </Row>
         <Row label={t('editorV2.summary.when')}>{whenLabel(draft.trigger, t)}</Row>
         <Row label={t('editorV2.summary.output')}>
-          {(draft.output?.fields ?? []).filter((f) => f.name.trim()).length === 0 ? (
+          {(draft.output?.fields ?? []).filter((f) => typeof f?.name === 'string' && f.name.trim()).length === 0 ? (
             <span className="text-muted-foreground">{t('editorV2.summary.outputOff')}</span>
           ) : (
             (draft.output?.fields ?? [])
-              .map((f) => f.name.trim())
+              .map((f) => (typeof f?.name === 'string' ? f.name.trim() : ''))
               .filter(Boolean)
               .join(', ')
           )}
