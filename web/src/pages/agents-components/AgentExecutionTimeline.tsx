@@ -296,41 +296,33 @@ export function AgentExecutionTimeline({
 
                         {/* Expanded Details */}
                         {isExpanded && (
-                          <div className="border-t p-4 space-y-4">
+                          <div className="px-3.5 pb-3.5 pt-1 space-y-3.5">
                             {isLoadingDetail ? (
                               <div className="flex items-center justify-center py-8">
                                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                               </div>
                             ) : detail ? (
                               <>
-                                <AgentExecutionEvidencePanel detail={detail} compact />
-                                {/* ⓪ Input Data — images & metrics from data_collected */}
+                                <AgentExecutionEvidencePanel
+                                  detail={detail}
+                                  compact
+                                  hideOutput={Boolean(detail.decision_process?.conclusion || detail.result?.summary)}
+                                />
+                                {/* ⓪ Input Data — only show image thumbnails here; text sources are already in EvidencePanel */}
                                 {(() => {
                                   const dc = detail.decision_process?.data_collected || []
                                   const imgs = extractImagesFromData(dc)
-                                  const mTags = extractMetricTags(dc)
-                                  if (imgs.length === 0 && mTags.length === 0) return null
+                                  if (imgs.length === 0) return null
                                   return (
                                     <TimelineSection
                                       icon={<Database className="h-4 w-4 text-muted-foreground" />}
                                       title={t('agents:memory.inputData', 'Input Data')}
                                     >
-                                      {imgs.length > 0 && (
-                                        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:grid-cols-3 gap-2 mb-2">
-                                          {imgs.map((img, idx) => (
-                                            <InputDataImage key={idx} source={img.source} image={img.image} />
-                                          ))}
-                                        </div>
-                                      )}
-                                      {mTags.length > 0 && (
-                                        <div className="flex flex-wrap gap-1.5">
-                                          {mTags.map((tag, idx) => (
-                                            <Badge key={idx} variant="secondary" className={cn("text-xs h-5 px-1.5")}>
-                                              {tag}
-                                            </Badge>
-                                          ))}
-                                        </div>
-                                      )}
+                                      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:grid-cols-3 gap-2">
+                                        {imgs.map((img, idx) => (
+                                          <InputDataImage key={idx} source={img.source} image={img.image} />
+                                        ))}
+                                      </div>
                                     </TimelineSection>
                                   )
                                 })()}

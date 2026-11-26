@@ -597,7 +597,7 @@ export function AgentDetailPanel({
                       </div>
                     </div>
                     {(partialRuns > 0 || runsToday > 0) && (
-                      <div className="mt-2.5 flex flex-wrap items-center gap-3 border-t border-border pt-2 text-xs text-muted-foreground tabular-nums">
+                      <div className="mt-2.5 flex flex-wrap items-center gap-3 text-xs text-muted-foreground tabular-nums">
                         {partialRuns > 0 && (
                           <span>
                             {t('agents:detail.partialRuns')}: <strong className="font-medium text-warning">{partialRuns}</strong>
@@ -618,10 +618,10 @@ export function AgentDetailPanel({
 
                   {/* Explain Last + Latest Structured Output (side-by-side when both present) */}
                   {(explainLast || hasOutputFields) && (
-                    <div className={cn("grid gap-3", explainLast && hasOutputFields ? "lg:grid-cols-2" : "grid-cols-1")}>
+                    <div className={cn("grid items-stretch gap-3", explainLast && hasOutputFields ? "lg:grid-cols-2" : "grid-cols-1")}>
                       {explainLast && (
-                        <div className="rounded-xl border border-border bg-card p-3.5">
-                          <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        <div className="flex flex-col rounded-xl border border-border bg-card p-3.5">
+                          <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                             <Info className="h-3.5 w-3.5 text-primary" />
                             {t('agents:detail.explainLast')}
                           </h4>
@@ -632,9 +632,9 @@ export function AgentDetailPanel({
                       )}
 
                       {hasOutputFields && (
-                        <div className="rounded-xl border border-border bg-card p-3.5 space-y-2">
+                        <div className="flex flex-col rounded-xl border border-border bg-card p-3.5 space-y-2.5">
                           <div className="flex items-center justify-between gap-2">
-                            <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            <h4 className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
                               <Database className="h-3.5 w-3.5" />
                               {t('agents:detail.outputFields')}
                             </h4>
@@ -642,33 +642,33 @@ export function AgentDetailPanel({
                               {outputPublish ? t('agents:detail.outputPublishOn') : t('agents:detail.outputPublishOff')}
                             </Badge>
                           </div>
-                          <div className="space-y-1.5">
+                          <div className="grid gap-2">
                             {outputFields.map((f) => {
                               const state = agent.latest_output_state?.[f.name]
                               const latest = state?.value ?? agent.latest_output?.[f.name]
                               return (
-                                <div key={f.name} className="border-b border-border py-1.5 last:border-0">
-                                  <div className="flex items-baseline gap-2">
-                                    <span className="font-mono text-xs font-medium">{f.name}</span>
-                                    {f.description && (
-                                      <span className="truncate text-xs text-muted-foreground">{f.description}</span>
-                                    )}
-                                    <span className="ml-auto shrink-0 text-sm font-semibold tabular-nums">
+                                <div key={f.name} className="rounded-lg bg-muted-20 px-3 py-2">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="flex min-w-0 items-baseline gap-2">
+                                      <span className="shrink-0 font-mono text-xs font-medium text-foreground">{f.name}</span>
+                                      {f.description && (
+                                        <span className="truncate text-xs text-muted-foreground">{f.description}</span>
+                                      )}
+                                    </div>
+                                    <span className="shrink-0 text-xs font-semibold tabular-nums text-foreground">
                                       {latest !== undefined ? String(latest) : '—'}
                                     </span>
                                   </div>
-                                  {f.depends_on && f.depends_on.length > 0 && (
-                                    <div className="mt-0.5 text-xs text-muted-foreground">
-                                      {t('agents:detail.outputDependsOn', { deps: f.depends_on.join(', ') })}
-                                    </div>
-                                  )}
-                                  {latest !== undefined && (
-                                    <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                                      {state && <span>{formatRelativeTime(state.at)}</span>}
-                                      {state?.confidence !== undefined && (
+                                  {((f.depends_on && f.depends_on.length > 0) || latest !== undefined) && (
+                                    <div className="mt-1 flex flex-wrap items-center gap-2 text-nano text-muted-foreground">
+                                      {f.depends_on && f.depends_on.length > 0 && (
+                                        <span>{t('agents:detail.outputDependsOn', { deps: f.depends_on.join(', ') })}</span>
+                                      )}
+                                      {latest !== undefined && state && <span>{formatRelativeTime(state.at)}</span>}
+                                      {latest !== undefined && state?.confidence !== undefined && (
                                         <span>{Math.round(state.confidence * 100)}%</span>
                                       )}
-                                      {state?.execution_id && (
+                                      {latest !== undefined && state?.execution_id && (
                                         <button
                                           type="button"
                                           onClick={() => onViewExecutionDetail(agent.id, state.execution_id!)}
@@ -744,7 +744,7 @@ export function AgentDetailPanel({
                         )}
                       </div>
                       {hasPacingSettings(agent.pacing) && (
-                        <div className="space-y-0.5 border-t border-border pt-2">
+                        <div className="space-y-0.5 pt-1.5">
                           {agent.pacing?.burst_merge_secs != null && (
                             <InfoRow label={t('agents:detail.burstMerge')} value={`${agent.pacing.burst_merge_secs}s`} />
                           )}
@@ -791,7 +791,7 @@ export function AgentDetailPanel({
                           )
                         })()}
                       </div>
-                      <div className="space-y-0.5 border-t border-border pt-2">
+                      <div className="space-y-0.5 pt-1.5">
                         <InfoRow label={t('agents:detail.toolPolicy')} value={toolPolicyInfo.label} />
                         {toolPolicyInfo.allowedTools.length > 0 && (
                           <InfoRow
@@ -844,13 +844,13 @@ export function AgentDetailPanel({
                           {t('agents:detailZones.noControlledActions')}
                         </p>
                       ) : (
-                        <div className="space-y-1">
+                        <div className="space-y-1.5">
                           {controlledActions.map((action, idx) => (
-                            <div key={`${action.name}-${idx}`} className="flex flex-wrap items-center gap-1.5 border-b border-border py-1 last:border-0">
+                            <div key={`${action.name}-${idx}`} className="flex flex-wrap items-center gap-1.5 rounded-lg bg-muted-20 px-2.5 py-1.5">
                               <span className="text-xs font-medium text-foreground">{action.name}</span>
                               <span className="truncate font-mono text-xs text-muted-foreground">{action.destination}</span>
                               {action.idempotent && (
-                                <Badge variant="secondary" className="ml-auto h-4 px-1 text-[10px]">
+                                <Badge variant="secondary" className="ml-auto h-4 px-1 text-nano">
                                   {t('agents:detail.idempotent')}
                                 </Badge>
                               )}
