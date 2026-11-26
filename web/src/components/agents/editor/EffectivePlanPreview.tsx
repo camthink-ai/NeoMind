@@ -42,11 +42,11 @@ function SummaryRow({
   children: ReactNode
 }) {
   return (
-    <div className="space-y-0.5">
-      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="space-y-1">
+      <dt className="text-xs font-medium text-muted-foreground">
         {label}
       </dt>
-      <dd className="text-sm text-foreground break-words">{children}</dd>
+      <dd className="text-xs leading-relaxed text-foreground break-words">{children}</dd>
     </div>
   )
 }
@@ -97,7 +97,7 @@ export function EffectivePlanPreview({
     >
       <header className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <h3 className="text-sm font-semibold tracking-tight text-foreground">
             {t('editorV2.planPreview.title')}
           </h3>
         </div>
@@ -171,7 +171,7 @@ export function EffectivePlanPreview({
       )}
 
       {!plan && !error && !loading && (
-        <p className="text-sm text-muted-foreground">{t('editorV2.planPreview.empty')}</p>
+        <p className="text-xs text-muted-foreground">{t('editorV2.planPreview.empty')}</p>
       )}
     </aside>
   )
