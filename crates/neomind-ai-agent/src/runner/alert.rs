@@ -46,6 +46,38 @@ pub fn alert_from_model_text(text: &str) -> bool {
     matches!(last, Some("Verdict: criteria met"))
 }
 
+/// Derive an explicit alert boolean from structured JSON output fields when present.
+///
+/// Returns `Some(true)` for explicit alert/abnormal statuses, `Some(false)` for
+/// explicit normal/ok statuses, and `None` when the structured payload makes no
+/// alert claim.
+pub fn alert_from_structured_result(value: &serde_json::Value) -> Option<bool> {
+    let obj = value.as_object()?;
+    if let Some(b) = obj.get("alert").and_then(|v| v.as_bool()) {
+        return Some(b);
+    }
+    if let Some(b) = obj.get("is_alert").and_then(|v| v.as_bool()) {
+        return Some(b);
+    }
+    for key in ["status", "verdict", "level", "severity"] {
+        if let Some(raw) = obj.get(key).and_then(|v| v.as_str()) {
+            let norm = raw.trim().to_ascii_lowercase();
+            match norm.as_str() {
+                "alert" | "abnormal" | "critical" | "warning" | "alarm" | "anomaly" | "error"
+                | "danger" | "high" | "异常" | "告警" | "警告" | "危险" | "超标" | "过载" => {
+                    return Some(true);
+                }
+                "normal" | "ok" | "healthy" | "pass" | "safe" | "none" | "正常" | "无异常"
+                | "安全" => {
+                    return Some(false);
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 fn text_asserts_overload(text: &str) -> bool {
     let upper = text.to_ascii_uppercase();
     if !upper.contains("OVERLOAD") {

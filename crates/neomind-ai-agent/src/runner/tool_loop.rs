@@ -74,6 +74,7 @@ impl AgentRunner for ToolLoopRunner {
                         tools_enabled: true,
                         allowed_tools,
                         allowed_commands,
+                        expect_json: !spec.output.fields.is_empty(),
                         images: images.clone(),
                     },
                     cancel.clone(),

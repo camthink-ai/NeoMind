@@ -53,6 +53,9 @@ pub struct LlmRequest {
     /// Optional command allowlist for command-capable tools (e.g. `shell`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_commands: Vec<String>,
+    /// When true, request grammar-constrained JSON object output on tool-less synthesis turns.
+    #[serde(default)]
+    pub expect_json: bool,
     /// Multimodal image attachments extracted from evidence / caller input.
     /// Kept out of the text prompt so base64 payloads never tokenize into
     /// hundreds of thousands of text tokens.

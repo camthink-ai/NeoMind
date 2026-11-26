@@ -1239,7 +1239,7 @@ pub async fn execute_agent(
         None
     };
 
-    let execution_id = uuid::Uuid::new_v4().to_string();
+    let execution_id = format!("exec_{}", &uuid::Uuid::new_v4().to_string()[..8]);
     let eid_clone = execution_id.clone();
     let aid_clone = id.clone();
 
@@ -1250,7 +1250,12 @@ pub async fn execute_agent(
             "Background agent execution started"
         );
         match rt
-            .submit_with_caller(&aid_clone, neomind_ai_agent::SubmitSource::Manual, caller)
+            .submit_with_caller_and_id(
+                &aid_clone,
+                neomind_ai_agent::SubmitSource::Manual,
+                caller,
+                Some(eid_clone.clone()),
+            )
             .await
         {
             Ok(resp) => {

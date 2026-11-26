@@ -4,13 +4,17 @@ use serde_json::{Map, Value};
 
 use crate::model::OutputField;
 
-/// Strip hallucinated `<tool_call>...</tool_call>` XML tags (common with Qwen-family
-/// local models when asked to produce structured JSON in a zero-tool prompt).
-fn strip_tool_call_tags(text: &str) -> String {
+/// Strip hallucinated `<tool_call>...</tool_call>` and `<json>...</json>` XML tags
+/// (common with local models when asked to produce structured JSON).
+fn strip_wrapper_tags(text: &str) -> String {
     text.replace("<tool_call>", "")
         .replace("</tool_call>", "")
         .replace("<|tool_call|>", "")
         .replace("<|/tool_call|>", "")
+        .replace("<json>", "")
+        .replace("</json>", "")
+        .replace("<JSON>", "")
+        .replace("</JSON>", "")
         .trim()
         .to_string()
 }
@@ -130,7 +134,7 @@ fn unwrap_tool_call_envelope(v: Value) -> Value {
 /// (breaking ties by choosing the **last** object, matching the system prompt's
 /// "Put the JSON object last" instruction).
 pub fn extract_json_for_fields(text: &str, fields: &[OutputField]) -> Option<Value> {
-    let stripped = strip_tool_call_tags(text);
+    let stripped = strip_wrapper_tags(text);
     let trimmed = stripped.trim();
 
     let mut candidates: Vec<Value> = Vec::new();
@@ -203,45 +207,103 @@ pub fn extract_json_object(text: &str) -> Option<Value> {
 
 /// Clean a raw model response for human-readable `conclusion` / `brief_text`.
 ///
-/// If the model emitted a `<tool_call>...</tool_call>` wrapper, extract its
-/// human-readable summary/details instead of surfacing raw XML tool-call syntax
-/// to the user.
+/// Strips protocol wrappers (`<tool_call>`, `<json>`, fenced ` ```json `,
+/// standalone `Verdict: criteria met`) and, when the reply is purely a JSON
+/// payload, surfaces its readable summary/details fields instead of raw JSON.
 pub fn clean_model_response(text: &str, structured: Option<&Value>) -> String {
     let trimmed = text.trim();
-    let had_tool_call_tag = trimmed.contains("<tool_call>")
-        || trimmed.contains("</tool_call>")
-        || trimmed.contains("<|tool_call|>");
-    if !had_tool_call_tag {
-        return text.to_string();
+    if trimmed.is_empty() {
+        return String::new();
     }
 
-    let extracted = extract_json_object(trimmed).or_else(|| structured.cloned());
-    if let Some(Value::Object(map)) = extracted {
-        let mut parts: Vec<String> = Vec::new();
-        for key in ["summary", "conclusion", "details", "analysis", "message", "description"] {
-            if let Some(val) = map.get(key).and_then(|v| v.as_str()) {
-                let s = val.trim();
-                if !s.is_empty() && !parts.iter().any(|p| p == s) {
-                    parts.push(s.to_string());
+    let had_wrapper_tag = trimmed.contains("<tool_call>")
+        || trimmed.contains("</tool_call>")
+        || trimmed.contains("<|tool_call|>")
+        || trimmed.contains("<json>")
+        || trimmed.contains("</json>");
+
+    // Remove protocol-only verdict line/prefix when checking whether the remaining body is pure JSON.
+    let without_tags = strip_wrapper_tags(trimmed);
+    let without_verdict = strip_verdict_marker(&without_tags);
+    let body_trimmed = strip_json_fence(without_verdict.trim()).trim();
+
+    let is_pure_json_body = (body_trimmed.starts_with('{') && body_trimmed.ends_with('}'))
+        || (body_trimmed.starts_with('[') && body_trimmed.ends_with(']'));
+
+    if had_wrapper_tag || is_pure_json_body {
+        let extracted = extract_json_object(trimmed).or_else(|| structured.cloned());
+        if let Some(Value::Object(map)) = extracted {
+            let mut parts: Vec<String> = Vec::new();
+            for key in [
+                "summary",
+                "brief",
+                "conclusion",
+                "details",
+                "analysis",
+                "message",
+                "description",
+            ] {
+                if let Some(val) = map.get(key).and_then(|v| v.as_str()) {
+                    let s = val.trim();
+                    if !s.is_empty() && !parts.iter().any(|p| p == s) {
+                        parts.push(s.to_string());
+                    }
                 }
             }
+            if !parts.is_empty() {
+                return parts.join("\n\n");
+            }
+            let kv: Vec<String> = map
+                .iter()
+                .map(|(k, v)| match v {
+                    Value::String(s) => format!("{k}: {s}"),
+                    other => format!("{k}: {other}"),
+                })
+                .collect();
+            if !kv.is_empty() {
+                return kv.join("\n");
+            }
         }
-        if !parts.is_empty() {
-            return parts.join("\n\n");
-        }
-        let kv: Vec<String> = map
-            .iter()
-            .map(|(k, v)| match v {
-                Value::String(s) => format!("{k}: {s}"),
-                other => format!("{k}: {other}"),
-            })
-            .collect();
-        if !kv.is_empty() {
-            return kv.join("\n");
-        }
+        return without_verdict;
     }
 
-    strip_tool_call_tags(trimmed)
+    text.to_string()
+}
+
+fn strip_verdict_marker(s: &str) -> String {
+    let mut lines: Vec<&str> = Vec::new();
+    for line in s.lines() {
+        let t = line.trim();
+        if t.eq_ignore_ascii_case("Verdict: criteria met")
+            || t.eq_ignore_ascii_case("Verdict: criteria not met")
+        {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("Verdict: criteria met") {
+            let rest = rest.trim();
+            if !rest.is_empty() {
+                lines.push(rest);
+            }
+            continue;
+        }
+        lines.push(line);
+    }
+    lines.join("\n").trim().to_string()
+}
+
+fn strip_json_fence(s: &str) -> &str {
+    let trimmed = s.trim();
+    if let Some(after) = trimmed.strip_prefix("```") {
+        let after = after
+            .strip_prefix("json")
+            .or_else(|| after.strip_prefix("JSON"))
+            .unwrap_or(after)
+            .trim_start();
+        if let Some(inner) = after.strip_suffix("```") {
+            return inner.trim();
+        }
+    }
+    trimmed
 }
 
 /// Keep only fields named in the output contract (plus optional confidence).

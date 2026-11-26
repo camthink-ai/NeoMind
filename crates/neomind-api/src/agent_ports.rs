@@ -189,8 +189,18 @@ impl HostLlmPort {
                 .map_err(|e| AgentError::Llm(e.to_string()))?,
         };
 
+        let thinking_is_integral = match request.backend_id.as_deref() {
+            Some(id) if id != "default" => manager
+                .get_instance(id)
+                .map(|i| i.thinking_is_integral)
+                .unwrap_or(false),
+            _ => manager
+                .get_active_instance()
+                .map(|i| i.thinking_is_integral)
+                .unwrap_or(false),
+        };
         let params = GenerationParams {
-            thinking_enabled: Some(false),
+            thinking_enabled: if thinking_is_integral { None } else { Some(false) },
             max_tokens: Some(2048),
             ..Default::default()
         };
@@ -257,9 +267,14 @@ impl HostLlmPort {
                 None
             };
 
+            let mut round_params = params.clone();
+            if request.expect_json && round_tools.is_none() {
+                round_params.json_mode = Some(true);
+            }
+
             let input = LlmInput {
                 messages: messages.clone(),
-                params: params.clone(),
+                params: round_params,
                 model: None,
                 stream: false,
                 tools: round_tools.clone(),
@@ -340,6 +355,7 @@ impl HostLlmPort {
             let mut tool_results = Vec::with_capacity(calls.len());
 
             for (orig_name, args) in calls {
+                tracing::info!(tool = %orig_name, round, "Agent executing authorized tool");
                 call_summaries.push(format!("{orig_name}({args})"));
 
                 // Optional command allowlist check for shell tool.

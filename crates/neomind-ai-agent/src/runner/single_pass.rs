@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use super::alert::{alert_from_model_text, evidence_shows_overload};
+use super::alert::{alert_from_model_text, alert_from_structured_result, evidence_shows_overload};
 use super::structured::{
     clean_model_response, extract_json_for_fields, project_output_fields, structured_system_addon,
 };
@@ -71,6 +71,7 @@ impl AgentRunner for SinglePassRunner {
             });
         }
 
+        let alert_enabled = spec.notify.on_alert || !spec.controlled_actions.is_empty();
         let (user, images) = build_evidence_prompt_with_media(&spec.user_prompt, evidence);
         let mut system = if tools_enabled {
             String::from(
@@ -78,16 +79,19 @@ impl AgentRunner for SinglePassRunner {
                  Actively call the available tools to query devices, run commands, or fetch live \
                  information needed to complete the task instead of claiming data is missing. \
                  Cite evidence keys when provided. Once you have the required results, respond \
-                 directly with your final answer. End with exactly `Verdict: criteria met` only \
-                 when alert criteria are met.",
+                 directly with your final answer.",
             )
         } else {
             String::from(
                 "You are a managed NeoMind agent. Cite evidence keys. Mark missing deps. \
-                 Respond directly without <tool_call> tags or function-call wrappers. \
-                 End with exactly `Verdict: criteria met` only when alert criteria are met.",
+                 Respond directly without <tool_call> tags or function-call wrappers.",
             )
         };
+        if alert_enabled {
+            system.push_str(
+                " End with exactly `Verdict: criteria met` ONLY when an alert/anomaly condition is actually triggered.",
+            );
+        }
         system.push_str(&structured_system_addon(&spec.output.fields));
         let resp = self
             .llm
@@ -99,16 +103,25 @@ impl AgentRunner for SinglePassRunner {
                     tools_enabled,
                     allowed_tools,
                     allowed_commands,
+                    expect_json: !spec.output.fields.is_empty(),
                     images,
                 },
                 cancel,
             )
             .await?;
 
-        // Model path: business verdict drives alert (through frozen deps /
-        // evidence gates later). Overload heuristics are local-template only.
-        let alert = alert_from_model_text(&resp.text) || resp.alert_criteria_met;
+        // Model path: combine explicit structured status with text verdict so
+        // explicit `status: "normal"` cannot be overridden by parroted verdict text,
+        // and explicit `status: "alert"` still fires when the model responds with pure JSON.
+        let text_alert = alert_from_model_text(&resp.text) || resp.alert_criteria_met;
         let structured_result = structured_from_text(&resp.text, spec);
+        let alert = match structured_result
+            .as_ref()
+            .and_then(alert_from_structured_result)
+        {
+            Some(explicit) => explicit,
+            None => text_alert,
+        };
         let clean_text = clean_model_response(&resp.text, structured_result.as_ref());
 
         Ok(RunOutcome {

@@ -234,7 +234,7 @@ impl HostedAiAgentRuntime {
         id: &str,
         caller: Option<CallerInput>,
     ) -> AgentResult<RunResponse> {
-        self.run_formal(id, SubmitSource::Manual, caller).await
+        self.run_formal(id, SubmitSource::Manual, caller, None).await
     }
 
     pub async fn dry_run(&self, id: &str) -> AgentResult<RunResponse> {
@@ -256,7 +256,7 @@ impl HostedAiAgentRuntime {
     }
 
     pub async fn submit(&self, id: &str, source: SubmitSource) -> AgentResult<RunResponse> {
-        self.run_formal(id, source, None).await
+        self.run_formal(id, source, None, None).await
     }
 
     pub async fn submit_with_caller(
@@ -265,7 +265,17 @@ impl HostedAiAgentRuntime {
         source: SubmitSource,
         caller: Option<CallerInput>,
     ) -> AgentResult<RunResponse> {
-        self.run_formal(id, source, caller).await
+        self.run_formal(id, source, caller, None).await
+    }
+
+    pub async fn submit_with_caller_and_id(
+        &self,
+        id: &str,
+        source: SubmitSource,
+        caller: Option<CallerInput>,
+        execution_id: Option<String>,
+    ) -> AgentResult<RunResponse> {
+        self.run_formal(id, source, caller, execution_id).await
     }
 
     async fn run_formal(
@@ -273,9 +283,12 @@ impl HostedAiAgentRuntime {
         id: &str,
         source: SubmitSource,
         caller: Option<CallerInput>,
+        preallocated_execution_id: Option<String>,
     ) -> AgentResult<RunResponse> {
         let started_ms = self.clock.now_ms();
-        let execution_id = format!("exec_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+        let execution_id = preallocated_execution_id
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("exec_{}", &uuid::Uuid::new_v4().to_string()[..8]));
         let operator_notes = self.load_operator_notes(id);
         let memory_context = self.load_memory_context(id);
 

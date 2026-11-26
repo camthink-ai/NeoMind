@@ -7,7 +7,10 @@ pub mod single_pass;
 pub mod structured;
 mod tool_loop;
 
-pub use alert::{alert_from_model_text, evidence_shows_overload, value_shows_overload};
+pub use alert::{
+    alert_from_model_text, alert_from_structured_result, evidence_shows_overload,
+    value_shows_overload,
+};
 pub use prompt_builder::{
     build_evidence_prompt, build_evidence_prompt_with_media, prompt_with_caller_input,
     prompt_with_memory_context, prompt_with_operator_notes, MemoryContext,

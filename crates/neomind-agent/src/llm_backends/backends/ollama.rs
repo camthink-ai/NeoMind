@@ -561,9 +561,13 @@ impl LlmRuntime for OllamaRuntime {
             input.params.thinking_enabled,
         );
 
-        // When tools are present, disable thinking to prevent wasting tokens
-        // and ensure tool calls are generated efficiently
-        let format: Option<String> = None;
+        // Honor grammar-constrained JSON output when requested on non-tool turns.
+        let format: Option<String> =
+            if input.params.json_mode == Some(true) && native_tools.is_none() {
+                Some("json".to_string())
+            } else {
+                None
+            };
 
         // Convert messages with tool injection for non-native models
         let messages = self.messages_to_ollama_with_tools(
@@ -825,9 +829,13 @@ impl LlmRuntime for OllamaRuntime {
             !supports_native_tools && has_tools
         );
 
-        // When tools are present, disable thinking to prevent wasting tokens
-        // and ensure tool calls are generated efficiently
-        let format: Option<String> = None;
+        // Honor grammar-constrained JSON output when requested on non-tool turns.
+        let format: Option<String> =
+            if input.params.json_mode == Some(true) && native_tools.is_none() {
+                Some("json".to_string())
+            } else {
+                None
+            };
 
         // Log request details before creating the request
         tracing::debug!(
