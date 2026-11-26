@@ -350,9 +350,36 @@ export function AgentEditor({
     [draft.input],
   )
 
-  // Left Config Rail (identity + model)
+  // Left Config Rail (templates + identity + model)
   const configRail = (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      <section className="space-y-2" data-section="templates">
+        <FieldLabel>{t('agents:editorV2.templates.title')}</FieldLabel>
+        <div className="grid grid-cols-2 gap-1.5">
+          {TASK_TEMPLATES.map((tmpl) => {
+            const Icon = tmpl.icon
+            const selected = templateId === tmpl.id
+            return (
+              <button
+                key={tmpl.id}
+                type="button"
+                onClick={() => applyTemplate(tmpl.id)}
+                title={t(`agents:${tmpl.descKey}`)}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                  selected
+                    ? 'border-primary bg-primary-light text-primary font-medium'
+                    : 'border-border bg-card text-foreground hover:bg-muted-30',
+                )}
+              >
+                <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                <span className="truncate text-xs">{t(`agents:${tmpl.nameKey}`)}</span>
+              </button>
+            )
+          })}
+        </div>
+      </section>
+
       <Field>
         <FieldLabel htmlFor="agent-editor-name">
           {t('agents:editorV2.name')} <span className="text-error">*</span>
@@ -386,7 +413,7 @@ export function AgentEditor({
     <EffectivePlanPreview draft={draft} debounceMs={500} />
   ) : undefined
 
-  // Center Main Workspace — Templates + 3-step logical flow
+  // Center Main Workspace — 3-step logical flow
   const workspace = loading ? (
     <div
       className="flex min-h-[16rem] items-center justify-center"
@@ -396,49 +423,6 @@ export function AgentEditor({
     </div>
   ) : (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-5">
-      {/* Scenario Templates inside main workspace */}
-      <section className="space-y-2.5" data-section="templates">
-        <div>
-          <h3 className="text-sm font-semibold tracking-tight text-foreground">
-            {t('agents:editorV2.templates.title')}
-          </h3>
-          {isCreate && (
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {t('agents:editorV2.dailyBriefHint')}
-            </p>
-          )}
-        </div>
-        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
-          {TASK_TEMPLATES.map((tmpl) => {
-            const Icon = tmpl.icon
-            const selected = templateId === tmpl.id
-            return (
-              <button
-                key={tmpl.id}
-                type="button"
-                onClick={() => applyTemplate(tmpl.id)}
-                title={t(`agents:${tmpl.descKey}`)}
-                className={cn(
-                  'flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-colors',
-                  selected
-                    ? 'border-primary bg-primary-light text-primary'
-                    : 'border-border bg-card text-foreground hover:bg-muted-30',
-                )}
-              >
-                <Icon className="mt-0.5 h-4 w-4 shrink-0 opacity-80" />
-                <div className="min-w-0 flex-1">
-                  <div className={cn('truncate text-xs', selected ? 'font-semibold' : 'font-medium')}>
-                    {t(`agents:${tmpl.nameKey}`)}
-                  </div>
-                  <div className="mt-0.5 truncate text-nano text-muted-foreground">
-                    {t(`agents:${tmpl.descKey}`)}
-                  </div>
-                </div>
-              </button>
-            )
-          })}
-        </div>
-      </section>
       {/* Inline Dry-Run Preview Banner */}
       {(dryRunResult || dryRunError) && (
         <div

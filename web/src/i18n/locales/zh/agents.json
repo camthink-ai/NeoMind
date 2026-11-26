@@ -888,8 +888,8 @@
     "description": "描述",
     "prompt": "任务说明",
     "templates": {
-      "title": "任务类型",
-      "pickFirst": "请先选择一种任务类型。",
+      "title": "任务模板",
+      "pickFirst": "请先选择一种任务模板。",
       "daily_brief": {
         "name": "每日简报"
       },

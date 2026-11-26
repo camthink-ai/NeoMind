@@ -888,8 +888,8 @@
     "description": "Description",
     "prompt": "Mission",
     "templates": {
-      "title": "Task type",
-      "pickFirst": "Pick a task type to continue.",
+      "title": "Task templates",
+      "pickFirst": "Pick a task template to continue.",
       "daily_brief": {
         "name": "Daily brief"
       },
