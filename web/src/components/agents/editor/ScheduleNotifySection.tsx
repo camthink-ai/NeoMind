@@ -7,7 +7,7 @@
 import { useState } from 'react'
 import { Link, useInRouterContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Bell, Calendar, Check, Clock, MessageSquare, MousePointerClick, Zap } from 'lucide-react'
+import { Bell, Calendar, Check, ChevronDown, ChevronRight, Clock, MessageSquare, MousePointerClick, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -122,6 +122,9 @@ export function ScheduleNotifySection({
   const safeNotify = normalizeNotify(notify)
   const safePacing: PacingPolicy = { failure_threshold: 3, ...pacing }
   const [showRawFilter, setShowRawFilter] = useState(false)
+  const [showAlertDeps, setShowAlertDeps] = useState(
+    () => (safeNotify.alert_depends_on ?? []).length > 0,
+  )
 
   const cronParsed =
     safeTrigger.kind === 'cron'
@@ -616,28 +619,54 @@ export function ScheduleNotifySection({
           ))}
         </div>
 
-        {/* Alert depends_on when on_alert enabled and inputs exist */}
+        {/* Alert depends_on when on_alert enabled and inputs exist (collapsed under Advanced) */}
         {safeNotify.on_alert && inputKeys.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-muted-foreground">{t('editorV2.notifyUnified.alertDependsOn')}:</span>
-            {inputKeys.map((k) => {
-              const on = (safeNotify.alert_depends_on ?? []).includes(k)
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => toggleAlertDep(k)}
-                  className={cn(
-                    'rounded border px-1.5 py-0.5 font-mono text-xs transition-colors',
-                    on
-                      ? 'border-primary bg-primary-light text-primary'
-                      : 'border-border bg-card text-muted-foreground',
-                  )}
-                >
-                  {k}
-                </button>
-              )
-            })}
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={() => setShowAlertDeps((v) => !v)}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {showAlertDeps ? (
+                <ChevronDown className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+              <span>{t('editorV2.notifyUnified.advancedDependsOn')}</span>
+              {(safeNotify.alert_depends_on ?? []).length > 0 && (
+                <span className="rounded bg-primary-light px-1.5 py-0.5 font-mono text-nano text-primary">
+                  {(safeNotify.alert_depends_on ?? []).length}
+                </span>
+              )}
+            </button>
+            {showAlertDeps && (
+              <div className="space-y-1.5 rounded-lg border border-border bg-muted-20 p-2.5">
+                <p className="text-xs text-muted-foreground">
+                  {t('editorV2.notifyUnified.dependsOnHint')}
+                </p>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {inputKeys.map((k) => {
+                    const on = (safeNotify.alert_depends_on ?? []).includes(k)
+                    return (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => toggleAlertDep(k)}
+                        className={cn(
+                          'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs transition-colors',
+                          on
+                            ? 'border-primary bg-primary-light text-primary font-medium'
+                            : 'border-border bg-card text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        {on && <Check className="h-3 w-3" />}
+                        {k}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -6,9 +6,9 @@
  *   - ControlledActions (name, destination picker from device commands, idempotent, depends_on)
  *   - OutputContract (enabled toggle, publish switch, fields with name + description + depends_on)
  */
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Plus, Trash2 } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react'
 import { Button, IconButton } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -31,6 +31,65 @@ import type {
   ToolPolicy,
 } from '@/types'
 import { normalizeToolPolicy } from './defaults'
+
+function AdvancedDependsOn({
+  selected,
+  inputKeys,
+  onToggle,
+}: {
+  selected: string[]
+  inputKeys: string[]
+  onToggle: (key: string) => void
+}) {
+  const { t } = useTranslation('agents')
+  const [open, setOpen] = useState(selected.length > 0)
+
+  if (inputKeys.length === 0) return null
+
+  return (
+    <div className="border-t border-border/60 pt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
+        {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        <span>{t('editorV2.notifyUnified.advancedDependsOn')}</span>
+        {selected.length > 0 && (
+          <span className="rounded bg-primary-light px-1.5 py-0.5 font-mono text-nano text-primary">
+            {selected.length}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="mt-2 space-y-1.5">
+          <p className="text-xs text-muted-foreground">{t('editorV2.notifyUnified.dependsOnHint')}</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {inputKeys.map((k) => {
+              const on = selected.includes(k)
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => onToggle(k)}
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs transition-colors',
+                    on
+                      ? 'border-primary bg-primary-light text-primary font-medium'
+                      : 'border-border bg-muted-20 text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {on && <Check className="h-3 w-3" />}
+                  {k}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export interface ActionsOutputSectionProps {
   toolPolicy: ToolPolicy
@@ -326,29 +385,11 @@ export function ActionsOutputSection({
                     {t('editorV2.actions.idempotent')}
                   </label>
                 </div>
-                {inputKeys.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                    <span className="text-muted-foreground">{t('editorV2.actions.dependsOn')}:</span>
-                    {inputKeys.map((k) => {
-                      const on = (action.depends_on ?? []).includes(k)
-                      return (
-                        <button
-                          key={k}
-                          type="button"
-                          onClick={() => toggleActionDep(idx, k)}
-                          className={cn(
-                            'rounded border px-1.5 py-0.5 font-mono text-xs transition-colors',
-                            on
-                              ? 'border-primary bg-primary-light text-primary'
-                              : 'border-border bg-card text-muted-foreground',
-                          )}
-                        >
-                          {k}
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
+                <AdvancedDependsOn
+                  selected={action.depends_on ?? []}
+                  inputKeys={inputKeys}
+                  onToggle={(k) => toggleActionDep(idx, k)}
+                />
               </div>
             ))}
           </div>
@@ -420,30 +461,11 @@ export function ActionsOutputSection({
                       <Trash2 className="h-4 w-4" />
                     </IconButton>
                   </div>
-                  {inputKeys.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2 text-xs">
-                      <span className="text-muted-foreground">{t('editorV2.output.dependsOn')}:</span>
-                      {inputKeys.map((k) => {
-                        const on = (field.depends_on ?? []).includes(k)
-                        return (
-                          <button
-                            key={k}
-                            type="button"
-                            onClick={() => toggleFieldDep(index, k)}
-                            className={cn(
-                              'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs transition-colors',
-                              on
-                                ? 'border-primary bg-primary-light text-primary font-medium'
-                                : 'border-border bg-muted-20 text-muted-foreground hover:text-foreground',
-                            )}
-                          >
-                            {on && <Check className="h-3 w-3" />}
-                            {k}
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
+                  <AdvancedDependsOn
+                    selected={field.depends_on ?? []}
+                    inputKeys={inputKeys}
+                    onToggle={(k) => toggleFieldDep(index, k)}
+                  />
                 </div>
               ))}
               <Button

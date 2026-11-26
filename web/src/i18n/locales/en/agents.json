@@ -1188,7 +1188,9 @@
     "notifyUnified": {
       "imBuiltin": "IM (Built-in)",
       "imHint": "Delivers to bound IM chats (Telegram / Slack / etc.)",
-      "alertDependsOn": "Alert depends on inputs"
+      "alertDependsOn": "Alert depends on inputs",
+      "advancedDependsOn": "Advanced: Input dependencies",
+      "dependsOnHint": "Only active when selected inputs are fresh and valid; leave empty for no restriction."
     },
     "dryRun": {
       "title": "Dry-Run Preview Result",

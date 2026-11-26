@@ -1188,7 +1188,9 @@
     "notifyUnified": {
       "imBuiltin": "IM（内置）",
       "imHint": "推送到已绑定的 IM 会话（Telegram / Slack 等）",
-      "alertDependsOn": "告警依赖输入键"
+      "alertDependsOn": "告警依赖输入键",
+      "advancedDependsOn": "高级配置：依赖输入键",
+      "dependsOnHint": "仅当所选数据源未过期且有效时才生效，留空则不限制。"
     },
     "dryRun": {
       "title": "试跑预览结果",
