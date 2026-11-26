@@ -238,6 +238,7 @@ fn with_v2_save_execution_mirrors_without_mirror_after_run() {
         finished_at: 1000,
         is_probe: false,
         dry_run: false,
+        trigger_source: Some("manual".into()),
         stale_config: None,
         evidence: Default::default(),
         deliveries: vec![neomind_ai_agent::model::ActionDeliveryRecord {

@@ -138,15 +138,31 @@ impl AgentApplicationService {
 
     /// Authorized read-only dry-run; does not enter formal history; notify=0.
     pub async fn dry_run(&self, id: &str) -> Result<RunResponse> {
-        self.execute_inner(id, true, false).await
+        self.execute_inner(id, true, false, None).await
     }
 
-    /// Formal invoke — writes history and may notify.
+    /// Formal invoke — writes history and may notify (manual submit provenance).
     pub async fn invoke(&self, id: &str) -> Result<RunResponse> {
-        self.execute_inner(id, false, false).await
+        self.invoke_with_source(id, crate::coordinator::SubmitSource::Manual)
+            .await
     }
 
-    async fn execute_inner(&self, id: &str, dry_run: bool, is_probe: bool) -> Result<RunResponse> {
+    /// Formal invoke with explicit submit provenance (schedule/event/manual/…).
+    pub async fn invoke_with_source(
+        &self,
+        id: &str,
+        source: crate::coordinator::SubmitSource,
+    ) -> Result<RunResponse> {
+        self.execute_inner(id, false, false, Some(source)).await
+    }
+
+    async fn execute_inner(
+        &self,
+        id: &str,
+        dry_run: bool,
+        is_probe: bool,
+        source: Option<crate::coordinator::SubmitSource>,
+    ) -> Result<RunResponse> {
         let spec = self.store.get_spec(id)?;
         let runtime = self.store.get_runtime(id)?;
         if matches!(runtime.status, AgentStatus::Paused | AgentStatus::Stopped) && !dry_run {
@@ -172,6 +188,7 @@ impl AgentApplicationService {
             finished_at: self.clock.now_ms(),
             is_probe,
             dry_run,
+            trigger_source: source.map(|s| s.as_str().to_string()),
             stale_config: None,
             evidence,
             deliveries: vec![],

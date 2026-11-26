@@ -3,19 +3,44 @@
 //! Reading an agent's latest conclusion goes
 //! `neomind agent latest-execution <ID>` → `GET /agents/v2/{id}/latest-execution`
 //! (list path `GET /agents/{id}/executions` also reads V2 formal rows).
+//!
+//! NM-407: list / single / batch detail must agree on trigger_type + input_summary
+//! for V2-only history (Monitor card batch previously hit the legacy store only).
 
 use axum::extract::{Path, State};
 use axum::Json;
 use neomind_ai_agent::model::{
     AgentSpecDraft, InputContract, OutputContract, ToolPolicy, TriggerSpec,
 };
-use neomind_api::handlers::agents::get_agent_executions;
+use neomind_api::handlers::agents::{
+    batch_get_executions, get_agent_executions, get_execution, BatchExecutionIds,
+};
 use neomind_api::handlers::agents_v2::create_agent_v2;
 use neomind_api::handlers::ServerState;
 use neomind_storage::agents_v2::{AgentExecutionRecordV2, ExecutionStatusV2};
 use neomind_storage::AgentStoreV2;
+use serde_json::json;
 
-async fn seed_executed_agent(state: &ServerState) -> String {
+fn vision_evidence() -> serde_json::Value {
+    json!({
+        "items": [{
+            "key": "frame",
+            "source_id": "device:cam-1:image_data",
+            "result_type": "vision",
+            "fetched_at": 1_700_000_000_000i64,
+            "quality": "fresh",
+            "binding_proof": "test",
+            "detail": {
+                "kind": "vision",
+                "image_source_field": "image_data",
+                "vision_path": "inline_multimodal"
+            }
+        }],
+        "missing_keys": []
+    })
+}
+
+async fn seed_executed_agent(state: &ServerState) -> (String, String) {
     let draft = AgentSpecDraft {
         name: "coldroom-watch".into(),
         description: None,
@@ -41,8 +66,9 @@ async fn seed_executed_agent(state: &ServerState) -> String {
     let agent_id = created.agent.id;
 
     let now_ms = chrono::Utc::now().timestamp_millis();
+    let exec_id = "exec-readback-1".to_string();
     let execution = AgentExecutionRecordV2 {
-        id: "exec-readback-1".into(),
+        id: exec_id.clone(),
         agent_id: agent_id.clone(),
         config_version: created.agent.config_version,
         status: ExecutionStatusV2::Completed,
@@ -50,8 +76,9 @@ async fn seed_executed_agent(state: &ServerState) -> String {
         finished_at: now_ms,
         is_probe: false,
         dry_run: false,
+        trigger_source: Some("manual".into()),
         stale_config: None,
-        evidence: serde_json::json!({}),
+        evidence: vision_evidence(),
         deliveries: vec![],
         brief_text: Some("冷库温度 4.2°C,处于正常范围".into()),
         conclusion: Some("冷库温度正常,无需处理".into()),
@@ -61,13 +88,13 @@ async fn seed_executed_agent(state: &ServerState) -> String {
     };
     let v2 = AgentStoreV2::from_arc(state.agents.agent_store.db()).expect("open AgentStoreV2");
     v2.save_execution(&execution).expect("seed V2 execution");
-    agent_id
+    (agent_id, exec_id)
 }
 
 #[tokio::test]
 async fn latest_execution_conclusion_is_readable_via_cli_read_path() {
     let state = crate::common::create_test_server_state().await;
-    let agent_id = seed_executed_agent(&state).await;
+    let (agent_id, _) = seed_executed_agent(&state).await;
 
     let resp = get_agent_executions(State(state), Path(agent_id))
         .await
@@ -85,5 +112,148 @@ async fn latest_execution_conclusion_is_readable_via_cli_read_path() {
     assert!(
         conclusions.iter().any(|c| c.contains("冷库温度正常")),
         "conclusion must be readable on the list path; got {conclusions:?} from {execs:?}"
+    );
+}
+
+#[tokio::test]
+async fn v2_list_card_modal_agree_on_trigger_and_input_summary() {
+    let state = crate::common::create_test_server_state().await;
+    let (agent_id, exec_id) = seed_executed_agent(&state).await;
+
+    // List
+    let list_resp = get_agent_executions(State(state.clone()), Path(agent_id.clone()))
+        .await
+        .expect("list");
+    let list_body = list_resp.0.data.expect("list data");
+    let list_row = list_body["executions"]
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .expect("one execution");
+    assert_eq!(list_row["trigger_type"], "manual");
+    assert_eq!(
+        list_row["input_summary"]["vision_path"],
+        "inline_multimodal"
+    );
+    assert_eq!(list_row["input_summary"]["image_extracted"], true);
+    assert_eq!(
+        list_row["input_summary"]["image_source_field"],
+        "image_data"
+    );
+
+    // Modal / single detail
+    let detail_resp = get_execution(
+        State(state.clone()),
+        Path((agent_id.clone(), exec_id.clone())),
+    )
+    .await
+    .expect("detail");
+    let detail = detail_resp.0.data.expect("detail data");
+    assert_eq!(detail["trigger_type"], list_row["trigger_type"]);
+    assert_eq!(detail["input_summary"], list_row["input_summary"]);
+    assert!(
+        detail["decision_process"]["data_collected"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
+        "detail must project evidence into data_collected: {detail}"
+    );
+    assert!(
+        detail["decision_process"]["conclusion"]
+            .as_str()
+            .unwrap_or("")
+            .contains("冷库温度正常"),
+        "detail conclusion missing: {detail}"
+    );
+
+    // Card batch detail (previously legacy-only → empty for V2-only history)
+    let batch_resp = batch_get_executions(
+        State(state),
+        Path(agent_id),
+        Json(BatchExecutionIds {
+            ids: vec![exec_id.clone()],
+        }),
+    )
+    .await
+    .expect("batch");
+    let batch = batch_resp.0.data.expect("batch data");
+    let batch_row = batch["details"][&exec_id]
+        .as_object()
+        .cloned()
+        .expect("batch detail for seeded id");
+    assert_eq!(batch_row["trigger_type"], list_row["trigger_type"]);
+    assert_eq!(batch_row["input_summary"], list_row["input_summary"]);
+    assert_eq!(
+        batch_row["decision_process"]["conclusion"],
+        detail["decision_process"]["conclusion"]
+    );
+    assert_eq!(
+        batch_row["decision_process"]["data_collected"],
+        detail["decision_process"]["data_collected"]
+    );
+}
+
+#[tokio::test]
+async fn v2_list_falls_back_to_agent_trigger_when_source_missing() {
+    let state = crate::common::create_test_server_state().await;
+    let draft = AgentSpecDraft {
+        name: "event-cam".into(),
+        description: None,
+        user_prompt: "watch".into(),
+        llm_backend_id: None,
+        preset: None,
+        trigger: TriggerSpec::Event {
+            filter: json!({"device_id": "cam-1"}),
+        },
+        pacing: Default::default(),
+        input: InputContract {
+            requirements: vec![],
+        },
+        tool_policy: ToolPolicy::Unrestricted,
+        output: OutputContract::default(),
+        notify: Default::default(),
+        controlled_actions: vec![],
+    };
+    let created = create_agent_v2(State(state.clone()), Json(draft))
+        .await
+        .expect("create")
+        .0
+        .data
+        .expect("data");
+    let agent_id = created.agent.id;
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let execution = AgentExecutionRecordV2 {
+        id: "exec-legacy-source".into(),
+        agent_id: agent_id.clone(),
+        config_version: created.agent.config_version,
+        status: ExecutionStatusV2::Completed,
+        started_at: now_ms - 100,
+        finished_at: now_ms,
+        is_probe: false,
+        dry_run: false,
+        trigger_source: None, // pre-provenance row
+        stale_config: None,
+        evidence: json!({"items": [], "missing_keys": []}),
+        deliveries: vec![],
+        brief_text: Some("ok".into()),
+        conclusion: Some("ok".into()),
+        structured_result: None,
+        error: None,
+        alert_verdict: None,
+    };
+    let v2 = AgentStoreV2::from_arc(state.agents.agent_store.db()).expect("v2");
+    v2.save_execution(&execution).expect("seed");
+
+    let resp = get_agent_executions(State(state), Path(agent_id))
+        .await
+        .expect("list");
+    let body = resp.0.data.expect("data");
+    let row = body["executions"]
+        .as_array()
+        .and_then(|a| a.first())
+        .expect("row");
+    assert_eq!(
+        row["trigger_type"], "event",
+        "missing trigger_source should fall back to agent TriggerSpec::Event"
     );
 }
