@@ -12,7 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::error::{AgentError, Result};
-use crate::model::{AgentStatus, RunResponse};
+use crate::model::{AgentStatus, CallerInput, RunResponse};
 use crate::ports::ClockPort;
 use crate::service::AgentApplicationService;
 use crate::store::InMemoryAgentStore;
@@ -64,6 +64,15 @@ impl ExecutionCoordinator {
     }
 
     pub async fn submit(&self, agent_id: &str, source: SubmitSource) -> Result<RunResponse> {
+        self.submit_with_caller(agent_id, source, None).await
+    }
+
+    pub async fn submit_with_caller(
+        &self,
+        agent_id: &str,
+        source: SubmitSource,
+        caller: Option<CallerInput>,
+    ) -> Result<RunResponse> {
         let runtime = self.store.get_runtime(agent_id)?;
         if matches!(runtime.status, AgentStatus::Paused | AgentStatus::Stopped) {
             return Err(AgentError::NotRunnable(format!("{:?}", runtime.status)));
@@ -112,7 +121,13 @@ impl ExecutionCoordinator {
             }
         }
 
-        self.service.invoke(agent_id).await
+        // Scheduled/event/rule submits never carry ask text — only Manual.
+        let caller = if matches!(source, SubmitSource::Manual) {
+            caller
+        } else {
+            None
+        };
+        self.service.invoke_with_caller(agent_id, caller).await
     }
 }
 

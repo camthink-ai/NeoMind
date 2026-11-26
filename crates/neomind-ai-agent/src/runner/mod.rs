@@ -8,7 +8,7 @@ pub mod structured;
 mod tool_loop;
 
 pub use alert::{alert_from_model_text, evidence_shows_overload, value_shows_overload};
-pub use prompt_builder::build_evidence_prompt;
+pub use prompt_builder::{build_evidence_prompt, prompt_with_caller_input};
 pub use single_pass::{SinglePassRunner, LOCAL_BRIEF_BACKEND};
 pub use structured::{extract_json_object, project_output_fields, structured_system_addon};
 pub use tool_loop::ToolLoopRunner;

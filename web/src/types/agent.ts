@@ -246,6 +246,8 @@ export interface AgentExecution {
   trigger_type: string
   status: ExecutionStatus
   duration_ms: number
+  /** List DTO conclusion (V2 nests here; detail may also expose decision_process). */
+  conclusion?: string
   error?: string
   input_summary?: ExecutionInputSummary
 }
@@ -508,6 +510,8 @@ export interface AgentExecutionsResponse {
 export interface AgentExecutionDetail extends AgentExecution {
   decision_process?: DecisionProcess
   result?: ExecutionResult
+  /** V2 get_execution returns conclusion at the top level. */
+  brief_text?: string
 }
 
 /**
