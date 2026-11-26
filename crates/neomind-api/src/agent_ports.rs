@@ -367,6 +367,7 @@ impl SourceReadPort for HostSourceReadPort {
         let freshness = params.get("_freshness").cloned();
 
         if field == "*" {
+            let _ = self.deps.telemetry.flush();
             let metrics =
                 tokio::time::timeout(timeout, self.deps.telemetry.list_metrics(&source_key))
                     .await
@@ -495,6 +496,7 @@ impl HostSourceReadPort {
             });
         }
 
+        let _ = self.deps.telemetry.flush();
         let point = tokio::time::timeout(timeout, self.deps.telemetry.latest(source_key, field))
             .await
             .map_err(|_| AgentError::Source {

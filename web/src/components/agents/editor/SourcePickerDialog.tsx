@@ -811,7 +811,7 @@ export function SourcePickerDialog({
         source: { kind: 'whole_device', device_id: id },
         timeout_secs: 10,
         result_type: 'structured_json',
-        freshness: { kind: 'latest_within', max_age_secs: 3600 },
+        freshness: { kind: 'any' },
         on_missing: 'report_stale',
       },
     ])
@@ -839,7 +839,7 @@ export function SourcePickerDialog({
         source: { kind: 'device_metric', device_id: id, field },
         timeout_secs: 10,
         result_type: 'metric',
-        freshness: { kind: 'latest_within', max_age_secs: 3600 },
+        freshness: { kind: 'any' },
         on_missing: 'report_stale',
       },
     ])
@@ -868,7 +868,7 @@ export function SourcePickerDialog({
         auth_scope: `extension:${ext.id}:read`,
         timeout_secs: 10,
         result_type: 'structured_json',
-        freshness: { kind: 'latest_within', max_age_secs: 3600 },
+        freshness: { kind: 'any' },
         on_missing: 'report_stale',
       },
     ])
@@ -895,7 +895,7 @@ export function SourcePickerDialog({
         source: { kind: 'upstream_ai', agent_id: agent.id, field },
         timeout_secs: 10,
         result_type: 'structured_json',
-        freshness: { kind: 'latest_within', max_age_secs: 3600 },
+        freshness: { kind: 'any' },
         on_missing: 'report_stale',
       },
     ])

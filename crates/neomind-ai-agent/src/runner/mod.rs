@@ -70,7 +70,26 @@ pub fn apply_outcome(mut exec: AgentExecutionRecord, outcome: RunOutcome) -> Age
         exec.status = crate::model::ExecutionStatus::Partial;
     } else {
         exec.status = crate::model::ExecutionStatus::Failed;
-        exec.error = Some("all sources missing".into());
+        let details: Vec<String> = exec
+            .evidence
+            .items
+            .iter()
+            .filter_map(|item| match &item.quality {
+                crate::model::EvidenceQuality::Error { reason } => {
+                    Some(format!("{}: {reason}", item.key))
+                }
+                crate::model::EvidenceQuality::Stale => Some(format!("{}: stale", item.key)),
+                crate::model::EvidenceQuality::Missing => {
+                    Some(format!("{}: {}", item.key, item.binding_proof))
+                }
+                crate::model::EvidenceQuality::Fresh => None,
+            })
+            .collect();
+        exec.error = Some(if details.is_empty() {
+            "all sources missing".into()
+        } else {
+            format!("all sources missing ({})", details.join("; "))
+        });
     }
     exec
 }
