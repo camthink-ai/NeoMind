@@ -1850,6 +1850,42 @@ pub async fn get_agent_memory(
         .map_err(|e| ErrorResponse::internal(format!("Failed to get memory: {e}")))?
         .unwrap_or_default();
     let memory_store = &state.agents.system_memory_store;
+    let mut seen_names = std::collections::HashSet::new();
+    let mut knowledge_files: Vec<KnowledgeFileRefDto> = memory
+        .knowledge_files
+        .iter()
+        .map(|f| {
+            seen_names.insert(f.name.clone());
+            let content = memory_store
+                .read_agent_custom_file(&id, &f.name)
+                .unwrap_or_default();
+            KnowledgeFileRefDto {
+                name: f.name.clone(),
+                description: f.description.clone(),
+                content: Some(content),
+                created_at: format_datetime(f.created_at),
+                updated_at: format_datetime(f.updated_at),
+            }
+        })
+        .collect();
+    if let Ok(disk_files) = memory_store.list_agent_custom_files(&id) {
+        let now_iso = format_datetime(chrono::Utc::now().timestamp());
+        for (name, _) in disk_files {
+            if seen_names.contains(&name) {
+                continue;
+            }
+            let content = memory_store
+                .read_agent_custom_file(&id, &name)
+                .unwrap_or_default();
+            knowledge_files.push(KnowledgeFileRefDto {
+                name,
+                description: String::new(),
+                content: Some(content),
+                created_at: now_iso.clone(),
+                updated_at: now_iso.clone(),
+            });
+        }
+    }
     let dto = AgentMemoryDto {
         journal: ExecutionJournalDto {
             records: memory
@@ -1866,22 +1902,7 @@ pub async fn get_agent_memory(
                 .collect(),
             max_records: memory.journal.max_records,
         },
-        knowledge_files: memory
-            .knowledge_files
-            .iter()
-            .map(|f| {
-                let content = memory_store
-                    .read_agent_custom_file(&id, &f.name)
-                    .unwrap_or_default();
-                KnowledgeFileRefDto {
-                    name: f.name.clone(),
-                    description: f.description.clone(),
-                    content: Some(content),
-                    created_at: format_datetime(f.created_at),
-                    updated_at: format_datetime(f.updated_at),
-                }
-            })
-            .collect(),
+        knowledge_files,
         updated_at: format_datetime(memory.updated_at),
     };
     ok(json!(dto))
@@ -1910,6 +1931,9 @@ pub async fn clear_agent_memory(
     record_store
         .save_memory(&id, &AgentMemory::default())
         .map_err(|e| ErrorResponse::internal(format!("Failed to clear memory: {e}")))?;
+    if let Err(e) = state.agents.system_memory_store.clean_agent_dir(&id) {
+        tracing::warn!(agent_id = %id, "Failed to clean agent memory dir on clear: {}", e);
+    }
     tracing::info!("Cleared memory for AI Agent: {}", id);
     ok(json!({ "ok": true }))
 }

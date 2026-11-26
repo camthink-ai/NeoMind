@@ -1203,7 +1203,8 @@ impl ServerState {
             devices.service.clone(),
             extensions.registry.clone(),
             extensions.metrics_storage.clone(),
-        );
+        )
+        .with_memory_store(agents.system_memory_store.clone());
         if let Some(ref bus) = core.event_bus {
             host_deps = host_deps
                 .with_event_bus(bus.clone())
@@ -1546,7 +1547,8 @@ impl ServerState {
             devices.service.clone(),
             extensions.registry.clone(),
             extensions.metrics_storage.clone(),
-        );
+        )
+        .with_memory_store(system_memory_store.clone());
         if let Some(ref bus) = core.event_bus {
             host_deps = host_deps
                 .with_event_bus(bus.clone())

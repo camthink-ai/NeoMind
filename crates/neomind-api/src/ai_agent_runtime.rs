@@ -19,14 +19,14 @@ use neomind_ai_agent::model::{
 };
 use neomind_ai_agent::persist::{persist_spec, DurableAgentStore};
 use neomind_ai_agent::ports::{ClockPort, NotifyPort, SourceReadPort, SystemClock};
-use neomind_ai_agent::runner::SinglePassRunner;
+use neomind_ai_agent::runner::{MemoryContext, SinglePassRunner};
 use neomind_ai_agent::service::{AgentApplicationService, RunOptions};
 use neomind_ai_agent::side_effects::{deps_fresh, Notifier, SideEffectBoundary};
 use neomind_core::eventbus::EventBus;
 use neomind_core::NeoMindEvent;
 use neomind_storage::agent_store::AgentRecordStore;
 use neomind_storage::agents::ExecutionRecord as JournalExecutionRecord;
-use neomind_storage::AgentStore;
+use neomind_storage::{AgentStore, MarkdownMemoryStore};
 
 use crate::agent_ports::{
     HostAgentDeps, HostLlmPort, HostNotifyPort, HostSideEffectPort, HostSourceReadPort,
@@ -46,6 +46,7 @@ pub struct HostedAiAgentRuntime {
     pub llm: Arc<HostLlmPort>,
     event_bus: Option<Arc<EventBus>>,
     metric_publisher: Option<Arc<VirtualMetricPublisher>>,
+    memory_store: Option<Arc<MarkdownMemoryStore>>,
     scheduler: Arc<std::sync::Mutex<Option<Arc<AgentScheduler>>>>,
     started: std::sync::atomic::AtomicBool,
 }
@@ -72,6 +73,7 @@ impl HostedAiAgentRuntime {
 
         let event_bus = deps.event_bus.clone();
         let metric_publisher = deps.metric_publisher.clone();
+        let memory_store = deps.memory_store.clone();
         let sources = Arc::new(HostSourceReadPort::new(deps.clone()));
         let notify = Arc::new(HostNotifyPort::new(deps.message_manager.clone()));
         let writes = Arc::new(HostSideEffectPort::new(
@@ -120,6 +122,7 @@ impl HostedAiAgentRuntime {
             llm,
             event_bus,
             metric_publisher,
+            memory_store,
             scheduler: Arc::new(std::sync::Mutex::new(None)),
             started: std::sync::atomic::AtomicBool::new(false),
         })
@@ -232,7 +235,20 @@ impl HostedAiAgentRuntime {
     }
 
     pub async fn dry_run(&self, id: &str) -> AgentResult<RunResponse> {
-        let resp = self.service.dry_run(id).await?;
+        let operator_notes = self.load_operator_notes(id);
+        let memory_context = self.load_memory_context(id);
+        let resp = self
+            .service
+            .dry_run_with_options(
+                id,
+                RunOptions {
+                    execution_id: None,
+                    caller: None,
+                    operator_notes,
+                    memory_context,
+                },
+            )
+            .await?;
         Ok(resp)
     }
 
@@ -258,6 +274,7 @@ impl HostedAiAgentRuntime {
         let started_ms = self.clock.now_ms();
         let execution_id = format!("exec_{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let operator_notes = self.load_operator_notes(id);
+        let memory_context = self.load_memory_context(id);
 
         let mut emitted_started = false;
         if let Some(bus) = &self.event_bus {
@@ -292,6 +309,7 @@ impl HostedAiAgentRuntime {
                     execution_id: Some(execution_id.clone()),
                     caller,
                     operator_notes,
+                    memory_context,
                 },
             )
             .await;
@@ -348,6 +366,100 @@ impl HostedAiAgentRuntime {
                 }
             })
             .collect()
+    }
+
+    /// Load recent execution journal entries and agent knowledge files from
+    /// durable storage into a token-bounded [`MemoryContext`] for the next run.
+    pub(crate) fn load_memory_context(&self, id: &str) -> MemoryContext {
+        const MAX_JOURNAL_ENTRIES: usize = 5;
+        const MAX_ENTRY_CHARS: usize = 240;
+        const MAX_FILE_CHARS: usize = 1200;
+        const MAX_TOTAL_KNOWLEDGE_CHARS: usize = 3000;
+
+        let mut ctx = MemoryContext::default();
+        let mut seen_files = std::collections::HashSet::new();
+        let mut remaining_budget = MAX_TOTAL_KNOWLEDGE_CHARS;
+
+        if let Some(store) = &self.durable.store {
+            if let Ok(Some(memory)) = store.get_memory(id) {
+                let start = memory
+                    .journal
+                    .records
+                    .len()
+                    .saturating_sub(MAX_JOURNAL_ENTRIES);
+                for rec in &memory.journal.records[start..] {
+                    let ts = chrono::DateTime::from_timestamp(rec.timestamp, 0)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+                        .unwrap_or_else(|| rec.timestamp.to_string());
+                    let status = if rec.success { "OK" } else { "FAIL" };
+                    let outcome = truncate_chars(rec.outcome.trim(), MAX_ENTRY_CHARS);
+                    if outcome.is_empty() {
+                        continue;
+                    }
+                    let line = if rec.action_taken.trim().is_empty() {
+                        format!("[{ts}] [{status}] {outcome}")
+                    } else {
+                        let action = truncate_chars(rec.action_taken.trim(), 80);
+                        format!("[{ts}] [{status}] {outcome} (action: {action})")
+                    };
+                    ctx.journal_entries.push(line);
+                }
+
+                if let Some(mem_store) = &self.memory_store {
+                    for f in &memory.knowledge_files {
+                        if remaining_budget == 0 {
+                            break;
+                        }
+                        seen_files.insert(f.name.clone());
+                        if let Ok(raw) = mem_store.read_agent_custom_file(id, &f.name) {
+                            let trimmed = raw.trim();
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+                            let cap = remaining_budget.min(MAX_FILE_CHARS);
+                            let content = truncate_chars(trimmed, cap);
+                            remaining_budget =
+                                remaining_budget.saturating_sub(content.chars().count());
+                            ctx.knowledge_files.push((
+                                f.name.clone(),
+                                f.description.clone(),
+                                content,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also surface any markdown files placed directly in the agent's memory
+        // directory (e.g. written by tools or API) even if not yet indexed in redb.
+        if remaining_budget > 0 {
+            if let Some(mem_store) = &self.memory_store {
+                if let Ok(files) = mem_store.list_agent_custom_files(id) {
+                    for (name, _) in files {
+                        if remaining_budget == 0 {
+                            break;
+                        }
+                        if seen_files.contains(&name) {
+                            continue;
+                        }
+                        if let Ok(raw) = mem_store.read_agent_custom_file(id, &name) {
+                            let trimmed = raw.trim();
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+                            let cap = remaining_budget.min(MAX_FILE_CHARS);
+                            let content = truncate_chars(trimmed, cap);
+                            remaining_budget =
+                                remaining_budget.saturating_sub(content.chars().count());
+                            ctx.knowledge_files.push((name, String::new(), content));
+                        }
+                    }
+                }
+            }
+        }
+
+        ctx
     }
 
     pub fn explain_last(&self, id: &str) -> AgentResult<String> {
@@ -1608,5 +1720,44 @@ mod tests {
             saw_completed,
             "must emit AgentExecutionCompleted on EventBus"
         );
+    }
+
+    #[tokio::test]
+    async fn memory_context_loads_journal_and_knowledge_files_without_mutating_spec() {
+        let store = AgentStore::memory().unwrap();
+        let mem_dir = tempfile::tempdir().unwrap();
+        let mem_store = Arc::new(MarkdownMemoryStore::with_config(
+            mem_dir.path().to_path_buf(),
+            neomind_storage::MemoryConfig::default(),
+        ));
+        let (base_deps, _, _) = test_deps().await;
+        let deps = base_deps.with_memory_store(mem_store.clone());
+        let runtime = HostedAiAgentRuntime::build(store.clone(), deps).unwrap();
+
+        let (spec, _) = runtime.create(local_brief_draft("memory-loop")).unwrap();
+        let original_prompt = spec.user_prompt.clone();
+
+        // First run appends to the execution journal.
+        let _ = runtime.invoke(&spec.id).await.unwrap();
+
+        // Write an agent knowledge file into the agent's memory directory.
+        mem_store
+            .write_agent_custom_file(&spec.id, "sop", "Escalate when temp > 30C.")
+            .await
+            .unwrap();
+
+        let ctx = runtime.load_memory_context(&spec.id);
+        assert_eq!(ctx.journal_entries.len(), 1);
+        assert!(ctx.journal_entries[0].contains("[OK]"));
+        assert_eq!(ctx.knowledge_files.len(), 1);
+        assert_eq!(ctx.knowledge_files[0].0, "sop");
+        assert!(ctx.knowledge_files[0]
+            .2
+            .contains("Escalate when temp > 30C."));
+
+        // Second run injects memory context run-locally without mutating stored spec.
+        let _ = runtime.invoke(&spec.id).await.unwrap();
+        let (reloaded, _) = runtime.get(&spec.id).unwrap();
+        assert_eq!(reloaded.user_prompt, original_prompt);
     }
 }

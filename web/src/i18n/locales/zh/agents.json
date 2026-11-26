@@ -192,7 +192,7 @@
     "explainLastEmpty": "暂无正式执行说明",
     "partialRuns": "部分完成",
     "runsToday": "今日运行",
-    "memoryNote": "执行日志记录近期运行结果，知识文件在多次执行间持续保留。",
+    "memoryNote": "近期执行日志与智能体知识文件会在每次执行时自动注入作为历史上下文参考（但不会替代缺失的实时数据）。",
     "noContent": "暂无内容"
   },
   "tabs": {

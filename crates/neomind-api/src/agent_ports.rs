@@ -38,6 +38,7 @@ pub struct HostAgentDeps {
     pub extension_metrics: Arc<ExtensionMetricsStorage>,
     pub event_bus: Option<Arc<EventBus>>,
     pub metric_publisher: Option<Arc<VirtualMetricPublisher>>,
+    pub memory_store: Option<Arc<neomind_storage::MarkdownMemoryStore>>,
 }
 
 impl HostAgentDeps {
@@ -56,6 +57,7 @@ impl HostAgentDeps {
             extension_metrics,
             event_bus: None,
             metric_publisher: None,
+            memory_store: None,
         }
     }
 
@@ -66,6 +68,14 @@ impl HostAgentDeps {
 
     pub fn with_metric_publisher(mut self, publisher: Arc<VirtualMetricPublisher>) -> Self {
         self.metric_publisher = Some(publisher);
+        self
+    }
+
+    pub fn with_memory_store(
+        mut self,
+        memory_store: Arc<neomind_storage::MarkdownMemoryStore>,
+    ) -> Self {
+        self.memory_store = Some(memory_store);
         self
     }
 }

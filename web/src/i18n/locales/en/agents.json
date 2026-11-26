@@ -192,7 +192,7 @@
     "explainLastEmpty": "No formal run explanation yet",
     "partialRuns": "Partial",
     "runsToday": "Today",
-    "memoryNote": "Execution journal records recent runs; knowledge files persist across runs.",
+    "memoryNote": "Recent execution journal entries and agent knowledge files are automatically injected as historical context on each run (without substituting missing live data).",
     "noContent": "No content available"
   },
   "tabs": {

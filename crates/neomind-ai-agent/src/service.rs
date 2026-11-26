@@ -16,7 +16,8 @@ use crate::model::{
 };
 use crate::ports::{CapabilityClass, ClockPort};
 use crate::runner::{
-    apply_outcome, prompt_with_caller_input, prompt_with_operator_notes, AgentRunner,
+    apply_outcome, prompt_with_caller_input, prompt_with_memory_context,
+    prompt_with_operator_notes, AgentRunner, MemoryContext,
 };
 use crate::side_effects::SideEffectBoundary;
 use crate::store::InMemoryAgentStore;
@@ -30,6 +31,8 @@ pub struct RunOptions {
     pub caller: Option<CallerInput>,
     /// Optional persisted operator notes (`user_messages`) appended to the run prompt.
     pub operator_notes: Vec<String>,
+    /// Optional persisted agent memory (recent execution journal + knowledge files).
+    pub memory_context: MemoryContext,
 }
 
 pub struct AgentApplicationService {
@@ -152,8 +155,12 @@ impl AgentApplicationService {
 
     /// Authorized read-only dry-run; does not enter formal history; notify=0.
     pub async fn dry_run(&self, id: &str) -> Result<RunResponse> {
-        self.execute_inner(id, true, false, None, RunOptions::default())
-            .await
+        self.dry_run_with_options(id, RunOptions::default()).await
+    }
+
+    /// Authorized read-only dry-run with run-local options (operator notes / memory context).
+    pub async fn dry_run_with_options(&self, id: &str, options: RunOptions) -> Result<RunResponse> {
+        self.execute_inner(id, true, false, None, options).await
     }
 
     /// Formal invoke — writes history and may notify (manual submit provenance).
@@ -250,6 +257,10 @@ impl AgentApplicationService {
 
         // Run-local prompt only — never mutate the stored AgentSpec.
         let mut run_spec = spec.clone();
+        if !options.memory_context.is_empty() {
+            run_spec.user_prompt =
+                prompt_with_memory_context(&run_spec.user_prompt, &options.memory_context);
+        }
         if !options.operator_notes.is_empty() {
             run_spec.user_prompt =
                 prompt_with_operator_notes(&run_spec.user_prompt, &options.operator_notes);
