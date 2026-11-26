@@ -686,31 +686,37 @@ export function ScheduleNotifySection({
               </a>
             )}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
             {(() => {
               const imOn = safeNotify.channels.includes('IM')
               return (
                 <button
                   type="button"
                   onClick={() => toggleChannel('IM')}
-                  title={t('editorV2.notifyUnified.imHint')}
                   className={cn(
-                    'inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors',
+                    'flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors',
                     imOn
                       ? 'border-primary bg-primary-light text-primary'
                       : 'border-border bg-card text-foreground hover:bg-muted-30',
                   )}
                 >
-                  <span
-                    className={cn(
-                      'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
-                      imOn ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
-                    )}
-                  >
-                    <Check className="h-3 w-3" />
-                  </span>
-                  <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                  <span>{t('editorV2.notifyUnified.imBuiltin')}</span>
+                  <div className="flex w-full items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2 text-xs font-medium">
+                      <MessageSquare className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                      <span className="truncate">{t('editorV2.notifyUnified.imBuiltin')}</span>
+                    </span>
+                    <span
+                      className={cn(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+                        imOn ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
+                      )}
+                    >
+                      <Check className="h-3 w-3" />
+                    </span>
+                  </div>
+                  <p className="line-clamp-1 text-nano text-muted-foreground">
+                    {t('editorV2.notifyUnified.imHint')}
+                  </p>
                 </button>
               )
             })()}
@@ -724,28 +730,31 @@ export function ScheduleNotifySection({
                     type="button"
                     onClick={() => toggleChannel(ch.name)}
                     className={cn(
-                      'inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors',
+                      'flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-colors',
                       on
                         ? 'border-primary bg-primary-light text-primary'
                         : 'border-border bg-card text-foreground hover:bg-muted-30',
                       !ch.enabled && 'opacity-50',
                     )}
                   >
-                    <span
-                      className={cn(
-                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
-                        on ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
-                      )}
-                    >
-                      <Check className="h-3 w-3" />
-                    </span>
-                    <Bell className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                    <span>{ch.name}</span>
-                    {ch.channel_type && (
-                      <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-nano text-muted-foreground">
-                        {ch.channel_type}
+                    <div className="flex w-full items-center justify-between gap-2">
+                      <span className="flex min-w-0 items-center gap-2 text-xs font-medium">
+                        <Bell className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                        <span className="truncate">{ch.name}</span>
                       </span>
-                    )}
+                      <span
+                        className={cn(
+                          'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+                          on ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
+                        )}
+                      >
+                        <Check className="h-3 w-3" />
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-nano text-muted-foreground">
+                      <span className="font-mono">{ch.channel_type || 'channel'}</span>
+                      {!ch.enabled && <span>· {t('common:disabled', 'Disabled')}</span>}
+                    </div>
                   </button>
                 )
               })}
