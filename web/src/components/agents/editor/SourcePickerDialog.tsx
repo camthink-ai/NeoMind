@@ -8,27 +8,28 @@
  *
  * Each bound requirement carries inline freshness & on_missing controls.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  Activity,
   Bot,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Cpu,
+  Database,
   Plus,
   Puzzle,
   Search,
+  Server,
   Trash2,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
+import { useIsMobile } from '@/hooks/useMobile'
 import {
   Select,
   SelectContent,
@@ -37,6 +38,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { textMicro, textNano } from '@/design-system/tokens/typography'
 import type {
   AiAgent,
   Device,
@@ -340,7 +342,7 @@ export function UnifiedInputsSection({
 }
 
 // ============================================================================
-// Sibling Dialog: Searchable, grouped source picker (Devices+Metrics / Extensions / Upstream AI)
+// Sibling Dialog: UnifiedFormDialog + Master-Detail Source Picker
 // ============================================================================
 
 export interface SourcePickerDialogProps {
@@ -355,6 +357,16 @@ export interface SourcePickerDialogProps {
   excludeAgentId?: string
 }
 
+type PickerTab = 'devices' | 'extensions' | 'ai'
+
+function formatMetricValue(val: unknown): string {
+  if (val === null || val === undefined) return ''
+  if (typeof val === 'number') return Number.isInteger(val) ? String(val) : val.toFixed(2)
+  if (typeof val === 'boolean') return val ? 'true' : 'false'
+  if (typeof val === 'object') return JSON.stringify(val)
+  return String(val)
+}
+
 export function SourcePickerDialog({
   open,
   onOpenChange,
@@ -366,15 +378,57 @@ export function SourcePickerDialog({
   agents,
   excludeAgentId,
 }: SourcePickerDialogProps) {
-  const { t } = useTranslation('agents')
-  const [tab, setTab] = useState<'devices' | 'extensions' | 'ai'>('devices')
+  const { t } = useTranslation(['agents', 'common'])
+  const isMobile = useIsMobile()
+  const [tab, setTab] = useState<PickerTab>('devices')
   const [query, setQuery] = useState('')
-  const requirements = value?.requirements ?? []
+  const [staged, setStaged] = useState<InputRequirement[]>([])
+  const [activeDeviceId, setActiveDeviceId] = useState<string | null>(null)
+  const [activeExtId, setActiveExtId] = useState<string | null>(null)
+  const [activeAgentId, setActiveAgentId] = useState<string | null>(null)
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
+
+  // Reset staged state from committed value each time dialog opens
+  useEffect(() => {
+    if (!open) return
+    setStaged(value?.requirements ?? [])
+    setQuery('')
+    setMobileDetailOpen(false)
+  }, [open, value])
 
   const deviceTypeMap = useMemo(
     () => new Map(deviceTypes.map((dt) => [dt.device_type, dt])),
     [deviceTypes],
   )
+
+  // Merge template metrics (from DeviceType) with runtime current_values keys
+  const deviceMetricsMap = useMemo(() => {
+    const map = new Map<string, Array<{ name: string; display_name?: string; unit?: string; value?: unknown }>>()
+    for (const d of devices) {
+      const id = d.device_id || d.id
+      const dt = deviceTypeMap.get(d.device_type)
+      const list: Array<{ name: string; display_name?: string; unit?: string; value?: unknown }> = []
+      const seen = new Set<string>()
+      for (const m of dt?.metrics ?? []) {
+        seen.add(m.name)
+        list.push({
+          name: m.name,
+          display_name: m.display_name,
+          unit: m.unit,
+          value: d.current_values?.[m.name],
+        })
+      }
+      if (d.current_values && typeof d.current_values === 'object') {
+        for (const [k, v] of Object.entries(d.current_values)) {
+          if (!seen.has(k)) {
+            list.push({ name: k, display_name: k, value: v })
+          }
+        }
+      }
+      map.set(id, list)
+    }
+    return map
+  }, [devices, deviceTypeMap])
 
   const q = query.trim().toLowerCase()
 
@@ -385,24 +439,30 @@ export function SourcePickerDialog({
         const id = (d.device_id || d.id || '').toLowerCase()
         const name = (d.name || '').toLowerCase()
         const type = (d.device_type || '').toLowerCase()
-        const dt = deviceTypeMap.get(d.device_type)
-        const metricMatch = dt?.metrics?.some(
+        const metrics = deviceMetricsMap.get(d.device_id || d.id) ?? []
+        const metricMatch = metrics.some(
           (m) =>
             m.name.toLowerCase().includes(q) ||
             (m.display_name || '').toLowerCase().includes(q),
         )
-        return id.includes(q) || name.includes(q) || type.includes(q) || Boolean(metricMatch)
+        return id.includes(q) || name.includes(q) || type.includes(q) || metricMatch
       }),
-    [devices, deviceTypeMap, q],
+    [devices, deviceMetricsMap, q],
   )
 
   const filteredExtensions = useMemo(
     () =>
       extensions.filter((e) => {
         if (!q) return true
+        const cmdMatch = e.commands?.some(
+          (c) =>
+            c.id.toLowerCase().includes(q) ||
+            (c.display_name || '').toLowerCase().includes(q),
+        )
         return (
           e.id.toLowerCase().includes(q) ||
-          (e.name || '').toLowerCase().includes(q)
+          (e.name || '').toLowerCase().includes(q) ||
+          Boolean(cmdMatch)
         )
       }),
     [extensions, q],
@@ -422,62 +482,116 @@ export function SourcePickerDialog({
     [agents, excludeAgentId, q],
   )
 
+  // Keep master selection valid on open / filter changes
+  useEffect(() => {
+    if (!filteredDevices.some((d) => (d.device_id || d.id) === activeDeviceId)) {
+      const first = filteredDevices[0]
+      setActiveDeviceId(first ? first.device_id || first.id : null)
+    }
+  }, [filteredDevices, activeDeviceId])
+
+  useEffect(() => {
+    if (!filteredExtensions.some((e) => e.id === activeExtId)) {
+      setActiveExtId(filteredExtensions[0]?.id ?? null)
+    }
+  }, [filteredExtensions, activeExtId])
+
+  useEffect(() => {
+    if (!aiAgentsWithFields.some((a) => a.id === activeAgentId)) {
+      setActiveAgentId(aiAgentsWithFields[0]?.id ?? null)
+    }
+  }, [aiAgentsWithFields, activeAgentId])
+
+  const selectedDevice = useMemo(
+    () => filteredDevices.find((d) => (d.device_id || d.id) === activeDeviceId) ?? null,
+    [filteredDevices, activeDeviceId],
+  )
+  const selectedExtension = useMemo(
+    () => filteredExtensions.find((e) => e.id === activeExtId) ?? null,
+    [filteredExtensions, activeExtId],
+  )
+  const selectedAgent = useMemo(
+    () => aiAgentsWithFields.find((a) => a.id === activeAgentId) ?? null,
+    [aiAgentsWithFields, activeAgentId],
+  )
+
   const hasWholeDevice = (deviceId: string) =>
-    requirements.some(
-      (r) => r.source.kind === 'whole_device' && r.source.device_id === deviceId,
-    )
+    staged.some((r) => r.source.kind === 'whole_device' && r.source.device_id === deviceId)
 
   const hasDeviceMetric = (deviceId: string, field: string) =>
-    requirements.some(
+    staged.some(
       (r) =>
         r.source.kind === 'device_metric' &&
         r.source.device_id === deviceId &&
         r.source.field === field,
     )
 
-  const hasExtension = (extId: string) =>
-    requirements.some(
-      (r) => r.source.kind === 'extension_instance' && r.source.id === extId,
+  const hasExtension = (extId: string, operation?: string) =>
+    staged.some(
+      (r) =>
+        r.source.kind === 'extension_instance' &&
+        r.source.id === extId &&
+        (operation === undefined ? !r.operation : r.operation === operation),
     )
 
   const hasUpstreamAi = (agentId: string, field: string) =>
-    requirements.some(
+    staged.some(
       (r) =>
         r.source.kind === 'upstream_ai' &&
         r.source.agent_id === agentId &&
         r.source.field === field,
     )
 
+  const deviceSelectedCount = (deviceId: string) =>
+    staged.filter(
+      (r) =>
+        (r.source.kind === 'whole_device' || r.source.kind === 'device_metric') &&
+        r.source.device_id === deviceId,
+    ).length
+
+  const extSelectedCount = (extId: string) =>
+    staged.filter((r) => r.source.kind === 'extension_instance' && r.source.id === extId).length
+
+  const aiSelectedCount = (agentId: string) =>
+    staged.filter((r) => r.source.kind === 'upstream_ai' && r.source.agent_id === agentId).length
+
+  const tabSelectedCounts = useMemo(
+    () => ({
+      devices: staged.filter(
+        (r) => r.source.kind === 'whole_device' || r.source.kind === 'device_metric',
+      ).length,
+      extensions: staged.filter((r) => r.source.kind === 'extension_instance').length,
+      ai: staged.filter((r) => r.source.kind === 'upstream_ai').length,
+    }),
+    [staged],
+  )
+
   const toggleWholeDevice = (device: Device) => {
     const id = device.device_id || device.id
     if (hasWholeDevice(id)) {
-      onChange({
-        requirements: requirements.filter(
-          (r) => !(r.source.kind === 'whole_device' && r.source.device_id === id),
-        ),
-      })
+      setStaged((prev) =>
+        prev.filter((r) => !(r.source.kind === 'whole_device' && r.source.device_id === id)),
+      )
       return
     }
-    onChange({
-      requirements: [
-        ...requirements,
-        {
-          key: uniqueKey(`device_${id}`, requirements),
-          source: { kind: 'whole_device', device_id: id },
-          timeout_secs: 10,
-          result_type: 'structured_json',
-          freshness: { kind: 'latest_within', max_age_secs: 3600 },
-          on_missing: 'report_stale',
-        },
-      ],
-    })
+    setStaged((prev) => [
+      ...prev,
+      {
+        key: uniqueKey(`device_${id}`, prev),
+        source: { kind: 'whole_device', device_id: id },
+        timeout_secs: 10,
+        result_type: 'structured_json',
+        freshness: { kind: 'latest_within', max_age_secs: 3600 },
+        on_missing: 'report_stale',
+      },
+    ])
   }
 
   const toggleDeviceMetric = (device: Device, field: string) => {
     const id = device.device_id || device.id
     if (hasDeviceMetric(id, field)) {
-      onChange({
-        requirements: requirements.filter(
+      setStaged((prev) =>
+        prev.filter(
           (r) =>
             !(
               r.source.kind === 'device_metric' &&
@@ -485,55 +599,55 @@ export function SourcePickerDialog({
               r.source.field === field
             ),
         ),
-      })
+      )
       return
     }
-    onChange({
-      requirements: [
-        ...requirements,
-        {
-          key: uniqueKey(`${id}_${field}`, requirements),
-          source: { kind: 'device_metric', device_id: id, field },
-          timeout_secs: 10,
-          result_type: 'metric',
-          freshness: { kind: 'latest_within', max_age_secs: 3600 },
-          on_missing: 'report_stale',
-        },
-      ],
-    })
+    setStaged((prev) => [
+      ...prev,
+      {
+        key: uniqueKey(`${id}_${field}`, prev),
+        source: { kind: 'device_metric', device_id: id, field },
+        timeout_secs: 10,
+        result_type: 'metric',
+        freshness: { kind: 'latest_within', max_age_secs: 3600 },
+        on_missing: 'report_stale',
+      },
+    ])
   }
 
-  const toggleExtension = (ext: Extension) => {
-    if (hasExtension(ext.id)) {
-      onChange({
-        requirements: requirements.filter(
-          (r) => !(r.source.kind === 'extension_instance' && r.source.id === ext.id),
+  const toggleExtension = (ext: Extension, operation?: string) => {
+    if (hasExtension(ext.id, operation)) {
+      setStaged((prev) =>
+        prev.filter(
+          (r) =>
+            !(
+              r.source.kind === 'extension_instance' &&
+              r.source.id === ext.id &&
+              (operation === undefined ? !r.operation : r.operation === operation)
+            ),
         ),
-      })
+      )
       return
     }
-    const op = ext.commands?.[0]?.id
-    onChange({
-      requirements: [
-        ...requirements,
-        {
-          key: uniqueKey(`ext_${ext.id}`, requirements),
-          source: { kind: 'extension_instance', id: ext.id },
-          operation: op || undefined,
-          auth_scope: `extension:${ext.id}:read`,
-          timeout_secs: 10,
-          result_type: 'structured_json',
-          freshness: { kind: 'latest_within', max_age_secs: 3600 },
-          on_missing: 'report_stale',
-        },
-      ],
-    })
+    setStaged((prev) => [
+      ...prev,
+      {
+        key: uniqueKey(operation ? `ext_${ext.id}_${operation}` : `ext_${ext.id}`, prev),
+        source: { kind: 'extension_instance', id: ext.id },
+        operation,
+        auth_scope: `extension:${ext.id}:read`,
+        timeout_secs: 10,
+        result_type: 'structured_json',
+        freshness: { kind: 'latest_within', max_age_secs: 3600 },
+        on_missing: 'report_stale',
+      },
+    ])
   }
 
   const toggleUpstreamAi = (agent: AiAgent, field: string) => {
     if (hasUpstreamAi(agent.id, field)) {
-      onChange({
-        requirements: requirements.filter(
+      setStaged((prev) =>
+        prev.filter(
           (r) =>
             !(
               r.source.kind === 'upstream_ai' &&
@@ -541,227 +655,636 @@ export function SourcePickerDialog({
               r.source.field === field
             ),
         ),
-      })
+      )
       return
     }
-    onChange({
-      requirements: [
-        ...requirements,
-        {
-          key: uniqueKey(`ai_${field}`, requirements),
-          source: { kind: 'upstream_ai', agent_id: agent.id, field },
-          timeout_secs: 10,
-          result_type: 'structured_json',
-          freshness: { kind: 'latest_within', max_age_secs: 3600 },
-          on_missing: 'report_stale',
-        },
-      ],
-    })
+    setStaged((prev) => [
+      ...prev,
+      {
+        key: uniqueKey(`ai_${field}`, prev),
+        source: { kind: 'upstream_ai', agent_id: agent.id, field },
+        timeout_secs: 10,
+        result_type: 'structured_json',
+        freshness: { kind: 'latest_within', max_age_secs: 3600 },
+        on_missing: 'report_stale',
+      },
+    ])
   }
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="z-[110] max-w-2xl max-h-[80vh] flex flex-col gap-3 overflow-hidden">
-        <DialogHeader>
-          <DialogTitle>{t('editorV2.picker.title')}</DialogTitle>
-        </DialogHeader>
+  const handleConfirm = () => {
+    onChange({ requirements: staged })
+    onOpenChange(false)
+  }
 
-        {/* Search + group tabs */}
-        <div className="space-y-2.5">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t('editorV2.picker.searchPlaceholder')}
-              className="pl-9"
-            />
-          </div>
-          <div className="flex gap-1.5">
-            {([
-              { id: 'devices', Icon: Cpu, label: t('editorV2.picker.tabDevices'), count: filteredDevices.length },
-              { id: 'extensions', Icon: Puzzle, label: t('editorV2.picker.tabExtensions'), count: filteredExtensions.length },
-              { id: 'ai', Icon: Bot, label: t('editorV2.picker.tabAi'), count: aiAgentsWithFields.length },
-            ] as const).map(({ id, Icon, label, count }) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setTab(id)}
-                className={cn(
-                  'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-                  tab === id
-                    ? 'border-primary bg-primary-light text-primary'
-                    : 'border-border bg-card text-muted-foreground hover:text-foreground',
-                )}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {label}
-                <span className="opacity-70">({count})</span>
-              </button>
-            ))}
-          </div>
+  const tabs: Array<{
+    id: PickerTab
+    Icon: typeof Cpu
+    label: string
+    count: number
+    selected: number
+  }> = [
+    {
+      id: 'devices',
+      Icon: Cpu,
+      label: t('agents:editorV2.picker.tabDevices'),
+      count: filteredDevices.length,
+      selected: tabSelectedCounts.devices,
+    },
+    {
+      id: 'extensions',
+      Icon: Puzzle,
+      label: t('agents:editorV2.picker.tabExtensions'),
+      count: filteredExtensions.length,
+      selected: tabSelectedCounts.extensions,
+    },
+    {
+      id: 'ai',
+      Icon: Bot,
+      label: t('agents:editorV2.picker.tabAi'),
+      count: aiAgentsWithFields.length,
+      selected: tabSelectedCounts.ai,
+    },
+  ]
+
+  const masterPane = (
+    <div className="flex h-full flex-col">
+      {/* Search inside master pane */}
+      <div className="border-b border-border p-2.5">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('agents:editorV2.picker.searchPlaceholder')}
+            className="h-8 pl-8 text-xs"
+          />
         </div>
+      </div>
 
-        {/* Scrollable catalog */}
-        <div className="min-h-0 flex-1 overflow-y-auto space-y-2 pr-1">
-          {tab === 'devices' && (
-            filteredDevices.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                {t('editorV2.picker.noDevices')}
-              </p>
-            ) : (
-              filteredDevices.map((d) => {
-                const id = d.device_id || d.id
-                const dt = deviceTypeMap.get(d.device_type)
-                const metrics = dt?.metrics ?? []
-                const wholeOn = hasWholeDevice(id)
-                return (
-                  <div key={id} className="rounded-lg border border-border bg-card p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={cn(
-                              'h-2 w-2 shrink-0 rounded-full',
-                              d.online ? 'bg-success' : 'bg-muted-foreground/40',
-                            )}
-                          />
-                          <span className="truncate text-sm font-medium text-foreground">
-                            {d.name || id}
-                          </span>
-                          <span className="truncate font-mono text-xs text-muted-foreground">
-                            {id}
-                          </span>
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={wholeOn ? 'default' : 'outline'}
-                        onClick={() => toggleWholeDevice(d)}
-                        className="h-7 shrink-0 text-xs"
-                      >
-                        {wholeOn && <Check className="mr-1 h-3 w-3" />}
-                        {wholeOn ? t('editorV2.picker.wholeDeviceAdded') : t('editorV2.picker.wholeDevice')}
-                      </Button>
-                    </div>
-                    {metrics.length > 0 && (
-                      <div className="space-y-1">
-                        <div className="text-xs text-muted-foreground">
-                          {t('editorV2.picker.metrics')}
-                        </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {metrics.map((m) => {
-                            const on = hasDeviceMetric(id, m.name)
-                            return (
-                              <button
-                                key={m.name}
-                                type="button"
-                                onClick={() => toggleDeviceMetric(d, m.name)}
-                                className={cn(
-                                  'inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs transition-colors',
-                                  on
-                                    ? 'border-primary bg-primary-light text-primary font-medium'
-                                    : 'border-border bg-muted-20 text-muted-foreground hover:text-foreground',
-                                )}
-                              >
-                                {on && <Check className="h-3 w-3" />}
-                                <span>{m.display_name || m.name}</span>
-                                <span className="font-mono opacity-70">{m.name}</span>
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
+      {/* Master items */}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {tab === 'devices' && (
+          filteredDevices.length === 0 ? (
+            <p className="p-6 text-center text-xs text-muted-foreground">
+              {t('agents:editorV2.picker.noDevices')}
+            </p>
+          ) : (
+            filteredDevices.map((d) => {
+              const id = d.device_id || d.id
+              const isActive = id === activeDeviceId
+              const count = deviceSelectedCount(id)
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    setActiveDeviceId(id)
+                    if (isMobile) setMobileDetailOpen(true)
+                  }}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 border-b border-border/50 px-3 py-2.5 text-left transition-colors',
+                    isActive ? 'bg-muted' : 'hover:bg-muted-30',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'h-2 w-2 shrink-0 rounded-full',
+                      d.online ? 'bg-success' : 'bg-muted-foreground/40',
                     )}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {d.name || id}
+                    </div>
+                    <div className={cn(textNano, 'truncate font-mono text-muted-foreground')}>
+                      {id}
+                    </div>
                   </div>
-                )
-              })
-            )
-          )}
+                  {count > 0 && (
+                    <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-xs">
+                      {count}
+                    </Badge>
+                  )}
+                  {isMobile && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                </button>
+              )
+            })
+          )
+        )}
 
-          {tab === 'extensions' && (
-            filteredExtensions.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                {t('editorV2.picker.noExtensions')}
-              </p>
-            ) : (
-              filteredExtensions.map((ext) => {
-                const on = hasExtension(ext.id)
-                return (
-                  <div
-                    key={ext.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card p-3"
+        {tab === 'extensions' && (
+          filteredExtensions.length === 0 ? (
+            <p className="p-6 text-center text-xs text-muted-foreground">
+              {t('agents:editorV2.picker.noExtensions')}
+            </p>
+          ) : (
+            filteredExtensions.map((ext) => {
+              const isActive = ext.id === activeExtId
+              const count = extSelectedCount(ext.id)
+              return (
+                <button
+                  key={ext.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveExtId(ext.id)
+                    if (isMobile) setMobileDetailOpen(true)
+                  }}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 border-b border-border/50 px-3 py-2.5 text-left transition-colors',
+                    isActive ? 'bg-muted' : 'hover:bg-muted-30',
+                  )}
+                >
+                  <Puzzle className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground')} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-foreground">
+                      {ext.name || ext.id}
+                    </div>
+                    <div className={cn(textNano, 'truncate font-mono text-muted-foreground')}>
+                      {ext.id}
+                    </div>
+                  </div>
+                  {count > 0 && (
+                    <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-xs">
+                      {count}
+                    </Badge>
+                  )}
+                  {isMobile && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                </button>
+              )
+            })
+          )
+        )}
+
+        {tab === 'ai' && (
+          aiAgentsWithFields.length === 0 ? (
+            <p className="p-6 text-center text-xs text-muted-foreground">
+              {t('agents:editorV2.picker.noAiSources')}
+            </p>
+          ) : (
+            aiAgentsWithFields.map((ag) => {
+              const isActive = ag.id === activeAgentId
+              const count = aiSelectedCount(ag.id)
+              return (
+                <button
+                  key={ag.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveAgentId(ag.id)
+                    if (isMobile) setMobileDetailOpen(true)
+                  }}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 border-b border-border/50 px-3 py-2.5 text-left transition-colors',
+                    isActive ? 'bg-muted' : 'hover:bg-muted-30',
+                  )}
+                >
+                  <Bot className={cn('h-4 w-4 shrink-0', isActive ? 'text-primary' : 'text-muted-foreground')} />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-foreground">{ag.name}</div>
+                    <div className={cn(textNano, 'truncate text-muted-foreground')}>
+                      {(ag.output_fields ?? []).length} fields
+                    </div>
+                  </div>
+                  {count > 0 && (
+                    <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-xs">
+                      {count}
+                    </Badge>
+                  )}
+                  {isMobile && <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                </button>
+              )
+            })
+          )
+        )}
+      </div>
+    </div>
+  )
+
+  const detailPane = (
+    <div className="flex h-full flex-col">
+      {isMobile && (
+        <div className="flex items-center gap-2 border-b border-border bg-muted-20 px-3 py-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => setMobileDetailOpen(false)}
+          >
+            <ChevronLeft className="mr-1 h-3.5 w-3.5" />
+            {t('common:back', 'Back')}
+          </Button>
+        </div>
+      )}
+
+      {tab === 'devices' && (
+        !selectedDevice ? (
+          <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
+            {t('agents:editorV2.picker.selectDeviceHint')}
+          </div>
+        ) : (
+          (() => {
+            const devId = selectedDevice.device_id || selectedDevice.id
+            const wholeOn = hasWholeDevice(devId)
+            const metrics = deviceMetricsMap.get(devId) ?? []
+            return (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="flex items-center justify-between border-b border-border bg-muted-20 px-4 py-2.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Server className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate text-sm font-medium text-foreground">
+                      {selectedDevice.name || devId}
+                    </span>
+                    <span className={cn(textNano, 'truncate font-mono text-muted-foreground')}>
+                      {selectedDevice.device_type}
+                    </span>
+                  </div>
+                  <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-xs">
+                    {metrics.length}
+                  </Badge>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2">
+                  {/* Whole device binding row */}
+                  <button
+                    type="button"
+                    onClick={() => toggleWholeDevice(selectedDevice)}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors',
+                      wholeOn
+                        ? 'border-primary bg-primary-light'
+                        : 'border-border bg-card hover:bg-muted-30',
+                    )}
                   >
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-foreground">
-                        {ext.name || ext.id}
+                    <div
+                      className={cn(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+                        wholeOn ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
+                      )}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-foreground">
+                        {wholeOn
+                          ? t('agents:editorV2.picker.wholeDeviceAdded')
+                          : t('agents:editorV2.picker.wholeDevice')}
                       </div>
-                      <div className="truncate font-mono text-xs text-muted-foreground">
-                        {ext.id}
-                        {ext.commands && ext.commands.length > 0
-                          ? ` · ${ext.commands.map((c) => c.id).join(', ')}`
-                          : ''}
+                      <div className="text-xs text-muted-foreground">
+                        {t('agents:editorV2.picker.wholeDeviceDesc')}
                       </div>
                     </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={on ? 'default' : 'outline'}
-                      onClick={() => toggleExtension(ext)}
-                      className="h-7 shrink-0 text-xs"
-                    >
-                      {on && <Check className="mr-1 h-3 w-3" />}
-                      {on ? t('editorV2.picker.selected') : t('editorV2.output.add')}
-                    </Button>
-                  </div>
-                )
-              })
-            )
-          )}
+                    <Badge variant="outline" className="h-5 shrink-0 font-mono text-xs">
+                      whole_device
+                    </Badge>
+                  </button>
 
-          {tab === 'ai' && (
-            aiAgentsWithFields.length === 0 ? (
-              <p className="py-8 text-center text-sm text-muted-foreground">
-                {t('editorV2.picker.noAiSources')}
-              </p>
-            ) : (
-              aiAgentsWithFields.map((ag) => (
-                <div key={ag.id} className="rounded-lg border border-border bg-card p-3 space-y-2">
-                  <div className="text-sm font-medium text-foreground">{ag.name}</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {(ag.output_fields ?? []).map((field) => {
-                      const on = hasUpstreamAi(ag.id, field)
+                  {/* Metrics section */}
+                  <div className="pt-1 text-xs font-medium text-muted-foreground">
+                    {t('agents:editorV2.picker.metrics')}
+                  </div>
+
+                  {metrics.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
+                      {t('agents:editorV2.picker.noMetrics')}
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {metrics.map((m) => {
+                        const on = hasDeviceMetric(devId, m.name)
+                        const valText = formatMetricValue(m.value)
+                        return (
+                          <button
+                            key={m.name}
+                            type="button"
+                            onClick={() => toggleDeviceMetric(selectedDevice, m.name)}
+                            className={cn(
+                              'flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors',
+                              on
+                                ? 'border-primary bg-primary-light'
+                                : 'border-border bg-card hover:bg-muted-30',
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+                                on ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
+                              )}
+                            >
+                              <Check className="h-3.5 w-3.5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="truncate text-sm font-medium text-foreground">
+                                  {m.display_name || m.name}
+                                </span>
+                                <code className={cn(textMicro, 'rounded bg-muted px-1.5 py-0.5 font-mono text-muted-foreground')}>
+                                  {m.name}
+                                </code>
+                              </div>
+                            </div>
+                            {(valText || m.unit) && (
+                              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                                {valText}
+                                {m.unit ? ` ${m.unit}` : ''}
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })()
+        )
+      )}
+
+      {tab === 'extensions' && (
+        !selectedExtension ? (
+          <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
+            {t('agents:editorV2.picker.selectExtensionHint')}
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex items-center justify-between border-b border-border bg-muted-20 px-4 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <Puzzle className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="truncate text-sm font-medium text-foreground">
+                  {selectedExtension.name || selectedExtension.id}
+                </span>
+              </div>
+              {selectedExtension.version && (
+                <Badge variant="outline" className="h-5 shrink-0 font-mono text-xs">
+                  v{selectedExtension.version}
+                </Badge>
+              )}
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2">
+              {selectedExtension.description && (
+                <p className="text-xs text-muted-foreground px-1">
+                  {selectedExtension.description}
+                </p>
+              )}
+
+              {/* Default extension binding */}
+              {(() => {
+                const defaultOn = hasExtension(selectedExtension.id, undefined)
+                return (
+                  <button
+                    type="button"
+                    onClick={() => toggleExtension(selectedExtension)}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors',
+                      defaultOn
+                        ? 'border-primary bg-primary-light'
+                        : 'border-border bg-card hover:bg-muted-30',
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+                        defaultOn ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
+                      )}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-foreground">
+                        {t('agents:editorV2.picker.bindExtensionDefault')}
+                      </div>
+                      <div className={cn(textNano, 'font-mono text-muted-foreground')}>
+                        {selectedExtension.id}
+                      </div>
+                    </div>
+                  </button>
+                )
+              })()}
+
+              {/* Specific commands if available */}
+              {selectedExtension.commands && selectedExtension.commands.length > 0 && (
+                <>
+                  <div className="pt-1 text-xs font-medium text-muted-foreground">
+                    {t('agents:editorV2.picker.extensionCommands')}
+                  </div>
+                  <div className="space-y-1.5">
+                    {selectedExtension.commands.map((cmd) => {
+                      const on = hasExtension(selectedExtension.id, cmd.id)
                       return (
                         <button
-                          key={field}
+                          key={cmd.id}
                           type="button"
-                          onClick={() => toggleUpstreamAi(ag, field)}
+                          onClick={() => toggleExtension(selectedExtension, cmd.id)}
                           className={cn(
-                            'inline-flex items-center gap-1 rounded-md border px-2 py-1 font-mono text-xs transition-colors',
+                            'flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors',
                             on
-                              ? 'border-primary bg-primary-light text-primary font-medium'
-                              : 'border-border bg-muted-20 text-muted-foreground hover:text-foreground',
+                              ? 'border-primary bg-primary-light'
+                              : 'border-border bg-card hover:bg-muted-30',
                           )}
                         >
-                          {on && <Check className="h-3 w-3" />}
-                          ai:{ag.id.slice(0, 8)}:{field}
+                          <div
+                            className={cn(
+                              'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+                              on ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
+                            )}
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium text-foreground">
+                                {cmd.display_name || cmd.id}
+                              </span>
+                              <code className={cn(textMicro, 'rounded bg-muted px-1.5 py-0.5 font-mono text-muted-foreground')}>
+                                {cmd.id}
+                              </code>
+                            </div>
+                            {cmd.description && (
+                              <div className="truncate text-xs text-muted-foreground">
+                                {cmd.description}
+                              </div>
+                            )}
+                          </div>
                         </button>
                       )
                     })}
                   </div>
-                </div>
-              ))
-            )
-          )}
-        </div>
+                </>
+              )}
+            </div>
+          </div>
+        )
+      )}
 
-        <DialogFooter>
-          <Button type="button" onClick={() => onOpenChange(false)}>
-            {t('editorV2.picker.done')} ({requirements.length})
+      {tab === 'ai' && (
+        !selectedAgent ? (
+          <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
+            {t('agents:editorV2.picker.selectAiHint')}
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex items-center justify-between border-b border-border bg-muted-20 px-4 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="truncate text-sm font-medium text-foreground">
+                  {selectedAgent.name}
+                </span>
+              </div>
+              <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-xs">
+                {(selectedAgent.output_fields ?? []).length}
+              </Badge>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-3 space-y-1.5">
+              {(selectedAgent.output_fields ?? []).map((field) => {
+                const on = hasUpstreamAi(selectedAgent.id, field)
+                return (
+                  <button
+                    key={field}
+                    type="button"
+                    onClick={() => toggleUpstreamAi(selectedAgent, field)}
+                    className={cn(
+                      'flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors',
+                      on
+                        ? 'border-primary bg-primary-light'
+                        : 'border-border bg-card hover:bg-muted-30',
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        'flex h-4 w-4 shrink-0 items-center justify-center rounded-sm',
+                        on ? 'bg-primary text-primary-foreground' : 'bg-muted text-transparent',
+                      )}
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-foreground">{field}</div>
+                      <code className={cn(textNano, 'font-mono text-muted-foreground')}>
+                        ai:{selectedAgent.id.slice(0, 8)}:{field}
+                      </code>
+                    </div>
+                    <Activity className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  )
+
+  return (
+    <UnifiedFormDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={t('agents:editorV2.picker.title')}
+      description={t('agents:editorV2.picker.subtitle')}
+      icon={<Database className="h-5 w-5 text-primary" />}
+      width="2xl"
+      className="sm:h-[74vh] z-[110]"
+      contentClassName="!p-0 flex flex-col overflow-hidden"
+      preventCloseOnSubmit={false}
+      footer={
+        <>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            {t('common:cancel')}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          <Button type="button" onClick={handleConfirm}>
+            {t('common:confirm')}
+            {staged.length > 0 ? ` (${staged.length})` : ''}
+          </Button>
+        </>
+      }
+    >
+      {/* Selected items summary bar */}
+      {staged.length > 0 && (
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border bg-muted-20 px-4 py-2">
+          <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+            <Check className="h-3.5 w-3.5" />
+            {t('agents:editorV2.picker.selectedCount', { count: staged.length })}
+          </span>
+          <div className="mx-1 h-3.5 w-px bg-border" />
+          <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+            {staged.map((req, index) => {
+              const info = describeSource(req.source, devices, extensions, agents)
+              return (
+                <span
+                  key={`${req.key}-${index}`}
+                  className="inline-flex max-w-[200px] items-center gap-1 rounded-md border border-border bg-card px-2 py-0.5 text-xs text-foreground"
+                >
+                  <span className="truncate">{info.label}</span>
+                  <button
+                    type="button"
+                    onClick={() => setStaged((prev) => prev.filter((_, i) => i !== index))}
+                    className="ml-0.5 shrink-0 text-muted-foreground hover:text-error"
+                    aria-label={t('agents:editorV2.input.remove')}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              )
+            })}
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => setStaged([])}
+            className="shrink-0 text-muted-foreground hover:text-error"
+          >
+            {t('common:clear')}
+          </Button>
+        </div>
+      )}
+
+      {/* Underline Category Tabs (matches UnifiedDataSourceConfig / DESIGN_SPEC) */}
+      <div className="flex min-w-0 shrink-0 overflow-x-auto border-b border-border px-2 scrollbar-none">
+        {tabs.map(({ id, Icon, label, count, selected }) => {
+          const active = tab === id
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                setTab(id)
+                setMobileDetailOpen(false)
+              }}
+              className={cn(
+                'relative flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-sm font-medium transition-colors',
+                'after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:transition-colors',
+                active
+                  ? 'text-primary after:bg-primary'
+                  : 'text-muted-foreground hover:bg-muted-50 hover:text-foreground',
+              )}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="whitespace-nowrap">{label}</span>
+              <span className="text-xs opacity-65">({count})</span>
+              {selected > 0 && (
+                <Badge variant="secondary" className="h-4 px-1 text-nano">
+                  {selected}
+                </Badge>
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Master-Detail Split Body */}
+      {isMobile ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {mobileDetailOpen ? detailPane : masterPane}
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="w-60 shrink-0 overflow-hidden border-r border-border sm:w-64">
+            {masterPane}
+          </div>
+          <div className="min-w-0 flex-1 overflow-hidden">{detailPane}</div>
+        </div>
+      )}
+    </UnifiedFormDialog>
   )
 }

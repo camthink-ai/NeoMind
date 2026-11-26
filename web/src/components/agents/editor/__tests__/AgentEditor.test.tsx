@@ -196,7 +196,7 @@ describe('AgentEditor unified BuilderShell UX', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'editorV2.picker.addSource' }))
 
-    const pickerTitle = await screen.findByText('editorV2.picker.title')
+    const pickerTitle = await screen.findByText('agents:editorV2.picker.title')
     const dialogEl = pickerTitle.closest('[role="dialog"]')
     expect(dialogEl).toBeTruthy()
     expect(dialogEl?.className).toContain('z-[110]')
@@ -205,7 +205,7 @@ describe('AgentEditor unified BuilderShell UX', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(onOpenChange).not.toHaveBeenCalled()
     await waitFor(() => {
-      expect(screen.queryByText('editorV2.picker.title')).toBeNull()
+      expect(screen.queryByText('agents:editorV2.picker.title')).toBeNull()
     })
   })
 })
