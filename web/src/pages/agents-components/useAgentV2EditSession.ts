@@ -1,9 +1,11 @@
 /**
  * Race-safe AgentSpec v2 edit session for AgentsPage.
  *
- * Open edit clears any stale editingAgent, tracks the selected id, and only
- * applies GET /agents/v2/:id when it still matches. Cancel / reselect drops
- * late responses. Save is refused while loading or when the target id drifted.
+ * Open edit clears any stale editingAgent and bumps a per-open sequence so
+ * only the current open's GET may seed / close / clear loading. Same-id
+ * cancel→reopen must not let GET₁ failure close GET₂, or GET₁ success
+ * overwrite GET₂'s draft. Save is refused while loading or when the target
+ * id drifted.
  */
 import { useCallback, useRef, useState } from 'react'
 import type { AgentSpec, AgentSpecDraft, AgentSpecPatch } from '@/types'
@@ -42,39 +44,48 @@ export function useAgentV2EditSession(
   const [editingAgent, setEditingAgent] = useState<AgentSpec | undefined>(undefined)
   /** Currently selected edit target; null = create or closed. */
   const pendingIdRef = useRef<string | null>(null)
+  /** Monotonic per-open token; cancel / create / new openEdit invalidate in-flight GETs. */
+  const loadSeqRef = useRef(0)
+
+  const invalidateInFlight = useCallback(() => {
+    loadSeqRef.current += 1
+  }, [])
 
   const close = useCallback(() => {
+    invalidateInFlight()
     pendingIdRef.current = null
     setLoading(false)
     setEditingAgent(undefined)
     setOpen(false)
-  }, [])
+  }, [invalidateInFlight])
 
   const openCreate = useCallback(() => {
+    invalidateInFlight()
     pendingIdRef.current = null
     setLoading(false)
     setEditingAgent(undefined)
     setOpen(true)
-  }, [])
+  }, [invalidateInFlight])
 
   const openEdit = useCallback(async (id: string) => {
+    const seq = ++loadSeqRef.current
     pendingIdRef.current = id
-    // Drop stale A immediately so save cannot PUT the previous id.
+    // Drop stale target immediately so save cannot PUT a previous id.
     setEditingAgent(undefined)
     setLoading(true)
     setOpen(true)
     try {
       const { agent } = await optionsRef.current.getAgentV2(id)
-      if (pendingIdRef.current !== id) return
+      if (loadSeqRef.current !== seq) return
       setEditingAgent(agent)
     } catch (error) {
-      if (pendingIdRef.current !== id) return
+      if (loadSeqRef.current !== seq) return
       pendingIdRef.current = null
       setEditingAgent(undefined)
       setOpen(false)
       optionsRef.current.onLoadError?.(error)
     } finally {
-      if (pendingIdRef.current === id) {
+      if (loadSeqRef.current === seq) {
         setLoading(false)
       }
     }
@@ -108,12 +119,13 @@ export function useAgentV2EditSession(
       }
       await createAgentV2(draft)
     }
+    invalidateInFlight()
     pendingIdRef.current = null
     setEditingAgent(undefined)
     setOpen(false)
     setLoading(false)
     await onSaved?.()
-  }, [editingAgent, loading])
+  }, [editingAgent, loading, invalidateInFlight])
 
   return {
     open,
