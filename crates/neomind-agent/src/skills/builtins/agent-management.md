@@ -148,34 +148,36 @@ focused agents the contract rides along: after the run, one extra step
 renders the conclusion into the schema. Field NAMES become data-source keys
 (ASCII recommended); descriptions localize.
 
-### Memory axis
+### Memory behavior
 
-`--memory-mode tool` — judged fresh each run (cheapest, predictable; the
-default for structured). `--memory-mode assistant` — carries the recent
-run narrative ("worse than yesterday" needs this). Omit to derive from the
-mode.
+Memory is managed automatically from the agent's journal and knowledge files:
+structured/tool-style agents focus on the current bound inputs, while
+analytical/assistant agents carry recent execution journal context across runs.
+Use `neomind agent memory <ID>` to inspect and `neomind agent clear-memory <ID>`
+to reset.
 
 ### Notification routing
 
-`--notify` picks WHERE and WHEN — no more inferring from the conclusion
-text:
+`--notify` picks WHERE and WHEN notifications are delivered. It accepts either
+the compact shorthand (`on`) or the explicit three-way `NotifyPolicy` fields
+(`on_complete`, `on_alert`, `on_failure`, `pending_confirmation`):
 
 ```bash
 neomind agent update 冷库巡检 --notify '{"channels":["IM","webhook:ops"],"on":"always"}'
+neomind agent update 冷库巡检 --notify '{"channels":["IM"],"on_alert":true,"on_failure":true}'
 ```
 
-Three triggers:
+Compact `on` shorthand:
 
-| `on` | Sends |
-|---|---|
-| `"failure"` (default) | only when the run failed — silence is health |
-| `"always"` | every run, success or failure |
-| `"judgment"` | **nothing.** The task decides for itself, in its own prompt, whether the operator needs to hear from it |
+| `on` | Equivalent policy | Sends |
+|---|---|---|
+| `"failure"` (default) | `on_failure: true` | only when the run fails — silence is health |
+| `"always"` | `on_complete: true, on_failure: true` | every run, success or failure |
+| `"judgment"` | `pending_confirmation: true` | **nothing automatically.** The task decides in its own prompt whether to send a message via tools |
 
-Channel names come from `neomind message channel-list`. Agents with **no**
-notify config keep the legacy keyword behavior (the conclusion is scanned for
-words like 异常/critical); once a config exists, that path is off — which is
-what makes `"judgment"` mean silence rather than "silence plus a sniffed alert".
+Channel names come from `neomind message channel-list`. Notification delivery is
+strictly policy-driven (there is no keyword-sniffing fallback on conclusion
+text), so `"judgment"` stays quiet unless the agent explicitly sends a message.
 
 Reach for `"judgment"` when the user asks for something periodic but does not
 want a message every time — "only tell me if it matters", "别每次都发", "让它自己判断".
@@ -187,17 +189,13 @@ send every time") — pick one.
 whenever the user asks to be told where they are already talking to you
 ("在 Telegram 告诉我", "给我发消息"), because it is the only channel that
 reaches their chat: it delivers to every IM chat bound under Settings → IM
-Bridges (the `/start` handshake). Without it, a run's outcome lands in the
-in-app Messages page and nowhere else — a scheduled agent that reports only
-in-app is indistinguishable from one that never ran.
+Bridges (the `/start` handshake).
 
-**A new agent already has somewhere to report.** The API applies
-`{"channels":["IM"],"on":"failure"}` to any create request that omits `notify` —
-CLI, editor and API alike — so leaving `--notify` off does **not** mean "no
-notification". The editor shows that floor on the form, and a user comparing the
-two will notice if you promise otherwise. An agent stays quiet only when you set
-`"on":"judgment"` (the task decides) or an explicit `{"channels":[]}` (routes
-nowhere).
+**Default when `--notify` is omitted:** new agents default to `channels: []`
+with `on_failure: true` (failures are recorded in-app without pushing to
+external channels). Whenever the user explicitly wants external alerts or IM
+messages, pass `--notify '{"channels":["IM"],"on":...}'` (or explicit channel
+IDs from `neomind message channel-list`).
 
 ### Binding Resources
 

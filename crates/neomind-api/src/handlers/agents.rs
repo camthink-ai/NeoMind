@@ -1597,25 +1597,40 @@ pub async fn get_execution(
                 .flatten()
                 .map(|s| s.trigger);
             let structured = row.structured_result.clone();
+            let deliveries = row.deliveries.clone();
+            let alert_verdict = row.alert_verdict.clone();
+            let config_version = row.config_version;
+            let dry_run = row.dry_run;
+            let stale_config = row.stale_config;
+            let brief_text = row.brief_text.clone();
             let list = dto_from_execution_row(row.clone(), agent_trigger.as_ref());
             let detail = detail_dto_from_execution_row(row, agent_trigger.as_ref());
-            // AgentExecutionDetail extends list fields; keep conclusion / structured_result
-            // at the top level for CLI and modal consumers.
-            return ok(json!({
+            // AgentExecutionDetail extends list fields; keep conclusion, structured_result,
+            // deliveries, and alert_verdict at the top level for CLI and modal consumers.
+            let mut payload = json!({
                 "id": detail.id,
                 "agent_id": detail.agent_id,
                 "timestamp": detail.timestamp,
                 "trigger_type": detail.trigger_type,
                 "status": detail.status,
                 "duration_ms": detail.duration_ms,
+                "config_version": config_version,
+                "dry_run": dry_run,
+                "stale_config": stale_config,
                 "conclusion": list.conclusion,
                 "structured_result": structured,
+                "alert_verdict": alert_verdict,
+                "deliveries": deliveries,
                 "confidence": list.confidence,
                 "error": detail.error,
                 "input_summary": detail.input_summary,
                 "decision_process": detail.decision_process,
                 "result": detail.result,
-            }));
+            });
+            if let (Some(bt), Some(obj)) = (brief_text, payload.as_object_mut()) {
+                obj.insert("brief_text".into(), json!(bt));
+            }
+            return ok(payload);
         }
     }
 

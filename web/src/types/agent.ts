@@ -25,13 +25,17 @@ export interface AiAgent {
   status: AgentStatus
   description?: string
   user_prompt?: string
-  created_at: string
-  last_execution_at: string | null
+  created_at: string | number
+  last_execution_at: string | number | null
   execution_count: number
   success_count: number
   error_count: number
-  avg_duration_ms: number
+  avg_duration_ms?: number
   llm_backend_id?: string
+  config_version?: number
+  preset?: AgentPresetId
+  trigger?: TriggerSpec
+  tool_policy?: ToolPolicy
   // Advanced configuration (returned by list API)
   max_chain_depth?: number
   priority?: number
@@ -51,39 +55,45 @@ export interface AiAgent {
   execution_mode?: AgentExecutionMode
   /** Memory axis — absent means the mode-derived default */
   memory_mode?: AgentMemoryMode
-  notify?: AgentNotify
+  notify?: NotifyPolicy | AgentNotify
   /** Tool gating for this agent (None = default: tools enabled, all allowed). */
   tool_config?: AgentToolConfig
 }
 
 /**
- * AI Agent detail - matches backend AgentDetailDto
+ * AI Agent detail - matches backend GET /api/agents/:id (AgentSpec + runtime status/stats/effective_plan)
  */
 export interface AiAgentDetail extends AiAgent {
   user_prompt: string
+  updated_at: string | number
+  /** New AgentSpec contract fields */
+  trigger?: TriggerSpec
+  pacing?: PacingPolicy
+  input?: InputContract
+  tool_policy?: ToolPolicy
+  output?: OutputContract
+  notify?: NotifyPolicy | AgentNotify
+  controlled_actions?: ControlledAction[]
+  effective_plan?: EffectivePlan
+  config_version?: number
+  preset?: AgentPresetId
+  /** Runtime statistics (AgentRuntimeStats from agent_runtime) */
+  stats?: Partial<AgentRuntimeStats> & Partial<AgentStats>
+  error_message?: string
+  /** Optional/legacy fields */
   parsed_intent?: ParsedIntent
   memory?: AgentMemory
-  resources: AgentResource[]
-  schedule: AgentSchedule
-  stats: AgentStats
-  updated_at: string
-  error_message?: string
-  user_messages: UserMessage[]
-  context_window_size: number
-  // Tool chaining configuration
+  resources?: AgentResource[]
+  schedule?: AgentSchedule
+  user_messages?: UserMessage[]
+  context_window_size?: number
   max_chain_depth?: number
   priority?: number
-  /** Execution mode: "focused" for bound-resource agents, "free" for unrestricted tool-calling, "structured" for L0 extraction */
   execution_mode?: AgentExecutionMode
-  /** Custom system prompt override */
   system_prompt?: string
-  /** Structured (L0) output contract */
   output_schema?: OperatorField[]
-  /** Structured (L0) runtime tuning */
   operator_config?: OperatorConfig
   memory_mode?: AgentMemoryMode
-  notify?: AgentNotify
-  /** Tool gating: enabled=false → text-only agent; allowed_tools empty → all. */
   tool_config?: AgentToolConfig
 }
 
@@ -504,14 +514,76 @@ export interface AgentExecutionsResponse {
 }
 
 /**
+ * Agent runtime statistics — mirrors backend `AgentRuntimeStats`.
+ */
+export interface AgentRuntimeStats {
+  total_runs: number
+  successful_runs: number
+  failed_runs: number
+  partial_runs?: number
+  skipped_daily_limit?: number
+  skipped_permit_timeout?: number
+  consecutive_failures?: number
+  runs_today?: number
+  quota_day?: string | null
+  last_execution_at?: number | null
+  last_execution_id?: string | null
+  avg_duration_ms?: number
+  last_duration_ms?: number | null
+  error_message?: string | null
+}
+
+/**
+ * Delivery receipt state — mirrors backend `DeliveryState`.
+ */
+export type DeliveryState =
+  | { state: 'intent_pending' }
+  | { state: 'rejected'; reason: string }
+  | { state: 'accepted' }
+  | { state: 'confirmed' }
+  | { state: 'outcome_unknown'; reason: string }
+
+/**
+ * Side-effect delivery receipt — mirrors backend `ActionDeliveryRecord`.
+ */
+export interface ActionDeliveryRecord {
+  execution_id: string
+  destination: string
+  action_fingerprint: string
+  depends_on?: string[]
+  idempotent: boolean
+  state: DeliveryState
+}
+
+/**
+ * Response from GET /api/agents/:id/explain-last.
+ */
+export interface ExplainLastResponse {
+  agent_id: string
+  explanation: string
+}
+
+/**
  * Agent execution detail with full decision process
- * Extends AgentExecution with decision_process and result
+ * Extends AgentExecution with decision_process, result, structured_result, deliveries, alert_verdict
  */
 export interface AgentExecutionDetail extends AgentExecution {
   decision_process?: DecisionProcess
   result?: ExecutionResult
-  /** V2 get_execution returns conclusion at the top level. */
+  /** Top-level brief text / conclusion returned by GET /api/agents/:id/executions/:exec_id. */
   brief_text?: string
+  /** Structured JSON fields extracted under OutputContract. */
+  structured_result?: Record<string, unknown> | null
+  /** Alert verdict produced by the run (when applicable). */
+  alert_verdict?: string | null
+  /** Side-effect / notification delivery receipts recorded for this run. */
+  deliveries?: ActionDeliveryRecord[]
+  /** AgentSpec config_version active when this execution ran. */
+  config_version?: number
+  /** Whether this run was a dry-run trial. */
+  dry_run?: boolean
+  /** True when agent config changed while this run was in flight. */
+  stale_config?: boolean | null
 }
 
 /**

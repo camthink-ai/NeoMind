@@ -84,15 +84,22 @@ export function AgentCard({
     ? Math.round((agent.success_count / agent.execution_count) * 100)
     : null
 
-  // Axis vocabulary in customer language — same words the editor and the
-  // detail panel use, never the execution-mode jargon.
+  // Axis vocabulary derived from the AgentSpec contract (role + tool policy).
   const hasContract = (agent.output_fields?.length ?? 0) > 0
   const roleKey = agent.execution_mode === 'structured' && hasContract
     ? 'recordData'
     : agent.execution_mode === 'free'
       ? 'actOrInvestigate'
       : 'answer'
-  const isToolMemory = (agent.memory_mode ?? (agent.execution_mode === 'structured' ? 'tool' : 'assistant')) === 'tool'
+  const toolAxisKey = agent.tool_policy === 'disabled'
+    ? 'toolsOff'
+    : agent.tool_policy === 'unrestricted'
+      ? 'toolsOn'
+      : agent.tool_policy && typeof agent.tool_policy === 'object'
+        ? 'toolsScoped'
+        : agent.execution_mode === 'free'
+          ? 'toolsOn'
+          : 'toolsOff'
 
   const isExecuting = agent.status === 'Executing'
   const isError = agent.status === 'Error'
@@ -169,7 +176,7 @@ export function AgentCard({
           <p className="mt-1 truncate text-mini text-muted-foreground">
             {t(`agents:card.role.${roleKey}`)}
             <span className="mx-1.5 text-border">·</span>
-            {t(`agents:card.memory.${isToolMemory ? 'tool' : 'assistant'}`)}
+            {t(`agents:editorV2.planLine.${toolAxisKey}`)}
           </p>
         </div>
 

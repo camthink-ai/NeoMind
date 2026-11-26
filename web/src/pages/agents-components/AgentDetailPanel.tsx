@@ -1,43 +1,61 @@
 /**
- * Agent Detail Panel - Right side of Agents page
+ * Agent Detail Panel - Right side / full-screen dialog content for Agents page.
  *
- * Shows detailed view of a selected agent with tabs.
+ * Renders the clean-slate AgentSpec contract (trigger, input requirements,
+ * output fields/publish, tool policy, three-way notify, pacing guardrails,
+ * controlled actions, effective plan, last-run explanation) alongside execution
+ * history, memory (journal + knowledge files), and user messages.
  */
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useTranslation } from "react-i18next"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { LoadingState } from "@/components/shared/LoadingState"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
-  Database,
-  Eye,
-  Workflow,
-  BrainCircuit,
-  Wrench,
-  Bot,
-  Clock,
-  Activity,
-  Brain,
-  Zap,
+  AlertTriangle,
   BarChart3,
-  FileText,
-
-
-  MessageSquare,
-  History,
-
-
+  Bell,
+  Bot,
+  Brain,
   ChevronDown,
   ChevronRight,
+  Database,
+  Eye,
+  FileText,
+  Gauge,
+  History,
+  Info,
+  MessageSquare,
+  Shield,
+  Sparkles,
+  Workflow,
+  Wrench,
+  Zap,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { formatRelativeTime } from "@/lib/utils/format"
-import { textNano } from "@/design-system/tokens/typography"
+import { formatRelativeTime, formatTimestamp } from "@/lib/utils/format"
 import { useIsMobile } from "@/hooks/useMobile"
 import { api } from "@/lib/api"
-import type { AiAgentDetail, AgentAvailableResources, AgentExecution, AgentMemory, KnowledgeFileRef, JournalExecutionRecord, LlmBackendInstance } from "@/types"
+import type {
+  AiAgentDetail,
+  AgentExecution,
+  AgentMemory,
+  AgentNotify,
+  ControlledAction,
+  FreshnessPolicy,
+  InputRequirement,
+  InputSourceRef,
+  JournalExecutionRecord,
+  KnowledgeFileRef,
+  LlmBackendInstance,
+  MissingPolicy,
+  NotifyPolicy,
+  PacingPolicy,
+  ToolPolicy,
+  TriggerSpec,
+} from "@/types"
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentExecutionStartedEvent, AgentExecutionCompletedEvent } from "@/lib/events"
@@ -55,15 +73,192 @@ interface AgentDetailPanelProps {
   onExecute: (agent: AiAgentDetail) => void
   onViewExecutionDetail: (agentId: string, executionId: string) => void
   onRefresh: () => void
-  inlineMode?: boolean  // When true, used inside dialog (no empty state)
+  inlineMode?: boolean // When true, used inside dialog (no empty state)
 }
 
-// Role configuration - labels use i18n
-const _ROLE_CONFIG: Record<string, { icon: typeof Activity; color: string }> = {
-  Monitor: { icon: Activity, color: 'text-info' },
-  Executor: { icon: Zap, color: 'text-accent-orange' },
-  Analyst: { icon: BarChart3, color: 'text-accent-purple' },
+// ============================================================================
+// Pure contract formatting helpers
+// ============================================================================
+
+type TFn = (key: string, opts?: Record<string, unknown>) => string
+
+function formatInterval(secs: number, t: TFn): string {
+  if (secs >= 3600 && secs % 3600 === 0) {
+    return t('agents:detail.everyHours', { hours: secs / 3600 })
+  }
+  if (secs >= 60 && secs % 60 === 0) {
+    return t('agents:detail.everyMins', { mins: secs / 60 })
+  }
+  return t('agents:detail.everySecs', { secs })
 }
+
+function formatInputSource(source: InputSourceRef): string {
+  switch (source.kind) {
+    case 'device_metric':
+      return `${source.device_id} / ${source.field}`
+    case 'whole_device':
+      return source.device_id
+    case 'extension_instance':
+      return `ext:${source.id}`
+    case 'upstream_ai':
+      return `ai:${source.agent_id}:${source.field}`
+    case 'caller_payload':
+      return 'caller_payload'
+  }
+}
+
+function formatFreshness(freshness: FreshnessPolicy, t: TFn): string {
+  switch (freshness.kind) {
+    case 'same_report':
+      return t('agents:detail.freshnessSameReport')
+    case 'latest_within':
+      return t('agents:detail.freshnessLatestWithin', { secs: freshness.max_age_secs })
+    case 'lookback_window':
+      return t('agents:detail.freshnessLookback', {
+        secs: freshness.lookback_secs,
+        points: freshness.max_points,
+      })
+    case 'any':
+      return t('agents:detail.freshnessAny')
+  }
+}
+
+function formatMissingPolicy(policy: MissingPolicy, t: TFn): string {
+  switch (policy) {
+    case 'undetermined':
+      return t('agents:detail.missingUndetermined')
+    case 'report_stale':
+      return t('agents:detail.missingReportStale')
+    case 'skip':
+      return t('agents:detail.missingSkip')
+    case 'ignore':
+      return t('agents:detail.missingIgnore')
+  }
+}
+
+function formatEventFilter(filter: unknown): string | null {
+  if (filter === null || filter === undefined) return null
+  if (typeof filter === 'string') return filter.trim() || null
+  if (typeof filter === 'object') {
+    const keys = Object.keys(filter as Record<string, unknown>)
+    if (keys.length === 0) return null
+    return JSON.stringify(filter)
+  }
+  return String(filter)
+}
+
+function describeToolPolicy(
+  policy: ToolPolicy | undefined,
+  t: TFn,
+): {
+  mode: 'disabled' | 'scoped' | 'unrestricted'
+  label: string
+  allowedTools: string[]
+  allowedCommands: string[]
+} {
+  if (!policy || policy === 'disabled') {
+    return {
+      mode: 'disabled',
+      label: t('agents:editorV2.toolPolicy.disabled'),
+      allowedTools: [],
+      allowedCommands: [],
+    }
+  }
+  if (policy === 'unrestricted') {
+    return {
+      mode: 'unrestricted',
+      label: t('agents:editorV2.toolPolicy.unrestricted'),
+      allowedTools: [],
+      allowedCommands: [],
+    }
+  }
+  return {
+    mode: 'scoped',
+    label: t('agents:editorV2.toolPolicy.scoped'),
+    allowedTools: policy.scoped.allowed_tools || [],
+    allowedCommands: policy.scoped.allowed_commands || [],
+  }
+}
+
+function normalizeNotifyPolicy(notify: NotifyPolicy | AgentNotify | undefined): {
+  channels: string[]
+  onComplete: boolean
+  onAlert: boolean
+  alertDependsOn: string[]
+  onFailure: boolean
+  pendingConfirmation: boolean
+} {
+  if (!notify) {
+    return {
+      channels: [],
+      onComplete: false,
+      onAlert: false,
+      alertDependsOn: [],
+      onFailure: false,
+      pendingConfirmation: false,
+    }
+  }
+  if ('on' in notify) {
+    return {
+      channels: notify.channels || [],
+      onComplete: notify.on === 'always',
+      onAlert: false,
+      alertDependsOn: [],
+      onFailure: notify.on === 'failure' || notify.on === 'always',
+      pendingConfirmation: notify.on === 'judgment',
+    }
+  }
+  return {
+    channels: notify.channels || [],
+    onComplete: Boolean(notify.on_complete),
+    onAlert: Boolean(notify.on_alert),
+    alertDependsOn: notify.alert_depends_on || [],
+    onFailure: Boolean(notify.on_failure),
+    pendingConfirmation: Boolean(notify.pending_confirmation),
+  }
+}
+
+function hasPacingSettings(pacing: PacingPolicy | undefined): boolean {
+  if (!pacing) return false
+  return (
+    pacing.burst_merge_secs != null ||
+    pacing.min_interval_secs != null ||
+    pacing.max_runs_per_day != null ||
+    pacing.failure_threshold != null
+  )
+}
+
+function resolveTrigger(agent: AiAgentDetail): TriggerSpec {
+  if (agent.trigger) return agent.trigger
+  // Graceful fallback if a partial mock object still provides legacy schedule
+  if (agent.schedule) {
+    switch (agent.schedule.schedule_type) {
+      case 'cron':
+        return {
+          kind: 'cron',
+          expr: agent.schedule.cron_expression || '',
+          timezone: agent.schedule.timezone || 'UTC',
+        }
+      case 'interval':
+        return {
+          kind: 'interval',
+          every_secs: agent.schedule.interval_seconds || 0,
+        }
+      case 'event':
+        return {
+          kind: 'event',
+          filter: agent.schedule.event_filter,
+        }
+      default:
+        return { kind: 'manual' }
+    }
+  }
+  return { kind: 'manual' }
+}
+
+// ============================================================================
+// Main Panel
+// ============================================================================
 
 export function AgentDetailPanel({
   agent,
@@ -80,25 +275,62 @@ export function AgentDetailPanel({
   const [executionsLoading, setExecutionsLoading] = useState(false)
   const [memory, setMemory] = useState<AgentMemory | null>(null)
   const [memoryLoading, setMemoryLoading] = useState(false)
-  const [_availableResources, setAvailableResources] = useState<AgentAvailableResources | null>(null)
+  const [explainLast, setExplainLast] = useState<string | null>(null)
 
   // Real-time status from WebSocket events
   const [realtimeStatus, setRealtimeStatus] = useState<string | null>(null)
-  // Backend id → human-readable name/model (the raw id means nothing to users)
+  // Backend id -> human-readable name/model
   const [llmBackends, setLlmBackends] = useState<LlmBackendInstance[]>([])
   const [section, setSection] = useState<'overview' | 'history' | 'memory' | 'messages'>('overview')
   // Bumped by the pinned composer so the message list refetches after a send
   const [messagesVersion, setMessagesVersion] = useState(0)
 
-  // Load executions immediately when agent is selected (preload)
-  // and when switching back to history tab with stale data
-  useEffect(() => {
-    if (agent?.id) {
-      loadExecutions()
-    }
-  }, [agent?.id])
+  const agentId = agent?.id
 
-  // Backends for id→name resolution (cheap, cached by the API layer)
+  const loadExecutions = useCallback(async (id: string) => {
+    setExecutionsLoading(true)
+    try {
+      const data = await api.getAgentExecutions(id)
+      setExecutions(data.executions || [])
+    } catch (error) {
+      handleError(error, { operation: 'Load agent executions', showToast: false })
+    } finally {
+      setExecutionsLoading(false)
+    }
+  }, [handleError])
+
+  const loadMemory = useCallback(async (id: string) => {
+    setMemoryLoading(true)
+    try {
+      const data = await api.getAgentMemory(id)
+      setMemory(data)
+    } catch (error) {
+      handleError(error, { operation: 'Load agent memory', showToast: false })
+    } finally {
+      setMemoryLoading(false)
+    }
+  }, [handleError])
+
+  const loadExplainLast = useCallback(async (id: string) => {
+    try {
+      const res = await api.explainLastAgent(id, { skipErrorToast: true })
+      const text = res?.explanation?.trim() || null
+      setExplainLast(text)
+    } catch {
+      setExplainLast(null)
+    }
+  }, [])
+
+  // Preload executions, memory, and last-run explanation when agent changes
+  useEffect(() => {
+    if (!agentId) return
+    setExplainLast(null)
+    void loadExecutions(agentId)
+    void loadMemory(agentId)
+    void loadExplainLast(agentId)
+  }, [agentId, loadExecutions, loadMemory, loadExplainLast])
+
+  // Backends for id->name resolution
   useEffect(() => {
     let cancelled = false
     api.listLlmBackends()
@@ -107,31 +339,15 @@ export function AgentDetailPanel({
     return () => { cancelled = true }
   }, [])
 
-  // Memory loads with the agent — the panel is a single page now
-  useEffect(() => {
-    if (agent?.id) {
-      loadMemory()
-    }
-  }, [agent?.id])
-
-  // Load available resources
-  useEffect(() => {
-    if (agent?.id) {
-      loadAvailableResources()
-    }
-  }, [agent?.id])
-
   // Listen to WebSocket events for real-time agent status updates
-  // Use ref to avoid stale closure over agent ID
-  const agentIdRef = useRef(agent?.id)
-  agentIdRef.current = agent?.id
+  const agentIdRef = useRef(agentId)
+  agentIdRef.current = agentId
 
   useEvents({
-    enabled: !!agent?.id,
+    enabled: !!agentId,
     eventTypes: ['AgentExecutionStarted', 'AgentExecutionCompleted'],
     onConnected: (connected) => {
       if (!connected) {
-        // Connection lost - clear realtime executing status
         setRealtimeStatus(null)
       }
     },
@@ -151,13 +367,11 @@ export function AgentDetailPanel({
         case 'AgentExecutionCompleted': {
           const completedData = (event as AgentExecutionCompletedEvent).data
           if (completedData.agent_id === currentAgentId) {
-            // Clear realtime status - agent's original status will be used
             setRealtimeStatus(null)
-            // Reload executions silently to include the just-completed one
-            loadExecutions()
-            // Reload agent data to get updated stats
+            void loadExecutions(currentAgentId)
+            void loadMemory(currentAgentId)
+            void loadExplainLast(currentAgentId)
             api.getAgent(currentAgentId).then(() => {
-              // Notify parent to refresh if needed
               onRefresh()
             }).catch(err => {
               handleError(err, { operation: 'Switch agent status', showToast: false })
@@ -168,43 +382,6 @@ export function AgentDetailPanel({
       }
     },
   })
-
-  const loadExecutions = async () => {
-    if (!agent) return
-    setExecutionsLoading(true)
-    try {
-      const data = await api.getAgentExecutions(agent.id)
-      setExecutions(data.executions || [])
-    } catch (error) {
-      handleError(error, { operation: 'Load agent executions', showToast: false })
-    } finally {
-      setExecutionsLoading(false)
-    }
-  }
-
-  const loadMemory = async () => {
-    if (!agent) return
-    setMemoryLoading(true)
-    try {
-      const data = await api.getAgentMemory(agent.id)
-      setMemory(data)
-    } catch (error) {
-      handleError(error, { operation: 'Load agent memory', showToast: false })
-    } finally {
-      setMemoryLoading(false)
-    }
-  }
-
-  const loadAvailableResources = async () => {
-    if (!agent?.id) return
-
-    try {
-      const resources = await api.getAgentAvailableResources(agent.id)
-      setAvailableResources(resources)
-    } catch (error) {
-      handleError(error, { operation: 'Load available resources', showToast: false })
-    }
-  }
 
   // Empty state (only in non-inline mode)
   if (!agent && !inlineMode) {
@@ -218,13 +395,10 @@ export function AgentDetailPanel({
     )
   }
 
-  // Return null if no agent in inline mode (dialog will handle it)
   if (!agent) return null
 
-  // Use realtime status from WebSocket if available, otherwise use agent's status
   const currentStatus = realtimeStatus || agent.status
 
-  // Format duration - handles undefined/null/NaN values
   const formatDuration = (ms: number | undefined | null) => {
     if (ms === undefined || ms === null || Number.isNaN(ms) || ms < 0) {
       return '--'
@@ -233,16 +407,46 @@ export function AgentDetailPanel({
     return `${(ms / 1000).toFixed(1)}s`
   }
 
-  // Safe number to string conversion
   const formatCount = (count: number | undefined | null) => {
     return count !== undefined && count !== null && !Number.isNaN(count) ? count : '--'
   }
 
+  // Contract derivations
+  const trigger = resolveTrigger(agent)
+  const toolPolicyInfo = describeToolPolicy(agent.tool_policy, t as TFn)
+  const notifyInfo = normalizeNotifyPolicy(agent.notify)
+  const inputRequirements: InputRequirement[] = agent.input?.requirements || []
+  const outputFields = agent.output?.fields || []
+  const outputPublish = Boolean(agent.output?.publish)
+  const controlledActions: ControlledAction[] = agent.controlled_actions || []
+  const effectivePlan = agent.effective_plan
+
+  // Role & stats derivations
+  const hasOutputFields = outputFields.length > 0
+  const role = (outputPublish || agent.execution_mode === 'structured') && hasOutputFields
+    ? 'recordData'
+    : (toolPolicyInfo.mode === 'unrestricted' || agent.execution_mode === 'free')
+      ? 'actOrInvestigate'
+      : 'answer'
+  const RoleIcon = role === 'recordData' ? BarChart3 : role === 'actOrInvestigate' ? Workflow : MessageSquare
+
+  const totalRuns = agent.stats?.total_runs ?? agent.stats?.total_executions ?? agent.execution_count
+  const successfulRuns = agent.stats?.successful_runs ?? agent.stats?.successful_executions ?? agent.success_count
+  const failedRuns = agent.stats?.failed_runs ?? agent.stats?.failed_executions ?? agent.error_count
+  const avgDurationMs = agent.stats?.avg_duration_ms ?? agent.avg_duration_ms
+  const partialRuns = agent.stats?.partial_runs ?? 0
+  const runsToday = agent.stats?.runs_today ?? 0
+
+  const eventFilterStr = trigger.kind === 'event' ? formatEventFilter(trigger.filter) : null
+
+  const notifyTriggers: string[] = []
+  if (notifyInfo.onComplete) notifyTriggers.push(t('agents:detail.notifyOnComplete'))
+  if (notifyInfo.onAlert) notifyTriggers.push(t('agents:detail.notifyOnAlert'))
+  if (notifyInfo.onFailure) notifyTriggers.push(t('agents:detail.notifyOnFailure'))
+  if (notifyInfo.pendingConfirmation) notifyTriggers.push(t('agents:detail.notifyPendingConfirmation'))
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Left-rail section nav + content — matches the app's quiet list language.
-          Mobile stacks: the section chips must sit ABOVE the content, never
-          beside it — as a row child they were squeezing content into a sliver. */}
       <div className={cn("flex min-h-0 flex-1", isMobile ? "flex-col" : "flex-row")}>
         <FullScreenDialogSidebar>
           <div className="p-2 space-y-1">
@@ -297,10 +501,6 @@ export function AgentDetailPanel({
         )}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {/* Messages owns its own scroll container — a native overflow div with a
-            definite height (flex-1 in this column) lets h-full/min-h-full work,
-            so the empty state can flex-centre. Radix ScrollArea's inner content
-            div is height-auto and defeats that. */}
         {section === 'messages' ? (
           <div className="min-h-0 flex-1 overflow-y-auto bg-muted-20">
             <div className={cn(
@@ -322,189 +522,375 @@ export function AgentDetailPanel({
           )}>
             {section === 'overview' && (
               <>
-                              <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                                {(() => {
-                                  const hasContract = (agent.output_schema?.length ?? 0) > 0
-                                  const role = agent.execution_mode === 'structured' && hasContract
-                                    ? 'recordData'
-                                    : agent.execution_mode === 'free' ? 'actOrInvestigate' : 'answer'
-                                  const RoleIcon = role === 'recordData' ? BarChart3 : role === 'actOrInvestigate' ? Workflow : MessageSquare
-                                  const isTool = (agent.memory_mode ?? (agent.execution_mode === 'structured' ? 'tool' : 'assistant')) === 'tool'
-                                  const MemIcon = isTool ? Wrench : BrainCircuit
-                                  return (
-                                    <>
-                                      <span className="inline-flex items-center gap-1 rounded-md bg-muted-30 px-1.5 py-0.5">
-                                        <RoleIcon className="h-3.5 w-3.5" />{t(`agents:card.role.${role}`)}
-                                      </span>
-                                      <span className="inline-flex items-center gap-1 rounded-md bg-muted-30 px-1.5 py-0.5">
-                                        <MemIcon className="h-3.5 w-3.5" />{t(`agents:card.memory.${isTool ? 'tool' : 'assistant'}`)}
-                                      </span>
-                                    </>
-                                  )
-                                })()}
-                                <span className={cn("text-xs text-muted-foreground tabular-nums", isMobile ? "w-full" : "ml-auto")}>
-                                  {t('common:updatedAt')} {new Date(agent.updated_at).toLocaleDateString()}
-                                  {agent.last_execution_at && (
-                                    <> · {t('agents:lastExecution')} {new Date(agent.last_execution_at).toLocaleString()}</>
-                                  )}
-                                </span>
-                              </div>
-
-                              <div className="grid grid-cols-2 gap-3 rounded-2xl border border-border bg-card p-4 md:grid-cols-4 md:rounded-lg md:p-3">
-                                <div>
-                                  <div className="text-base font-semibold tabular-nums leading-tight">{formatCount(agent.stats?.total_executions ?? agent.execution_count)}</div>
-                                  <div className="text-xs text-muted-foreground">{t('agents:detail.executions')}</div>
-                                </div>
-                                <div>
-                                  <div className="text-base font-semibold tabular-nums leading-tight text-success">{formatCount(agent.stats?.successful_executions ?? agent.success_count)}</div>
-                                  <div className="text-xs text-muted-foreground">{t('agents:detail.success')}</div>
-                                </div>
-                                <div>
-                                  <div className={cn(
-                                    "text-base font-semibold tabular-nums leading-tight",
-                                    (agent.stats?.failed_executions ?? agent.error_count) > 0 ? "text-error" : ""
-                                  )}>{formatCount(agent.stats?.failed_executions ?? agent.error_count)}</div>
-                                  <div className="text-xs text-muted-foreground">{t('agents:detail.failed')}</div>
-                                </div>
-                                <div>
-                                  <div className="text-base font-semibold tabular-nums leading-tight">{formatDuration(agent.stats?.avg_duration_ms ?? agent.avg_duration_ms)}</div>
-                                  <div className="text-xs text-muted-foreground">{t('agents:detail.avgDuration')}</div>
-                                </div>
-                              </div>
-
-                              <DetailSection title={t('agents:userPrompt')} icon={FileText}>
-                                <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-                                  {agent.user_prompt || t('agents:card.noDescription')}
-                                </div>
-                              </DetailSection>
-
-                              {(agent.output_schema?.length ?? 0) > 0 && (
-                                <DetailSection title={t('agents:detail.outputFields')} icon={Database}>
-                                  <div className="space-y-1">
-                                    {agent.output_schema!.map((f) => {
-                                      // The rich state when the backend sends
-                                      // it; the bare value map is the fallback.
-                                      const state = agent.latest_output_state?.[f.name]
-                                      const latest = state?.value ?? agent.latest_output?.[f.name]
-                                      return (
-                                        <div key={f.name} className="border-b border-border py-1.5 last:border-0">
-                                          <div className="flex items-baseline gap-2">
-                                            <span className="font-mono text-xs">{f.name}</span>
-                                            <span className="text-xs text-muted-foreground truncate">
-                                              {f.field_type.type === 'enum' ? `enum(${f.field_type.values.join('/')})` : t(`agents:detail.fieldType.${f.field_type.type}`)}
-                                              {f.unit ? ` · ${f.unit}` : ''}
-                                            </span>
-                                            <span className="ml-auto shrink-0 text-sm font-medium tabular-nums">
-                                              {latest !== undefined ? String(latest) : '—'}
-                                            </span>
-                                          </div>
-                                          {/* When it was published, how sure the
-                                              model was, and the way back to the
-                                              run behind the reading (002 §4.2). */}
-                                          {latest !== undefined && (
-                                            <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                                              {state && <span>{formatRelativeTime(state.at)}</span>}
-                                              {state?.confidence !== undefined && (
-                                                <span>{Math.round(state.confidence * 100)}%</span>
-                                              )}
-                                              {state?.execution_id && (
-                                                <button
-                                                  type="button"
-                                                  onClick={() =>
-                                                    onViewExecutionDetail(agent.id, state.execution_id!)
-                                                  }
-                                                  className="ml-auto inline-flex items-center gap-0.5 text-primary transition-colors hover:underline"
-                                                >
-                                                  {t('agents:detail.viewEvidence')}
-                                                  <ChevronRight className="h-3 w-3" />
-                                                </button>
-                                              )}
-                                            </div>
-                                          )}
-                                        </div>
-                                      )
-                                    })}
-                                    <p className="pt-1 text-xs text-muted-foreground">{t('agents:detail.outputFieldsHint')}</p>
-                                  </div>
-                                </DetailSection>
-                              )}
-
-                              <div className="rounded-2xl border border-border bg-card p-4 md:rounded-lg">
-                                <div className="space-y-1.5">
-                                  <h4 className="text-sm font-medium">{t('agents:detail.schedule')}</h4>
-                                  <InfoRow label={t('agents:detail.type')} value={agent.schedule.schedule_type} />
-                                  {agent.schedule.interval_seconds && (
-                                    <InfoRow label={t('agents:detail.interval')} value={`${agent.schedule.interval_seconds}s`} />
-                                  )}
-                                  {agent.schedule.cron_expression && (
-                                    <InfoRow label={t('agents:detail.cron')} value={agent.schedule.cron_expression} mono />
-                                  )}
-                                  {agent.schedule.event_filter && (
-                                    <InfoRow label={t('agents:creator.schedule.event.triggerEvent')} value={agent.schedule.event_filter} mono />
-                                  )}
-                                </div>
-
-                                <div className="mt-4 space-y-1.5 border-t border-border pt-4">
-                                  <h4 className="text-sm font-medium">{t('agents:creator.basicInfo.llmBackend')}</h4>
-                                  {(() => {
-                                    const backend = llmBackends.find((b) => b.id === agent.llm_backend_id)
-                                    if (backend) {
-                                      return (
-                                        <>
-                                          <InfoRow label={t('agents:detail.model')} value={backend.name} />
-                                          {backend.model && (
-                                            <InfoRow label={t('agents:detail.modelId', 'Model')} value={backend.model} mono />
-                                          )}
-                                        </>
-                                      )
-                                    }
-                                    return (
-                                      <InfoRow
-                                        label={t('agents:detail.model')}
-                                        value={agent.llm_backend_id
-                                          ? `${agent.llm_backend_id.slice(0, 8)}…`
-                                          : t('agents:creator.basicInfo.useActiveBackend')}
-                                        mono={!!agent.llm_backend_id}
-                                      />
-                                    )
-                                  })()}
-                                  <InfoRow label={t('common:priority')} value={agent.priority ?? '-'} />
-                                </div>
-                              </div>
-
-                              <div className="md:rounded-lg md:border md:border-border md:bg-card md:p-4">
-                <DetailSection title={`${t('agents:detail.resources')} (${(agent.resources || []).length})`} icon={Zap}>
-                                <div className="space-y-2">
-                                  {(agent.resources || []).length > 0 && (
-                                    <p className="text-xs text-muted-foreground">
-                                      {Object.entries(
-                                        (agent.resources || []).reduce((acc, r) => {
-                                          const type = r.resource_type.toLowerCase()
-                                          acc[type] = (acc[type] || 0) + 1
-                                          return acc
-                                        }, {} as Record<string, number>)
-                                      ).map(([type, count]) => `${count} × ${type}`).join(' · ')}
-                                    </p>
-                                  )}
-                                  <div className={cn("gap-x-4 gap-y-1", isMobile ? "grid grid-cols-1" : "grid grid-cols-2")}>
-                                    {(agent.resources || []).slice(0, 8).map((resource, idx) => (
-                                      <div key={idx} className="flex items-baseline gap-2 border-b border-border py-1 last:border-0">
-                                        <span className="min-w-0 flex-1 truncate text-sm" title={resource.resource_id}>
-                                          {resource.name || resource.resource_id}
-                                        </span>
-                                        <span className="shrink-0 text-xs text-muted-foreground">{resource.resource_type}</span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                  {(agent.resources || []).length > 8 && (
-                                    <div className="text-xs text-muted-foreground pt-0.5">
-                                      {t('agents:detail.moreResources', { count: (agent.resources || []).length - 8 })}
-                                    </div>
-                                  )}
-                                </div>
-                              </DetailSection>
+                {/* Top metadata strip */}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1 rounded-md bg-muted-30 px-1.5 py-0.5">
+                    <RoleIcon className="h-3.5 w-3.5" />
+                    {t(`agents:card.role.${role}`)}
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-md bg-muted-30 px-1.5 py-0.5">
+                    <Wrench className="h-3.5 w-3.5" />
+                    {toolPolicyInfo.label}
+                  </span>
+                  {agent.config_version != null && (
+                    <span className="inline-flex items-center rounded-md bg-muted-30 px-1.5 py-0.5 font-mono">
+                      {t('agents:detail.configVersion', { version: agent.config_version })}
+                    </span>
+                  )}
+                  {currentStatus === 'Executing' && (
+                    <Badge variant="secondary" className="h-5 px-1.5 text-xs text-info">
+                      {t('agents:status.executing')}
+                    </Badge>
+                  )}
+                  <span className={cn("text-xs text-muted-foreground tabular-nums", isMobile ? "w-full" : "ml-auto")}>
+                    {t('common:updatedAt')} {formatTimestamp(agent.updated_at, false)}
+                    {agent.last_execution_at != null && (
+                      <> · {t('agents:lastExecution')} {formatTimestamp(agent.last_execution_at, false)}</>
+                    )}
+                  </span>
                 </div>
 
+                {/* Runtime stats */}
+                <div className="rounded-2xl border border-border bg-card p-4 md:rounded-lg md:p-3">
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <div>
+                      <div className="text-base font-semibold tabular-nums leading-tight">{formatCount(totalRuns)}</div>
+                      <div className="text-xs text-muted-foreground">{t('agents:detail.executions')}</div>
+                    </div>
+                    <div>
+                      <div className="text-base font-semibold tabular-nums leading-tight text-success">{formatCount(successfulRuns)}</div>
+                      <div className="text-xs text-muted-foreground">{t('agents:detail.success')}</div>
+                    </div>
+                    <div>
+                      <div className={cn(
+                        "text-base font-semibold tabular-nums leading-tight",
+                        failedRuns > 0 ? "text-error" : ""
+                      )}>{formatCount(failedRuns)}</div>
+                      <div className="text-xs text-muted-foreground">{t('agents:detail.failed')}</div>
+                    </div>
+                    <div>
+                      <div className="text-base font-semibold tabular-nums leading-tight">{formatDuration(avgDurationMs)}</div>
+                      <div className="text-xs text-muted-foreground">{t('agents:detail.avgDuration')}</div>
+                    </div>
+                  </div>
+                  {(partialRuns > 0 || runsToday > 0) && (
+                    <div className="mt-2.5 flex flex-wrap items-center gap-3 border-t border-border pt-2 text-xs text-muted-foreground tabular-nums">
+                      {partialRuns > 0 && (
+                        <span>
+                          {t('agents:detail.partialRuns')}: <strong className="font-medium text-warning">{partialRuns}</strong>
+                        </span>
+                      )}
+                      {runsToday > 0 && (
+                        <span>
+                          {t('agents:detail.runsToday')}:{' '}
+                          <strong className="font-medium text-foreground">
+                            {runsToday}
+                            {agent.pacing?.max_runs_per_day != null ? ` / ${agent.pacing.max_runs_per_day}` : ''}
+                          </strong>
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Explain Last Run */}
+                {explainLast && (
+                  <div className="rounded-2xl border border-border bg-card p-4 md:rounded-lg">
+                    <h4 className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-foreground">
+                      <Info className="h-4 w-4 text-primary" />
+                      {t('agents:detail.explainLast')}
+                    </h4>
+                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                      {explainLast}
+                    </p>
+                  </div>
+                )}
+
+                {/* User Prompt */}
+                <DetailSection title={t('agents:userPrompt')} icon={FileText}>
+                  <div className="text-sm leading-relaxed whitespace-pre-wrap text-foreground">
+                    {agent.user_prompt || t('agents:card.noDescription')}
+                  </div>
+                </DetailSection>
+
+                {/* Output Contract */}
+                {hasOutputFields && (
+                  <DetailSection title={t('agents:detail.outputFields')} icon={Database}>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Badge variant={outputPublish ? 'default' : 'secondary'} className="text-xs">
+                          {outputPublish ? t('agents:detail.outputPublishOn') : t('agents:detail.outputPublishOff')}
+                        </Badge>
+                      </div>
+                      <div className="space-y-1">
+                        {outputFields.map((f) => {
+                          const state = agent.latest_output_state?.[f.name]
+                          const latest = state?.value ?? agent.latest_output?.[f.name]
+                          return (
+                            <div key={f.name} className="border-b border-border py-1.5 last:border-0">
+                              <div className="flex items-baseline gap-2">
+                                <span className="font-mono text-xs font-medium">{f.name}</span>
+                                {f.description && (
+                                  <span className="truncate text-xs text-muted-foreground">{f.description}</span>
+                                )}
+                                <span className="ml-auto shrink-0 text-sm font-medium tabular-nums">
+                                  {latest !== undefined ? String(latest) : '—'}
+                                </span>
+                              </div>
+                              {f.depends_on && f.depends_on.length > 0 && (
+                                <div className="mt-0.5 text-xs text-muted-foreground">
+                                  {t('agents:detail.outputDependsOn', { deps: f.depends_on.join(', ') })}
+                                </div>
+                              )}
+                              {latest !== undefined && (
+                                <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                                  {state && <span>{formatRelativeTime(state.at)}</span>}
+                                  {state?.confidence !== undefined && (
+                                    <span>{Math.round(state.confidence * 100)}%</span>
+                                  )}
+                                  {state?.execution_id && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onViewExecutionDetail(agent.id, state.execution_id!)
+                                      }
+                                      className="ml-auto inline-flex items-center gap-0.5 text-primary transition-colors hover:underline"
+                                    >
+                                      {t('agents:detail.viewEvidence')}
+                                      <ChevronRight className="h-3 w-3" />
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                        {outputPublish && (
+                          <p className="pt-1 text-xs text-muted-foreground">{t('agents:detail.outputFieldsHint')}</p>
+                        )}
+                      </div>
+                    </div>
+                  </DetailSection>
+                )}
+
+                {/* Trigger, Model, Tool Policy, Notify, Pacing */}
+                <div className="rounded-2xl border border-border bg-card p-4 md:rounded-lg space-y-4">
+                  {/* Trigger */}
+                  <div className="space-y-1.5">
+                    <h4 className="text-sm font-medium">{t('agents:detail.trigger')}</h4>
+                    <InfoRow
+                      label={t('agents:detail.type')}
+                      value={t(`agents:editorV2.trigger.${trigger.kind}`, { defaultValue: trigger.kind })}
+                    />
+                    {trigger.kind === 'interval' && (
+                      <InfoRow
+                        label={t('agents:detail.interval')}
+                        value={formatInterval(trigger.every_secs, t as TFn)}
+                      />
+                    )}
+                    {trigger.kind === 'cron' && (
+                      <>
+                        <InfoRow label={t('agents:detail.cron')} value={trigger.expr} mono />
+                        {trigger.timezone && (
+                          <InfoRow label={t('agents:detail.timezone')} value={trigger.timezone} mono />
+                        )}
+                      </>
+                    )}
+                    {trigger.kind === 'event' && eventFilterStr && (
+                      <InfoRow label={t('agents:detail.eventFilter')} value={eventFilterStr} mono />
+                    )}
+                    {trigger.kind === 'manual' && (
+                      <InfoRow label={t('agents:detail.schedule')} value={t('agents:detail.manualOnly')} />
+                    )}
+                  </div>
+
+                  {/* LLM Backend */}
+                  <div className="space-y-1.5 border-t border-border pt-4">
+                    <h4 className="text-sm font-medium">{t('agents:creator.basicInfo.llmBackend')}</h4>
+                    {(() => {
+                      const backend = llmBackends.find((b) => b.id === agent.llm_backend_id)
+                      if (backend) {
+                        return (
+                          <>
+                            <InfoRow label={t('agents:detail.model')} value={backend.name} />
+                            {backend.model && (
+                              <InfoRow label={t('agents:detail.modelId')} value={backend.model} mono />
+                            )}
+                          </>
+                        )
+                      }
+                      return (
+                        <InfoRow
+                          label={t('agents:detail.model')}
+                          value={agent.llm_backend_id
+                            ? `${agent.llm_backend_id.slice(0, 8)}…`
+                            : t('agents:creator.basicInfo.useActiveBackend')}
+                          mono={!!agent.llm_backend_id}
+                        />
+                      )
+                    })()}
+                  </div>
+
+                  {/* Tool Policy */}
+                  <div className="space-y-1.5 border-t border-border pt-4">
+                    <h4 className="flex items-center gap-1.5 text-sm font-medium">
+                      <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+                      {t('agents:detail.toolPolicy')}
+                    </h4>
+                    <InfoRow label={t('agents:detail.type')} value={toolPolicyInfo.label} />
+                    {toolPolicyInfo.allowedTools.length > 0 && (
+                      <InfoRow
+                        label={t('agents:detail.allowedTools')}
+                        value={toolPolicyInfo.allowedTools.join(', ')}
+                        mono
+                      />
+                    )}
+                    {toolPolicyInfo.allowedCommands.length > 0 && (
+                      <InfoRow
+                        label={t('agents:detail.allowedCommands')}
+                        value={toolPolicyInfo.allowedCommands.join(', ')}
+                        mono
+                      />
+                    )}
+                  </div>
+
+                  {/* Notification Policy */}
+                  <div className="space-y-1.5 border-t border-border pt-4">
+                    <h4 className="flex items-center gap-1.5 text-sm font-medium">
+                      <Bell className="h-3.5 w-3.5 text-muted-foreground" />
+                      {t('agents:detail.notifyPolicy')}
+                    </h4>
+                    <InfoRow
+                      label={t('agents:detail.notifyTriggers')}
+                      value={notifyTriggers.length > 0 ? notifyTriggers.join(' · ') : t('agents:detail.notifySilent')}
+                    />
+                    <InfoRow
+                      label={t('agents:detail.notifyChannels')}
+                      value={
+                        notifyInfo.channels.length > 0
+                          ? notifyInfo.channels.join(', ')
+                          : t('agents:detail.notifyChannelsEmpty')
+                      }
+                      mono={notifyInfo.channels.length > 0}
+                    />
+                  </div>
+
+                  {/* Pacing & Guardrails */}
+                  {hasPacingSettings(agent.pacing) && (
+                    <div className="space-y-1.5 border-t border-border pt-4">
+                      <h4 className="flex items-center gap-1.5 text-sm font-medium">
+                        <Gauge className="h-3.5 w-3.5 text-muted-foreground" />
+                        {t('agents:detail.pacing')}
+                      </h4>
+                      {agent.pacing?.burst_merge_secs != null && (
+                        <InfoRow label={t('agents:detail.burstMerge')} value={`${agent.pacing.burst_merge_secs}s`} />
+                      )}
+                      {agent.pacing?.min_interval_secs != null && (
+                        <InfoRow label={t('agents:detail.minInterval')} value={`${agent.pacing.min_interval_secs}s`} />
+                      )}
+                      {agent.pacing?.max_runs_per_day != null && (
+                        <InfoRow label={t('agents:detail.maxRunsPerDay')} value={agent.pacing.max_runs_per_day} />
+                      )}
+                      {agent.pacing?.failure_threshold != null && (
+                        <InfoRow label={t('agents:detail.failureThreshold')} value={agent.pacing.failure_threshold} />
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Input Requirements */}
+                <div className="md:rounded-lg md:border md:border-border md:bg-card md:p-4">
+                  <DetailSection title={`${t('agents:detail.inputRequirements')} (${inputRequirements.length})`} icon={Zap}>
+                    {inputRequirements.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">{t('agents:detail.noInputs')}</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {inputRequirements.map((req) => (
+                          <div key={req.key} className="rounded-lg border border-border bg-muted-20 px-3 py-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-mono text-xs font-medium text-foreground">{req.key}</span>
+                              <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
+                                {formatInputSource(req.source)}
+                                {req.operation ? ` / ${req.operation}` : ''}
+                              </span>
+                              <Badge variant="outline" className="ml-auto h-5 px-1.5 text-xs">
+                                {req.result_type}
+                              </Badge>
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                              <span>
+                                {t('agents:detail.freshness')}: {formatFreshness(req.freshness, t as TFn)}
+                              </span>
+                              <span>
+                                {t('agents:detail.onMissing')}: {formatMissingPolicy(req.on_missing, t as TFn)}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </DetailSection>
+                </div>
+
+                {/* Controlled Actions */}
+                {controlledActions.length > 0 && (
+                  <div className="md:rounded-lg md:border md:border-border md:bg-card md:p-4">
+                    <DetailSection title={`${t('agents:detail.controlledActions')} (${controlledActions.length})`} icon={Workflow}>
+                      <div className="space-y-1.5">
+                        {controlledActions.map((action, idx) => (
+                          <div key={`${action.name}-${idx}`} className="flex flex-wrap items-center gap-2 border-b border-border py-1.5 last:border-0">
+                            <span className="text-sm font-medium text-foreground">{action.name}</span>
+                            <span className="font-mono text-xs text-muted-foreground truncate">{action.destination}</span>
+                            {action.idempotent && (
+                              <Badge variant="secondary" className="ml-auto h-5 px-1.5 text-xs">
+                                {t('agents:detail.idempotent')}
+                              </Badge>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </DetailSection>
+                  </div>
+                )}
+
+                {/* Effective Plan */}
+                {effectivePlan && (
+                  <div className="rounded-2xl border border-dashed border-border bg-muted-20 p-4 md:rounded-lg space-y-2.5">
+                    <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {t('agents:detail.effectivePlan')}
+                    </h4>
+                    <InfoRow label={t('agents:detail.trigger')} value={effectivePlan.trigger_summary} mono />
+                    {effectivePlan.authorized_reads.length > 0 && (
+                      <div className="space-y-1 pt-1">
+                        <div className="text-xs text-muted-foreground">
+                          {t('agents:detail.authorizedReads')} ({effectivePlan.authorized_reads.length})
+                        </div>
+                        <ul className="space-y-0.5">
+                          {effectivePlan.authorized_reads.map((read) => (
+                            <li key={read.key} className="font-mono text-xs text-muted-foreground">
+                              {read.key} → {read.source_id}
+                              {read.operation ? ` / ${read.operation}` : ''}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {effectivePlan.warnings && effectivePlan.warnings.length > 0 && (
+                      <div className="space-y-1 rounded-md border border-warning/40 bg-warning/5 px-3 py-2">
+                        <div className="flex items-center gap-1.5 text-xs font-medium text-warning">
+                          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                          {t('agents:detail.planWarnings')}
+                        </div>
+                        <ul className="space-y-0.5 text-xs text-warning">
+                          {effectivePlan.warnings.map((w, idx) => (
+                            <li key={idx}>{w}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
             {section === 'history' && (
@@ -522,19 +908,11 @@ export function AgentDetailPanel({
             )}
             {section === 'memory' && (
               <>
-              <div className="mb-3 flex items-center gap-1.5 rounded-md bg-muted-30 px-2 py-1.5 text-xs text-muted-foreground">
-                            {(() => {
-                              const isTool = (agent.memory_mode ?? (agent.execution_mode === 'structured' ? 'tool' : 'assistant')) === 'tool'
-                              const MemIcon = isTool ? Wrench : BrainCircuit
-                              return (
-                                <>
-                                  <MemIcon className="h-3.5 w-3.5 shrink-0" />
-                                  <span>{t(`agents:detail.memoryModeNote.${isTool ? 'tool' : 'assistant'}`)}</span>
-                                </>
-                              )
-                            })()}
-                          </div>
-                          <MemoryContent memory={memory} loading={memoryLoading} />
+                <div className="mb-3 flex items-center gap-1.5 rounded-md bg-muted-30 px-2.5 py-1.5 text-xs text-muted-foreground">
+                  <Brain className="h-3.5 w-3.5 shrink-0" />
+                  <span>{t('agents:detail.memoryNote')}</span>
+                </div>
+                <MemoryContent memory={memory} loading={memoryLoading} />
               </>
             )}
           </div>
@@ -561,7 +939,6 @@ export function AgentDetailPanel({
 // Sub Components
 // ============================================================================
 
-// Unified Section Component for all detail displays
 interface DetailSectionProps {
   title: string
   icon: React.ComponentType<{ className?: string }> | null
@@ -582,8 +959,6 @@ function DetailSection({ title, icon: Icon, children }: DetailSectionProps) {
   )
 }
 
-
-// Info Row Component — definition-list row: muted label left, value right
 interface InfoRowProps {
   label: string
   value: string | number
@@ -603,7 +978,15 @@ function InfoRow({ label, value, mono }: InfoRowProps) {
 // Knowledge File Card — expandable with markdown rendering
 // ============================================================================
 
-function KnowledgeFileCard({ file, formatTime }: { file: KnowledgeFileRef; formatTime: (ts: string | number) => string }) {
+function KnowledgeFileCard({
+  file,
+  formatTime,
+  emptyLabel,
+}: {
+  file: KnowledgeFileRef
+  formatTime: (ts: string | number) => string
+  emptyLabel: string
+}) {
   const [expanded, setExpanded] = useState(false)
   const hasContent = file.content && file.content.trim().length > 0
 
@@ -636,7 +1019,7 @@ function KnowledgeFileCard({ file, formatTime }: { file: KnowledgeFileRef; forma
               </ReactMarkdown>
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground italic mt-2">No content available</p>
+            <p className="text-xs text-muted-foreground italic mt-2">{emptyLabel}</p>
           )}
         </div>
       )}
@@ -702,76 +1085,80 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
   }
 
   return (
-      <div className="space-y-4">
-        {/* Stats */}
-        <div className="rounded-lg bg-card border border-border p-4">
-          <div className={cn("grid gap-4", isMobile ? "grid-cols-2" : "grid-cols-3")}>
-            <div>
-              <div className="text-base font-semibold tabular-nums leading-tight">{journalRecords.length}</div>
-              <div className="text-xs text-muted-foreground">{t('agents:memory.executions')}</div>
-            </div>
-            <div>
-              <div className="text-base font-semibold tabular-nums leading-tight">{knowledgeFiles.length}</div>
-              <div className="text-xs text-muted-foreground">{t('agents:memory.knowledgeFiles')}</div>
-            </div>
-            {memory.updated_at && (
-              <div>
-                <div className="text-base font-semibold leading-tight">{formatTime(memory.updated_at)}</div>
-                <div className="text-xs text-muted-foreground">{t('agents:memory.lastUpdate')}</div>
-              </div>
-            )}
+    <div className="space-y-4">
+      {/* Stats */}
+      <div className="rounded-lg bg-card border border-border p-4">
+        <div className={cn("grid gap-4", isMobile ? "grid-cols-2" : "grid-cols-3")}>
+          <div>
+            <div className="text-base font-semibold tabular-nums leading-tight">{journalRecords.length}</div>
+            <div className="text-xs text-muted-foreground">{t('agents:memory.executions')}</div>
           </div>
-        </div>
-
-        {/* Knowledge Files */}
-        {knowledgeFiles.length > 0 && (
-          <DetailSection
-            title={`${t('agents:memory.knowledgeFiles')} (${knowledgeFiles.length})`}
-            icon={FileText}
-          >
-            <div className="space-y-2">
-              {knowledgeFiles.map((file: KnowledgeFileRef) => (
-                <KnowledgeFileCard key={file.name} file={file} formatTime={formatTime} />
-              ))}
+          <div>
+            <div className="text-base font-semibold tabular-nums leading-tight">{knowledgeFiles.length}</div>
+            <div className="text-xs text-muted-foreground">{t('agents:memory.knowledgeFiles')}</div>
+          </div>
+          {memory.updated_at && (
+            <div>
+              <div className="text-base font-semibold leading-tight">{formatTime(memory.updated_at)}</div>
+              <div className="text-xs text-muted-foreground">{t('agents:memory.lastUpdate')}</div>
             </div>
-          </DetailSection>
-        )}
+          )}
+        </div>
+      </div>
 
-        {/* Execution Journal */}
-        {journalRecords.length > 0 && (
-          <DetailSection
-            title={`${t('agents:memory.journal')} (${journalRecords.length}/${memory.journal?.max_records || 10})`}
-            icon={History}
-          >
-            <div className="space-y-2">
-              {journalRecords.map((record: JournalExecutionRecord, idx: number) => (
-                <div key={idx} className="group rounded-lg border border-border bg-card hover:border-foreground/25 transition-colors">
-                  <div className="pl-4 pr-3 py-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                          {record.execution_id?.slice(0, 6)}...
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatTime(record.timestamp)}
-                        </span>
-                      </div>
-                      <Badge variant={record.success ? 'default' : 'destructive'} className="text-xs">
-                        {record.success ? t('agents:executionStatus.completed') : t('agents:executionStatus.failed')}
-                      </Badge>
+      {/* Knowledge Files */}
+      {knowledgeFiles.length > 0 && (
+        <DetailSection
+          title={`${t('agents:memory.knowledgeFiles')} (${knowledgeFiles.length})`}
+          icon={FileText}
+        >
+          <div className="space-y-2">
+            {knowledgeFiles.map((file: KnowledgeFileRef) => (
+              <KnowledgeFileCard
+                key={file.name}
+                file={file}
+                formatTime={formatTime}
+                emptyLabel={t('agents:detail.noContent')}
+              />
+            ))}
+          </div>
+        </DetailSection>
+      )}
+
+      {/* Execution Journal */}
+      {journalRecords.length > 0 && (
+        <DetailSection
+          title={`${t('agents:memory.journal')} (${journalRecords.length}/${memory.journal?.max_records || 10})`}
+          icon={History}
+        >
+          <div className="space-y-2">
+            {journalRecords.map((record: JournalExecutionRecord, idx: number) => (
+              <div key={idx} className="group rounded-lg border border-border bg-card hover:border-foreground/25 transition-colors">
+                <div className="pl-4 pr-3 py-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                        {record.execution_id?.slice(0, 6)}...
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatTime(record.timestamp)}
+                      </span>
                     </div>
-                    <p className="text-sm">{record.outcome}</p>
-                    <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <Zap className="h-3.5 w-3.5" />
-                      <span>{record.action_taken}</span>
-                    </div>
+                    <Badge variant={record.success ? 'default' : 'destructive'} className="text-xs">
+                      {record.success ? t('agents:executionStatus.completed') : t('agents:executionStatus.failed')}
+                    </Badge>
+                  </div>
+                  <p className="text-sm">{record.outcome}</p>
+                  <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Zap className="h-3.5 w-3.5" />
+                    <span>{record.action_taken}</span>
                   </div>
                 </div>
-              ))}
-            </div>
-
-          </DetailSection>
-        )}
-      </div>
+              </div>
+            ))}
+          </div>
+        </DetailSection>
+      )}
+    </div>
   )
 }

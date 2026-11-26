@@ -20,7 +20,7 @@ import { formatTimestamp } from "@/lib/utils/format"
 import { cn } from "@/lib/utils"
 import { MarkdownMessage } from "@/components/chat/MarkdownMessage"
 import { textMicro, badgeSize, textNano } from "@/design-system/tokens/typography"
-import type { AgentExecutionDetail, DataCollected } from "@/types"
+import type { AgentExecutionDetail, DataCollected, DeliveryState } from "@/types"
 import { FormSection, FormSectionGroup } from "@/components/ui/form-section"
 import { UnifiedFormDialog } from "@/components/dialog/UnifiedFormDialog"
 import { AgentExecutionEvidencePanel } from "@/components/agents/AgentExecutionEvidencePanel"
@@ -117,6 +117,29 @@ const getDataDisplayPairs = (data: DataCollected) => {
   return pairs
 }
 
+const getDeliveryBadgeTone = (state: DeliveryState): string => {
+  switch (state.state) {
+    case 'confirmed':
+      return 'border-success/40 bg-success/10 text-success'
+    case 'accepted':
+      return 'border-info/40 bg-info/10 text-info'
+    case 'rejected':
+      return 'border-error/40 bg-error/10 text-error'
+    case 'outcome_unknown':
+      return 'border-warning/40 bg-warning/10 text-warning'
+    case 'intent_pending':
+    default:
+      return 'border-border bg-muted text-muted-foreground'
+  }
+}
+
+const getDeliveryReason = (state: DeliveryState): string | null => {
+  if (state.state === 'rejected' || state.state === 'outcome_unknown') {
+    return state.reason || null
+  }
+  return null
+}
+
 interface ExecutionDetailDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -204,10 +227,30 @@ export function ExecutionDetailDialog({
       ) : (
         <div className="space-y-3">
           {/* Status Bar */}
-          <div className="flex items-center justify-between py-2 px-3 bg-muted-30 rounded-lg">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 py-2 px-3 bg-muted-30 rounded-lg">
+            <div className="flex flex-wrap items-center gap-2">
               {getStatusIcon(execution.status)}
               <span className="text-xs font-medium">{t(`agents:executionStatus.${execution.status.toLowerCase()}`)}</span>
+              {execution.config_version != null && (
+                <Badge variant="outline" className="h-5 px-1.5 font-mono text-xs">
+                  {t('agents:execution.configVersion', { version: execution.config_version })}
+                </Badge>
+              )}
+              {execution.dry_run && (
+                <Badge variant="secondary" className="h-5 px-1.5 text-xs">
+                  {t('agents:execution.dryRun')}
+                </Badge>
+              )}
+              {execution.stale_config && (
+                <Badge variant="outline" className="h-5 px-1.5 text-xs text-warning border-warning/40">
+                  {t('agents:execution.staleConfig')}
+                </Badge>
+              )}
+              {execution.alert_verdict && (
+                <Badge variant="outline" className="h-5 px-1.5 text-xs">
+                  {t('agents:execution.alertVerdict')}: {execution.alert_verdict}
+                </Badge>
+              )}
             </div>
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
@@ -266,15 +309,72 @@ export function ExecutionDetailDialog({
             </Card>
           )}
 
+          {/* Structured Output (OutputContract projection) */}
+          {execution.structured_result && Object.keys(execution.structured_result).length > 0 && (
+            <FormSectionGroup>
+              <FormSection
+                title={`${t('agents:execution.structuredResult')} (${Object.keys(execution.structured_result).length})`}
+                collapsible
+              >
+                <div className="space-y-1">
+                  {Object.entries(execution.structured_result).map(([key, value]) => (
+                    <div key={key} className="flex items-baseline justify-between gap-3 border-b border-border py-1 last:border-0">
+                      <span className="font-mono text-xs text-muted-foreground shrink-0">{key}</span>
+                      <span className="text-xs font-medium font-mono break-all text-right">
+                        {formatValue(value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </FormSection>
+            </FormSectionGroup>
+          )}
+
+          {/* Delivery Receipts */}
+          {execution.deliveries && execution.deliveries.length > 0 && (
+            <FormSectionGroup>
+              <FormSection
+                title={`${t('agents:execution.deliveries')} (${execution.deliveries.length})`}
+                collapsible
+              >
+                <div className="space-y-1.5">
+                  {execution.deliveries.map((delivery, idx) => {
+                    const reason = getDeliveryReason(delivery.state)
+                    return (
+                      <div key={`${delivery.destination}-${delivery.action_fingerprint}-${idx}`} className="rounded-lg border border-border bg-card p-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-mono text-xs font-medium truncate">{delivery.destination}</span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <Badge variant="outline" className={cn(badgeSize.micro, "h-4 px-1")}>
+                              {delivery.idempotent ? t('agents:execution.idempotent') : t('agents:execution.nonIdempotent')}
+                            </Badge>
+                            <Badge variant="outline" className={cn(badgeSize.micro, "h-4 px-1.5", getDeliveryBadgeTone(delivery.state))}>
+                              {t(`agents:execution.deliveryState.${delivery.state.state}`)}
+                            </Badge>
+                          </div>
+                        </div>
+                        {reason && (
+                          <p className={cn(textNano, "mt-1 text-muted-foreground break-words")}>{reason}</p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </FormSection>
+            </FormSectionGroup>
+          )}
+
           {execution.decision_process && (
             <FormSectionGroup>
               {/* Situation Analysis */}
-              <FormSection
-                title={t('agents:execution.analysis', { defaultValue: 'Situation Analysis' })}
-                collapsible
-              >
-                <p className="text-xs leading-relaxed">{execution.decision_process.situation_analysis}</p>
-              </FormSection>
+              {execution.decision_process.situation_analysis.trim().length > 0 && (
+                <FormSection
+                  title={t('agents:execution.analysis', { defaultValue: 'Situation Analysis' })}
+                  collapsible
+                >
+                  <p className="text-xs leading-relaxed">{execution.decision_process.situation_analysis}</p>
+                </FormSection>
+              )}
 
               {/* Input Data */}
               {execution.decision_process.data_collected.length > 0 && (

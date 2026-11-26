@@ -85,9 +85,10 @@ describe('api surface (post-split composition)', () => {
   // 289 -> 290 when edit load switched to `getAgentV2` (GET /api/agents/v2/:id).
   // 290 -> 287 when V1 agent remnants were removed and `/api/agents/*` unified
   // (`getAgent`/`createAgent`/`updateAgent`/`planPreview` replace `*V2`).
-  it('member count grows only by deliberate additions (287)', () => {
+  // 287 -> 289 when AgentDetailPanel added `explainLastAgent` and `latestExecution`.
+  it('member count grows only by deliberate additions (289)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(287)
+    expect(keys.length).toBe(289)
   })
 })
 

@@ -1,5 +1,5 @@
 /** agents api — split from api.ts 2026-09. */
-import type { AiAgentDetail, AgentMemory, AgentToolCatalogItem, AgentStats, AgentExecutionDetail, ExecuteAgentRequest, ValidateLlmRequest, ValidateLlmResponse, AgentListResponse, AgentExecutionsResponse, ParsedIntent, AgentAvailableResources, UserMessage, DashboardResponse, CreateDashboardRequest, UpdateDashboardRequest, DashboardTemplateResponse, MemorySystemConfig, AgentSpec, AgentSpecDraft, AgentSpecPatch, EffectivePlan } from '@/types'
+import type { AiAgentDetail, AgentMemory, AgentToolCatalogItem, AgentStats, AgentExecutionDetail, ExecuteAgentRequest, ValidateLlmRequest, ValidateLlmResponse, AgentListResponse, AgentExecutionsResponse, ParsedIntent, AgentAvailableResources, UserMessage, DashboardResponse, CreateDashboardRequest, UpdateDashboardRequest, DashboardTemplateResponse, MemorySystemConfig, AgentSpec, AgentSpecDraft, AgentSpecPatch, EffectivePlan, ExplainLastResponse } from '@/types'
 import type { SkillSummary, SkillDetail } from '@/types/skill'
 import { fetchAPI } from "./client"
 
@@ -171,6 +171,20 @@ export const agentsApi = {
    */
   getExecution: (id: string, executionId: string) =>
     fetchAPI<AgentExecutionDetail>(`/agents/${id}/executions/${executionId}`),
+
+  /**
+   * Get human-readable explanation of the last run.
+   * GET /api/agents/:id/explain-last
+   */
+  explainLastAgent: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<ExplainLastResponse>(`/agents/${id}/explain-last`, options),
+
+  /**
+   * Get latest formal execution record.
+   * GET /api/agents/:id/latest-execution
+   */
+  latestExecution: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<AgentExecutionDetail>(`/agents/${id}/latest-execution`, options),
 
   /**
    * Batch get execution details — eliminates N+1 API calls
