@@ -25,12 +25,12 @@ import { AgentExecutionEvidencePanel } from '@/components/agents/AgentExecutionE
 import { useIsMobile } from '@/hooks/useMobile'
 import { cn } from '@/lib/utils'
 import type {
+  AgentSpec,
   AgentSpecDraft,
-  AiAgentDetail,
   AgentExecutionDetail,
   NotifyPolicy,
 } from '@/types'
-import { emptyDraft, detailToV2Draft } from './defaults'
+import { emptyDraft, specToDraft } from './defaults'
 import { EditorSection, FormSurface } from './EditorSection'
 import { TriggerSection } from './TriggerSection'
 import { InputContractSection } from './InputContractSection'
@@ -51,8 +51,8 @@ import {
 export interface AgentEditorV2Props {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** Legacy detail when editing; create waits for a template pick. */
-  agent?: AiAgentDetail
+  /** V2 AgentSpec from GET `/agents/v2/:id` when editing; create waits for a template pick. */
+  agent?: AgentSpec
   /** Optional evidence for the preserved evidence panel. */
   evidenceDetail?: AgentExecutionDetail | null
   /** Save the v2 draft directly (POST/PUT `/agents/v2`) — no legacy projection. */
@@ -76,7 +76,7 @@ export function AgentEditorV2({
   useEffect(() => {
     if (!open) return
     if (agent) {
-      const next = detailToV2Draft(agent)
+      const next = specToDraft(agent)
       setDraft(next)
       setTemplateId(inferTemplateId(next.trigger, next.preset))
       setAdvancedOpen(false)

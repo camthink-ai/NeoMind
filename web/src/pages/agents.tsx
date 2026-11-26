@@ -12,7 +12,7 @@ import { useStore } from "@/store"
 import { useDataVersion } from "@/hooks/useDataVersion"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
-import { AgentEditorV2 } from "@/components/agents/editor-v2"
+import { AgentEditorV2, draftToUpdatePatch } from "@/components/agents/editor-v2"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
 import { PageTabsBar, PageTabsContent, Pagination, SearchInput } from "@/components/shared"
@@ -36,7 +36,7 @@ import {
 import { debounce } from "@/lib/utils/async"
 import type { ToolSourceFilter } from "./agents-components/ToolsPanel"
 import { EmptyState } from "@/components/shared/EmptyState"
-import type { AiAgent, AiAgentDetail } from "@/types"
+import type { AgentSpec, AiAgent, AiAgentDetail } from "@/types"
 import type { AgentExecutionStartedEvent, AgentExecutionCompletedEvent, AgentThinkingEvent } from "@/lib/events"
 
 // Import components
@@ -107,8 +107,8 @@ export function AgentsPage() {
   const [detailAgentId, setDetailAgentId] = useState('')
   const [detailExecutionId, setDetailExecutionId] = useState('')
 
-  // Editing states
-  const [editingAgent, setEditingAgent] = useState<AiAgentDetail | undefined>(undefined)
+  // Editing states — edit load is V2 AgentSpec (not legacy detail → wipe draft)
+  const [editingAgent, setEditingAgent] = useState<AgentSpec | undefined>(undefined)
   const [selectedAgent, setSelectedAgent] = useState<AiAgentDetail | null>(null)
 
   // Data state
@@ -345,8 +345,8 @@ export function AgentsPage() {
   const handleEdit = async (agent: AiAgent) => {
     try {
       setShowAgentDialog(true)
-      const detail = await api.getAgent(agent.id)
-      setEditingAgent(detail)
+      const { agent: spec } = await api.getAgentV2(agent.id)
+      setEditingAgent(spec)
     } catch (error) {
       setShowAgentDialog(false)
       handleError(error, { operation: 'Load agent details', showToast: false })
@@ -423,22 +423,8 @@ export function AgentsPage() {
   const handleSave = async (draft: import('@/types').AgentSpecDraft) => {
     try {
       if (editingAgent) {
-        // Name + full contract replace via v2 patch (omit id/config_version).
-        const { name, description, user_prompt, llm_backend_id, preset, trigger, pacing, input, tool_policy, output, notify, controlled_actions } = draft
-        await api.updateAgentV2(editingAgent.id, {
-          name,
-          description,
-          user_prompt,
-          llm_backend_id,
-          preset,
-          trigger,
-          pacing,
-          input,
-          tool_policy,
-          output,
-          notify,
-          controlled_actions,
-        })
+        // Full contract via v2 patch (omit id/config_version). Seed must be V2.
+        await api.updateAgentV2(editingAgent.id, draftToUpdatePatch(draft))
       } else {
         await api.createAgentV2(draft)
       }
@@ -471,11 +457,18 @@ export function AgentsPage() {
     }
   }
 
-  // Edit from detail: close detail first to avoid scroll-through bug
-  const handleEditFromDetail = (agent: AiAgentDetail) => {
+  // Edit from detail: close detail first; reload V2 spec so save cannot wipe
+  const handleEditFromDetail = async (agent: AiAgentDetail) => {
     setDetailDialogOpen(false)
-    setEditingAgent(agent)
-    setShowAgentDialog(true)
+    try {
+      setShowAgentDialog(true)
+      const { agent: spec } = await api.getAgentV2(agent.id)
+      setEditingAgent(spec)
+    } catch (error) {
+      setShowAgentDialog(false)
+      handleError(error, { operation: 'Load agent details', showToast: false })
+      showErrorToast(toast, error, tCommon('failed'))
+    }
   }
 
   // Note: detail data is loaded solely by handleViewDetail. The dialog's only

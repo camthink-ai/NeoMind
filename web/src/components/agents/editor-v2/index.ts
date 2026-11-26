@@ -1,5 +1,11 @@
 export { isAgentEditorV2Enabled, AGENT_EDITOR_V2_STORAGE_KEY } from './featureFlag'
-export { defaultDailyBriefDraft, emptyDraft, detailToV2Draft } from './defaults'
+export {
+  defaultDailyBriefDraft,
+  emptyDraft,
+  specToDraft,
+  draftToUpdatePatch,
+  detailToV2Draft,
+} from './defaults'
 export { TriggerSection } from './TriggerSection'
 export type { TriggerSectionProps } from './TriggerSection'
 export { InputContractSection } from './InputContractSection'

@@ -1,8 +1,18 @@
 /**
- * Seed drafts for the v2 editor — empty create canvas + legacy projection.
+ * Seed drafts for the v2 editor — empty create canvas + V2 spec projection.
  * Task templates live in templates.ts (user mental model).
+ *
+ * Edit load MUST use GET /agents/v2/:id → specToDraft. Never seed save from
+ * detailToV2Draft (legacy detail lacks requirements / controlled_actions /
+ * output.depends_on and would wipe them on PUT).
  */
-import type { AgentSpecDraft, AiAgentDetail, NotifyPolicy } from '@/types'
+import type {
+  AgentSpec,
+  AgentSpecDraft,
+  AgentSpecPatch,
+  AiAgentDetail,
+  NotifyPolicy,
+} from '@/types'
 import {
   scheduleToTrigger,
   toolConfigToPolicy,
@@ -101,7 +111,60 @@ export function defaultDailyBriefDraft(): AgentSpecDraft {
   }
 }
 
-/** Best-effort projection of a legacy detail into a v2 draft for the new editor. */
+/**
+ * Strip persistence metadata so a loaded AgentSpec seeds the editor draft.
+ * Preserves input.requirements, output deps, controlled_actions, notify, …
+ */
+export function specToDraft(spec: AgentSpec): AgentSpecDraft {
+  const {
+    id: _id,
+    config_version: _configVersion,
+    created_at: _createdAt,
+    updated_at: _updatedAt,
+    ...draft
+  } = spec
+  return draft
+}
+
+/**
+ * Full-contract PUT body matching AgentsPage save (omit id / config_version).
+ * Callers that loaded via specToDraft can rename-only without wiping V2 fields.
+ */
+export function draftToUpdatePatch(draft: AgentSpecDraft): AgentSpecPatch {
+  const {
+    name,
+    description,
+    user_prompt,
+    llm_backend_id,
+    preset,
+    trigger,
+    pacing,
+    input,
+    tool_policy,
+    output,
+    notify,
+    controlled_actions,
+  } = draft
+  return {
+    name,
+    description,
+    user_prompt,
+    llm_backend_id,
+    preset,
+    trigger,
+    pacing,
+    input,
+    tool_policy,
+    output,
+    notify,
+    controlled_actions,
+  }
+}
+
+/**
+ * @deprecated Legacy detail → draft. Empties requirements / controlled_actions
+ * and clears output.depends_on. Do not use for edit→save; use getAgentV2 + specToDraft.
+ */
 export function detailToV2Draft(detail: AiAgentDetail): AgentSpecDraft {
   return {
     name: detail.name,
