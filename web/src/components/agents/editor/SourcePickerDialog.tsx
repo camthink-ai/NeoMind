@@ -1410,7 +1410,6 @@ export function SourcePickerDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={t('agents:editorV2.picker.title')}
-      description={t('agents:editorV2.picker.subtitle')}
       icon={<Database className="h-5 w-5 text-primary" />}
       width="2xl"
       className="sm:h-[74vh] z-[110]"
@@ -1428,27 +1427,27 @@ export function SourcePickerDialog({
         </>
       }
     >
-      {/* Selected items summary bar */}
+      {/* Selected items summary bar — single-row horizontal strip */}
       {staged.length > 0 && (
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border bg-muted-20 px-4 py-2">
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+        <div className="flex shrink-0 items-center gap-2 border-b border-border bg-muted-20 px-4 py-1.5">
+          <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-primary">
             <Check className="h-3.5 w-3.5" />
             {t('agents:editorV2.picker.selectedCount', { count: staged.length })}
           </span>
-          <div className="mx-1 h-3.5 w-px bg-border" />
-          <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+          <div className="h-3.5 w-px shrink-0 bg-border" />
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto scrollbar-none">
             {staged.map((req, index) => {
               const info = describeSource(req.source, devices, extensions, agents)
               return (
                 <span
                   key={`${req.key}-${index}`}
-                  className="inline-flex max-w-[200px] items-center gap-1 rounded-md border border-border bg-card px-2 py-0.5 text-xs text-foreground"
+                  className="inline-flex h-6 max-w-[180px] shrink-0 items-center gap-1 rounded border border-border bg-card px-2 text-xs text-foreground"
                 >
                   <span className="truncate">{info.label}</span>
                   <button
                     type="button"
                     onClick={() => setStaged((prev) => prev.filter((_, i) => i !== index))}
-                    className="ml-0.5 shrink-0 text-muted-foreground hover:text-error"
+                    className="shrink-0 text-muted-foreground hover:text-error"
                     aria-label={t('agents:editorV2.input.remove')}
                   >
                     <X className="h-3 w-3" />
