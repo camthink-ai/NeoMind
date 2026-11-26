@@ -233,6 +233,13 @@ export function AgentEditor({
       ])
       if (cancelled) return
       setBackends(backendsResp.backends ?? [])
+      if (!agent) {
+        const list = backendsResp.backends ?? []
+        const defaultBackend = list.find((b) => b.is_active)?.id ?? list[0]?.id
+        if (defaultBackend) {
+          setDraft((prev) => (prev.llm_backend_id ? prev : { ...prev, llm_backend_id: defaultBackend }))
+        }
+      }
       setDevices(devicesResp.devices ?? [])
       setDeviceTypes(deviceTypesResp.device_types ?? [])
       setExtensions(Array.isArray(extensionsResp) ? extensionsResp : [])
@@ -350,9 +357,35 @@ export function AgentEditor({
     [draft.input],
   )
 
-  // Left Config Rail (templates + identity + model)
+  // Left Config Rail (identity + model + templates)
   const configRail = (
     <div className="space-y-5">
+      <Field>
+        <FieldLabel htmlFor="agent-editor-name">
+          {t('agents:editorV2.name')} <span className="text-error">*</span>
+        </FieldLabel>
+        <Input
+          id="agent-editor-name"
+          value={draft.name}
+          onChange={(e) => {
+            patch({ name: e.target.value })
+            if (fieldErrors.name) setFieldErrors((prev) => ({ ...prev, name: undefined }))
+          }}
+          onBlur={() => setFieldErrors((prev) => ({ ...prev, name: validateName(draft.name ?? '') }))}
+          placeholder={t('agents:editorV2.namePlaceholder')}
+          autoFocus={isCreate}
+          aria-invalid={!!fieldErrors.name}
+        />
+        {fieldErrors.name && <FieldMessage>{fieldErrors.name}</FieldMessage>}
+      </Field>
+
+      {/* Model picker with capability badges */}
+      <ModelPicker
+        value={draft.llm_backend_id}
+        onChange={(llm_backend_id) => patch({ llm_backend_id })}
+        backends={backends}
+      />
+
       <section className="space-y-2" data-section="templates">
         <FieldLabel>{t('agents:editorV2.templates.title')}</FieldLabel>
         <div className="grid grid-cols-2 gap-1.5">
@@ -379,32 +412,6 @@ export function AgentEditor({
           })}
         </div>
       </section>
-
-      <Field>
-        <FieldLabel htmlFor="agent-editor-name">
-          {t('agents:editorV2.name')} <span className="text-error">*</span>
-        </FieldLabel>
-        <Input
-          id="agent-editor-name"
-          value={draft.name}
-          onChange={(e) => {
-            patch({ name: e.target.value })
-            if (fieldErrors.name) setFieldErrors((prev) => ({ ...prev, name: undefined }))
-          }}
-          onBlur={() => setFieldErrors((prev) => ({ ...prev, name: validateName(draft.name ?? '') }))}
-          placeholder={t('agents:editorV2.namePlaceholder')}
-          autoFocus={isCreate}
-          aria-invalid={!!fieldErrors.name}
-        />
-        {fieldErrors.name && <FieldMessage>{fieldErrors.name}</FieldMessage>}
-      </Field>
-
-      {/* Model picker with capability badges */}
-      <ModelPicker
-        value={draft.llm_backend_id}
-        onChange={(llm_backend_id) => patch({ llm_backend_id })}
-        backends={backends}
-      />
     </div>
   )
 

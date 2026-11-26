@@ -1089,7 +1089,8 @@
     "model": {
       "label": "Model",
       "useActive": "Global default",
-      "useActiveNamed": "Global default ({{name}})"
+      "useActiveNamed": "Global default ({{name}})",
+      "noBackends": "No models configured yet. Add an LLM backend in Settings."
     },
     "output": {
       "title": "Output",

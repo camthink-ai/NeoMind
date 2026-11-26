@@ -1089,7 +1089,8 @@
     "model": {
       "label": "模型",
       "useActive": "全局默认",
-      "useActiveNamed": "全局默认（{{name}}）"
+      "useActiveNamed": "全局默认（{{name}}）",
+      "noBackends": "尚未配置可用模型，请先在设置中添加 LLM。"
     },
     "output": {
       "title": "输出",

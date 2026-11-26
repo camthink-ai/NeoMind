@@ -4,7 +4,7 @@
  * (Vision / Tools / Thinking).
  */
 import { useTranslation } from 'react-i18next'
-import { Field, FieldLabel } from '@/components/ui/field'
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
 import {
   Select,
   SelectContent,
@@ -31,7 +31,9 @@ export function ModelPicker({ value, onChange, backends }: ModelPickerProps) {
 
   return (
     <Field data-section="model-picker">
-      <FieldLabel>{t('editorV2.model.label')}</FieldLabel>
+      <FieldLabel>
+        {t('editorV2.model.label')} <span className="text-error">*</span>
+      </FieldLabel>
       <Select
         value={selectValue}
         onValueChange={(v) => onChange(v === ACTIVE_VALUE ? undefined : v)}
@@ -74,6 +76,11 @@ export function ModelPicker({ value, onChange, backends }: ModelPickerProps) {
           ))}
         </SelectContent>
       </Select>
+      {backends.length === 0 && (
+        <FieldDescription className="text-xs">
+          {t('editorV2.model.noBackends')}
+        </FieldDescription>
+      )}
     </Field>
   )
 }
