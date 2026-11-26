@@ -39,7 +39,7 @@ describe('PlanConfirmLine', () => {
     const el = screen.getByTestId('plan-confirm-line')
     expect(el.textContent).toContain('Will run:')
     expect(el.textContent).toContain('daily at 09:00')
-    expect(el.textContent).toContain('tools off')
+    expect(el.textContent).toContain('tools open')
     expect(el.textContent).toContain('0 sources')
   })
 })

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   seedVision,
   seedDailyBrief,
+  seedWeekly,
   seedScheduledPatrol,
   seedMeterInspect,
   seedEventReview,
@@ -45,16 +46,25 @@ describe('task templates', () => {
     })
   })
 
-  it('daily brief seeds cron 09:00 + tools disabled + complete notify', () => {
+  it('daily brief and weekly report seed cron + unrestricted tools + complete notify', () => {
     const d = seedDailyBrief()
     expect(d.trigger).toEqual({
       kind: 'cron',
       expr: '0 9 * * *',
       timezone: 'Asia/Shanghai',
     })
-    expect(d.tool_policy).toBe('disabled')
+    expect(d.tool_policy).toBe('unrestricted')
     expect(d.notify?.on_complete).toBe(true)
     expect(d.preset).toBe('daily_brief')
+
+    const w = seedWeekly()
+    expect(w.trigger).toEqual({
+      kind: 'cron',
+      expr: '0 9 * * 1',
+      timezone: 'Asia/Shanghai',
+    })
+    expect(w.tool_policy).toBe('unrestricted')
+    expect(w.notify?.on_complete).toBe(true)
   })
 
   it('meter inspect seeds interval + tools disabled', () => {

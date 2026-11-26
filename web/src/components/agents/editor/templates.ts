@@ -114,6 +114,7 @@ export function seedDailyBrief(): AgentSpecDraft {
     user_prompt: '',
     preset: 'daily_brief',
     trigger: { kind: 'cron', expr: '0 9 * * *', timezone: 'Asia/Shanghai' },
+    tool_policy: 'unrestricted',
     notify: COMPLETE_NOTIFY,
     output: fields(false, { name: 'brief', description: 'Human-readable daily brief' }),
   })
@@ -168,6 +169,7 @@ export function seedWeekly(): AgentSpecDraft {
     user_prompt: '',
     preset: 'custom',
     trigger: { kind: 'cron', expr: '0 9 * * 1', timezone: 'Asia/Shanghai' },
+    tool_policy: 'unrestricted',
     notify: COMPLETE_NOTIFY,
     output: fields(false, { name: 'report', description: 'Weekly summary' }),
   })
