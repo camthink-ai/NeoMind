@@ -1144,7 +1144,16 @@
       "maxAgeSecs": "有效期（秒）",
       "lookbackSecs": "回看（秒）",
       "maxPoints": "最大点数",
-      "onMissing": "缺失策略"
+      "onMissing": "缺失策略",
+      "configureSource": "配置策略与键名",
+      "typeDevice": "整台设备",
+      "typeMetric": "设备指标",
+      "typeExtension": "扩展",
+      "typeAi": "上游 AI",
+      "typeCaller": "调用参数",
+      "secsUnit": "秒",
+      "ptsUnit": "点",
+      "currentValue": "当前"
     },
     "actions": {
       "title": "受控动作",

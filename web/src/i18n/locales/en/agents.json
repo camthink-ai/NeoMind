@@ -1144,7 +1144,16 @@
       "maxAgeSecs": "Max age (s)",
       "lookbackSecs": "Window (s)",
       "maxPoints": "Max pts",
-      "onMissing": "On missing"
+      "onMissing": "On missing",
+      "configureSource": "Configure policy & key",
+      "typeDevice": "Device",
+      "typeMetric": "Metric",
+      "typeExtension": "Extension",
+      "typeAi": "Upstream AI",
+      "typeCaller": "Caller",
+      "secsUnit": "s",
+      "ptsUnit": "pts",
+      "currentValue": "Now"
     },
     "actions": {
       "title": "Controlled Actions",

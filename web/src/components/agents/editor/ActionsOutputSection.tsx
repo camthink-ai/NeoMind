@@ -384,29 +384,31 @@ export function ActionsOutputSection({
               />
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {outputContract.fields.map((field, index) => (
                 <div
                   key={index}
-                  className="space-y-2 rounded-lg border border-border bg-muted-20 p-2.5"
+                  className="space-y-2.5 rounded-lg border border-border bg-card p-3"
                 >
-                  <div className="flex items-center gap-2">
-                    <Input
-                      value={field.name}
-                      onChange={(e) => updateOutputField(index, { name: e.target.value })}
-                      placeholder={t('editorV2.output.namePlaceholder')}
-                      className="h-8 w-40 shrink-0 font-mono text-xs"
-                    />
-                    <Input
-                      value={field.description ?? ''}
-                      onChange={(e) => updateOutputField(index, { description: e.target.value })}
-                      placeholder={t('editorV2.output.descPlaceholder')}
-                      className="h-8 flex-1 text-xs"
-                    />
+                  <div className="flex items-start gap-2">
+                    <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-[11rem_1fr]">
+                      <Input
+                        value={field.name}
+                        onChange={(e) => updateOutputField(index, { name: e.target.value })}
+                        placeholder={t('editorV2.output.namePlaceholder')}
+                        className="h-9 font-mono text-xs"
+                      />
+                      <Input
+                        value={field.description ?? ''}
+                        onChange={(e) => updateOutputField(index, { description: e.target.value })}
+                        placeholder={t('editorV2.output.descPlaceholder')}
+                        className="h-9 text-xs"
+                      />
+                    </div>
                     <IconButton
                       type="button"
                       size="sm"
-                      className="shrink-0 text-muted-foreground hover:text-error"
+                      className="mt-0.5 shrink-0 text-muted-foreground hover:text-error"
                       onClick={() =>
                         onOutputChange({
                           ...outputContract,
@@ -419,7 +421,7 @@ export function ActionsOutputSection({
                     </IconButton>
                   </div>
                   {inputKeys.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2 text-xs">
                       <span className="text-muted-foreground">{t('editorV2.output.dependsOn')}:</span>
                       {inputKeys.map((k) => {
                         const on = (field.depends_on ?? []).includes(k)
@@ -429,12 +431,13 @@ export function ActionsOutputSection({
                             type="button"
                             onClick={() => toggleFieldDep(index, k)}
                             className={cn(
-                              'rounded border px-1.5 py-0.5 font-mono text-xs transition-colors',
+                              'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs transition-colors',
                               on
-                                ? 'border-primary bg-primary-light text-primary'
-                                : 'border-border bg-card text-muted-foreground',
+                                ? 'border-primary bg-primary-light text-primary font-medium'
+                                : 'border-border bg-muted-20 text-muted-foreground hover:text-foreground',
                             )}
                           >
+                            {on && <Check className="h-3 w-3" />}
                             {k}
                           </button>
                         )

@@ -14,6 +14,7 @@ import {
   Activity,
   Bot,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Cpu,
@@ -22,6 +23,7 @@ import {
   Puzzle,
   Search,
   Server,
+  SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react'
@@ -73,29 +75,123 @@ function describeSource(
   devices: Device[],
   extensions: Extension[],
   agents: AiAgent[],
-): { badge: string; label: string } {
+): {
+  kind: InputSourceRef['kind']
+  label: string
+  sublabel?: string
+  online?: boolean
+  currentValue?: string
+} {
   switch (source.kind) {
     case 'whole_device': {
       const dev = devices.find((d) => (d.device_id || d.id) === source.device_id)
-      return { badge: 'device', label: dev?.name ? `${dev.name} (${source.device_id})` : source.device_id }
+      return {
+        kind: source.kind,
+        label: dev?.name || source.device_id,
+        sublabel: dev?.name ? source.device_id : undefined,
+        online: dev?.online,
+      }
     }
     case 'device_metric': {
       const dev = devices.find((d) => (d.device_id || d.id) === source.device_id)
+      const rawVal = dev?.current_values?.[source.field]
       return {
-        badge: 'metric',
+        kind: source.kind,
         label: `${dev?.name || source.device_id} · ${source.field}`,
+        sublabel: dev?.name ? source.device_id : undefined,
+        online: dev?.online,
+        currentValue: formatMetricValue(rawVal) || undefined,
       }
     }
     case 'extension_instance': {
       const ext = extensions.find((e) => e.id === source.id)
-      return { badge: 'extension', label: ext?.name || source.id }
+      return {
+        kind: source.kind,
+        label: ext?.name || source.id,
+        sublabel: ext?.name ? source.id : undefined,
+      }
     }
     case 'upstream_ai': {
       const ag = agents.find((a) => a.id === source.agent_id)
-      return { badge: 'ai', label: `${ag?.name || source.agent_id} · ${source.field}` }
+      return {
+        kind: source.kind,
+        label: `${ag?.name || source.agent_id} · ${source.field}`,
+      }
     }
     case 'caller_payload':
-      return { badge: 'caller', label: 'caller_payload' }
+      return { kind: source.kind, label: 'caller_payload' }
+  }
+}
+
+function sourceTypeMeta(
+  kind: InputSourceRef['kind'],
+  t: (key: string) => string,
+): { badge: string; Icon: typeof Server; tone: string } {
+  switch (kind) {
+    case 'whole_device':
+      return {
+        badge: t('editorV2.picker.typeDevice'),
+        Icon: Server,
+        tone: 'bg-info-light text-info',
+      }
+    case 'device_metric':
+      return {
+        badge: t('editorV2.picker.typeMetric'),
+        Icon: Activity,
+        tone: 'bg-info-light text-info',
+      }
+    case 'extension_instance':
+      return {
+        badge: t('editorV2.picker.typeExtension'),
+        Icon: Puzzle,
+        tone: 'bg-accent-cyan-light text-accent-cyan',
+      }
+    case 'upstream_ai':
+      return {
+        badge: t('editorV2.picker.typeAi'),
+        Icon: Bot,
+        tone: 'bg-accent-indigo-light text-accent-indigo',
+      }
+    case 'caller_payload':
+      return {
+        badge: t('editorV2.picker.typeCaller'),
+        Icon: Database,
+        tone: 'bg-muted text-muted-foreground',
+      }
+  }
+}
+
+function formatDurationShort(secs: number): string {
+  if (secs % 3600 === 0 && secs >= 3600) return `${secs / 3600}h`
+  if (secs % 60 === 0 && secs >= 60) return `${secs / 60}m`
+  return `${secs}s`
+}
+
+function formatFreshnessSummary(
+  freshness: FreshnessPolicy | undefined,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): string {
+  if (!freshness || freshness.kind === 'any') return t('detail.freshnessAny')
+  if (freshness.kind === 'same_report') return t('detail.freshnessSameReport')
+  if (freshness.kind === 'latest_within') {
+    return `${t('editorV2.picker.freshnessLatestWithinLabel')} ${formatDurationShort(freshness.max_age_secs)}`
+  }
+  return `${t('editorV2.picker.freshnessLookbackLabel')} ${formatDurationShort(freshness.lookback_secs)} · ${freshness.max_points}${t('editorV2.picker.ptsUnit')}`
+}
+
+function formatMissingSummary(
+  onMissing: MissingPolicy | undefined,
+  t: (key: string) => string,
+): string {
+  switch (onMissing ?? 'report_stale') {
+    case 'report_stale':
+      return t('detail.missingReportStale')
+    case 'undetermined':
+      return t('detail.missingUndetermined')
+    case 'skip':
+      return t('detail.missingSkip')
+    case 'ignore':
+      return t('detail.missingIgnore')
   }
 }
 
@@ -122,6 +218,7 @@ export function UnifiedInputsSection({
 }: UnifiedInputsSectionProps) {
   const { t } = useTranslation('agents')
   const requirements = value?.requirements ?? []
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
 
   const updateAt = (index: number, patch: Partial<InputRequirement>) => {
     const next = requirements.map((r, i) => (i === index ? { ...r, ...patch } : r))
@@ -129,6 +226,8 @@ export function UnifiedInputsSection({
   }
 
   const removeAt = (index: number) => {
+    if (expandedIndex === index) setExpandedIndex(null)
+    else if (expandedIndex !== null && expandedIndex > index) setExpandedIndex(expandedIndex - 1)
     onChange({ requirements: requirements.filter((_, i) => i !== index) })
   }
 
@@ -162,175 +261,272 @@ export function UnifiedInputsSection({
       </div>
 
       {requirements.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border bg-muted-20 px-4 py-3 text-xs text-muted-foreground">
-          {t('editorV2.picker.emptyBound')}
-        </div>
+        <button
+          type="button"
+          onClick={onOpenPicker}
+          className="flex w-full items-center justify-between gap-3 rounded-lg border border-dashed border-border bg-muted-20 px-4 py-4 text-left transition-colors hover:bg-muted-30"
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <Database className="h-4 w-4" />
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {t('editorV2.picker.emptyBound')}
+            </p>
+          </div>
+        </button>
       ) : (
-        <ul className="space-y-2.5">
+        <ul className="space-y-2">
           {requirements.map((req, index) => {
             const info = describeSource(req.source, devices, extensions, agents)
+            const meta = sourceTypeMeta(req.source.kind, t)
+            const TypeIcon = meta.Icon
+            const isExpanded = expandedIndex === index
             const extId =
               req.source.kind === 'extension_instance' ? req.source.id : null
             const extMatch = extId ? extensions.find((e) => e.id === extId) : undefined
+
             return (
               <li
                 key={`${req.key}-${index}`}
-                className="rounded-lg border border-border bg-muted-20 p-3 space-y-2.5"
+                className="overflow-hidden rounded-lg border border-border bg-card transition-colors"
               >
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-xs font-mono">
-                    {info.badge}
-                  </Badge>
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                    {info.label}
-                  </span>
-                  <Input
-                    value={req.key}
-                    onChange={(e) => updateAt(index, { key: e.target.value })}
-                    aria-label={t('editorV2.input.key')}
-                    className="h-9 w-36 shrink-0 font-mono text-xs"
-                  />
-                  <IconButton
-                    type="button"
-                    size="sm"
-                    className="shrink-0 text-muted-foreground hover:text-error"
-                    onClick={() => removeAt(index)}
-                    aria-label={t('editorV2.input.remove')}
+                {/* Compact primary row */}
+                <div className="flex items-center gap-3 px-3.5 py-2.5">
+                  <div
+                    className={cn(
+                      'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md',
+                      meta.tone,
+                    )}
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </IconButton>
-                </div>
-
-                {/* Inline freshness, on_missing & optional extension operation */}
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-muted-foreground">{t('editorV2.picker.freshness')}</span>
-                    <Select
-                      value={req.freshness?.kind ?? 'any'}
-                      onValueChange={(v) => setFreshnessKind(index, v as FreshnessPolicy['kind'])}
-                    >
-                      <SelectTrigger className="h-9 w-36 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="latest_within">{t('editorV2.picker.freshnessLatestWithinLabel')}</SelectItem>
-                        <SelectItem value="lookback_window">{t('editorV2.picker.freshnessLookbackLabel')}</SelectItem>
-                        <SelectItem value="same_report">{t('detail.freshnessSameReport')}</SelectItem>
-                        <SelectItem value="any">{t('detail.freshnessAny')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {req.freshness?.kind === 'latest_within' && (
-                      <Input
-                        type="number"
-                        min={1}
-                        value={req.freshness.max_age_secs}
-                        onChange={(e) =>
-                          updateAt(index, {
-                            freshness: {
-                              kind: 'latest_within',
-                              max_age_secs: Math.max(1, Number(e.target.value) || 60),
-                            },
-                          })
-                        }
-                        aria-label={t('editorV2.picker.maxAgeSecs')}
-                        className="h-7 w-20 text-xs tabular-nums"
+                    <TypeIcon className="h-4 w-4" />
+                    {info.online !== undefined && (
+                      <span
+                        className={cn(
+                          'absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-card',
+                          info.online ? 'bg-success' : 'bg-muted-foreground/40',
+                        )}
                       />
                     )}
-                    {req.freshness?.kind === 'lookback_window' && (
-                      <>
-                        <Input
-                          type="number"
-                          min={60}
-                          value={req.freshness.lookback_secs}
-                          onChange={(e) =>
-                            updateAt(index, {
-                              freshness: {
-                                kind: 'lookback_window',
-                                lookback_secs: Math.max(60, Number(e.target.value) || 3600),
-                                max_points:
-                                  req.freshness.kind === 'lookback_window'
-                                    ? req.freshness.max_points
-                                    : 60,
-                              },
-                            })
-                          }
-                          aria-label={t('editorV2.picker.lookbackSecs')}
-                          className="h-7 w-20 text-xs tabular-nums"
-                        />
-                        <Input
-                          type="number"
-                          min={1}
-                          value={req.freshness.max_points}
-                          onChange={(e) =>
-                            updateAt(index, {
-                              freshness: {
-                                kind: 'lookback_window',
-                                lookback_secs:
-                                  req.freshness.kind === 'lookback_window'
-                                    ? req.freshness.lookback_secs
-                                    : 3600,
-                                max_points: Math.max(1, Number(e.target.value) || 60),
-                              },
-                            })
-                          }
-                          aria-label={t('editorV2.picker.maxPoints')}
-                          className="h-7 w-16 text-xs tabular-nums"
-                        />
-                      </>
-                    )}
                   </div>
 
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-muted-foreground">{t('editorV2.picker.onMissing')}</span>
-                    <Select
-                      value={req.on_missing ?? 'report_stale'}
-                      onValueChange={(v) => updateAt(index, { on_missing: v as MissingPolicy })}
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-foreground">
+                        {info.label}
+                      </span>
+                      <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-nano font-normal">
+                        {meta.badge}
+                      </Badge>
+                      {req.operation && (
+                        <code className={cn(textNano, 'rounded bg-muted px-1.5 py-0.5 font-mono text-muted-foreground')}>
+                          {req.operation}
+                        </code>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                      <code className={cn(textNano, 'rounded bg-muted px-1.5 py-0.5 font-mono text-foreground')}>
+                        {req.key}
+                      </code>
+                      {info.currentValue && (
+                        <span>
+                          · {t('editorV2.picker.currentValue')}: <strong className="font-mono font-medium text-foreground">{info.currentValue}</strong>
+                        </span>
+                      )}
+                      <span>
+                        · {formatFreshnessSummary(req.freshness, t)} · {formatMissingSummary(req.on_missing, t)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-1">
+                    <IconButton
+                      type="button"
+                      size="sm"
+                      onClick={() => setExpandedIndex(isExpanded ? null : index)}
+                      aria-label={t('editorV2.picker.configureSource')}
+                      aria-expanded={isExpanded}
+                      className={cn(
+                        isExpanded
+                          ? 'bg-muted text-foreground'
+                          : 'text-muted-foreground hover:text-foreground',
+                      )}
                     >
-                      <SelectTrigger className="h-9 w-32 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="report_stale">{t('detail.missingReportStale')}</SelectItem>
-                        <SelectItem value="undetermined">{t('detail.missingUndetermined')}</SelectItem>
-                        <SelectItem value="skip">{t('detail.missingSkip')}</SelectItem>
-                        <SelectItem value="ignore">{t('detail.missingIgnore')}</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      {isExpanded ? (
+                        <ChevronDown className="h-4 w-4" />
+                      ) : (
+                        <SlidersHorizontal className="h-4 w-4" />
+                      )}
+                    </IconButton>
+                    <IconButton
+                      type="button"
+                      size="sm"
+                      className="text-muted-foreground hover:text-error"
+                      onClick={() => removeAt(index)}
+                      aria-label={t('editorV2.input.remove')}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </IconButton>
                   </div>
+                </div>
 
-                  {req.source.kind === 'extension_instance' && (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-muted-foreground">{t('editorV2.picker.extensionOp')}</span>
-                      {extMatch?.commands && extMatch.commands.length > 0 ? (
+                {/* Collapsible policy & key drawer */}
+                {isExpanded && (
+                  <div className="grid gap-3 border-t border-border bg-muted-20 px-3.5 py-3 sm:grid-cols-2 lg:grid-cols-3">
+                    <div className="space-y-1">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t('editorV2.input.key')}
+                      </span>
+                      <Input
+                        value={req.key}
+                        onChange={(e) => updateAt(index, { key: e.target.value })}
+                        aria-label={t('editorV2.input.key')}
+                        className="h-9 font-mono text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t('editorV2.picker.freshness')}
+                      </span>
+                      <div className="flex items-center gap-1.5">
                         <Select
-                          value={req.operation || '__default__'}
-                          onValueChange={(v) =>
-                            updateAt(index, { operation: v === '__default__' ? undefined : v })
-                          }
+                          value={req.freshness?.kind ?? 'any'}
+                          onValueChange={(v) => setFreshnessKind(index, v as FreshnessPolicy['kind'])}
                         >
-                          <SelectTrigger className="h-9 w-36 font-mono text-xs">
+                          <SelectTrigger className="h-9 flex-1 text-xs">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="__default__">{t('editorV2.picker.extensionDefaultOp')}</SelectItem>
-                            {extMatch.commands.map((cmd) => (
-                              <SelectItem key={cmd.id} value={cmd.id}>
-                                {cmd.display_name || cmd.id}
-                              </SelectItem>
-                            ))}
+                            <SelectItem value="latest_within">{t('editorV2.picker.freshnessLatestWithinLabel')}</SelectItem>
+                            <SelectItem value="lookback_window">{t('editorV2.picker.freshnessLookbackLabel')}</SelectItem>
+                            <SelectItem value="same_report">{t('detail.freshnessSameReport')}</SelectItem>
+                            <SelectItem value="any">{t('detail.freshnessAny')}</SelectItem>
                           </SelectContent>
                         </Select>
-                      ) : (
-                        <Input
-                          value={req.operation ?? ''}
-                          onChange={(e) => updateAt(index, { operation: e.target.value || undefined })}
-                          placeholder="current"
-                          className="h-7 w-28 font-mono text-xs"
-                        />
+                        {req.freshness?.kind === 'latest_within' && (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="number"
+                              min={1}
+                              value={req.freshness.max_age_secs}
+                              onChange={(e) =>
+                                updateAt(index, {
+                                  freshness: {
+                                    kind: 'latest_within',
+                                    max_age_secs: Math.max(1, Number(e.target.value) || 60),
+                                  },
+                                })
+                              }
+                              aria-label={t('editorV2.picker.maxAgeSecs')}
+                              className="h-9 w-20 text-xs tabular-nums"
+                            />
+                            <span className="text-xs text-muted-foreground">{t('editorV2.picker.secsUnit')}</span>
+                          </div>
+                        )}
+                      </div>
+                      {req.freshness?.kind === 'lookback_window' && (
+                        <div className="flex items-center gap-1.5 pt-1">
+                          <Input
+                            type="number"
+                            min={60}
+                            value={req.freshness.lookback_secs}
+                            onChange={(e) =>
+                              updateAt(index, {
+                                freshness: {
+                                  kind: 'lookback_window',
+                                  lookback_secs: Math.max(60, Number(e.target.value) || 3600),
+                                  max_points:
+                                    req.freshness.kind === 'lookback_window'
+                                      ? req.freshness.max_points
+                                      : 60,
+                                },
+                              })
+                            }
+                            aria-label={t('editorV2.picker.lookbackSecs')}
+                            className="h-9 w-20 text-xs tabular-nums"
+                          />
+                          <span className="text-xs text-muted-foreground">{t('editorV2.picker.secsUnit')}</span>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={req.freshness.max_points}
+                            onChange={(e) =>
+                              updateAt(index, {
+                                freshness: {
+                                  kind: 'lookback_window',
+                                  lookback_secs:
+                                    req.freshness.kind === 'lookback_window'
+                                      ? req.freshness.lookback_secs
+                                      : 3600,
+                                  max_points: Math.max(1, Number(e.target.value) || 60),
+                                },
+                              })
+                            }
+                            aria-label={t('editorV2.picker.maxPoints')}
+                            className="h-9 w-16 text-xs tabular-nums"
+                          />
+                          <span className="text-xs text-muted-foreground">{t('editorV2.picker.ptsUnit')}</span>
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
+
+                    <div className="space-y-1">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t('editorV2.picker.onMissing')}
+                      </span>
+                      <Select
+                        value={req.on_missing ?? 'report_stale'}
+                        onValueChange={(v) => updateAt(index, { on_missing: v as MissingPolicy })}
+                      >
+                        <SelectTrigger className="h-9 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="report_stale">{t('detail.missingReportStale')}</SelectItem>
+                          <SelectItem value="undetermined">{t('detail.missingUndetermined')}</SelectItem>
+                          <SelectItem value="skip">{t('detail.missingSkip')}</SelectItem>
+                          <SelectItem value="ignore">{t('detail.missingIgnore')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {req.source.kind === 'extension_instance' && (
+                      <div className="space-y-1">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {t('editorV2.picker.extensionOp')}
+                        </span>
+                        {extMatch?.commands && extMatch.commands.length > 0 ? (
+                          <Select
+                            value={req.operation || '__default__'}
+                            onValueChange={(v) =>
+                              updateAt(index, { operation: v === '__default__' ? undefined : v })
+                            }
+                          >
+                            <SelectTrigger className="h-9 font-mono text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__default__">{t('editorV2.picker.extensionDefaultOp')}</SelectItem>
+                              {extMatch.commands.map((cmd) => (
+                                <SelectItem key={cmd.id} value={cmd.id}>
+                                  {cmd.display_name || cmd.id}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Input
+                            value={req.operation ?? ''}
+                            onChange={(e) => updateAt(index, { operation: e.target.value || undefined })}
+                            placeholder="current"
+                            className="h-9 font-mono text-xs"
+                          />
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </li>
             )
           })}
