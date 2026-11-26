@@ -125,13 +125,45 @@ impl InputPipeline {
                         }
                     }
                 }
-                InputSourceRef::UpstreamAi { .. } | InputSourceRef::CallerPayload => {
-                    // Not needed for T12; mark missing unless Ignore.
+                InputSourceRef::UpstreamAi { agent_id, field } => {
+                    counts.other += 1;
+                    let params = params_with_freshness(req);
+                    match self
+                        .sources
+                        .read_upstream_ai(agent_id, field, &params, req.timeout_secs)
+                        .await
+                    {
+                        Ok(r) => {
+                            let (item, is_missing) =
+                                evidence_from_read(req, r, self.clock.now_ms(), None);
+                            if is_missing {
+                                missing.push(req.key.clone());
+                            }
+                            items.push(item);
+                        }
+                        Err(e) => {
+                            missing.push(req.key.clone());
+                            items.push(missing_item(req, e.to_string(), self.clock.now_ms()));
+                            if matches!(req.on_missing, MissingPolicy::Skip) {
+                                return Ok((
+                                    EvidenceReport {
+                                        items,
+                                        missing_keys: missing,
+                                        skip_reason: Some(format!("missing {}", req.key)),
+                                    },
+                                    counts,
+                                ));
+                            }
+                        }
+                    }
+                }
+                InputSourceRef::CallerPayload => {
+                    // Populated by `merge_caller_into_evidence` when caller input is provided.
                     if !matches!(req.on_missing, MissingPolicy::Ignore) {
                         missing.push(req.key.clone());
                         items.push(missing_item(
                             req,
-                            "source not wired in M1 harness".into(),
+                            "no caller payload provided".into(),
                             self.clock.now_ms(),
                         ));
                     }

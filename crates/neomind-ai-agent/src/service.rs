@@ -15,9 +15,22 @@ use crate::model::{
     ToolPolicy, TriggerSpec,
 };
 use crate::ports::{CapabilityClass, ClockPort};
-use crate::runner::{apply_outcome, prompt_with_caller_input, AgentRunner};
+use crate::runner::{
+    apply_outcome, prompt_with_caller_input, prompt_with_operator_notes, AgentRunner,
+};
 use crate::side_effects::SideEffectBoundary;
 use crate::store::InMemoryAgentStore;
+
+/// Per-run options (run-local only; never persisted onto `AgentSpec`).
+#[derive(Debug, Clone, Default)]
+pub struct RunOptions {
+    /// Pre-allocated execution id so host events (Started/Completed) match the persisted row.
+    pub execution_id: Option<String>,
+    /// Optional this-turn caller input (ask text / structured payload).
+    pub caller: Option<CallerInput>,
+    /// Optional persisted operator notes (`user_messages`) appended to the run prompt.
+    pub operator_notes: Vec<String>,
+}
 
 pub struct AgentApplicationService {
     pub store: InMemoryAgentStore,
@@ -139,13 +152,18 @@ impl AgentApplicationService {
 
     /// Authorized read-only dry-run; does not enter formal history; notify=0.
     pub async fn dry_run(&self, id: &str) -> Result<RunResponse> {
-        self.execute_inner(id, true, false, None, None).await
+        self.execute_inner(id, true, false, None, RunOptions::default())
+            .await
     }
 
     /// Formal invoke — writes history and may notify (manual submit provenance).
     pub async fn invoke(&self, id: &str) -> Result<RunResponse> {
-        self.invoke_with_source_and_caller(id, crate::coordinator::SubmitSource::Manual, None)
-            .await
+        self.invoke_with_options(
+            id,
+            crate::coordinator::SubmitSource::Manual,
+            RunOptions::default(),
+        )
+        .await
     }
 
     /// Formal invoke with optional this-turn caller text/data (ask path).
@@ -154,8 +172,15 @@ impl AgentApplicationService {
         id: &str,
         caller: Option<CallerInput>,
     ) -> Result<RunResponse> {
-        self.invoke_with_source_and_caller(id, crate::coordinator::SubmitSource::Manual, caller)
-            .await
+        self.invoke_with_options(
+            id,
+            crate::coordinator::SubmitSource::Manual,
+            RunOptions {
+                caller,
+                ..Default::default()
+            },
+        )
+        .await
     }
 
     /// Formal invoke with explicit submit provenance (schedule/event/manual/…).
@@ -164,7 +189,8 @@ impl AgentApplicationService {
         id: &str,
         source: crate::coordinator::SubmitSource,
     ) -> Result<RunResponse> {
-        self.invoke_with_source_and_caller(id, source, None).await
+        self.invoke_with_options(id, source, RunOptions::default())
+            .await
     }
 
     /// Formal invoke with both explicit submit provenance and optional caller input.
@@ -174,7 +200,25 @@ impl AgentApplicationService {
         source: crate::coordinator::SubmitSource,
         caller: Option<CallerInput>,
     ) -> Result<RunResponse> {
-        self.execute_inner(id, false, false, Some(source), caller)
+        self.invoke_with_options(
+            id,
+            source,
+            RunOptions {
+                caller,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// Formal invoke with explicit submit provenance and per-run options.
+    pub async fn invoke_with_options(
+        &self,
+        id: &str,
+        source: crate::coordinator::SubmitSource,
+        options: RunOptions,
+    ) -> Result<RunResponse> {
+        self.execute_inner(id, false, false, Some(source), options)
             .await
     }
 
@@ -184,7 +228,7 @@ impl AgentApplicationService {
         dry_run: bool,
         is_probe: bool,
         source: Option<crate::coordinator::SubmitSource>,
-        caller: Option<CallerInput>,
+        options: RunOptions,
     ) -> Result<RunResponse> {
         let spec = self.store.get_spec(id)?;
         let runtime = self.store.get_runtime(id)?;
@@ -194,18 +238,25 @@ impl AgentApplicationService {
 
         let (mut evidence, read_counts) = self.input.collect(&spec.input.requirements).await?;
         let now = self.clock.now_ms();
-        if let Some(ref c) = caller {
+        if let Some(ref c) = options.caller {
             merge_caller_into_evidence(&mut evidence, &spec, c, now);
         }
-        let execution_id = format!("exec_{}", &Uuid::new_v4().to_string()[..8]);
+        let execution_id = options
+            .execution_id
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("exec_{}", &Uuid::new_v4().to_string()[..8]));
         let started = now;
         let plan = plan_from_spec(&spec);
 
         // Run-local prompt only — never mutate the stored AgentSpec.
         let mut run_spec = spec.clone();
-        if let Some(ref c) = caller {
+        if !options.operator_notes.is_empty() {
+            run_spec.user_prompt =
+                prompt_with_operator_notes(&run_spec.user_prompt, &options.operator_notes);
+        }
+        if let Some(ref c) = options.caller {
             if !c.is_empty() {
-                run_spec.user_prompt = prompt_with_caller_input(&spec.user_prompt, c);
+                run_spec.user_prompt = prompt_with_caller_input(&run_spec.user_prompt, c);
             }
         }
 
@@ -290,6 +341,15 @@ impl AgentApplicationService {
             }
             rt.stats.last_execution_at = Some(exec.finished_at);
             rt.stats.last_execution_id = Some(exec.id.clone());
+            let duration_ms = exec.finished_at.saturating_sub(exec.started_at).max(0) as u64;
+            let total = rt.stats.total_runs.max(1);
+            rt.stats.avg_duration_ms = (rt
+                .stats
+                .avg_duration_ms
+                .saturating_mul(total - 1)
+                .saturating_add(duration_ms))
+                / total;
+            rt.stats.last_duration_ms = Some(duration_ms);
             if matches!(exec.status, crate::model::ExecutionStatus::Failed) {
                 rt.status = AgentStatus::Error;
                 rt.error_message = exec.error.clone();

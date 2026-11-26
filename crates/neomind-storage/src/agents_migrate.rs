@@ -164,6 +164,8 @@ fn map_stats(
         quota_day: None,
         last_execution_at,
         last_execution_id: None,
+        avg_duration_ms: stats.avg_duration_ms,
+        last_duration_ms: stats.last_duration_ms,
     }
 }
 
@@ -326,8 +328,8 @@ pub fn map_agent_v2_to_v1(
                     total_executions: rt.stats.total_runs,
                     successful_executions: rt.stats.successful_runs,
                     failed_executions: rt.stats.failed_runs,
-                    avg_duration_ms: 0,
-                    last_duration_ms: None,
+                    avg_duration_ms: rt.stats.avg_duration_ms,
+                    last_duration_ms: rt.stats.last_duration_ms,
                 },
             )
         } else {

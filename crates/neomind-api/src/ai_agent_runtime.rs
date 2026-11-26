@@ -14,19 +14,24 @@ use neomind_ai_agent::coordinator::{
 use neomind_ai_agent::error::{AgentError, Result as AgentResult};
 use neomind_ai_agent::input::InputPipeline;
 use neomind_ai_agent::model::{
-    AgentSpec, AgentSpecDraft, AgentSpecPatch, AgentStatus, CallerInput, EffectivePlan, RunResponse,
+    AgentExecutionRecord, AgentSpec, AgentSpecDraft, AgentSpecPatch, AgentStatus, CallerInput,
+    EffectivePlan, ExecutionStatus, RunResponse, EXECUTION_ID_KEY,
 };
 use neomind_ai_agent::persist::{persist_spec, DurableAgentStore};
 use neomind_ai_agent::ports::{ClockPort, NotifyPort, SourceReadPort, SystemClock};
 use neomind_ai_agent::runner::SinglePassRunner;
-use neomind_ai_agent::service::AgentApplicationService;
-use neomind_ai_agent::side_effects::{Notifier, SideEffectBoundary};
+use neomind_ai_agent::service::{AgentApplicationService, RunOptions};
+use neomind_ai_agent::side_effects::{deps_fresh, Notifier, SideEffectBoundary};
+use neomind_core::eventbus::EventBus;
+use neomind_core::NeoMindEvent;
+use neomind_storage::agents::ExecutionRecord as JournalExecutionRecord;
 use neomind_storage::agents_v2::AgentStoreV2;
 use neomind_storage::AgentStore;
 
 use crate::agent_ports::{
     HostAgentDeps, HostLlmPort, HostNotifyPort, HostSideEffectPort, HostSourceReadPort,
 };
+use crate::automation::metric_publish::{json_to_core_metric_value, VirtualMetricPublisher};
 
 /// Hosted clean-slate agent runtime (service + coordinator + durable store).
 pub struct HostedAiAgentRuntime {
@@ -39,6 +44,8 @@ pub struct HostedAiAgentRuntime {
     pub notify: Arc<HostNotifyPort>,
     pub side_effects: Arc<HostSideEffectPort>,
     pub llm: Arc<HostLlmPort>,
+    event_bus: Option<Arc<EventBus>>,
+    metric_publisher: Option<Arc<VirtualMetricPublisher>>,
     scheduler: Arc<std::sync::Mutex<Option<Arc<AgentScheduler>>>>,
     started: std::sync::atomic::AtomicBool,
 }
@@ -71,6 +78,8 @@ impl HostedAiAgentRuntime {
             }
         };
 
+        let event_bus = deps.event_bus.clone();
+        let metric_publisher = deps.metric_publisher.clone();
         let sources = Arc::new(HostSourceReadPort::new(deps.clone()));
         let notify = Arc::new(HostNotifyPort::new(deps.message_manager.clone()));
         let writes = Arc::new(HostSideEffectPort::new(
@@ -117,6 +126,8 @@ impl HostedAiAgentRuntime {
             notify,
             side_effects: writes,
             llm,
+            event_bus,
+            metric_publisher,
             scheduler: Arc::new(std::sync::Mutex::new(None)),
             started: std::sync::atomic::AtomicBool::new(false),
         })
@@ -202,6 +213,8 @@ impl HostedAiAgentRuntime {
                 "consecutive_failures": rt.stats.consecutive_failures,
                 "last_execution_at": rt.stats.last_execution_at,
                 "last_execution_id": rt.stats.last_execution_id,
+                "avg_duration_ms": rt.stats.avg_duration_ms,
+                "last_duration_ms": rt.stats.last_duration_ms,
                 "error_message": rt.error_message,
             }),
             Err(_) => serde_json::json!({}),
@@ -232,12 +245,7 @@ impl HostedAiAgentRuntime {
         id: &str,
         caller: Option<CallerInput>,
     ) -> AgentResult<RunResponse> {
-        let resp = self
-            .coordinator
-            .submit_with_caller(id, SubmitSource::Manual, caller)
-            .await?;
-        self.mirror_after_run(id, &resp)?;
-        Ok(resp)
+        self.run_formal(id, SubmitSource::Manual, caller).await
     }
 
     pub async fn dry_run(&self, id: &str) -> AgentResult<RunResponse> {
@@ -246,9 +254,117 @@ impl HostedAiAgentRuntime {
     }
 
     pub async fn submit(&self, id: &str, source: SubmitSource) -> AgentResult<RunResponse> {
-        let resp = self.coordinator.submit(id, source).await?;
-        self.mirror_after_run(id, &resp)?;
-        Ok(resp)
+        self.run_formal(id, source, None).await
+    }
+
+    pub async fn submit_with_caller(
+        &self,
+        id: &str,
+        source: SubmitSource,
+        caller: Option<CallerInput>,
+    ) -> AgentResult<RunResponse> {
+        self.run_formal(id, source, caller).await
+    }
+
+    async fn run_formal(
+        &self,
+        id: &str,
+        source: SubmitSource,
+        caller: Option<CallerInput>,
+    ) -> AgentResult<RunResponse> {
+        let started_ms = self.clock.now_ms();
+        let execution_id = format!("exec_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+        let operator_notes = self.load_operator_notes(id);
+
+        let mut emitted_started = false;
+        if let Some(bus) = &self.event_bus {
+            if let Ok(spec) = self.durable.mem.get_spec(id) {
+                let runnable = self
+                    .durable
+                    .mem
+                    .get_runtime(id)
+                    .map(|rt| !matches!(rt.status, AgentStatus::Paused | AgentStatus::Stopped))
+                    .unwrap_or(false);
+                if runnable {
+                    let _ = bus
+                        .publish(NeoMindEvent::AgentExecutionStarted {
+                            agent_id: id.to_string(),
+                            agent_name: spec.name,
+                            execution_id: execution_id.clone(),
+                            trigger_type: source.as_str().to_string(),
+                            timestamp: started_ms / 1000,
+                        })
+                        .await;
+                    emitted_started = true;
+                }
+            }
+        }
+
+        let res = self
+            .coordinator
+            .submit_with_options(
+                id,
+                source,
+                RunOptions {
+                    execution_id: Some(execution_id.clone()),
+                    caller,
+                    operator_notes,
+                },
+            )
+            .await;
+
+        match res {
+            Ok(resp) => {
+                self.mirror_after_run(id, &resp).await?;
+                Ok(resp)
+            }
+            Err(e) => {
+                if emitted_started {
+                    if let Some(bus) = &self.event_bus {
+                        let now_ms = self.clock.now_ms();
+                        let _ = bus
+                            .publish(NeoMindEvent::AgentExecutionCompleted {
+                                agent_id: id.to_string(),
+                                execution_id,
+                                success: false,
+                                duration_ms: now_ms.saturating_sub(started_ms).max(0) as u64,
+                                error: Some(e.to_string()),
+                                timestamp: now_ms / 1000,
+                            })
+                            .await;
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    fn load_operator_notes(&self, id: &str) -> Vec<String> {
+        let Some(v2) = &self.durable.v2 else {
+            return Vec::new();
+        };
+        let Ok(Some(msgs)) = v2.get_user_messages(id) else {
+            return Vec::new();
+        };
+        if msgs.is_empty() {
+            return Vec::new();
+        }
+        let start = msgs.len().saturating_sub(20);
+        msgs[start..]
+            .iter()
+            .filter_map(|m| {
+                let text = m.content.trim();
+                if text.is_empty() {
+                    return None;
+                }
+                match m.message_type.as_deref() {
+                    Some(tag) if !tag.trim().is_empty() => {
+                        Some(format!("[{}] {}", tag.trim(), text))
+                    }
+                    _ => Some(text.to_string()),
+                }
+            })
+            .collect()
     }
 
     pub fn explain_last(&self, id: &str) -> AgentResult<String> {
@@ -268,16 +384,164 @@ impl HostedAiAgentRuntime {
         Ok(())
     }
 
-    fn mirror_after_run(&self, id: &str, resp: &RunResponse) -> AgentResult<()> {
+    async fn mirror_after_run(&self, id: &str, resp: &RunResponse) -> AgentResult<()> {
         if let Some(exec) = &resp.execution {
             if !exec.dry_run {
                 self.durable.mirror_execution(exec)?;
                 if let Ok(rt) = self.durable.mem.get_runtime(id) {
                     self.durable.mirror_runtime(&rt)?;
                 }
+                self.append_journal(exec);
+                if let Ok(spec) = self.durable.mem.get_spec(id) {
+                    self.publish_structured_outputs(&spec, exec).await;
+                }
+                if let Some(bus) = &self.event_bus {
+                    let duration_ms =
+                        exec.finished_at.saturating_sub(exec.started_at).max(0) as u64;
+                    let success = matches!(
+                        exec.status,
+                        ExecutionStatus::Completed | ExecutionStatus::Partial
+                    );
+                    let _ = bus
+                        .publish(NeoMindEvent::AgentExecutionCompleted {
+                            agent_id: exec.agent_id.clone(),
+                            execution_id: exec.id.clone(),
+                            success,
+                            duration_ms,
+                            error: exec.error.clone(),
+                            timestamp: exec.finished_at / 1000,
+                        })
+                        .await;
+                }
             }
         }
         Ok(())
+    }
+
+    fn append_journal(&self, exec: &AgentExecutionRecord) {
+        let Some(v2) = &self.durable.v2 else {
+            return;
+        };
+        let success = matches!(
+            exec.status,
+            ExecutionStatus::Completed | ExecutionStatus::Partial
+        );
+        let raw_outcome = exec
+            .conclusion
+            .as_deref()
+            .or(exec.brief_text.as_deref())
+            .or(exec.error.as_deref())
+            .unwrap_or(match exec.status {
+                ExecutionStatus::Completed => "completed",
+                ExecutionStatus::Partial => "partial",
+                ExecutionStatus::Skipped => "skipped",
+                ExecutionStatus::Failed => "failed",
+            });
+        let outcome = truncate_chars(raw_outcome, 300);
+        let actions: Vec<String> = exec
+            .deliveries
+            .iter()
+            .take(5)
+            .map(|d| {
+                let s = format!(
+                    "{} -> {} ({:?})",
+                    d.action_fingerprint, d.destination, d.state
+                );
+                truncate_chars(&s, 150)
+            })
+            .collect();
+        let action_taken = if actions.is_empty() {
+            "no action".to_string()
+        } else {
+            actions.join("; ")
+        };
+        let stop_reason = match exec.status {
+            ExecutionStatus::Completed => "completed",
+            ExecutionStatus::Partial => "partial",
+            ExecutionStatus::Skipped => "skipped",
+            ExecutionStatus::Failed => "failed",
+        }
+        .to_string();
+        let record = JournalExecutionRecord {
+            timestamp: exec.finished_at / 1000,
+            execution_id: exec.id.clone(),
+            outcome,
+            action_taken,
+            success,
+            stop_reason,
+        };
+        if let Err(e) = v2.append_journal_entry(&exec.agent_id, record) {
+            tracing::warn!(
+                agent_id = %exec.agent_id,
+                execution_id = %exec.id,
+                error = %e,
+                "Failed to append V2 execution journal entry"
+            );
+        }
+    }
+
+    async fn publish_structured_outputs(&self, spec: &AgentSpec, exec: &AgentExecutionRecord) {
+        if !spec.output.publish || spec.output.fields.is_empty() {
+            return;
+        }
+        if !matches!(
+            exec.status,
+            ExecutionStatus::Completed | ExecutionStatus::Partial
+        ) {
+            return;
+        }
+        let Some(publisher) = &self.metric_publisher else {
+            return;
+        };
+        let Some(obj) = exec.structured_result.as_ref().and_then(|v| v.as_object()) else {
+            return;
+        };
+        let confidence = obj
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32);
+        let primary_ns = format!("ai:{}", spec.id);
+        let ts_secs = exec.finished_at / 1000;
+        let meta = Some(serde_json::json!({ EXECUTION_ID_KEY: exec.id }));
+
+        for field in &spec.output.fields {
+            if !field.depends_on.is_empty() && !deps_fresh(&exec.evidence, &field.depends_on) {
+                tracing::debug!(
+                    agent_id = %spec.id,
+                    field = %field.name,
+                    "Skipping ai:* publish because field depends_on evidence is not fresh"
+                );
+                continue;
+            }
+            if let Some(val_json) = obj.get(&field.name) {
+                if val_json.is_null() {
+                    continue;
+                }
+                let metric_val = json_to_core_metric_value(val_json);
+                publisher
+                    .publish_virtual_metric_with_metadata(
+                        &primary_ns,
+                        None,
+                        &field.name,
+                        &metric_val,
+                        ts_secs,
+                        confidence,
+                        Some(("ai", spec.id.as_str())),
+                        meta.clone(),
+                    )
+                    .await;
+            }
+        }
+    }
+}
+
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    let mut chars = s.chars();
+    let out: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        out
+    } else {
+        s.to_string()
     }
 }
 
@@ -401,16 +665,17 @@ mod tests {
 
     /// Readonly weather extension whose `current` payload is swapped per test.
     fn fake_weather_extension(
+        id: &str,
         payload: Arc<Mutex<serde_json::Value>>,
     ) -> neomind_core::extension::DynExtension {
         struct FakeWeather {
+            metadata: ExtensionMetadata,
             payload: Arc<Mutex<serde_json::Value>>,
         }
         #[async_trait]
         impl Extension for FakeWeather {
             fn metadata(&self) -> &ExtensionMetadata {
-                static M: OnceLock<ExtensionMetadata> = OnceLock::new();
-                M.get_or_init(|| ExtensionMetadata::new("weather_cn", "Weather", "1.0.0"))
+                &self.metadata
             }
             fn metrics(&self) -> Vec<MetricDefinition> {
                 vec![]
@@ -442,7 +707,10 @@ mod tests {
                 self
             }
         }
-        Arc::new(tokio::sync::RwLock::new(Box::new(FakeWeather { payload })))
+        Arc::new(tokio::sync::RwLock::new(Box::new(FakeWeather {
+            metadata: ExtensionMetadata::new(id, "Weather", "1.0.0"),
+            payload,
+        })))
     }
 
     async fn test_deps() -> (HostAgentDeps, Arc<CountingChannel>, Arc<TimeSeriesStorage>) {
@@ -967,7 +1235,10 @@ mod tests {
         let (mut deps, _, _) = test_deps().await;
         let ext_reg = Arc::new(ExtensionRegistry::new());
         ext_reg
-            .register("weather_cn".into(), fake_weather_extension(payload.clone()))
+            .register(
+                "weather_cn_obs".into(),
+                fake_weather_extension("weather_cn_obs", payload.clone()),
+            )
             .await
             .unwrap();
         deps.extension_registry = ext_reg;
@@ -981,7 +1252,7 @@ mod tests {
                 requirements: vec![InputRequirement {
                     key: "weather".into(),
                     source: InputSourceRef::ExtensionInstance {
-                        id: "weather_cn".into(),
+                        id: "weather_cn_obs".into(),
                     },
                     operation: Some("current".into()),
                     params: serde_json::json!({}),
@@ -1066,7 +1337,10 @@ mod tests {
         let (mut deps, _, _) = test_deps().await;
         let ext_reg = Arc::new(ExtensionRegistry::new());
         ext_reg
-            .register("weather_cn".into(), fake_weather_extension(payload.clone()))
+            .register(
+                "weather_cn_forge".into(),
+                fake_weather_extension("weather_cn_forge", payload.clone()),
+            )
             .await
             .unwrap();
         deps.extension_registry = ext_reg;
@@ -1085,7 +1359,7 @@ mod tests {
             requirements: vec![InputRequirement {
                 key: "weather".into(),
                 source: InputSourceRef::ExtensionInstance {
-                    id: "weather_cn".into(),
+                    id: "weather_cn_forge".into(),
                 },
                 operation: Some("current".into()),
                 params: serde_json::json!({ "_invoke_is_sample": true }),
@@ -1157,5 +1431,198 @@ mod tests {
         let (spec, _) = runtime.create(local_brief_draft("gate-empty")).unwrap();
         runtime.ensure_loaded(&spec.id).unwrap();
         assert!(runtime.has_agent(&spec.id));
+    }
+
+    #[tokio::test]
+    async fn output_publish_writes_ai_metric_with_provenance_and_feeds_upstream_ai() {
+        let (mut base_deps, _, telemetry) = test_deps().await;
+        let payload = Arc::new(Mutex::new(serde_json::json!({
+            "status": "normal",
+            "score": 92,
+            "confidence": 0.9
+        })));
+        let ext_reg = Arc::new(ExtensionRegistry::new());
+        ext_reg
+            .register(
+                "weather_cn_pub".into(),
+                fake_weather_extension("weather_cn_pub", payload),
+            )
+            .await
+            .unwrap();
+        base_deps.extension_registry = ext_reg;
+
+        let bus = Arc::new(EventBus::new());
+        let value_provider = Arc::new(neomind_rules::UnifiedValueProvider::new());
+        let rule_engine = Arc::new(neomind_rules::RuleEngine::new(value_provider.clone()));
+        let publisher = Arc::new(VirtualMetricPublisher {
+            event_bus: bus.clone(),
+            time_series: telemetry.clone(),
+            value_provider: value_provider.clone(),
+            rule_engine,
+        });
+        let deps = base_deps
+            .with_event_bus(bus.clone())
+            .with_metric_publisher(publisher);
+
+        let store = AgentStore::memory().unwrap();
+        let runtime = HostedAiAgentRuntime::build(store, deps).unwrap();
+
+        let mut upstream = local_brief_draft("upstream-pub");
+        upstream.input = InputContract {
+            requirements: vec![InputRequirement {
+                key: "src".into(),
+                source: InputSourceRef::ExtensionInstance {
+                    id: "weather_cn_pub".into(),
+                },
+                operation: Some("current".into()),
+                params: serde_json::json!({}),
+                auth_scope: None,
+                timeout_secs: 5,
+                result_type: InputModality::StructuredJson,
+                freshness: FreshnessPolicy::Any,
+                on_missing: MissingPolicy::ReportStale,
+            }],
+        };
+        upstream.output = OutputContract {
+            fields: vec![
+                neomind_ai_agent::model::OutputField {
+                    name: "status".into(),
+                    depends_on: vec!["src".into()],
+                    description: Some("Overall status".into()),
+                },
+                neomind_ai_agent::model::OutputField {
+                    name: "score".into(),
+                    depends_on: vec!["src".into()],
+                    description: Some("Score".into()),
+                },
+            ],
+            publish: true,
+        };
+
+        let (up_spec, _) = runtime.create(upstream).unwrap();
+        let up_resp = runtime.invoke(&up_spec.id).await.unwrap();
+        let up_exec = up_resp.execution.expect("upstream exec");
+        assert_eq!(up_exec.status, ExecutionStatus::Completed);
+        assert!(up_exec.structured_result.is_some());
+
+        let _ = telemetry.flush();
+        let ai_ns = format!("ai:{}", up_spec.id);
+        let score_pt = telemetry
+            .latest(&ai_ns, "score")
+            .await
+            .unwrap()
+            .expect("published ai:{agent}:score point");
+        assert_eq!(score_pt.value, MetricValue::Integer(92));
+        assert_eq!(score_pt.quality, Some(0.9));
+        assert_eq!(
+            score_pt
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get(EXECUTION_ID_KEY))
+                .and_then(|v| v.as_str()),
+            Some(up_exec.id.as_str()),
+            "published AI metric must carry execution_id provenance"
+        );
+
+        // Downstream agent reads ai:{up_spec.id}:score via InputSourceRef::UpstreamAi.
+        let mut downstream = local_brief_draft("downstream-reader");
+        downstream.input = InputContract {
+            requirements: vec![InputRequirement {
+                key: "up_score".into(),
+                source: InputSourceRef::UpstreamAi {
+                    agent_id: up_spec.id.clone(),
+                    field: "score".into(),
+                },
+                operation: None,
+                params: serde_json::json!({}),
+                auth_scope: None,
+                timeout_secs: 5,
+                result_type: InputModality::Metric,
+                freshness: FreshnessPolicy::LatestWithin { max_age_secs: 60 },
+                on_missing: MissingPolicy::ReportStale,
+            }],
+        };
+        let (down_spec, _) = runtime.create(downstream).unwrap();
+        let down_resp = runtime.invoke(&down_spec.id).await.unwrap();
+        let down_exec = down_resp.execution.expect("downstream exec");
+        let item = down_exec
+            .evidence
+            .items
+            .iter()
+            .find(|i| i.key == "up_score")
+            .expect("upstream evidence");
+        assert!(
+            matches!(item.quality, EvidenceQuality::Fresh),
+            "UpstreamAi must read published ai:* metric as Fresh: {:?}",
+            item.quality
+        );
+    }
+
+    #[tokio::test]
+    async fn formal_run_emits_events_appends_journal_and_records_duration_stats() {
+        let (base_deps, _, _) = test_deps().await;
+        let bus = Arc::new(EventBus::new());
+        let mut rx = bus.subscribe();
+        let deps = base_deps.with_event_bus(bus);
+
+        let store = AgentStore::memory().unwrap();
+        let runtime = HostedAiAgentRuntime::build(store.clone(), deps).unwrap();
+
+        let (spec, _) = runtime.create(local_brief_draft("journal-events")).unwrap();
+        let ok_resp = runtime.invoke(&spec.id).await.unwrap();
+        let ok_exec = ok_resp.execution.expect("ok exec");
+
+        // Trigger a failure on a real-model agent to verify error-path journal write.
+        let mut fail_draft = local_brief_draft("journal-fail");
+        fail_draft.llm_backend_id = None;
+        let (fail_spec, _) = runtime.create(fail_draft).unwrap();
+        runtime.llm.force_fail_next.store(true, Ordering::SeqCst);
+        let fail_resp = runtime.invoke(&fail_spec.id).await.unwrap();
+        let fail_exec = fail_resp.execution.expect("fail exec");
+        assert_eq!(fail_exec.status, ExecutionStatus::Failed);
+
+        let v2 = AgentStoreV2::from_arc(store.db()).unwrap();
+        let ok_mem = v2.get_memory(&spec.id).unwrap().expect("ok memory");
+        assert_eq!(ok_mem.journal.records.len(), 1);
+        assert_eq!(ok_mem.journal.records[0].execution_id, ok_exec.id);
+        assert!(ok_mem.journal.records[0].success);
+
+        let fail_mem = v2.get_memory(&fail_spec.id).unwrap().expect("fail memory");
+        assert_eq!(fail_mem.journal.records.len(), 1);
+        assert_eq!(fail_mem.journal.records[0].execution_id, fail_exec.id);
+        assert!(!fail_mem.journal.records[0].success);
+
+        let stats = runtime.runtime_stats_json(&spec.id);
+        assert_eq!(stats["total_runs"], 1);
+        assert!(stats["last_duration_ms"].is_u64());
+
+        // Drain EventBus and confirm matching Started + Completed events for ok_exec.
+        let mut saw_started = false;
+        let mut saw_completed = false;
+        while let Some((ev, _)) = rx.try_recv() {
+            match ev {
+                NeoMindEvent::AgentExecutionStarted {
+                    agent_id,
+                    execution_id,
+                    ..
+                } if agent_id == spec.id && execution_id == ok_exec.id => {
+                    saw_started = true;
+                }
+                NeoMindEvent::AgentExecutionCompleted {
+                    agent_id,
+                    execution_id,
+                    success,
+                    ..
+                } if agent_id == spec.id && execution_id == ok_exec.id && success => {
+                    saw_completed = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_started, "must emit AgentExecutionStarted on EventBus");
+        assert!(
+            saw_completed,
+            "must emit AgentExecutionCompleted on EventBus"
+        );
     }
 }

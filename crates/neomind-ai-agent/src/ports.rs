@@ -149,6 +149,20 @@ pub trait SourceReadPort: Send + Sync {
         params: &serde_json::Value,
         timeout_secs: u32,
     ) -> Result<SourceReadResult>;
+
+    /// Read a published upstream AI output metric (`ai:{agent_id}:{field}`).
+    async fn read_upstream_ai(
+        &self,
+        agent_id: &str,
+        field: &str,
+        _params: &serde_json::Value,
+        _timeout_secs: u32,
+    ) -> Result<SourceReadResult> {
+        Err(AgentError::Source {
+            key: format!("ai:{agent_id}:{field}"),
+            reason: "upstream AI source reader not configured".into(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

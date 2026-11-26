@@ -29,6 +29,24 @@ pub fn prompt_with_caller_input(user_prompt: &str, caller: &CallerInput) -> Stri
     format!("{user_prompt}\n{section}")
 }
 
+/// Append persisted operator notes (`user_messages`) to the standing prompt (run-local only).
+pub fn prompt_with_operator_notes(user_prompt: &str, notes: &[String]) -> String {
+    let non_empty: Vec<&str> = notes
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if non_empty.is_empty() {
+        return user_prompt.to_string();
+    }
+    let body = non_empty
+        .into_iter()
+        .map(|n| format!("- {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{user_prompt}\n\n## Operator Notes\n{body}\n")
+}
+
 fn format_caller_section(caller: &CallerInput) -> String {
     if caller.is_empty() {
         return String::new();

@@ -114,6 +114,8 @@ pub fn runtime_to_storage(rt: &AgentRuntimeRecord) -> StorageRuntime {
             quota_day: rt.stats.quota_day.clone(),
             last_execution_at: rt.stats.last_execution_at,
             last_execution_id: rt.stats.last_execution_id.clone(),
+            avg_duration_ms: rt.stats.avg_duration_ms,
+            last_duration_ms: rt.stats.last_duration_ms,
         },
         error_message: rt.error_message.clone(),
         next_probe_at: rt.next_probe_at,

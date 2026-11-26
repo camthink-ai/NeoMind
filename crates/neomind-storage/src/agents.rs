@@ -1493,11 +1493,12 @@ impl AgentStore {
     pub async fn update_agent_memory(&self, id: &str, memory: AgentMemory) -> Result<(), Error> {
         if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
             let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            // Silent no-op when the agent is gone — same as the v1 RMW path.
-            if v2.get_spec(id)?.is_none() {
-                return Ok(());
-            }
-            v2.save_memory(id, &memory)?;
+            // Single write transaction checking spec existence + writing memory
+            // so a concurrent delete cannot leave an orphan memory row.
+            #[cfg(test)]
+            v2.apply_memory_with_hook(id, &memory, || self.test_hook_point())?;
+            #[cfg(not(test))]
+            v2.apply_memory_if_exists(id, &memory)?;
             return Ok(());
         }
         // Atomic RMW over BOTH tables in one write transaction. If the agent
@@ -1540,12 +1541,11 @@ impl AgentStore {
         if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
             let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
             let now = chrono::Utc::now().timestamp();
-            let _ = duration_ms; // v2 runtime row has no avg_duration yet
             #[cfg(test)]
             self.test_hook_point();
             // Single-write conditional field update — never rewrites status,
             // so a concurrent pause cannot be revived by a stale stats settle.
-            v2.apply_runtime_stats_tick(id, success, now)?;
+            v2.apply_runtime_stats_tick(id, success, duration_ms, now)?;
             return Ok(());
         }
         // Atomic RMW, one write transaction (see update_agent_status): reads
@@ -1886,6 +1886,10 @@ impl AgentStore {
         content: String,
         message_type: Option<String>,
     ) -> Result<UserMessage, Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            return v2.add_user_message(agent_id, content, message_type, Self::MAX_USER_MESSAGES);
+        }
         let mut agent = self
             .get_agent(agent_id)
             .await?
@@ -1903,7 +1907,7 @@ impl AgentStore {
         // Trim old messages if needed
         if agent.user_messages.len() > Self::MAX_USER_MESSAGES {
             let removed_count = agent.user_messages.len() - Self::MAX_USER_MESSAGES;
-            agent.user_messages = agent.user_messages.split_off(Self::MAX_USER_MESSAGES);
+            agent.user_messages.drain(..removed_count);
 
             tracing::debug!(
                 agent_id = %agent_id,
@@ -1936,6 +1940,10 @@ impl AgentStore {
         agent_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<UserMessage>, Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            return v2.get_user_messages_checked(agent_id, limit);
+        }
         let agent = self.get_agent(agent_id).await?;
         let agent =
             agent.ok_or_else(|| Error::NotFound(format!("Agent {} not found", agent_id)))?;
@@ -1958,6 +1966,10 @@ impl AgentStore {
         agent_id: &str,
         message_id: &str,
     ) -> Result<bool, Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            return v2.delete_user_message(agent_id, message_id);
+        }
         let mut agent = self
             .get_agent(agent_id)
             .await?
@@ -1989,6 +2001,10 @@ impl AgentStore {
 
     /// Clear all user messages for an agent.
     pub async fn clear_user_messages(&self, agent_id: &str) -> Result<usize, Error> {
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+            return v2.clear_user_messages(agent_id);
+        }
         let mut agent = self
             .get_agent(agent_id)
             .await?
@@ -2667,6 +2683,21 @@ mod tests {
         let store = test_store();
         let id = "mech-1";
         store.save_agent(&race_agent(id)).await.unwrap();
+
+        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
+            // Schema v2 equivalent: reading a stale spec snapshot before a
+            // concurrent delete and blindly re-inserting it resurrects the row.
+            let v2 = crate::agents_v2::AgentStoreV2::from_arc(store.db()).unwrap();
+            let stale = v2.get_spec(id).unwrap().unwrap();
+            store.delete_agent(id).await.unwrap();
+            assert!(store.get_agent(id).await.unwrap().is_none());
+            v2.save_spec(&stale).unwrap();
+            assert!(
+                store.get_agent(id).await.unwrap().is_some(),
+                "stale-snapshot re-insert resurrects — the fixed functions must never do this"
+            );
+            return;
+        }
 
         // Old algorithm, step 1: read a snapshot (row exists).
         let stale = {

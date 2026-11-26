@@ -126,7 +126,7 @@ pub async fn agent_v2_schema() -> HandlerResult<Value> {
         "fields": {
             "llm_backend_id": "Optional backend id on AgentSpec / Draft / Patch — HostLlmPort resolves it (omit/null = active backend). Exposed for editor (#46) model picker.",
             "output.fields": "Named structured JSON keys extracted after each run into execution.structured_result",
-            "output.publish": "When true, published as ai:{agent_id}:{field} (publish path may follow in a later tip)",
+            "output.publish": "When true, publishes each fresh structured field as ai:{agent_id}:{field} via VirtualMetricPublisher with execution_id provenance",
             "execution.structured_result": "Persisted JSON object on AgentExecutionRecord / RunResponse.execution — API/CLI/Chat readable like legacy Structured"
         },
         "operations": {

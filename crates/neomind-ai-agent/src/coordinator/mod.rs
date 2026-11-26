@@ -77,7 +77,8 @@ impl ExecutionCoordinator {
     }
 
     pub async fn submit(&self, agent_id: &str, source: SubmitSource) -> Result<RunResponse> {
-        self.submit_with_caller(agent_id, source, None).await
+        self.submit_with_options(agent_id, source, crate::service::RunOptions::default())
+            .await
     }
 
     pub async fn submit_with_caller(
@@ -85,6 +86,23 @@ impl ExecutionCoordinator {
         agent_id: &str,
         source: SubmitSource,
         caller: Option<CallerInput>,
+    ) -> Result<RunResponse> {
+        self.submit_with_options(
+            agent_id,
+            source,
+            crate::service::RunOptions {
+                caller,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn submit_with_options(
+        &self,
+        agent_id: &str,
+        source: SubmitSource,
+        mut options: crate::service::RunOptions,
     ) -> Result<RunResponse> {
         let runtime = self.store.get_runtime(agent_id)?;
         if matches!(runtime.status, AgentStatus::Paused | AgentStatus::Stopped) {
@@ -135,13 +153,11 @@ impl ExecutionCoordinator {
         }
 
         // Scheduled/event/rule submits never carry ask text — only Manual.
-        let caller = if matches!(source, SubmitSource::Manual) {
-            caller
-        } else {
-            None
-        };
+        if !matches!(source, SubmitSource::Manual) {
+            options.caller = None;
+        }
         self.service
-            .invoke_with_source_and_caller(agent_id, source, caller)
+            .invoke_with_options(agent_id, source, options)
             .await
     }
 }

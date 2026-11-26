@@ -74,8 +74,28 @@ pub fn core_to_rule_value(value: &CoreMetricValue) -> RuleValue {
     }
 }
 
+/// Convert a JSON value (e.g. a field from an agent's `structured_result`)
+/// into a bus-side [`CoreMetricValue`].
+pub fn json_to_core_metric_value(value: &serde_json::Value) -> CoreMetricValue {
+    match value {
+        serde_json::Value::Bool(b) => CoreMetricValue::Boolean(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                CoreMetricValue::Integer(i)
+            } else if let Some(f) = n.as_f64() {
+                CoreMetricValue::Float(f)
+            } else {
+                CoreMetricValue::String(n.to_string())
+            }
+        }
+        serde_json::Value::String(s) => CoreMetricValue::String(s.clone()),
+        other => CoreMetricValue::Json(other.clone()),
+    }
+}
+
 /// Dependencies for publishing a derived metric. All four are standard
 /// `ServerState` residents; construct once per task and reuse.
+#[derive(Clone)]
 pub struct VirtualMetricPublisher {
     pub event_bus: Arc<EventBus>,
     pub time_series: Arc<TimeSeriesStorage>,
@@ -115,6 +135,33 @@ impl VirtualMetricPublisher {
         quality: Option<f32>,
         rule_source: Option<(&str, &str)>,
     ) {
+        self.publish_virtual_metric_with_metadata(
+            primary_ns,
+            alias_ns,
+            metric,
+            value,
+            timestamp,
+            quality,
+            rule_source,
+            None,
+        )
+        .await;
+    }
+
+    /// Publish one derived (virtual) metric with optional telemetry point
+    /// metadata (e.g. `{"execution_id": "..."}` provenance for AI outputs).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn publish_virtual_metric_with_metadata(
+        &self,
+        primary_ns: &str,
+        alias_ns: Option<&str>,
+        metric: &str,
+        value: &CoreMetricValue,
+        timestamp: i64,
+        quality: Option<f32>,
+        rule_source: Option<(&str, &str)>,
+        metadata: Option<serde_json::Value>,
+    ) {
         // Events: primary namespace, then alias namespace.
         let _ = self
             .event_bus
@@ -146,10 +193,7 @@ impl VirtualMetricPublisher {
             timestamp,
             value: core_to_devices(value),
             quality,
-            // No producer on this path attaches provenance yet. The field is
-            // here because the storage point has always had it and the view
-            // type used to swallow it.
-            metadata: None,
+            metadata,
         };
         if let Err(e) = self
             .time_series
@@ -202,6 +246,7 @@ fn data_source_for(source_type: &str, source_id: &str, metric: &str) -> Option<D
         "device" => Some(DataSourceId::device(source_id, metric)),
         "extension" => Some(DataSourceId::extension(source_id, metric)),
         "transform" => Some(DataSourceId::transform(source_id, metric)),
+        "ai" => Some(DataSourceId::ai(source_id, metric)),
         _ => None,
     }
 }
@@ -310,6 +355,30 @@ mod tests {
             data_source_for("transform", "t1", "m").map(|d| d.storage_key()),
             Some("transform:t1:m".to_string())
         );
+        assert_eq!(
+            data_source_for("ai", "agt_1", "risk").map(|d| d.storage_key()),
+            Some("ai:agt_1:risk".to_string())
+        );
         assert!(data_source_for("unknown", "x", "m").is_none());
+    }
+
+    #[test]
+    fn json_to_core_metric_value_maps_primitives() {
+        assert_eq!(
+            json_to_core_metric_value(&serde_json::json!(true)),
+            CoreMetricValue::Boolean(true)
+        );
+        assert_eq!(
+            json_to_core_metric_value(&serde_json::json!(42)),
+            CoreMetricValue::Integer(42)
+        );
+        assert_eq!(
+            json_to_core_metric_value(&serde_json::json!(3.5)),
+            CoreMetricValue::Float(3.5)
+        );
+        assert_eq!(
+            json_to_core_metric_value(&serde_json::json!("normal")),
+            CoreMetricValue::String("normal".into())
+        );
     }
 }

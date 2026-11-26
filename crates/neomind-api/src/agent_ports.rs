@@ -17,6 +17,7 @@ use neomind_ai_agent::ports::{
 };
 use neomind_ai_agent::runner::alert_from_model_text;
 use neomind_ai_agent::service::{NotifyCounter, WriteCounter};
+use neomind_core::eventbus::EventBus;
 use neomind_core::extension::{CommandEffect, ExtensionRegistry};
 use neomind_core::llm::{GenerationParams, LlmInput};
 use neomind_core::Message;
@@ -24,6 +25,7 @@ use neomind_devices::{CommandDelivery, DeviceService, TimeSeriesStorage};
 use neomind_messages::{Message as NotifyMessage, MessageManager, MessageSeverity};
 use tokio_util::sync::CancellationToken;
 
+use crate::automation::metric_publish::VirtualMetricPublisher;
 use crate::server::state::ExtensionMetricsStorage;
 
 /// Host services injected into the clean-slate runtime builder.
@@ -34,6 +36,8 @@ pub struct HostAgentDeps {
     pub device_service: Arc<DeviceService>,
     pub extension_registry: Arc<ExtensionRegistry>,
     pub extension_metrics: Arc<ExtensionMetricsStorage>,
+    pub event_bus: Option<Arc<EventBus>>,
+    pub metric_publisher: Option<Arc<VirtualMetricPublisher>>,
 }
 
 impl HostAgentDeps {
@@ -50,7 +54,19 @@ impl HostAgentDeps {
             device_service,
             extension_registry,
             extension_metrics,
+            event_bus: None,
+            metric_publisher: None,
         }
+    }
+
+    pub fn with_event_bus(mut self, event_bus: Arc<EventBus>) -> Self {
+        self.event_bus = Some(event_bus);
+        self
+    }
+
+    pub fn with_metric_publisher(mut self, publisher: Arc<VirtualMetricPublisher>) -> Self {
+        self.metric_publisher = Some(publisher);
+        self
     }
 }
 
@@ -377,6 +393,38 @@ impl SourceReadPort for HostSourceReadPort {
         }
 
         // Windowed tasks must range-query — never substitute a lone latest.
+        self.read_telemetry_metric(&source_key, device_id, field, params, timeout_secs)
+            .await
+    }
+
+    async fn read_upstream_ai(
+        &self,
+        agent_id: &str,
+        field: &str,
+        params: &serde_json::Value,
+        timeout_secs: u32,
+    ) -> AgentResult<SourceReadResult> {
+        self.read_count.fetch_add(1, Ordering::SeqCst);
+        let source_key = format!("ai:{agent_id}");
+        self.read_telemetry_metric(&source_key, &source_key, field, params, timeout_secs)
+            .await
+    }
+}
+
+impl HostSourceReadPort {
+    async fn read_telemetry_metric(
+        &self,
+        source_key: &str,
+        err_key: &str,
+        field: &str,
+        params: &serde_json::Value,
+        timeout_secs: u32,
+    ) -> AgentResult<SourceReadResult> {
+        let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let freshness = params.get("_freshness").cloned();
+
+        // Windowed tasks must range-query — never substitute a lone latest.
         if let Some(lookback_secs) = freshness
             .as_ref()
             .and_then(|f| f.get("lookback_secs"))
@@ -398,7 +446,7 @@ impl SourceReadPort for HostSourceReadPort {
             let sample_ts = self
                 .deps
                 .telemetry
-                .latest(&source_key, field)
+                .latest(source_key, field)
                 .await
                 .ok()
                 .flatten()
@@ -407,7 +455,7 @@ impl SourceReadPort for HostSourceReadPort {
             let points = tokio::time::timeout(
                 timeout,
                 self.deps.telemetry.query_limited(
-                    &source_key,
+                    source_key,
                     field,
                     start_q,
                     end_q,
@@ -416,11 +464,11 @@ impl SourceReadPort for HostSourceReadPort {
             )
             .await
             .map_err(|_| AgentError::Source {
-                key: device_id.into(),
+                key: err_key.into(),
                 reason: "query_limited timed out".into(),
             })?
             .map_err(|e| AgentError::Source {
-                key: device_id.into(),
+                key: err_key.into(),
                 reason: e.to_string(),
             })?;
             let observed = points.last().map(|p| normalize_ts_to_ms(p.timestamp));
@@ -429,7 +477,7 @@ impl SourceReadPort for HostSourceReadPort {
                 .filter_map(|p| serde_json::to_value(p).ok())
                 .collect();
             return Ok(SourceReadResult {
-                source_id: source_key.clone(),
+                source_id: source_key.to_string(),
                 binding_proof: format!("{source_key}:{field}:lookback={lookback_secs}"),
                 observed_at: observed,
                 valid_window: Some(window_ms),
@@ -437,23 +485,23 @@ impl SourceReadPort for HostSourceReadPort {
             });
         }
 
-        let point = tokio::time::timeout(timeout, self.deps.telemetry.latest(&source_key, field))
+        let point = tokio::time::timeout(timeout, self.deps.telemetry.latest(source_key, field))
             .await
             .map_err(|_| AgentError::Source {
-                key: device_id.into(),
+                key: err_key.into(),
                 reason: "latest timed out".into(),
             })?
             .map_err(|e| AgentError::Source {
-                key: device_id.into(),
+                key: err_key.into(),
                 reason: e.to_string(),
             })?
             .ok_or_else(|| AgentError::Source {
-                key: device_id.into(),
+                key: err_key.into(),
                 reason: format!("no data for {source_key}:{field}"),
             })?;
 
         Ok(SourceReadResult {
-            source_id: source_key.clone(),
+            source_id: source_key.to_string(),
             binding_proof: format!("{source_key}:{field}"),
             observed_at: Some(point.timestamp),
             valid_window: lookback_window_from_freshness(&freshness, now_ms),

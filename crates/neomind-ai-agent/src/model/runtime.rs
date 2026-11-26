@@ -32,6 +32,10 @@ pub struct AgentStats {
     pub last_execution_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_execution_id: Option<String>,
+    #[serde(default)]
+    pub avg_duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_duration_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

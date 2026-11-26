@@ -1195,14 +1195,27 @@ impl ServerState {
         *session_manager_holder.write().await = Some(agents.session_manager.clone());
 
         // Build clean-slate HostedAiAgentRuntime on the shared agents.redb
-        // with production host ports (LLM / telemetry / notify / side-effects).
-        let host_deps = crate::agent_ports::HostAgentDeps::new(
+        // with production host ports (LLM / telemetry / notify / side-effects /
+        // EventBus / VirtualMetricPublisher for ai:{agent}:{field}).
+        let mut host_deps = crate::agent_ports::HostAgentDeps::new(
             core.message_manager.clone(),
             devices.telemetry.clone(),
             devices.service.clone(),
             extensions.registry.clone(),
             extensions.metrics_storage.clone(),
         );
+        if let Some(ref bus) = core.event_bus {
+            host_deps = host_deps
+                .with_event_bus(bus.clone())
+                .with_metric_publisher(Arc::new(
+                    crate::automation::metric_publish::VirtualMetricPublisher {
+                        event_bus: bus.clone(),
+                        time_series: devices.telemetry.clone(),
+                        value_provider: automation.value_provider.clone(),
+                        rule_engine: automation.rule_engine.clone(),
+                    },
+                ));
+        }
         match crate::ai_agent_runtime::build_hosted_runtime(agents.agent_store.clone(), host_deps) {
             Ok(runtime) => {
                 runtime.start();
@@ -1527,13 +1540,25 @@ impl ServerState {
         // `require_clean_slate()` after M3 deleted AiAgentManager.
         let clean_slate_holder: crate::server::state::CleanSlateHolder =
             Arc::new(tokio::sync::RwLock::new(None));
-        let host_deps = crate::agent_ports::HostAgentDeps::new(
+        let mut host_deps = crate::agent_ports::HostAgentDeps::new(
             core.message_manager.clone(),
             devices.telemetry.clone(),
             devices.service.clone(),
             extensions.registry.clone(),
             extensions.metrics_storage.clone(),
         );
+        if let Some(ref bus) = core.event_bus {
+            host_deps = host_deps
+                .with_event_bus(bus.clone())
+                .with_metric_publisher(Arc::new(
+                    crate::automation::metric_publish::VirtualMetricPublisher {
+                        event_bus: bus.clone(),
+                        time_series: devices.telemetry.clone(),
+                        value_provider: automation.value_provider.clone(),
+                        rule_engine: automation.rule_engine.clone(),
+                    },
+                ));
+        }
         match crate::ai_agent_runtime::build_hosted_runtime(agent_store.clone(), host_deps) {
             Ok(runtime) => {
                 *clean_slate_holder.write().await = Some(runtime);

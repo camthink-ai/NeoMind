@@ -1127,9 +1127,103 @@ pub async fn update_agent(
                     patch["tool_policy"] = json!({
                         "scoped": { "allowed_tools": list, "allowed_commands": [] }
                     });
+                } else if tc.get("enabled") == Some(&json!(true)) {
+                    patch["tool_policy"] = json!("unrestricted");
                 }
             }
         }
+    }
+    // Compile legacy resource binding flags into V2 InputContract when explicit
+    // --input-requirements was not supplied.
+    if patch.get("input").is_none()
+        && (body.get("device_ids").is_some()
+            || body.get("metrics").is_some()
+            || body.get("resources").is_some())
+    {
+        let mut requirements = Vec::new();
+        if let Some(ids) = body.get("device_ids").and_then(|v| v.as_array()) {
+            for id_val in ids {
+                if let Some(dev_id) = id_val.as_str() {
+                    requirements.push(json!({
+                        "key": dev_id,
+                        "source": { "kind": "whole_device", "device_id": dev_id },
+                        "params": {},
+                        "timeout_secs": 10,
+                        "result_type": "structured_json",
+                        "freshness": { "kind": "any" },
+                        "on_missing": "report_stale",
+                    }));
+                }
+            }
+        }
+        if let Some(arr) = body.get("metrics").and_then(|v| v.as_array()) {
+            for m in arr {
+                let device_id = m
+                    .get("device_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let field = m
+                    .get("metric_name")
+                    .or_else(|| m.get("field"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("value");
+                let key = m
+                    .get("display_name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("{device_id}:{field}"));
+                requirements.push(json!({
+                    "key": key,
+                    "source": { "kind": "device_metric", "device_id": device_id, "field": field },
+                    "params": {},
+                    "timeout_secs": 10,
+                    "result_type": "metric",
+                    "freshness": { "kind": "any" },
+                    "on_missing": "report_stale",
+                }));
+            }
+        }
+        if let Some(arr) = body.get("resources").and_then(|v| v.as_array()) {
+            for (i, r) in arr.iter().enumerate() {
+                let rtype = r
+                    .get("resource_type")
+                    .or_else(|| r.get("type"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("device");
+                let rid = r
+                    .get("resource_id")
+                    .or_else(|| r.get("id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let key = r
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("r{i}"));
+                let source = match rtype {
+                    "metric" | "Metric" => {
+                        let mut parts = rid.splitn(2, ':');
+                        let device_id = parts.next().unwrap_or(rid);
+                        let field = parts.next().unwrap_or("value");
+                        json!({ "kind": "device_metric", "device_id": device_id, "field": field })
+                    }
+                    "extension_metric" | "ExtensionMetric" | "extension_tool" | "ExtensionTool" => {
+                        json!({ "kind": "extension_instance", "id": rid })
+                    }
+                    _ => json!({ "kind": "whole_device", "device_id": rid }),
+                };
+                requirements.push(json!({
+                    "key": key,
+                    "source": source,
+                    "params": r.get("config").cloned().unwrap_or_else(|| json!({})),
+                    "timeout_secs": 10,
+                    "result_type": "structured_json",
+                    "freshness": { "kind": "any" },
+                    "on_missing": "report_stale",
+                }));
+            }
+        }
+        patch["input"] = json!({ "requirements": requirements });
     }
     if let Some(sched) = body.get("schedule") {
         let st = sched

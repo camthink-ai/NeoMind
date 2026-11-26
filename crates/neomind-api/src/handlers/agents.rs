@@ -1050,12 +1050,21 @@ pub async fn execute_agent(
     Path(id): Path<String>,
     Json(request): Json<ExecuteAgentRequest>,
 ) -> HandlerResult<Value> {
-    let _ = request; // Caller payload is not yet plumbed into clean-slate submit.
     let rt = require_v2_agent(&state, &id).await?;
     let agent_name = rt
         .get(&id)
         .map(|(s, _)| s.name)
         .unwrap_or_else(|_| id.clone());
+
+    let caller = if request.input.is_some() || request.data.is_some() {
+        Some(neomind_ai_agent::CallerInput {
+            content: request.input.clone(),
+            data: request.data.clone(),
+            source: Some("api".into()),
+        })
+    } else {
+        None
+    };
 
     let execution_id = uuid::Uuid::new_v4().to_string();
     let eid_clone = execution_id.clone();
@@ -1068,7 +1077,7 @@ pub async fn execute_agent(
             "Background agent execution started"
         );
         match rt
-            .submit(&aid_clone, neomind_ai_agent::SubmitSource::Manual)
+            .submit_with_caller(&aid_clone, neomind_ai_agent::SubmitSource::Manual, caller)
             .await
         {
             Ok(resp) => {
@@ -1759,7 +1768,8 @@ pub async fn get_agent_stats(
         "total_executions": stats.get("total_runs").cloned().unwrap_or(json!(0)),
         "successful_executions": stats.get("successful_runs").cloned().unwrap_or(json!(0)),
         "failed_executions": stats.get("failed_runs").cloned().unwrap_or(json!(0)),
-        "avg_duration_ms": 0,
+        "avg_duration_ms": stats.get("avg_duration_ms").cloned().unwrap_or(json!(0)),
+        "last_duration_ms": stats.get("last_duration_ms").cloned().unwrap_or(json!(null)),
     }))
 }
 

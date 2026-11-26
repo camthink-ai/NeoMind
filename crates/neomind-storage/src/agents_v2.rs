@@ -209,6 +209,10 @@ pub struct AgentStatsV2 {
     pub last_execution_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_execution_id: Option<String>,
+    #[serde(default)]
+    pub avg_duration_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_duration_ms: Option<u64>,
 }
 
 /// High-frequency runtime row written to `agent_runtime`.
@@ -470,7 +474,13 @@ impl AgentStoreV2 {
     ///
     /// Does not revive a paused/stopped agent — only mutates `stats` (+ `updated_at`).
     /// Concurrent callers serialize on the redb write lock so both increments stick.
-    pub fn apply_runtime_stats_tick(&self, agent_id: &str, success: bool, now: i64) -> Result<()> {
+    pub fn apply_runtime_stats_tick(
+        &self,
+        agent_id: &str,
+        success: bool,
+        duration_ms: u64,
+        now: i64,
+    ) -> Result<()> {
         let write = self.db.begin_write()?;
         {
             let mut table = write.open_table(AGENT_RUNTIME_TABLE)?;
@@ -499,6 +509,14 @@ impl AgentStoreV2 {
             } else {
                 rt.stats.failed_runs = rt.stats.failed_runs.saturating_add(1);
             }
+            let total = rt.stats.total_runs.max(1);
+            rt.stats.avg_duration_ms = (rt
+                .stats
+                .avg_duration_ms
+                .saturating_mul(total - 1)
+                .saturating_add(duration_ms))
+                / total;
+            rt.stats.last_duration_ms = Some(duration_ms);
             rt.stats.last_execution_at = Some(now);
             rt.updated_at = now;
             let bytes = serde_json::to_vec(&rt).map_err(|e| Error::Serialization(e.to_string()))?;
@@ -729,6 +747,71 @@ impl AgentStoreV2 {
         Ok(())
     }
 
+    /// Atomic single-write-txn memory update: writes only when the agent spec
+    /// still exists, so a concurrent delete can never leave an orphan memory row.
+    pub fn apply_memory_if_exists(&self, agent_id: &str, memory: &AgentMemory) -> Result<bool> {
+        self.apply_memory_with_hook(agent_id, memory, || {})
+    }
+
+    pub(crate) fn apply_memory_with_hook<F: FnOnce()>(
+        &self,
+        agent_id: &str,
+        memory: &AgentMemory,
+        after_begin_write: F,
+    ) -> Result<bool> {
+        let bytes = serde_json::to_vec(memory).map_err(|e| Error::Serialization(e.to_string()))?;
+        let write = self.db.begin_write()?;
+        after_begin_write();
+        let written = {
+            let specs = write.open_table(AGENT_SPECS_TABLE)?;
+            if specs.get(agent_id)?.is_some() {
+                let mut table = write.open_table(AGENT_MEMORY_TABLE)?;
+                table.insert(agent_id, bytes.as_slice())?;
+                true
+            } else {
+                false
+            }
+        };
+        write.commit()?;
+        Ok(written)
+    }
+
+    /// Append one execution journal record atomically if the agent still exists.
+    /// Enforces `memory.journal.max_records` FIFO cap.
+    pub fn append_journal_entry(
+        &self,
+        agent_id: &str,
+        record: crate::agents::ExecutionRecord,
+    ) -> Result<bool> {
+        let write = self.db.begin_write()?;
+        let written = {
+            let specs = write.open_table(AGENT_SPECS_TABLE)?;
+            if specs.get(agent_id)?.is_some() {
+                let mut table = write.open_table(AGENT_MEMORY_TABLE)?;
+                let mut memory = match table.get(agent_id)?.map(|g| g.value().to_vec()) {
+                    Some(bytes) => serde_json::from_slice::<AgentMemory>(&bytes)
+                        .unwrap_or_else(|_| AgentMemory::default()),
+                    None => AgentMemory::default(),
+                };
+                let cap = memory.journal.max_records.max(1);
+                memory.journal.records.push(record);
+                if memory.journal.records.len() > cap {
+                    let excess = memory.journal.records.len() - cap;
+                    memory.journal.records.drain(..excess);
+                }
+                memory.updated_at = chrono::Utc::now().timestamp();
+                let bytes =
+                    serde_json::to_vec(&memory).map_err(|e| Error::Serialization(e.to_string()))?;
+                table.insert(agent_id, bytes.as_slice())?;
+                true
+            } else {
+                false
+            }
+        };
+        write.commit()?;
+        Ok(written)
+    }
+
     pub fn get_memory(&self, agent_id: &str) -> Result<Option<AgentMemory>> {
         let read = self.db.begin_read()?;
         let table = read.open_table(AGENT_MEMORY_TABLE)?;
@@ -765,6 +848,128 @@ impl AgentStoreV2 {
             }
             None => Ok(None),
         }
+    }
+
+    /// Add a user message to a V2 agent (atomic check-spec + append + FIFO trim).
+    pub fn add_user_message(
+        &self,
+        agent_id: &str,
+        content: String,
+        message_type: Option<String>,
+        max_messages: usize,
+    ) -> Result<UserMessage> {
+        let message = UserMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: chrono::Utc::now().timestamp(),
+            content,
+            message_type,
+        };
+        let write = self.db.begin_write()?;
+        {
+            let specs = write.open_table(AGENT_SPECS_TABLE)?;
+            if specs.get(agent_id)?.is_none() {
+                return Err(Error::NotFound(format!("Agent {} not found", agent_id)));
+            }
+            let mut table = write.open_table(AGENT_USER_MESSAGES_TABLE)?;
+            let mut msgs: Vec<UserMessage> = match table.get(agent_id)?.map(|g| g.value().to_vec())
+            {
+                Some(bytes) => serde_json::from_slice(&bytes)
+                    .map_err(|e| Error::Serialization(e.to_string()))?,
+                None => Vec::new(),
+            };
+            msgs.push(message.clone());
+            let cap = max_messages.max(1);
+            if msgs.len() > cap {
+                let excess = msgs.len() - cap;
+                msgs.drain(..excess);
+            }
+            let bytes =
+                serde_json::to_vec(&msgs).map_err(|e| Error::Serialization(e.to_string()))?;
+            table.insert(agent_id, bytes.as_slice())?;
+        }
+        write.commit()?;
+        Ok(message)
+    }
+
+    /// Read user messages for a V2 agent, returning NotFound if the spec does not exist.
+    pub fn get_user_messages_checked(
+        &self,
+        agent_id: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<UserMessage>> {
+        let read = self.db.begin_read()?;
+        let specs = read.open_table(AGENT_SPECS_TABLE)?;
+        if specs.get(agent_id)?.is_none() {
+            return Err(Error::NotFound(format!("Agent {} not found", agent_id)));
+        }
+        let table = read.open_table(AGENT_USER_MESSAGES_TABLE)?;
+        let msgs: Vec<UserMessage> = match table.get(agent_id)? {
+            Some(bytes) => serde_json::from_slice(bytes.value())
+                .map_err(|e| Error::Serialization(e.to_string()))?,
+            None => Vec::new(),
+        };
+        if let Some(limit) = limit {
+            if msgs.len() > limit {
+                return Ok(msgs[msgs.len() - limit..].to_vec());
+            }
+        }
+        Ok(msgs)
+    }
+
+    /// Delete one user message by id for a V2 agent.
+    pub fn delete_user_message(&self, agent_id: &str, message_id: &str) -> Result<bool> {
+        let write = self.db.begin_write()?;
+        let removed = {
+            let specs = write.open_table(AGENT_SPECS_TABLE)?;
+            if specs.get(agent_id)?.is_none() {
+                return Err(Error::NotFound(format!("Agent {} not found", agent_id)));
+            }
+            let mut table = write.open_table(AGENT_USER_MESSAGES_TABLE)?;
+            let mut msgs: Vec<UserMessage> = match table.get(agent_id)?.map(|g| g.value().to_vec())
+            {
+                Some(bytes) => serde_json::from_slice(&bytes)
+                    .map_err(|e| Error::Serialization(e.to_string()))?,
+                None => Vec::new(),
+            };
+            let before = msgs.len();
+            msgs.retain(|m| m.id != message_id);
+            let changed = msgs.len() < before;
+            if changed {
+                let bytes =
+                    serde_json::to_vec(&msgs).map_err(|e| Error::Serialization(e.to_string()))?;
+                table.insert(agent_id, bytes.as_slice())?;
+            }
+            changed
+        };
+        write.commit()?;
+        Ok(removed)
+    }
+
+    /// Clear all user messages for a V2 agent; returns number removed.
+    pub fn clear_user_messages(&self, agent_id: &str) -> Result<usize> {
+        let write = self.db.begin_write()?;
+        let count = {
+            let specs = write.open_table(AGENT_SPECS_TABLE)?;
+            if specs.get(agent_id)?.is_none() {
+                return Err(Error::NotFound(format!("Agent {} not found", agent_id)));
+            }
+            let mut table = write.open_table(AGENT_USER_MESSAGES_TABLE)?;
+            let existing: Vec<UserMessage> = match table.get(agent_id)?.map(|g| g.value().to_vec())
+            {
+                Some(bytes) => serde_json::from_slice(&bytes)
+                    .map_err(|e| Error::Serialization(e.to_string()))?,
+                None => Vec::new(),
+            };
+            let count = existing.len();
+            if count > 0 {
+                let bytes = serde_json::to_vec(&Vec::<UserMessage>::new())
+                    .map_err(|e| Error::Serialization(e.to_string()))?;
+                table.insert(agent_id, bytes.as_slice())?;
+            }
+            count
+        };
+        write.commit()?;
+        Ok(count)
     }
 }
 
@@ -1211,5 +1416,59 @@ mod tests {
         let exec = store.get_execution("exec-formal").unwrap().unwrap();
         assert_eq!(exec.deliveries.len(), 1);
         assert_eq!(exec.deliveries[0].state, DeliveryState::Accepted);
+    }
+
+    #[test]
+    fn agent_store_v2_user_messages_and_journal_roundtrip() {
+        let store = AgentStoreV2::memory().unwrap();
+        // Missing agent returns NotFound.
+        assert!(store
+            .add_user_message("ghost", "hi".into(), None, 50)
+            .is_err());
+        assert!(store.get_user_messages_checked("ghost", None).is_err());
+
+        store.save_spec(&sample_spec("u1")).unwrap();
+        let m1 = store
+            .add_user_message("u1", "first".into(), Some("note".into()), 2)
+            .unwrap();
+        let m2 = store
+            .add_user_message("u1", "second".into(), None, 2)
+            .unwrap();
+        let m3 = store
+            .add_user_message("u1", "third".into(), Some("instruction".into()), 2)
+            .unwrap();
+
+        // Cap = 2 keeps the two newest messages ("second", "third").
+        let msgs = store.get_user_messages_checked("u1", None).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].id, m2.id);
+        assert_eq!(msgs[1].id, m3.id);
+        assert!(!msgs.iter().any(|m| m.id == m1.id));
+
+        assert!(store.delete_user_message("u1", &m2.id).unwrap());
+        assert!(!store.delete_user_message("u1", &m2.id).unwrap());
+        assert_eq!(store.clear_user_messages("u1").unwrap(), 1);
+        assert!(store
+            .get_user_messages_checked("u1", None)
+            .unwrap()
+            .is_empty());
+
+        // Journal append + missing-agent no-op.
+        let rec = crate::agents::ExecutionRecord {
+            timestamp: 100,
+            execution_id: "exec-1".into(),
+            outcome: "ok".into(),
+            action_taken: "no action".into(),
+            success: true,
+            stop_reason: "completed".into(),
+        };
+        assert!(store.append_journal_entry("u1", rec.clone()).unwrap());
+        let mem = store.get_memory("u1").unwrap().expect("memory");
+        assert_eq!(mem.journal.records.len(), 1);
+        assert_eq!(mem.journal.records[0].execution_id, "exec-1");
+
+        assert!(store.delete_agent_rows("u1").unwrap());
+        assert!(!store.append_journal_entry("u1", rec).unwrap());
+        assert!(store.get_memory("u1").unwrap().is_none());
     }
 }

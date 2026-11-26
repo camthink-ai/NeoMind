@@ -257,3 +257,96 @@ async fn v2_list_falls_back_to_agent_trigger_when_source_missing() {
         "missing trigger_source should fall back to agent TriggerSpec::Event"
     );
 }
+
+#[tokio::test]
+async fn v2_user_messages_and_memory_endpoints_work_under_schema_v2() {
+    use neomind_api::handlers::agents::{
+        add_user_message, clear_user_messages, delete_user_message, get_agent_memory,
+        get_user_messages,
+    };
+
+    let state = crate::common::create_test_server_state().await;
+    let draft = AgentSpecDraft {
+        name: "notes-agent".into(),
+        description: None,
+        user_prompt: "watch".into(),
+        llm_backend_id: Some("local-brief".into()),
+        preset: None,
+        trigger: TriggerSpec::Manual,
+        pacing: Default::default(),
+        input: InputContract {
+            requirements: vec![],
+        },
+        tool_policy: ToolPolicy::Disabled,
+        output: OutputContract::default(),
+        notify: Default::default(),
+        controlled_actions: vec![],
+    };
+    let created = create_agent_v2(State(state.clone()), Json(draft))
+        .await
+        .expect("create")
+        .0
+        .data
+        .expect("data");
+    let agent_id = created.agent.id;
+
+    // Add two user messages via HTTP handler (was failing under schema v2 before).
+    let added1 = add_user_message(
+        State(state.clone()),
+        Path(agent_id.clone()),
+        Json(
+            serde_json::from_value(
+                json!({ "content": "Focus on sensor A", "message_type": "instruction" }),
+            )
+            .unwrap(),
+        ),
+    )
+    .await
+    .expect("add msg 1")
+    .0
+    .data
+    .expect("data");
+    let msg1_id = added1["id"].as_str().expect("id").to_string();
+
+    let _added2 = add_user_message(
+        State(state.clone()),
+        Path(agent_id.clone()),
+        Json(serde_json::from_value(json!({ "content": "Ignore transient spikes" })).unwrap()),
+    )
+    .await
+    .expect("add msg 2");
+
+    let list = get_user_messages(State(state.clone()), Path(agent_id.clone()))
+        .await
+        .expect("list msgs")
+        .0
+        .data
+        .expect("data");
+    assert_eq!(list.as_array().unwrap().len(), 2);
+
+    // Invoke the agent and verify V2 memory journal records the execution.
+    let rt = state.require_clean_slate().await.expect("rt");
+    let _ = rt.invoke(&agent_id).await.expect("invoke");
+    let mem = get_agent_memory(State(state.clone()), Path(agent_id.clone()))
+        .await
+        .expect("memory")
+        .0
+        .data
+        .expect("data");
+    assert_eq!(
+        mem["journal"]["records"].as_array().unwrap().len(),
+        1,
+        "V2 execution must append to agent memory journal"
+    );
+
+    let _ = delete_user_message(State(state.clone()), Path((agent_id.clone(), msg1_id)))
+        .await
+        .expect("delete one");
+    let cleared = clear_user_messages(State(state.clone()), Path(agent_id.clone()))
+        .await
+        .expect("clear remaining")
+        .0
+        .data
+        .expect("data");
+    assert_eq!(cleared["count"], 1);
+}
