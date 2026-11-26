@@ -84,7 +84,13 @@ pub fn apply_outcome(mut exec: AgentExecutionRecord, outcome: RunOutcome) -> Age
                 crate::model::EvidenceQuality::Error { reason } => {
                     Some(format!("{}: {reason}", item.key))
                 }
-                crate::model::EvidenceQuality::Stale => Some(format!("{}: stale", item.key)),
+                crate::model::EvidenceQuality::Stale => {
+                    if let Some(reason) = item.binding_proof.strip_prefix("missing:") {
+                        Some(format!("{}: {reason}", item.key))
+                    } else {
+                        Some(format!("{}: stale", item.key))
+                    }
+                }
                 crate::model::EvidenceQuality::Missing => {
                     Some(format!("{}: {}", item.key, item.binding_proof))
                 }

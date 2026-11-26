@@ -189,17 +189,22 @@ impl HostLlmPort {
                 .map_err(|e| AgentError::Llm(e.to_string()))?,
         };
 
-        let thinking_is_integral = match request.backend_id.as_deref() {
-            Some(id) if id != "default" => manager
-                .get_instance(id)
-                .map(|i| i.thinking_is_integral)
-                .unwrap_or(false),
-            _ => manager
-                .get_active_instance()
-                .map(|i| i.thinking_is_integral)
-                .unwrap_or(false),
+        let instance_opt = match request.backend_id.as_deref() {
+            Some(id) if id != "default" => manager.get_instance(id),
+            _ => manager.get_active_instance(),
         };
+        let thinking_is_integral = instance_opt
+            .as_ref()
+            .map(|i| i.thinking_is_integral)
+            .unwrap_or(false);
+        // Autonomous agent runs need deterministic threshold/boolean/JSON reasoning;
+        // never inherit high chat temperatures (e.g. llama-server --temp 1.00).
+        let agent_temp = instance_opt
+            .as_ref()
+            .map(|i| i.temperature.clamp(0.0, 0.2))
+            .unwrap_or(0.2);
         let params = GenerationParams {
+            temperature: Some(agent_temp),
             thinking_enabled: if thinking_is_integral { None } else { Some(false) },
             max_tokens: Some(2048),
             ..Default::default()
@@ -227,6 +232,12 @@ impl HostLlmPort {
             system_text.push_str("\n\n## Available Tools\n");
             for def in &tool_defs {
                 system_text.push_str(&format!("- {}: {}\n", def.name, def.description));
+            }
+            if !request.allowed_commands.is_empty() {
+                system_text.push_str(&format!(
+                    "\nAllowed shell commands: {}\n",
+                    request.allowed_commands.join(", ")
+                ));
             }
         }
 
@@ -282,11 +293,30 @@ impl HostLlmPort {
 
             let first_result = tokio::select! {
                 _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-                result = runtime.generate(input) => result,
+                result = runtime.generate(input.clone()) => result,
             };
 
             let output = match first_result {
                 Ok(out) => out,
+                Err(LlmError::Network(err)) => {
+                    // Local llama-server / Ollama frequently close idle HTTP/1.1 keep-alive
+                    // sockets between runs; one fast retry recovers stale pooled connections.
+                    tracing::warn!(
+                        error = %err,
+                        round,
+                        "Transient LLM network error; retrying once after 200ms"
+                    );
+                    tokio::select! {
+                        _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                        _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+                    }
+                    tokio::select! {
+                        _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                        result = runtime.generate(input) => {
+                            result.map_err(|e| AgentError::Llm(e.to_string()))?
+                        }
+                    }
+                }
                 Err(LlmError::ContextOverflow {
                     prompt_tokens,
                     max_context,
@@ -342,7 +372,43 @@ impl HostLlmPort {
             };
 
             if calls.is_empty() {
-                final_text = output.text;
+                // If the agent declared structured output fields (`expect_json`),
+                // `json_mode` was intentionally off while tools were enabled so the
+                // model could emit native tool calls. When the model finishes with
+                // plain prose instead of JSON, run one grammar-constrained JSON pass
+                // (`tools: None`, `json_mode: Some(true)`) to serialize the answer.
+                if request.expect_json
+                    && round_tools.is_some()
+                    && neomind_ai_agent::runner::extract_json_object(&output.text).is_none()
+                {
+                    tracing::debug!(
+                        round,
+                        "Tool-enabled run ended with prose while expect_json=true; running JSON-mode formatting pass"
+                    );
+                    messages.push(Message::assistant(output.text.clone()));
+                    messages.push(Message::user(
+                        "Now output ONLY the requested JSON object summarizing your findings above.",
+                    ));
+                    let mut json_params = params.clone();
+                    json_params.json_mode = Some(true);
+                    let json_input = LlmInput {
+                        messages: messages.clone(),
+                        params: json_params,
+                        model: None,
+                        stream: false,
+                        tools: None,
+                    };
+                    let json_res = tokio::select! {
+                        _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                        result = runtime.generate(json_input) => result,
+                    };
+                    final_text = match json_res {
+                        Ok(out) if !out.text.trim().is_empty() => out.text,
+                        _ => output.text,
+                    };
+                } else {
+                    final_text = output.text;
+                }
                 break;
             }
 
@@ -372,7 +438,8 @@ impl HostLlmPort {
                         .any(|allowed| allowed == first_tok || cmd_str.starts_with(allowed.as_str()));
                     if !permitted {
                         tool_results.push(format!(
-                            "### Tool `{orig_name}` rejected\nCommand `{first_tok}` is not in allowed_commands."
+                            "### Tool `{orig_name}` rejected\nCommand `{first_tok}` is not in allowed_commands (allowed: {}). Proceed with allowed commands or finish.",
+                            request.allowed_commands.join(", ")
                         ));
                         continue;
                     }

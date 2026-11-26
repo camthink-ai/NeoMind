@@ -97,6 +97,16 @@ impl SideEffectBoundary {
             return Ok(exec);
         }
 
+        // Alert-driven agents (`notify.on_alert == true`) only execute
+        // remediation controlled actions when alert criteria are actually met.
+        // Routine non-alert agents (`on_alert == false`) still execute whenever
+        // execution status and `depends_on` freshness pass.
+        if spec.notify.on_alert
+            && !matches!(exec.alert_verdict, Some(AlertVerdict::CriteriaMet))
+        {
+            return Ok(exec);
+        }
+
         // controlled actions — frozen depends_on from spec
         for action in &spec.controlled_actions {
             if !deps_fresh(&exec.evidence, &action.depends_on) {

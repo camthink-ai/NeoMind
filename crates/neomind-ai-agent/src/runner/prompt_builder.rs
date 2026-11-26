@@ -219,7 +219,8 @@ fn format_item(
         .unwrap_or_default();
     let body = match &item.detail {
         Some(EvidenceDetail::Structured { value }) => {
-            let clean = sanitize_json_value(value, &item.key, false, images, seen_images);
+            let compact = unwrap_datapoint_envelopes(value);
+            let clean = sanitize_json_value(&compact, &item.key, false, images, seen_images);
             truncate_chars(&clean.to_string(), MAX_EVIDENCE_ITEM_CHARS)
         }
         Some(EvidenceDetail::Text { text }) => {
@@ -276,10 +277,61 @@ fn format_item(
         }
         None => "null".into(),
     };
+    let observed = item
+        .observed_at
+        .and_then(|ts| {
+            let secs = if ts >= 1_000_000_000_000 { ts / 1000 } else { ts };
+            chrono::DateTime::from_timestamp(secs, 0)
+        })
+        .map(|dt| format!(" observed={}", dt.format("%Y-%m-%dT%H:%M:%SZ")))
+        .unwrap_or_default();
     format!(
-        "- {} ({quality}) source={} proof={}{window}: {body}",
+        "- {} ({quality}) source={} proof={}{observed}{window}: {body}",
         item.key, item.source_id, item.binding_proof
     )
+}
+
+/// Compact telemetry `DataPoint` wrappers (`{"timestamp": ..., "value": X, "quality": null}`)
+/// into bare values `X` for structured single-snapshot evidence.
+///
+/// The observation timestamp is already rendered once on the evidence line
+/// (`observed=...`), so stripping repetitive per-metric `quality: null` /
+/// `timestamp` wrappers cuts prompt tokens by ~60% and keeps each metric key
+/// directly adjacent to its value (crucial for 1B–3B edge models).
+fn unwrap_datapoint_envelopes(value: &Value) -> Value {
+    match value {
+        Value::Object(obj) => {
+            if is_datapoint_envelope(obj) {
+                if let Some(inner) = obj.get("value") {
+                    return inner.clone();
+                }
+            }
+            let mut out = serde_json::Map::with_capacity(obj.len());
+            for (k, v) in obj {
+                out.insert(k.clone(), unwrap_datapoint_envelopes(v));
+            }
+            Value::Object(out)
+        }
+        other => other.clone(),
+    }
+}
+
+fn is_datapoint_envelope(obj: &serde_json::Map<String, Value>) -> bool {
+    if !obj.contains_key("value") || !obj.contains_key("timestamp") {
+        return false;
+    }
+    let only_dp_keys = obj
+        .keys()
+        .all(|k| matches!(k.as_str(), "timestamp" | "value" | "quality" | "metadata"));
+    if !only_dp_keys {
+        return false;
+    }
+    // Preserve envelope if non-empty metadata is attached.
+    match obj.get("metadata") {
+        None | Some(Value::Null) => true,
+        Some(Value::Object(m)) => m.is_empty(),
+        _ => false,
+    }
 }
 
 fn sanitize_json_value(
