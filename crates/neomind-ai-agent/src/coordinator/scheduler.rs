@@ -73,24 +73,31 @@ impl AgentScheduler {
             let Ok(runtime) = self.store.get_runtime(&spec.id) else {
                 continue;
             };
-            if !matches!(runtime.status, AgentStatus::Active) {
+            let is_recovery_probe = matches!(runtime.status, AgentStatus::Error)
+                && runtime.next_probe_at.is_some_and(|t| now >= t);
+            if !matches!(runtime.status, AgentStatus::Active) && !is_recovery_probe {
                 continue;
             }
-            let due = match &spec.trigger {
-                TriggerSpec::Interval { every_secs } => {
-                    self.interval_due(&spec.id, *every_secs, now, &runtime)
+            let fire_key = format!("{}:{}", spec.id, spec.config_version);
+            let due = if is_recovery_probe {
+                true
+            } else {
+                match &spec.trigger {
+                    TriggerSpec::Interval { every_secs } => {
+                        self.interval_due(&fire_key, *every_secs, now, &runtime)
+                    }
+                    TriggerSpec::Cron { expr, timezone } => {
+                        self.cron_due(&fire_key, expr, timezone, now)
+                    }
+                    TriggerSpec::Event { .. } | TriggerSpec::Manual => false,
                 }
-                TriggerSpec::Cron { expr, timezone } => {
-                    self.cron_due(&spec.id, expr, timezone, now)
-                }
-                TriggerSpec::Event { .. } | TriggerSpec::Manual => false,
             };
             if !due {
                 continue;
             }
             {
                 let mut g = self.last_fired.lock().expect("last_fired");
-                g.insert(spec.id.clone(), now);
+                g.insert(fire_key, now);
             }
             let id = spec.id.clone();
             let submit = self.submit.clone();

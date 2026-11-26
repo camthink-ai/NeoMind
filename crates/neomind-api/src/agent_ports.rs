@@ -100,6 +100,9 @@ pub struct HostLlmPort {
     /// Test hook: next `complete` fails like a backend 5xx (no local-brief fake).
     pub force_fail_next: AtomicBool,
     session_manager: Option<Arc<neomind_agent::SessionManager>>,
+    /// Per-backend concurrency cap (max 2 concurrent agent runs per backend)
+    /// to prevent scheduled/event bursts from starving local single-slot servers.
+    backend_semaphores: std::sync::Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
 }
 
 impl HostLlmPort {
@@ -108,6 +111,7 @@ impl HostLlmPort {
             request_count: AtomicU64::new(0),
             force_fail_next: AtomicBool::new(false),
             session_manager: None,
+            backend_semaphores: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -116,7 +120,18 @@ impl HostLlmPort {
             request_count: AtomicU64::new(0),
             force_fail_next: AtomicBool::new(false),
             session_manager: Some(session_manager),
+            backend_semaphores: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    fn backend_semaphore(&self, backend_key: &str) -> Arc<tokio::sync::Semaphore> {
+        let mut map = self
+            .backend_semaphores
+            .lock()
+            .expect("backend_semaphores lock");
+        map.entry(backend_key.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(2)))
+            .clone()
     }
 
     pub fn requests(&self) -> u64 {
@@ -177,6 +192,12 @@ impl HostLlmPort {
         request: &LlmRequest,
         cancel: CancellationToken,
     ) -> AgentResult<LlmResponse> {
+        let sem_key = request.backend_id.as_deref().unwrap_or("default");
+        let sem = self.backend_semaphore(sem_key);
+        let _permit = tokio::select! {
+            _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+            p = sem.acquire_owned() => p.map_err(|_| AgentError::Llm("backend semaphore closed".into()))?,
+        };
         let manager =
             neomind_agent::get_instance_manager().map_err(|e| AgentError::Llm(e.to_string()))?;
         let runtime = match request.backend_id.as_deref() {
@@ -533,15 +554,18 @@ impl HostLlmPort {
 
                 tracing::info!(tool = %orig_name, round, "Agent executing authorized tool");
 
-                // Optional command allowlist check for shell tool (rejects metacharacter injection).
-                if orig_name == "shell" && !request.allowed_commands.is_empty() {
+                // Always enforce catastrophic shell deny-list (defense-in-depth even when
+                // allowed_commands is empty), plus strict allowlist check when configured.
+                if orig_name == "shell" {
                     let cmd_str = args
                         .get("command")
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .trim();
-                    if let Err(reason) = is_shell_command_allowed(cmd_str, &request.allowed_commands)
-                    {
+                    if let Some(deny) = neomind_agent::toolkit::policy::deny_reason(cmd_str) {
+                        let reason = format!(
+                            "Shell command blocked by safety policy ({deny}). Choose a safe read-only command or finish."
+                        );
                         seen_tool_calls.insert(call_key, (2, true));
                         recorded_tool_calls.push(ToolCallTrace {
                             round: round as u32,
@@ -554,6 +578,30 @@ impl HostLlmPort {
                         });
                         tool_results.push(format!("### Tool `{orig_name}` rejected\n{reason}"));
                         continue;
+                    }
+                    if !request.allowed_commands.is_empty() {
+                        let has_extra_params = args
+                            .get("params")
+                            .is_some_and(|p| !p.is_null() && p != &serde_json::json!({}));
+                        let check = if has_extra_params {
+                            Err("Shell `params` side-channel is forbidden when allowed_commands is enforced.".into())
+                        } else {
+                            is_shell_command_allowed(cmd_str, &request.allowed_commands)
+                        };
+                        if let Err(reason) = check {
+                            seen_tool_calls.insert(call_key, (2, true));
+                            recorded_tool_calls.push(ToolCallTrace {
+                                round: round as u32,
+                                name: orig_name.clone(),
+                                arguments: trace_args,
+                                success: false,
+                                result_preview: String::new(),
+                                error: Some(reason.clone()),
+                                duration_ms: 0,
+                            });
+                            tool_results.push(format!("### Tool `{orig_name}` rejected\n{reason}"));
+                            continue;
+                        }
                     }
                 }
 
@@ -685,11 +733,7 @@ pub(crate) fn classify_host_tool_capability(
             | "memory_read"
             | "get_time"
             | "datetime"
-    ) || lower.starts_with("get_")
-        || lower.starts_with("list_")
-        || lower.starts_with("read_")
-        || lower.starts_with("query_")
-        || lower.starts_with("search_");
+    );
 
     neomind_ai_agent::ports::OperationCapability {
         class: if is_read_only {
@@ -715,7 +759,9 @@ pub(crate) fn is_shell_command_allowed(
     if trimmed.is_empty() {
         return Err("Empty shell command is not allowed.".into());
     }
-    const FORBIDDEN_METACHARS: &[&str] = &[";", "&", "|", "$(", "`", ">", "<", "\n", "\r"];
+    const FORBIDDEN_METACHARS: &[&str] = &[
+        ";", "&", "|", "$", "`", ">", "<", "\n", "\r", "{", "}", "\\", "'", "\"", "!",
+    ];
     for meta in FORBIDDEN_METACHARS {
         if trimmed.contains(meta) {
             return Err(format!(
@@ -835,7 +881,8 @@ fn select_authorized_tools(
             continue;
         }
         if let Some(allow) = allowed_tools {
-            if !allow.is_empty() && !allow.iter().any(|a| a.eq_ignore_ascii_case(&def.name)) {
+            // Fail-closed: Scoped with an empty allowlist exposes zero tools.
+            if allow.is_empty() || !allow.iter().any(|a| a.eq_ignore_ascii_case(&def.name)) {
                 continue;
             }
         }
@@ -1033,7 +1080,16 @@ fn resolve_llm_image_parts(images: &[LlmImage]) -> Vec<ContentPart> {
                 tracing::warn!(url = %url, "Skipping unreadable /api/images/ attachment for agent LLM");
             }
         } else if url.starts_with("http://") || url.starts_with("https://") {
-            parts.push(ContentPart::image_url(url.to_string()));
+            let is_private = reqwest::Url::parse(url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_string))
+                .map(|host| neomind_core::net::is_private_host(&host))
+                .unwrap_or(true);
+            if is_private {
+                tracing::warn!(url = %url, "Blocking private/internal HTTP image URL attachment for agent LLM");
+            } else {
+                parts.push(ContentPart::image_url(url.to_string()));
+            }
         }
     }
     parts
@@ -1234,8 +1290,6 @@ impl SourceReadPort for HostSourceReadPort {
         self.read_count.fetch_add(1, Ordering::SeqCst);
         let source_key = format!("device:{device_id}");
         let timeout = Duration::from_secs(timeout_secs.max(1) as u64);
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        let freshness = params.get("_freshness").cloned();
 
         if field == "*" {
             let _ = self.deps.telemetry.flush();
@@ -1264,12 +1318,18 @@ impl SourceReadPort for HostSourceReadPort {
                 key: device_id.into(),
                 reason: e.to_string(),
             })?;
+            if batch.is_empty() {
+                return Err(AgentError::Source {
+                    key: device_id.into(),
+                    reason: "device has no telemetry data".into(),
+                });
+            }
             let observed = batch.values().map(|p| p.timestamp).max();
             return Ok(SourceReadResult {
                 source_id: source_key.clone(),
                 binding_proof: format!("{source_key}:*"),
                 observed_at: observed,
-                valid_window: lookback_window_from_freshness(&freshness, now_ms),
+                valid_window: None,
                 value: serde_json::to_value(&batch).unwrap_or(serde_json::json!({})),
             });
         }
@@ -1703,10 +1763,38 @@ mod tests {
         assert!(is_shell_command_allowed("uname > /tmp/out", &allowed).is_err());
         assert!(is_shell_command_allowed("uname\nid", &allowed).is_err());
 
-        // Prefix spoofing must be rejected.
+        // Prefix spoofing and variable/quote expansion must be rejected.
         assert!(is_shell_command_allowed("uname2", &allowed).is_err());
         assert!(is_shell_command_allowed("git status2", &allowed).is_err());
         assert!(is_shell_command_allowed("rm -rf /", &allowed).is_err());
+        assert!(is_shell_command_allowed("uname $NEOMIND_API_KEY", &allowed).is_err());
+        assert!(is_shell_command_allowed("git status \"-c\"", &allowed).is_err());
+    }
+
+    #[test]
+    fn extension_tool_with_read_prefix_is_not_classified_readonly() {
+        let cap = classify_host_tool_capability("query_plc:write_coil");
+        assert_eq!(cap.class, neomind_ai_agent::ports::CapabilityClass::SideEffect);
+    }
+
+    #[test]
+    fn scoped_empty_allowlist_fails_closed() {
+        let hooks = neomind_ai_agent::runner::hooks::default_hooks();
+        let empty_scoped = neomind_ai_agent::model::ToolPolicy::Scoped {
+            allowed_tools: vec![],
+            allowed_commands: vec![],
+        };
+        let call = neomind_ai_agent::ports::ToolInvocation {
+            name: "web_search".into(),
+            arguments: serde_json::json!({}),
+            extension_id: None,
+            operation: None,
+        };
+        let cap = classify_host_tool_capability("web_search");
+        assert!(hooks
+            .iter()
+            .try_for_each(|h| h.before_dispatch(&call, &cap, false, &empty_scoped))
+            .is_err());
     }
 
     #[test]

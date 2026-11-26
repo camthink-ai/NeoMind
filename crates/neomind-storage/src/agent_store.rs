@@ -123,6 +123,8 @@ pub struct AgentSpecRecord {
     pub user_prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_backend_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
     pub trigger: TriggerSpec,
     #[serde(default)]
     pub pacing: PacingPolicy,
@@ -405,6 +407,21 @@ impl AgentRecordStore {
         {
             let mut messages = write.open_table(AGENT_USER_MESSAGES_TABLE)?;
             let _ = messages.remove(id)?;
+        }
+        {
+            let mut executions = write.open_table(AGENT_EXECUTIONS_TABLE)?;
+            let mut exec_ids = Vec::new();
+            for item in executions.iter()? {
+                let (k, v) = item?;
+                if let Ok(row) = serde_json::from_slice::<AgentExecutionRow>(v.value()) {
+                    if row.agent_id == id {
+                        exec_ids.push(k.value().to_string());
+                    }
+                }
+            }
+            for exec_id in exec_ids {
+                let _ = executions.remove(exec_id.as_str())?;
+            }
         }
         write.commit()?;
         Ok(removed)
@@ -1218,7 +1235,7 @@ mod tests {
             assert_eq!(messages[0].content, "hi");
         }
 
-        assert_eq!(crate::schema::CURRENT_SCHEMA_VERSION, 2);
+        assert_eq!(crate::schema::AGENTS_SCHEMA_VERSION, 2);
 
         // Idempotent second pass.
         migrate_legacy_agents_table(&db).unwrap();
@@ -1234,6 +1251,7 @@ mod tests {
             description: Some("spec round-trip".into()),
             user_prompt: "do the thing".into(),
             llm_backend_id: None,
+            preset: None,
             trigger: TriggerSpec::Manual,
             pacing: PacingPolicy::default(),
             input: InputContract::default(),
@@ -1262,7 +1280,8 @@ mod tests {
         assert!(read.open_table(AGENT_EXECUTIONS_TABLE).is_ok());
         assert!(read.open_table(AGENT_MEMORY_TABLE).is_ok());
         assert!(read.open_table(AGENT_USER_MESSAGES_TABLE).is_ok());
-        assert_eq!(crate::schema::CURRENT_SCHEMA_VERSION, 2);
+        assert_eq!(crate::schema::AGENTS_SCHEMA_VERSION, 2);
+        assert_eq!(crate::schema::CURRENT_SCHEMA_VERSION, 1);
     }
 
     #[test]
@@ -1278,7 +1297,7 @@ mod tests {
         assert!(store.delete_spec("spec-1").unwrap());
         assert!(store.get_spec("spec-1").unwrap().is_none());
         assert!(store.list_specs().unwrap().is_empty());
-        assert_eq!(crate::schema::CURRENT_SCHEMA_VERSION, 2);
+        assert_eq!(crate::schema::AGENTS_SCHEMA_VERSION, 2);
     }
 
     #[test]

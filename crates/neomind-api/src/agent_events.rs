@@ -34,7 +34,7 @@ impl AgentEventBridge {
         source_type: &str,
         source_id: &str,
         field: &str,
-        _report_timestamp: i64,
+        report_timestamp: i64,
     ) {
         let now = chrono::Utc::now().timestamp();
         let specs = self.runtime.durable.mem.list_specs();
@@ -50,7 +50,10 @@ impl AgentEventBridge {
                 continue;
             };
 
-            let event_filter = parse_event_filter(filter);
+            let mut event_filter = parse_event_filter(filter);
+            if event_filter.any.is_empty() && event_filter.all.is_empty() {
+                event_filter = fallback_filter_from_inputs(&spec);
+            }
             if !self.event_fires(&spec.id, &event_filter, source_type, source_id, field, now) {
                 continue;
             }
@@ -76,8 +79,22 @@ impl AgentEventBridge {
 
             let rt = self.runtime.clone();
             let agent_id = spec.id.clone();
+            let caller = neomind_ai_agent::model::CallerInput {
+                source: Some(format!("{source_type}:{source_id}")),
+                content: None,
+                data: Some(serde_json::json!({
+                    "source_type": source_type,
+                    "source_id": source_id,
+                    "field": field,
+                    "report_timestamp": report_timestamp,
+                    "report_id": format!("{source_id}:{report_timestamp}"),
+                })),
+            };
             tokio::spawn(async move {
-                match rt.submit(&agent_id, SubmitSource::Event).await {
+                match rt
+                    .submit_with_caller(&agent_id, SubmitSource::Event, Some(caller))
+                    .await
+                {
                     Ok(_) => tracing::info!(
                         agent_id = %agent_id,
                         "Event-triggered clean-slate agent submitted"
@@ -143,5 +160,42 @@ fn parse_event_filter(filter: &serde_json::Value) -> EventFilter {
     if filter.is_null() {
         return EventFilter::default();
     }
+    if let Some(s) = filter.as_str() {
+        if let Ok(parsed) = serde_json::from_str::<EventFilter>(s) {
+            return parsed;
+        }
+    }
     serde_json::from_value(filter.clone()).unwrap_or_default()
+}
+
+fn fallback_filter_from_inputs(spec: &neomind_ai_agent::model::AgentSpec) -> EventFilter {
+    use neomind_ai_agent::model::InputSourceRef;
+
+    let mut any = Vec::new();
+    for req in &spec.input.requirements {
+        match &req.source {
+            InputSourceRef::WholeDevice { device_id } => {
+                any.push(serde_json::json!({ "type": "device", "id": device_id }));
+            }
+            InputSourceRef::DeviceMetric { device_id, field } => {
+                if field == "*" {
+                    any.push(serde_json::json!({ "type": "device", "id": device_id }));
+                } else {
+                    any.push(serde_json::json!({ "type": "device", "id": device_id, "field": field }));
+                }
+            }
+            InputSourceRef::ExtensionInstance { id } => {
+                if let Some(op) = &req.operation {
+                    any.push(serde_json::json!({ "type": "extension", "id": id, "field": op }));
+                } else {
+                    any.push(serde_json::json!({ "type": "extension", "id": id }));
+                }
+            }
+            _ => {}
+        }
+    }
+    if any.is_empty() {
+        return EventFilter::default();
+    }
+    serde_json::from_value(serde_json::json!({ "any": any })).unwrap_or_default()
 }

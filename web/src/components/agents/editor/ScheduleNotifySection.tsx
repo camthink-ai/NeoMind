@@ -85,9 +85,15 @@ function parseCronParts(expr: string): {
 
 function extractEventSources(filter: unknown): EventFilterSource[] {
   if (!filter || typeof filter !== 'object') return []
-  const obj = filter as { sources?: unknown }
-  if (!Array.isArray(obj.sources)) return []
-  return obj.sources.filter(
+  const obj = filter as { sources?: unknown; any?: unknown; all?: unknown }
+  const rawList = Array.isArray(obj.sources)
+    ? obj.sources
+    : Array.isArray(obj.any)
+      ? obj.any
+      : Array.isArray(obj.all)
+        ? obj.all
+        : []
+  return rawList.filter(
     (s): s is EventFilterSource =>
       Boolean(s) && typeof s === 'object' && typeof (s as EventFilterSource).id === 'string',
   )

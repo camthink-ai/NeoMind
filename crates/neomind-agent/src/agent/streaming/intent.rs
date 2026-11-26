@@ -530,7 +530,7 @@ pub fn extract_user_device_targets(text: &str) -> Vec<String> {
         if !has_digit {
             continue;
         }
-        if looks_like_date_token(t) {
+        if looks_like_date_token(t) || looks_like_non_device_numeric_token(t) {
             continue;
         }
         if !out.iter().any(|x| x == t) {
@@ -538,6 +538,42 @@ pub fn extract_user_device_targets(text: &str) -> Vec<String> {
         }
     }
     out
+}
+
+fn looks_like_non_device_numeric_token(t: &str) -> bool {
+    let lower = t.to_ascii_lowercase();
+    // 4-digit calendar year (e.g. "2026" from "2026年")
+    if lower.len() == 4 && lower.chars().all(|c| c.is_ascii_digit()) {
+        if let Ok(year) = lower.parse::<u16>() {
+            if (1900..=2100).contains(&year) {
+                return true;
+            }
+        }
+    }
+    // Resolution tokens like "1080p", "720p", "2160p", "800x600", "1920x1080"
+    if let Some(num) = lower.strip_suffix('p') {
+        if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+            return true;
+        }
+    }
+    if let Some((w, h)) = lower.split_once('x') {
+        if !w.is_empty()
+            && !h.is_empty()
+            && w.chars().all(|c| c.is_ascii_digit())
+            && h.chars().all(|c| c.is_ascii_digit())
+        {
+            return true;
+        }
+    }
+    // Unit-suffixed measurements like "5000ms", "100kb", "10mb", "3600s", "50hz"
+    for suffix in ["ms", "sec", "min", "kb", "mb", "gb", "tb", "hz", "khz", "mhz", "kw", "mw"] {
+        if let Some(num) = lower.strip_suffix(suffix) {
+            if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Send/display **destinations** from user text (the device being written to).

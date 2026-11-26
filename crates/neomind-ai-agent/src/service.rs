@@ -243,7 +243,33 @@ impl AgentApplicationService {
             return Err(AgentError::NotRunnable(format!("{:?}", runtime.status)));
         }
 
-        let (mut evidence, read_counts) = self.input.collect(&spec.input.requirements).await?;
+        let mut requirements = spec.input.requirements.clone();
+        if let Some(ref c) = options.caller {
+            if let Some(ref data) = c.data {
+                let ev_report_id = data.get("report_id").and_then(|v| v.as_str());
+                let ev_ts = data.get("report_timestamp").and_then(|v| v.as_i64());
+                for req in &mut requirements {
+                    if matches!(req.freshness, crate::model::FreshnessPolicy::SameReport) {
+                        if let Some(obj) = req.params.as_object_mut() {
+                            if !obj.contains_key("report_id") {
+                                if let Some(rid) = ev_report_id {
+                                    obj.insert(
+                                        "report_id".into(),
+                                        serde_json::Value::String(rid.to_string()),
+                                    );
+                                }
+                            }
+                            if !obj.contains_key("anchor_ts") {
+                                if let Some(ts) = ev_ts {
+                                    obj.insert("anchor_ts".into(), serde_json::json!(ts));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let (mut evidence, read_counts) = self.input.collect(&requirements).await?;
         let now = self.clock.now_ms();
         if let Some(ref c) = options.caller {
             merge_caller_into_evidence(&mut evidence, &spec, c, now);
@@ -254,6 +280,44 @@ impl AgentApplicationService {
             .unwrap_or_else(|| format!("exec_{}", &Uuid::new_v4().to_string()[..8]));
         let started = now;
         let plan = plan_from_spec(&spec);
+
+        // Short-circuit `MissingPolicy::Skip` without calling the LLM.
+        if let Some(skip_reason) = evidence.skip_reason.clone() {
+            let exec = crate::model::AgentExecutionRecord {
+                id: execution_id,
+                agent_id: spec.id.clone(),
+                config_version: spec.config_version,
+                status: crate::model::ExecutionStatus::Skipped,
+                started_at: started,
+                finished_at: self.clock.now_ms(),
+                is_probe,
+                dry_run,
+                trigger_source: source.map(|s| s.as_str().to_string()),
+                stale_config: None,
+                evidence,
+                deliveries: vec![],
+                tool_calls: vec![],
+                brief_text: None,
+                conclusion: Some(format!("Skipped: {skip_reason}")),
+                structured_result: None,
+                alert_verdict: None,
+                error: Some(skip_reason),
+            };
+            if !dry_run && !is_probe {
+                self.store.save_execution(exec.clone())?;
+            }
+            return Ok(RunResponse {
+                dry_run,
+                execution: Some(exec),
+                effective_plan: Some(plan),
+                external_read_counts: read_counts,
+                receiver_counts: ReceiverCounts {
+                    notify: 0,
+                    device_control: 0,
+                    extension_write: 0,
+                },
+            });
+        }
 
         // Run-local prompt only — never mutate the stored AgentSpec.
         let mut run_spec = spec.clone();
@@ -365,12 +429,22 @@ impl AgentApplicationService {
                 / total;
             rt.stats.last_duration_ms = Some(duration_ms);
             if matches!(exec.status, crate::model::ExecutionStatus::Failed) {
-                rt.status = AgentStatus::Error;
                 rt.error_message = exec.error.clone();
+                let threshold = spec.pacing.failure_threshold.max(1);
+                if rt.stats.consecutive_failures >= threshold {
+                    rt.status = AgentStatus::Error;
+                    let over = rt.stats.consecutive_failures.saturating_sub(threshold).min(4);
+                    let backoff_ms = (300_000i64 << over).min(3_600_000);
+                    rt.next_probe_at = Some(self.clock.now_ms().saturating_add(backoff_ms));
+                }
             } else if matches!(spec.trigger, TriggerSpec::Manual) {
                 rt.status = AgentStatus::Completed;
+                rt.error_message = None;
+                rt.next_probe_at = None;
             } else {
                 rt.status = AgentStatus::Active;
+                rt.error_message = None;
+                rt.next_probe_at = None;
             }
             rt.updated_at = self.clock.now_ms();
             self.store.set_runtime(rt)?;
@@ -494,6 +568,12 @@ impl AgentApplicationService {
 }
 
 fn validate_draft(draft: &AgentSpecDraft) -> Result<()> {
+    validate_common_fields(
+        &draft.name,
+        draft.description.as_deref(),
+        &draft.user_prompt,
+        &draft.trigger,
+    )?;
     validate_keys_and_deps(
         &draft
             .input
@@ -524,6 +604,12 @@ fn validate_draft(draft: &AgentSpecDraft) -> Result<()> {
 }
 
 fn validate_spec(spec: &AgentSpec) -> Result<()> {
+    validate_common_fields(
+        &spec.name,
+        spec.description.as_deref(),
+        &spec.user_prompt,
+        &spec.trigger,
+    )?;
     validate_keys_and_deps(
         &spec
             .input
@@ -550,6 +636,44 @@ fn validate_spec(spec: &AgentSpec) -> Result<()> {
             .map(|r| r.key.as_str())
             .collect::<Vec<_>>(),
     )
+}
+
+fn validate_common_fields(
+    name: &str,
+    description: Option<&str>,
+    user_prompt: &str,
+    trigger: &TriggerSpec,
+) -> Result<()> {
+    if name.trim().is_empty() {
+        return Err(AgentError::InvalidConfig(
+            "agent name must not be empty".into(),
+        ));
+    }
+    if name.chars().count() > 120 {
+        return Err(AgentError::InvalidConfig(
+            "agent name exceeds 120 characters".into(),
+        ));
+    }
+    if let Some(desc) = description {
+        if desc.chars().count() > 2_000 {
+            return Err(AgentError::InvalidConfig(
+                "agent description exceeds 2000 characters".into(),
+            ));
+        }
+    }
+    if user_prompt.chars().count() > 32_000 {
+        return Err(AgentError::InvalidConfig(
+            "user_prompt exceeds 32000 characters".into(),
+        ));
+    }
+    if let TriggerSpec::Interval { every_secs } = trigger {
+        if *every_secs == 0 {
+            return Err(AgentError::InvalidConfig(
+                "interval every_secs must be >= 1".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_keys_and_deps(keys: &[String], deps: &[String], key_refs: &[&str]) -> Result<()> {

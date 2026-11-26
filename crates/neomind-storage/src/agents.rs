@@ -1087,7 +1087,7 @@ impl AgentStore {
             crate::agent_migration::migrate_legacy_agents_table(&db)
                 .map_err(|e| Error::Storage(format!("legacy agents migration: {e}")))?;
         }
-        crate::schema::check_or_stamp(&db)
+        crate::schema::check_or_stamp_version(&db, crate::schema::AGENTS_SCHEMA_VERSION)
             .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
         let db = Arc::new(db);
         crate::agent_store::ensure_agent_tables(&db)?;
@@ -1290,27 +1290,46 @@ impl AgentStore {
         .await
     }
 
-    /// Delete old execution records.
+    /// Delete old execution records (handles both V2 `AgentExecutionRow` and legacy V1 `AgentExecutionRecord`).
     pub async fn cleanup_executions(&self, older_than: i64) -> Result<usize, Error> {
+        let (older_than_secs, older_than_ms) = if older_than >= 1_000_000_000_000 {
+            (older_than / 1000, older_than)
+        } else {
+            (older_than, older_than.saturating_mul(1000))
+        };
+
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(AGENT_EXECUTIONS_TABLE)?;
 
         let mut to_remove: Vec<String> = Vec::new();
         for item in table.iter()? {
             let (id, bytes) = item?;
-            let execution: AgentExecutionRecord = match serde_json::from_slice(bytes.value()) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Skipping corrupted execution record {}: {}", id.value(), e);
-                    // Remove corrupted records during cleanup
+            // Try V2 `AgentExecutionRow` first (timestamps in milliseconds).
+            if let Ok(row) =
+                serde_json::from_slice::<crate::agent_store::AgentExecutionRow>(bytes.value())
+            {
+                let finished_ms = if row.finished_at > 0 && row.finished_at < 1_000_000_000_000 {
+                    row.finished_at.saturating_mul(1000)
+                } else {
+                    row.finished_at
+                };
+                if finished_ms > 0 && finished_ms < older_than_ms {
                     to_remove.push(id.value().to_string());
-                    continue;
                 }
-            };
-
-            if execution.timestamp < older_than {
-                to_remove.push(id.value().to_string());
+                continue;
             }
+            // Fallback: legacy V1 `AgentExecutionRecord` (timestamp in seconds).
+            if let Ok(execution) = serde_json::from_slice::<AgentExecutionRecord>(bytes.value()) {
+                if execution.timestamp > 0 && execution.timestamp < older_than_secs {
+                    to_remove.push(id.value().to_string());
+                }
+                continue;
+            }
+            // Never blindly delete unrecognized records — preserve data and log.
+            tracing::warn!(
+                execution_id = %id.value(),
+                "Skipping unrecognized execution record during periodic cleanup"
+            );
         }
         drop(table);
         drop(read_txn);
@@ -1434,6 +1453,7 @@ mod tests {
             description: None,
             user_prompt: "check".to_string(),
             llm_backend_id: None,
+            preset: None,
             trigger: TriggerSpec::Interval { every_secs: 300 },
             pacing: PacingPolicy::default(),
             input: InputContract::default(),

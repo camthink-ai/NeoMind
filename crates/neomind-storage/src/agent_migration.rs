@@ -74,6 +74,9 @@ pub fn map_notify_policy(notify: &Option<AgentNotify>) -> NotifyPolicy {
             match n.on {
                 NotifyOn::Always => {
                     policy.on_complete = true;
+                    if !channels.is_empty() {
+                        policy.on_failure = true;
+                    }
                 }
                 NotifyOn::Failure => {
                     policy.on_failure = true;
@@ -81,6 +84,8 @@ pub fn map_notify_policy(notify: &Option<AgentNotify>) -> NotifyPolicy {
                 NotifyOn::Judgment => {
                     if channels.is_empty() {
                         policy.pending_confirmation = true;
+                    } else {
+                        policy.on_alert = true;
                     }
                 }
             }
@@ -89,7 +94,152 @@ pub fn map_notify_policy(notify: &Option<AgentNotify>) -> NotifyPolicy {
     }
 }
 
-fn map_trigger(schedule: &AgentSchedule) -> TriggerSpec {
+fn to_millis(ts: i64) -> i64 {
+    if ts > 0 && ts < 1_000_000_000_000 {
+        ts.saturating_mul(1000)
+    } else {
+        ts
+    }
+}
+
+fn sanitize_input_key(raw: &str, used: &mut std::collections::HashSet<String>) -> String {
+    let mut base: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    while base.contains("__") {
+        base = base.replace("__", "_");
+    }
+    let base = base.trim_matches('_').to_string();
+    let base = if base.is_empty() {
+        "source".to_string()
+    } else {
+        base
+    };
+    if used.insert(base.clone()) {
+        return base;
+    }
+    for i in 2..=999 {
+        let candidate = format!("{base}_{i}");
+        if used.insert(candidate.clone()) {
+            return candidate;
+        }
+    }
+    base
+}
+
+fn map_resources(resources: &[AgentResource]) -> (InputContract, Vec<serde_json::Value>) {
+    let mut requirements = Vec::new();
+    let mut controlled_actions = Vec::new();
+    let mut used_keys = std::collections::HashSet::new();
+
+    for res in resources {
+        let rid = res.resource_id.trim();
+        if rid.is_empty() {
+            continue;
+        }
+        match res.resource_type {
+            ResourceType::Device => {
+                let key = sanitize_input_key(&format!("device_{rid}"), &mut used_keys);
+                requirements.push(serde_json::json!({
+                    "key": key,
+                    "source": { "kind": "whole_device", "device_id": rid },
+                    "operation": null,
+                    "params": {},
+                    "auth_scope": format!("device:{rid}:read"),
+                    "timeout_secs": 10,
+                    "result_type": "structured_json",
+                    "freshness": { "kind": "any" },
+                    "on_missing": "report_stale",
+                }));
+            }
+            ResourceType::Metric | ResourceType::DataStream => {
+                let (device_id, field) = match rid.split_once(':') {
+                    Some((d, f)) if !d.is_empty() && !f.is_empty() => (d, f),
+                    _ => (rid, "*"),
+                };
+                let key = sanitize_input_key(&format!("{device_id}_{field}"), &mut used_keys);
+                let source = if field == "*" {
+                    serde_json::json!({ "kind": "whole_device", "device_id": device_id })
+                } else {
+                    serde_json::json!({
+                        "kind": "device_metric",
+                        "device_id": device_id,
+                        "field": field,
+                    })
+                };
+                requirements.push(serde_json::json!({
+                    "key": key,
+                    "source": source,
+                    "operation": null,
+                    "params": {},
+                    "auth_scope": format!("device:{device_id}:read"),
+                    "timeout_secs": 10,
+                    "result_type": "structured_json",
+                    "freshness": { "kind": "any" },
+                    "on_missing": "report_stale",
+                }));
+            }
+            ResourceType::ExtensionMetric => {
+                let (ext_id, op) = match rid.split_once(':') {
+                    Some((e, o)) if !e.is_empty() && !o.is_empty() => (e, Some(o)),
+                    _ => (rid, None),
+                };
+                let key = sanitize_input_key(
+                    &format!("ext_{}_{}", ext_id, op.unwrap_or("read")),
+                    &mut used_keys,
+                );
+                requirements.push(serde_json::json!({
+                    "key": key,
+                    "source": { "kind": "extension_instance", "id": ext_id },
+                    "operation": op,
+                    "params": {},
+                    "auth_scope": format!("extension:{ext_id}:read"),
+                    "timeout_secs": 10,
+                    "result_type": "structured_json",
+                    "freshness": { "kind": "any" },
+                    "on_missing": "report_stale",
+                }));
+            }
+            ResourceType::Command => {
+                let (device_id, cmd_name) = match rid.split_once(':') {
+                    Some((d, c)) if !d.is_empty() && !c.is_empty() => (d, c),
+                    _ => (rid, res.name.as_str()),
+                };
+                controlled_actions.push(serde_json::json!({
+                    "name": if cmd_name.is_empty() { "command" } else { cmd_name },
+                    "destination": format!("device:{device_id}"),
+                    "params": {},
+                    "depends_on": [],
+                    "idempotent": false,
+                }));
+            }
+            ResourceType::ExtensionTool => {
+                let (ext_id, cmd_name) = match rid.split_once(':') {
+                    Some((e, c)) if !e.is_empty() && !c.is_empty() => (e, c),
+                    _ => (rid, res.name.as_str()),
+                };
+                controlled_actions.push(serde_json::json!({
+                    "name": if cmd_name.is_empty() { "execute" } else { cmd_name },
+                    "destination": ext_id,
+                    "params": {},
+                    "depends_on": [],
+                    "idempotent": false,
+                }));
+            }
+        }
+    }
+
+    (InputContract { requirements }, controlled_actions)
+}
+
+fn map_trigger(schedule: &AgentSchedule, resources: &[AgentResource]) -> TriggerSpec {
     match schedule.schedule_type {
         ScheduleType::Cron => TriggerSpec::Cron {
             expr: schedule
@@ -102,11 +252,48 @@ fn map_trigger(schedule: &AgentSchedule) -> TriggerSpec {
             every_secs: schedule.interval_seconds.unwrap_or(300),
         },
         ScheduleType::Event => {
-            let filter = schedule
-                .event_filter
-                .as_deref()
-                .and_then(|s| serde_json::from_str(s).ok())
-                .unwrap_or(serde_json::Value::Null);
+            let parsed = schedule.parsed_event_filter();
+            let filter = if let Some(ef) = parsed {
+                serde_json::to_value(ef).unwrap_or_else(|_| serde_json::json!({}))
+            } else {
+                // Fall back to deriving event sources from bound resources (matching v1.3.3).
+                let sources: Vec<serde_json::Value> = resources
+                    .iter()
+                    .filter_map(|r| {
+                        let rid = r.resource_id.trim();
+                        if rid.is_empty() {
+                            return None;
+                        }
+                        match r.resource_type {
+                            ResourceType::Device => {
+                                Some(serde_json::json!({ "type": "device", "id": rid }))
+                            }
+                            ResourceType::Metric | ResourceType::DataStream => {
+                                let (d, f) = rid.split_once(':').unwrap_or((rid, ""));
+                                if f.is_empty() || f == "*" {
+                                    Some(serde_json::json!({ "type": "device", "id": d }))
+                                } else {
+                                    Some(serde_json::json!({ "type": "device", "id": d, "field": f }))
+                                }
+                            }
+                            ResourceType::ExtensionMetric => {
+                                let (e, f) = rid.split_once(':').unwrap_or((rid, ""));
+                                if f.is_empty() {
+                                    Some(serde_json::json!({ "type": "extension", "id": e }))
+                                } else {
+                                    Some(serde_json::json!({ "type": "extension", "id": e, "field": f }))
+                                }
+                            }
+                            _ => None,
+                        }
+                    })
+                    .collect();
+                if sources.is_empty() {
+                    serde_json::json!({})
+                } else {
+                    serde_json::json!({ "any": sources })
+                }
+            };
             TriggerSpec::Event { filter }
         }
         ScheduleType::Manual => TriggerSpec::Manual,
@@ -121,6 +308,13 @@ fn map_pacing(agent: &AiAgent) -> PacingPolicy {
             max_runs_per_day: cfg.max_calls_per_day,
             timezone: None,
             failure_threshold: u32::from(cfg.consecutive_failure_threshold),
+        },
+        None if matches!(agent.schedule.schedule_type, ScheduleType::Event) => PacingPolicy {
+            burst_merge_secs: Some(30),
+            min_interval_secs: Some(60),
+            max_runs_per_day: None,
+            timezone: None,
+            failure_threshold: 3,
         },
         None => PacingPolicy::default(),
     }
@@ -179,34 +373,36 @@ pub fn map_legacy_agent_record(
     Vec<UserMessage>,
     AgentMemory,
 ) {
+    let (input, controlled_actions) = map_resources(&agent.resources);
+    let created_at_ms = to_millis(agent.created_at);
+    let updated_at_ms = to_millis(agent.updated_at);
+    let last_exec_ms = agent.last_execution_at.map(to_millis);
+
     let spec = AgentSpecRecord {
         id: agent.id.clone(),
         name: agent.name.clone(),
         description: agent.description.clone(),
         user_prompt: agent.user_prompt.clone(),
         llm_backend_id: agent.llm_backend_id.clone(),
-        trigger: map_trigger(&agent.schedule),
+        preset: None,
+        trigger: map_trigger(&agent.schedule, &agent.resources),
         pacing: map_pacing(agent),
-        input: InputContract::default(),
+        input,
         tool_policy: map_tool_policy(agent.execution_mode, &agent.tool_config, &agent.resources),
         output: map_output(agent),
         notify: map_notify_policy(&agent.notify),
-        controlled_actions: Vec::new(),
+        controlled_actions,
         config_version: 1,
-        created_at: agent.created_at,
-        updated_at: agent.updated_at,
+        created_at: created_at_ms,
+        updated_at: updated_at_ms,
     };
     let runtime = AgentRuntimeRecord {
         agent_id: agent.id.clone(),
         status: agent.status,
-        stats: map_stats(
-            &agent.stats,
-            agent.consecutive_failures,
-            agent.last_execution_at,
-        ),
+        stats: map_stats(&agent.stats, agent.consecutive_failures, last_exec_ms),
         error_message: agent.error_message.clone(),
         next_probe_at: None,
-        updated_at: agent.updated_at,
+        updated_at: updated_at_ms,
     };
     (
         spec,

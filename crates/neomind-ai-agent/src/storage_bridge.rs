@@ -20,6 +20,11 @@ pub fn spec_to_record(spec: &AgentSpec) -> AgentSpecRecord {
         description: spec.description.clone(),
         user_prompt: spec.user_prompt.clone(),
         llm_backend_id: spec.llm_backend_id.clone(),
+        preset: spec
+            .preset
+            .as_ref()
+            .and_then(|p| serde_json::to_value(p).ok())
+            .and_then(|v| v.as_str().map(str::to_string)),
         trigger: trigger_to_storage(&spec.trigger),
         pacing: pacing_to_storage(&spec.pacing),
         input: StorageInput {
@@ -79,7 +84,10 @@ pub fn record_to_spec(rec: &AgentSpecRecord) -> Result<AgentSpec, String> {
         description: rec.description.clone(),
         user_prompt: rec.user_prompt.clone(),
         llm_backend_id: rec.llm_backend_id.clone(),
-        preset: None,
+        preset: rec
+            .preset
+            .as_deref()
+            .and_then(|s| serde_json::from_value(serde_json::Value::String(s.to_string())).ok()),
         trigger: trigger_from_storage(&rec.trigger),
         pacing: pacing_from_storage(&rec.pacing),
         input: crate::model::InputContract { requirements },

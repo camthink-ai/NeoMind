@@ -2719,8 +2719,8 @@ impl ServerState {
             let rule_engine = self.automation.rule_engine.clone();
             let callback: neomind_rules::AgentTriggerCallback = Arc::new(
                 move |agent_id: String,
-                      _input: Option<String>,
-                      _data: Option<serde_json::Value>| {
+                      input: Option<String>,
+                      data: Option<serde_json::Value>| {
                     let clean_slate = clean_slate.clone();
                     Box::pin(async move {
                         let guard = clean_slate.read().await;
@@ -2732,8 +2732,21 @@ impl ServerState {
                                 "Agent not found in clean-slate runtime: {agent_id}"
                             ));
                         }
+                        let caller = if input.is_some() || data.is_some() {
+                            Some(neomind_ai_agent::model::CallerInput {
+                                content: input,
+                                data,
+                                source: Some("rule_engine".into()),
+                            })
+                        } else {
+                            None
+                        };
                         match rt
-                            .submit(&agent_id, neomind_ai_agent::SubmitSource::Rule)
+                            .submit_with_caller(
+                                &agent_id,
+                                neomind_ai_agent::SubmitSource::Rule,
+                                caller,
+                            )
                             .await
                         {
                             Ok(_) => Ok(()),

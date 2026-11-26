@@ -533,7 +533,8 @@ pub async fn create_agent(
         _ => {
             // event (default)
             let filter = if let Some(ef) = event_filter {
-                json!(ef)
+                crate::json_arg::parse_json_arg(ef)
+                    .map_err(|e| anyhow::anyhow!("--event-filter is not valid JSON: {}", e))?
             } else {
                 json!({})
             };
@@ -993,7 +994,8 @@ pub async fn update_agent(
             _ => {}
         }
         if let Some(ef) = event_filter {
-            schedule["event_filter"] = json!(ef);
+            schedule["event_filter"] = crate::json_arg::parse_json_arg(ef)
+                .map_err(|e| anyhow::anyhow!("--event-filter is not valid JSON: {}", e))?;
         }
         if let Some(tz) = timezone {
             schedule["timezone"] = json!(tz);
@@ -1023,7 +1025,8 @@ pub async fn update_agent(
             None => json!({ "schedule_type": "event" }),
         };
         if let Some(ef) = event_filter {
-            schedule["event_filter"] = json!(ef);
+            schedule["event_filter"] = crate::json_arg::parse_json_arg(ef)
+                .map_err(|e| anyhow::anyhow!("--event-filter is not valid JSON: {}", e))?;
         }
         if let Some(tz) = timezone {
             schedule["timezone"] = json!(tz);

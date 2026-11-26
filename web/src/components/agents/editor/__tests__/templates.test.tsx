@@ -38,22 +38,22 @@ describe('task templates', () => {
     expect(d.output?.fields.map((f) => f.name)).toEqual(['status', 'summary'])
   })
 
-  it('qa seeds scoped query_data tool policy', () => {
+  it('qa seeds scoped read-only web tool policy', () => {
     const d = seedQa()
     expect(d.trigger.kind).toBe('manual')
     expect(d.tool_policy).toEqual({
-      scoped: { allowed_tools: ['query_data'], allowed_commands: [] },
+      scoped: { allowed_tools: ['web_search', 'web_fetch'], allowed_commands: [] },
     })
   })
 
-  it('daily brief and weekly report seed cron + unrestricted tools + complete notify', () => {
+  it('daily brief and weekly report seed cron + disabled tools + complete notify', () => {
     const d = seedDailyBrief()
     expect(d.trigger).toEqual({
       kind: 'cron',
       expr: '0 9 * * *',
       timezone: 'Asia/Shanghai',
     })
-    expect(d.tool_policy).toBe('unrestricted')
+    expect(d.tool_policy).toBe('disabled')
     expect(d.notify?.on_complete).toBe(true)
     expect(d.preset).toBe('daily_brief')
 
@@ -63,7 +63,7 @@ describe('task templates', () => {
       expr: '0 9 * * 1',
       timezone: 'Asia/Shanghai',
     })
-    expect(w.tool_policy).toBe('unrestricted')
+    expect(w.tool_policy).toBe('disabled')
     expect(w.notify?.on_complete).toBe(true)
   })
 

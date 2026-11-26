@@ -20,14 +20,15 @@
 
 use redb::{Database, TableDefinition};
 
-/// Current row-format version for every neomind-storage database.
+/// Current row-format version for general neomind-storage databases.
 ///
-/// Bump ONLY for changes older code cannot safely read — e.g. a field
-/// changing meaning where serde defaults would paper over real data loss.
-/// Additive fields with `#[serde(default)]` do not need a bump.
-/// Schema v2: agents.redb uses five tables; startup migrates/deletes legacy
-/// `agents` when present (see [`crate::agents::AgentStore::from_db`]).
-pub const CURRENT_SCHEMA_VERSION: u64 = 2;
+/// Unchanged stores (`devices.redb`, `telemetry.redb`, `dashboards.redb`,
+/// `sessions.redb`, `messages.redb`, etc.) stay at version 1 so rolling back
+/// to v1.3.3 never fails to open them.
+pub const CURRENT_SCHEMA_VERSION: u64 = 1;
+
+/// Row-format version for `agents.redb` (v2 five-table layout).
+pub const AGENTS_SCHEMA_VERSION: u64 = 2;
 
 const SCHEMA_META_TABLE: TableDefinition<&str, u64> = TableDefinition::new("schema_meta");
 const VERSION_KEY: &str = "version";
@@ -44,24 +45,30 @@ pub fn read_version(db: &Database) -> Result<Option<u64>, String> {
     }
 }
 
-/// Check the database's schema stamp against this build, and stamp it if
-/// missing or older.
+/// Check the database's schema stamp against [`CURRENT_SCHEMA_VERSION`], and
+/// stamp it if missing or older.
+pub fn check_or_stamp(db: &Database) -> Result<(), String> {
+    check_or_stamp_version(db, CURRENT_SCHEMA_VERSION)
+}
+
+/// Check the database's schema stamp against an explicit `expected_version`,
+/// and stamp it if missing or older.
 ///
 /// Errors when the database was written by a NEWER build (rollback scenario)
 /// — callers must treat this as fatal for that database, not fall back to a
 /// default-value store handle, or the first save would destroy the new data.
-pub fn check_or_stamp(db: &Database) -> Result<(), String> {
+pub fn check_or_stamp_version(db: &Database, expected_version: u64) -> Result<(), String> {
     let stored = read_version(db)?;
 
     match stored {
-        Some(v) if v > CURRENT_SCHEMA_VERSION => Err(format!(
-            "database schema version {v} is NEWER than this build supports ({CURRENT_SCHEMA_VERSION}). \
+        Some(v) if v > expected_version => Err(format!(
+            "database schema version {v} is NEWER than this build supports ({expected_version}). \
              The data was written by a newer NeoMind — upgrade the server instead of rolling back \
              (opening it now would silently destroy newer-format rows on the next save)."
         )),
         Some(_) | None => {
             // Stamp (idempotent). One-shot migrations keyed on
-            // `stored < CURRENT_SCHEMA_VERSION` run in the caller (AgentStore::from_db
+            // `stored < expected_version` run in the caller (AgentStore::from_db
             // for agents v1→v2) before this stamp.
             let write = db.begin_write().map_err(|e| e.to_string())?;
             {
@@ -69,7 +76,7 @@ pub fn check_or_stamp(db: &Database) -> Result<(), String> {
                     .open_table(SCHEMA_META_TABLE)
                     .map_err(|e| e.to_string())?;
                 table
-                    .insert(VERSION_KEY, CURRENT_SCHEMA_VERSION)
+                    .insert(VERSION_KEY, expected_version)
                     .map_err(|e| e.to_string())?;
             }
             write.commit().map_err(|e| e.to_string())?;

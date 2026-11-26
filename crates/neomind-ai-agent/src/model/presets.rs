@@ -175,8 +175,11 @@ pub fn event_vision_draft(
         preset: Some(PresetId::EventVision),
         trigger: TriggerSpec::Event {
             filter: serde_json::json!({
-                "device_id": device_id,
-                "field": image_field,
+                "any": [{
+                    "type": "device",
+                    "id": device_id,
+                    "field": image_field,
+                }]
             }),
         },
         pacing: PacingPolicy {

@@ -533,7 +533,35 @@ export function AgentEditor({
 
         <UnifiedInputsSection
           value={draft.input}
-          onChange={(input) => patch({ input })}
+          onChange={(input) => {
+            const validKeys = new Set(
+              (input.requirements ?? []).map((r) => r.key).filter(Boolean),
+            )
+            const pruneDeps = (deps?: string[]) =>
+              (deps ?? []).filter((k) => validKeys.has(k))
+            patch({
+              input,
+              output: draft.output
+                ? {
+                    ...draft.output,
+                    fields: draft.output.fields.map((f) => ({
+                      ...f,
+                      depends_on: pruneDeps(f.depends_on),
+                    })),
+                  }
+                : draft.output,
+              controlled_actions: (draft.controlled_actions ?? []).map((a) => ({
+                ...a,
+                depends_on: pruneDeps(a.depends_on),
+              })),
+              notify: draft.notify
+                ? {
+                    ...draft.notify,
+                    alert_depends_on: pruneDeps(draft.notify.alert_depends_on),
+                  }
+                : draft.notify,
+            })
+          }}
           devices={devices}
           extensions={extensions}
           agents={agentsList}

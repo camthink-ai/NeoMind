@@ -255,7 +255,8 @@
     "completed": "Completed",
     "failed": "Failed",
     "partial": "Partial",
-    "cancelled": "Cancelled"
+    "cancelled": "Cancelled",
+    "skipped": "Skipped"
   },
   "execution": {
     "title": "Execution Details",

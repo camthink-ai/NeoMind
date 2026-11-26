@@ -1176,7 +1176,39 @@ pub async fn explain_last_agent(
     Path(id): Path<String>,
 ) -> HandlerResult<ExplainLastResponse> {
     let rt = require_agent(&state, &id).await?;
-    let explanation = rt.explain_last(&id).map_err(map_agent_error)?;
+    let mut explanation = rt.explain_last(&id).map_err(map_agent_error)?;
+    // Post-restart fallback: InMemoryAgentStore does not hydrate formal_history on boot,
+    // so read the latest durable row via runtime.stats.last_execution_id when present.
+    if explanation == "No formal execution yet." {
+        if let Some(store) = &rt.durable.store {
+            let last_exec_id = rt
+                .service
+                .store
+                .get_runtime(&id)
+                .ok()
+                .and_then(|r| r.stats.last_execution_id)
+                .or_else(|| {
+                    store
+                        .get_runtime(&id)
+                        .ok()
+                        .flatten()
+                        .and_then(|r| r.stats.last_execution_id)
+                });
+            if let Some(exec_id) = last_exec_id {
+                if let Ok(Some(row)) = store.get_execution(&exec_id) {
+                    let conclusion = row
+                        .conclusion
+                        .as_deref()
+                        .or(row.brief_text.as_deref())
+                        .unwrap_or("(none)");
+                    explanation = format!(
+                        "execution_id={}\nstatus={:?}\nconclusion={}\nalert={:?}",
+                        row.id, row.status, conclusion, row.alert_verdict
+                    );
+                }
+            }
+        }
+    }
     ok(ExplainLastResponse {
         agent_id: id,
         explanation,
@@ -1189,12 +1221,33 @@ pub async fn latest_execution_agent(
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
     let rt = require_agent(&state, &id).await?;
-    let Some(exec) = rt.latest_formal(&id) else {
-        return Err(ErrorResponse::not_found(format!(
-            "No formal execution for agent {id}"
-        )));
-    };
-    ok(serde_json::to_value(exec).unwrap_or(json!({})))
+    if let Some(exec) = rt.latest_formal(&id) {
+        return ok(serde_json::to_value(exec).unwrap_or(json!({})));
+    }
+    // Post-restart fallback via durable store.
+    if let Some(store) = &rt.durable.store {
+        let last_exec_id = rt
+            .service
+            .store
+            .get_runtime(&id)
+            .ok()
+            .and_then(|r| r.stats.last_execution_id)
+            .or_else(|| {
+                store
+                    .get_runtime(&id)
+                    .ok()
+                    .flatten()
+                    .and_then(|r| r.stats.last_execution_id)
+            });
+        if let Some(exec_id) = last_exec_id {
+            if let Ok(Some(row)) = store.get_execution(&exec_id) {
+                return ok(serde_json::to_value(row).unwrap_or(json!({})));
+            }
+        }
+    }
+    Err(ErrorResponse::not_found(format!(
+        "No formal execution for agent {id}"
+    )))
 }
 
 /// Delete an AI Agent.
@@ -1507,15 +1560,12 @@ pub async fn test_agent_preview(
     };
 
     let rt = state.require_clean_slate().await?;
-    let (spec, _) = rt
-        .create(draft)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to build preview agent: {e}")))?;
+    let (spec, _) = rt.create(draft).map_err(map_agent_error)?;
     let preview_id = spec.id.clone();
-    let resp = rt
-        .dry_run(&preview_id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {e}")))?;
+    let dry_run_res = rt.dry_run(&preview_id).await;
+    // Always delete the transient preview agent even when dry_run returns an error.
     let _ = rt.delete(&preview_id);
+    let resp = dry_run_res.map_err(map_agent_error)?;
 
     ok(serde_json::to_value(resp).unwrap_or_else(|_| {
         json!({
@@ -1680,10 +1730,15 @@ pub async fn get_agent_executions(
 )]
 pub async fn get_execution(
     State(state): State<ServerState>,
-    Path((_id, execution_id)): Path<(String, String)>,
+    Path((id, execution_id)): Path<(String, String)>,
 ) -> HandlerResult<Value> {
     if let Ok(record_store) = AgentRecordStore::from_arc(state.agents.agent_store.db()) {
         if let Ok(Some(row)) = record_store.get_execution(&execution_id) {
+            if row.agent_id != id {
+                return Err(ErrorResponse::not_found(format!(
+                    "Execution {execution_id} not found for agent {id}"
+                )));
+            }
             let agent_trigger = record_store
                 .get_spec(&row.agent_id)
                 .ok()

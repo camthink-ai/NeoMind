@@ -2044,8 +2044,14 @@ impl MarkdownMemoryStore {
     pub fn read_raw_markdown(&self, source_type: &str, id: &str) -> Result<String> {
         warn!(source_type, id, "read_raw_markdown called (deprecated)");
         let path = match source_type {
-            "agent" => self.base_path.join("agents").join(format!("{}.md", id)),
-            "chat" => self.base_path.join("chat").join(format!("{}.md", id)),
+            "agent" => {
+                Self::validate_agent_id(id)?;
+                self.base_path.join("agents").join(format!("{}.md", id))
+            }
+            "chat" => {
+                Self::validate_session_id(id)?;
+                self.base_path.join("chat").join(format!("{}.md", id))
+            }
             _ => self.base_path.join("system.md"),
         };
 
@@ -2062,8 +2068,14 @@ impl MarkdownMemoryStore {
     pub fn write_raw_markdown(&self, source_type: &str, id: &str, content: &str) -> Result<()> {
         warn!(source_type, id, "write_raw_markdown called (deprecated)");
         let path = match source_type {
-            "agent" => self.base_path.join("agents").join(format!("{}.md", id)),
-            "chat" => self.base_path.join("chat").join(format!("{}.md", id)),
+            "agent" => {
+                Self::validate_agent_id(id)?;
+                self.base_path.join("agents").join(format!("{}.md", id))
+            }
+            "chat" => {
+                Self::validate_session_id(id)?;
+                self.base_path.join("chat").join(format!("{}.md", id))
+            }
             _ => self.base_path.join("system.md"),
         };
 
@@ -2098,8 +2110,14 @@ impl MarkdownMemoryStore {
     pub fn delete_file(&self, source_type: &str, id: &str) -> Result<()> {
         warn!(source_type, id, "delete_file called (deprecated)");
         let path = match source_type {
-            "agent" => self.base_path.join("agents").join(format!("{}.md", id)),
-            "chat" => self.base_path.join("chat").join(format!("{}.md", id)),
+            "agent" => {
+                Self::validate_agent_id(id)?;
+                self.base_path.join("agents").join(format!("{}.md", id))
+            }
+            "chat" => {
+                Self::validate_session_id(id)?;
+                self.base_path.join("chat").join(format!("{}.md", id))
+            }
             _ => return Err(Error::Storage("Cannot delete system memory".to_string())),
         };
 

@@ -96,6 +96,12 @@ impl InMemoryAgentStore {
             return Err(AgentError::NotFound(id.into()));
         }
         g.runtime.remove(id);
+        if let Some(exec_ids) = g.formal_history.remove(id) {
+            for exec_id in exec_ids {
+                g.executions.remove(&exec_id);
+            }
+        }
+        g.executions.retain(|_, exec| exec.agent_id != id);
         Ok(())
     }
 
@@ -125,9 +131,19 @@ impl InMemoryAgentStore {
             // Formal history is idempotent by execution ID — re-saving the same
             // row (pre-settle skeleton → post-settle receipt) must not duplicate.
             if !dry_run {
+                const MAX_INMEM_FORMAL_PER_AGENT: usize = 50;
                 let hist = g.formal_history.entry(agent_id).or_default();
                 if !hist.iter().any(|existing| existing == &id) {
                     hist.push(id);
+                }
+                let evicted: Vec<String> = if hist.len() > MAX_INMEM_FORMAL_PER_AGENT {
+                    let excess = hist.len() - MAX_INMEM_FORMAL_PER_AGENT;
+                    hist.drain(..excess).collect()
+                } else {
+                    Vec::new()
+                };
+                for old_id in evicted {
+                    g.executions.remove(&old_id);
                 }
             }
             g.execution_persist.clone()

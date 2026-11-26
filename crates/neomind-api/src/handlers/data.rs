@@ -304,7 +304,7 @@ async fn collect_ai_sources(state: &ServerState, sources: &mut Vec<UnifiedDataSo
         // Any agent with an output contract, not just the L0 ones: since M2-2 a
         // reasoning agent publishes its fields too, and a field the picker
         // refuses to list is a field nothing can bind to.
-        if agent.output.fields.is_empty() {
+        if !agent.output.publish || agent.output.fields.is_empty() {
             continue;
         }
         for field in &agent.output.fields {

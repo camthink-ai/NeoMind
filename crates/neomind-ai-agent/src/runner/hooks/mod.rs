@@ -27,7 +27,11 @@ impl ToolCallHook for AllowlistHook {
             ToolPolicy::Disabled => Err("tools disabled".into()),
             ToolPolicy::Unrestricted => Ok(()),
             ToolPolicy::Scoped { allowed_tools, .. } => {
-                if allowed_tools.is_empty() || allowed_tools.iter().any(|t| t == &call.name) {
+                // Fail-closed: an empty allowlist in Scoped mode permits no tools.
+                if allowed_tools
+                    .iter()
+                    .any(|t| t.eq_ignore_ascii_case(&call.name))
+                {
                     Ok(())
                 } else {
                     Err(format!("{} not in allowlist", call.name))

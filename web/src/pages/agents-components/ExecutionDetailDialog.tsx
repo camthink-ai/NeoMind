@@ -120,13 +120,13 @@ const getDataDisplayPairs = (data: DataCollected) => {
 const getDeliveryBadgeTone = (state: DeliveryState): string => {
   switch (state.state) {
     case 'confirmed':
-      return 'border-success/40 bg-success/10 text-success'
+      return 'border-success-light bg-success-light text-success'
     case 'accepted':
-      return 'border-info/40 bg-info/10 text-info'
+      return 'border-info-light bg-info-light text-info'
     case 'rejected':
-      return 'border-error/40 bg-error/10 text-error'
+      return 'border-error-light bg-error-light text-error'
     case 'outcome_unknown':
-      return 'border-warning/40 bg-warning/10 text-warning'
+      return 'border-warning-light bg-warning-light text-warning'
     case 'intent_pending':
     default:
       return 'border-border bg-muted text-muted-foreground'

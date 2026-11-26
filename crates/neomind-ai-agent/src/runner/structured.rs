@@ -387,7 +387,7 @@ pub fn structured_system_addon_with_alert(fields: &[OutputField], alert_enabled:
     let has_alert_field = fields.iter().any(|f| {
         matches!(
             f.name.trim().to_ascii_lowercase().as_str(),
-            "alert" | "is_alert" | "status" | "verdict" | "level" | "severity"
+            "alert" | "is_alert"
         )
     });
     for f in fields {
@@ -493,12 +493,12 @@ mod tests {
         let addon = structured_system_addon_with_alert(&fields, true);
         assert!(addon.contains("\"alert\""));
 
-        let fields_with_status = vec![OutputField {
-            name: "status".into(),
+        let fields_with_alert = vec![OutputField {
+            name: "alert".into(),
             depends_on: vec![],
             description: None,
         }];
-        let addon_with_status = structured_system_addon_with_alert(&fields_with_status, true);
-        assert!(!addon_with_status.contains("- \"alert\""));
+        let addon_with_alert = structured_system_addon_with_alert(&fields_with_alert, true);
+        assert!(!addon_with_alert.contains("- \"alert\" — boolean"));
     }
 }

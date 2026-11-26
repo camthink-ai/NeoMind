@@ -265,7 +265,7 @@ export interface AgentExecution {
 /**
  * Execution status for agent executions
  */
-export type ExecutionStatus = 'Running' | 'Completed' | 'Failed' | 'Partial' | 'Cancelled'
+export type ExecutionStatus = 'Running' | 'Completed' | 'Failed' | 'Partial' | 'Cancelled' | 'Skipped'
 
 /**
  * User message sent to an agent between executions

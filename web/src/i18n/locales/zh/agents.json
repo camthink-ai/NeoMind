@@ -255,7 +255,8 @@
     "completed": "已完成",
     "failed": "失败",
     "partial": "部分完成 / 未判定",
-    "cancelled": "已取消"
+    "cancelled": "已取消",
+    "skipped": "已跳过"
   },
   "execution": {
     "title": "执行详情",

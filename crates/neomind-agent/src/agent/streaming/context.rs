@@ -728,9 +728,11 @@ pub(crate) fn dedupe_verbatim_against_live_users(
         if item.is_empty() {
             continue;
         }
-        let still_live = live_user_bodies
-            .iter()
-            .any(|live| live == item || live.starts_with(item) || item.starts_with(live.as_str()));
+        let item_stem = item.strip_suffix("...").unwrap_or(item);
+        let still_live = live_user_bodies.iter().any(|live| {
+            live == item
+                || (!item_stem.is_empty() && item_stem.len() >= 16 && live.starts_with(item_stem))
+        });
         if !still_live {
             kept.push(item.to_string());
         }

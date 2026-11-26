@@ -114,7 +114,7 @@ export function seedDailyBrief(): AgentSpecDraft {
     user_prompt: '',
     preset: 'daily_brief',
     trigger: { kind: 'cron', expr: '0 9 * * *', timezone: 'Asia/Shanghai' },
-    tool_policy: 'unrestricted',
+    tool_policy: 'disabled',
     notify: COMPLETE_NOTIFY,
     output: fields(false, { name: 'brief', description: 'Human-readable daily brief' }),
   })
@@ -169,7 +169,7 @@ export function seedWeekly(): AgentSpecDraft {
     user_prompt: '',
     preset: 'custom',
     trigger: { kind: 'cron', expr: '0 9 * * 1', timezone: 'Asia/Shanghai' },
-    tool_policy: 'unrestricted',
+    tool_policy: 'disabled',
     notify: COMPLETE_NOTIFY,
     output: fields(false, { name: 'report', description: 'Weekly summary' }),
   })
@@ -209,7 +209,7 @@ export function seedQa(): AgentSpecDraft {
     user_prompt: '',
     preset: 'custom',
     trigger: { kind: 'manual' },
-    tool_policy: { scoped: { allowed_tools: ['query_data'], allowed_commands: [] } },
+    tool_policy: { scoped: { allowed_tools: ['web_search', 'web_fetch'], allowed_commands: [] } },
   })
 }
 
@@ -221,7 +221,7 @@ export function seedCustom(): AgentSpecDraft {
     trigger: { kind: 'manual' },
     tool_policy: {
       scoped: {
-        allowed_tools: ['shell', 'web_search', 'web_fetch'],
+        allowed_tools: ['web_search', 'web_fetch'],
         allowed_commands: [],
       },
     },
