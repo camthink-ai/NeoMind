@@ -53,6 +53,8 @@ export interface AgentEditorV2Props {
   onOpenChange: (open: boolean) => void
   /** V2 AgentSpec from GET `/agents/v2/:id` when editing; create waits for a template pick. */
   agent?: AgentSpec
+  /** True while GET /agents/v2/:id is in flight — blocks save and avoids create UX. */
+  loading?: boolean
   /** Optional evidence for the preserved evidence panel. */
   evidenceDetail?: AgentExecutionDetail | null
   /** Save the v2 draft directly (POST/PUT `/agents/v2`) — no legacy projection. */
@@ -63,6 +65,7 @@ export function AgentEditorV2({
   open,
   onOpenChange,
   agent,
+  loading = false,
   evidenceDetail,
   onSave,
 }: AgentEditorV2Props) {
@@ -75,6 +78,7 @@ export function AgentEditorV2({
 
   useEffect(() => {
     if (!open) return
+    if (loading) return
     if (agent) {
       const next = specToDraft(agent)
       setDraft(next)
@@ -85,7 +89,7 @@ export function AgentEditorV2({
       setTemplateId(null)
       setAdvancedOpen(false)
     }
-  }, [open, agent])
+  }, [open, agent, loading])
 
   const patch = (partial: Partial<AgentSpecDraft>) => {
     setDraft((prev) => ({ ...prev, ...partial }))
@@ -107,6 +111,7 @@ export function AgentEditorV2({
   }
 
   const handleSave = async () => {
+    if (loading) return
     setSaving(true)
     try {
       await onSave(draft)
@@ -117,14 +122,23 @@ export function AgentEditorV2({
   }
 
   const notify: NotifyPolicy = normalizeNotify(draft.notify)
-  const isCreate = !agent
+  // While GET is in flight, agent is cleared — do not flip into create UX.
+  const isCreate = !loading && !agent
   const needsTemplate = isCreate && !templateId
   const canSave =
+    !loading &&
     !needsTemplate &&
     draft.name.trim().length > 0 &&
     draft.user_prompt.trim().length > 0
 
-  const formColumn = (
+  const formColumn = loading ? (
+    <div
+      className="flex min-h-[12rem] items-center justify-center"
+      data-testid="agent-editor-v2-loading"
+    >
+      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+    </div>
+  ) : (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 lg:mx-0 lg:max-w-none">
       <section data-section="templates" className="space-y-3">
         <h2 className="text-base font-semibold tracking-tight text-foreground">
@@ -272,14 +286,18 @@ export function AgentEditorV2({
   return (
     <FullScreenDialog open={open} onOpenChange={onOpenChange}>
       <FullScreenDialogHeader
-        title={agent ? t('agents:editorV2.titleEdit') : t('agents:editorV2.titleCreate')}
+        title={
+          loading || agent
+            ? t('agents:editorV2.titleEdit')
+            : t('agents:editorV2.titleCreate')
+        }
         onClose={() => onOpenChange(false)}
       />
       <FullScreenDialogContent>
         {isMobile ? (
           <FullScreenDialogMain className="overflow-auto bg-background p-4">
             {formColumn}
-            {!needsTemplate && (
+            {!loading && !needsTemplate && (
               <div className="mt-5">
                 <LiveSummaryPanel
                   draft={draft}
@@ -296,13 +314,15 @@ export function AgentEditorV2({
               {formColumn}
             </FullScreenDialogMain>
             {/* Right: live summary rail — border-l so it sits after the form */}
-            <aside className="hidden w-[300px] shrink-0 border-l border-border lg:flex lg:w-[340px] xl:w-[360px]">
-              <LiveSummaryPanel
-                draft={draft}
-                templateId={templateId}
-                className="w-full"
-              />
-            </aside>
+            {!loading && (
+              <aside className="hidden w-[300px] shrink-0 border-l border-border lg:flex lg:w-[340px] xl:w-[360px]">
+                <LiveSummaryPanel
+                  draft={draft}
+                  templateId={templateId}
+                  className="w-full"
+                />
+              </aside>
+            )}
           </>
         )}
       </FullScreenDialogContent>
@@ -314,6 +334,7 @@ export function AgentEditorV2({
           <Button
             size="lg"
             className="min-w-[7.5rem] font-semibold"
+            data-testid="agent-editor-v2-save"
             onClick={() => void handleSave()}
             disabled={saving || !canSave}
           >

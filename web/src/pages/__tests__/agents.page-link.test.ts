@@ -101,13 +101,14 @@ describe('AgentsPage edit V2 page-link', () => {
     }
 
     // Page edit load: GET /agents/v2/:id → seed editor (not detailToV2Draft).
-    const draft = specToDraft(loaded)
-    draft.name = 'daily-brief-renamed'
+    const seed = specToDraft(loaded)
+    const draft = { ...seed, name: 'daily-brief-renamed' }
 
-    // Page save: same patch body AgentsPage sends via updateAgentV2.
-    const patch = draftToUpdatePatch(draft)
+    // Page save: sparse patch vs loaded seed (rename-only → { name }).
+    const patch = draftToUpdatePatch(draft, seed)
+    expect(patch).toEqual({ name: 'daily-brief-renamed' })
 
-    // Server-side merge for a full-contract PUT, then re-GET shape.
+    // Server-side merge for sparse PUT, then re-GET shape.
     const afterGet: AgentSpec = {
       ...loaded,
       name: patch.name!,

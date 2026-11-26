@@ -12,7 +12,7 @@ import { useStore } from "@/store"
 import { useDataVersion } from "@/hooks/useDataVersion"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
-import { AgentEditorV2, draftToUpdatePatch } from "@/components/agents/editor-v2"
+import { AgentEditorV2 } from "@/components/agents/editor-v2"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
 import { PageTabsBar, PageTabsContent, Pagination, SearchInput } from "@/components/shared"
@@ -36,7 +36,8 @@ import {
 import { debounce } from "@/lib/utils/async"
 import type { ToolSourceFilter } from "./agents-components/ToolsPanel"
 import { EmptyState } from "@/components/shared/EmptyState"
-import type { AgentSpec, AiAgent, AiAgentDetail } from "@/types"
+import type { AiAgent, AiAgentDetail } from "@/types"
+import { useAgentV2EditSession } from "./agents-components/useAgentV2EditSession"
 import type { AgentExecutionStartedEvent, AgentExecutionCompletedEvent, AgentThinkingEvent } from "@/lib/events"
 
 // Import components
@@ -99,7 +100,6 @@ export function AgentsPage() {
   }
 
   // Dialog states
-  const [showAgentDialog, setShowAgentDialog] = useState(false)
   const [executionDetailOpen, setExecutionDetailOpen] = useState(false)
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
 
@@ -107,9 +107,19 @@ export function AgentsPage() {
   const [detailAgentId, setDetailAgentId] = useState('')
   const [detailExecutionId, setDetailExecutionId] = useState('')
 
-  // Editing states — edit load is V2 AgentSpec (not legacy detail → wipe draft)
-  const [editingAgent, setEditingAgent] = useState<AgentSpec | undefined>(undefined)
   const [selectedAgent, setSelectedAgent] = useState<AiAgentDetail | null>(null)
+
+  // Race-safe V2 edit/create session (unified entry; ignores late GETs)
+  const editSession = useAgentV2EditSession({
+    getAgentV2: (id) => api.getAgentV2(id),
+    updateAgentV2: (id, patch) => api.updateAgentV2(id, patch),
+    createAgentV2: (draft) => api.createAgentV2(draft),
+    onSaved: () => loadItems(),
+    onLoadError: (error) => {
+      handleError(error, { operation: 'Load agent details', showToast: false })
+      showErrorToast(toast, error, tCommon('failed'))
+    },
+  })
 
   // Data state
   const [agents, setAgents] = useState<AiAgent[]>([])
@@ -338,20 +348,11 @@ export function AgentsPage() {
 
   // Handlers
   const handleCreate = () => {
-    setEditingAgent(undefined)
-    setShowAgentDialog(true)
+    editSession.openCreate()
   }
 
-  const handleEdit = async (agent: AiAgent) => {
-    try {
-      setShowAgentDialog(true)
-      const { agent: spec } = await api.getAgentV2(agent.id)
-      setEditingAgent(spec)
-    } catch (error) {
-      setShowAgentDialog(false)
-      handleError(error, { operation: 'Load agent details', showToast: false })
-      showErrorToast(toast, error, tCommon('failed'))
-    }
+  const handleEdit = (agent: AiAgent) => {
+    void editSession.openEdit(agent.id)
   }
 
   const handleDelete = async (agent: AiAgent) => {
@@ -422,15 +423,7 @@ export function AgentsPage() {
 
   const handleSave = async (draft: import('@/types').AgentSpecDraft) => {
     try {
-      if (editingAgent) {
-        // Full contract via v2 patch (omit id/config_version). Seed must be V2.
-        await api.updateAgentV2(editingAgent.id, draftToUpdatePatch(draft))
-      } else {
-        await api.createAgentV2(draft)
-      }
-      setShowAgentDialog(false)
-      setEditingAgent(undefined)
-      await loadItems()
+      await editSession.save(draft)
       // Toast is shown by AgentEditorV2 — don't duplicate here
     } catch (error) {
       handleError(error, { operation: 'Save agent', showToast: false })
@@ -457,18 +450,10 @@ export function AgentsPage() {
     }
   }
 
-  // Edit from detail: close detail first; reload V2 spec so save cannot wipe
-  const handleEditFromDetail = async (agent: AiAgentDetail) => {
+  // Edit from detail: same race-safe openEdit as the card entry point
+  const handleEditFromDetail = (agent: AiAgentDetail) => {
     setDetailDialogOpen(false)
-    try {
-      setShowAgentDialog(true)
-      const { agent: spec } = await api.getAgentV2(agent.id)
-      setEditingAgent(spec)
-    } catch (error) {
-      setShowAgentDialog(false)
-      handleError(error, { operation: 'Load agent details', showToast: false })
-      showErrorToast(toast, error, tCommon('failed'))
-    }
+    void editSession.openEdit(agent.id)
   }
 
   // Note: detail data is loaded solely by handleViewDetail. The dialog's only
@@ -688,9 +673,10 @@ export function AgentsPage() {
 
       {/* Agent Editor — AgentEditorV2 is the only create/edit surface (M3) */}
       <AgentEditorV2
-        open={showAgentDialog}
-        onOpenChange={setShowAgentDialog}
-        agent={editingAgent}
+        open={editSession.open}
+        onOpenChange={editSession.onOpenChange}
+        agent={editSession.editingAgent}
+        loading={editSession.loading}
         onSave={handleSave}
       />
 

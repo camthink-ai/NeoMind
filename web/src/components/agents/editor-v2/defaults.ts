@@ -126,39 +126,73 @@ export function specToDraft(spec: AgentSpec): AgentSpecDraft {
   return draft
 }
 
+function sameJson(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
 /**
- * Full-contract PUT body matching AgentsPage save (omit id / config_version).
- * Callers that loaded via specToDraft can rename-only without wiping V2 fields.
+ * AgentSpecPatch for PUT /agents/v2/:id (omit id / config_version).
+ * With `previous` (loaded seed), only changed fields are sent — rename-only
+ * becomes `{ name }` so a full old snapshot cannot clobber the contract.
+ * Without `previous`, sends the full draft (legacy / create-adjacent callers).
  */
-export function draftToUpdatePatch(draft: AgentSpecDraft): AgentSpecPatch {
-  const {
-    name,
-    description,
-    user_prompt,
-    llm_backend_id,
-    preset,
-    trigger,
-    pacing,
-    input,
-    tool_policy,
-    output,
-    notify,
-    controlled_actions,
-  } = draft
-  return {
-    name,
-    description,
-    user_prompt,
-    llm_backend_id,
-    preset,
-    trigger,
-    pacing,
-    input,
-    tool_policy,
-    output,
-    notify,
-    controlled_actions,
+export function draftToUpdatePatch(
+  draft: AgentSpecDraft,
+  previous?: AgentSpecDraft,
+): AgentSpecPatch {
+  if (!previous) {
+    const {
+      name,
+      description,
+      user_prompt,
+      llm_backend_id,
+      preset,
+      trigger,
+      pacing,
+      input,
+      tool_policy,
+      output,
+      notify,
+      controlled_actions,
+    } = draft
+    return {
+      name,
+      description,
+      user_prompt,
+      llm_backend_id,
+      preset,
+      trigger,
+      pacing,
+      input,
+      tool_policy,
+      output,
+      notify,
+      controlled_actions,
+    }
   }
+
+  const patch: AgentSpecPatch = {}
+  if (draft.name !== previous.name) patch.name = draft.name
+  if (draft.description !== previous.description) {
+    patch.description = draft.description ?? null
+  }
+  if (draft.user_prompt !== previous.user_prompt) patch.user_prompt = draft.user_prompt
+  if (draft.llm_backend_id !== previous.llm_backend_id) {
+    patch.llm_backend_id = draft.llm_backend_id ?? null
+  }
+  if (draft.preset !== previous.preset) patch.preset = draft.preset ?? null
+  if (!sameJson(draft.trigger, previous.trigger)) patch.trigger = draft.trigger
+  if (!sameJson(draft.pacing, previous.pacing)) patch.pacing = draft.pacing
+  if (!sameJson(draft.input, previous.input)) patch.input = draft.input
+  if (!sameJson(draft.tool_policy, previous.tool_policy)) {
+    patch.tool_policy = draft.tool_policy
+  }
+  if (!sameJson(draft.output, previous.output)) patch.output = draft.output
+  if (!sameJson(draft.notify, previous.notify)) patch.notify = draft.notify
+  if (!sameJson(draft.controlled_actions, previous.controlled_actions)) {
+    patch.controlled_actions = draft.controlled_actions
+  }
+  return patch
 }
 
 /**
