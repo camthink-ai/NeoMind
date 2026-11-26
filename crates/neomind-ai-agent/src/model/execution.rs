@@ -100,6 +100,9 @@ pub struct AgentExecutionRecord {
     pub finished_at: i64,
     pub is_probe: bool,
     pub dry_run: bool,
+    /// Submit provenance: `schedule` | `event` | `manual` | `rule` | `extension`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale_config: Option<bool>,
     pub evidence: EvidenceReport,

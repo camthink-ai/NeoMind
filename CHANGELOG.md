@@ -30,6 +30,7 @@ Post-`v1.3.3`: whole-device event snapshots + vision `Partial`, Chat agent creat
 - Frontend first-paint bundle budgets, cold-start measure, and route-pass `smoke-chunks.mjs`.
 
 ### Fixed — agent / runtime / notify
+- **Agent Monitor V2 history list/card/modal agree** (NM-407): batch execution details prefer `AgentStoreV2` (no longer miss V2-only rows via the legacy store); list/detail DTOs keep real `trigger_type` (`manual`/`event`/`schedule`/…) from persisted submit provenance (with agent-trigger fallback) and project evidence into `input_summary` + `decision_process.data_collected`.
 - **Pre-send IntentPending is durable on the production path** (NM-403): `DurableAgentStore::with_v2` installs an execution persist sink on `durable.mem`, so non-idempotent `save_execution` before side-effect invoke lands in the same `agents.redb` restart recovery opens — intent written before send; reopen recovers as `OutcomeUnknown` without re-send (receiver count stays 1).
 - **Legacy Free-mode host deleted**: `crates/neomind-agent/src/ai_agent/` and `get_or_init_agent_manager` call sites are gone; EventBus triggers / rules / SDK / invoke/test use `HostedAiAgentRuntime` only (eight legacy executor integration tests removed).
 - **ViaVisionTool cannot Complete without a successful vision call** (NM-388): zero calls or only non-vision tools + a "未发现人员" conclusion settle as Partial / undetermined; multimodal inline path still Completes.

@@ -8,8 +8,7 @@ use async_trait::async_trait;
 use neomind_ai_agent::coordinator::{ExecutionCoordinator, SubmitSource};
 use neomind_ai_agent::harness::build_harness;
 use neomind_ai_agent::model::{
-    CallerInput, InputContract, NotifyPolicy, OutputContract, PacingPolicy, ToolPolicy,
-    TriggerSpec,
+    CallerInput, InputContract, NotifyPolicy, OutputContract, PacingPolicy, ToolPolicy, TriggerSpec,
 };
 use neomind_ai_agent::ports::{LlmBackendCapabilities, LlmPort, LlmRequest, LlmResponse};
 use neomind_ai_agent::runner::SinglePassRunner;
@@ -43,7 +42,10 @@ impl LlmPort for CapturingLlm {
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.users.lock().unwrap().push(request.user);
         Ok(LlmResponse {
-            text: format!("answer-{}\nVerdict: criteria not met\n", self.calls.load(Ordering::SeqCst)),
+            text: format!(
+                "answer-{}\nVerdict: criteria not met\n",
+                self.calls.load(Ordering::SeqCst)
+            ),
             alert_criteria_met: false,
         })
     }

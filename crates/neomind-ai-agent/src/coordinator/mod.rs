@@ -33,6 +33,19 @@ pub enum SubmitSource {
     Extension,
 }
 
+impl SubmitSource {
+    /// Wire value persisted on execution rows / exposed as `trigger_type`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Schedule => "schedule",
+            Self::Event => "event",
+            Self::Manual => "manual",
+            Self::Rule => "rule",
+            Self::Extension => "extension",
+        }
+    }
+}
+
 /// Shared post-submit path used by the scheduler and host wrappers.
 ///
 /// Host implements this so Cron/Interval ticks go through the same
@@ -127,7 +140,9 @@ impl ExecutionCoordinator {
         } else {
             None
         };
-        self.service.invoke_with_caller(agent_id, caller).await
+        self.service
+            .invoke_with_source_and_caller(agent_id, source, caller)
+            .await
     }
 }
 

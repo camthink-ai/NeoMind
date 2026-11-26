@@ -268,6 +268,10 @@ pub struct AgentExecutionRecordV2 {
     pub finished_at: i64,
     pub is_probe: bool,
     pub dry_run: bool,
+    /// How this run was submitted: `schedule` | `event` | `manual` | `rule` | `extension`.
+    /// Absent on rows written before trigger provenance was persisted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale_config: Option<bool>,
     #[serde(default)]
@@ -1167,6 +1171,7 @@ mod tests {
             finished_at: 20,
             is_probe: false,
             dry_run: false,
+            trigger_source: Some("schedule".into()),
             stale_config: None,
             evidence: serde_json::json!({}),
             deliveries: Vec::new(),

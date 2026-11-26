@@ -349,8 +349,195 @@ impl From<AgentExecutionRecord> for AgentExecutionDto {
     }
 }
 
+fn v2_status_str(status: &neomind_storage::agents_v2::ExecutionStatusV2) -> &'static str {
+    match status {
+        neomind_storage::agents_v2::ExecutionStatusV2::Completed => "Completed",
+        neomind_storage::agents_v2::ExecutionStatusV2::Partial => "Partial",
+        neomind_storage::agents_v2::ExecutionStatusV2::Skipped => "Skipped",
+        neomind_storage::agents_v2::ExecutionStatusV2::Failed => "Failed",
+    }
+}
+
+fn v2_trigger_fallback_from_spec(
+    trigger: &neomind_storage::agents_v2::TriggerSpec,
+) -> &'static str {
+    match trigger {
+        neomind_storage::agents_v2::TriggerSpec::Cron { .. }
+        | neomind_storage::agents_v2::TriggerSpec::Interval { .. } => "schedule",
+        neomind_storage::agents_v2::TriggerSpec::Event { .. } => "event",
+        neomind_storage::agents_v2::TriggerSpec::Manual => "manual",
+    }
+}
+
+/// Resolve trigger label for a V2 execution row.
+///
+/// Prefer persisted `trigger_source`; otherwise fall back to the agent's current
+/// trigger kind (best-effort for rows written before provenance was stored).
+fn v2_trigger_type(
+    record: &neomind_storage::agents_v2::AgentExecutionRecordV2,
+    agent_trigger: Option<&neomind_storage::agents_v2::TriggerSpec>,
+) -> String {
+    if record.is_probe {
+        return "probe".into();
+    }
+    if record.dry_run {
+        return "dry_run".into();
+    }
+    if let Some(src) = record
+        .trigger_source
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return src.to_string();
+    }
+    agent_trigger
+        .map(v2_trigger_fallback_from_spec)
+        .unwrap_or("schedule")
+        .to_string()
+}
+
+/// Project V2 evidence JSON into the list/card `input_summary` chip fields.
+fn v2_input_summary_from_evidence(
+    evidence: &serde_json::Value,
+) -> Option<ExecutionInputSummaryDto> {
+    let items = evidence.get("items").and_then(|v| v.as_array());
+    let skip_reason = evidence
+        .get("skip_reason")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let mut metrics_collected = 0usize;
+    let mut image_extracted: Option<bool> = None;
+    let mut image_source_field: Option<String> = None;
+    let mut vision_path: Option<String> = None;
+
+    if let Some(items) = items {
+        for item in items {
+            let detail = item.get("detail");
+            let kind = detail
+                .and_then(|d| d.get("kind"))
+                .and_then(|k| k.as_str())
+                .unwrap_or("");
+            match kind {
+                "vision" => {
+                    image_extracted = Some(true);
+                    if image_source_field.is_none() {
+                        image_source_field = detail
+                            .and_then(|d| d.get("image_source_field"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                    }
+                    if vision_path.is_none() {
+                        vision_path = detail
+                            .and_then(|d| d.get("vision_path"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                    }
+                    metrics_collected = metrics_collected.saturating_add(1);
+                }
+                "time_series" => {
+                    let points = detail
+                        .and_then(|d| d.get("points"))
+                        .and_then(|p| p.as_u64())
+                        .unwrap_or(1) as usize;
+                    metrics_collected = metrics_collected.saturating_add(points.max(1));
+                }
+                "structured" | "text" => {
+                    metrics_collected = metrics_collected.saturating_add(1);
+                }
+                _ => {
+                    // Unknown / missing detail still counts as an observation row.
+                    metrics_collected = metrics_collected.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    if metrics_collected == 0
+        && image_extracted.is_none()
+        && image_source_field.is_none()
+        && vision_path.is_none()
+        && skip_reason.is_none()
+    {
+        return None;
+    }
+
+    Some(ExecutionInputSummaryDto {
+        metrics_collected,
+        image_extracted,
+        image_source_field,
+        vision_path,
+        skip_reason,
+    })
+}
+
+fn v2_data_collected_from_evidence(evidence: &serde_json::Value) -> Vec<DataCollectedDto> {
+    let Some(items) = evidence.get("items").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(|item| {
+            let source = item
+                .get("source_id")
+                .or_else(|| item.get("key"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let timestamp = item
+                .get("observed_at")
+                .or_else(|| item.get("fetched_at"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let detail = item.get("detail");
+            let kind = detail
+                .and_then(|d| d.get("kind"))
+                .and_then(|k| k.as_str())
+                .unwrap_or("unknown");
+            let (data_type, values) = match kind {
+                "vision" => (
+                    "vision".to_string(),
+                    json!({
+                        "image_source_field": detail.and_then(|d| d.get("image_source_field")),
+                        "vision_path": detail.and_then(|d| d.get("vision_path")),
+                    }),
+                ),
+                "time_series" => (
+                    "timeseries".to_string(),
+                    json!({
+                        "points": detail.and_then(|d| d.get("points")),
+                        "value": detail.and_then(|d| d.get("value")),
+                    }),
+                ),
+                "structured" => (
+                    "structured".to_string(),
+                    detail
+                        .and_then(|d| d.get("value"))
+                        .cloned()
+                        .unwrap_or(json!({})),
+                ),
+                "text" => (
+                    "text".to_string(),
+                    json!({
+                        "text": detail.and_then(|d| d.get("text")),
+                    }),
+                ),
+                other => (other.to_string(), detail.cloned().unwrap_or(json!({}))),
+            };
+            DataCollectedDto {
+                source,
+                data_type,
+                values,
+                timestamp,
+            }
+        })
+        .collect()
+}
+
 fn dto_from_v2_execution(
     record: neomind_storage::agents_v2::AgentExecutionRecordV2,
+    agent_trigger: Option<&neomind_storage::agents_v2::TriggerSpec>,
 ) -> AgentExecutionDto {
     let duration_ms = record.finished_at.saturating_sub(record.started_at).max(0) as u64;
     let conclusion = record
@@ -358,36 +545,68 @@ fn dto_from_v2_execution(
         .clone()
         .or(record.brief_text.clone())
         .unwrap_or_default();
-    let status = match record.status {
-        neomind_storage::agents_v2::ExecutionStatusV2::Completed => "Completed",
-        neomind_storage::agents_v2::ExecutionStatusV2::Partial => "Partial",
-        neomind_storage::agents_v2::ExecutionStatusV2::Skipped => "Skipped",
-        neomind_storage::agents_v2::ExecutionStatusV2::Failed => "Failed",
-    };
     let confidence = record
         .structured_result
         .as_ref()
         .and_then(|v| v.get("confidence"))
         .and_then(|c| c.as_f64())
         .map(|f| f as f32);
+    let input_summary = v2_input_summary_from_evidence(&record.evidence);
+    let trigger_type = v2_trigger_type(&record, agent_trigger);
     AgentExecutionDto {
         id: record.id,
         agent_id: record.agent_id,
         timestamp: format_datetime(record.finished_at / 1000),
-        trigger_type: if record.is_probe {
-            "probe".into()
-        } else if record.dry_run {
-            "dry_run".into()
-        } else {
-            "schedule".into()
-        },
-        status: status.into(),
+        trigger_type,
+        status: v2_status_str(&record.status).into(),
         duration_ms,
         conclusion,
         structured_result: record.structured_result,
         confidence,
         error: record.error,
-        input_summary: None,
+        input_summary,
+    }
+}
+
+fn detail_dto_from_v2_execution(
+    record: neomind_storage::agents_v2::AgentExecutionRecordV2,
+    agent_trigger: Option<&neomind_storage::agents_v2::TriggerSpec>,
+) -> AgentExecutionDetailDto {
+    let duration_ms = record.finished_at.saturating_sub(record.started_at).max(0) as u64;
+    let conclusion = record
+        .conclusion
+        .clone()
+        .or(record.brief_text.clone())
+        .unwrap_or_default();
+    let confidence = record
+        .structured_result
+        .as_ref()
+        .and_then(|v| v.get("confidence"))
+        .and_then(|c| c.as_f64())
+        .map(|f| f as f32);
+    let input_summary = v2_input_summary_from_evidence(&record.evidence);
+    let data_collected = v2_data_collected_from_evidence(&record.evidence);
+    let trigger_type = v2_trigger_type(&record, agent_trigger);
+    AgentExecutionDetailDto {
+        id: record.id,
+        agent_id: record.agent_id,
+        timestamp: format_datetime(record.finished_at / 1000),
+        trigger_type,
+        status: v2_status_str(&record.status).into(),
+        duration_ms,
+        error: record.error,
+        input_summary,
+        decision_process: Some(DecisionProcessDto {
+            situation_analysis: String::new(),
+            data_collected,
+            reasoning_steps: Vec::new(),
+            decisions: Vec::new(),
+            conclusion,
+            confidence,
+            stop_reason: String::new(),
+            tokens_used: 0,
+        }),
+        result: None,
     }
 }
 
@@ -1176,17 +1395,20 @@ pub async fn get_agent_executions(
     // V2-only: formal executions from AgentStoreV2 (includes structured_result).
     let dtos: Vec<AgentExecutionDto> =
         match neomind_storage::AgentStoreV2::from_arc(state.agents.agent_store.db()) {
-            Ok(v2) => match v2.list_formal_executions(&id) {
-                Ok(rows) => rows
-                    .into_iter()
-                    .take(50)
-                    .map(dto_from_v2_execution)
-                    .collect(),
-                Err(e) => {
-                    tracing::warn!("Failed to query V2 executions for agent {}: {}", id, e);
-                    Vec::new()
+            Ok(v2) => {
+                let agent_trigger = v2.get_spec(&id).ok().flatten().map(|s| s.trigger);
+                match v2.list_formal_executions(&id) {
+                    Ok(rows) => rows
+                        .into_iter()
+                        .take(50)
+                        .map(|row| dto_from_v2_execution(row, agent_trigger.as_ref()))
+                        .collect(),
+                    Err(e) => {
+                        tracing::warn!("Failed to query V2 executions for agent {}: {}", id, e);
+                        Vec::new()
+                    }
                 }
-            },
+            }
             Err(e) => {
                 tracing::warn!("Failed to open AgentStoreV2 for executions: {}", e);
                 Vec::new()
@@ -1218,22 +1440,29 @@ pub async fn get_execution(
     State(state): State<ServerState>,
     Path((_id, execution_id)): Path<(String, String)>,
 ) -> HandlerResult<Value> {
-    // Prefer V2 execution row (structured_result); fall back to legacy table.
+    // Prefer V2 execution row (structured_result + evidence); fall back to legacy table.
     if let Ok(v2) = neomind_storage::AgentStoreV2::from_arc(state.agents.agent_store.db()) {
         if let Ok(Some(row)) = v2.get_execution(&execution_id) {
+            let agent_trigger = v2.get_spec(&row.agent_id).ok().flatten().map(|s| s.trigger);
             let structured = row.structured_result.clone();
-            let dto = dto_from_v2_execution(row);
+            let list = dto_from_v2_execution(row.clone(), agent_trigger.as_ref());
+            let detail = detail_dto_from_v2_execution(row, agent_trigger.as_ref());
+            // AgentExecutionDetail extends list fields; keep conclusion / structured_result
+            // at the top level for CLI and modal consumers.
             return ok(json!({
-                "id": dto.id,
-                "agent_id": dto.agent_id,
-                "timestamp": dto.timestamp,
-                "trigger_type": dto.trigger_type,
-                "status": dto.status,
-                "duration_ms": dto.duration_ms,
-                "conclusion": dto.conclusion,
+                "id": detail.id,
+                "agent_id": detail.agent_id,
+                "timestamp": detail.timestamp,
+                "trigger_type": detail.trigger_type,
+                "status": detail.status,
+                "duration_ms": detail.duration_ms,
+                "conclusion": list.conclusion,
                 "structured_result": structured,
-                "confidence": dto.confidence,
-                "error": dto.error,
+                "confidence": list.confidence,
+                "error": detail.error,
+                "input_summary": detail.input_summary,
+                "decision_process": detail.decision_process,
+                "result": detail.result,
             }));
         }
     }
@@ -1294,38 +1523,66 @@ pub async fn batch_get_executions(
         )));
     }
 
-    let store = state.agents.agent_store.clone();
-
-    // Fetch all executions in parallel with concurrency limit
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(5));
-    let futures: Vec<_> = body
-        .ids
-        .into_iter()
-        .map(|exec_id| {
-            let store = store.clone();
-            let sem = semaphore.clone();
-            async move {
-                let _permit = sem.acquire().await;
-                let result = store.get_execution(&exec_id).await;
-                (exec_id, result)
-            }
-        })
-        .collect();
-
-    let results = futures::future::join_all(futures).await;
+    let v2 = neomind_storage::AgentStoreV2::from_arc(state.agents.agent_store.db()).ok();
+    let agent_trigger = v2
+        .as_ref()
+        .and_then(|store| store.get_spec(&id).ok().flatten().map(|s| s.trigger));
 
     let mut details = serde_json::Map::new();
-    for (exec_id, result) in results {
-        match result {
-            Ok(Some(record)) => {
-                let dto = AgentExecutionDetailDto::from(record);
-                details.insert(exec_id, json!(dto));
+    let mut missing: Vec<String> = Vec::new();
+
+    // Prefer V2 rows so Monitor card/modal match V2-only list history.
+    for exec_id in &body.ids {
+        if let Some(store) = v2.as_ref() {
+            match store.get_execution(exec_id) {
+                Ok(Some(row)) => {
+                    let dto = detail_dto_from_v2_execution(row, agent_trigger.as_ref());
+                    details.insert(exec_id.clone(), json!(dto));
+                    continue;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        "batch_get_executions: V2 lookup failed for {}: {}",
+                        exec_id,
+                        e
+                    );
+                }
             }
-            Ok(None) => {
-                // Execution not found — skip
-            }
-            Err(e) => {
-                tracing::warn!("batch_get_executions: failed to get {}: {}", exec_id, e);
+        }
+        missing.push(exec_id.clone());
+    }
+
+    // Legacy fallback for any IDs not present in V2 (mixed history).
+    if !missing.is_empty() {
+        let store = state.agents.agent_store.clone();
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(5));
+        let futures: Vec<_> = missing
+            .into_iter()
+            .map(|exec_id| {
+                let store = store.clone();
+                let sem = semaphore.clone();
+                async move {
+                    let _permit = sem.acquire().await;
+                    let result = store.get_execution(&exec_id).await;
+                    (exec_id, result)
+                }
+            })
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+        for (exec_id, result) in results {
+            match result {
+                Ok(Some(record)) => {
+                    let dto = AgentExecutionDetailDto::from(record);
+                    details.insert(exec_id, json!(dto));
+                }
+                Ok(None) => {
+                    // Execution not found — skip
+                }
+                Err(e) => {
+                    tracing::warn!("batch_get_executions: failed to get {}: {}", exec_id, e);
+                }
             }
         }
     }

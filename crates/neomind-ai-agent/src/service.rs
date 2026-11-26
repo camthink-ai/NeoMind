@@ -139,12 +139,13 @@ impl AgentApplicationService {
 
     /// Authorized read-only dry-run; does not enter formal history; notify=0.
     pub async fn dry_run(&self, id: &str) -> Result<RunResponse> {
-        self.execute_inner(id, true, false, None).await
+        self.execute_inner(id, true, false, None, None).await
     }
 
-    /// Formal invoke — writes history and may notify.
+    /// Formal invoke — writes history and may notify (manual submit provenance).
     pub async fn invoke(&self, id: &str) -> Result<RunResponse> {
-        self.invoke_with_caller(id, None).await
+        self.invoke_with_source_and_caller(id, crate::coordinator::SubmitSource::Manual, None)
+            .await
     }
 
     /// Formal invoke with optional this-turn caller text/data (ask path).
@@ -153,7 +154,28 @@ impl AgentApplicationService {
         id: &str,
         caller: Option<CallerInput>,
     ) -> Result<RunResponse> {
-        self.execute_inner(id, false, false, caller).await
+        self.invoke_with_source_and_caller(id, crate::coordinator::SubmitSource::Manual, caller)
+            .await
+    }
+
+    /// Formal invoke with explicit submit provenance (schedule/event/manual/…).
+    pub async fn invoke_with_source(
+        &self,
+        id: &str,
+        source: crate::coordinator::SubmitSource,
+    ) -> Result<RunResponse> {
+        self.invoke_with_source_and_caller(id, source, None).await
+    }
+
+    /// Formal invoke with both explicit submit provenance and optional caller input.
+    pub async fn invoke_with_source_and_caller(
+        &self,
+        id: &str,
+        source: crate::coordinator::SubmitSource,
+        caller: Option<CallerInput>,
+    ) -> Result<RunResponse> {
+        self.execute_inner(id, false, false, Some(source), caller)
+            .await
     }
 
     async fn execute_inner(
@@ -161,6 +183,7 @@ impl AgentApplicationService {
         id: &str,
         dry_run: bool,
         is_probe: bool,
+        source: Option<crate::coordinator::SubmitSource>,
         caller: Option<CallerInput>,
     ) -> Result<RunResponse> {
         let spec = self.store.get_spec(id)?;
@@ -188,7 +211,12 @@ impl AgentApplicationService {
 
         let run_result = self
             .runner
-            .run(&run_spec, &evidence, &execution_id, CancellationToken::new())
+            .run(
+                &run_spec,
+                &evidence,
+                &execution_id,
+                CancellationToken::new(),
+            )
             .await;
 
         let mut exec = crate::model::AgentExecutionRecord {
@@ -200,6 +228,7 @@ impl AgentApplicationService {
             finished_at: self.clock.now_ms(),
             is_probe,
             dry_run,
+            trigger_source: source.map(|s| s.as_str().to_string()),
             stale_config: None,
             evidence,
             deliveries: vec![],

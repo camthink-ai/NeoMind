@@ -89,6 +89,7 @@ pub fn persist_execution(v2: &AgentStoreV2, exec: &AgentExecutionRecord) -> Resu
         finished_at: exec.finished_at,
         is_probe: exec.is_probe,
         dry_run: exec.dry_run,
+        trigger_source: exec.trigger_source.clone(),
         stale_config: exec.stale_config,
         evidence: serde_json::to_value(&exec.evidence).unwrap_or_default(),
         deliveries: exec
