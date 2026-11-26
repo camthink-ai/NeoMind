@@ -45,6 +45,9 @@
 //! ```
 
 pub mod agents;
+pub mod agents_inventory;
+pub mod agents_migrate;
+pub mod agents_purge;
 pub mod agents_v2;
 pub mod atomic_write;
 pub mod backup;
@@ -105,9 +108,20 @@ pub use agents::{
     DEFAULT_MAX_CHAIN_DEPTH,
 };
 
-pub use agents_v2::{
-    copy_agents_v1_to_v2_keep_legacy, ensure_v2_tables, migrate_agents_v1_to_v2,
-    table_exists_agents_v1, AgentStoreV2,
+pub use agents_v2::{ensure_v2_tables, table_exists_agents_v1, AgentStoreV2};
+
+pub use agents_migrate::{
+    copy_agents_v1_to_v2_keep_legacy, map_agent_v1_to_v2, map_agent_v2_to_v1, map_notify_policy,
+    map_tool_policy, migrate_agents_v1_to_v2,
+};
+
+pub use agents_inventory::{
+    classify_agent, empty_inventory_scaffold, inventory_agents_db, InventoryDisposition,
+    InventoryReport, InventoryRow,
+};
+
+pub use agents_purge::{
+    is_v2_only, purge_agents_to_v2_only, read_runtime_mark, PurgeReport, RUNTIME_V2_ONLY,
 };
 
 pub use device_registry::DeviceRegistryStore;

@@ -346,6 +346,10 @@ export interface TestPreviewRequest {
   tool_config?: AgentToolConfig
 }
 
+/**
+ * @deprecated Legacy create body. `agentsApi.createAgent` compiles this into
+ * an AgentSpecDraft and POSTs `/agents/v2`. Prefer `AgentSpecDraft` + createAgentV2.
+ */
 export interface CreateAgentRequest {
   name: string
   description?: string
@@ -428,7 +432,8 @@ export interface AgentScheduleRequest {
 }
 
 /**
- * Request to update an agent - all fields optional, matches backend UpdateAgentRequest
+ * @deprecated Legacy update body. `agentsApi.updateAgent` compiles this into
+ * an AgentSpecPatch and PUTs `/agents/v2/:id`. Prefer `AgentSpecPatch` + updateAgentV2.
  */
 export interface UpdateAgentRequest {
   name?: string

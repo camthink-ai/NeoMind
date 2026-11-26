@@ -1,7 +1,14 @@
 /** agents api — split from api.ts 2026-09. */
-import type { AiAgentDetail, AgentMemory, AgentToolCatalogItem, AgentStats, AgentExecutionDetail, CreateAgentRequest, UpdateAgentRequest, ExecuteAgentRequest, ValidateLlmRequest, ValidateLlmResponse, AgentListResponse, AgentExecutionsResponse, ParsedIntent, AgentAvailableResources, UserMessage, DashboardResponse, CreateDashboardRequest, UpdateDashboardRequest, DashboardTemplateResponse, MemorySystemConfig } from '@/types'
+import type { AiAgentDetail, AgentMemory, AgentToolCatalogItem, AgentStats, AgentExecutionDetail, CreateAgentRequest, UpdateAgentRequest, ExecuteAgentRequest, ValidateLlmRequest, ValidateLlmResponse, AgentListResponse, AgentExecutionsResponse, ParsedIntent, AgentAvailableResources, UserMessage, DashboardResponse, CreateDashboardRequest, UpdateDashboardRequest, DashboardTemplateResponse, MemorySystemConfig, AgentSpecDraft, AgentSpecPatch } from '@/types'
 import type { SkillSummary, SkillDetail } from '@/types/skill'
 import { fetchAPI } from "./client"
+import {
+  formStateToV2Draft,
+  resourcesToInput,
+  scheduleToTrigger,
+  toolConfigToPolicy,
+  legacyNotifyToPolicy,
+} from './agentV2Adapter'
 
 // M2 temporary form ↔ v2 AgentSpec translation (deleted in M3 with the old editor).
 export {
@@ -14,8 +21,51 @@ export {
   toolConfigToPolicy,
   notifyPolicyToLegacy,
   legacyNotifyToPolicy,
+  resourcesToInput,
 } from './agentV2Adapter'
 export type { AgentSpecLike } from './agentV2Adapter'
+
+/** Legacy create body → AgentSpecDraft (POST /agents/v2). */
+function createRequestToDraft(req: CreateAgentRequest): AgentSpecDraft {
+  return formStateToV2Draft({
+    name: req.name,
+    description: req.description,
+    user_prompt: req.user_prompt,
+    llm_backend_id: req.llm_backend_id,
+    schedule: req.schedule,
+    resources: req.resources,
+    execution_mode: req.execution_mode,
+    tool_config: req.tool_config,
+    notify: req.notify,
+    output_schema: req.output_schema,
+    operator_config: req.operator_config,
+    memory_mode: req.memory_mode,
+  })
+}
+
+/** Sparse legacy update body → AgentSpecPatch (PUT /agents/v2/:id). */
+function updateRequestToPatch(req: UpdateAgentRequest): AgentSpecPatch {
+  const patch: AgentSpecPatch = {}
+  if (req.name !== undefined) patch.name = req.name
+  if (req.description !== undefined) patch.description = req.description
+  if (req.user_prompt !== undefined) patch.user_prompt = req.user_prompt
+  if (req.llm_backend_id !== undefined) patch.llm_backend_id = req.llm_backend_id
+  if (req.schedule) patch.trigger = scheduleToTrigger(req.schedule)
+  if (req.resources) patch.input = resourcesToInput(req.resources)
+  if (req.tool_config) patch.tool_policy = toolConfigToPolicy(req.tool_config)
+  if (req.notify) patch.notify = legacyNotifyToPolicy(req.notify)
+  if (req.output_schema) {
+    patch.output = {
+      fields: req.output_schema.map((f) => ({
+        name: f.name,
+        depends_on: [],
+        description: f.description,
+      })),
+      publish: req.execution_mode === 'structured',
+    }
+  }
+  return patch
+}
 
 export const agentsApi = {
   // ========== AI Agents API ==========
@@ -51,24 +101,52 @@ export const agentsApi = {
     fetchAPI<AiAgentDetail>(`/agents/${id}`, options),
 
   /**
-   * Create a new AI Agent
-   * POST /api/agents
+   * Create an agent (legacy CreateAgentRequest shape → POST /agents/v2).
+   * Prefer createAgentV2 when the caller already has an AgentSpecDraft.
    */
-  createAgent: (req: CreateAgentRequest) =>
-    fetchAPI<{ id: string; name: string; status: string }>('/agents', {
-      method: 'POST',
-      body: JSON.stringify(req),
-    }),
+  createAgent: async (req: CreateAgentRequest) => {
+    const created = await agentsApi.createAgentV2(createRequestToDraft(req))
+    return {
+      id: created.agent.id,
+      name: created.agent.name,
+      status: 'Active',
+    }
+  },
 
   /**
-   * Update an AI Agent
-   * PUT /api/agents/:id
+   * Create via AgentSpec v2.
+   * POST /api/agents/v2
    */
-  updateAgent: (id: string, req: UpdateAgentRequest) =>
-    fetchAPI<{ id: string }>(`/agents/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(req),
-    }),
+  createAgentV2: (draft: import('@/types').AgentSpecDraft) =>
+    fetchAPI<{ agent: import('@/types').AgentSpec; effective_plan: import('@/types').EffectivePlan }>(
+      '/agents/v2',
+      {
+        method: 'POST',
+        body: JSON.stringify(draft),
+      },
+    ),
+
+  /**
+   * Update an agent (legacy UpdateAgentRequest shape → PUT /agents/v2/:id).
+   * Prefer updateAgentV2 when the caller already has an AgentSpecPatch.
+   */
+  updateAgent: async (id: string, req: UpdateAgentRequest) => {
+    const updated = await agentsApi.updateAgentV2(id, updateRequestToPatch(req))
+    return { id: updated.agent.id }
+  },
+
+  /**
+   * Partial update via AgentSpec v2 patch.
+   * PUT /api/agents/v2/:id
+   */
+  updateAgentV2: (id: string, patch: import('@/types').AgentSpecPatch) =>
+    fetchAPI<{ agent: import('@/types').AgentSpec; effective_plan: import('@/types').EffectivePlan }>(
+      `/agents/v2/${id}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      },
+    ),
 
   /**
    * Save-before dry run for a structured agent (transient, nothing persisted)

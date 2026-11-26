@@ -3189,19 +3189,21 @@ impl ServerState {
         // has zero agents — from logging a scary "IM router not started"
         // error and 503-ing every /im-bridges call before the user has done
         // anything. An agent created later works without a server restart.
-        let agent_store = self.agent_store();
+        // V2-only: pick first Active agent from HostedAiAgentRuntime.
+        let clean_slate = self.agents.clean_slate.clone();
         let default_agent_resolver: neomind_messages::im_bridge::router::DefaultAgentResolver =
             Arc::new(move || {
-                let store = agent_store.clone();
+                let clean_slate = clean_slate.clone();
                 Box::pin(async move {
-                    store
-                        .query_agents(neomind_storage::AgentFilter {
-                            status: Some(neomind_storage::AgentStatus::Active),
-                            ..Default::default()
-                        })
-                        .await
-                        .ok()
-                        .and_then(|agents| agents.into_iter().next().map(|a| a.id))
+                    let guard = clean_slate.read().await;
+                    let rt = guard.as_ref()?;
+                    rt.list().into_iter().find_map(|(spec, _)| {
+                        matches!(
+                            rt.runtime_status(&spec.id),
+                            Some(neomind_ai_agent::AgentStatus::Active)
+                        )
+                        .then_some(spec.id)
+                    })
                 })
             });
 
@@ -3403,34 +3405,24 @@ impl ServerState {
             }
         };
 
-        let store = self.agents.agent_store.clone();
         let rt_for_status = runtime.clone();
 
-        // Cleanup agents stuck in Executing status on startup.
+        // Cleanup agents stuck in Executing status on startup (V2 runtime only).
         tokio::spawn(async move {
-            if let Ok(agents) = store
-                .query_agents(neomind_storage::AgentFilter {
-                    status: Some(neomind_storage::AgentStatus::Executing),
-                    ..Default::default()
-                })
-                .await
-            {
-                for agent in agents {
-                    tracing::warn!(
-                        agent_id = %agent.id,
-                        agent_name = %agent.name,
-                        "Agent stuck in Executing status on startup, resetting to Active"
-                    );
-                    let _ = store
-                        .update_agent_status(
-                            &agent.id,
-                            neomind_storage::AgentStatus::Active,
-                            Some("Server restarted - status reset".to_string()),
-                        )
-                        .await;
-                    let _ = rt_for_status
-                        .set_agent_status(&agent.id, neomind_ai_agent::AgentStatus::Active);
+            for (spec, _) in rt_for_status.list() {
+                if !matches!(
+                    rt_for_status.runtime_status(&spec.id),
+                    Some(neomind_ai_agent::AgentStatus::Executing)
+                ) {
+                    continue;
                 }
+                tracing::warn!(
+                    agent_id = %spec.id,
+                    agent_name = %spec.name,
+                    "Agent stuck in Executing status on startup, resetting to Active"
+                );
+                let _ =
+                    rt_for_status.set_agent_status(&spec.id, neomind_ai_agent::AgentStatus::Active);
             }
         });
 

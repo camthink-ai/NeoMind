@@ -1187,22 +1187,16 @@ impl ExtensionCapabilityProvider for StorageCapabilityProvider {
 // Agent Capability Provider
 // ============================================================================
 
-use neomind_storage::AgentStore;
-
 use crate::server::state::CleanSlateHolder;
 
-/// Provider for agent-related capabilities
+/// Provider for agent-related capabilities (V2 HostedAiAgentRuntime only).
 pub struct AgentCapabilityProvider {
-    services: CapabilityServices,
     clean_slate: CleanSlateHolder,
 }
 
 impl AgentCapabilityProvider {
-    pub fn new(services: CapabilityServices, clean_slate: CleanSlateHolder) -> Self {
-        Self {
-            services,
-            clean_slate,
-        }
+    pub fn new(clean_slate: CleanSlateHolder) -> Self {
+        Self { clean_slate }
     }
 
     async fn handle_agent_trigger(&self, params: &Value) -> Result<Value, CapabilityError> {
@@ -1250,71 +1244,55 @@ impl AgentCapabilityProvider {
     async fn handle_agent_status(&self, params: &Value) -> Result<Value, CapabilityError> {
         let agent_id = params.get("agent_id").and_then(|v| v.as_str());
 
-        // Try to get the agent store
-        let agent_store: Option<std::sync::Arc<AgentStore>> =
-            self.services.get::<AgentStore>(keys::AGENT_STORE);
+        let guard = self.clean_slate.read().await;
+        let Some(rt) = guard.as_ref() else {
+            return Ok(json!({
+                "success": false,
+                "error": "Clean-slate agent runtime not available",
+            }));
+        };
 
         if let Some(id) = agent_id {
-            // Get specific agent status
-            if let Some(store) = &agent_store {
-                match store.get_agent(id).await {
-                    Ok(Some(agent)) => Ok(json!({
-                        "success": true,
-                        "agent_id": id,
-                        "name": agent.name,
-                        "status": format!("{:?}", agent.status),
-                        "description": agent.description,
-                    })),
-                    Ok(None) => Ok(json!({
-                        "success": false,
-                        "agent_id": id,
-                        "error": "Agent not found",
-                    })),
-                    Err(e) => Ok(json!({
-                        "success": false,
-                        "agent_id": id,
-                        "error": e.to_string(),
-                    })),
-                }
-            } else {
-                Ok(json!({
-                    "success": false,
-                    "agent_id": id,
-                    "error": "Agent store not available",
-                }))
-            }
-        } else if let Some(store) = &agent_store {
-            match store
-                .query_agents(neomind_storage::AgentFilter::default())
-                .await
-            {
-                Ok(agents) => {
-                    let agent_list: Vec<Value> = agents
-                        .iter()
-                        .map(|a| {
-                            json!({
-                                "id": a.id,
-                                "name": a.name,
-                                "status": format!("{:?}", a.status),
-                            })
-                        })
-                        .collect();
-
+            match rt.get(id) {
+                Ok((spec, _)) => {
+                    let status = rt
+                        .runtime_status(id)
+                        .map(|s| format!("{s:?}"))
+                        .unwrap_or_else(|| "Unknown".into());
                     Ok(json!({
                         "success": true,
-                        "agents": agent_list,
-                        "count": agent_list.len(),
+                        "agent_id": id,
+                        "name": spec.name,
+                        "status": status,
+                        "description": spec.description,
                     }))
                 }
-                Err(e) => Ok(json!({
+                Err(_) => Ok(json!({
                     "success": false,
-                    "error": e.to_string(),
+                    "agent_id": id,
+                    "error": "Agent not found",
                 })),
             }
         } else {
+            let agent_list: Vec<Value> = rt
+                .list()
+                .into_iter()
+                .map(|(spec, _)| {
+                    let status = rt
+                        .runtime_status(&spec.id)
+                        .map(|s| format!("{s:?}"))
+                        .unwrap_or_else(|| "Unknown".into());
+                    json!({
+                        "id": spec.id,
+                        "name": spec.name,
+                        "status": status,
+                    })
+                })
+                .collect();
             Ok(json!({
-                "success": false,
-                "error": "Agent store not available",
+                "success": true,
+                "agents": agent_list,
+                "count": agent_list.len(),
             }))
         }
     }
@@ -2306,10 +2284,11 @@ pub async fn register_builtin_providers_with_dispatcher(
         .register_provider("neomind-api::storage".to_string(), storage_provider)
         .await;
 
-    let agent_provider = Arc::new(AgentCapabilityProvider::new(services, clean_slate));
+    let agent_provider = Arc::new(AgentCapabilityProvider::new(clean_slate));
     context
         .register_provider("neomind-api::agent".to_string(), agent_provider)
         .await;
+    let _ = services;
 
     let chat_stream_provider = Arc::new(ChatStreamCapabilityProvider::new(
         session_manager_holder.clone(),
@@ -2425,10 +2404,11 @@ impl CompositeCapabilityProvider {
             .providers
             .insert("neomind-api::storage".to_string(), storage_provider);
 
-        let agent_provider = Arc::new(AgentCapabilityProvider::new(services, clean_slate));
+        let agent_provider = Arc::new(AgentCapabilityProvider::new(clean_slate));
         composite
             .providers
             .insert("neomind-api::agent".to_string(), agent_provider);
+        let _ = services;
 
         // ChatStream provider — needs late-binding session_manager holder.
         let chat_stream_provider = Arc::new(ChatStreamCapabilityProvider::new(

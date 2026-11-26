@@ -580,22 +580,24 @@ async fn resolve_one_inline(state: &ServerState, r: &ChatReference) -> (bool, St
                 ),
             ),
         },
-        "agent" => match state.agents.agent_store.get_agent(&r.id).await {
-            Ok(Some(agent)) => {
-                let name = sanitize_text(&agent.name, 60);
-                (
-                    true,
-                    name.clone(),
-                    format!("【agent `{safe_id}` \"{name}\"】"),
-                )
-            }
-            Ok(None) => (
-                false,
-                "no agent with this id".into(),
-                format!(
-                    "【agent `{safe_id}`: NOT FOUND (no agent with this id) — Do NOT substitute】"
+        "agent" => match state.require_clean_slate().await {
+            Ok(rt) => match rt.get(&r.id) {
+                Ok((spec, _)) => {
+                    let name = sanitize_text(&spec.name, 60);
+                    (
+                        true,
+                        name.clone(),
+                        format!("【agent `{safe_id}` \"{name}\"】"),
+                    )
+                }
+                Err(_) => (
+                    false,
+                    "no agent with this id".into(),
+                    format!(
+                        "【agent `{safe_id}`: NOT FOUND (no agent with this id) — Do NOT substitute】"
+                    ),
                 ),
-            ),
+            },
             Err(e) => (
                 false,
                 format!("lookup failed: {e}"),
@@ -663,14 +665,22 @@ async fn resolve_one(state: &ServerState, r: &ChatReference) -> String {
                 None => not_found(r, "automation store unavailable"),
             }
         }
-        "agent" => match state.agents.agent_store.get_agent(&r.id).await {
-            Ok(Some(agent)) => format!(
-                "- agent `{}` \"{}\": status {}",
-                sanitize_id(&r.id),
-                sanitize_text(&agent.name, 60),
-                format!("{:?}", agent.status).to_lowercase()
-            ),
-            Ok(None) => not_found(r, "no agent with this id"),
+        "agent" => match state.require_clean_slate().await {
+            Ok(rt) => match rt.get(&r.id) {
+                Ok((spec, _)) => {
+                    let status = rt
+                        .runtime_status(&spec.id)
+                        .map(|s| format!("{s:?}").to_lowercase())
+                        .unwrap_or_else(|| "unknown".into());
+                    format!(
+                        "- agent `{}` \"{}\": status {}",
+                        sanitize_id(&r.id),
+                        sanitize_text(&spec.name, 60),
+                        status
+                    )
+                }
+                Err(_) => not_found(r, "no agent with this id"),
+            },
             Err(e) => not_found(r, &format!("lookup failed: {e}")),
         },
         other => format!(

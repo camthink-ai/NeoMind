@@ -10,8 +10,7 @@ use std::sync::Arc;
 
 use neomind_agent::llm_backends::get_instance_manager;
 use neomind_storage::{
-    AgentExecutionRecord, AgentFilter, AgentMemory, AgentSchedule, AgentStats, AgentStatus,
-    AiAgent, ExecutionMode, ExecutionStatus, ResourceType, ScheduleType, UserMessage,
+    AgentExecutionRecord, AgentMemory, AgentStatus, ExecutionStatus, UserMessage,
 };
 
 /// Map a store error to a response WITHOUT lying about the status: a
@@ -32,33 +31,20 @@ use super::{
 };
 use crate::models::ErrorResponse;
 
-// Import DataSourceId for type-safe resource ID parsing
-use neomind_core::datasource::DataSourceId;
+/// Ensure the clean-slate runtime has `id` loaded (V2-only; no AiAgent map).
+async fn require_v2_agent(
+    state: &ServerState,
+    id: &str,
+) -> Result<Arc<crate::ai_agent_runtime::HostedAiAgentRuntime>, ErrorResponse> {
+    let rt = state.require_clean_slate().await?;
+    rt.ensure_loaded(id)
+        .map_err(|e| ErrorResponse::not_found(format!("Agent not found: {id} ({e})")))?;
+    Ok(rt)
+}
 
 // ============================================================================
 // Helper functions for enum serialization
 // ============================================================================
-
-/// Convert AgentStatus to PascalCase string (matching existing API contract).
-fn status_to_string(status: &AgentStatus) -> &'static str {
-    match status {
-        AgentStatus::Active => "Active",
-        AgentStatus::Paused => "Paused",
-        AgentStatus::Stopped => "Stopped",
-        AgentStatus::Error => "Error",
-        AgentStatus::Executing => "Executing",
-        AgentStatus::Completed => "Completed",
-    }
-}
-
-/// Convert ExecutionMode to lowercase string.
-fn execution_mode_to_string(mode: &ExecutionMode) -> &'static str {
-    match mode {
-        ExecutionMode::Focused => "focused",
-        ExecutionMode::Free => "free",
-        ExecutionMode::Structured => "structured",
-    }
-}
 
 /// Convert ExecutionStatus to PascalCase string (matching existing API contract).
 fn execution_status_to_string(status: &ExecutionStatus) -> &'static str {
@@ -70,402 +56,9 @@ fn execution_status_to_string(status: &ExecutionStatus) -> &'static str {
     }
 }
 
-/// Convert ScheduleType to lowercase string (matching serde snake_case)
-fn schedule_type_to_string(schedule_type: &ScheduleType) -> &'static str {
-    match schedule_type {
-        ScheduleType::Interval => "interval",
-        ScheduleType::Cron => "cron",
-        ScheduleType::Event => "event",
-        ScheduleType::Manual => "manual",
-    }
-}
-
-/// Convert ResourceType to lowercase string (matching serde snake_case)
-fn resource_type_to_string(resource_type: &ResourceType) -> &'static str {
-    match resource_type {
-        ResourceType::Device => "device",
-        ResourceType::Metric => "metric",
-        ResourceType::Command => "command",
-        ResourceType::DataStream => "data_stream",
-        ResourceType::ExtensionTool => "extension_tool",
-        ResourceType::ExtensionMetric => "extension_metric",
-    }
-}
-
-/// Hard reject judgment notify with tools disabled or an allowlist that omits
-/// `shell` — mirrors CLI `--no-tools` / `--allowed-tools` conflict checks so
-/// Chat/`curl` cannot persist a mute Judgment agent.
-fn judgment_tool_config_conflict(agent: &AiAgent) -> Option<String> {
-    let judgment = agent
-        .notify
-        .as_ref()
-        .is_some_and(|n| matches!(n.on, neomind_storage::NotifyOn::Judgment));
-    if !judgment {
-        return None;
-    }
-    let tc = agent.tool_config.as_ref()?;
-    if !tc.enabled {
-        return Some(
-            "tool_config.enabled=false conflicts with notify.on=judgment: judgment alerts need \
-             `shell` to send messages — use allowed_tools=[\"shell\"] or notify.on=always/failure."
-                .to_string(),
-        );
-    }
-    if !tc.allowed_tools.is_empty()
-        && !tc
-            .allowed_tools
-            .iter()
-            .any(|t| t.eq_ignore_ascii_case("shell"))
-    {
-        return Some(
-            "tool_config.allowed_tools omits `shell` while notify.on=judgment: judgment alerts \
-             need `shell` to send messages — include \"shell\" or switch notify.on."
-                .to_string(),
-        );
-    }
-    None
-}
-
-/// Soft configuration warnings for create/update responses (never hard-fails).
-fn collect_agent_config_warnings(agent: &AiAgent) -> Vec<String> {
-    let mut warnings = Vec::new();
-
-    if agent.schedule.schedule_type == ScheduleType::Event && agent.resources.is_empty() {
-        warnings.push(
-            "Event-triggered agent has no bound resources — it will rely only on the trigger \
-             snapshot. Prefer binding the target device or metrics."
-                .to_string(),
-        );
-    }
-
-    if looks_like_vision_task(agent) && !agent_backend_supports_vision(agent) {
-        warnings.push(
-            "This agent looks vision/image-related but the selected LLM does not report vision \
-             support — runs that need images may fail every trigger."
-                .to_string(),
-        );
-    }
-
-    let tools_unrestricted = agent
-        .tool_config
-        .as_ref()
-        .map(|tc| tc.enabled && tc.allowed_tools.is_empty())
-        .unwrap_or(true);
-    let has_commands = agent
-        .resources
-        .iter()
-        .any(|r| matches!(r.resource_type, ResourceType::Command));
-    if agent.execution_mode == ExecutionMode::Focused && tools_unrestricted && !has_commands {
-        warnings.push(
-            "Focused monitor without tool restrictions: consider tool_config enabled=false \
-             (with notify.on=always) or allowed_tools=[\"shell\"] (with judgment) to cut latency \
-             and tool-hallucination risk."
-                .to_string(),
-        );
-    }
-
-    warnings
-}
-
-fn looks_like_vision_task(agent: &AiAgent) -> bool {
-    let prompt = agent.user_prompt.to_ascii_lowercase();
-    if prompt.contains("image")
-        || prompt.contains("vision")
-        || prompt.contains("camera")
-        || prompt.contains("图片")
-        || prompt.contains("看图")
-        || prompt.contains("摄像头")
-    {
-        return true;
-    }
-    if let Some(filter) = agent.schedule.event_filter.as_deref() {
-        let lower = filter.to_ascii_lowercase();
-        if lower.contains("image") || lower.contains("frame") {
-            return true;
-        }
-    }
-    agent.resources.iter().any(|r| {
-        let id = r.resource_id.to_ascii_lowercase();
-        let name = r.name.to_ascii_lowercase();
-        id.contains("image")
-            || name.contains("image")
-            || id.contains("camera")
-            || name.contains("camera")
-    })
-}
-
-fn agent_backend_supports_vision(agent: &AiAgent) -> bool {
-    let Ok(manager) = get_instance_manager() else {
-        // Unknown — do not warn as if vision is missing.
-        return true;
-    };
-    let instance = match agent.llm_backend_id.as_deref() {
-        Some(id) if id != "default" => manager.get_instance(id),
-        _ => manager.get_active_instance(),
-    };
-    match instance {
-        Some(inst) => inst.capabilities.supports_multimodal,
-        None => true,
-    }
-}
-
-/// Compact effective-config summary for create/update success payloads.
-fn agent_effective_config_summary(agent: &AiAgent) -> Value {
-    let tool_summary = match &agent.tool_config {
-        Some(tc) if !tc.enabled => json!({"enabled": false, "allowed_tools": []}),
-        Some(tc) if !tc.allowed_tools.is_empty() => {
-            json!({"enabled": true, "allowed_tools": tc.allowed_tools})
-        }
-        _ => json!({"enabled": true, "allowed_tools": "all"}),
-    };
-    json!({
-        "execution_mode": execution_mode_to_string(&agent.execution_mode),
-        "schedule_type": schedule_type_to_string(&agent.schedule.schedule_type),
-        "resource_count": agent.resources.len(),
-        "tool_config": tool_summary,
-        "notify": agent.notify,
-    })
-}
-
-fn agent_mutation_response(agent: &AiAgent, include_name_status: bool) -> Value {
-    let warnings = collect_agent_config_warnings(agent);
-    let mut body = if include_name_status {
-        json!({
-            "id": agent.id,
-            "name": agent.name,
-            "status": "active",
-            "effective_config": agent_effective_config_summary(agent),
-        })
-    } else {
-        json!({
-            "id": agent.id,
-            "effective_config": agent_effective_config_summary(agent),
-        })
-    };
-    if !warnings.is_empty() {
-        body["warnings"] = json!(warnings);
-    }
-    body
-}
-
-/// Infer resource type from resource_id string.
-///
-/// This function uses DataSourceId parsing to determine the resource type
-/// in a type-safe manner, avoiding fragile string-based inference.
-///
-/// # Important Note on Ambiguity
-/// When resource_type is not explicitly specified, the following rules apply:
-/// - "extension:id:field" with field containing "." -> ExtensionMetric (nested data field)
-/// - "extension:id:field" without "." -> ExtensionMetric (simple metric, default)
-/// - "extension:id" -> ExtensionTool (extension reference without field)
-///
-/// Users SHOULD specify resource_type explicitly to avoid ambiguity.
-///
-/// # Returns
-/// Inferred ResourceType, or Device as default fallback
-fn infer_resource_type_from_id(resource_id: &str) -> ResourceType {
-    // Try parsing as standard DataSourceId (three-part format: type:id:field)
-    if let Some(ds_id) = DataSourceId::parse(resource_id) {
-        match ds_id.source_type {
-            neomind_core::datasource::DataSourceType::Device => ResourceType::Metric,
-            neomind_core::datasource::DataSourceType::Extension => {
-                // Extension with a field: "extension:id:field"
-                // Default to ExtensionMetric for data query compatibility
-                // Use ExtensionTool explicitly if you want command execution
-                ResourceType::ExtensionMetric
-            }
-            neomind_core::datasource::DataSourceType::Transform => ResourceType::DataStream,
-            // An agent's published field, bound as an input to another agent.
-            neomind_core::datasource::DataSourceType::Ai => ResourceType::Metric,
-        }
-    } else if let Some(_ds_id) = DataSourceId::parse_extension_command(resource_id) {
-        // Four-part format: extension:id:command:field
-        // Always ExtensionMetric for data queries
-        ResourceType::ExtensionMetric
-    } else if resource_id.starts_with("extension:") {
-        // Count parts to distinguish
-        let parts: Vec<&str> = resource_id.split(':').collect();
-        if parts.len() == 2 {
-            // "extension:id" -> ExtensionTool (extension reference, no field)
-            ResourceType::ExtensionTool
-        } else {
-            // "extension:id:..." with more parts -> default to ExtensionMetric
-            ResourceType::ExtensionMetric
-        }
-    } else {
-        // Default fallback for device-like resources
-        ResourceType::Device
-    }
-}
-
 // ============================================================================
 // DTOs for API requests/responses
 // ============================================================================
-
-/// AI Agent list item.
-#[derive(Debug, serde::Serialize)]
-struct AgentDto {
-    id: String,
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    /// The agent's instruction — the card's hero fallback before first run
-    user_prompt: String,
-    status: String,
-    created_at: String,
-    last_execution_at: Option<String>,
-    execution_count: u32,
-    success_count: u32,
-    error_count: u32,
-    avg_duration_ms: u64,
-    // Advanced configuration fields
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_chain_depth: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    priority: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    context_window_size: Option<usize>,
-    /// Execution mode: "focused" | "free" | "structured"
-    execution_mode: String,
-    /// Output contract field names (structured/contracted agents) — the card
-    /// role badge + latest-output row key off these.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    output_fields: Option<Vec<String>>,
-    /// Memory axis (None = mode-derived default: structured→tool, else→assistant)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    memory_mode: Option<neomind_storage::MemoryMode>,
-    /// Latest published field values (ai:{agent_id}:{field}), if any — read
-    /// best-effort from telemetry for the card's 最新产出 row.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    latest_output: Option<serde_json::Map<String, serde_json::Value>>,
-    /// The same readings with everything needed to check them: when each was
-    /// published, how sure the model was, and which run produced it.
-    ///
-    /// `latest_output` stays a bare value map because the card only shows the
-    /// reading; this exists for the detail view, which is where design 002
-    /// §4.2's "click a value and see what it read" belongs. Both are built from
-    /// one telemetry read.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    latest_output_state: Option<serde_json::Map<String, serde_json::Value>>,
-    /// Last error message when status is Error (additive, nullable).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error_message: Option<String>,
-    /// Bound LLM backend id when set (additive).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    llm_backend_id: Option<String>,
-    /// Schedule type string for list honesty (additive).
-    schedule_type: String,
-    /// Notify config when present (additive).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    notify: Option<neomind_storage::AgentNotify>,
-}
-
-/// One published field, as the detail view needs it.
-#[derive(Debug, serde::Serialize)]
-struct OutputFieldStateDto {
-    value: serde_json::Value,
-    /// Unix seconds — when this value was published. Freshness is the whole
-    /// question for a field nothing has refreshed since the input went away.
-    at: i64,
-    /// The model's confidence, absent when it reported none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    confidence: Option<f32>,
-    /// The run that produced it — the way back to its evidence.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    execution_id: Option<String>,
-}
-
-/// Lightweight agent summary for dropdowns/selectors.
-#[derive(Debug, serde::Serialize)]
-struct AgentSummaryDto {
-    id: String,
-    name: String,
-    status: String,
-}
-
-/// AI Agent detail.
-#[derive(Debug, serde::Serialize)]
-struct AgentDetailDto {
-    id: String,
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    description: Option<String>,
-    user_prompt: String,
-    status: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    parsed_intent: Option<ParsedIntentDto>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    memory: Option<AgentMemoryDto>,
-    resources: Vec<AgentResourceDto>,
-    schedule: AgentScheduleDto,
-    stats: AgentStatsDto,
-    created_at: String,
-    updated_at: String,
-    last_execution_at: Option<String>,
-    error_message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    llm_backend_id: Option<String>,
-    // Advanced configuration fields
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_chain_depth: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    priority: Option<u8>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    context_window_size: Option<usize>,
-    /// Execution mode: "focused" or "free"
-    execution_mode: String,
-    /// Custom system prompt override
-    #[serde(skip_serializing_if = "Option::is_none")]
-    system_prompt: Option<String>,
-    /// Tool scoping (None = all tools; allowed_tools empty = all tools)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_config: Option<neomind_storage::AgentToolConfig>,
-    /// Structured (L0) output contract — present only for structured agents
-    #[serde(skip_serializing_if = "Option::is_none")]
-    output_schema: Option<Vec<neomind_storage::OperatorField>>,
-    /// Structured (L0) runtime tuning — present only for structured agents
-    #[serde(skip_serializing_if = "Option::is_none")]
-    operator_config: Option<neomind_storage::OperatorConfig>,
-    /// Memory axis (None = mode-derived default)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    memory_mode: Option<neomind_storage::MemoryMode>,
-    /// Notification routing (None = legacy keyword behavior)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    notify: Option<neomind_storage::AgentNotify>,
-    /// Per-run LLM token budget (None = uncapped). Stop reason becomes
-    /// `token-budget` when exceeded.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_tokens_per_run: Option<u64>,
-}
-
-/// Agent resource for API responses.
-#[derive(Debug, serde::Serialize)]
-struct AgentResourceDto {
-    resource_type: String,
-    resource_id: String,
-    name: String,
-}
-
-/// Agent schedule for API responses.
-#[derive(Debug, serde::Serialize)]
-struct AgentScheduleDto {
-    schedule_type: String,
-    interval_seconds: Option<u64>,
-    cron_expression: Option<String>,
-    timezone: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    event_filter: Option<String>,
-}
-
-/// Parsed intent for API responses.
-#[derive(Debug, serde::Serialize)]
-struct ParsedIntentDto {
-    intent_type: String,
-    target_metrics: Vec<String>,
-    conditions: Vec<String>,
-    actions: Vec<String>,
-    confidence: f32,
-}
 
 /// Agent memory for API responses.
 #[derive(Debug, serde::Serialize)]
@@ -501,15 +94,6 @@ struct KnowledgeFileRefDto {
     content: Option<String>,
     created_at: String,
     updated_at: String,
-}
-
-/// Agent stats for API responses.
-#[derive(Debug, serde::Serialize)]
-struct AgentStatsDto {
-    total_executions: u32,
-    successful_executions: u32,
-    failed_executions: u32,
-    avg_duration_ms: u64,
 }
 
 /// Agent execution record for API responses.
@@ -646,75 +230,6 @@ struct AgentExecutionDetailDto {
     result: Option<ExecutionResultDto>,
 }
 
-/// Request body for creating a new AI Agent.
-#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
-pub struct CreateAgentRequest {
-    pub name: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    pub user_prompt: String,
-    /// Legacy device IDs (for backward compatibility)
-    #[serde(default)]
-    pub device_ids: Vec<String>,
-    /// Legacy metrics selection (for backward compatibility)
-    #[serde(default)]
-    pub metrics: Vec<MetricSelectionRequest>,
-    /// Legacy commands selection (for backward compatibility)
-    #[serde(default)]
-    pub commands: Vec<CommandSelectionRequest>,
-    /// New unified resources format (supports devices and extensions)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resources: Option<Vec<ResourceRequest>>,
-    pub schedule: AgentScheduleRequest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub llm_backend_id: Option<String>,
-    /// Maximum chain depth (default: 3)
-    #[serde(default)]
-    pub max_chain_depth: Option<usize>,
-    /// Agent priority (0-255, default: 128)
-    #[serde(default)]
-    pub priority: Option<u8>,
-    /// Context window size (default: 10)
-    #[serde(default)]
-    pub context_window_size: Option<usize>,
-    /// Execution mode: "focused", "free", or "structured" (L0 operator)
-    #[serde(default)]
-    pub execution_mode: Option<String>,
-    /// Custom system prompt override (replaces default IoT role prompt)
-    #[serde(default)]
-    pub system_prompt: Option<String>,
-    /// Structured (L0) output contract: fields published as ai:{id}:{field}
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_schema: Option<Vec<neomind_storage::OperatorField>>,
-    /// Structured (L0) runtime tuning (debounce/budget/breaker)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub operator_config: Option<neomind_storage::OperatorConfig>,
-    /// Memory axis: "tool" (stateless) | "assistant" (carries history narrative)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_mode: Option<neomind_storage::MemoryMode>,
-    /// Explicit notification routing (channels + when to notify)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notify: Option<neomind_storage::AgentNotify>,
-    /// Tool scoping: restrict which tools this agent may call. Omit (or set
-    /// `allowed_tools: []`) for all tools — the default. Scoping the tool set
-    /// per task is the highest-leverage fix for small-model tool selection.
-    #[serde(default)]
-    #[schema(value_type = Option<AgentToolConfigMirror>)]
-    pub tool_config: Option<neomind_storage::AgentToolConfig>,
-    /// Per-run LLM token budget (None = uncapped). When exceeded the run
-    /// stops with reason `token-budget` and synthesizes a conclusion.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens_per_run: Option<u64>,
-    /// Clean-slate ToolPolicy (additive; ignored by the v1 create path until
-    /// schema-v2 cutover). Accepted so CLI `--tool-policy` is not silently dropped.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_policy: Option<serde_json::Value>,
-    /// Clean-slate InputContract (additive; ignored by the v1 create path until
-    /// schema-v2 cutover). Accepted so CLI `--input-requirements` is not silently dropped.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input: Option<serde_json::Value>,
-}
-
 /// Resource request in the new unified format.
 #[derive(utoipa::ToSchema, Debug, serde::Deserialize, serde::Serialize)]
 pub struct ResourceRequest {
@@ -760,72 +275,6 @@ pub struct AgentScheduleRequest {
     pub timezone: Option<String>,
 }
 
-/// Request body for updating an agent.
-#[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
-pub struct UpdateAgentRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_prompt: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub llm_backend_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub schedule: Option<AgentScheduleRequest>,
-    // New format: resources array
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resources: Option<Vec<AgentResourceRequest>>,
-    // Old format: kept for backward compatibility
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub device_ids: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metrics: Option<Vec<MetricSelectionRequest>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub commands: Option<Vec<CommandSelectionRequest>>,
-    // Advanced options
-    #[serde(default)]
-    pub max_chain_depth: Option<usize>,
-    #[serde(default)]
-    pub priority: Option<u8>,
-    #[serde(default)]
-    pub context_window_size: Option<usize>,
-    /// Execution mode: "focused" for single-pass with bound resources, "free" for multi-round tool calling
-    #[serde(default)]
-    pub execution_mode: Option<String>,
-    /// Custom system prompt override (replaces default IoT role prompt)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    /// Structured (L0) output contract: fields published as ai:{id}:{field}
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_schema: Option<Vec<neomind_storage::OperatorField>>,
-    /// Structured (L0) runtime tuning (debounce/budget/breaker)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub operator_config: Option<neomind_storage::OperatorConfig>,
-    /// Memory axis override
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_mode: Option<neomind_storage::MemoryMode>,
-    /// Notification routing override
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notify: Option<neomind_storage::AgentNotify>,
-    /// Per-run LLM token budget override (None in the body = leave unchanged)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens_per_run: Option<u64>,
-    /// Tool scoping override. Send an object to set/replace it; omit to leave
-    /// unchanged. Set `allowed_tools: []` to mean "all tools".
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(value_type = Option<AgentToolConfigMirror>)]
-    pub tool_config: Option<neomind_storage::AgentToolConfig>,
-    /// Clean-slate ToolPolicy (additive; ignored by the v1 update path until cutover).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_policy: Option<serde_json::Value>,
-    /// Clean-slate InputContract (additive; ignored by the v1 update path until cutover).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub input: Option<serde_json::Value>,
-}
-
 /// Resource in update request (new format).
 #[derive(utoipa::ToSchema, Debug, serde::Deserialize)]
 pub struct AgentResourceRequest {
@@ -858,133 +307,6 @@ pub struct ExecuteAgentRequest {
 // ============================================================================
 // Conversion functions
 // ============================================================================
-
-impl From<AiAgent> for AgentDto {
-    fn from(agent: AiAgent) -> Self {
-        Self {
-            id: agent.id,
-            name: agent.name,
-            description: agent.description,
-            user_prompt: agent.user_prompt,
-            status: status_to_string(&agent.status).to_string(),
-            created_at: format_datetime(agent.created_at),
-            last_execution_at: agent.last_execution_at.map(format_datetime),
-            execution_count: agent.stats.total_executions as u32,
-            success_count: agent.stats.successful_executions as u32,
-            error_count: agent.stats.failed_executions as u32,
-            avg_duration_ms: agent.stats.avg_duration_ms,
-            // Advanced configuration
-            max_chain_depth: Some(agent.max_chain_depth),
-            priority: Some(agent.priority),
-            context_window_size: Some(agent.context_window_size),
-            execution_mode: execution_mode_to_string(&agent.execution_mode).to_string(),
-            output_fields: agent
-                .output_schema
-                .as_ref()
-                .map(|schema| schema.iter().map(|f| f.name.clone()).collect()),
-            memory_mode: agent.memory_mode.or_else(|| {
-                Some(neomind_storage::MemoryMode::derived_for(
-                    agent.execution_mode,
-                ))
-            }),
-            latest_output: None,
-            latest_output_state: None,
-            error_message: agent.error_message,
-            llm_backend_id: agent.llm_backend_id,
-            schedule_type: schedule_type_to_string(&agent.schedule.schedule_type).to_string(),
-            notify: agent.notify,
-        }
-    }
-}
-
-impl From<&AiAgent> for AgentDetailDto {
-    fn from(agent: &AiAgent) -> Self {
-        Self {
-            id: agent.id.clone(),
-            name: agent.name.clone(),
-            description: agent.description.clone(),
-            user_prompt: agent.user_prompt.clone(),
-            status: status_to_string(&agent.status).to_string(),
-            parsed_intent: agent.parsed_intent.as_ref().map(|i| ParsedIntentDto {
-                intent_type: format!("{:?}", i.intent_type),
-                target_metrics: i.target_metrics.clone(),
-                conditions: i.conditions.clone(),
-                actions: i.actions.clone(),
-                confidence: i.confidence,
-            }),
-            memory: Some(AgentMemoryDto {
-                journal: ExecutionJournalDto {
-                    records: agent
-                        .memory
-                        .journal
-                        .records
-                        .iter()
-                        .map(|r| ExecutionRecordDto {
-                            timestamp: format_datetime(r.timestamp),
-                            execution_id: r.execution_id.clone(),
-                            outcome: r.outcome.clone(),
-                            action_taken: r.action_taken.clone(),
-                            success: r.success,
-                        })
-                        .collect(),
-                    max_records: agent.memory.journal.max_records,
-                },
-                knowledge_files: agent
-                    .memory
-                    .knowledge_files
-                    .iter()
-                    .map(|f| KnowledgeFileRefDto {
-                        name: f.name.clone(),
-                        description: f.description.clone(),
-                        content: None,
-                        created_at: format_datetime(f.created_at),
-                        updated_at: format_datetime(f.updated_at),
-                    })
-                    .collect(),
-                updated_at: format_datetime(agent.memory.updated_at),
-            }),
-            resources: agent
-                .resources
-                .iter()
-                .map(|r| AgentResourceDto {
-                    resource_type: resource_type_to_string(&r.resource_type).to_string(),
-                    resource_id: r.resource_id.clone(),
-                    name: r.name.clone(),
-                })
-                .collect(),
-            schedule: AgentScheduleDto {
-                schedule_type: schedule_type_to_string(&agent.schedule.schedule_type).to_string(),
-                interval_seconds: agent.schedule.interval_seconds,
-                cron_expression: agent.schedule.cron_expression.clone(),
-                timezone: agent.schedule.timezone.clone(),
-                event_filter: agent.schedule.event_filter.clone(),
-            },
-            stats: AgentStatsDto {
-                total_executions: agent.stats.total_executions as u32,
-                successful_executions: agent.stats.successful_executions as u32,
-                failed_executions: agent.stats.failed_executions as u32,
-                avg_duration_ms: agent.stats.avg_duration_ms,
-            },
-            created_at: format_datetime(agent.created_at),
-            updated_at: format_datetime(agent.updated_at),
-            last_execution_at: agent.last_execution_at.map(format_datetime),
-            error_message: agent.error_message.clone(),
-            llm_backend_id: agent.llm_backend_id.clone(),
-            // Advanced configuration
-            max_chain_depth: Some(agent.max_chain_depth),
-            priority: Some(agent.priority),
-            context_window_size: Some(agent.context_window_size),
-            execution_mode: execution_mode_to_string(&agent.execution_mode).to_string(),
-            system_prompt: agent.system_prompt.clone(),
-            tool_config: agent.tool_config.clone(),
-            output_schema: agent.output_schema.clone(),
-            operator_config: agent.operator_config.clone(),
-            memory_mode: agent.memory_mode,
-            notify: agent.notify.clone(),
-            max_tokens_per_run: agent.max_tokens_per_run,
-        }
-    }
-}
 
 /// Lightweight input summary for API responses: what a run was given.
 #[derive(Debug, serde::Serialize)]
@@ -1156,76 +478,110 @@ pub async fn list_agents(
     State(state): State<ServerState>,
     Query(query): Query<ListAgentsQuery>,
 ) -> HandlerResult<Value> {
-    let store = &state.agents.agent_store;
-    let agents = store
-        .query_agents(AgentFilter::default())
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to query agents: {}", e)))?;
+    let rt = state.require_clean_slate().await?;
+    let rows = rt.list();
 
     if query.view.as_deref() == Some("summary") {
-        let summaries: Vec<AgentSummaryDto> = agents
+        let summaries: Vec<Value> = rows
             .into_iter()
-            .map(|a| AgentSummaryDto {
-                id: a.id,
-                name: a.name,
-                status: status_to_string(&a.status).to_string(),
+            .map(|(agent, _plan)| {
+                let status = rt
+                    .runtime_status(&agent.id)
+                    .map(|s| format!("{s:?}"))
+                    .unwrap_or_else(|| "Active".into());
+                json!({
+                    "id": agent.id,
+                    "name": agent.name,
+                    "status": status,
+                })
             })
             .collect();
-
-        ok(json!({
+        let count = summaries.len();
+        return ok(json!({
+            "schema": "agent-contract/v2",
             "agents": summaries,
-            "count": summaries.len(),
-        }))
-    } else {
-        let mut dtos: Vec<AgentDto> = agents.into_iter().map(AgentDto::from).collect();
-        // Latest published output per agent (ai:{id}:{field}) — best-effort,
-        // batched per agent; contract-less agents just omit the row.
-        for dto in &mut dtos {
-            let Some(fields) = &dto.output_fields else {
-                continue;
-            };
-            let ns = format!("ai:{}", dto.id);
-            let field_refs: Vec<&str> = fields.iter().map(String::as_str).collect();
-            if let Ok(points) = state.devices.telemetry.latest_batch(&ns, &field_refs).await {
-                let mut values = serde_json::Map::new();
-                let mut states = serde_json::Map::new();
-                for (metric, point) in points {
-                    // `to_json_value`, not `serde_json::to_value`: the enum's
-                    // derived form is `{"Integer": 2}`, which the card renders
-                    // as "[object Object]".
-                    let value = point.value.to_json_value();
-                    // The pointer the executor stamps on every published field.
-                    let execution_id = point
-                        .metadata
-                        .as_ref()
-                        .and_then(|m| m.get(neomind_ai_agent::EXECUTION_ID_KEY))
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string);
-                    let state = OutputFieldStateDto {
-                        value: value.clone(),
-                        at: point.timestamp,
-                        confidence: point.quality,
-                        execution_id,
-                    };
-                    states.insert(
-                        metric.clone(),
-                        // A plain struct of string keys — this cannot fail.
-                        serde_json::to_value(&state).unwrap_or(serde_json::Value::Null),
-                    );
-                    values.insert(metric, value);
-                }
-                if !values.is_empty() {
-                    dto.latest_output = Some(values);
-                    dto.latest_output_state = Some(states);
-                }
-            }
-        }
-
-        ok(json!({
-            "agents": dtos,
-            "count": dtos.len(),
-        }))
+            "count": count,
+        }));
     }
+
+    let agents: Vec<Value> = rows
+        .into_iter()
+        .map(|(agent, effective_plan)| {
+            let status = rt
+                .runtime_status(&agent.id)
+                .map(|s| format!("{s:?}"))
+                .unwrap_or_else(|| "Active".into());
+            let stats = rt.runtime_stats_json(&agent.id);
+            let mut row = serde_json::to_value(&agent).unwrap_or_else(|_| json!({}));
+            if let Some(obj) = row.as_object_mut() {
+                obj.insert("status".into(), json!(status));
+                obj.insert("stats".into(), stats);
+                obj.insert(
+                    "effective_plan".into(),
+                    serde_json::to_value(&effective_plan).unwrap_or(json!({})),
+                );
+                obj.insert("schema".into(), json!("agent-contract/v2"));
+                // Chat card aliases derived from AgentSpec (no AiAgent map).
+                let output_fields: Vec<String> =
+                    agent.output.fields.iter().map(|f| f.name.clone()).collect();
+                obj.insert("output_fields".into(), json!(output_fields));
+                let execution_mode = if agent.output.publish {
+                    "structured"
+                } else if matches!(
+                    agent.tool_policy,
+                    neomind_ai_agent::model::ToolPolicy::Unrestricted
+                ) {
+                    "free"
+                } else {
+                    "focused"
+                };
+                obj.insert("execution_mode".into(), json!(execution_mode));
+                // Chat/list card aliases (ISO-ish seconds stay as numbers; UI tolerates both).
+                obj.insert(
+                    "execution_count".into(),
+                    obj.get("stats")
+                        .and_then(|s| s.get("total_runs"))
+                        .cloned()
+                        .unwrap_or(json!(0)),
+                );
+                obj.insert(
+                    "success_count".into(),
+                    obj.get("stats")
+                        .and_then(|s| s.get("successful_runs"))
+                        .cloned()
+                        .unwrap_or(json!(0)),
+                );
+                obj.insert(
+                    "error_count".into(),
+                    obj.get("stats")
+                        .and_then(|s| s.get("failed_runs"))
+                        .cloned()
+                        .unwrap_or(json!(0)),
+                );
+                obj.insert(
+                    "last_execution_at".into(),
+                    obj.get("stats")
+                        .and_then(|s| s.get("last_execution_at"))
+                        .cloned()
+                        .unwrap_or(json!(null)),
+                );
+                obj.insert(
+                    "error".into(),
+                    obj.get("stats")
+                        .and_then(|s| s.get("error_message"))
+                        .cloned()
+                        .unwrap_or(json!(null)),
+                );
+            }
+            row
+        })
+        .collect();
+    let count = agents.len();
+    ok(json!({
+        "schema": "agent-contract/v2",
+        "agents": agents,
+        "count": count,
+    }))
 }
 
 /// Get an AI Agent by ID.
@@ -1245,16 +601,65 @@ pub async fn get_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agents.agent_store;
-    let agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
-    let dto = AgentDetailDto::from(&agent);
-
-    ok(json!(dto))
+    let rt = state.require_clean_slate().await?;
+    rt.ensure_loaded(&id)
+        .map_err(|e| ErrorResponse::not_found(format!("Agent not found: {id} ({e})")))?;
+    let (agent, effective_plan) = rt
+        .get(&id)
+        .map_err(|e| ErrorResponse::not_found(format!("Agent not found: {id} ({e})")))?;
+    let status = rt
+        .runtime_status(&id)
+        .map(|s| format!("{s:?}"))
+        .unwrap_or_else(|| "Active".into());
+    let stats = rt.runtime_stats_json(&id);
+    let mut row = serde_json::to_value(&agent).unwrap_or_else(|_| json!({}));
+    if let Some(obj) = row.as_object_mut() {
+        obj.insert("status".into(), json!(status));
+        obj.insert("stats".into(), stats.clone());
+        obj.insert(
+            "effective_plan".into(),
+            serde_json::to_value(&effective_plan).unwrap_or(json!({})),
+        );
+        obj.insert("schema".into(), json!("agent-contract/v2"));
+        let output_fields: Vec<String> =
+            agent.output.fields.iter().map(|f| f.name.clone()).collect();
+        obj.insert("output_fields".into(), json!(output_fields));
+        let execution_mode = if agent.output.publish {
+            "structured"
+        } else if matches!(
+            agent.tool_policy,
+            neomind_ai_agent::model::ToolPolicy::Unrestricted
+        ) {
+            "free"
+        } else {
+            "focused"
+        };
+        obj.insert("execution_mode".into(), json!(execution_mode));
+        obj.insert(
+            "execution_count".into(),
+            stats.get("total_runs").cloned().unwrap_or(json!(0)),
+        );
+        obj.insert(
+            "success_count".into(),
+            stats.get("successful_runs").cloned().unwrap_or(json!(0)),
+        );
+        obj.insert(
+            "error_count".into(),
+            stats.get("failed_runs").cloned().unwrap_or(json!(0)),
+        );
+        obj.insert(
+            "last_execution_at".into(),
+            stats
+                .get("last_execution_at")
+                .cloned()
+                .unwrap_or(json!(null)),
+        );
+        obj.insert(
+            "error".into(),
+            stats.get("error_message").cloned().unwrap_or(json!(null)),
+        );
+    }
+    ok(row)
 }
 
 /// The notification target a new agent gets when the caller names none.
@@ -1271,492 +676,20 @@ pub async fn get_agent(
     post,
     path = "/api/agents",
     tag = "agents",
-    request_body = CreateAgentRequest,
+    request_body = Value,
     responses(
         (status = 200, description = "Agent created"),
     )
 )]
 pub async fn create_agent(
-    State(state): State<ServerState>,
-    Json(request): Json<CreateAgentRequest>,
+    State(_state): State<ServerState>,
+    Json(_request): Json<Value>,
 ) -> HandlerResult<Value> {
-    use crate::validator::{
-        validate_required_string, validate_string_length, validate_usize_range,
-    };
-
-    // Validate required fields
-    validate_required_string(&request.name, "name")?;
-    validate_string_length(&request.name, "name", 1, 100)?;
-    validate_required_string(&request.user_prompt, "user_prompt")?;
-    validate_string_length(&request.user_prompt, "user_prompt", 1, 10000)?;
-
-    // Validate description if provided
-    if let Some(ref desc) = request.description {
-        validate_string_length(desc, "description", 0, 500)?;
-    }
-
-    // Validate system_prompt if provided
-    if let Some(ref sp) = request.system_prompt {
-        validate_string_length(sp, "system_prompt", 1, 4000)?;
-    }
-
-    // Validate max_chain_depth (executor clamps to [1,30]; reject values that
-    // would silently disable tool chaining (0) or get silently clamped (>30))
-    if let Some(depth) = request.max_chain_depth {
-        validate_usize_range(depth, "max_chain_depth", 1, 30)?;
-    }
-    // Validate context_window_size (executor clamps scale to [0.5,5.0] which
-    // corresponds to [5,50]; allow up to 100 for forward-compat with larger
-    // context models, reject 0 which would zero out history budget)
-    if let Some(cw) = request.context_window_size {
-        validate_usize_range(cw, "context_window_size", 1, 100)?;
-    }
-
-    // Validate schedule type. "manual" is first-class (manual-only, never
-    // auto-scheduled) — the editor's on-demand strategy compiles to it.
-    if !["interval", "cron", "event", "manual"].contains(&request.schedule.schedule_type.as_str()) {
-        return Err(ErrorResponse::bad_request(format!(
-            "Invalid schedule type: {} (must be 'interval', 'cron', 'event', or 'manual')",
-            request.schedule.schedule_type
-        )));
-    }
-
-    // Validate cron expression when schedule type is cron
-    if request.schedule.schedule_type == "cron" {
-        match &request.schedule.cron_expression {
-            None => {
-                return Err(ErrorResponse::validation(
-                    "cron_expression is required when schedule_type is 'cron'",
-                ));
-            }
-            Some(expr) => {
-                if let Err(e) = neomind_core::cron::normalize(expr).parse::<cron::Schedule>() {
-                    return Err(ErrorResponse::bad_request(format!(
-                        "Invalid cron expression '{}': {}",
-                        expr, e
-                    )));
-                }
-            }
-        }
-    }
-
-    // Validate interval_seconds when schedule type is interval
-    if request.schedule.schedule_type == "interval" {
-        match request.schedule.interval_seconds {
-            // Some(0) is the legacy on-demand encoding: a manual-only agent that
-            // never auto-schedules (the scheduler maps it to a never-due
-            // next_execution). Previously rejected here, which made the
-            // frontend's "on-demand" option fail with 400 on create while
-            // the read path still interpreted stored 0 as on-demand.
-            Some(0) => {}
-            None => {
-                return Err(ErrorResponse::validation(
-                    "interval_seconds is required when schedule_type is 'interval'",
-                ).with_hint(
-                    "CLI: --schedule-type interval --schedule-config <SECONDS>, e.g. --schedule-config 300 for a 5-minute interval. A non-numeric --schedule-config is silently dropped by older CLI builds — pass a plain number.",
-                ));
-            }
-            Some(secs) if secs < 10 => {
-                return Err(ErrorResponse::validation(
-                    "interval_seconds must be at least 10 seconds",
-                )
-                .with_hint("Pass --schedule-config 10 or higher (seconds)."));
-            }
-            _ => {}
-        }
-    }
-
-    // Validate llm_backend_id if explicitly provided (non-default)
-    if let Some(ref backend_id) = request.llm_backend_id {
-        if backend_id != "default" && !backend_id.is_empty() {
-            let manager = get_instance_manager().map_err(|e| {
-                ErrorResponse::internal(format!("Failed to get LLM backend manager: {}", e))
-            })?;
-            if manager.get_instance(backend_id).is_none() {
-                return Err(ErrorResponse::bad_request(format!(
-                    "LLM backend '{}' not found",
-                    backend_id
-                )));
-            }
-        }
-    }
-
-    // Convert request to storage types
-    let schedule_type = match request.schedule.schedule_type.as_str() {
-        "interval" => ScheduleType::Interval,
-        "cron" => ScheduleType::Cron,
-        "event" => ScheduleType::Event,
-        "manual" => ScheduleType::Manual,
-        _ => {
-            return Err(ErrorResponse::bad_request(format!(
-                "Invalid schedule type: {}",
-                request.schedule.schedule_type
-            )));
-        }
-    };
-
-    let schedule = AgentSchedule {
-        schedule_type,
-        interval_seconds: request.schedule.interval_seconds,
-        cron_expression: request.schedule.cron_expression,
-        event_filter: request.schedule.event_filter,
-        timezone: request.schedule.timezone,
-    };
-
-    // Build resources
-    let mut resources = Vec::new();
-    use neomind_storage::{AgentResource, ResourceType};
-
-    // Handle new resources format (preferred)
-    if let Some(ref req_resources) = request.resources {
-        // New format provided - use it exclusively (ignore legacy format to avoid duplicates)
-        for req_resource in req_resources {
-            let resource_type = match req_resource.resource_type.as_str() {
-                "device" | "Device" => ResourceType::Device,
-                "metric" | "Metric" => ResourceType::Metric,
-                "command" | "Command" => ResourceType::Command,
-                "extension_metric" | "ExtensionMetric" => ResourceType::ExtensionMetric,
-                "extension_tool" | "ExtensionTool" => ResourceType::ExtensionTool,
-                "data_stream" | "DataStream" => ResourceType::DataStream,
-                _ => {
-                    // Use type-safe inference based on DataSourceId parsing
-                    infer_resource_type_from_id(&req_resource.resource_id)
-                }
-            };
-
-            resources.push(AgentResource {
-                resource_type,
-                resource_id: req_resource.resource_id.clone(),
-                name: req_resource.name.clone(),
-                config: req_resource.config.clone().unwrap_or_default(),
-            });
-        }
-    } else {
-        // No new format - handle legacy format for backward compatibility
-        for device_id in &request.device_ids {
-            resources.push(AgentResource {
-                resource_type: ResourceType::Device,
-                resource_id: device_id.clone(),
-                name: device_id.clone(),
-                config: json!({}),
-            });
-        }
-
-        for metric in &request.metrics {
-            // Build config, merging data_collection settings if provided
-            let mut config_json = json!({
-                "device_id": metric.device_id,
-                "metric_name": metric.metric_name,
-            });
-
-            // Merge data_collection config if provided
-            if let Some(ref metric_config) = metric.config {
-                if let Some(data_collection) = metric_config.get("data_collection") {
-                    config_json["data_collection"] = data_collection.clone();
-                }
-            }
-
-            resources.push(AgentResource {
-                resource_type: ResourceType::Metric,
-                resource_id: format!("{}:{}", metric.device_id, metric.metric_name),
-                name: metric.display_name.clone(),
-                config: config_json,
-            });
-        }
-
-        for command in &request.commands {
-            resources.push(AgentResource {
-                resource_type: ResourceType::Command,
-                resource_id: format!("{}:{}", command.device_id, command.command_name),
-                name: command.display_name.clone(),
-                config: json!({
-                    "device_id": command.device_id,
-                    "command_name": command.command_name,
-                    "parameters": command.parameters,
-                }),
-            });
-        }
-    }
-
-    // Map the editor's mode string. A `focused` agent may bind no resources:
-    // "focused" now means "no commands and no output contract" — the plainest
-    // agent there is — so requiring a binding here rejected the form's most
-    // basic path.
-    let execution_mode = match request.execution_mode.as_deref() {
-        Some("free") | Some("react") => neomind_storage::agents::ExecutionMode::Free,
-        Some("structured") => neomind_storage::agents::ExecutionMode::Structured,
-        _ => neomind_storage::agents::ExecutionMode::Focused,
-    };
-
-    // Create the agent
-    let agent = AiAgent {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: request.name.clone(),
-        description: request.description.clone(),
-        // Deprecated dead field — always false (see AiAgent docs).
-        enable_tool_chaining: false,
-        user_prompt: request.user_prompt,
-        llm_backend_id: {
-            // Auto-lock to the current active backend so the agent
-            // won't be affected by future chat model switches.
-            // Each agent keeps its own independent LLM backend.
-            match request.llm_backend_id.as_deref() {
-                None | Some("default") => get_instance_manager()
-                    .ok()
-                    .and_then(|m| m.get_active_instance())
-                    .map(|inst| inst.id),
-                Some(id) => Some(id.to_string()),
-            }
-        },
-        parsed_intent: None,
-        resources,
-        schedule,
-        status: AgentStatus::Active,
-        priority: request.priority.unwrap_or(128), // Default middle priority (0-255 range)
-        created_at: chrono::Utc::now().timestamp(),
-        updated_at: chrono::Utc::now().timestamp(),
-        last_execution_at: None,
-        stats: AgentStats::default(),
-        memory: AgentMemory::default(),
-        error_message: None,
-        system_prompt: request.system_prompt,
-        max_retries: 0,
-        consecutive_failures: 0,
-        output_schema: request.output_schema,
-        operator_config: request.operator_config,
-        memory_mode: request.memory_mode,
-        notify: Some(
-            request
-                .notify
-                .unwrap_or_else(crate::agent_defaults::default_agent_notify),
-        ),
-        conversation_history: Default::default(),
-        user_messages: Default::default(),
-        conversation_summary: Default::default(),
-        context_window_size: request.context_window_size.unwrap_or(10),
-        max_chain_depth: request
-            .max_chain_depth
-            .unwrap_or(neomind_storage::DEFAULT_MAX_CHAIN_DEPTH),
-        tool_config: request.tool_config,
-        execution_mode,
-        max_tokens_per_run: request.max_tokens_per_run,
-    };
-
-    if let Some(msg) = judgment_tool_config_conflict(&agent) {
-        return Err(ErrorResponse::bad_request(msg));
-    }
-
-    // Save to storage
-    let store = &state.agents.agent_store;
-    store
-        .save_agent(&agent)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to save agent: {}", e)))?;
-
-    // Initialize knowledge file at creation time (not first execution)
-    // This gives the agent immediate context for its first run.
-    // Stateless (Tool-memory) agents skip it: their inference path never
-    // loads knowledge files (MemoryMode::Tool = no history in the prompt),
-    // so the file would be dead weight the detail panel shows as "unused".
-    let stateless = agent.effective_memory_mode() == neomind_storage::MemoryMode::Tool;
-    if !stateless {
-        init_agent_knowledge_file(&state, &agent).await;
-    }
-
-    // Hot-set the clean-slate runtime so Cron/Interval/Event ticks see it.
-    if let Ok(rt) = state.require_clean_slate().await {
-        if let Err(e) = rt.ingest_v1_agent(&agent) {
-            tracing::warn!(
-                agent_id = %agent.id,
-                error = %e,
-                "Failed to ingest agent into clean-slate runtime after create"
-            );
-        }
-    }
-
-    tracing::info!(
-        "Created AI Agent: {} ({}) llm_backend_id={}",
-        agent.name,
-        agent.id,
-        agent.llm_backend_id.as_deref().unwrap_or("default")
-    );
-
-    ok(agent_mutation_response(&agent, true))
-}
-
-/// Initialize the agent's knowledge file at creation time.
-/// Creates `task-understanding.md` with the system prompt, task description, and bound resources.
-async fn init_agent_knowledge_file(state: &crate::server::ServerState, agent: &AiAgent) {
-    use neomind_storage::KnowledgeFileRef;
-
-    let memory_store = &state.agents.system_memory_store;
-    let now = chrono::Utc::now().timestamp();
-
-    // Build resources summary
-    let resources_summary = if agent.resources.is_empty() {
-        "None (free mode)".to_string()
-    } else {
-        agent
-            .resources
-            .iter()
-            .map(|r| format!("- {} ({})", r.name, r.resource_id))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-
-    // Build the system prompt section (identity + role)
-    let default_identity = format!(
-        "You are an intelligent IoT agent named '{}' monitoring edge devices.",
-        agent.name
-    );
-    let identity_section = agent.system_prompt.as_deref().unwrap_or(&default_identity);
-
-    // Schedule info
-    let schedule_info = match &agent.schedule.schedule_type {
-        ScheduleType::Interval => format!(
-            "Interval: every {}s",
-            agent.schedule.interval_seconds.unwrap_or(300)
-        ),
-        ScheduleType::Cron => format!(
-            "Cron: {}",
-            agent.schedule.cron_expression.as_deref().unwrap_or("?")
-        ),
-        ScheduleType::Event => "Event-driven".to_string(),
-        ScheduleType::Manual => "Manual task (runs on invoke/delegation, repeatable)".to_string(),
-    };
-
-    let content = format!(
-        "# Task Understanding\n\
-         \n\
-         ## Identity & Role\n\
-         {}\n\
-         \n\
-         ## Mission\n\
-         {}\n\
-         \n\
-         ## Bound Resources\n\
-         {}\n\
-         \n\
-         ## Schedule\n\
-         {}\n\
-         \n\
-         ## Status\n\
-         - Execution mode: {:?}\n\
-         - Created: {}\n\
-         \n\
-         ## Memory Commands\n\
-         - Read this file: `memory(action='read', target='custom:task-understanding')`\n\
-         - Record new findings in their own file: `memory(action='create', target='custom:{{name}}', content='...')`\n\
-         \n\
-         ## Notes\n\
-         This file was auto-created when the agent was created.\n\
-         The `## Mission` section mirrors the agent's task prompt and is kept in sync with it automatically — never rewrite it.\n\
-         Record what you learn about the environment in separate knowledge files.",
-        identity_section,
-        agent.user_prompt,
-        resources_summary,
-        schedule_info,
-        agent.execution_mode,
-        chrono::DateTime::from_timestamp(now, 0)
-            .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
-            .unwrap_or_else(|| "unknown".to_string()),
-    );
-
-    // Write the knowledge file
-    if let Err(e) = memory_store
-        .write_agent_custom_file(&agent.id, "task-understanding", &content)
-        .await
-    {
-        tracing::warn!(
-            agent_id = %agent.id,
-            "Failed to init knowledge file at creation: {}", e
-        );
-        return;
-    }
-
-    // Register in agent's memory knowledge_files index
-    let mut updated_memory = agent.memory.clone();
-    updated_memory.knowledge_files.push(KnowledgeFileRef {
-        name: "task-understanding".to_string(),
-        description: format!(
-            "Task context: {}",
-            agent.user_prompt.chars().take(80).collect::<String>()
-        ),
-        created_at: now,
-        updated_at: now,
-    });
-
-    // Save updated memory back to storage (await to avoid TOCTOU with early executions)
-    if let Err(e) = state
-        .agents
-        .agent_store
-        .update_agent_memory(&agent.id, updated_memory)
-        .await
-    {
-        tracing::warn!(
-            agent_id = %agent.id,
-            "Failed to save knowledge file index: {}", e
-        );
-    }
-
-    tracing::info!(
-        agent_id = %agent.id,
-        "Initialized knowledge file at agent creation"
-    );
-}
-
-/// Re-point the `## Mission` section of `custom:task-understanding` at the
-/// agent's edited task prompt.
-///
-/// `prompt_before` is what the section was mirroring: where it still starts
-/// with that text, exactly that text is replaced and everything after it —
-/// a section the operator filed in between, notes under the mission — stays.
-/// The operator edits this file too, so a section that no longer starts
-/// with the previous prompt is left alone: what is under the heading may be
-/// theirs, and runs show the task prompt in its place either way.
-async fn sync_task_understanding_mission(
-    state: &crate::server::ServerState,
-    agent: &AiAgent,
-    prompt_before: &str,
-) {
-    use neomind_storage::{task_understanding_repair, TASK_UNDERSTANDING_FILE};
-
-    let memory_store = &state.agents.system_memory_store;
-    let content = match memory_store.read_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE) {
-        Ok(content) => content,
-        Err(e) => {
-            tracing::warn!(
-                agent_id = %agent.id,
-                "Failed to read task-understanding after a prompt edit: {}", e
-            );
-            return;
-        }
-    };
-    let repair = task_understanding_repair(&content, &agent.user_prompt, Some(prompt_before));
-    if repair.content == content {
-        return;
-    }
-    if !repair.store {
-        tracing::warn!(
-            agent_id = %agent.id,
-            "Task-understanding no longer carries the previous task prompt — file left untouched; runs show the task prompt in the Mission's place"
-        );
-        return;
-    }
-    if let Err(e) = memory_store
-        .write_agent_custom_file(&agent.id, TASK_UNDERSTANDING_FILE, &repair.content)
-        .await
-    {
-        tracing::warn!(
-            agent_id = %agent.id,
-            "Failed to re-sync task-understanding after a prompt edit: {}", e
-        );
-        return;
-    }
-    tracing::info!(
-        agent_id = %agent.id,
-        "Task-understanding Mission re-synced to the edited task prompt"
-    );
+    // Production create is V2-only. Chat/`neomind agent create` compiles flags
+    // into AgentSpecDraft → POST /agents/v2 (see cli-ops create_agent).
+    Err(ErrorResponse::bad_request(
+        "Legacy POST /api/agents is disabled: create with POST /api/agents/v2 or `neomind agent create` / `create-v2` (AgentSpecDraft).",
+    ))
 }
 
 /// Update an AI Agent.
@@ -1767,367 +700,22 @@ async fn sync_task_understanding_mission(
     params(
         ("id" = String, Path, description = "Agent id"),
     ),
-    request_body = UpdateAgentRequest,
+    request_body = Value,
     responses(
         (status = 200, description = "Agent updated"),
         (status = 404, description = "Not found"),
     )
 )]
 pub async fn update_agent(
-    State(state): State<ServerState>,
-    Path(id): Path<String>,
-    Json(request): Json<UpdateAgentRequest>,
+    State(_state): State<ServerState>,
+    Path(_id): Path<String>,
+    Json(_request): Json<Value>,
 ) -> HandlerResult<Value> {
-    use crate::validator::{validate_required_string, validate_string_length};
-
-    // Validate fields if provided
-    if let Some(ref name) = request.name {
-        validate_required_string(name, "name")?;
-        validate_string_length(name, "name", 1, 100)?;
-    }
-    if let Some(ref desc) = request.description {
-        validate_string_length(desc, "description", 0, 500)?;
-    }
-    if let Some(ref prompt) = request.user_prompt {
-        validate_required_string(prompt, "user_prompt")?;
-        validate_string_length(prompt, "user_prompt", 1, 10000)?;
-    }
-    if let Some(ref sp) = request.system_prompt {
-        validate_string_length(sp, "system_prompt", 1, 4000)?;
-    }
-
-    let store = &state.agents.agent_store;
-
-    // Get existing agent
-    let mut agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
-    // Update basic fields
-    if let Some(name) = request.name {
-        agent.name = name;
-    }
-    if let Some(description) = request.description {
-        agent.description = Some(description);
-    }
-    let prompt_before = agent.user_prompt.clone();
-    if let Some(prompt) = request.user_prompt {
-        agent.user_prompt = prompt;
-    }
-    // The task definition lives twice: `user_prompt`, and the `## Mission`
-    // section of `custom:task-understanding` — a verbatim copy that every
-    // run inlines. A prompt edit that skips the copy keeps feeding the model
-    // the OLD mission (T4: "用 vision 工具" outlived its prompt edit by two
-    // days). Refresh the index entry with this save; the file itself is
-    // re-pointed right after.
-    let prompt_changed = agent.user_prompt != prompt_before;
-    if prompt_changed {
-        // The parsed intent is derived from the prompt once and then cached.
-        // A stale one still evaluates its old conditions into `condition_met`
-        // decisions — which run the agent's bound commands — so drop it and
-        // let the next execution re-parse.
-        agent.parsed_intent = None;
-
-        let now = chrono::Utc::now().timestamp();
-        for file in agent
-            .memory
-            .knowledge_files
-            .iter_mut()
-            .filter(|f| f.name == neomind_storage::TASK_UNDERSTANDING_FILE)
-        {
-            file.description = format!(
-                "Task context: {}",
-                agent.user_prompt.chars().take(80).collect::<String>()
-            );
-            file.updated_at = now;
-        }
-    }
-    if let Some(backend_id) = request.llm_backend_id.clone() {
-        // Handle "default" by locking to the current active backend
-        agent.llm_backend_id = match backend_id.as_str() {
-            "default" => get_instance_manager()
-                .ok()
-                .and_then(|m| m.get_active_instance())
-                .map(|inst| inst.id),
-            id => {
-                // Validate that the backend exists
-                let manager = get_instance_manager().map_err(|e| {
-                    ErrorResponse::internal(format!("Failed to get LLM backend manager: {}", e))
-                })?;
-                if manager.get_instance(id).is_none() {
-                    return Err(ErrorResponse::bad_request(format!(
-                        "LLM backend '{}' not found",
-                        id
-                    )));
-                }
-                Some(backend_id)
-            }
-        };
-    }
-    // system_prompt update: non-empty string sets it, empty/null clears it
-    if let Some(system_prompt) = request.system_prompt {
-        agent.system_prompt = Some(system_prompt);
-    }
-    // Tool scoping override: Some replaces; omit leaves unchanged. Send
-    // `{allowed_tools: []}` to clear scoping (meaning "all tools").
-    if let Some(tool_config) = request.tool_config {
-        agent.tool_config = Some(tool_config);
-    }
-    // Structured (L0) contract: Some replaces; omit leaves unchanged.
-    if let Some(output_schema) = request.output_schema {
-        agent.output_schema = Some(output_schema);
-    }
-    if let Some(operator_config) = request.operator_config {
-        agent.operator_config = Some(operator_config);
-    }
-    if let Some(memory_mode) = request.memory_mode {
-        agent.memory_mode = Some(memory_mode);
-    }
-    if let Some(notify) = request.notify {
-        agent.notify = Some(notify);
-    }
-    // Token budget: Some replaces; omit leaves unchanged.
-    if let Some(max_tokens_per_run) = request.max_tokens_per_run {
-        agent.max_tokens_per_run = Some(max_tokens_per_run);
-    }
-    if let Some(status_str) = request.status {
-        agent.status = match status_str.as_str() {
-            "active" => AgentStatus::Active,
-            "paused" => AgentStatus::Paused,
-            "error" => AgentStatus::Error,
-            _ => {
-                return Err(ErrorResponse::bad_request(format!(
-                    "Invalid status: {}",
-                    status_str
-                )));
-            }
-        };
-    }
-
-    // Check if we need to update resources
-    let has_schedule_update = request.schedule.is_some();
-    let has_resources_update = request.resources.is_some();
-    let has_old_format =
-        request.device_ids.is_some() || request.metrics.is_some() || request.commands.is_some();
-
-    // Update schedule if provided
-    if let Some(schedule) = request.schedule {
-        let schedule_type = match schedule.schedule_type.as_str() {
-            "interval" => neomind_storage::ScheduleType::Interval,
-            "cron" => neomind_storage::ScheduleType::Cron,
-            "event" => neomind_storage::ScheduleType::Event,
-            "manual" => neomind_storage::ScheduleType::Manual,
-            _ => {
-                return Err(ErrorResponse::bad_request(format!(
-                    "Invalid schedule_type: {}",
-                    schedule.schedule_type
-                )));
-            }
-        };
-
-        // Validate cron expression when schedule type is cron
-        if schedule.schedule_type == "cron" {
-            match &schedule.cron_expression {
-                None => {
-                    return Err(ErrorResponse::validation(
-                        "cron_expression is required when schedule_type is 'cron'",
-                    ));
-                }
-                Some(expr) => {
-                    if let Err(e) = neomind_core::cron::normalize(expr).parse::<cron::Schedule>() {
-                        return Err(ErrorResponse::bad_request(format!(
-                            "Invalid cron expression '{}': {}",
-                            expr, e
-                        )));
-                    }
-                }
-            }
-        }
-
-        // Validate interval_seconds when schedule type is interval
-        if schedule.schedule_type == "interval" {
-            match schedule.interval_seconds {
-                None | Some(0) => {
-                    return Err(ErrorResponse::validation(
-                        "interval_seconds must be > 0 when schedule_type is 'interval'",
-                    ));
-                }
-                Some(secs) if secs < 10 => {
-                    return Err(ErrorResponse::validation(
-                        "interval_seconds must be at least 10 seconds",
-                    ));
-                }
-                _ => {}
-            }
-        }
-
-        agent.schedule = neomind_storage::AgentSchedule {
-            schedule_type,
-            interval_seconds: schedule.interval_seconds,
-            cron_expression: schedule.cron_expression,
-            event_filter: schedule.event_filter,
-            timezone: schedule.timezone,
-        };
-    }
-
-    // Update resources if provided
-    let mut resources = Vec::new();
-    use neomind_storage::{AgentResource, ResourceType};
-
-    // Handle new resources format
-    if let Some(ref req_resources) = request.resources {
-        for req_resource in req_resources {
-            let resource_type = match req_resource.resource_type.as_str() {
-                "device" | "Device" => ResourceType::Device,
-                "metric" | "Metric" => ResourceType::Metric,
-                "command" | "Command" => ResourceType::Command,
-                "extension_metric" | "ExtensionMetric" => ResourceType::ExtensionMetric,
-                "extension_tool" | "ExtensionTool" => ResourceType::ExtensionTool,
-                "data_stream" | "DataStream" => ResourceType::DataStream,
-                _ => {
-                    // Use type-safe inference based on DataSourceId parsing
-                    infer_resource_type_from_id(&req_resource.resource_id)
-                }
-            };
-
-            resources.push(AgentResource {
-                resource_type,
-                resource_id: req_resource.resource_id.clone(),
-                name: req_resource.name.clone(),
-                config: req_resource.config.clone().unwrap_or_default(),
-            });
-        }
-    } else if has_old_format {
-        // Handle old format (backward compatibility)
-        // Add device resources
-        let device_ids = request.device_ids.unwrap_or_default();
-        for device_id in &device_ids {
-            resources.push(AgentResource {
-                resource_type: ResourceType::Device,
-                resource_id: device_id.clone(),
-                name: device_id.clone(),
-                config: json!({}),
-            });
-        }
-
-        // Add metric resources
-        if let Some(metrics) = request.metrics {
-            for metric in &metrics {
-                let mut config_json = json!({
-                    "device_id": metric.device_id,
-                });
-                if let Some(ref config) = metric.config {
-                    if let Some(data_collection) = config.get("data_collection") {
-                        config_json["data_collection"] = data_collection.clone();
-                    }
-                }
-                let display_name = if metric.display_name.is_empty() {
-                    &metric.metric_name
-                } else {
-                    &metric.display_name
-                };
-                resources.push(AgentResource {
-                    resource_type: ResourceType::Metric,
-                    resource_id: format!("{}:{}", metric.device_id, metric.metric_name),
-                    name: display_name.clone(),
-                    config: config_json,
-                });
-            }
-        }
-
-        // Add command resources
-        if let Some(commands) = request.commands {
-            for command in &commands {
-                let display_name = if command.display_name.is_empty() {
-                    &command.command_name
-                } else {
-                    &command.display_name
-                };
-                resources.push(AgentResource {
-                    resource_type: ResourceType::Command,
-                    resource_id: format!("{}:{}", command.device_id, command.command_name),
-                    name: display_name.clone(),
-                    config: json!({
-                        "device_id": command.device_id,
-                        "parameters": command.parameters,
-                    }),
-                });
-            }
-        }
-    }
-
-    // Only update resources when resources (or legacy binding fields) were
-    // actually provided. Including `has_schedule_update` here used to wipe
-    // bindings whenever a schedule-only PUT omitted `resources`.
-    if has_resources_update || has_old_format {
-        agent.resources = resources;
-    }
-
-    // Update advanced options if provided
-    if let Some(max_depth) = request.max_chain_depth {
-        // Validate BEFORE assigning — same bounds as create_agent. Rejecting
-        // here keeps storage consistent with the create path so consumers can
-        // trust stored values without re-clamping.
-        crate::validator::validate_usize_range(max_depth, "max_chain_depth", 1, 30)?;
-        agent.max_chain_depth = max_depth;
-    }
-    if let Some(priority) = request.priority {
-        agent.priority = priority;
-    }
-    if let Some(context_window) = request.context_window_size {
-        crate::validator::validate_usize_range(context_window, "context_window_size", 1, 100)?;
-        agent.context_window_size = context_window;
-    }
-    if let Some(mode) = request.execution_mode {
-        agent.execution_mode = match mode.as_str() {
-            "free" | "react" => neomind_storage::agents::ExecutionMode::Free,
-            "structured" => neomind_storage::agents::ExecutionMode::Structured,
-            _ => neomind_storage::agents::ExecutionMode::Focused,
-        };
-    }
-
-    agent.updated_at = chrono::Utc::now().timestamp();
-
-    if let Some(msg) = judgment_tool_config_conflict(&agent) {
-        return Err(ErrorResponse::bad_request(msg));
-    }
-
-    // Save
-    store
-        .save_agent(&agent)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to update agent: {}", e)))?;
-
-    // Auto-init knowledge file if agent has none (covers legacy agents created before init feature)
-    if agent.memory.knowledge_files.is_empty() {
-        init_agent_knowledge_file(&state, &agent).await;
-    } else if prompt_changed
-        && agent
-            .memory
-            .knowledge_files
-            .iter()
-            .any(|f| f.name == neomind_storage::TASK_UNDERSTANDING_FILE)
-    {
-        sync_task_understanding_mission(&state, &agent, &prompt_before).await;
-    }
-
-    // Refresh clean-slate hot set (trigger/pacing/status).
-    if let Ok(rt) = state.require_clean_slate().await {
-        if let Err(e) = rt.ingest_v1_agent(&agent) {
-            tracing::warn!(
-                agent_id = %agent.id,
-                error = %e,
-                "Failed to ingest agent into clean-slate runtime after update"
-            );
-        }
-    }
-    let _ = has_schedule_update; // schedule lives in the ingested TriggerSpec
-
-    tracing::info!("Updated AI Agent: {}", id);
-
-    ok(agent_mutation_response(&agent, false))
+    // Production update is V2-only. Chat/`neomind agent update` compiles flags
+    // into AgentSpecPatch → PUT /agents/v2/:id.
+    Err(ErrorResponse::bad_request(
+        "Legacy PUT /api/agents/:id is disabled: update with PUT /api/agents/v2/:id or `neomind agent update` (AgentSpecPatch).",
+    ))
 }
 
 /// Delete an AI Agent.
@@ -2147,21 +735,13 @@ pub async fn delete_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agents.agent_store;
-
-    // Check if agent exists
-    let _agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
+    let rt = require_v2_agent(&state, &id).await?;
     // Drop from clean-slate hot set first so Cron/Event ticks stop immediately.
-    if let Ok(rt) = state.require_clean_slate().await {
-        let _ = rt.delete(&id);
-    }
+    let _ = rt.delete(&id);
 
-    store
+    state
+        .agents
+        .agent_store
         .delete_agent(&id)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Failed to delete agent: {}", e)))?;
@@ -2206,19 +786,13 @@ pub async fn execute_agent(
     Json(request): Json<ExecuteAgentRequest>,
 ) -> HandlerResult<Value> {
     let _ = request; // Caller payload is not yet plumbed into clean-slate submit.
-    let store = &state.agents.agent_store;
-    let agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
-    let rt = state.require_clean_slate().await?;
-    rt.ensure_v1_agent(&agent)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to load agent into runtime: {e}")))?;
+    let rt = require_v2_agent(&state, &id).await?;
+    let agent_name = rt
+        .get(&id)
+        .map(|(s, _)| s.name)
+        .unwrap_or_else(|_| id.clone());
 
     let execution_id = uuid::Uuid::new_v4().to_string();
-    let agent_name = agent.name.clone();
     let eid_clone = execution_id.clone();
     let aid_clone = id.clone();
 
@@ -2277,16 +851,7 @@ pub async fn test_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let store = &state.agents.agent_store;
-    let agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
-    let rt = state.require_clean_slate().await?;
-    rt.ensure_v1_agent(&agent)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to load agent into runtime: {e}")))?;
+    let rt = require_v2_agent(&state, &id).await?;
 
     let resp = rt
         .dry_run(&id)
@@ -2342,105 +907,113 @@ pub async fn test_agent_preview(
     State(state): State<ServerState>,
     Json(request): Json<TestPreviewRequest>,
 ) -> HandlerResult<serde_json::Value> {
-    use neomind_storage::{
-        AgentMemory, AgentResource, AgentSchedule, AgentStats, AgentStatus, ScheduleType,
+    use neomind_ai_agent::model::{
+        AgentSpecDraft, FreshnessPolicy, InputContract, InputModality, InputRequirement,
+        InputSourceRef, MissingPolicy, OutputContract, OutputField, PacingPolicy, ToolPolicy,
+        TriggerSpec,
     };
 
-    let resources = request
-        .resources
-        .iter()
-        .map(|r| {
-            let resource_type = match r.resource_type.as_str() {
-                "device" | "Device" => ResourceType::Device,
-                "metric" | "Metric" => ResourceType::Metric,
-                "command" | "Command" => ResourceType::Command,
-                "extension_metric" | "ExtensionMetric" => ResourceType::ExtensionMetric,
-                "extension_tool" | "ExtensionTool" => ResourceType::ExtensionTool,
-                "data_stream" | "DataStream" => ResourceType::DataStream,
-                _ => infer_resource_type_from_id(&r.resource_id),
-            };
-            AgentResource {
-                resource_type,
-                resource_id: r.resource_id.clone(),
-                name: r.name.clone(),
-                config: r.config.clone().unwrap_or_default(),
+    // Map preview resources → InputContract (no AiAgent / ingest).
+    let mut requirements = Vec::new();
+    for (i, r) in request.resources.iter().enumerate() {
+        let key = if r.name.is_empty() {
+            format!("r{i}")
+        } else {
+            r.name.clone()
+        };
+        let source = match r.resource_type.as_str() {
+            "device" | "Device" => InputSourceRef::WholeDevice {
+                device_id: r.resource_id.clone(),
+            },
+            "metric" | "Metric" => {
+                let mut parts = r.resource_id.splitn(2, ':');
+                let device_id = parts.next().unwrap_or(&r.resource_id).to_string();
+                let field = parts.next().unwrap_or("value").to_string();
+                InputSourceRef::DeviceMetric { device_id, field }
             }
-        })
-        .collect();
+            "extension_metric" | "ExtensionMetric" | "extension_tool" | "ExtensionTool" => {
+                InputSourceRef::ExtensionInstance {
+                    id: r.resource_id.clone(),
+                }
+            }
+            _ => InputSourceRef::WholeDevice {
+                device_id: r.resource_id.clone(),
+            },
+        };
+        requirements.push(InputRequirement {
+            key,
+            source,
+            operation: None,
+            params: r.config.clone().unwrap_or_else(|| json!({})),
+            auth_scope: None,
+            timeout_secs: 10,
+            result_type: InputModality::StructuredJson,
+            freshness: FreshnessPolicy::Any,
+            on_missing: MissingPolicy::ReportStale,
+        });
+    }
 
-    let now = chrono::Utc::now().timestamp();
-    let transient = AiAgent {
-        id: "preview".to_string(),
-        name: "Preview".to_string(),
+    let tool_policy = match request.tool_config.as_ref() {
+        Some(tc) if !tc.enabled => ToolPolicy::Disabled,
+        Some(tc) if !tc.allowed_tools.is_empty() => ToolPolicy::Scoped {
+            allowed_tools: tc.allowed_tools.clone(),
+            allowed_commands: vec![],
+        },
+        _ => ToolPolicy::Unrestricted,
+    };
+
+    let output = if let Some(schema) = request.output_schema.as_ref() {
+        OutputContract {
+            fields: schema
+                .iter()
+                .map(|f| OutputField {
+                    name: f.name.clone(),
+                    depends_on: vec![],
+                    description: f.description.clone(),
+                })
+                .collect(),
+            publish: false,
+        }
+    } else {
+        OutputContract::default()
+    };
+
+    let draft = AgentSpecDraft {
+        name: "Preview".into(),
         description: None,
         user_prompt: request.user_prompt,
         llm_backend_id: request.llm_backend_id,
-        parsed_intent: None,
-        resources,
-        schedule: AgentSchedule {
-            schedule_type: ScheduleType::Manual,
-            cron_expression: None,
-            interval_seconds: None,
-            event_filter: None,
-            timezone: None,
-        },
-        status: AgentStatus::Active,
-        priority: 128,
-        created_at: now,
-        updated_at: now,
-        last_execution_at: None,
-        stats: AgentStats::default(),
-        memory: AgentMemory::default(),
-        conversation_history: Default::default(),
-        user_messages: Default::default(),
-        conversation_summary: None,
-        context_window_size: 10,
-        enable_tool_chaining: false,
-        max_chain_depth: 5,
-        tool_config: request.tool_config,
-        system_prompt: None,
-        max_retries: 0,
-        consecutive_failures: 0,
-        output_schema: request.output_schema,
-        operator_config: request.operator_config,
-        memory_mode: None,
-        notify: None,
-        max_tokens_per_run: None,
-        // Mode follows the request; structured stays the default so the
-        // original dry-run contract is unchanged for existing callers.
-        execution_mode: match request.execution_mode.as_deref() {
-            Some("free") | Some("react") => neomind_storage::agents::ExecutionMode::Free,
-            Some("focused") | None | Some("") => {
-                // Focused IS the dry-run for plain prompts; structured is
-                // requested explicitly by name.
-                neomind_storage::agents::ExecutionMode::Focused
-            }
-            Some("structured") => neomind_storage::agents::ExecutionMode::Structured,
-            Some(other) => {
-                return Err(ErrorResponse::bad_request(format!(
-                    "Unknown execution_mode '{}' (free | focused | structured)",
-                    other
-                )))
-            }
-        },
-        error_message: None,
+        preset: None,
+        trigger: TriggerSpec::Manual,
+        pacing: PacingPolicy::default(),
+        input: InputContract { requirements },
+        tool_policy,
+        output,
+        notify: Default::default(),
+        controlled_actions: vec![],
     };
 
+    let mode_label = request
+        .execution_mode
+        .clone()
+        .unwrap_or_else(|| "focused".into());
+
     let rt = state.require_clean_slate().await?;
-    // Transient preview: ingest → dry-run → delete (nothing persisted formally).
-    rt.ingest_v1_agent(&transient)
+    let (spec, _) = rt
+        .create(draft)
         .map_err(|e| ErrorResponse::internal(format!("Failed to build preview agent: {e}")))?;
+    let preview_id = spec.id.clone();
     let resp = rt
-        .dry_run(&transient.id)
+        .dry_run(&preview_id)
         .await
         .map_err(|e| ErrorResponse::internal(format!("Dry-run failed: {e}")))?;
-    let _ = rt.delete(&transient.id);
+    let _ = rt.delete(&preview_id);
 
     ok(serde_json::to_value(resp).unwrap_or_else(|_| {
         json!({
-            "agent_id": transient.id,
+            "agent_id": preview_id,
             "dry_run": true,
-            "mode": format!("{:?}", transient.execution_mode),
+            "mode": mode_label,
         })
     }))
 }
@@ -2476,18 +1049,11 @@ pub async fn invoke_agent(
         }
     }
 
-    let store = &state.agents.agent_store;
-    let agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
-    let rt = state.require_clean_slate().await?;
-    rt.ensure_v1_agent(&agent)
-        .map_err(|e| ErrorResponse::internal(format!("Failed to load agent into runtime: {e}")))?;
-
-    let agent_name = agent.name.clone();
+    let rt = require_v2_agent(&state, &id).await?;
+    let agent_name = rt
+        .get(&id)
+        .map(|(s, _)| s.name)
+        .unwrap_or_else(|_| id.clone());
     let dry_run = request.dry_run;
     let run_agent_id = id.clone();
     let rt_run = rt.clone();
@@ -2549,14 +1115,8 @@ pub async fn get_agent_executions(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
+    let _rt = require_v2_agent(&state, &id).await?;
     let store = &state.agents.agent_store;
-
-    // Check if agent exists
-    let _agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
 
     // Get executions — return empty list on storage error instead of 500
     let executions = match store.get_agent_executions(&id, 50).await {
@@ -2731,29 +1291,16 @@ pub async fn set_agent_status(
         }
     };
 
-    let store = &state.agents.agent_store;
-    let agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
-    store
+    let rt = require_v2_agent(&state, &id).await?;
+    let cs_status = neomind_ai_agent::storage_bridge::status_from_storage(new_status);
+    rt.set_agent_status(&id, cs_status)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to update status: {e}")))?;
+    // Best-effort mirror into AgentStoreV2 runtime row (no AiAgent map).
+    let _ = state
+        .agents
+        .agent_store
         .update_agent_status(&id, new_status, None)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to update status: {}", e)))?;
-
-    if let Ok(rt) = state.require_clean_slate().await {
-        let _ = rt.ensure_v1_agent(&agent);
-        let cs_status = neomind_ai_agent::storage_bridge::status_from_storage(new_status);
-        if let Err(e) = rt.set_agent_status(&id, cs_status) {
-            tracing::warn!(
-                agent_id = %id,
-                error = %e,
-                "Failed to sync status into clean-slate runtime"
-            );
-        }
-    }
+        .await;
 
     tracing::debug!("Updated AI Agent {} status to: {}", id, status_str);
 
@@ -2780,21 +1327,17 @@ pub async fn get_agent_memory(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agents.agent_store;
-
-    let agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
+    let _rt = require_v2_agent(&state, &id).await?;
+    let v2 = neomind_storage::agents_v2::AgentStoreV2::from_arc(state.agents.agent_store.db())
+        .map_err(|e| ErrorResponse::internal(format!("V2 store: {e}")))?;
+    let memory = v2
+        .get_memory(&id)
+        .map_err(|e| ErrorResponse::internal(format!("Failed to get memory: {e}")))?
+        .unwrap_or_default();
     let memory_store = &state.agents.system_memory_store;
-    let agent_id = &agent.id;
-
-    let memory = AgentMemoryDto {
+    let dto = AgentMemoryDto {
         journal: ExecutionJournalDto {
-            records: agent
-                .memory
+            records: memory
                 .journal
                 .records
                 .iter()
@@ -2806,15 +1349,14 @@ pub async fn get_agent_memory(
                     success: r.success,
                 })
                 .collect(),
-            max_records: agent.memory.journal.max_records,
+            max_records: memory.journal.max_records,
         },
-        knowledge_files: agent
-            .memory
+        knowledge_files: memory
             .knowledge_files
             .iter()
             .map(|f| {
                 let content = memory_store
-                    .read_agent_custom_file(agent_id, &f.name)
+                    .read_agent_custom_file(&id, &f.name)
                     .unwrap_or_default();
                 KnowledgeFileRefDto {
                     name: f.name.clone(),
@@ -2825,10 +1367,9 @@ pub async fn get_agent_memory(
                 }
             })
             .collect(),
-        updated_at: format_datetime(agent.memory.updated_at),
+        updated_at: format_datetime(memory.updated_at),
     };
-
-    ok(json!(memory))
+    ok(json!(dto))
 }
 
 /// Clear agent memory.
@@ -2848,29 +1389,13 @@ pub async fn clear_agent_memory(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agents.agent_store;
-
-    // Check if agent exists
-    let mut agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
-    // Clear memory
-    agent.memory = AgentMemory::default();
-    agent.updated_at = chrono::Utc::now().timestamp();
-
-    store
-        .save_agent(&agent)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to update agent: {}", e)))?;
-
+    let _rt = require_v2_agent(&state, &id).await?;
+    let v2 = neomind_storage::agents_v2::AgentStoreV2::from_arc(state.agents.agent_store.db())
+        .map_err(|e| ErrorResponse::internal(format!("V2 store: {e}")))?;
+    v2.save_memory(&id, &AgentMemory::default())
+        .map_err(|e| ErrorResponse::internal(format!("Failed to clear memory: {e}")))?;
     tracing::info!("Cleared memory for AI Agent: {}", id);
-
-    ok(json!({
-        "ok": true,
-    }))
+    ok(json!({ "ok": true }))
 }
 
 /// Get agent statistics.
@@ -2890,19 +1415,13 @@ pub async fn get_agent_stats(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let store = &state.agents.agent_store;
-
-    let agent = store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
-
+    let rt = require_v2_agent(&state, &id).await?;
+    let stats = rt.runtime_stats_json(&id);
     ok(json!({
-        "total_executions": agent.stats.total_executions,
-        "successful_executions": agent.stats.successful_executions,
-        "failed_executions": agent.stats.failed_executions,
-        "avg_duration_ms": agent.stats.avg_duration_ms,
+        "total_executions": stats.get("total_runs").cloned().unwrap_or(json!(0)),
+        "successful_executions": stats.get("successful_runs").cloned().unwrap_or(json!(0)),
+        "failed_executions": stats.get("failed_runs").cloned().unwrap_or(json!(0)),
+        "avg_duration_ms": 0,
     }))
 }
 
@@ -3299,14 +1818,7 @@ pub async fn get_available_resources(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    // Check if agent exists
-    let _agent = state
-        .agents
-        .agent_store
-        .get_agent(&id)
-        .await
-        .map_err(|e| ErrorResponse::internal(format!("Failed to get agent: {}", e)))?
-        .ok_or_else(|| ErrorResponse::not_found(format!("Agent not found: {}", id)))?;
+    let _rt = require_v2_agent(&state, &id).await?;
 
     // Collect available devices
     let devices = state.devices.service.list_devices();
@@ -3433,8 +1945,184 @@ pub async fn list_agent_tools(State(state): State<ServerState>) -> HandlerResult
 mod config_warning_tests {
     use super::*;
     use neomind_storage::{
-        AgentMemory, AgentNotify, AgentSchedule, AgentStats, AgentStatus, AgentToolConfig, NotifyOn,
+        AgentMemory, AgentNotify, AgentSchedule, AgentStats, AgentStatus, AgentToolConfig, AiAgent,
+        ExecutionMode, NotifyOn, ResourceType, ScheduleType,
     };
+
+    /// Convert ExecutionMode to lowercase string.
+    fn execution_mode_to_string(mode: &ExecutionMode) -> &'static str {
+        match mode {
+            ExecutionMode::Focused => "focused",
+            ExecutionMode::Free => "free",
+            ExecutionMode::Structured => "structured",
+        }
+    }
+
+    /// Convert ScheduleType to lowercase string (matching serde snake_case)
+    fn schedule_type_to_string(schedule_type: &ScheduleType) -> &'static str {
+        match schedule_type {
+            ScheduleType::Interval => "interval",
+            ScheduleType::Cron => "cron",
+            ScheduleType::Event => "event",
+            ScheduleType::Manual => "manual",
+        }
+    }
+
+    /// Hard reject judgment notify with tools disabled or an allowlist that omits
+    /// `shell` — mirrors CLI `--no-tools` / `--allowed-tools` conflict checks so
+    /// Chat/`curl` cannot persist a mute Judgment agent.
+    fn judgment_tool_config_conflict(agent: &AiAgent) -> Option<String> {
+        let judgment = agent
+            .notify
+            .as_ref()
+            .is_some_and(|n| matches!(n.on, neomind_storage::NotifyOn::Judgment));
+        if !judgment {
+            return None;
+        }
+        let tc = agent.tool_config.as_ref()?;
+        if !tc.enabled {
+            return Some(
+            "tool_config.enabled=false conflicts with notify.on=judgment: judgment alerts need \
+             `shell` to send messages — use allowed_tools=[\"shell\"] or notify.on=always/failure."
+                .to_string(),
+        );
+        }
+        if !tc.allowed_tools.is_empty()
+            && !tc
+                .allowed_tools
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case("shell"))
+        {
+            return Some(
+            "tool_config.allowed_tools omits `shell` while notify.on=judgment: judgment alerts \
+             need `shell` to send messages — include \"shell\" or switch notify.on."
+                .to_string(),
+        );
+        }
+        None
+    }
+
+    /// Soft configuration warnings for create/update responses (never hard-fails).
+    fn collect_agent_config_warnings(agent: &AiAgent) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        if agent.schedule.schedule_type == ScheduleType::Event && agent.resources.is_empty() {
+            warnings.push(
+                "Event-triggered agent has no bound resources — it will rely only on the trigger \
+             snapshot. Prefer binding the target device or metrics."
+                    .to_string(),
+            );
+        }
+
+        if looks_like_vision_task(agent) && !agent_backend_supports_vision(agent) {
+            warnings.push(
+            "This agent looks vision/image-related but the selected LLM does not report vision \
+             support — runs that need images may fail every trigger."
+                .to_string(),
+        );
+        }
+
+        let tools_unrestricted = agent
+            .tool_config
+            .as_ref()
+            .map(|tc| tc.enabled && tc.allowed_tools.is_empty())
+            .unwrap_or(true);
+        let has_commands = agent
+            .resources
+            .iter()
+            .any(|r| matches!(r.resource_type, ResourceType::Command));
+        if agent.execution_mode == ExecutionMode::Focused && tools_unrestricted && !has_commands {
+            warnings.push(
+                "Focused monitor without tool restrictions: consider tool_config enabled=false \
+             (with notify.on=always) or allowed_tools=[\"shell\"] (with judgment) to cut latency \
+             and tool-hallucination risk."
+                    .to_string(),
+            );
+        }
+
+        warnings
+    }
+
+    fn looks_like_vision_task(agent: &AiAgent) -> bool {
+        let prompt = agent.user_prompt.to_ascii_lowercase();
+        if prompt.contains("image")
+            || prompt.contains("vision")
+            || prompt.contains("camera")
+            || prompt.contains("图片")
+            || prompt.contains("看图")
+            || prompt.contains("摄像头")
+        {
+            return true;
+        }
+        if let Some(filter) = agent.schedule.event_filter.as_deref() {
+            let lower = filter.to_ascii_lowercase();
+            if lower.contains("image") || lower.contains("frame") {
+                return true;
+            }
+        }
+        agent.resources.iter().any(|r| {
+            let id = r.resource_id.to_ascii_lowercase();
+            let name = r.name.to_ascii_lowercase();
+            id.contains("image")
+                || name.contains("image")
+                || id.contains("camera")
+                || name.contains("camera")
+        })
+    }
+
+    fn agent_backend_supports_vision(agent: &AiAgent) -> bool {
+        let Ok(manager) = get_instance_manager() else {
+            // Unknown — do not warn as if vision is missing.
+            return true;
+        };
+        let instance = match agent.llm_backend_id.as_deref() {
+            Some(id) if id != "default" => manager.get_instance(id),
+            _ => manager.get_active_instance(),
+        };
+        match instance {
+            Some(inst) => inst.capabilities.supports_multimodal,
+            None => true,
+        }
+    }
+
+    /// Compact effective-config summary for create/update success payloads.
+    fn agent_effective_config_summary(agent: &AiAgent) -> Value {
+        let tool_summary = match &agent.tool_config {
+            Some(tc) if !tc.enabled => json!({"enabled": false, "allowed_tools": []}),
+            Some(tc) if !tc.allowed_tools.is_empty() => {
+                json!({"enabled": true, "allowed_tools": tc.allowed_tools})
+            }
+            _ => json!({"enabled": true, "allowed_tools": "all"}),
+        };
+        json!({
+            "execution_mode": execution_mode_to_string(&agent.execution_mode),
+            "schedule_type": schedule_type_to_string(&agent.schedule.schedule_type),
+            "resource_count": agent.resources.len(),
+            "tool_config": tool_summary,
+            "notify": agent.notify,
+        })
+    }
+
+    fn agent_mutation_response(agent: &AiAgent, include_name_status: bool) -> Value {
+        let warnings = collect_agent_config_warnings(agent);
+        let mut body = if include_name_status {
+            json!({
+                "id": agent.id,
+                "name": agent.name,
+                "status": "active",
+                "effective_config": agent_effective_config_summary(agent),
+            })
+        } else {
+            json!({
+                "id": agent.id,
+                "effective_config": agent_effective_config_summary(agent),
+            })
+        };
+        if !warnings.is_empty() {
+            body["warnings"] = json!(warnings);
+        }
+        body
+    }
 
     fn base_agent() -> AiAgent {
         AiAgent {

@@ -1089,7 +1089,7 @@ impl AgentStore {
             && stored.unwrap_or(0) < 2
             && crate::agents_v2::table_exists_agents_v1(&db).unwrap_or(false)
         {
-            crate::agents_v2::migrate_agents_v1_to_v2(&db)
+            crate::agents_migrate::migrate_agents_v1_to_v2(&db)
                 .map_err(|e| Error::Storage(format!("agents v1→v2 migrate: {e}")))?;
         }
         crate::schema::check_or_stamp(&db)
@@ -1111,7 +1111,7 @@ impl AgentStore {
         write_txn.commit()?;
 
         if crate::schema::CURRENT_SCHEMA_VERSION < 2 {
-            if let Err(e) = crate::agents_v2::copy_agents_v1_to_v2_keep_legacy(&db) {
+            if let Err(e) = crate::agents_migrate::copy_agents_v1_to_v2_keep_legacy(&db) {
                 tracing::warn!(category = "storage", error = %e, "agents soft-copy v1→v2 failed");
             }
         } else {
@@ -1147,15 +1147,31 @@ impl AgentStore {
     }
 
     /// Save an agent to the store.
+    ///
+    /// Under schema ≥2 the production binary refuses AiAgent dual-write.
+    /// Offline migrate/inventory call [`crate::agents_migrate::map_agent_v1_to_v2`]
+    /// directly; unit tests keep a cfg(test) map path for fixtures.
     pub async fn save_agent(&self, agent: &AiAgent) -> Result<(), Error> {
         if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            let (spec, runtime, messages, memory) = crate::agents_v2::map_agent_v1_to_v2(agent);
-            v2.save_spec(&spec)?;
-            v2.set_runtime(&runtime)?;
-            v2.save_user_messages(&agent.id, &messages)?;
-            v2.save_memory(&agent.id, &memory)?;
-            return Ok(());
+            #[cfg(test)]
+            {
+                let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
+                let (spec, runtime, messages, memory) =
+                    crate::agents_migrate::map_agent_v1_to_v2(agent);
+                v2.save_spec(&spec)?;
+                v2.set_runtime(&runtime)?;
+                v2.save_user_messages(&agent.id, &messages)?;
+                v2.save_memory(&agent.id, &memory)?;
+                return Ok(());
+            }
+            #[cfg(not(test))]
+            {
+                let _ = agent;
+                return Err(Error::Storage(
+                    "legacy AiAgent save_agent disabled under schema v2; use AgentStoreV2 / HostedAiAgentRuntime"
+                        .into(),
+                ));
+            }
         }
         let write_txn = self.db.begin_write()?;
         #[cfg(test)]
@@ -1179,14 +1195,37 @@ impl AgentStore {
     }
 
     /// Get an agent by ID.
+    ///
+    /// Under schema ≥2 production code must use AgentStoreV2 / HostedAiAgentRuntime.
+    /// The V1 dual-read map remains only for `cfg(test)` fixtures and offline migrate.
     pub async fn get_agent(&self, id: &str) -> Result<Option<AiAgent>, Error> {
         if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            return self.get_agent_from_v2(id);
+            #[cfg(test)]
+            {
+                return self.get_agent_from_v2(id);
+            }
+            #[cfg(not(test))]
+            {
+                let _ = id;
+                return Err(Error::Storage(
+                    "legacy AiAgent get_agent disabled under schema v2; use AgentStoreV2 / HostedAiAgentRuntime"
+                        .into(),
+                ));
+            }
         }
         let read_txn = self.db.begin_read()?;
         let table = match read_txn.open_table(AGENTS_TABLE) {
             Ok(t) => t,
-            Err(_) => return self.get_agent_from_v2(id),
+            Err(_) => {
+                #[cfg(test)]
+                {
+                    return self.get_agent_from_v2(id);
+                }
+                #[cfg(not(test))]
+                {
+                    return Ok(None);
+                }
+            }
         };
 
         match table.get(id)? {
@@ -1196,10 +1235,20 @@ impl AgentStore {
 
                 Ok(Some(agent))
             }
-            None => self.get_agent_from_v2(id),
+            None => {
+                #[cfg(test)]
+                {
+                    self.get_agent_from_v2(id)
+                }
+                #[cfg(not(test))]
+                {
+                    Ok(None)
+                }
+            }
         }
     }
 
+    #[cfg(test)]
     fn get_agent_from_v2(&self, id: &str) -> Result<Option<AiAgent>, Error> {
         let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
         let Some(spec) = v2.get_spec(id)? else {
@@ -1208,7 +1257,7 @@ impl AgentStore {
         let runtime = v2.get_runtime(id)?;
         let memory = v2.get_memory(id)?.unwrap_or_default();
         let messages = v2.get_user_messages(id)?.unwrap_or_default();
-        Ok(Some(crate::agents_v2::map_agent_v2_to_v1(
+        Ok(Some(crate::agents_migrate::map_agent_v2_to_v1(
             &spec,
             runtime.as_ref(),
             Some(memory),
@@ -1229,12 +1278,32 @@ impl AgentStore {
 
     fn query_agents_impl(db: Arc<Database>, filter: AgentFilter) -> Result<Vec<AiAgent>, Error> {
         if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            return Self::query_agents_v2_impl(&db, filter);
+            #[cfg(test)]
+            {
+                return Self::query_agents_v2_impl(&db, filter);
+            }
+            #[cfg(not(test))]
+            {
+                let _ = (db, filter);
+                return Err(Error::Storage(
+                    "legacy AiAgent query_agents disabled under schema v2; use AgentStoreV2 / HostedAiAgentRuntime"
+                        .into(),
+                ));
+            }
         }
         let read_txn = db.begin_read()?;
         let table = match read_txn.open_table(AGENTS_TABLE) {
             Ok(t) => t,
-            Err(_) => return Self::query_agents_v2_impl(&db, filter),
+            Err(_) => {
+                #[cfg(test)]
+                {
+                    return Self::query_agents_v2_impl(&db, filter);
+                }
+                #[cfg(not(test))]
+                {
+                    return Ok(Vec::new());
+                }
+            }
         };
 
         let mut agents = Vec::new();
@@ -1273,6 +1342,7 @@ impl AgentStore {
         Ok(agents)
     }
 
+    #[cfg(test)]
     fn query_agents_v2_impl(
         db: &Arc<Database>,
         filter: AgentFilter,
@@ -1284,7 +1354,7 @@ impl AgentStore {
             let runtime = v2.get_runtime(&spec.id)?;
             let memory = v2.get_memory(&spec.id)?.unwrap_or_default();
             let messages = v2.get_user_messages(&spec.id)?.unwrap_or_default();
-            let agent = crate::agents_v2::map_agent_v2_to_v1(
+            let agent = crate::agents_migrate::map_agent_v2_to_v1(
                 &spec,
                 runtime.as_ref(),
                 Some(memory),
@@ -1392,12 +1462,9 @@ impl AgentStore {
         parsed_intent: Option<ParsedIntent>,
     ) -> Result<(), Error> {
         if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            if let Some(mut spec) = v2.get_spec(id)? {
-                spec.v1_compat.parsed_intent = parsed_intent;
-                spec.updated_at = chrono::Utc::now().timestamp();
-                v2.save_spec(&spec)?;
-            }
+            // V1 parsed-intent cache is migrate-only (`v1_compat`); prod V2
+            // writers leave the bundle at Default and do not refresh it.
+            let _ = (id, parsed_intent);
             return Ok(());
         }
         // Atomic RMW, one write transaction (see update_agent_status).

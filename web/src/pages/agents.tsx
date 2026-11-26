@@ -420,12 +420,27 @@ export function AgentsPage() {
     }
   }
 
-  const handleSave = async (data: any) => {
+  const handleSave = async (draft: import('@/types').AgentSpecDraft) => {
     try {
       if (editingAgent) {
-        await api.updateAgent(editingAgent.id, data)
+        // Name + full contract replace via v2 patch (omit id/config_version).
+        const { name, description, user_prompt, llm_backend_id, preset, trigger, pacing, input, tool_policy, output, notify, controlled_actions } = draft
+        await api.updateAgentV2(editingAgent.id, {
+          name,
+          description,
+          user_prompt,
+          llm_backend_id,
+          preset,
+          trigger,
+          pacing,
+          input,
+          tool_policy,
+          output,
+          notify,
+          controlled_actions,
+        })
       } else {
-        await api.createAgent(data)
+        await api.createAgentV2(draft)
       }
       setShowAgentDialog(false)
       setEditingAgent(undefined)

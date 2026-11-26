@@ -896,6 +896,11 @@ pub async fn run_agent_cmd_with_context(
             invoke_agent_with_options(&client, &id, input.as_deref(), dry_run).await?
         }
         AgentCommand::PlanPreview { draft } => plan_preview_agent(&client, &draft).await?,
+        AgentCommand::CreateV2 { draft } => create_agent_v2(&client, &draft).await?,
+        AgentCommand::Inventory { db, out } => inventory_agents_local(&db, out.as_deref()).await?,
+        AgentCommand::MigrateV2Only { db, report } => {
+            migrate_v2_only_local(&db, report.as_deref()).await?
+        }
         AgentCommand::Test { id } => test_agent(&client, &id).await?,
         AgentCommand::Memory { id } => get_agent_memory(&client, &id).await?,
         AgentCommand::ClearMemory { id } => clear_agent_memory(&client, &id).await?,

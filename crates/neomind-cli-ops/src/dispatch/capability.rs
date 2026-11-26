@@ -145,7 +145,8 @@ pub fn classify_parsed_command(command: &Command) -> CliSideEffect {
             | AgentCommand::LatestExecution { .. }
             | AgentCommand::Conversation { .. }
             | AgentCommand::Memory { .. }
-            | AgentCommand::PlanPreview { .. } => ProvenReadOnly,
+            | AgentCommand::PlanPreview { .. }
+            | AgentCommand::Inventory { .. } => ProvenReadOnly,
             _ => Mutating,
         },
         Command::Message { message_cmd } => match message_cmd {
