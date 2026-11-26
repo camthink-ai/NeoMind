@@ -22,10 +22,12 @@ function whenLabel(
 ): string {
   if (trigger.kind === 'cron') {
     const hour = trigger.expr.trim().split(/\s+/)[1] ?? '9'
-    return t('editorV2.planLine.dailyAt', { time: `${String(hour).padStart(2, '0')}:00` })
+    return t('agents:editorV2.planLine.dailyAt', {
+      time: `${String(hour).padStart(2, '0')}:00`,
+    })
   }
   if (trigger.kind === 'interval') {
-    return t('editorV2.planLine.everyMinutes', {
+    return t('agents:editorV2.planLine.everyMinutes', {
       count: Math.max(1, Math.round(trigger.every_secs / 60)),
     })
   }

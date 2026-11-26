@@ -19,11 +19,13 @@ function triggerPhrase(
   if (trigger.kind === 'cron') {
     const parts = trigger.expr.trim().split(/\s+/)
     const hour = parts[1] ?? '9'
-    return t('editorV2.planLine.dailyAt', { time: `${String(hour).padStart(2, '0')}:00` })
+    return t('agents:editorV2.planLine.dailyAt', {
+      time: `${String(hour).padStart(2, '0')}:00`,
+    })
   }
   if (trigger.kind === 'interval') {
     const mins = Math.max(1, Math.round(trigger.every_secs / 60))
-    return t('editorV2.planLine.everyMinutes', { count: mins })
+    return t('agents:editorV2.planLine.everyMinutes', { count: mins })
   }
   if (trigger.kind === 'event') return t('editorV2.planLine.onEvent')
   return t('editorV2.planLine.manual')
@@ -43,7 +45,7 @@ export function PlanConfirmLine({ draft, className }: PlanConfirmLineProps) {
   const line = useMemo(() => {
     const parts = [
       triggerPhrase(draft.trigger, t),
-      t('editorV2.planLine.reads', { count: reads }),
+      t('agents:editorV2.planLine.reads', { count: reads }),
       toolsPhrase(draft.tool_policy, t),
     ]
     if (notify.on_complete) parts.push(t('editorV2.planLine.notifyComplete'))

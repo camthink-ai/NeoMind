@@ -292,7 +292,10 @@ describe('translation keys referenced from source', () => {
     // BOTH locales — one soft gap resolved, ratchet down so it cannot creep back.
     // 252 -> 253 (clean-slate Editor V2): measured tip after AgentEditorV2
     // soft keys landed — ratchet so the gate stays honest.
-    const FROZEN = 253
+    // 253 -> 252 (#46): interpolating editorV2 calls use agents: prefix so the
+    // scanner no longer treats editorV2 as a missing namespace (soft −5, then
+    // other churn); freeze at the measured tip.
+    const FROZEN = 252
     const soft = [...referenced.values()].filter(
       (r) => r.bare.length === 0 && resolve(bundleOf('en', r.ns) ?? {}, r.key) === undefined,
     )

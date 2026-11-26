@@ -9,6 +9,8 @@ vi.mock('react-i18next', async (importOriginal) => {
     ...actual,
     useTranslation: () => ({
       t: (key: string, opts?: Record<string, unknown>) => {
+        // Match i18next: `agents:editorV2…` resolves under the agents ns.
+        const bare = key.startsWith('agents:') ? key.slice('agents:'.length) : key
         const map: Record<string, string> = {
           'editorV2.planLine.label': 'Will run:',
           'editorV2.planLine.sep': ' · ',
@@ -24,7 +26,7 @@ vi.mock('react-i18next', async (importOriginal) => {
           'editorV2.planLine.notifyFailure': 'notify on failure',
           'editorV2.planLine.notifySilent': 'silent',
         }
-        return map[key] ?? key
+        return map[bare] ?? key
       },
       i18n: { language: 'en' },
     }),

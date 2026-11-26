@@ -102,7 +102,7 @@ export function SimpleWhenSection({ value, onChange, className }: SimpleWhenSect
             <SelectContent>
               {Array.from({ length: 24 }, (_, i) => (
                 <SelectItem key={i} value={String(i)}>
-                  {t('editorV2.when.hourOption', { hour: String(i).padStart(2, '0') })}
+                  {t('agents:editorV2.when.hourOption', { hour: String(i).padStart(2, '0') })}
                 </SelectItem>
               ))}
             </SelectContent>

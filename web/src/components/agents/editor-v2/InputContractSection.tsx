@@ -73,7 +73,7 @@ export function InputContractSection({ value, onChange, className }: InputContra
   return (
     <EditorSection
       title={t('editorV2.input.title')}
-      meta={t('editorV2.input.count', { count: requirements.length })}
+      meta={t('agents:editorV2.input.count', { count: requirements.length })}
       className={cn(className)}
       data-section="input"
       actions={
