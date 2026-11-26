@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use super::hooks::{default_hooks, ToolCallHook};
-use super::{build_evidence_prompt, AgentRunner, RunOutcome};
+use super::{build_evidence_prompt_with_media, AgentRunner, RunOutcome};
 use crate::error::{AgentError, Result};
 use crate::model::{AgentSpec, EvidenceReport, ToolPolicy};
 use crate::ports::{LlmPort, LlmRequest, ToolExecContext, ToolInvocation, ToolRegistryPort};
@@ -44,7 +44,7 @@ impl AgentRunner for ToolLoopRunner {
             ));
         }
 
-        let mut transcript = build_evidence_prompt(&spec.user_prompt, evidence);
+        let (mut transcript, images) = build_evidence_prompt_with_media(&spec.user_prompt, evidence);
         let mut alert = false;
         let mut last_text = String::new();
 
@@ -64,6 +64,7 @@ impl AgentRunner for ToolLoopRunner {
                         system: format!("Managed agent round {round}. Prefer finishing."),
                         user: transcript.clone(),
                         tools_enabled: true,
+                        images: images.clone(),
                     },
                     cancel.clone(),
                 )

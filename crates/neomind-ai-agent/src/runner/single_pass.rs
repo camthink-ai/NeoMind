@@ -7,8 +7,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::alert::{alert_from_model_text, evidence_shows_overload};
 use super::structured::{extract_json_object, project_output_fields, structured_system_addon};
-use super::{build_evidence_prompt, AgentRunner, RunOutcome};
-use crate::error::{AgentError, Result};
+use super::{build_evidence_prompt_with_media, AgentRunner, RunOutcome};
+use crate::error::Result;
 use crate::model::{AgentSpec, EvidenceDetail, EvidenceQuality, EvidenceReport, ToolPolicy};
 use crate::ports::{LlmPort, LlmRequest};
 
@@ -58,7 +58,7 @@ impl AgentRunner for SinglePassRunner {
             });
         }
 
-        let user = build_evidence_prompt(&spec.user_prompt, evidence);
+        let (user, images) = build_evidence_prompt_with_media(&spec.user_prompt, evidence);
         let mut system = String::from(
             "You are a managed NeoMind agent. Cite evidence keys. Mark missing deps. \
              End with exactly `Verdict: criteria met` only when alert criteria are met.",
@@ -72,11 +72,11 @@ impl AgentRunner for SinglePassRunner {
                     system,
                     user,
                     tools_enabled,
+                    images,
                 },
                 cancel,
             )
-            .await
-            .map_err(|e| AgentError::Llm(e.to_string()))?;
+            .await?;
 
         // Model path: business verdict drives alert (through frozen deps /
         // evidence gates later). Overload heuristics are local-template only.

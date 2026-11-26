@@ -665,14 +665,43 @@ fn detail_for(
         }
         InputModality::Image => EvidenceDetail::Vision {
             image_source_field: image_field.unwrap_or("image").into(),
-            vision_path: value
-                .get("image_url")
-                .or_else(|| value.get("url"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("inline")
-                .to_string(),
+            vision_path: extract_vision_path(&value).unwrap_or_else(|| "inline".to_string()),
         },
         _ => EvidenceDetail::Structured { value },
+    }
+}
+
+fn extract_vision_path(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.starts_with("/api/images/")
+                || t.starts_with("http://")
+                || t.starts_with("https://")
+                || t.starts_with("data:image/")
+            {
+                Some(t.to_string())
+            } else {
+                None
+            }
+        }
+        serde_json::Value::Object(obj) => {
+            for key in ["image_url", "url", "path", "value", "image_data", "image"] {
+                if let Some(v) = obj.get(key) {
+                    if let Some(found) = extract_vision_path(v) {
+                        return Some(found);
+                    }
+                }
+            }
+            for v in obj.values() {
+                if let Some(found) = extract_vision_path(v) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        serde_json::Value::Array(arr) => arr.iter().find_map(extract_vision_path),
+        _ => None,
     }
 }
 

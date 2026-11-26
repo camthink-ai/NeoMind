@@ -29,12 +29,28 @@ pub struct LlmBackendCapabilities {
     pub model: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LlmImage {
+    /// Raw base64 payload (without `data:...;base64,` prefix) when `mime_type` is `Some`,
+    /// or an image URL (`/api/images/...`, `http(s)://...`) when `mime_type` is `None`.
+    pub data: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LlmRequest {
     pub backend_id: Option<String>,
     pub system: String,
     pub user: String,
     pub tools_enabled: bool,
+    /// Multimodal image attachments extracted from evidence / caller input.
+    /// Kept out of the text prompt so base64 payloads never tokenize into
+    /// hundreds of thousands of text tokens.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<LlmImage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

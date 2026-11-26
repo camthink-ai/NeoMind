@@ -8,7 +8,7 @@
  */
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, ChevronDown, ChevronRight, Plus, Trash2, Zap } from 'lucide-react'
+import { Check, ChevronDown, Link2, Plus, Trash2, Zap } from 'lucide-react'
 import { Button, IconButton } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -32,7 +32,38 @@ import type {
 } from '@/types'
 import { normalizeToolPolicy } from './defaults'
 
-function AdvancedDependsOn({
+function DependsOnToggleButton({
+  open,
+  count,
+  onClick,
+}: {
+  open: boolean
+  count: number
+  onClick: () => void
+}) {
+  const { t } = useTranslation('agents')
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      aria-label={t('editorV2.notifyUnified.advancedDependsOn')}
+      title={t('editorV2.notifyUnified.dependsOnHint')}
+      className={cn(
+        'inline-flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-nano transition-colors',
+        open || count > 0
+          ? 'border-primary/30 bg-primary-light text-primary font-medium'
+          : 'border-transparent text-muted-foreground hover:bg-muted-30 hover:text-foreground',
+      )}
+    >
+      <Link2 className="h-3.5 w-3.5" />
+      {count > 0 && <span className="font-mono">{count}</span>}
+      <ChevronDown className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} />
+    </button>
+  )
+}
+
+function DependsOnDrawer({
   selected,
   inputKeys,
   onToggle,
@@ -42,46 +73,30 @@ function AdvancedDependsOn({
   onToggle: (key: string) => void
 }) {
   const { t } = useTranslation('agents')
-  const [open, setOpen] = useState(selected.length > 0)
-
-  if (inputKeys.length === 0) return null
-
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        title={t('editorV2.notifyUnified.dependsOnHint')}
-        className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-nano text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground"
-      >
-        {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        <span>{t('editorV2.notifyUnified.advancedDependsOn')}</span>
-        {selected.length > 0 && (
-          <span className="rounded bg-primary-light px-1 font-mono text-nano text-primary">
-            {selected.length}
-          </span>
-        )}
-      </button>
-      {open &&
-        inputKeys.map((k) => {
-          const on = selected.includes(k)
-          return (
-            <button
-              key={k}
-              type="button"
-              onClick={() => onToggle(k)}
-              className={cn(
-                'inline-flex h-6 items-center gap-1 rounded border px-1.5 font-mono text-nano transition-colors',
-                on
-                  ? 'border-primary bg-primary-light text-primary font-medium'
-                  : 'border-border bg-muted-20 text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {on && <Check className="h-2.5 w-2.5" />}
-              {k}
-            </button>
-          )
-        })}
+    <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-muted-20 px-2.5 py-2">
+      <span className="text-nano text-muted-foreground mr-0.5">
+        {t('editorV2.notifyUnified.advancedDependsOn')}:
+      </span>
+      {inputKeys.map((k) => {
+        const on = selected.includes(k)
+        return (
+          <button
+            key={k}
+            type="button"
+            onClick={() => onToggle(k)}
+            className={cn(
+              'inline-flex h-6 items-center gap-1 rounded border px-1.5 font-mono text-nano transition-colors',
+              on
+                ? 'border-primary bg-primary-light text-primary font-medium'
+                : 'border-border bg-card text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {on && <Check className="h-2.5 w-2.5" />}
+            {k}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -113,6 +128,8 @@ export function ActionsOutputSection({
 }: ActionsOutputSectionProps) {
   const { t } = useTranslation('agents')
   const safePolicy = normalizeToolPolicy(toolPolicy)
+  const [openActionDeps, setOpenActionDeps] = useState<Record<number, boolean>>({})
+  const [openFieldDeps, setOpenFieldDeps] = useState<Record<number, boolean>>({})
   const policyMode: 'disabled' | 'scoped' | 'unrestricted' =
     safePolicy === 'disabled'
       ? 'disabled'
@@ -338,16 +355,35 @@ export function ActionsOutputSection({
                       </div>
                     )}
                   </div>
-                  <IconButton
-                    type="button"
-                    size="sm"
-                    className="shrink-0 text-muted-foreground hover:text-error"
-                    onClick={() => removeAction(idx)}
-                    aria-label={t('editorV2.actions.remove')}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </IconButton>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {inputKeys.length > 0 && (
+                      <DependsOnToggleButton
+                        open={Boolean(openActionDeps[idx])}
+                        count={(action.depends_on ?? []).length}
+                        onClick={() =>
+                          setOpenActionDeps((prev) => ({ ...prev, [idx]: !prev[idx] }))
+                        }
+                      />
+                    )}
+                    <IconButton
+                      type="button"
+                      size="sm"
+                      className="shrink-0 text-muted-foreground hover:text-error"
+                      onClick={() => removeAction(idx)}
+                      aria-label={t('editorV2.actions.remove')}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </IconButton>
+                  </div>
                 </div>
+
+                {inputKeys.length > 0 && openActionDeps[idx] && (
+                  <DependsOnDrawer
+                    selected={action.depends_on ?? []}
+                    inputKeys={inputKeys}
+                    onToggle={(k) => toggleActionDep(idx, k)}
+                  />
+                )}
 
                 {/* Quick device command picker */}
                 {deviceCommandOptions.length > 0 && (
@@ -414,12 +450,6 @@ export function ActionsOutputSection({
                     onCheckedChange={(idempotent) => updateAction(idx, { idempotent })}
                   />
                 </div>
-
-                <AdvancedDependsOn
-                  selected={action.depends_on ?? []}
-                  inputKeys={inputKeys}
-                  onToggle={(k) => toggleActionDep(idx, k)}
-                />
               </div>
             ))}
           </div>
@@ -459,9 +489,9 @@ export function ActionsOutputSection({
               {outputContract.fields.map((field, index) => (
                 <div
                   key={index}
-                  className="space-y-2.5 rounded-lg border border-border bg-card p-3"
+                  className="space-y-2 rounded-lg border border-border bg-card p-2.5"
                 >
-                  <div className="flex items-start gap-2">
+                  <div className="flex items-center gap-1.5">
                     <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-[11rem_1fr]">
                       <Input
                         value={field.name}
@@ -476,10 +506,19 @@ export function ActionsOutputSection({
                         className="h-9 text-xs"
                       />
                     </div>
+                    {inputKeys.length > 0 && (
+                      <DependsOnToggleButton
+                        open={Boolean(openFieldDeps[index])}
+                        count={(field.depends_on ?? []).length}
+                        onClick={() =>
+                          setOpenFieldDeps((prev) => ({ ...prev, [index]: !prev[index] }))
+                        }
+                      />
+                    )}
                     <IconButton
                       type="button"
                       size="sm"
-                      className="mt-0.5 shrink-0 text-muted-foreground hover:text-error"
+                      className="shrink-0 text-muted-foreground hover:text-error"
                       onClick={() =>
                         onOutputChange({
                           ...outputContract,
@@ -491,11 +530,13 @@ export function ActionsOutputSection({
                       <Trash2 className="h-4 w-4" />
                     </IconButton>
                   </div>
-                  <AdvancedDependsOn
-                    selected={field.depends_on ?? []}
-                    inputKeys={inputKeys}
-                    onToggle={(k) => toggleFieldDep(index, k)}
-                  />
+                  {inputKeys.length > 0 && openFieldDeps[index] && (
+                    <DependsOnDrawer
+                      selected={field.depends_on ?? []}
+                      inputKeys={inputKeys}
+                      onToggle={(k) => toggleFieldDep(index, k)}
+                    />
+                  )}
                 </div>
               ))}
               <Button

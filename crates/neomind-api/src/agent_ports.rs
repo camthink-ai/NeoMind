@@ -12,14 +12,15 @@ use std::time::Duration;
 use async_trait::async_trait;
 use neomind_ai_agent::error::{AgentError, Result as AgentResult};
 use neomind_ai_agent::ports::{
-    LlmBackendCapabilities, LlmPort, LlmRequest, LlmResponse, NotifyPort, SideEffectPort,
+    LlmBackendCapabilities, LlmImage, LlmPort, LlmRequest, LlmResponse, NotifyPort, SideEffectPort,
     SideEffectReceipt, SourceReadPort, SourceReadResult,
 };
 use neomind_ai_agent::runner::alert_from_model_text;
 use neomind_ai_agent::service::{NotifyCounter, WriteCounter};
 use neomind_core::eventbus::EventBus;
 use neomind_core::extension::{CommandEffect, ExtensionRegistry};
-use neomind_core::llm::{GenerationParams, LlmInput};
+use neomind_core::llm::{GenerationParams, LlmError, LlmInput};
+use neomind_core::message::{Content, ContentPart, MessageRole};
 use neomind_core::Message;
 use neomind_devices::{CommandDelivery, DeviceService, TimeSeriesStorage};
 use neomind_messages::{Message as NotifyMessage, MessageManager, MessageSeverity};
@@ -172,22 +173,76 @@ impl HostLlmPort {
             max_tokens: Some(2048),
             ..Default::default()
         };
-        let input = LlmInput {
-            messages: vec![
-                Message::system(request.system.clone()),
-                Message::user(request.user.clone()),
-            ],
-            params,
-            model: None,
-            stream: false,
-            tools: None,
+
+        let image_parts = resolve_llm_image_parts(&request.images);
+        let max_ctx = runtime.max_context_length();
+        let user_text = fit_user_prompt_to_context(
+            &request.user,
+            request.system.len(),
+            image_parts.len(),
+            max_ctx,
+            2048,
+        );
+
+        let build_input = |text: String, imgs: Vec<ContentPart>| {
+            let user_msg = if imgs.is_empty() {
+                Message::user(text)
+            } else {
+                let mut parts = Vec::with_capacity(1 + imgs.len());
+                parts.push(ContentPart::text(text));
+                parts.extend(imgs);
+                Message::new(MessageRole::User, Content::Parts(parts))
+            };
+            LlmInput {
+                messages: vec![Message::system(request.system.clone()), user_msg],
+                params: params.clone(),
+                model: None,
+                stream: false,
+                tools: None,
+            }
         };
 
-        let output = tokio::select! {
+        let first_input = build_input(user_text, image_parts.clone());
+        let first_result = tokio::select! {
             _ = cancel.cancelled() => return Err(AgentError::Cancelled),
-            result = runtime.generate(input) => {
-                result.map_err(|e| AgentError::Llm(e.to_string()))?
+            result = runtime.generate(first_input) => result,
+        };
+
+        let output = match first_result {
+            Ok(out) => out,
+            Err(LlmError::ContextOverflow {
+                prompt_tokens,
+                max_context,
+            }) => {
+                tracing::warn!(
+                    prompt_tokens,
+                    max_context,
+                    images = image_parts.len(),
+                    "Agent LLM context overflow; retrying with compacted prompt"
+                );
+                // If images themselves pushed a small context window over the limit,
+                // keep at most 1 image on retry (or drop images if ctx is very small).
+                let retry_imgs = if max_context < 8192 {
+                    Vec::new()
+                } else {
+                    image_parts.into_iter().take(1).collect()
+                };
+                let compact_text = fit_user_prompt_to_context(
+                    &request.user,
+                    request.system.len(),
+                    retry_imgs.len(),
+                    max_context,
+                    2048,
+                );
+                let retry_input = build_input(compact_text, retry_imgs);
+                tokio::select! {
+                    _ = cancel.cancelled() => return Err(AgentError::Cancelled),
+                    result = runtime.generate(retry_input) => {
+                        result.map_err(|e| AgentError::Llm(e.to_string()))?
+                    }
+                }
             }
+            Err(e) => return Err(AgentError::Llm(e.to_string())),
         };
 
         Ok(LlmResponse {
@@ -195,6 +250,73 @@ impl HostLlmPort {
             alert_criteria_met: alert_from_model_text(&output.text),
         })
     }
+}
+
+fn resolve_llm_image_parts(images: &[LlmImage]) -> Vec<ContentPart> {
+    if images.is_empty() {
+        return Vec::new();
+    }
+    let data_dir = neomind_core::paths::data_dir();
+    let mut parts = Vec::with_capacity(images.len());
+    for img in images {
+        if let Some(ref mime) = img.mime_type {
+            if !img.data.is_empty() {
+                parts.push(ContentPart::image_base64(img.data.clone(), mime.clone()));
+            }
+            continue;
+        }
+        let url = img.data.trim();
+        if url.starts_with("/api/images/") {
+            if let Some(data_url) =
+                neomind_devices::image_storage::resolve_internal_image_to_data_url(url, &data_dir)
+            {
+                if let Some((meta, b64)) = data_url
+                    .strip_prefix("data:")
+                    .and_then(|rest| rest.split_once(','))
+                {
+                    let mime = meta.strip_suffix(";base64").unwrap_or(meta);
+                    if !mime.is_empty() && !b64.is_empty() {
+                        parts.push(ContentPart::image_base64(b64.to_string(), mime.to_string()));
+                        continue;
+                    }
+                }
+            } else {
+                tracing::warn!(url = %url, "Skipping unreadable /api/images/ attachment for agent LLM");
+            }
+        } else if url.starts_with("http://") || url.starts_with("https://") {
+            parts.push(ContentPart::image_url(url.to_string()));
+        }
+    }
+    parts
+}
+
+/// Fit the user prompt text comfortably inside `max_context` tokens, accounting
+/// for system prompt, output tokens, and attached vision tokens.
+fn fit_user_prompt_to_context(
+    user: &str,
+    system_chars: usize,
+    image_count: usize,
+    max_context_tokens: usize,
+    output_reserve_tokens: usize,
+) -> String {
+    if max_context_tokens == 0 {
+        return user.to_string();
+    }
+    // Conservative token estimate (mixed CJK/JSON can be ~1.5-2 chars/token).
+    let system_tokens = (system_chars / 2) + 256;
+    let image_tokens = image_count.saturating_mul(1536);
+    let reserved = output_reserve_tokens
+        .saturating_add(system_tokens)
+        .saturating_add(image_tokens);
+    let available_tokens = max_context_tokens.saturating_sub(reserved).max(512);
+    let max_chars = available_tokens.saturating_mul(2);
+    let total_chars = user.chars().count();
+    if total_chars <= max_chars {
+        return user.to_string();
+    }
+    let kept: String = user.chars().take(max_chars).collect();
+    let dropped = total_chars - max_chars;
+    format!("{kept}\n\n... [prompt truncated by {dropped} chars to fit {max_context_tokens}-token context]")
 }
 
 // ── Source reads ────────────────────────────────────────────────────────────
