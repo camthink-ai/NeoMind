@@ -6,7 +6,9 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use super::alert::{alert_from_model_text, evidence_shows_overload};
-use super::structured::{extract_json_object, project_output_fields, structured_system_addon};
+use super::structured::{
+    clean_model_response, extract_json_object, project_output_fields, structured_system_addon,
+};
 use super::{build_evidence_prompt_with_media, AgentRunner, RunOutcome};
 use crate::error::Result;
 use crate::model::{AgentSpec, EvidenceDetail, EvidenceQuality, EvidenceReport, ToolPolicy};
@@ -61,6 +63,7 @@ impl AgentRunner for SinglePassRunner {
         let (user, images) = build_evidence_prompt_with_media(&spec.user_prompt, evidence);
         let mut system = String::from(
             "You are a managed NeoMind agent. Cite evidence keys. Mark missing deps. \
+             Respond directly without <tool_call> tags or function-call wrappers. \
              End with exactly `Verdict: criteria met` only when alert criteria are met.",
         );
         system.push_str(&structured_system_addon(&spec.output.fields));
@@ -82,10 +85,11 @@ impl AgentRunner for SinglePassRunner {
         // evidence gates later). Overload heuristics are local-template only.
         let alert = alert_from_model_text(&resp.text) || resp.alert_criteria_met;
         let structured_result = structured_from_text(&resp.text, spec);
+        let clean_text = clean_model_response(&resp.text, structured_result.as_ref());
 
         Ok(RunOutcome {
-            brief_text: Some(resp.text.clone()),
-            conclusion: Some(resp.text),
+            brief_text: Some(clean_text.clone()),
+            conclusion: Some(clean_text),
             structured_result,
             alert_criteria_met: alert,
             status_hint: None,

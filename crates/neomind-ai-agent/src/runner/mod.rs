@@ -13,7 +13,9 @@ pub use prompt_builder::{
     prompt_with_memory_context, prompt_with_operator_notes, MemoryContext,
 };
 pub use single_pass::{SinglePassRunner, LOCAL_BRIEF_BACKEND};
-pub use structured::{extract_json_object, project_output_fields, structured_system_addon};
+pub use structured::{
+    clean_model_response, extract_json_object, project_output_fields, structured_system_addon,
+};
 pub use tool_loop::ToolLoopRunner;
 
 use async_trait::async_trait;

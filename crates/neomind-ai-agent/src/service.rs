@@ -406,40 +406,67 @@ impl AgentApplicationService {
         let Some(exec) = self.latest_formal(id) else {
             return Ok("No formal execution yet.".into());
         };
-        let mut lines = vec![
-            format!("execution_id={}", exec.id),
-            format!("status={:?}", exec.status),
-        ];
-        for item in &exec.evidence.items {
-            lines.push(format!(
-                "evidence {}: quality={:?} source={} proof={}",
-                item.key, item.quality, item.source_id, item.binding_proof
-            ));
+        let status_label = match exec.status {
+            crate::model::ExecutionStatus::Completed => "Completed",
+            crate::model::ExecutionStatus::Partial => "Partial",
+            crate::model::ExecutionStatus::Skipped => "Skipped",
+            crate::model::ExecutionStatus::Failed => "Failed",
+        };
+        let mut lines = vec![format!("Status: {status_label} ({})", exec.id)];
+
+        if !exec.evidence.items.is_empty() {
+            let sources: Vec<String> = exec
+                .evidence
+                .items
+                .iter()
+                .map(|item| {
+                    let q = match &item.quality {
+                        EvidenceQuality::Fresh => "fresh",
+                        EvidenceQuality::Stale => "stale",
+                        EvidenceQuality::Missing => "missing",
+                        EvidenceQuality::Error { .. } => "error",
+                    };
+                    format!("{} ({q})", item.key)
+                })
+                .collect();
+            lines.push(format!("Inputs: {}", sources.join(", ")));
         }
-        if exec.evidence.missing_keys.is_empty() {
-            lines.push("missing: (none)".into());
-        } else {
-            lines.push(format!(
-                "missing: {}",
-                exec.evidence.missing_keys.join(", ")
-            ));
+        if !exec.evidence.missing_keys.is_empty() {
+            lines.push(format!("Missing: {}", exec.evidence.missing_keys.join(", ")));
         }
-        if let Some(sr) = &exec.structured_result {
-            lines.push(format!("structured_result={sr}"));
+        if let Some(err) = &exec.error {
+            lines.push(format!("Error: {err}"));
         } else if let Some(c) = &exec.conclusion {
-            let preview: String = c.chars().take(240).collect();
-            lines.push(format!("conclusion={preview}"));
+            let cleaned = crate::runner::clean_model_response(c, exec.structured_result.as_ref());
+            let preview: String = cleaned.chars().take(240).collect();
+            if !preview.trim().is_empty() {
+                lines.push(format!("Summary: {preview}"));
+            }
+        } else if let Some(sr) = &exec.structured_result {
+            lines.push(format!("Output: {sr}"));
         }
+
         let notify_n = exec
             .deliveries
             .iter()
             .filter(|d| d.action_fingerprint.starts_with("on_"))
             .count();
-        lines.push(format!(
-            "why notify: deliveries_with_notify_fingerprint={notify_n}, on_complete_policy={}, alert={:?}",
-            self.store.get_spec(id)?.notify.on_complete,
-            exec.alert_verdict
-        ));
+        let on_complete = self.store.get_spec(id)?.notify.on_complete;
+        let verdict_label = match exec.alert_verdict {
+            Some(crate::model::AlertVerdict::CriteriaMet) => "alert criteria met",
+            Some(crate::model::AlertVerdict::CriteriaNotMet) => "no alert triggered",
+            Some(crate::model::AlertVerdict::InsufficientEvidence) => "insufficient evidence",
+            None => "no alert evaluation",
+        };
+        if notify_n > 0 {
+            lines.push(format!("Notification: sent ({notify_n}, {verdict_label})"));
+        } else if !on_complete {
+            lines.push(format!(
+                "Notification: not sent ({verdict_label}; completion notify off)"
+            ));
+        } else {
+            lines.push(format!("Notification: not sent ({verdict_label})"));
+        }
         Ok(lines.join("\n"))
     }
 
