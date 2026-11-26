@@ -1,13 +1,12 @@
-//! Bridge between runtime `AgentSpec` and `neomind_storage::agents_v2` records.
+//! Bridge between runtime `AgentSpec` and `neomind_storage::agent_store` records.
 //!
-//! Used when persisting clean-slate agents into the five-table layout without
-//! depending on storage from the hot path in unit tests (InMemoryAgentStore).
+//! Used when persisting agents into the five-table layout without depending on
+//! storage from the hot path in unit tests (`InMemoryAgentStore`).
 
-use neomind_storage::agents_v2::{
-    AgentRuntimeRecord as StorageRuntime, AgentSpecRecord, AgentStatsV2,
+use neomind_storage::agent_store::{
+    AgentRuntimeRecord as StorageRuntime, AgentRuntimeStats, AgentSpecRecord,
     InputContract as StorageInput, NotifyPolicy as StorageNotify, OutputContract as StorageOutput,
     PacingPolicy as StoragePacing, ToolPolicy as StorageToolPolicy, TriggerSpec as StorageTrigger,
-    V1CompatBundle,
 };
 
 use crate::model::{
@@ -47,7 +46,6 @@ pub fn spec_to_record(spec: &AgentSpec) -> AgentSpecRecord {
             .iter()
             .filter_map(|a| serde_json::to_value(a).ok())
             .collect(),
-        v1_compat: V1CompatBundle::default(),
         config_version: spec.config_version,
         created_at: spec.created_at,
         updated_at: spec.updated_at,
@@ -102,7 +100,7 @@ pub fn runtime_to_storage(rt: &AgentRuntimeRecord) -> StorageRuntime {
     StorageRuntime {
         agent_id: rt.agent_id.clone(),
         status: status_to_storage(rt.status),
-        stats: AgentStatsV2 {
+        stats: AgentRuntimeStats {
             total_runs: rt.stats.total_runs,
             successful_runs: rt.stats.successful_runs,
             failed_runs: rt.stats.failed_runs,

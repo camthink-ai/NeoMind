@@ -68,11 +68,10 @@ pub async fn collect_referenced_image_files(
         }
     }
 
-    // V2-only: scan AgentStoreV2 journal memory (no AiAgent query_agents).
-    if let Ok(v2) = neomind_storage::AgentStoreV2::from_arc(agent_store.db()) {
-        if let Ok(specs) = v2.list_specs() {
+    if let Ok(record_store) = neomind_storage::AgentRecordStore::from_arc(agent_store.db()) {
+        if let Ok(specs) = record_store.list_specs() {
             for spec in specs {
-                if let Ok(Some(memory)) = v2.get_memory(&spec.id) {
+                if let Ok(Some(memory)) = record_store.get_memory(&spec.id) {
                     for record in &memory.journal.records {
                         if record.outcome.contains(MARKER) {
                             extract_image_refs(&record.outcome, &mut referenced);

@@ -1,19 +1,14 @@
 /**
- * Page-link: AgentsPage edit load (GET /agents/v2) → rename-only → PUT patch
+ * Page-link: AgentsPage edit load (GET /agents/:id) → rename-only → PUT patch
  * must leave every other contract field intact for a subsequent re-GET.
- *
- * Guards the regression where getAgent + detailToV2Draft emptied
- * input.requirements / controlled_actions and cleared output.depends_on.
  */
 import { describe, expect, it } from 'vitest'
-import type { AgentSpec, AgentSpecDraft, AiAgentDetail } from '@/types'
+import type { AgentSpec, AgentSpecDraft } from '@/types'
 import {
-  detailToV2Draft,
   draftToUpdatePatch,
   specToDraft,
-} from '@/components/agents/editor-v2/defaults'
+} from '@/components/agents/editor/defaults'
 
-/** Embedded from tests/fixtures/agent-contract/v2/daily-brief.json `draft`. */
 const dailyBriefDraft: AgentSpecDraft = {
   name: 'daily-brief',
   description: 'Zero-device weather + tariff daily brief',
@@ -90,7 +85,7 @@ const CONTRACT_KEYS = [
   'controlled_actions',
 ] as const
 
-describe('AgentsPage edit V2 page-link', () => {
+describe('AgentsPage edit page-link', () => {
   it('rename-only → re-GET keeps all other contract fields', () => {
     const loaded: AgentSpec = {
       ...dailyBriefDraft,
@@ -100,7 +95,7 @@ describe('AgentsPage edit V2 page-link', () => {
       updated_at: 1_700_000_100,
     }
 
-    // Page edit load: GET /agents/v2/:id → seed editor (not detailToV2Draft).
+    // Page edit load: GET /agents/:id → seed editor via specToDraft.
     const seed = specToDraft(loaded)
     const draft = { ...seed, name: 'daily-brief-renamed' }
 
@@ -134,7 +129,7 @@ describe('AgentsPage edit V2 page-link', () => {
       expect(afterGet[key]).toEqual(loaded[key])
     }
 
-    // Fixture must_roundtrip fields (timezone, requirements, tool_policy, channels).
+    // Must-roundtrip fields (timezone, requirements, tool_policy, channels).
     expect(afterGet.trigger).toEqual({
       kind: 'cron',
       expr: '0 9 * * *',
@@ -151,22 +146,5 @@ describe('AgentsPage edit V2 page-link', () => {
       'weather_now',
       'tariff_today',
     ])
-  })
-
-  it('legacy detailToV2Draft still empties contract fields (do not use for edit)', () => {
-    const legacy = {
-      id: 'legacy-1',
-      name: 'legacy',
-      description: 'd',
-      user_prompt: 'do something',
-      schedule: { type: 'Cron', cron: '0 9 * * *' },
-      tool_config: { enabled: false },
-      output_schema: [{ name: 'brief', description: 'x' }],
-    } as unknown as AiAgentDetail
-
-    const wiped = detailToV2Draft(legacy)
-    expect(wiped.input.requirements).toEqual([])
-    expect(wiped.controlled_actions).toEqual([])
-    expect(wiped.output?.fields[0]?.depends_on).toEqual([])
   })
 })

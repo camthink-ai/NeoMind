@@ -1,10 +1,9 @@
-//! V2-only agent handler smoke tests (V1 create/update request types removed).
+//! Agent handler integration tests.
 
 use axum::extract::{Path, Query, State};
 use axum::Json;
 use neomind_ai_agent::model::{AgentSpecPatch, InputContract, TriggerSpec};
 use neomind_api::handlers::agents::{create_agent, get_agent, list_agents, update_agent};
-use neomind_api::handlers::agents_v2::{create_agent_v2, update_agent_v2};
 use neomind_api::handlers::data::{list_all_data_sources_handler, ListDataSourcesQuery};
 use neomind_api::handlers::ServerState;
 use serde_json::json;
@@ -42,9 +41,9 @@ fn base_draft(overrides: serde_json::Value) -> neomind_ai_agent::model::AgentSpe
 
 async fn create_agent_with(state: &ServerState, overrides: serde_json::Value) -> String {
     let draft = base_draft(overrides);
-    let resp = create_agent_v2(State(state.clone()), Json(draft))
+    let resp = create_agent(State(state.clone()), Json(draft))
         .await
-        .expect("create_agent_v2 must accept the draft")
+        .expect("create_agent must accept the draft")
         .0
         .data
         .expect("create returns data");
@@ -61,25 +60,7 @@ async fn read_back(state: &ServerState, id: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
-async fn legacy_create_and_update_are_refused() {
-    let state = create_test_server_state().await;
-    let create_err = create_agent(State(state.clone()), Json(json!({ "name": "x" })))
-        .await
-        .expect_err("legacy POST /agents must refuse");
-    assert!(create_err.message.contains("/agents/v2"), "{create_err:?}");
-
-    let update_err = update_agent(
-        State(state),
-        Path("missing".into()),
-        Json(json!({ "name": "y" })),
-    )
-    .await
-    .expect_err("legacy PUT /agents/:id must refuse");
-    assert!(update_err.message.contains("/agents/v2"), "{update_err:?}");
-}
-
-#[tokio::test]
-async fn list_and_get_return_v2_schema_dtos() {
+async fn list_and_get_return_agent_contract_dtos() {
     let state = create_test_server_state().await;
     let id = create_agent_with(&state, json!({})).await;
 
@@ -141,7 +122,7 @@ async fn update_via_v2_patch_preserves_input_when_trigger_only() {
         trigger: Some(TriggerSpec::Interval { every_secs: 120 }),
         ..Default::default()
     };
-    let _ = update_agent_v2(State(state.clone()), Path(id.clone()), Json(patch))
+    let _ = update_agent(State(state.clone()), Path(id.clone()), Json(patch))
         .await
         .expect("trigger-only patch");
 
@@ -159,7 +140,7 @@ async fn update_via_v2_patch_preserves_input_when_trigger_only() {
         }),
         ..Default::default()
     };
-    let _ = update_agent_v2(State(state.clone()), Path(id.clone()), Json(clear))
+    let _ = update_agent(State(state.clone()), Path(id.clone()), Json(clear))
         .await
         .expect("explicit empty input");
     let cleared = read_back(&state, &id).await;
@@ -322,7 +303,7 @@ async fn prompt_patch_updates_user_prompt() {
         user_prompt: Some("只在工作日告警".into()),
         ..Default::default()
     };
-    let _ = update_agent_v2(State(state.clone()), Path(id.clone()), Json(patch))
+    let _ = update_agent(State(state.clone()), Path(id.clone()), Json(patch))
         .await
         .expect("prompt patch");
     assert_eq!(

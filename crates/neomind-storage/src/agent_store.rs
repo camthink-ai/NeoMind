@@ -1,10 +1,7 @@
-//! Schema-v2 agent tables (five-table layout + AgentStoreV2).
+//! Five-table agent persistence layout and [`AgentRecordStore`].
 //!
-//! V1↔V2 row maps and migrate/copy live in [`crate::agents_migrate`].
-//!
-//! M1 lands the five-table layout and the fidelity mapping helpers, but does
-//! **not** bump [`crate::schema::CURRENT_SCHEMA_VERSION`] or wire this into
-//! [`crate::agents::AgentStore::open`]. M2 activates startup migration.
+//! One-way startup migration from residual legacy `agents` tables lives in
+//! [`crate::agent_migration`].
 //!
 //! Storage must not depend on `neomind-ai-agent` — DTO shapes here mirror that
 //! crate's contracts so rows stay JSON-compatible across the boundary.
@@ -14,15 +11,12 @@ use std::sync::Arc;
 use redb::{Database, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 
-use crate::agents::{
-    AgentMemory, AgentResource, AgentStatus, MemoryMode, OperatorConfig, OperatorField,
-    ParsedIntent, UserMessage,
-};
+use crate::agents::{AgentMemory, AgentStatus, UserMessage};
 use crate::error::{Error, Result};
 
-// ── Table names (v2 layout) ─────────────────────────────────────────────────
+// ── Table names ─────────────────────────────────────────────────────────────
 
-pub(crate) const AGENTS_V1_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("agents");
+pub(crate) const LEGACY_AGENTS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("agents");
 pub(crate) const AGENT_SPECS_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("agent_specs");
 pub(crate) const AGENT_RUNTIME_TABLE: TableDefinition<&str, &[u8]> =
@@ -34,7 +28,7 @@ pub(crate) const AGENT_MEMORY_TABLE: TableDefinition<&str, &[u8]> =
 pub(crate) const AGENT_USER_MESSAGES_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("agent_user_messages");
 
-// ── V2 DTO types (JSON-compatible with neomind-ai-agent) ────────────────────
+// ── Storage DTO types (JSON-compatible with neomind-ai-agent) ───────────────
 
 /// Tool access policy for a managed agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -115,48 +109,6 @@ pub struct OutputContract {
     pub publish: bool,
 }
 
-/// Legacy payload preserved on migrated rows for offline inventory / readback.
-///
-/// Production writers leave this at [`Default`]. Mapping into/out of
-/// [`crate::AiAgent`] lives only in [`crate::agents_migrate`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct V1CompatBundle {
-    #[serde(default)]
-    pub resources: Vec<AgentResource>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parsed_intent: Option<ParsedIntent>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_schema: Option<Vec<OperatorField>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub operator_config: Option<OperatorConfig>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub memory_mode: Option<MemoryMode>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens_per_run: Option<u64>,
-    #[serde(default = "v1_compat_default_priority")]
-    pub priority: u8,
-    #[serde(default = "v1_compat_default_context_window")]
-    pub context_window_size: usize,
-    #[serde(default = "v1_compat_default_max_chain_depth")]
-    pub max_chain_depth: usize,
-    #[serde(default)]
-    pub max_retries: u32,
-}
-
-fn v1_compat_default_priority() -> u8 {
-    100
-}
-
-fn v1_compat_default_context_window() -> usize {
-    10
-}
-
-fn v1_compat_default_max_chain_depth() -> usize {
-    crate::agents::DEFAULT_MAX_CHAIN_DEPTH
-}
-
 /// Frozen static configuration written to `agent_specs`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentSpecRecord {
@@ -179,17 +131,13 @@ pub struct AgentSpecRecord {
     pub notify: NotifyPolicy,
     #[serde(default)]
     pub controlled_actions: Vec<serde_json::Value>,
-    /// See [`V1CompatBundle`]. `#[serde(default)]` so rows written before this
-    /// field still deserialize.
-    #[serde(default)]
-    pub v1_compat: V1CompatBundle,
     pub config_version: u64,
     pub created_at: i64,
     pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct AgentStatsV2 {
+pub struct AgentRuntimeStats {
     pub total_runs: u64,
     pub successful_runs: u64,
     pub failed_runs: u64,
@@ -220,7 +168,7 @@ pub struct AgentStatsV2 {
 pub struct AgentRuntimeRecord {
     pub agent_id: String,
     pub status: AgentStatus,
-    pub stats: AgentStatsV2,
+    pub stats: AgentRuntimeStats,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -228,10 +176,10 @@ pub struct AgentRuntimeRecord {
     pub updated_at: i64,
 }
 
-/// V2 execution outcome (distinct from legacy [`crate::agents::ExecutionStatus`]).
+/// Execution outcome written to `agent_executions`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ExecutionStatusV2 {
+pub enum AgentExecutionStatus {
     Completed,
     Partial,
     Skipped,
@@ -261,13 +209,13 @@ pub struct ActionDeliveryRecord {
     pub state: DeliveryState,
 }
 
-/// Execution row written to `agent_executions` (v2 shape).
+/// Execution row written to `agent_executions`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentExecutionRecordV2 {
+pub struct AgentExecutionRow {
     pub id: String,
     pub agent_id: String,
     pub config_version: u64,
-    pub status: ExecutionStatusV2,
+    pub status: AgentExecutionStatus,
     pub started_at: i64,
     pub finished_at: i64,
     pub is_probe: bool,
@@ -300,13 +248,10 @@ fn delivery_matches(rec: &ActionDeliveryRecord, destination: &str, fingerprint: 
     rec.destination == destination && rec.action_fingerprint == fingerprint
 }
 
-// ── Store (v2 tables only; does not migrate or delete legacy `agents`) ──────
+// ── Store ───────────────────────────────────────────────────────────────────
 
-/// Create the five v2 tables if missing.
-///
-/// Does **not** delete, rename, or touch a legacy `agents` table — even when
-/// that table is present and empty. Safe to call from [`AgentStoreV2::open`].
-pub fn ensure_v2_tables(db: &Database) -> Result<()> {
+/// Create the five agent tables if missing.
+pub fn ensure_agent_tables(db: &Database) -> Result<()> {
     let write = db.begin_write()?;
     write.open_table(AGENT_SPECS_TABLE)?;
     write.open_table(AGENT_RUNTIME_TABLE)?;
@@ -317,16 +262,13 @@ pub fn ensure_v2_tables(db: &Database) -> Result<()> {
     Ok(())
 }
 
-/// Persistent agent store over the five v2 tables.
-///
-/// Opening ensures tables exist but never runs [`migrate_agents_v1_to_v2`] and
-/// never bumps [`crate::schema::CURRENT_SCHEMA_VERSION`].
-pub struct AgentStoreV2 {
+/// Persistent agent store over the five agent tables.
+pub struct AgentRecordStore {
     db: Arc<Database>,
 }
 
-impl AgentStoreV2 {
-    /// Open or create a store at `path`, ensuring the five v2 tables exist.
+impl AgentRecordStore {
+    /// Open or create a store at `path`, ensuring the five agent tables exist.
     pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Arc<Self>> {
         Self::from_db(Database::create(path)?)
     }
@@ -340,14 +282,14 @@ impl AgentStoreV2 {
         )
     }
 
-    /// Take ownership of a [`Database`] and ensure v2 tables.
+    /// Take ownership of a [`Database`] and ensure tables.
     pub fn from_db(db: Database) -> Result<Arc<Self>> {
         Self::from_arc(Arc::new(db))
     }
 
-    /// Share an existing [`Database`] (e.g. alongside legacy [`crate::agents::AgentStore`]).
+    /// Share an existing [`Database`].
     pub fn from_arc(db: Arc<Database>) -> Result<Arc<Self>> {
-        ensure_v2_tables(&db)?;
+        ensure_agent_tables(&db)?;
         Ok(Arc::new(Self { db }))
     }
 
@@ -416,7 +358,7 @@ impl AgentStoreV2 {
         Ok(removed)
     }
 
-    /// Drop every v2 row for `id` (spec, runtime, memory, user messages).
+    /// Drop every row for `id` (spec, runtime, memory, user messages).
     pub fn delete_agent_rows(&self, id: &str) -> Result<bool> {
         let write = self.db.begin_write()?;
         let removed = {
@@ -492,13 +434,12 @@ impl AgentStoreV2 {
                 None if specs.get(agent_id)?.is_some() => AgentRuntimeRecord {
                     agent_id: agent_id.to_string(),
                     status: AgentStatus::Active,
-                    stats: AgentStatsV2::default(),
+                    stats: AgentRuntimeStats::default(),
                     error_message: None,
                     next_probe_at: None,
                     updated_at: now,
                 },
                 None => {
-                    // Agent gone — same silent no-op as the legacy RMW path.
                     return Ok(());
                 }
             };
@@ -545,7 +486,7 @@ impl AgentStoreV2 {
                 None if specs.get(agent_id)?.is_some() => AgentRuntimeRecord {
                     agent_id: agent_id.to_string(),
                     status,
-                    stats: AgentStatsV2::default(),
+                    stats: AgentRuntimeStats::default(),
                     error_message: error_message.clone(),
                     next_probe_at: None,
                     updated_at: now,
@@ -564,7 +505,7 @@ impl AgentStoreV2 {
 
     // ── Executions ──────────────────────────────────────────────────────────
 
-    pub fn save_execution(&self, execution: &AgentExecutionRecordV2) -> Result<()> {
+    pub fn save_execution(&self, execution: &AgentExecutionRow) -> Result<()> {
         let write = self.db.begin_write()?;
         {
             let mut table = write.open_table(AGENT_EXECUTIONS_TABLE)?;
@@ -576,12 +517,12 @@ impl AgentStoreV2 {
         Ok(())
     }
 
-    pub fn get_execution(&self, id: &str) -> Result<Option<AgentExecutionRecordV2>> {
+    pub fn get_execution(&self, id: &str) -> Result<Option<AgentExecutionRow>> {
         let read = self.db.begin_read()?;
         let table = read.open_table(AGENT_EXECUTIONS_TABLE)?;
         match table.get(id)? {
             Some(bytes) => {
-                let exec: AgentExecutionRecordV2 = serde_json::from_slice(bytes.value())
+                let exec: AgentExecutionRow = serde_json::from_slice(bytes.value())
                     .map_err(|e| Error::Serialization(e.to_string()))?;
                 Ok(Some(exec))
             }
@@ -590,13 +531,13 @@ impl AgentStoreV2 {
     }
 
     /// Formal (non-`dry_run`) executions for `agent_id`, newest `finished_at` first.
-    pub fn list_formal_executions(&self, agent_id: &str) -> Result<Vec<AgentExecutionRecordV2>> {
+    pub fn list_formal_executions(&self, agent_id: &str) -> Result<Vec<AgentExecutionRow>> {
         let read = self.db.begin_read()?;
         let table = read.open_table(AGENT_EXECUTIONS_TABLE)?;
         let mut out = Vec::new();
         for entry in table.iter()? {
             let (_, bytes) = entry?;
-            let exec: AgentExecutionRecordV2 = match serde_json::from_slice(bytes.value()) {
+            let exec: AgentExecutionRow = match serde_json::from_slice(bytes.value()) {
                 Ok(e) => e,
                 Err(e) => {
                     tracing::warn!("skip corrupt agent_executions row: {e}");
@@ -629,7 +570,7 @@ impl AgentStoreV2 {
                     )));
                 }
             };
-            let mut exec: AgentExecutionRecordV2 = serde_json::from_slice(&existing_bytes)
+            let mut exec: AgentExecutionRow = serde_json::from_slice(&existing_bytes)
                 .map_err(|e| Error::Serialization(e.to_string()))?;
             if exec
                 .deliveries
@@ -666,7 +607,7 @@ impl AgentStoreV2 {
                     return Err(Error::NotFound(format!("execution {execution_id}")));
                 }
             };
-            let mut exec: AgentExecutionRecordV2 = serde_json::from_slice(&existing_bytes)
+            let mut exec: AgentExecutionRow = serde_json::from_slice(&existing_bytes)
                 .map_err(|e| Error::Serialization(e.to_string()))?;
             let rec = exec
                 .deliveries
@@ -705,7 +646,7 @@ impl AgentStoreV2 {
                     };
                     guard.value().to_vec()
                 };
-                let mut exec: AgentExecutionRecordV2 = match serde_json::from_slice(&existing) {
+                let mut exec: AgentExecutionRow = match serde_json::from_slice(&existing) {
                     Ok(e) => e,
                     Err(e) => {
                         tracing::warn!("skip corrupt agent_executions row on recover: {e}");
@@ -850,7 +791,7 @@ impl AgentStoreV2 {
         }
     }
 
-    /// Add a user message to a V2 agent (atomic check-spec + append + FIFO trim).
+    /// Add a user message to an agent (atomic check-spec + append + FIFO trim).
     pub fn add_user_message(
         &self,
         agent_id: &str,
@@ -891,7 +832,7 @@ impl AgentStoreV2 {
         Ok(message)
     }
 
-    /// Read user messages for a V2 agent, returning NotFound if the spec does not exist.
+    /// Read user messages for an agent, returning NotFound if the spec does not exist.
     pub fn get_user_messages_checked(
         &self,
         agent_id: &str,
@@ -916,7 +857,7 @@ impl AgentStoreV2 {
         Ok(msgs)
     }
 
-    /// Delete one user message by id for a V2 agent.
+    /// Delete one user message by id for an agent.
     pub fn delete_user_message(&self, agent_id: &str, message_id: &str) -> Result<bool> {
         let write = self.db.begin_write()?;
         let removed = {
@@ -945,7 +886,7 @@ impl AgentStoreV2 {
         Ok(removed)
     }
 
-    /// Clear all user messages for a V2 agent; returns number removed.
+    /// Clear all user messages for an agent; returns number removed.
     pub fn clear_user_messages(&self, agent_id: &str) -> Result<usize> {
         let write = self.db.begin_write()?;
         let count = {
@@ -973,7 +914,7 @@ impl AgentStoreV2 {
     }
 }
 
-// ── Migration ───────────────────────────────────────────────────────────────
+// ── Legacy table detection ──────────────────────────────────────────────────
 
 fn table_exists(
     db: &Database,
@@ -984,20 +925,17 @@ fn table_exists(
 }
 
 /// Whether the legacy single-table `agents` layout is still present.
-pub fn table_exists_agents_v1(db: &Database) -> std::result::Result<bool, String> {
-    table_exists(db, AGENTS_V1_TABLE)
+pub fn has_legacy_agents_table(db: &Database) -> std::result::Result<bool, String> {
+    table_exists(db, LEGACY_AGENTS_TABLE)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_migration::{map_notify_policy, map_tool_policy, migrate_legacy_agents_table};
     use crate::agents::{
-        AgentNotify, AgentSchedule, AgentStats, AgentStatus, AgentToolConfig, AiAgent,
-        ExecutionMode, NotifyOn, ResourceType, ScheduleType,
-    };
-    use crate::agents_migrate::{
-        copy_agents_v1_to_v2_keep_legacy, map_notify_policy, map_tool_policy,
-        migrate_agents_v1_to_v2,
+        AgentNotify, AgentResource, AgentSchedule, AgentStats, AgentStatus, AgentToolConfig,
+        AiAgent, ExecutionMode, NotifyOn, ResourceType, ScheduleType,
     };
 
     fn bare_resource(resource_type: ResourceType, resource_id: &str) -> AgentResource {
@@ -1054,7 +992,6 @@ mod tests {
 
     #[test]
     fn structured_maps_to_disabled_no_privilege_expansion() {
-        // Even with a broad allowlist, Structured must not gain tools.
         let cfg = Some(AgentToolConfig {
             enabled: true,
             allowed_tools: vec!["shell".into(), "memory".into()],
@@ -1193,11 +1130,11 @@ mod tests {
             .create_with_backend(redb::backends::InMemoryBackend::new())
             .unwrap();
 
-        // Seed a v1 agents row (mimic AgentStore layout).
+        // Seed a legacy agents row alongside a corrupt row.
         {
             let write = db.begin_write().unwrap();
             {
-                let mut agents = write.open_table(AGENTS_V1_TABLE).unwrap();
+                let mut agents = write.open_table(LEGACY_AGENTS_TABLE).unwrap();
                 let mut execs = write.open_table(AGENT_EXECUTIONS_TABLE).unwrap();
                 let mut mem = write.open_table(AGENT_MEMORY_TABLE).unwrap();
                 let mut agent = fixture_agent();
@@ -1218,14 +1155,16 @@ mod tests {
                 }];
                 let bytes = serde_json::to_vec(&agent).unwrap();
                 agents.insert(agent.id.as_str(), bytes.as_slice()).unwrap();
-                // Touch legacy sibling tables so they exist like a real store.
+                agents
+                    .insert("corrupt-row", b"{not valid json".as_slice())
+                    .unwrap();
                 let _ = &mut execs;
                 let _ = &mut mem;
             }
             write.commit().unwrap();
         }
 
-        migrate_agents_v1_to_v2(&db).unwrap();
+        migrate_legacy_agents_table(&db).unwrap();
 
         {
             let read = db.begin_read().unwrap();
@@ -1235,7 +1174,7 @@ mod tests {
             assert!(read.open_table(AGENT_MEMORY_TABLE).is_ok());
             assert!(read.open_table(AGENT_USER_MESSAGES_TABLE).is_ok());
             assert!(
-                read.open_table(AGENTS_V1_TABLE).is_err(),
+                read.open_table(LEGACY_AGENTS_TABLE).is_err(),
                 "legacy agents table must be removed"
             );
 
@@ -1245,6 +1184,7 @@ mod tests {
             assert_eq!(spec.tool_policy, ToolPolicy::Disabled);
             assert!(spec.notify.pending_confirmation);
             assert!(spec.notify.channels.is_empty());
+            assert!(specs.get("corrupt-row").unwrap().is_none());
 
             let msgs = read.open_table(AGENT_USER_MESSAGES_TABLE).unwrap();
             let msg_bytes = msgs.get("a1").unwrap().unwrap().value().to_vec();
@@ -1253,11 +1193,10 @@ mod tests {
             assert_eq!(messages[0].content, "hi");
         }
 
-        // Schema stamp is owned by schema.rs; migrate helper itself does not stamp.
         assert_eq!(crate::schema::CURRENT_SCHEMA_VERSION, 2);
 
         // Idempotent second pass.
-        migrate_agents_v1_to_v2(&db).unwrap();
+        migrate_legacy_agents_table(&db).unwrap();
         let read = db.begin_read().unwrap();
         let specs = read.open_table(AGENT_SPECS_TABLE).unwrap();
         assert!(specs.get("a1").unwrap().is_some());
@@ -1277,7 +1216,6 @@ mod tests {
             output: OutputContract::default(),
             notify: NotifyPolicy::default(),
             controlled_actions: Vec::new(),
-            v1_compat: V1CompatBundle::default(),
             config_version: 1,
             created_at: 100,
             updated_at: 200,
@@ -1285,27 +1223,15 @@ mod tests {
     }
 
     #[test]
-    fn ensure_v2_tables_preserves_empty_legacy_agents() {
+    fn ensure_agent_tables_creates_five_tables() {
         let db = Database::builder()
             .create_with_backend(redb::backends::InMemoryBackend::new())
             .unwrap();
-        {
-            let write = db.begin_write().unwrap();
-            {
-                let mut agents = write.open_table(AGENTS_V1_TABLE).unwrap();
-                // Empty legacy table — still must survive ensure_v2_tables.
-                let _ = &mut agents;
-            }
-            write.commit().unwrap();
-        }
 
-        ensure_v2_tables(&db).unwrap();
+        ensure_agent_tables(&db).unwrap();
 
         let read = db.begin_read().unwrap();
-        assert!(
-            read.open_table(AGENTS_V1_TABLE).is_ok(),
-            "ensure_v2_tables must not delete legacy agents"
-        );
+        assert!(read.open_table(LEGACY_AGENTS_TABLE).is_err());
         assert!(read.open_table(AGENT_SPECS_TABLE).is_ok());
         assert!(read.open_table(AGENT_RUNTIME_TABLE).is_ok());
         assert!(read.open_table(AGENT_EXECUTIONS_TABLE).is_ok());
@@ -1315,29 +1241,8 @@ mod tests {
     }
 
     #[test]
-    fn soft_copy_keeps_legacy_agents_table() {
-        let tmp = tempfile::tempdir().unwrap();
-        let db = Database::create(tmp.path().join("soft.redb")).unwrap();
-        {
-            let write = db.begin_write().unwrap();
-            {
-                let mut t = write.open_table(AGENTS_V1_TABLE).unwrap();
-                let agent = fixture_agent();
-                let bytes = serde_json::to_vec(&agent).unwrap();
-                t.insert(agent.id.as_str(), bytes.as_slice()).unwrap();
-            }
-            write.commit().unwrap();
-        }
-        copy_agents_v1_to_v2_keep_legacy(&db).unwrap();
-        copy_agents_v1_to_v2_keep_legacy(&db).unwrap();
-        assert!(table_exists(&db, AGENTS_V1_TABLE).unwrap());
-        let store = AgentStoreV2::from_db(db).unwrap();
-        assert!(store.get_spec("a1").unwrap().is_some());
-    }
-
-    #[test]
-    fn agent_store_v2_spec_roundtrip() {
-        let store = AgentStoreV2::memory().unwrap();
+    fn agent_record_store_spec_roundtrip() {
+        let store = AgentRecordStore::memory().unwrap();
         let spec = sample_spec("spec-1");
         store.save_spec(&spec).unwrap();
 
@@ -1352,14 +1257,14 @@ mod tests {
     }
 
     #[test]
-    fn agent_store_v2_runtime_and_execution_delivery() {
-        let store = AgentStoreV2::memory().unwrap();
+    fn agent_record_store_runtime_and_execution_delivery() {
+        let store = AgentRecordStore::memory().unwrap();
         store.save_spec(&sample_spec("a1")).unwrap();
 
         let runtime = AgentRuntimeRecord {
             agent_id: "a1".into(),
             status: AgentStatus::Active,
-            stats: AgentStatsV2::default(),
+            stats: AgentRuntimeStats::default(),
             error_message: None,
             next_probe_at: None,
             updated_at: 50,
@@ -1367,11 +1272,11 @@ mod tests {
         store.set_runtime(&runtime).unwrap();
         assert_eq!(store.get_runtime("a1").unwrap().unwrap(), runtime);
 
-        let formal = AgentExecutionRecordV2 {
+        let formal = AgentExecutionRow {
             id: "exec-formal".into(),
             agent_id: "a1".into(),
             config_version: 1,
-            status: ExecutionStatusV2::Completed,
+            status: AgentExecutionStatus::Completed,
             started_at: 10,
             finished_at: 20,
             is_probe: false,
@@ -1386,7 +1291,7 @@ mod tests {
             error: None,
             alert_verdict: None,
         };
-        let dry = AgentExecutionRecordV2 {
+        let dry = AgentExecutionRow {
             id: "exec-dry".into(),
             dry_run: true,
             finished_at: 30,
@@ -1419,9 +1324,8 @@ mod tests {
     }
 
     #[test]
-    fn agent_store_v2_user_messages_and_journal_roundtrip() {
-        let store = AgentStoreV2::memory().unwrap();
-        // Missing agent returns NotFound.
+    fn agent_record_store_user_messages_and_journal_roundtrip() {
+        let store = AgentRecordStore::memory().unwrap();
         assert!(store
             .add_user_message("ghost", "hi".into(), None, 50)
             .is_err());
@@ -1438,7 +1342,6 @@ mod tests {
             .add_user_message("u1", "third".into(), Some("instruction".into()), 2)
             .unwrap();
 
-        // Cap = 2 keeps the two newest messages ("second", "third").
         let msgs = store.get_user_messages_checked("u1", None).unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].id, m2.id);
@@ -1453,7 +1356,6 @@ mod tests {
             .unwrap()
             .is_empty());
 
-        // Journal append + missing-agent no-op.
         let rec = crate::agents::ExecutionRecord {
             timestamp: 100,
             execution_id: "exec-1".into(),

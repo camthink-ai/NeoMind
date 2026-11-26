@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { api } from '@/lib/api'
 import { resolveImageSrc } from '@/lib/imageUtils'
 import { useEvents } from '@/hooks/useEvents'
-import type { ResourceRequest } from '@/types'
+import type { AgentSpecDraft, AgentSpecPatch, InputContract, InputRequirement, TriggerSpec } from '@/types'
 import type { DataSource, DataSourceOrList } from '@/types/dashboard'
 import { getSourceId, normalizeDataSource } from '@/types/dashboard'
 import type { AiAnalystConfig, AnalystMessage } from './types'
@@ -180,78 +180,61 @@ function resolveMetricField(dataSource: DataSource): string {
   return raw.startsWith('produce:') ? raw.slice(8) : raw
 }
 
-function buildResources(dataSources: DataSource[]): ResourceRequest[] | undefined {
-  if (!dataSources.length) return undefined
-  const resources: ResourceRequest[] = dataSources.flatMap((ds): ResourceRequest[] => {
+function buildInputContract(dataSources: DataSource[]): InputContract {
+  const requirements: InputRequirement[] = []
+  for (const [i, ds] of dataSources.entries()) {
     const sourceId = getSourceId(ds)
     const field = resolveMetricField(ds)
-
-    // Device commands → same format as AgentEditorFullScreen
-    if (ds.type === 'command' && sourceId && ds.command) {
-      return [{
-        resource_id: `${sourceId}:${ds.command}`,
-        resource_type: 'command',
-        name: ds.command,
-        config: {
-          device_id: sourceId,
-          command_name: ds.command,
-          parameters: ds.commandParams || {},
-        },
-      }]
+    const base = {
+      params: {} as Record<string, unknown>,
+      timeout_secs: 10,
+      result_type: 'structured_json' as const,
+      freshness: { kind: 'any' as const },
+      on_missing: 'report_stale' as const,
     }
 
-    // Extension commands → same format as AgentEditorFullScreen
-    if (ds.type === 'extension-command' && ds.extensionId && ds.extensionCommand) {
-      return [{
-        resource_id: `extension:${ds.extensionId}:${ds.extensionCommand}`,
-        resource_type: 'extension_tool',
-        name: ds.extensionCommand,
-        config: {
-          extension_id: ds.extensionId,
-          command_name: ds.extensionCommand,
-          parameters: ds.commandParams || {},
-        },
-      }]
+    if (ds.type === 'command' || ds.type === 'extension-command') {
+      continue
     }
 
     if (ds.type === 'extension' && ds.extensionId) {
-      return [{
-        resource_id: `extension:${ds.extensionId}:${field}`,
-        resource_type: 'extension_metric',
-        name: ds.extensionDisplayName || field,
-        config: {
-          extension_id: ds.extensionId,
-          metric_name: field,
-        },
-      }]
+      requirements.push({
+        ...base,
+        key: ds.extensionDisplayName || field || `ext_${i}`,
+        source: { kind: 'extension_instance', id: ds.extensionId },
+        params: { metric_name: field },
+      })
+      continue
     }
+
     if (sourceId) {
-      return [{
-        resource_id: `${sourceId}:${field}`,
-        resource_type: ds.type === 'extension-metric' ? 'extension_metric' : 'metric',
-        name: field,
-        config: {
-          device_id: sourceId,
-          metric_name: field,
-        },
-      }]
+      if (ds.type === 'extension-metric') {
+        requirements.push({
+          ...base,
+          key: field || `ext_metric_${i}`,
+          source: { kind: 'extension_instance', id: sourceId },
+          params: { metric_name: field },
+        })
+      } else {
+        requirements.push({
+          ...base,
+          key: field || `metric_${i}`,
+          source: { kind: 'device_metric', device_id: sourceId, field },
+        })
+      }
     }
-    return []
-  })
-  return resources.length > 0 ? resources : undefined
+  }
+  return { requirements }
 }
 
 /**
- * Build event_filter JSON for schedule_type: 'event' so the agent editor
- * can display the Data-driven trigger sources.
- * Format: {"sources": [{"type": "device"|"extension", "id": "...", "name": "...", "field": "..."}]}
+ * Build an event TriggerSpec from the bound data sources.
+ * Format: { kind: 'event', filter: { sources: [...] } }
  */
-function buildEventFilter(dataSources: DataSource[]): string | undefined {
-  // Commands should not trigger agent execution — only metrics drive events
+function buildEventTrigger(dataSources: DataSource[]): TriggerSpec {
   const metricSources = dataSources.filter(ds =>
     ds.type !== 'command' && ds.type !== 'extension-command'
   )
-  if (!metricSources.length) return undefined
   const sources = metricSources.flatMap((ds) => {
     const sourceId = getSourceId(ds)
     const field = resolveMetricField(ds)
@@ -274,7 +257,10 @@ function buildEventFilter(dataSources: DataSource[]): string | undefined {
     }
     return []
   })
-  return sources.length > 0 ? JSON.stringify({ sources }) : undefined
+  return {
+    kind: 'event',
+    filter: sources.length > 0 ? { sources } : {},
+  }
 }
 
 /**
@@ -766,9 +752,27 @@ export function useAnalystSession({
       const cfg = configRef.current
       const ds = dataSourceRef.current
       const dsList = normalizeDataSource(ds)
-      const resources = buildResources(dsList)
-      const eventFilter = buildEventFilter(dsList)
+      const input = buildInputContract(dsList)
+      const trigger = buildEventTrigger(dsList)
       const agentName = `${titleRef.current || 'AI Analyst'} [${componentId.slice(0, 8)}]`
+      const createDraft: AgentSpecDraft = {
+        name: agentName,
+        user_prompt: cfg.systemPrompt,
+        llm_backend_id: cfg.modelId,
+        trigger,
+        input,
+        tool_policy: 'unrestricted',
+        output: { fields: [], publish: false },
+        notify: {
+          channels: [],
+          on_complete: false,
+          on_alert: false,
+          alert_depends_on: [],
+          on_failure: true,
+          pending_confirmation: false,
+        },
+        controlled_actions: [],
+      }
 
       // Search for existing agent by name to avoid duplicates.
       let agentId: string
@@ -781,34 +785,17 @@ export function useAnalystSession({
           await api.updateAgent(agentId, {
             name: agentName,
             user_prompt: cfg.systemPrompt,
-            llm_backend_id: cfg.modelId,
-            schedule: { schedule_type: 'event', event_filter: eventFilter },
-            resources,
-            context_window_size: cfg.contextWindowSize,
+            llm_backend_id: cfg.modelId ?? null,
+            trigger,
+            input,
           })
         } else {
-          const agent = await api.createAgent({
-            name: agentName,
-            user_prompt: cfg.systemPrompt,
-            llm_backend_id: cfg.modelId,
-            schedule: { schedule_type: 'event', event_filter: eventFilter },
-            execution_mode: 'focused',
-            context_window_size: cfg.contextWindowSize,
-            resources,
-          })
+          const { agent } = await api.createAgent(createDraft)
           agentId = agent.id
         }
       } catch {
         // listAgents failed — fall through to create
-        const agent = await api.createAgent({
-          name: agentName,
-          user_prompt: cfg.systemPrompt,
-          llm_backend_id: cfg.modelId,
-          schedule: { schedule_type: 'event', event_filter: eventFilter },
-          execution_mode: 'focused',
-          context_window_size: cfg.contextWindowSize,
-          resources,
-        })
+        const { agent } = await api.createAgent(createDraft)
         agentId = agent.id
       }
 
@@ -855,12 +842,11 @@ export function useAnalystSession({
   // Also fires on initial connection (isConnected transition) to sync saved config.
   const prevModelIdRef = useRef<string | undefined>(undefined)
   const prevPromptRef = useRef<string | undefined>(undefined)
-  const prevContextSizeRef = useRef<number | undefined>(undefined)
   useEffect(() => {
     const agentId = agentIdRef.current
     if (!agentId || !isConnected) return
 
-    const updates: Record<string, unknown> = {}
+    const updates: AgentSpecPatch = {}
     if (config.modelId && config.modelId !== prevModelIdRef.current) {
       updates.llm_backend_id = config.modelId
       prevModelIdRef.current = config.modelId
@@ -868,10 +854,6 @@ export function useAnalystSession({
     if (config.systemPrompt && config.systemPrompt !== prevPromptRef.current) {
       updates.user_prompt = config.systemPrompt
       prevPromptRef.current = config.systemPrompt
-    }
-    if (config.contextWindowSize && config.contextWindowSize !== prevContextSizeRef.current) {
-      updates.context_window_size = config.contextWindowSize
-      prevContextSizeRef.current = config.contextWindowSize
     }
 
     if (Object.keys(updates).length === 0) return
@@ -888,7 +870,7 @@ export function useAnalystSession({
     api.updateAgent(agentId, updates).catch(() => {
       // Non-critical: agent will use whatever configuration it has
     })
-  }, [config.modelId, config.systemPrompt, config.contextWindowSize, isConnected])
+  }, [config.modelId, config.systemPrompt, isConnected])
 
   // Sync agent name when title changes after agent creation
   const prevTitleRef = useRef(title)
@@ -901,7 +883,7 @@ export function useAnalystSession({
     api.updateAgent(agentId, { name: nameWithId }).catch(() => {})
   }, [title, isConnected])
 
-  // Sync event_filter and resources when dataSource changes after agent creation
+  // Sync event trigger and input requirements when dataSource changes after agent creation
   // This handles component editing (changing data source) without creating a new agent
   const prevDataSourceRef = useRef(dataSource)
   useEffect(() => {
@@ -912,12 +894,12 @@ export function useAnalystSession({
     prevDataSourceRef.current = dataSource
 
     const dsList = normalizeDataSource(dataSource)
-    const resources = buildResources(dsList)
-    const eventFilter = buildEventFilter(dsList)
+    const input = buildInputContract(dsList)
+    const trigger = buildEventTrigger(dsList)
 
     api.updateAgent(agentId, {
-      schedule: { schedule_type: 'event', event_filter: eventFilter },
-      resources,
+      trigger,
+      input,
     }).catch(() => {
       // Non-critical: agent will use previous configuration
     })

@@ -13,15 +13,11 @@ use serde_json::json;
 /// UUIDs; users and the AI agent naturally refer to them by name.
 async fn resolve_agent_id(client: &ApiClient, id_or_name: &str) -> Result<String> {
     // Fast path: already a valid id.
-    if client
-        .get(&format!("/agents/v2/{}", id_or_name))
-        .await
-        .is_ok()
-    {
+    if client.get(&format!("/agents/{}", id_or_name)).await.is_ok() {
         return Ok(id_or_name.to_string());
     }
     // Slow path: list + match by name.
-    if let Ok(data) = client.get("/agents/v2").await {
+    if let Ok(data) = client.get("/agents").await {
         let agents = data
             .as_array()
             .or_else(|| data.get("agents").and_then(|v| v.as_array()))
@@ -56,7 +52,7 @@ async fn resolve_agent_id(client: &ApiClient, id_or_name: &str) -> Result<String
 /// Returns id, name, status, schedule type, execution mode, and stats per agent.
 /// Full agent config is available via `neomind agent get <id>`.
 pub async fn list_agents(client: &ApiClient) -> Result<CliResponse> {
-    let data = client.get("/agents/v2").await?;
+    let data = client.get("/agents").await?;
 
     let agents = data
         .as_array()
@@ -117,7 +113,7 @@ pub async fn list_agents(client: &ApiClient) -> Result<CliResponse> {
 /// Get agent by ID
 pub async fn get_agent(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let id = resolve_agent_id(client, id).await?;
-    let data = client.get(&format!("/agents/v2/{}", id)).await?;
+    let data = client.get(&format!("/agents/{}", id)).await?;
     Ok(CliResponse::success(data, "Agent retrieved"))
 }
 
@@ -720,7 +716,7 @@ pub async fn create_agent(
 
     let notify_policy = if let Some(raw) = notify {
         match parse_notify_arg(raw) {
-            Ok(parsed) => notify_for_v2_draft(parsed),
+            Ok(parsed) => notify_to_policy(parsed),
             Err(resp) => return Ok(resp),
         }
     } else {
@@ -785,7 +781,7 @@ pub async fn create_agent(
         draft["llm_backend_id"] = json!(backend);
     }
 
-    let data = client.post("/agents/v2", &draft).await?;
+    let data = client.post("/agents", &draft).await?;
     let agent_id = data
         .get("agent")
         .and_then(|a| a.get("id"))
@@ -805,8 +801,8 @@ pub async fn create_agent(
     ))
 }
 
-/// Project v1 `on` notify JSON onto NotifyPolicy wire shape for POST /agents/v2.
-pub fn notify_for_v2_draft(parsed: serde_json::Value) -> serde_json::Value {
+/// Normalize `--notify` JSON onto the `NotifyPolicy` wire shape for `POST /agents`.
+pub fn notify_to_policy(parsed: serde_json::Value) -> serde_json::Value {
     if parsed.get("on_complete").is_some()
         || parsed.get("on_alert").is_some()
         || parsed.get("on_failure").is_some()
@@ -954,7 +950,7 @@ pub async fn update_agent(
     // existing notify so judgment×no-tools / judgment×no-shell still conflict.
     let existing_notify_owned;
     let notify_for_tools = if (no_tools || allowed_tools.is_some()) && notify.is_none() {
-        let existing = client.get(&format!("/agents/v2/{}", id)).await?;
+        let existing = client.get(&format!("/agents/{}", id)).await?;
         let agent = existing.get("agent").unwrap_or(&existing);
         existing_notify_owned = agent.get("notify").cloned().map(|v| v.to_string());
         existing_notify_owned.as_deref()
@@ -1004,7 +1000,7 @@ pub async fn update_agent(
         }
         body["schedule"] = schedule;
     } else if event_filter.is_some() || timezone.is_some() {
-        let existing = client.get(&format!("/agents/v2/{}", id)).await?;
+        let existing = client.get(&format!("/agents/{}", id)).await?;
         let agent = existing.get("agent").unwrap_or(&existing);
         // Reconstruct a v1-ish schedule object from TriggerSpec for partial merge.
         let mut schedule = match agent.get("trigger") {
@@ -1043,9 +1039,7 @@ pub async fn update_agent(
     }
     if let Some(notify_json) = notify {
         match parse_notify_arg(notify_json) {
-            // V2 PUT — store NotifyPolicy shape on the intermediate body so the
-            // patch copy below does not re-project from a v1 AgentNotify blob.
-            Ok(parsed) => body["notify"] = notify_for_v2_draft(parsed),
+            Ok(parsed) => body["notify"] = notify_to_policy(parsed),
             Err(resp) => return Ok(resp),
         }
     }
@@ -1259,7 +1253,7 @@ pub async fn update_agent(
         patch["output"] = json!({ "fields": fields, "publish": body.get("execution_mode") == Some(&json!("structured")) });
     }
 
-    let data = client.put(&format!("/agents/v2/{}", id), &patch).await?;
+    let data = client.put(&format!("/agents/{}", id), &patch).await?;
     Ok(CliResponse::success(
         data.clone(),
         message_with_warnings("Agent updated".to_string(), &data),
@@ -1331,7 +1325,7 @@ pub async fn invoke_agent_with_options(
 
 /// Static EffectivePlan preview from an AgentSpecDraft (zero external reads).
 ///
-/// POST `/agents/v2/plan-preview` with `{ "draft": ... }`. Does not create an agent.
+/// POST `/agents/plan-preview` with `{ "draft": ... }`. Does not create an agent.
 pub async fn plan_preview_agent(client: &ApiClient, draft_json: &str) -> Result<CliResponse> {
     let draft = crate::json_arg::parse_json_arg(draft_json).map_err(|e| {
         anyhow::anyhow!(
@@ -1340,71 +1334,12 @@ pub async fn plan_preview_agent(client: &ApiClient, draft_json: &str) -> Result<
         )
     })?;
     let body = json!({ "draft": draft });
-    let data = client.post("/agents/v2/plan-preview", &body).await?;
+    let data = client.post("/agents/plan-preview", &body).await?;
     Ok(CliResponse::success(
         data.clone(),
         message_with_warnings(
             "Agent plan preview (static; zero external reads)".into(),
             &data,
-        ),
-    ))
-}
-
-/// Create via V2 draft (POST `/agents/v2`) — Chat/cutover primary path.
-pub async fn create_agent_v2(client: &ApiClient, draft_json: &str) -> Result<CliResponse> {
-    let draft = crate::json_arg::parse_json_arg(draft_json).map_err(|e| {
-        anyhow::anyhow!("--draft is not valid JSON: {e} — expected an AgentSpecDraft object.")
-    })?;
-    let data = client.post("/agents/v2", &draft).await?;
-    let id = data
-        .get("agent")
-        .and_then(|a| a.get("id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("?");
-    Ok(CliResponse::success(
-        data.clone(),
-        message_with_warnings(format!("Agent created via V2 (id: {id})"), &data),
-    ))
-}
-
-/// Offline inventory对照表 from a local agents.redb.
-pub async fn inventory_agents_local(db: &str, out: Option<&str>) -> Result<CliResponse> {
-    let path = std::path::Path::new(db);
-    if !path.exists() {
-        return Ok(CliResponse::error(
-            format!("agents.redb not found at {db} — pass --db or use the empty scaffold."),
-            "NOT_FOUND",
-        ));
-    }
-    let report = neomind_storage::inventory_agents_db(path)
-        .await
-        .map_err(|e| anyhow::anyhow!("inventory failed: {e}"))?;
-    let md = report.to_markdown_table();
-    if let Some(out_path) = out {
-        std::fs::write(out_path, &md)
-            .map_err(|e| anyhow::anyhow!("write inventory markdown: {e}"))?;
-    }
-    Ok(CliResponse::success(
-        serde_json::to_value(&report).unwrap_or_default(),
-        md,
-    ))
-}
-
-/// Offline V2-only purge migration.
-pub async fn migrate_v2_only_local(db: &str, report_path: Option<&str>) -> Result<CliResponse> {
-    let path = std::path::Path::new(db);
-    let report = neomind_storage::purge_agents_to_v2_only(path)
-        .map_err(|e| anyhow::anyhow!("migrate-v2-only failed: {e}"))?;
-    let value = serde_json::to_value(&report).unwrap_or_default();
-    if let Some(p) = report_path {
-        std::fs::write(p, serde_json::to_string_pretty(&value).unwrap_or_default())
-            .map_err(|e| anyhow::anyhow!("write purge report: {e}"))?;
-    }
-    Ok(CliResponse::success(
-        value,
-        format!(
-            "V2-only purge complete (already={} migrated={} specs={})",
-            report.already_v2_only, report.v1_rows_migrated, report.v2_specs_after
         ),
     ))
 }
@@ -1496,11 +1431,7 @@ pub async fn get_agent_executions(
 /// Get latest agent execution
 pub async fn get_latest_execution(client: &ApiClient, id: &str) -> Result<CliResponse> {
     let id = resolve_agent_id(client, id).await?;
-    // Prefer V2 latest-execution (full record + structured_result).
-    if let Ok(data) = client
-        .get(&format!("/agents/v2/{id}/latest-execution"))
-        .await
-    {
+    if let Ok(data) = client.get(&format!("/agents/{id}/latest-execution")).await {
         return Ok(CliResponse::success(data, "Latest execution retrieved"));
     }
     let path = format!("/agents/{}/executions?limit=1", id);
@@ -1702,13 +1633,13 @@ mod tests {
         assert_eq!(projected["on"], json!("always"));
         assert_eq!(projected["channels"], json!(["test-channel"]));
 
-        let v2_draft = notify_for_v2_draft(v1);
-        assert_eq!(v2_draft["on_complete"], json!(true));
-        assert_eq!(v2_draft["on_failure"], json!(true));
-        assert!(v2_draft.get("on").is_none());
-        let from_v2 = notify_for_v2_draft(v2);
-        assert_eq!(from_v2["on_complete"], json!(true));
-        assert!(from_v2.get("on").is_none());
+        let policy = notify_to_policy(v1);
+        assert_eq!(policy["on_complete"], json!(true));
+        assert_eq!(policy["on_failure"], json!(true));
+        assert!(policy.get("on").is_none());
+        let from_policy = notify_to_policy(v2);
+        assert_eq!(from_policy["on_complete"], json!(true));
+        assert!(from_policy.get("on").is_none());
     }
 
     #[test]

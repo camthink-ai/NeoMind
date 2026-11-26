@@ -18,7 +18,7 @@ use neomind_ai_agent::ports::{
 use neomind_ai_agent::runner::SinglePassRunner;
 use neomind_ai_agent::service::{AgentApplicationService, NotifyCounter, WriteCounter};
 use neomind_ai_agent::side_effects::{Notifier, SideEffectBoundary};
-use neomind_storage::agents_v2::{AgentStoreV2, DeliveryState as V2DeliveryState};
+use neomind_storage::agent_store::{AgentRecordStore, DeliveryState as StorageDeliveryState};
 use neomind_storage::AgentStore;
 
 /// Counts accepts, signals the test, then hangs so the task can be aborted.
@@ -114,8 +114,8 @@ async fn pre_send_intent_survives_abort_reopen_receiver_count_one() {
 
     let agent_id = {
         let store = AgentStore::open(&path).unwrap();
-        let v2 = AgentStoreV2::from_arc(store.db()).unwrap();
-        let durable = DurableAgentStore::with_v2(v2, now).unwrap();
+        let record_store = AgentRecordStore::from_arc(store.db()).unwrap();
+        let durable = DurableAgentStore::with_store(record_store, now).unwrap();
         let clock = Arc::new(FixedClock::new(now));
         let sources = Arc::new(CountingSourcePort::new());
         seed_brief(&sources, now);
@@ -123,7 +123,7 @@ async fn pre_send_intent_survives_abort_reopen_receiver_count_one() {
         let input = InputPipeline::new(sources.clone(), clock.clone());
         let runner = Arc::new(SinglePassRunner::new(Arc::new(LocalBriefLlm)));
         // Same production wiring shape: SideEffectBoundary gets durable.mem
-        // (persist sink installed by with_v2), not a bare mem store.
+        // (persist sink installed by with_store), not a bare mem store.
         let side_effects = SideEffectBoundary {
             store: durable.mem.clone(),
             notifier: Notifier::new(notify.clone()),
@@ -178,8 +178,8 @@ async fn pre_send_intent_survives_abort_reopen_receiver_count_one() {
         let _ = invoke.await;
 
         // Prove IntentPending is already on disk before drop/reopen.
-        let v2_live = durable.v2.as_ref().expect("v2");
-        let formal = v2_live.list_formal_executions(&agent_id).unwrap();
+        let store_live = durable.store.as_ref().expect("durable store");
+        let formal = store_live.list_formal_executions(&agent_id).unwrap();
         assert_eq!(
             formal.len(),
             1,
@@ -189,7 +189,7 @@ async fn pre_send_intent_survives_abort_reopen_receiver_count_one() {
             formal[0]
                 .deliveries
                 .iter()
-                .any(|d| matches!(d.state, V2DeliveryState::IntentPending)),
+                .any(|d| matches!(d.state, StorageDeliveryState::IntentPending)),
             "IntentPending must be durable before abort/reopen: {:?}",
             formal[0].deliveries
         );
@@ -200,17 +200,17 @@ async fn pre_send_intent_survives_abort_reopen_receiver_count_one() {
         agent_id
     };
 
-    // Restart same DB — recover_stale_intents runs inside with_v2.
+    // Restart same DB — recover_stale_intents runs inside with_store.
     let reopened = AgentStore::open(&path).unwrap();
-    let v2 = AgentStoreV2::from_arc(reopened.db()).unwrap();
-    let _durable = DurableAgentStore::with_v2(v2.clone(), now + 1).unwrap();
-    let formal = v2.list_formal_executions(&agent_id).unwrap();
+    let record_store = AgentRecordStore::from_arc(reopened.db()).unwrap();
+    let _durable = DurableAgentStore::with_store(record_store.clone(), now + 1).unwrap();
+    let formal = record_store.list_formal_executions(&agent_id).unwrap();
     assert_eq!(formal.len(), 1);
     assert!(
         formal[0]
             .deliveries
             .iter()
-            .any(|d| matches!(d.state, V2DeliveryState::OutcomeUnknown { .. })),
+            .any(|d| matches!(d.state, StorageDeliveryState::OutcomeUnknown { .. })),
         "restart must mark IntentPending as OutcomeUnknown: {:?}",
         formal[0].deliveries
     );
@@ -222,12 +222,12 @@ async fn pre_send_intent_survives_abort_reopen_receiver_count_one() {
 }
 
 #[test]
-fn with_v2_save_execution_mirrors_without_mirror_after_run() {
+fn with_store_save_execution_mirrors_without_mirror_after_run() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("agents.redb");
     let store = AgentStore::open(&path).unwrap();
-    let v2 = AgentStoreV2::from_arc(store.db()).unwrap();
-    let durable = DurableAgentStore::with_v2(v2.clone(), 1000).unwrap();
+    let record_store = AgentRecordStore::from_arc(store.db()).unwrap();
+    let durable = DurableAgentStore::with_store(record_store.clone(), 1000).unwrap();
 
     let exec = neomind_ai_agent::model::AgentExecutionRecord {
         id: "exec-pre".into(),
@@ -258,9 +258,12 @@ fn with_v2_save_execution_mirrors_without_mirror_after_run() {
     // Production path: service/side_effects call durable.mem.save_execution.
     durable.mem.save_execution(exec).unwrap();
 
-    let row = v2.get_execution("exec-pre").unwrap().expect("mirrored");
+    let row = record_store
+        .get_execution("exec-pre")
+        .unwrap()
+        .expect("mirrored");
     assert!(row
         .deliveries
         .iter()
-        .any(|d| matches!(d.state, V2DeliveryState::IntentPending)));
+        .any(|d| matches!(d.state, StorageDeliveryState::IntentPending)));
 }

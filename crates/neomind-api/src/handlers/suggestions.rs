@@ -17,7 +17,7 @@ use std::collections::HashMap;
 
 use crate::server::ServerState;
 use neomind_devices::adapter::ConnectionStatus;
-use neomind_storage::AgentStoreV2;
+use neomind_storage::AgentRecordStore;
 
 /// Suggestion item with enhanced metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,11 +405,10 @@ async fn generate_recent_operation_suggestions(state: &ServerState) -> Vec<Sugge
 async fn generate_pattern_based_suggestions(state: &ServerState) -> Vec<SuggestionItem> {
     let mut pattern_suggestions = Vec::new();
 
-    // V2-only: journal lives under AgentStoreV2 memory rows.
-    let Ok(v2) = AgentStoreV2::from_arc(state.agents.agent_store.db()) else {
+    let Ok(record_store) = AgentRecordStore::from_arc(state.agents.agent_store.db()) else {
         return pattern_suggestions;
     };
-    let Ok(specs) = v2.list_specs() else {
+    let Ok(specs) = record_store.list_specs() else {
         return pattern_suggestions;
     };
 
@@ -417,7 +416,7 @@ async fn generate_pattern_based_suggestions(state: &ServerState) -> Vec<Suggesti
 
     // Use recent journal outcomes as pattern-like insights
     for spec in specs {
-        let Ok(Some(memory)) = v2.get_memory(&spec.id) else {
+        let Ok(Some(memory)) = record_store.get_memory(&spec.id) else {
             continue;
         };
         for record in memory.journal.records.iter().rev().take(3) {

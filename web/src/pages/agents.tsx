@@ -12,7 +12,7 @@ import { useStore } from "@/store"
 import { useDataVersion } from "@/hooks/useDataVersion"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
-import { AgentEditorV2 } from "@/components/agents/editor-v2"
+import { AgentEditor } from "@/components/agents/editor"
 import { PageLayout } from "@/components/layout/PageLayout"
 import { BuiltinModelWizard } from "@/components/llm/BuiltinModelWizard"
 import { PageTabsBar, PageTabsContent, Pagination, SearchInput } from "@/components/shared"
@@ -37,7 +37,7 @@ import { debounce } from "@/lib/utils/async"
 import type { ToolSourceFilter } from "./agents-components/ToolsPanel"
 import { EmptyState } from "@/components/shared/EmptyState"
 import type { AiAgent, AiAgentDetail } from "@/types"
-import { useAgentV2EditSession } from "./agents-components/useAgentV2EditSession"
+import { useAgentEditSession } from "./agents-components/useAgentEditSession"
 import type { AgentExecutionStartedEvent, AgentExecutionCompletedEvent, AgentThinkingEvent } from "@/lib/events"
 
 // Import components
@@ -109,11 +109,11 @@ export function AgentsPage() {
 
   const [selectedAgent, setSelectedAgent] = useState<AiAgentDetail | null>(null)
 
-  // Race-safe V2 edit/create session (unified entry; ignores late GETs)
-  const editSession = useAgentV2EditSession({
-    getAgentV2: (id) => api.getAgentV2(id),
-    updateAgentV2: (id, patch) => api.updateAgentV2(id, patch),
-    createAgentV2: (draft) => api.createAgentV2(draft),
+  // Race-safe edit/create session (unified entry; ignores late GETs)
+  const editSession = useAgentEditSession({
+    getAgent: (id) => api.getAgent(id),
+    updateAgent: (id, patch) => api.updateAgent(id, patch),
+    createAgent: (draft) => api.createAgent(draft),
     onSaved: () => loadItems(),
     onLoadError: (error) => {
       handleError(error, { operation: 'Load agent details', showToast: false })
@@ -671,8 +671,8 @@ export function AgentsPage() {
         />
       </PageTabsContent>
 
-      {/* Agent Editor — AgentEditorV2 is the only create/edit surface (M3) */}
-      <AgentEditorV2
+      {/* Agent Editor */}
+      <AgentEditor
         open={editSession.open}
         onOpenChange={editSession.onOpenChange}
         agent={editSession.editingAgent}

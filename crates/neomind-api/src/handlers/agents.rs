@@ -9,8 +9,13 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use neomind_agent::llm_backends::get_instance_manager;
+use neomind_ai_agent::error::AgentError;
+use neomind_ai_agent::model::{
+    AgentSpec, AgentSpecDraft, AgentSpecPatch, EffectivePlan, RunResponse,
+};
+use neomind_ai_agent::service::plan_from_spec;
 use neomind_storage::{
-    AgentExecutionRecord, AgentMemory, AgentStatus, ExecutionStatus, UserMessage,
+    AgentExecutionRecord, AgentMemory, AgentRecordStore, AgentStatus, ExecutionStatus, UserMessage,
 };
 
 /// Map a store error to a response WITHOUT lying about the status: a
@@ -25,14 +30,53 @@ fn store_error_to_response(context: &str, e: neomind_storage::Error) -> ErrorRes
     }
 }
 
+fn map_agent_error(e: AgentError) -> ErrorResponse {
+    match e {
+        AgentError::NotFound(id) => ErrorResponse::not_found(format!("Agent {id}")),
+        AgentError::InvalidConfig(m) => ErrorResponse::validation(m),
+        AgentError::Busy => ErrorResponse::conflict("agent is busy"),
+        AgentError::NotRunnable(s) => ErrorResponse::bad_request(format!("agent is {s}")),
+        AgentError::ToolRejected(m) => ErrorResponse::bad_request(m),
+        AgentError::Source { key, reason } => {
+            ErrorResponse::bad_request(format!("source {key}: {reason}"))
+        }
+        other => ErrorResponse::internal(other.to_string()),
+    }
+}
+
+/// Envelope returned by create and update endpoints.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentSpecResponse {
+    pub agent: AgentSpec,
+    pub effective_plan: EffectivePlan,
+}
+
+/// Preview request — static plan only.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentPlanPreviewRequest {
+    pub draft: AgentSpecDraft,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AgentPlanPreviewResponse {
+    pub effective_plan: EffectivePlan,
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExplainLastResponse {
+    pub agent_id: String,
+    pub explanation: String,
+}
+
 use super::{
     common::{ok, HandlerResult},
     ServerState,
 };
 use crate::models::ErrorResponse;
 
-/// Ensure the clean-slate runtime has `id` loaded (V2-only; no AiAgent map).
-async fn require_v2_agent(
+/// Ensure the agent runtime has `id` loaded.
+async fn require_agent(
     state: &ServerState,
     id: &str,
 ) -> Result<Arc<crate::ai_agent_runtime::HostedAiAgentRuntime>, ErrorResponse> {
@@ -349,33 +393,33 @@ impl From<AgentExecutionRecord> for AgentExecutionDto {
     }
 }
 
-fn v2_status_str(status: &neomind_storage::agents_v2::ExecutionStatusV2) -> &'static str {
-    match status {
-        neomind_storage::agents_v2::ExecutionStatusV2::Completed => "Completed",
-        neomind_storage::agents_v2::ExecutionStatusV2::Partial => "Partial",
-        neomind_storage::agents_v2::ExecutionStatusV2::Skipped => "Skipped",
-        neomind_storage::agents_v2::ExecutionStatusV2::Failed => "Failed",
-    }
-}
-
-fn v2_trigger_fallback_from_spec(
-    trigger: &neomind_storage::agents_v2::TriggerSpec,
+fn execution_row_status_str(
+    status: &neomind_storage::agent_store::AgentExecutionStatus,
 ) -> &'static str {
-    match trigger {
-        neomind_storage::agents_v2::TriggerSpec::Cron { .. }
-        | neomind_storage::agents_v2::TriggerSpec::Interval { .. } => "schedule",
-        neomind_storage::agents_v2::TriggerSpec::Event { .. } => "event",
-        neomind_storage::agents_v2::TriggerSpec::Manual => "manual",
+    match status {
+        neomind_storage::agent_store::AgentExecutionStatus::Completed => "Completed",
+        neomind_storage::agent_store::AgentExecutionStatus::Partial => "Partial",
+        neomind_storage::agent_store::AgentExecutionStatus::Skipped => "Skipped",
+        neomind_storage::agent_store::AgentExecutionStatus::Failed => "Failed",
     }
 }
 
-/// Resolve trigger label for a V2 execution row.
+fn trigger_fallback_from_spec(trigger: &neomind_storage::agent_store::TriggerSpec) -> &'static str {
+    match trigger {
+        neomind_storage::agent_store::TriggerSpec::Cron { .. }
+        | neomind_storage::agent_store::TriggerSpec::Interval { .. } => "schedule",
+        neomind_storage::agent_store::TriggerSpec::Event { .. } => "event",
+        neomind_storage::agent_store::TriggerSpec::Manual => "manual",
+    }
+}
+
+/// Resolve trigger label for an execution row.
 ///
 /// Prefer persisted `trigger_source`; otherwise fall back to the agent's current
 /// trigger kind (best-effort for rows written before provenance was stored).
-fn v2_trigger_type(
-    record: &neomind_storage::agents_v2::AgentExecutionRecordV2,
-    agent_trigger: Option<&neomind_storage::agents_v2::TriggerSpec>,
+fn execution_row_trigger_type(
+    record: &neomind_storage::agent_store::AgentExecutionRow,
+    agent_trigger: Option<&neomind_storage::agent_store::TriggerSpec>,
 ) -> String {
     if record.is_probe {
         return "probe".into();
@@ -392,15 +436,13 @@ fn v2_trigger_type(
         return src.to_string();
     }
     agent_trigger
-        .map(v2_trigger_fallback_from_spec)
+        .map(trigger_fallback_from_spec)
         .unwrap_or("schedule")
         .to_string()
 }
 
-/// Project V2 evidence JSON into the list/card `input_summary` chip fields.
-fn v2_input_summary_from_evidence(
-    evidence: &serde_json::Value,
-) -> Option<ExecutionInputSummaryDto> {
+/// Project execution evidence JSON into the list/card `input_summary` chip fields.
+fn input_summary_from_evidence(evidence: &serde_json::Value) -> Option<ExecutionInputSummaryDto> {
     let items = evidence.get("items").and_then(|v| v.as_array());
     let skip_reason = evidence
         .get("skip_reason")
@@ -472,7 +514,7 @@ fn v2_input_summary_from_evidence(
     })
 }
 
-fn v2_data_collected_from_evidence(evidence: &serde_json::Value) -> Vec<DataCollectedDto> {
+fn data_collected_from_evidence(evidence: &serde_json::Value) -> Vec<DataCollectedDto> {
     let Some(items) = evidence.get("items").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
@@ -535,9 +577,9 @@ fn v2_data_collected_from_evidence(evidence: &serde_json::Value) -> Vec<DataColl
         .collect()
 }
 
-fn dto_from_v2_execution(
-    record: neomind_storage::agents_v2::AgentExecutionRecordV2,
-    agent_trigger: Option<&neomind_storage::agents_v2::TriggerSpec>,
+fn dto_from_execution_row(
+    record: neomind_storage::agent_store::AgentExecutionRow,
+    agent_trigger: Option<&neomind_storage::agent_store::TriggerSpec>,
 ) -> AgentExecutionDto {
     let duration_ms = record.finished_at.saturating_sub(record.started_at).max(0) as u64;
     let conclusion = record
@@ -551,14 +593,14 @@ fn dto_from_v2_execution(
         .and_then(|v| v.get("confidence"))
         .and_then(|c| c.as_f64())
         .map(|f| f as f32);
-    let input_summary = v2_input_summary_from_evidence(&record.evidence);
-    let trigger_type = v2_trigger_type(&record, agent_trigger);
+    let input_summary = input_summary_from_evidence(&record.evidence);
+    let trigger_type = execution_row_trigger_type(&record, agent_trigger);
     AgentExecutionDto {
         id: record.id,
         agent_id: record.agent_id,
         timestamp: format_datetime(record.finished_at / 1000),
         trigger_type,
-        status: v2_status_str(&record.status).into(),
+        status: execution_row_status_str(&record.status).into(),
         duration_ms,
         conclusion,
         structured_result: record.structured_result,
@@ -568,9 +610,9 @@ fn dto_from_v2_execution(
     }
 }
 
-fn detail_dto_from_v2_execution(
-    record: neomind_storage::agents_v2::AgentExecutionRecordV2,
-    agent_trigger: Option<&neomind_storage::agents_v2::TriggerSpec>,
+fn detail_dto_from_execution_row(
+    record: neomind_storage::agent_store::AgentExecutionRow,
+    agent_trigger: Option<&neomind_storage::agent_store::TriggerSpec>,
 ) -> AgentExecutionDetailDto {
     let duration_ms = record.finished_at.saturating_sub(record.started_at).max(0) as u64;
     let conclusion = record
@@ -584,15 +626,15 @@ fn detail_dto_from_v2_execution(
         .and_then(|v| v.get("confidence"))
         .and_then(|c| c.as_f64())
         .map(|f| f as f32);
-    let input_summary = v2_input_summary_from_evidence(&record.evidence);
-    let data_collected = v2_data_collected_from_evidence(&record.evidence);
-    let trigger_type = v2_trigger_type(&record, agent_trigger);
+    let input_summary = input_summary_from_evidence(&record.evidence);
+    let data_collected = data_collected_from_evidence(&record.evidence);
+    let trigger_type = execution_row_trigger_type(&record, agent_trigger);
     AgentExecutionDetailDto {
         id: record.id,
         agent_id: record.agent_id,
         timestamp: format_datetime(record.finished_at / 1000),
         trigger_type,
-        status: v2_status_str(&record.status).into(),
+        status: execution_row_status_str(&record.status).into(),
         duration_ms,
         error: record.error,
         input_summary,
@@ -927,15 +969,75 @@ pub async fn get_agent(
     ok(row)
 }
 
-/// The notification target a new agent gets when the caller names none.
-///
-/// Silence was the old default, and it is indistinguishable from a broken
-/// agent: a scheduled run that reports only into the in-app Messages page
-/// looks exactly like one that never ran at all. Every agent now starts with
-/// somewhere to report to.
-///
-/// `IM` is the channel that reaches a human — it delivers to whatever chats
-/// the operator bound under Settings -> IM Bridges. With nobody bound it is a
+/// Build a transient AgentSpec (`config_version = 0`) for static preview without save.
+pub fn preview_draft(draft: AgentSpecDraft) -> Result<AgentPlanPreviewResponse, String> {
+    let now = chrono::Utc::now().timestamp_millis();
+    let spec = AgentSpec {
+        id: "preview".into(),
+        name: draft.name,
+        description: draft.description,
+        user_prompt: draft.user_prompt,
+        llm_backend_id: draft.llm_backend_id,
+        preset: draft.preset,
+        trigger: draft.trigger,
+        pacing: draft.pacing,
+        input: draft.input,
+        tool_policy: draft.tool_policy,
+        output: draft.output,
+        notify: draft.notify,
+        controlled_actions: draft.controlled_actions,
+        config_version: 0,
+        created_at: now,
+        updated_at: now,
+    };
+    let plan = plan_from_spec(&spec);
+    if plan.external_read_counts.total() != 0 {
+        return Err("static preview must not perform external reads".into());
+    }
+    Ok(AgentPlanPreviewResponse {
+        effective_plan: plan,
+        dry_run: false,
+    })
+}
+
+/// POST /api/agents/plan-preview — static EffectivePlan, zero external reads.
+pub async fn plan_preview(
+    Json(req): Json<AgentPlanPreviewRequest>,
+) -> HandlerResult<AgentPlanPreviewResponse> {
+    match preview_draft(req.draft) {
+        Ok(resp) => ok(resp),
+        Err(e) => Err(ErrorResponse::bad_request(e)),
+    }
+}
+
+/// GET /api/agents/schema — contract descriptor for editor / CLI discovery.
+pub async fn agent_schema() -> HandlerResult<Value> {
+    ok(serde_json::json!({
+        "schema": "agent-contract/v2",
+        "schema_version_runtime": neomind_storage::schema::CURRENT_SCHEMA_VERSION,
+        "schema_version_target": neomind_storage::schema::CURRENT_SCHEMA_VERSION,
+        "fields": {
+            "llm_backend_id": "Optional backend id on AgentSpec / Draft / Patch — HostLlmPort resolves it (omit/null = active backend).",
+            "output.fields": "Named structured JSON keys extracted after each run into execution.structured_result",
+            "output.publish": "When true, publishes each fresh structured field as ai:{agent_id}:{field} via VirtualMetricPublisher with execution_id provenance",
+            "execution.structured_result": "Persisted JSON object on AgentExecutionRecord / RunResponse.execution"
+        },
+        "operations": {
+            "schema": "GET /api/agents/schema",
+            "plan_preview": "POST /api/agents/plan-preview",
+            "create": "POST /api/agents",
+            "list": "GET /api/agents",
+            "get": "GET /api/agents/:id",
+            "update": "PUT /api/agents/:id",
+            "delete": "DELETE /api/agents/:id",
+            "invoke": "POST /api/agents/:id/invoke",
+            "dry_run": "POST /api/agents/:id/dry-run",
+            "explain_last": "GET /api/agents/:id/explain-last",
+            "latest_execution": "GET /api/agents/:id/latest-execution"
+        }
+    }))
+}
+
 /// Create a new AI Agent.
 #[utoipa::path(
     post,
@@ -947,14 +1049,15 @@ pub async fn get_agent(
     )
 )]
 pub async fn create_agent(
-    State(_state): State<ServerState>,
-    Json(_request): Json<Value>,
-) -> HandlerResult<Value> {
-    // Production create is V2-only. Chat/`neomind agent create` compiles flags
-    // into AgentSpecDraft → POST /agents/v2 (see cli-ops create_agent).
-    Err(ErrorResponse::bad_request(
-        "Legacy POST /api/agents is disabled: create with POST /api/agents/v2 or `neomind agent create` / `create-v2` (AgentSpecDraft).",
-    ))
+    State(state): State<ServerState>,
+    Json(draft): Json<AgentSpecDraft>,
+) -> HandlerResult<AgentSpecResponse> {
+    let rt = state.require_clean_slate().await?;
+    let (agent, effective_plan) = rt.create(draft).map_err(map_agent_error)?;
+    ok(AgentSpecResponse {
+        agent,
+        effective_plan,
+    })
 }
 
 /// Update an AI Agent.
@@ -972,15 +1075,53 @@ pub async fn create_agent(
     )
 )]
 pub async fn update_agent(
-    State(_state): State<ServerState>,
-    Path(_id): Path<String>,
-    Json(_request): Json<Value>,
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+    Json(patch): Json<AgentSpecPatch>,
+) -> HandlerResult<AgentSpecResponse> {
+    let rt = state.require_clean_slate().await?;
+    let (agent, effective_plan) = rt.update(&id, patch).map_err(map_agent_error)?;
+    ok(AgentSpecResponse {
+        agent,
+        effective_plan,
+    })
+}
+
+/// POST /api/agents/:id/dry-run — execute a non-persisted dry run.
+pub async fn dry_run_agent(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> HandlerResult<RunResponse> {
+    let rt = require_agent(&state, &id).await?;
+    let resp = rt.dry_run(&id).await.map_err(map_agent_error)?;
+    ok(resp)
+}
+
+/// GET /api/agents/:id/explain-last — human-readable explanation of the last run.
+pub async fn explain_last_agent(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
+) -> HandlerResult<ExplainLastResponse> {
+    let rt = require_agent(&state, &id).await?;
+    let explanation = rt.explain_last(&id).map_err(map_agent_error)?;
+    ok(ExplainLastResponse {
+        agent_id: id,
+        explanation,
+    })
+}
+
+/// GET /api/agents/:id/latest-execution — full formal execution record including `structured_result`.
+pub async fn latest_execution_agent(
+    State(state): State<ServerState>,
+    Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    // Production update is V2-only. Chat/`neomind agent update` compiles flags
-    // into AgentSpecPatch → PUT /agents/v2/:id.
-    Err(ErrorResponse::bad_request(
-        "Legacy PUT /api/agents/:id is disabled: update with PUT /api/agents/v2/:id or `neomind agent update` (AgentSpecPatch).",
-    ))
+    let rt = require_agent(&state, &id).await?;
+    let Some(exec) = rt.latest_formal(&id) else {
+        return Err(ErrorResponse::not_found(format!(
+            "No formal execution for agent {id}"
+        )));
+    };
+    ok(serde_json::to_value(exec).unwrap_or(json!({})))
 }
 
 /// Delete an AI Agent.
@@ -1000,7 +1141,7 @@ pub async fn delete_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let rt = require_v2_agent(&state, &id).await?;
+    let rt = require_agent(&state, &id).await?;
     // Drop from clean-slate hot set first so Cron/Event ticks stop immediately.
     let _ = rt.delete(&id);
 
@@ -1050,7 +1191,7 @@ pub async fn execute_agent(
     Path(id): Path<String>,
     Json(request): Json<ExecuteAgentRequest>,
 ) -> HandlerResult<Value> {
-    let rt = require_v2_agent(&state, &id).await?;
+    let rt = require_agent(&state, &id).await?;
     let agent_name = rt
         .get(&id)
         .map(|(s, _)| s.name)
@@ -1125,7 +1266,7 @@ pub async fn test_agent(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<serde_json::Value> {
-    let rt = require_v2_agent(&state, &id).await?;
+    let rt = require_agent(&state, &id).await?;
 
     let resp = rt
         .dry_run(&id)
@@ -1323,7 +1464,7 @@ pub async fn invoke_agent(
         }
     }
 
-    let rt = require_v2_agent(&state, &id).await?;
+    let rt = require_agent(&state, &id).await?;
     let agent_name = rt
         .get(&id)
         .map(|(s, _)| s.name)
@@ -1399,27 +1540,26 @@ pub async fn get_agent_executions(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let _rt = require_v2_agent(&state, &id).await?;
+    let _rt = require_agent(&state, &id).await?;
 
-    // V2-only: formal executions from AgentStoreV2 (includes structured_result).
     let dtos: Vec<AgentExecutionDto> =
-        match neomind_storage::AgentStoreV2::from_arc(state.agents.agent_store.db()) {
-            Ok(v2) => {
-                let agent_trigger = v2.get_spec(&id).ok().flatten().map(|s| s.trigger);
-                match v2.list_formal_executions(&id) {
+        match AgentRecordStore::from_arc(state.agents.agent_store.db()) {
+            Ok(store) => {
+                let agent_trigger = store.get_spec(&id).ok().flatten().map(|s| s.trigger);
+                match store.list_formal_executions(&id) {
                     Ok(rows) => rows
                         .into_iter()
                         .take(50)
-                        .map(|row| dto_from_v2_execution(row, agent_trigger.as_ref()))
+                        .map(|row| dto_from_execution_row(row, agent_trigger.as_ref()))
                         .collect(),
                     Err(e) => {
-                        tracing::warn!("Failed to query V2 executions for agent {}: {}", id, e);
+                        tracing::warn!("Failed to query executions for agent {}: {}", id, e);
                         Vec::new()
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("Failed to open AgentStoreV2 for executions: {}", e);
+                tracing::warn!("Failed to open AgentRecordStore for executions: {}", e);
                 Vec::new()
             }
         };
@@ -1449,13 +1589,16 @@ pub async fn get_execution(
     State(state): State<ServerState>,
     Path((_id, execution_id)): Path<(String, String)>,
 ) -> HandlerResult<Value> {
-    // Prefer V2 execution row (structured_result + evidence); fall back to legacy table.
-    if let Ok(v2) = neomind_storage::AgentStoreV2::from_arc(state.agents.agent_store.db()) {
-        if let Ok(Some(row)) = v2.get_execution(&execution_id) {
-            let agent_trigger = v2.get_spec(&row.agent_id).ok().flatten().map(|s| s.trigger);
+    if let Ok(record_store) = AgentRecordStore::from_arc(state.agents.agent_store.db()) {
+        if let Ok(Some(row)) = record_store.get_execution(&execution_id) {
+            let agent_trigger = record_store
+                .get_spec(&row.agent_id)
+                .ok()
+                .flatten()
+                .map(|s| s.trigger);
             let structured = row.structured_result.clone();
-            let list = dto_from_v2_execution(row.clone(), agent_trigger.as_ref());
-            let detail = detail_dto_from_v2_execution(row, agent_trigger.as_ref());
+            let list = dto_from_execution_row(row.clone(), agent_trigger.as_ref());
+            let detail = detail_dto_from_execution_row(row, agent_trigger.as_ref());
             // AgentExecutionDetail extends list fields; keep conclusion / structured_result
             // at the top level for CLI and modal consumers.
             return ok(json!({
@@ -1532,30 +1675,25 @@ pub async fn batch_get_executions(
         )));
     }
 
-    let v2 = neomind_storage::AgentStoreV2::from_arc(state.agents.agent_store.db()).ok();
-    let agent_trigger = v2
+    let record_store = AgentRecordStore::from_arc(state.agents.agent_store.db()).ok();
+    let agent_trigger = record_store
         .as_ref()
         .and_then(|store| store.get_spec(&id).ok().flatten().map(|s| s.trigger));
 
     let mut details = serde_json::Map::new();
     let mut missing: Vec<String> = Vec::new();
 
-    // Prefer V2 rows so Monitor card/modal match V2-only list history.
     for exec_id in &body.ids {
-        if let Some(store) = v2.as_ref() {
+        if let Some(store) = record_store.as_ref() {
             match store.get_execution(exec_id) {
                 Ok(Some(row)) => {
-                    let dto = detail_dto_from_v2_execution(row, agent_trigger.as_ref());
+                    let dto = detail_dto_from_execution_row(row, agent_trigger.as_ref());
                     details.insert(exec_id.clone(), json!(dto));
                     continue;
                 }
                 Ok(None) => {}
                 Err(e) => {
-                    tracing::warn!(
-                        "batch_get_executions: V2 lookup failed for {}: {}",
-                        exec_id,
-                        e
-                    );
+                    tracing::warn!("batch_get_executions: lookup failed for {}: {}", exec_id, e);
                 }
             }
         }
@@ -1638,7 +1776,7 @@ pub async fn set_agent_status(
         }
     };
 
-    let rt = require_v2_agent(&state, &id).await?;
+    let rt = require_agent(&state, &id).await?;
     let cs_status = neomind_ai_agent::storage_bridge::status_from_storage(new_status);
     rt.set_agent_status(&id, cs_status)
         .map_err(|e| ErrorResponse::internal(format!("Failed to update status: {e}")))?;
@@ -1674,10 +1812,10 @@ pub async fn get_agent_memory(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let _rt = require_v2_agent(&state, &id).await?;
-    let v2 = neomind_storage::agents_v2::AgentStoreV2::from_arc(state.agents.agent_store.db())
-        .map_err(|e| ErrorResponse::internal(format!("V2 store: {e}")))?;
-    let memory = v2
+    let _rt = require_agent(&state, &id).await?;
+    let record_store = AgentRecordStore::from_arc(state.agents.agent_store.db())
+        .map_err(|e| ErrorResponse::internal(format!("Agent record store: {e}")))?;
+    let memory = record_store
         .get_memory(&id)
         .map_err(|e| ErrorResponse::internal(format!("Failed to get memory: {e}")))?
         .unwrap_or_default();
@@ -1736,10 +1874,11 @@ pub async fn clear_agent_memory(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let _rt = require_v2_agent(&state, &id).await?;
-    let v2 = neomind_storage::agents_v2::AgentStoreV2::from_arc(state.agents.agent_store.db())
-        .map_err(|e| ErrorResponse::internal(format!("V2 store: {e}")))?;
-    v2.save_memory(&id, &AgentMemory::default())
+    let _rt = require_agent(&state, &id).await?;
+    let record_store = AgentRecordStore::from_arc(state.agents.agent_store.db())
+        .map_err(|e| ErrorResponse::internal(format!("Agent record store: {e}")))?;
+    record_store
+        .save_memory(&id, &AgentMemory::default())
         .map_err(|e| ErrorResponse::internal(format!("Failed to clear memory: {e}")))?;
     tracing::info!("Cleared memory for AI Agent: {}", id);
     ok(json!({ "ok": true }))
@@ -1762,7 +1901,7 @@ pub async fn get_agent_stats(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let rt = require_v2_agent(&state, &id).await?;
+    let rt = require_agent(&state, &id).await?;
     let stats = rt.runtime_stats_json(&id);
     ok(json!({
         "total_executions": stats.get("total_runs").cloned().unwrap_or(json!(0)),
@@ -2166,7 +2305,7 @@ pub async fn get_available_resources(
     State(state): State<ServerState>,
     Path(id): Path<String>,
 ) -> HandlerResult<Value> {
-    let _rt = require_v2_agent(&state, &id).await?;
+    let _rt = require_agent(&state, &id).await?;
 
     // Collect available devices
     let devices = state.devices.service.list_devices();
@@ -2290,312 +2429,32 @@ pub async fn list_agent_tools(State(state): State<ServerState>) -> HandlerResult
 }
 
 #[cfg(test)]
-mod config_warning_tests {
+mod tests {
     use super::*;
-    use neomind_storage::{
-        AgentMemory, AgentNotify, AgentSchedule, AgentStats, AgentStatus, AgentToolConfig, AiAgent,
-        ExecutionMode, NotifyOn, ResourceType, ScheduleType,
-    };
-
-    /// Convert ExecutionMode to lowercase string.
-    fn execution_mode_to_string(mode: &ExecutionMode) -> &'static str {
-        match mode {
-            ExecutionMode::Focused => "focused",
-            ExecutionMode::Free => "free",
-            ExecutionMode::Structured => "structured",
-        }
-    }
-
-    /// Convert ScheduleType to lowercase string (matching serde snake_case)
-    fn schedule_type_to_string(schedule_type: &ScheduleType) -> &'static str {
-        match schedule_type {
-            ScheduleType::Interval => "interval",
-            ScheduleType::Cron => "cron",
-            ScheduleType::Event => "event",
-            ScheduleType::Manual => "manual",
-        }
-    }
-
-    /// Hard reject judgment notify with tools disabled or an allowlist that omits
-    /// `shell` — mirrors CLI `--no-tools` / `--allowed-tools` conflict checks so
-    /// Chat/`curl` cannot persist a mute Judgment agent.
-    fn judgment_tool_config_conflict(agent: &AiAgent) -> Option<String> {
-        let judgment = agent
-            .notify
-            .as_ref()
-            .is_some_and(|n| matches!(n.on, neomind_storage::NotifyOn::Judgment));
-        if !judgment {
-            return None;
-        }
-        let tc = agent.tool_config.as_ref()?;
-        if !tc.enabled {
-            return Some(
-            "tool_config.enabled=false conflicts with notify.on=judgment: judgment alerts need \
-             `shell` to send messages — use allowed_tools=[\"shell\"] or notify.on=always/failure."
-                .to_string(),
-        );
-        }
-        if !tc.allowed_tools.is_empty()
-            && !tc
-                .allowed_tools
-                .iter()
-                .any(|t| t.eq_ignore_ascii_case("shell"))
-        {
-            return Some(
-            "tool_config.allowed_tools omits `shell` while notify.on=judgment: judgment alerts \
-             need `shell` to send messages — include \"shell\" or switch notify.on."
-                .to_string(),
-        );
-        }
-        None
-    }
-
-    /// Soft configuration warnings for create/update responses (never hard-fails).
-    fn collect_agent_config_warnings(agent: &AiAgent) -> Vec<String> {
-        let mut warnings = Vec::new();
-
-        if agent.schedule.schedule_type == ScheduleType::Event && agent.resources.is_empty() {
-            warnings.push(
-                "Event-triggered agent has no bound resources — it will rely only on the trigger \
-             snapshot. Prefer binding the target device or metrics."
-                    .to_string(),
-            );
-        }
-
-        if looks_like_vision_task(agent) && !agent_backend_supports_vision(agent) {
-            warnings.push(
-            "This agent looks vision/image-related but the selected LLM does not report vision \
-             support — runs that need images may fail every trigger."
-                .to_string(),
-        );
-        }
-
-        let tools_unrestricted = agent
-            .tool_config
-            .as_ref()
-            .map(|tc| tc.enabled && tc.allowed_tools.is_empty())
-            .unwrap_or(true);
-        let has_commands = agent
-            .resources
-            .iter()
-            .any(|r| matches!(r.resource_type, ResourceType::Command));
-        if agent.execution_mode == ExecutionMode::Focused && tools_unrestricted && !has_commands {
-            warnings.push(
-                "Focused monitor without tool restrictions: consider tool_config enabled=false \
-             (with notify.on=always) or allowed_tools=[\"shell\"] (with judgment) to cut latency \
-             and tool-hallucination risk."
-                    .to_string(),
-            );
-        }
-
-        warnings
-    }
-
-    fn looks_like_vision_task(agent: &AiAgent) -> bool {
-        let prompt = agent.user_prompt.to_ascii_lowercase();
-        if prompt.contains("image")
-            || prompt.contains("vision")
-            || prompt.contains("camera")
-            || prompt.contains("图片")
-            || prompt.contains("看图")
-            || prompt.contains("摄像头")
-        {
-            return true;
-        }
-        if let Some(filter) = agent.schedule.event_filter.as_deref() {
-            let lower = filter.to_ascii_lowercase();
-            if lower.contains("image") || lower.contains("frame") {
-                return true;
-            }
-        }
-        agent.resources.iter().any(|r| {
-            let id = r.resource_id.to_ascii_lowercase();
-            let name = r.name.to_ascii_lowercase();
-            id.contains("image")
-                || name.contains("image")
-                || id.contains("camera")
-                || name.contains("camera")
-        })
-    }
-
-    fn agent_backend_supports_vision(agent: &AiAgent) -> bool {
-        let Ok(manager) = get_instance_manager() else {
-            // Unknown — do not warn as if vision is missing.
-            return true;
-        };
-        let instance = match agent.llm_backend_id.as_deref() {
-            Some(id) if id != "default" => manager.get_instance(id),
-            _ => manager.get_active_instance(),
-        };
-        match instance {
-            Some(inst) => inst.capabilities.supports_multimodal,
-            None => true,
-        }
-    }
-
-    /// Compact effective-config summary for create/update success payloads.
-    fn agent_effective_config_summary(agent: &AiAgent) -> Value {
-        let tool_summary = match &agent.tool_config {
-            Some(tc) if !tc.enabled => json!({"enabled": false, "allowed_tools": []}),
-            Some(tc) if !tc.allowed_tools.is_empty() => {
-                json!({"enabled": true, "allowed_tools": tc.allowed_tools})
-            }
-            _ => json!({"enabled": true, "allowed_tools": "all"}),
-        };
-        json!({
-            "execution_mode": execution_mode_to_string(&agent.execution_mode),
-            "schedule_type": schedule_type_to_string(&agent.schedule.schedule_type),
-            "resource_count": agent.resources.len(),
-            "tool_config": tool_summary,
-            "notify": agent.notify,
-        })
-    }
-
-    fn agent_mutation_response(agent: &AiAgent, include_name_status: bool) -> Value {
-        let warnings = collect_agent_config_warnings(agent);
-        let mut body = if include_name_status {
-            json!({
-                "id": agent.id,
-                "name": agent.name,
-                "status": "active",
-                "effective_config": agent_effective_config_summary(agent),
-            })
-        } else {
-            json!({
-                "id": agent.id,
-                "effective_config": agent_effective_config_summary(agent),
-            })
-        };
-        if !warnings.is_empty() {
-            body["warnings"] = json!(warnings);
-        }
-        body
-    }
-
-    fn base_agent() -> AiAgent {
-        AiAgent {
-            id: "a1".into(),
-            name: "WarnTest".into(),
-            description: None,
-            user_prompt: "Check temperature".into(),
-            llm_backend_id: None,
-            parsed_intent: None,
-            resources: vec![],
-            schedule: AgentSchedule {
-                schedule_type: ScheduleType::Event,
-                cron_expression: None,
-                interval_seconds: None,
-                event_filter: None,
-                timezone: None,
-            },
-            status: AgentStatus::Active,
-            priority: 128,
-            created_at: 0,
-            updated_at: 0,
-            last_execution_at: None,
-            stats: AgentStats::default(),
-            memory: AgentMemory::default(),
-            conversation_history: vec![],
-            user_messages: vec![],
-            conversation_summary: None,
-            context_window_size: 10,
-            enable_tool_chaining: false,
-            max_chain_depth: 3,
-            tool_config: None,
-            execution_mode: ExecutionMode::Focused,
-            error_message: None,
-            system_prompt: None,
-            max_retries: 0,
-            consecutive_failures: 0,
-            output_schema: None,
-            operator_config: None,
-            memory_mode: None,
-            notify: Some(AgentNotify {
-                channels: vec!["IM".into()],
-                on: NotifyOn::Failure,
-            }),
-            max_tokens_per_run: None,
-        }
-    }
+    use neomind_ai_agent::model::{daily_brief_draft, ToolPolicy};
 
     #[test]
-    fn rejects_no_tools_plus_judgment() {
-        let mut agent = base_agent();
-        agent.tool_config = Some(AgentToolConfig {
-            enabled: false,
-            allowed_tools: vec![],
-        });
-        agent.notify = Some(AgentNotify {
-            channels: vec!["IM".into()],
-            on: NotifyOn::Judgment,
-        });
-        let conflict = judgment_tool_config_conflict(&agent);
-        assert!(
-            conflict.as_ref().is_some_and(|m| m.contains("judgment")),
-            "{conflict:?}"
+    fn daily_brief_plan_preview_has_zero_external_reads() {
+        let draft = daily_brief_draft("weather_cn", "tariff_tou", "test-channel");
+        let preview = preview_draft(draft).unwrap();
+        assert_eq!(preview.effective_plan.external_read_counts.weather, 0);
+        assert_eq!(preview.effective_plan.external_read_counts.tariff, 0);
+        assert!(matches!(
+            preview.effective_plan.tool_policy,
+            ToolPolicy::Disabled
+        ));
+        assert_eq!(
+            preview.effective_plan.timezone.as_deref(),
+            Some("Asia/Shanghai")
         );
-        // Soft warnings no longer cover this — it is a hard 400.
-        let warnings = collect_agent_config_warnings(&agent);
+        let enc = serde_json::to_value(&preview).unwrap();
+        assert_eq!(enc["dry_run"], false);
         assert!(
-            warnings.iter().all(|w| !w.contains("judgment")),
-            "{warnings:?}"
+            enc["effective_plan"]["authorized_reads"]
+                .as_array()
+                .unwrap()
+                .len()
+                >= 2
         );
-    }
-
-    #[test]
-    fn rejects_judgment_allowlist_without_shell() {
-        let mut agent = base_agent();
-        agent.tool_config = Some(AgentToolConfig {
-            enabled: true,
-            allowed_tools: vec!["memory".into()],
-        });
-        agent.notify = Some(AgentNotify {
-            channels: vec!["IM".into()],
-            on: NotifyOn::Judgment,
-        });
-        let conflict = judgment_tool_config_conflict(&agent);
-        assert!(
-            conflict.as_ref().is_some_and(|m| m.contains("shell")),
-            "{conflict:?}"
-        );
-    }
-
-    #[test]
-    fn warns_on_event_without_resources() {
-        let agent = base_agent();
-        let warnings = collect_agent_config_warnings(&agent);
-        assert!(
-            warnings.iter().any(|w| w.contains("no bound resources")),
-            "{warnings:?}"
-        );
-    }
-
-    #[test]
-    fn schedule_only_update_must_not_clear_resources_guard() {
-        // Documents the fixed predicate: resources rewrite requires an
-        // explicit resources/legacy-bindings update, never schedule alone.
-        let has_schedule_update = true;
-        let has_resources_update = false;
-        let has_old_format = false;
-        let should_rewrite = has_resources_update || has_old_format;
-        assert!(
-            !should_rewrite,
-            "schedule-only must not rewrite resources (had schedule={has_schedule_update})"
-        );
-    }
-
-    #[test]
-    fn mutation_response_omits_empty_warnings() {
-        let mut agent = base_agent();
-        agent.schedule.schedule_type = ScheduleType::Manual;
-        agent.execution_mode = ExecutionMode::Free;
-        agent.tool_config = Some(AgentToolConfig {
-            enabled: false,
-            allowed_tools: vec![],
-        });
-        let body = agent_mutation_response(&agent, true);
-        assert_eq!(body["id"], "a1");
-        assert!(body.get("warnings").is_none(), "{body}");
-        assert!(body.get("effective_config").is_some());
     }
 }

@@ -612,7 +612,7 @@ run_rollback() {
   start_serve "$BIN132" 132
   verify_after_upgrade
   # Post-upgrade write: new agent config + a telemetry point (loss window).
-  api POST /agents -d '{"name":"post-upgrade-agent","user_prompt":"g6 rollback probe","schedule":{"schedule_type":"Manual"},"execution_mode":"Focused"}' \
+  api POST /agents -d '{"name":"post-upgrade-agent","user_prompt":"g6 rollback probe","trigger":{"kind":"manual"},"input":{"requirements":[]},"tool_policy":"disabled","output":{"fields":[],"publish":false}}' \
     >"$OUT_DIR/post-upgrade-agent.json" || true
   api POST /devices/upgrade-sensor-001/telemetry -d '{"metric":"values.battery","value":91,"timestamp":null}' \
     >"$OUT_DIR/post-upgrade-telemetry.json" || true

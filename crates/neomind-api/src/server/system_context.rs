@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use neomind_ai_agent::AgentStatus;
 use neomind_core::llm::backend::{GenerationParams, LlmInput, LlmRuntime};
-use neomind_storage::{AgentStore, AgentStoreV2, MarkdownMemoryStore, SessionStore};
+use neomind_storage::{AgentRecordStore, AgentStore, MarkdownMemoryStore, SessionStore};
 
 use super::types::ServerState;
 
@@ -306,10 +306,9 @@ pub async fn summarize_agent_context(
     llm: &Arc<dyn LlmRuntime>,
     memory_store: &MarkdownMemoryStore,
 ) -> Result<(), String> {
-    // V2-only: specs + journal memory via AgentStoreV2 (no AiAgent query).
-    let v2 = AgentStoreV2::from_arc(agent_store.db())
-        .map_err(|e| format!("Failed to open AgentStoreV2: {}", e))?;
-    let specs = v2
+    let record_store = AgentRecordStore::from_arc(agent_store.db())
+        .map_err(|e| format!("Failed to open AgentRecordStore: {}", e))?;
+    let specs = record_store
         .list_specs()
         .map_err(|e| format!("Failed to list agent specs: {}", e))?;
 
@@ -320,7 +319,7 @@ pub async fn summarize_agent_context(
     // Collect recent execution records from agents with journal entries
     let mut agent_data = String::new();
     for spec in &specs {
-        let Ok(Some(memory)) = v2.get_memory(&spec.id) else {
+        let Ok(Some(memory)) = record_store.get_memory(&spec.id) else {
             continue;
         };
         let records: Vec<_> = memory.journal.records.iter().rev().take(5).collect();

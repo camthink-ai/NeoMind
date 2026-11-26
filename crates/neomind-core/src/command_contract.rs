@@ -660,7 +660,7 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
                 r#"{"name":"daily-brief","user_prompt":"Summarize weather","trigger":{"kind":"manual"},"input":{"requirements":[]},"tool_policy":"disabled"}"#,
             ),
         },
-        guidance: "Static config preview only — POST /api/agents/v2/plan-preview; no reads, no side effects, no create. Chat workflow: plan-preview → create → test/`invoke --dry-run` → invoke. Response includes `effective_plan`.",
+        guidance: "Static config preview only — POST /api/agents/plan-preview; no reads, no side effects, no create. Chat workflow: plan-preview → create → test/`invoke --dry-run` → invoke. Response includes `effective_plan`.",
     },
     DomainCommandContract {
         domain: "agent",

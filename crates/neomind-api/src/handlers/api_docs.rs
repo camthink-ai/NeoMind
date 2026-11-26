@@ -1255,67 +1255,20 @@ pub static ROUTES: &[RouteDoc] = &[
         auth: "jwt-or-api-key",
     },
     RouteDoc {
+        method: "GET",
+        path: "/api/agents/schema",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/agents/plan-preview",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
         method: "POST",
         path: "/api/agents/test-preview",
         auth: "jwt-or-api-key",
     },
-    // Clean-slate v2 surface — must be documented before /api/agents/:id
-    // (same ordering constraint as the router).
-    RouteDoc {
-        method: "GET",
-        path: "/api/agents/v2/schema",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "POST",
-        path: "/api/agents/v2/plan-preview",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "GET",
-        path: "/api/agents/v2",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "POST",
-        path: "/api/agents/v2",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "GET",
-        path: "/api/agents/v2/:id",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "PUT",
-        path: "/api/agents/v2/:id",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "DELETE",
-        path: "/api/agents/v2/:id",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "POST",
-        path: "/api/agents/v2/:id/invoke",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "POST",
-        path: "/api/agents/v2/:id/dry-run",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "GET",
-        path: "/api/agents/v2/:id/explain-last",
-        auth: "jwt-or-api-key",
-    },
-    RouteDoc {
-        method: "GET",
-        path: "/api/agents/v2/:id/latest-execution",
-        auth: "jwt-or-api-key",
-    },
     RouteDoc {
         method: "GET",
         path: "/api/agents/:id",
@@ -1329,6 +1282,21 @@ pub static ROUTES: &[RouteDoc] = &[
     RouteDoc {
         method: "DELETE",
         path: "/api/agents/:id",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "POST",
+        path: "/api/agents/:id/dry-run",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "GET",
+        path: "/api/agents/:id/explain-last",
+        auth: "jwt-or-api-key",
+    },
+    RouteDoc {
+        method: "GET",
+        path: "/api/agents/:id/latest-execution",
         auth: "jwt-or-api-key",
     },
     RouteDoc {

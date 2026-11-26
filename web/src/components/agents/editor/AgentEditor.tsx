@@ -48,27 +48,27 @@ import {
   type TaskTemplateId,
 } from './templates'
 
-export interface AgentEditorV2Props {
+export interface AgentEditorProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** V2 AgentSpec from GET `/agents/v2/:id` when editing; create waits for a template pick. */
+  /** AgentSpec from GET `/agents/:id` when editing; create waits for a template pick. */
   agent?: AgentSpec
-  /** True while GET /agents/v2/:id is in flight — blocks save and avoids create UX. */
+  /** True while GET /agents/:id is in flight — blocks save and avoids create UX. */
   loading?: boolean
   /** Optional evidence for the preserved evidence panel. */
   evidenceDetail?: AgentExecutionDetail | null
-  /** Save the v2 draft directly (POST/PUT `/agents/v2`) — no legacy projection. */
+  /** Save the draft directly (POST/PUT `/agents`). */
   onSave: (draft: AgentSpecDraft) => Promise<void>
 }
 
-export function AgentEditorV2({
+export function AgentEditor({
   open,
   onOpenChange,
   agent,
   loading = false,
   evidenceDetail,
   onSave,
-}: AgentEditorV2Props) {
+}: AgentEditorProps) {
   const { t } = useTranslation(['agents', 'common'])
   const isMobile = useIsMobile()
   const [draft, setDraft] = useState<AgentSpecDraft>(() => emptyDraft())
@@ -134,7 +134,7 @@ export function AgentEditorV2({
   const formColumn = loading ? (
     <div
       className="flex min-h-[12rem] items-center justify-center"
-      data-testid="agent-editor-v2-loading"
+      data-testid="agent-editor-loading"
     >
       <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
     </div>
@@ -334,7 +334,7 @@ export function AgentEditorV2({
           <Button
             size="lg"
             className="min-w-[7.5rem] font-semibold"
-            data-testid="agent-editor-v2-save"
+            data-testid="agent-editor-save"
             onClick={() => void handleSave()}
             disabled={saving || !canSave}
           >

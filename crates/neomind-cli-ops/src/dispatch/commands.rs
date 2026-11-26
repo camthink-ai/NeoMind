@@ -1935,46 +1935,7 @@ pub enum AgentCommand {
         #[arg(long)]
         draft: String,
     },
-    /// Create from an AgentSpecDraft JSON (V2-only path — POST /agents/v2).
-    ///
-    /// Prefer this over flag-based `agent create` for Chat/cutover workflows.
-    /// Example: `neomind agent create-v2 --draft '{"name":"daily-brief",...}'`
-    #[command(name = "create-v2")]
-    CreateV2 {
-        /// AgentSpecDraft JSON.
-        #[arg(long)]
-        draft: String,
-    },
-    /// Read-only V1→V2 purge inventory (对照表) from a local agents.redb.
-    ///
-    /// Offline — does not call the API. Classifies each agent as auto_migrate /
-    /// manual_fix / retire. Default path: macOS Application Support data dir.
-    ///
-    /// Example: `neomind agent inventory --db "$HOME/Library/Application Support/com.neomind.neomind/data/agents.redb"`
-    Inventory {
-        /// Path to agents.redb (required).
-        #[arg(long)]
-        db: String,
-        /// Write markdown table to this file (optional; also printed).
-        #[arg(long)]
-        out: Option<String>,
-    },
-    /// Offline purge: migrate remaining v1 rows → V2, delete `agents` table, stamp `v2_only`.
-    ///
-    /// Idempotent; preserves IDs; prints a JSON report. Does NOT cut over a live
-    /// production process — run during a maintenance window after backup.
-    ///
-    /// Example: `neomind agent migrate-v2-only --db /path/to/agents.redb`
-    #[command(name = "migrate-v2-only")]
-    MigrateV2Only {
-        /// Path to agents.redb.
-        #[arg(long)]
-        db: String,
-        /// Optional path to write the JSON report.
-        #[arg(long)]
-        report: Option<String>,
-    },
-    /// Dry-run / test a saved agent (authorized reads; no formal history for v2 dry-run).
+    /// Dry-run / test a saved agent (authorized reads; no formal history).
     ///
     /// Structured (L0) agents use the existing `/agents/{id}/test` path.
     /// Prefer `agent invoke` with the dry-run flag for the clean-slate envelope.

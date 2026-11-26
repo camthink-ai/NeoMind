@@ -84,15 +84,14 @@ async fn seed_rule_transform_agent(state: &ServerState) -> (String, String, Stri
             "output": { "fields": [], "publish": false },
         }))
         .expect("valid agent draft");
-    let agent_id =
-        neomind_api::handlers::agents_v2::create_agent_v2(State(state.clone()), Json(draft))
-            .await
-            .expect("create agent")
-            .0
-            .data
-            .expect("payload")
-            .agent
-            .id;
+    let agent_id = neomind_api::handlers::agents::create_agent(State(state.clone()), Json(draft))
+        .await
+        .expect("create agent")
+        .0
+        .data
+        .expect("payload")
+        .agent
+        .id;
 
     (rule_id, "xf-avg".into(), agent_id)
 }

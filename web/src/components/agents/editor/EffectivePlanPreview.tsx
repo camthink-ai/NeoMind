@@ -1,6 +1,6 @@
 /**
  * EffectivePlan preview — quiet secondary summary (not a competing card).
- * POST /api/agents/v2/plan-preview (static, zero reads).
+ * POST /api/agents/plan-preview (static, zero reads).
  * Accepts optional `previewFn` so tests can mock without hitting the network.
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
@@ -17,7 +17,7 @@ export type PlanPreviewFn = (
 
 export interface EffectivePlanPreviewProps {
   draft: AgentSpecDraft
-  /** Override network call (tests / offline). Defaults to agentsApi.planPreviewV2. */
+  /** Override network call (tests / offline). Defaults to agentsApi.planPreview. */
   previewFn?: PlanPreviewFn
   /** Debounce ms before auto-refresh (0 = only manual). Default 400. */
   debounceMs?: number
@@ -64,7 +64,7 @@ export function EffectivePlanPreview({
     setLoading(true)
     setError(null)
     try {
-      const fn = previewFn ?? ((d: AgentSpecDraft) => agentsApi.planPreviewV2(d))
+      const fn = previewFn ?? ((d: AgentSpecDraft) => agentsApi.planPreview(d))
       const resp = await fn(draft)
       setPlan(resp.effective_plan)
     } catch (e) {

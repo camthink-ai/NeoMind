@@ -14,9 +14,9 @@ use std::sync::Arc;
 use crate::Error;
 
 // Tables for agent storage
-const AGENTS_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("agents");
 const AGENT_EXECUTIONS_TABLE: TableDefinition<&str, &[u8]> =
     TableDefinition::new("agent_executions");
+#[cfg(test)]
 const AGENT_MEMORY_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("agent_memory");
 
 /// Per-instance test hook state for deterministic RMW interleaving tests.
@@ -36,7 +36,7 @@ pub enum TestHookState {
 
 /// AI Agent store for persisting autonomous agents.
 pub struct AgentStore {
-    /// redb database (shared with [`crate::agents_v2::AgentStoreV2`] during cutover).
+    /// Shared redb database backing the five-table agent layout.
     db: Arc<Database>,
     /// Per-instance deterministic-interleaving test hook (test builds only).
     /// Arc-cloned stores share the hook; separate stores are isolated.
@@ -45,8 +45,8 @@ pub struct AgentStore {
 }
 
 impl AgentStore {
-    /// Shared redb handle — used to open [`crate::agents_v2::AgentStoreV2`] on the
-    /// same `agents.redb` without a second file.
+    /// Shared redb handle — used to open [`crate::agent_store::AgentRecordStore`]
+    /// on the same `agents.redb` without a second file.
     pub fn db(&self) -> Arc<Database> {
         self.db.clone()
     }
@@ -1081,43 +1081,16 @@ impl AgentStore {
     }
 
     fn from_db(db: Database) -> Result<Arc<Self>, Error> {
-        // Plan §2.3: when CURRENT_SCHEMA_VERSION >= 2, migrate (delete legacy
-        // `agents`) BEFORE stamping. While version stays 1, only soft-copy.
-        let stored = crate::schema::read_version(&db)
-            .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2
-            && stored.unwrap_or(0) < 2
-            && crate::agents_v2::table_exists_agents_v1(&db).unwrap_or(false)
-        {
-            crate::agents_migrate::migrate_agents_v1_to_v2(&db)
-                .map_err(|e| Error::Storage(format!("agents v1→v2 migrate: {e}")))?;
+        // Automatically migrate any residual legacy `agents` table into the
+        // five-table layout and delete the legacy table in the same write txn.
+        if crate::agent_store::has_legacy_agents_table(&db).unwrap_or(false) {
+            crate::agent_migration::migrate_legacy_agents_table(&db)
+                .map_err(|e| Error::Storage(format!("legacy agents migration: {e}")))?;
         }
         crate::schema::check_or_stamp(&db)
             .map_err(|e| Error::Storage(format!("schema version: {e}")))?;
         let db = Arc::new(db);
-        let write_txn = db.begin_write()?;
-
-        // Legacy tables: still created while schema=1 (and after migrate the
-        // `agents` table is gone so open_table recreates an empty shell only
-        // if migrate did not run — migrate deletes it; open below no-ops when
-        // CURRENT_SCHEMA_VERSION>=2 after migrate removed the table... actually
-        // open_table creates if missing, so post-migrate we avoid re-creating
-        // the legacy definition table).
-        if crate::schema::CURRENT_SCHEMA_VERSION < 2 {
-            write_txn.open_table(AGENTS_TABLE)?;
-        }
-        write_txn.open_table(AGENT_EXECUTIONS_TABLE)?;
-        write_txn.open_table(AGENT_MEMORY_TABLE)?;
-        write_txn.commit()?;
-
-        if crate::schema::CURRENT_SCHEMA_VERSION < 2 {
-            if let Err(e) = crate::agents_migrate::copy_agents_v1_to_v2_keep_legacy(&db) {
-                tracing::warn!(category = "storage", error = %e, "agents soft-copy v1→v2 failed");
-            }
-        } else {
-            // Ensure five-table layout exists even on a fresh DB stamped at 2.
-            crate::agents_v2::ensure_v2_tables(&db)?;
-        }
+        crate::agent_store::ensure_agent_tables(&db)?;
 
         Ok(Arc::new(Self {
             db,
@@ -1146,238 +1119,6 @@ impl AgentStore {
         *guard = crate::agents::TestHookState::Disarmed;
     }
 
-    /// Save an agent to the store.
-    ///
-    /// Under schema ≥2 the production binary refuses AiAgent dual-write.
-    /// Offline migrate/inventory call [`crate::agents_migrate::map_agent_v1_to_v2`]
-    /// directly; unit tests keep a cfg(test) map path for fixtures.
-    pub async fn save_agent(&self, agent: &AiAgent) -> Result<(), Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            #[cfg(test)]
-            {
-                let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-                let (spec, runtime, messages, memory) =
-                    crate::agents_migrate::map_agent_v1_to_v2(agent);
-                v2.save_spec(&spec)?;
-                v2.set_runtime(&runtime)?;
-                v2.save_user_messages(&agent.id, &messages)?;
-                v2.save_memory(&agent.id, &memory)?;
-                return Ok(());
-            }
-            #[cfg(not(test))]
-            {
-                let _ = agent;
-                return Err(Error::Storage(
-                    "legacy AiAgent save_agent disabled under schema v2; use AgentStoreV2 / HostedAiAgentRuntime"
-                        .into(),
-                ));
-            }
-        }
-        let write_txn = self.db.begin_write()?;
-        #[cfg(test)]
-        self.test_hook_point();
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-
-            let value =
-                serde_json::to_vec(agent).map_err(|e| Error::Serialization(e.to_string()))?;
-
-            table.insert(agent.id.as_str(), value.as_slice())?;
-
-            // Also save memory separately for efficient updates
-            let memory_value = serde_json::to_vec(&agent.memory)
-                .map_err(|e| Error::Serialization(e.to_string()))?;
-            let mut memory_table = write_txn.open_table(AGENT_MEMORY_TABLE)?;
-            memory_table.insert(agent.id.as_str(), memory_value.as_slice())?;
-        }
-        write_txn.commit()?;
-        Ok(())
-    }
-
-    /// Get an agent by ID.
-    ///
-    /// Under schema ≥2 production code must use AgentStoreV2 / HostedAiAgentRuntime.
-    /// The V1 dual-read map remains only for `cfg(test)` fixtures and offline migrate.
-    pub async fn get_agent(&self, id: &str) -> Result<Option<AiAgent>, Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            #[cfg(test)]
-            {
-                return self.get_agent_from_v2(id);
-            }
-            #[cfg(not(test))]
-            {
-                let _ = id;
-                return Err(Error::Storage(
-                    "legacy AiAgent get_agent disabled under schema v2; use AgentStoreV2 / HostedAiAgentRuntime"
-                        .into(),
-                ));
-            }
-        }
-        let read_txn = self.db.begin_read()?;
-        let table = match read_txn.open_table(AGENTS_TABLE) {
-            Ok(t) => t,
-            Err(_) => {
-                #[cfg(test)]
-                {
-                    return self.get_agent_from_v2(id);
-                }
-                #[cfg(not(test))]
-                {
-                    return Ok(None);
-                }
-            }
-        };
-
-        match table.get(id)? {
-            Some(bytes) => {
-                let agent: AiAgent = serde_json::from_slice(bytes.value())
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
-
-                Ok(Some(agent))
-            }
-            None => {
-                #[cfg(test)]
-                {
-                    self.get_agent_from_v2(id)
-                }
-                #[cfg(not(test))]
-                {
-                    Ok(None)
-                }
-            }
-        }
-    }
-
-    #[cfg(test)]
-    fn get_agent_from_v2(&self, id: &str) -> Result<Option<AiAgent>, Error> {
-        let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-        let Some(spec) = v2.get_spec(id)? else {
-            return Ok(None);
-        };
-        let runtime = v2.get_runtime(id)?;
-        let memory = v2.get_memory(id)?.unwrap_or_default();
-        let messages = v2.get_user_messages(id)?.unwrap_or_default();
-        Ok(Some(crate::agents_migrate::map_agent_v2_to_v1(
-            &spec,
-            runtime.as_ref(),
-            Some(memory),
-            messages,
-        )))
-    }
-
-    /// Query agents with filters.
-    pub async fn query_agents(&self, filter: AgentFilter) -> Result<Vec<AiAgent>, Error> {
-        // [fake-async fix] Full-table scan + deserialize + sort on every call
-        // blocks the executor thread; push it onto the blocking pool. Only
-        // the database handle is needed.
-        let db = self.db.clone();
-        tokio::task::spawn_blocking(move || Self::query_agents_impl(db, filter))
-            .await
-            .map_err(|e| Error::Storage(format!("query_agents join error: {}", e)))?
-    }
-
-    fn query_agents_impl(db: Arc<Database>, filter: AgentFilter) -> Result<Vec<AiAgent>, Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            #[cfg(test)]
-            {
-                return Self::query_agents_v2_impl(&db, filter);
-            }
-            #[cfg(not(test))]
-            {
-                let _ = (db, filter);
-                return Err(Error::Storage(
-                    "legacy AiAgent query_agents disabled under schema v2; use AgentStoreV2 / HostedAiAgentRuntime"
-                        .into(),
-                ));
-            }
-        }
-        let read_txn = db.begin_read()?;
-        let table = match read_txn.open_table(AGENTS_TABLE) {
-            Ok(t) => t,
-            Err(_) => {
-                #[cfg(test)]
-                {
-                    return Self::query_agents_v2_impl(&db, filter);
-                }
-                #[cfg(not(test))]
-                {
-                    return Ok(Vec::new());
-                }
-            }
-        };
-
-        let mut agents = Vec::new();
-
-        for item in table.iter()? {
-            let (_id, bytes) = item?;
-            let agent: AiAgent = match serde_json::from_slice(bytes.value()) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("Skipping corrupted agent record {}: {}", _id.value(), e);
-                    continue;
-                }
-            };
-
-            if Self::matches_agent_filter(&agent, &filter) {
-                agents.push(agent);
-            }
-        }
-
-        // Sort by updated_at descending
-        agents.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
-
-        // Apply pagination
-        if let Some(offset) = filter.offset {
-            if offset < agents.len() {
-                agents = agents.into_iter().skip(offset).collect();
-            } else {
-                agents.clear();
-            }
-        }
-
-        if let Some(limit) = filter.limit {
-            agents.truncate(limit);
-        }
-
-        Ok(agents)
-    }
-
-    #[cfg(test)]
-    fn query_agents_v2_impl(
-        db: &Arc<Database>,
-        filter: AgentFilter,
-    ) -> Result<Vec<AiAgent>, Error> {
-        let v2 = crate::agents_v2::AgentStoreV2::from_arc(db.clone())?;
-        let specs = v2.list_specs()?;
-        let mut agents = Vec::new();
-        for spec in specs {
-            let runtime = v2.get_runtime(&spec.id)?;
-            let memory = v2.get_memory(&spec.id)?.unwrap_or_default();
-            let messages = v2.get_user_messages(&spec.id)?.unwrap_or_default();
-            let agent = crate::agents_migrate::map_agent_v2_to_v1(
-                &spec,
-                runtime.as_ref(),
-                Some(memory),
-                messages,
-            );
-            if Self::matches_agent_filter(&agent, &filter) {
-                agents.push(agent);
-            }
-        }
-        agents.sort_by_key(|a| std::cmp::Reverse(a.updated_at));
-        if let Some(offset) = filter.offset {
-            if offset < agents.len() {
-                agents = agents.into_iter().skip(offset).collect();
-            } else {
-                agents.clear();
-            }
-        }
-        if let Some(limit) = filter.limit {
-            agents.truncate(limit);
-        }
-        Ok(agents)
-    }
-
     /// Update agent status.
     pub async fn update_agent_status(
         &self,
@@ -1385,37 +1126,11 @@ impl AgentStore {
         status: AgentStatus,
         error_message: Option<String>,
     ) -> Result<(), Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            let now = chrono::Utc::now().timestamp();
-            #[cfg(test)]
-            self.test_hook_point();
-            v2.apply_runtime_status(id, status, error_message, now)?;
-            return Ok(());
-        }
-        // Atomic read-modify-write in ONE write transaction: a concurrent
-        // delete either commits first (row gone -> no re-create, same as the
-        // old no-op) or afterwards (removes the updated row). The previous
-        // two-transaction shape re-inserted a stale snapshot and resurrected
-        // deleted agents (2026-11-04 delete-vs-update race).
-        let write_txn = self.db.begin_write()?;
+        let store = crate::agent_store::AgentRecordStore::from_arc(self.db.clone())?;
+        let now = chrono::Utc::now().timestamp();
         #[cfg(test)]
         self.test_hook_point();
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-            let existing = table.get(id)?.map(|guard| guard.value().to_vec());
-            if let Some(bytes) = existing {
-                let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
-                ag.status = status;
-                ag.error_message = error_message;
-                ag.updated_at = chrono::Utc::now().timestamp();
-                let value =
-                    serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
-                table.insert(id, value.as_slice())?;
-            }
-        }
-        write_txn.commit()?;
+        store.apply_runtime_status(id, status, error_message, now)?;
         Ok(())
     }
 
@@ -1425,193 +1140,48 @@ impl AgentStore {
         id: &str,
         consecutive_failures: u32,
     ) -> Result<(), Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            if let Some(mut rt) = v2.get_runtime(id)? {
-                rt.stats.consecutive_failures = consecutive_failures;
-                rt.updated_at = chrono::Utc::now().timestamp();
-                v2.set_runtime(&rt)?;
-            }
-            return Ok(());
+        let store = crate::agent_store::AgentRecordStore::from_arc(self.db.clone())?;
+        if let Some(mut rt) = store.get_runtime(id)? {
+            rt.stats.consecutive_failures = consecutive_failures;
+            rt.updated_at = chrono::Utc::now().timestamp();
+            store.set_runtime(&rt)?;
         }
-        // Atomic RMW, one write transaction (see update_agent_status).
-        let write_txn = self.db.begin_write()?;
-        #[cfg(test)]
-        self.test_hook_point();
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-            let existing = table.get(id)?.map(|guard| guard.value().to_vec());
-            if let Some(bytes) = existing {
-                let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
-                ag.consecutive_failures = consecutive_failures;
-                ag.updated_at = chrono::Utc::now().timestamp();
-                let value =
-                    serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
-                table.insert(id, value.as_slice())?;
-            }
-        }
-        write_txn.commit()?;
-        Ok(())
-    }
-
-    /// Update agent parsed intent after initial parsing.
-    pub async fn update_agent_parsed_intent(
-        &self,
-        id: &str,
-        parsed_intent: Option<ParsedIntent>,
-    ) -> Result<(), Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            // V1 parsed-intent cache is migrate-only (`v1_compat`); prod V2
-            // writers leave the bundle at Default and do not refresh it.
-            let _ = (id, parsed_intent);
-            return Ok(());
-        }
-        // Atomic RMW, one write transaction (see update_agent_status).
-        let write_txn = self.db.begin_write()?;
-        #[cfg(test)]
-        self.test_hook_point();
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-            let existing = table.get(id)?.map(|guard| guard.value().to_vec());
-            if let Some(bytes) = existing {
-                let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
-                ag.parsed_intent = parsed_intent;
-                ag.updated_at = chrono::Utc::now().timestamp();
-                let value =
-                    serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
-                table.insert(id, value.as_slice())?;
-            }
-        }
-        write_txn.commit()?;
         Ok(())
     }
 
     /// Update agent memory after execution.
-    /// First reads the agent, then updates both tables in a single write transaction.
     pub async fn update_agent_memory(&self, id: &str, memory: AgentMemory) -> Result<(), Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            // Single write transaction checking spec existence + writing memory
-            // so a concurrent delete cannot leave an orphan memory row.
-            #[cfg(test)]
-            v2.apply_memory_with_hook(id, &memory, || self.test_hook_point())?;
-            #[cfg(not(test))]
-            v2.apply_memory_if_exists(id, &memory)?;
-            return Ok(());
-        }
-        // Atomic RMW over BOTH tables in one write transaction. If the agent
-        // row is gone (concurrent delete), neither the agent row nor an
-        // orphan memory row may be written — the old shape wrote the memory
-        // table unconditionally and re-inserted a stale agent snapshot.
-        let memory_value =
-            serde_json::to_vec(&memory).map_err(|e| Error::Serialization(e.to_string()))?;
-        let write_txn = self.db.begin_write()?;
+        let store = crate::agent_store::AgentRecordStore::from_arc(self.db.clone())?;
+        // Single write transaction checking spec existence + writing memory
+        // so a concurrent delete cannot leave an orphan memory row.
         #[cfg(test)]
-        self.test_hook_point();
-        {
-            let mut agent_table = write_txn.open_table(AGENTS_TABLE)?;
-            let mut memory_table = write_txn.open_table(AGENT_MEMORY_TABLE)?;
-            let existing_agent = agent_table.get(id)?.map(|guard| guard.value().to_vec());
-            if let Some(bytes) = existing_agent {
-                memory_table.insert(id, memory_value.as_slice())?;
-                let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
-                ag.memory = memory;
-                ag.updated_at = chrono::Utc::now().timestamp();
-                let value =
-                    serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
-                agent_table.insert(id, value.as_slice())?;
-            }
-        }
-        write_txn.commit()?;
+        store.apply_memory_with_hook(id, &memory, || self.test_hook_point())?;
+        #[cfg(not(test))]
+        store.apply_memory_if_exists(id, &memory)?;
         Ok(())
     }
 
     /// Update agent stats after execution.
-    /// Reads latest memory from AGENT_MEMORY_TABLE and only writes to AGENTS_TABLE.
-    /// This avoids overwriting memory data that was just written by update_agent_memory.
     pub async fn update_agent_stats(
         &self,
         id: &str,
         success: bool,
         duration_ms: u64,
     ) -> Result<(), Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            let now = chrono::Utc::now().timestamp();
-            #[cfg(test)]
-            self.test_hook_point();
-            // Single-write conditional field update — never rewrites status,
-            // so a concurrent pause cannot be revived by a stale stats settle.
-            v2.apply_runtime_stats_tick(id, success, duration_ms, now)?;
-            return Ok(());
-        }
-        // Atomic RMW, one write transaction (see update_agent_status): reads
-        // the agent row AND the latest memory inside the same transaction, so
-        // neither a concurrent delete can be overwritten nor updates lost.
-        let write_txn = self.db.begin_write()?;
+        let store = crate::agent_store::AgentRecordStore::from_arc(self.db.clone())?;
+        let now = chrono::Utc::now().timestamp();
         #[cfg(test)]
         self.test_hook_point();
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-            let memory_table = write_txn.open_table(AGENT_MEMORY_TABLE)?;
-            let existing = table.get(id)?.map(|guard| guard.value().to_vec());
-            if let Some(bytes) = existing {
-                let mut ag: AiAgent = serde_json::from_slice(bytes.as_slice())
-                    .map_err(|e| Error::Serialization(e.to_string()))?;
-
-                // Merge the latest memory from the dedicated table.
-                if let Some(mem_bytes) = memory_table.get(id)?.map(|g| g.value().to_vec()) {
-                    ag.memory = serde_json::from_slice::<AgentMemory>(mem_bytes.as_slice())
-                        .map_err(|e| Error::Serialization(e.to_string()))?;
-                }
-
-                // Update stats
-                ag.stats.total_executions += 1;
-                if success {
-                    ag.stats.successful_executions += 1;
-                } else {
-                    ag.stats.failed_executions += 1;
-                }
-                let total = ag.stats.total_executions as u64;
-                ag.stats.avg_duration_ms =
-                    (ag.stats.avg_duration_ms * (total - 1) + duration_ms) / total;
-                ag.stats.last_duration_ms = Some(duration_ms);
-                ag.last_execution_at = Some(chrono::Utc::now().timestamp());
-                ag.updated_at = chrono::Utc::now().timestamp();
-
-                // Only write to AGENTS_TABLE, not to AGENT_MEMORY_TABLE
-                // (update_agent_memory handles writing to AGENT_MEMORY_TABLE)
-                let value =
-                    serde_json::to_vec(&ag).map_err(|e| Error::Serialization(e.to_string()))?;
-                table.insert(id, value.as_slice())?;
-            }
-        }
-        write_txn.commit()?;
+        // Single-write conditional field update — never rewrites status,
+        // so a concurrent pause cannot be revived by a stale stats settle.
+        store.apply_runtime_stats_tick(id, success, duration_ms, now)?;
         Ok(())
     }
 
     /// Delete an agent by ID.
     pub async fn delete_agent(&self, id: &str) -> Result<(), Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            let _ = v2.delete_agent_rows(id)?;
-            return Ok(());
-        }
-        let write_txn = self.db.begin_write()?;
-        #[cfg(test)]
-        self.test_hook_point();
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-            table.remove(id)?;
-        }
-        {
-            let mut memory_table = write_txn.open_table(AGENT_MEMORY_TABLE)?;
-            memory_table.remove(id)?;
-        }
-        write_txn.commit()?;
+        let store = crate::agent_store::AgentRecordStore::from_arc(self.db.clone())?;
+        let _ = store.delete_agent_rows(id)?;
         Ok(())
     }
 
@@ -1628,55 +1198,6 @@ impl AgentStore {
 
             table.insert(execution.id.as_str(), value.as_slice())?;
         }
-        write_txn.commit()?;
-        Ok(())
-    }
-
-    /// Save execution record and optionally update agent's updated_at timestamp.
-    /// Conversation history is no longer maintained — short-term memory is the single source.
-    pub async fn save_execution_with_conversation(
-        &self,
-        execution: &AgentExecutionRecord,
-        agent_id: Option<&str>,
-        _conversation_turn: Option<&serde_json::Value>,
-    ) -> Result<(), Error> {
-        let write_txn = self.db.begin_write()?;
-        #[cfg(test)]
-        self.test_hook_point();
-
-        // Save execution record
-        {
-            let mut table = write_txn.open_table(AGENT_EXECUTIONS_TABLE)?;
-            let value =
-                serde_json::to_vec(execution).map_err(|e| Error::Serialization(e.to_string()))?;
-            table.insert(execution.id.as_str(), value.as_slice())?;
-        }
-
-        // Update agent's updated_at timestamp in the same transaction
-        if let Some(agent_id) = agent_id {
-            let mut agent = {
-                let result = match write_txn.open_table(AGENTS_TABLE)?.get(agent_id)? {
-                    Some(bytes) => {
-                        let value = bytes.value().to_vec();
-                        let a: AiAgent = serde_json::from_slice(&value)
-                            .map_err(|e| Error::Serialization(e.to_string()))?;
-                        Ok(a)
-                    }
-                    None => Err(Error::NotFound(format!("Agent {} not found", agent_id))),
-                };
-                result?
-            };
-
-            agent.updated_at = chrono::Utc::now().timestamp();
-
-            {
-                let mut table = write_txn.open_table(AGENTS_TABLE)?;
-                let value =
-                    serde_json::to_vec(&agent).map_err(|e| Error::Serialization(e.to_string()))?;
-                table.insert(agent_id, value.as_slice())?;
-            }
-        }
-
         write_txn.commit()?;
         Ok(())
     }
@@ -1812,35 +1333,6 @@ impl AgentStore {
         Ok(to_remove.len())
     }
 
-    /// Check if an agent matches the given filter.
-    fn matches_agent_filter(agent: &AiAgent, filter: &AgentFilter) -> bool {
-        if let Some(status) = filter.status {
-            if agent.status != status {
-                return false;
-            }
-        }
-
-        if let Some(schedule_type) = &filter.schedule_type {
-            if agent.schedule.schedule_type != *schedule_type {
-                return false;
-            }
-        }
-
-        if let Some(start_time) = filter.start_time {
-            if agent.created_at < start_time {
-                return false;
-            }
-        }
-
-        if let Some(end_time) = filter.end_time {
-            if agent.created_at > end_time {
-                return false;
-            }
-        }
-
-        true
-    }
-
     /// Check if an execution matches the given filter.
     fn matches_execution_filter(
         &self,
@@ -1886,52 +1378,8 @@ impl AgentStore {
         content: String,
         message_type: Option<String>,
     ) -> Result<UserMessage, Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            return v2.add_user_message(agent_id, content, message_type, Self::MAX_USER_MESSAGES);
-        }
-        let mut agent = self
-            .get_agent(agent_id)
-            .await?
-            .ok_or_else(|| Error::NotFound(format!("Agent {} not found", agent_id)))?;
-
-        let message = UserMessage {
-            id: uuid::Uuid::new_v4().to_string(),
-            timestamp: chrono::Utc::now().timestamp(),
-            content,
-            message_type,
-        };
-
-        agent.user_messages.push(message.clone());
-
-        // Trim old messages if needed
-        if agent.user_messages.len() > Self::MAX_USER_MESSAGES {
-            let removed_count = agent.user_messages.len() - Self::MAX_USER_MESSAGES;
-            agent.user_messages.drain(..removed_count);
-
-            tracing::debug!(
-                agent_id = %agent_id,
-                removed_count = removed_count,
-                remaining_count = agent.user_messages.len(),
-                "Trimmed user messages to prevent unbounded growth"
-            );
-        }
-
-        agent.updated_at = chrono::Utc::now().timestamp();
-
-        // Save the updated agent
-        let write_txn = self.db.begin_write()?;
-        #[cfg(test)]
-        self.test_hook_point();
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-            let value =
-                serde_json::to_vec(&agent).map_err(|e| Error::Serialization(e.to_string()))?;
-            table.insert(agent_id, value.as_slice())?;
-        }
-        write_txn.commit()?;
-
-        Ok(message)
+        let store = crate::agent_store::AgentRecordStore::from_arc(self.db.clone())?;
+        store.add_user_message(agent_id, content, message_type, Self::MAX_USER_MESSAGES)
     }
 
     /// Get user messages for an agent.
@@ -1940,24 +1388,8 @@ impl AgentStore {
         agent_id: &str,
         limit: Option<usize>,
     ) -> Result<Vec<UserMessage>, Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            return v2.get_user_messages_checked(agent_id, limit);
-        }
-        let agent = self.get_agent(agent_id).await?;
-        let agent =
-            agent.ok_or_else(|| Error::NotFound(format!("Agent {} not found", agent_id)))?;
-
-        let messages = &agent.user_messages;
-        if let Some(limit) = limit {
-            if messages.len() > limit {
-                Ok(messages[messages.len() - limit..].to_vec())
-            } else {
-                Ok(messages.clone())
-            }
-        } else {
-            Ok(messages.clone())
-        }
+        let store = crate::agent_store::AgentRecordStore::from_arc(self.db.clone())?;
+        store.get_user_messages_checked(agent_id, limit)
     }
 
     /// Delete a specific user message.
@@ -1966,110 +1398,64 @@ impl AgentStore {
         agent_id: &str,
         message_id: &str,
     ) -> Result<bool, Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            return v2.delete_user_message(agent_id, message_id);
-        }
-        let mut agent = self
-            .get_agent(agent_id)
-            .await?
-            .ok_or_else(|| Error::NotFound(format!("Agent {} not found", agent_id)))?;
-
-        let original_len = agent.user_messages.len();
-        agent.user_messages.retain(|m| m.id != message_id);
-
-        if agent.user_messages.len() < original_len {
-            agent.updated_at = chrono::Utc::now().timestamp();
-
-            // Save the updated agent
-            let write_txn = self.db.begin_write()?;
-            #[cfg(test)]
-            self.test_hook_point();
-            {
-                let mut table = write_txn.open_table(AGENTS_TABLE)?;
-                let value =
-                    serde_json::to_vec(&agent).map_err(|e| Error::Serialization(e.to_string()))?;
-                table.insert(agent_id, value.as_slice())?;
-            }
-            write_txn.commit()?;
-
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        let store = crate::agent_store::AgentRecordStore::from_arc(self.db.clone())?;
+        store.delete_user_message(agent_id, message_id)
     }
 
     /// Clear all user messages for an agent.
     pub async fn clear_user_messages(&self, agent_id: &str) -> Result<usize, Error> {
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(self.db.clone())?;
-            return v2.clear_user_messages(agent_id);
-        }
-        let mut agent = self
-            .get_agent(agent_id)
-            .await?
-            .ok_or_else(|| Error::NotFound(format!("Agent {} not found", agent_id)))?;
-
-        let count = agent.user_messages.len();
-        agent.user_messages.clear();
-        agent.updated_at = chrono::Utc::now().timestamp();
-
-        // Save the updated agent
-        let write_txn = self.db.begin_write()?;
-        #[cfg(test)]
-        self.test_hook_point();
-        {
-            let mut table = write_txn.open_table(AGENTS_TABLE)?;
-            let value =
-                serde_json::to_vec(&agent).map_err(|e| Error::Serialization(e.to_string()))?;
-            table.insert(agent_id, value.as_slice())?;
-        }
-        write_txn.commit()?;
-
-        Ok(count)
+        let store = crate::agent_store::AgentRecordStore::from_arc(self.db.clone())?;
+        store.clear_user_messages(agent_id)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Read `export const <name> = <digits>` out of the editor's shared
-    /// constants module. `None` when the file is absent (source tarball without
-    /// `web/`) or the constant is not declared.
-    fn editor_constant(name: &str) -> Option<u64> {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../web/src/pages/agents-components/agent-editor/constants.ts");
-        let text = std::fs::read_to_string(path).ok()?;
-        let marker = format!("export const {} =", name);
-        let start = text.find(&marker)? + marker.len();
-        let rest = &text[start..];
-        let end = rest
-            .find(|c: char| !c.is_ascii_digit() && c != '_' && c != ' ')
-            .unwrap_or(rest.len());
-        rest[..end].trim().replace('_', "").parse().ok()
-    }
-
-    /// The editor *shows* this number and uses it as its "untouched" sentinel:
-    /// a create request that leaves the field there sends nothing, and
-    /// `create_agent` applies this same default. Drift, and the form shows one
-    /// budget while the agent is created with another — the lie the lookback
-    /// window used to tell. No constant crosses the Rust/TS boundary, so the
-    /// invariant is held by test.
-    #[test]
-    fn default_max_chain_depth_matches_the_editor_constant() {
-        let Some(editor) = editor_constant("DEFAULT_MAX_CHAIN_DEPTH") else {
-            return; // no web/ tree to compare against
-        };
-        assert_eq!(
-            editor, DEFAULT_MAX_CHAIN_DEPTH as u64,
-            "DEFAULT_MAX_CHAIN_DEPTH (web/.../agent-editor/constants.ts) drifted from \
-             DEFAULT_MAX_CHAIN_DEPTH (neomind-storage/src/agents.rs) — update both"
-        );
-    }
+    use crate::agent_store::{
+        AgentRecordStore, AgentRuntimeRecord, AgentRuntimeStats, AgentSpecRecord, InputContract,
+        NotifyPolicy, OutputContract, PacingPolicy, ToolPolicy, TriggerSpec,
+    };
 
     fn test_store() -> Arc<AgentStore> {
         AgentStore::memory().unwrap()
+    }
+
+    fn record_store(store: &AgentStore) -> Arc<AgentRecordStore> {
+        AgentRecordStore::from_arc(store.db()).unwrap()
+    }
+
+    fn seed_agent(store: &AgentStore, id: &str, name: &str) {
+        let rs = record_store(store);
+        let now = chrono::Utc::now().timestamp();
+        let spec = AgentSpecRecord {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: None,
+            user_prompt: "check".to_string(),
+            llm_backend_id: None,
+            trigger: TriggerSpec::Interval { every_secs: 300 },
+            pacing: PacingPolicy::default(),
+            input: InputContract::default(),
+            tool_policy: ToolPolicy::Disabled,
+            output: OutputContract::default(),
+            notify: NotifyPolicy::default(),
+            controlled_actions: vec![],
+            config_version: 1,
+            created_at: now,
+            updated_at: now,
+        };
+        let rt = AgentRuntimeRecord {
+            agent_id: id.to_string(),
+            status: AgentStatus::Active,
+            stats: AgentRuntimeStats::default(),
+            error_message: None,
+            next_probe_at: None,
+            updated_at: now,
+        };
+        rs.save_spec(&spec).unwrap();
+        rs.set_runtime(&rt).unwrap();
+        rs.save_memory(id, &AgentMemory::default()).unwrap();
     }
 
     /// Minimal agent for the memory-mode derivation tests.
@@ -2119,15 +1505,12 @@ mod tests {
         }
     }
 
-    /// A scanner (structured) has nothing to learn from past runs, so it must
-    /// not pay to carry their narrative into the prompt.
     #[test]
     fn effective_memory_mode_derives_tool_for_structured_agents() {
         let agent = memory_mode_fixture(ExecutionMode::Structured, None);
         assert_eq!(agent.effective_memory_mode(), MemoryMode::Tool);
     }
 
-    /// Everything that reasons across turns defaults to carrying history.
     #[test]
     fn effective_memory_mode_derives_assistant_for_the_rest() {
         for mode in [ExecutionMode::Focused, ExecutionMode::Free] {
@@ -2140,8 +1523,6 @@ mod tests {
         }
     }
 
-    /// The derived default is only a default — an explicit choice wins, in
-    /// both directions.
     #[test]
     fn effective_memory_mode_honours_an_explicit_override() {
         let pinned_stateless = memory_mode_fixture(ExecutionMode::Free, Some(MemoryMode::Tool));
@@ -2155,110 +1536,58 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_save_and_get_agent() {
-        let store = test_store();
+    #[test]
+    fn boot_auto_migrates_and_deletes_legacy_agents_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("legacy_agents.redb");
+        {
+            let db = Database::create(&path).unwrap();
+            let write = db.begin_write().unwrap();
+            {
+                let mut table = write
+                    .open_table(crate::agent_store::LEGACY_AGENTS_TABLE)
+                    .unwrap();
+                let mut legacy = memory_mode_fixture(ExecutionMode::Focused, None);
+                legacy.id = "legacy-1".into();
+                legacy.name = "Legacy Monitor".into();
+                let bytes = serde_json::to_vec(&legacy).unwrap();
+                table.insert("legacy-1", bytes.as_slice()).unwrap();
+            }
+            write.commit().unwrap();
+        }
 
-        let agent = AiAgent {
-            id: "agent-1".to_string(),
-            name: "Temperature Monitor".to_string(),
-            description: None,
-            user_prompt: "Monitor warehouse temperatures and alert if above 30°C".to_string(),
-            llm_backend_id: None,
-            parsed_intent: None,
-            resources: vec![],
-            schedule: AgentSchedule {
-                schedule_type: ScheduleType::Interval,
-                cron_expression: None,
-                interval_seconds: Some(300),
-                event_filter: None,
-                timezone: None,
-            },
-            status: AgentStatus::Active,
-            priority: 128,
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
-            last_execution_at: None,
-            stats: AgentStats::default(),
-            memory: AgentMemory::default(),
-            conversation_history: vec![],
-            user_messages: vec![],
-            conversation_summary: None,
-            context_window_size: 10,
-            enable_tool_chaining: false,
-            max_chain_depth: 5,
-            tool_config: None,
-            execution_mode: ExecutionMode::Focused,
-            error_message: None,
-            system_prompt: None,
-            max_retries: 0,
-            consecutive_failures: 0,
-            output_schema: None,
-            operator_config: None,
-            memory_mode: None,
-            notify: None,
-            max_tokens_per_run: None,
-        };
-
-        store.save_agent(&agent).await.unwrap();
-        let retrieved = store.get_agent("agent-1").await.unwrap().unwrap();
-        assert_eq!(retrieved.id, "agent-1");
-        assert_eq!(retrieved.name, "Temperature Monitor");
+        let store = AgentStore::open(&path).unwrap();
+        assert!(
+            !crate::agent_store::has_legacy_agents_table(&store.db()).unwrap(),
+            "legacy agents table must be deleted on startup"
+        );
+        let rs = record_store(&store);
+        let spec = rs
+            .get_spec("legacy-1")
+            .unwrap()
+            .expect("migrated spec must exist");
+        assert_eq!(spec.name, "Legacy Monitor");
+        let rt = rs
+            .get_runtime("legacy-1")
+            .unwrap()
+            .expect("migrated runtime must exist");
+        assert_eq!(rt.status, AgentStatus::Active);
     }
 
     #[tokio::test]
     async fn test_update_agent_status() {
         let store = test_store();
-
-        let agent = AiAgent {
-            id: "agent-1".to_string(),
-            name: "Test Agent".to_string(),
-            description: None,
-            user_prompt: "Test".to_string(),
-            llm_backend_id: None,
-            parsed_intent: None,
-            resources: vec![],
-            schedule: AgentSchedule {
-                schedule_type: ScheduleType::Interval,
-                cron_expression: None,
-                interval_seconds: Some(300),
-                event_filter: None,
-                timezone: None,
-            },
-            status: AgentStatus::Active,
-            priority: 128,
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
-            last_execution_at: None,
-            stats: AgentStats::default(),
-            memory: AgentMemory::default(),
-            conversation_history: vec![],
-            user_messages: vec![],
-            conversation_summary: None,
-            context_window_size: 10,
-            enable_tool_chaining: false,
-            max_chain_depth: 5,
-            tool_config: None,
-            execution_mode: ExecutionMode::Focused,
-            error_message: None,
-            system_prompt: None,
-            max_retries: 0,
-            consecutive_failures: 0,
-            output_schema: None,
-            operator_config: None,
-            memory_mode: None,
-            notify: None,
-            max_tokens_per_run: None,
-        };
-
-        store.save_agent(&agent).await.unwrap();
+        seed_agent(&store, "agent-1", "Test Agent");
         store
             .update_agent_status("agent-1", AgentStatus::Paused, None)
             .await
             .unwrap();
 
-        let retrieved = store.get_agent("agent-1").await.unwrap().unwrap();
-        assert_eq!(retrieved.status, AgentStatus::Paused);
+        let rt = record_store(&store)
+            .get_runtime("agent-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(rt.status, AgentStatus::Paused);
     }
 
     #[tokio::test]
@@ -2296,53 +1625,10 @@ mod tests {
     #[tokio::test]
     async fn test_agent_memory_persistence() {
         let store = test_store();
+        seed_agent(&store, "agent-1", "Learning Agent");
 
-        let mut agent = AiAgent {
-            id: "agent-1".to_string(),
-            name: "Learning Agent".to_string(),
-            description: None,
-            user_prompt: "Learn patterns".to_string(),
-            llm_backend_id: None,
-            parsed_intent: None,
-            resources: vec![],
-            schedule: AgentSchedule {
-                schedule_type: ScheduleType::Interval,
-                cron_expression: None,
-                interval_seconds: Some(300),
-                event_filter: None,
-                timezone: None,
-            },
-            status: AgentStatus::Active,
-            priority: 128,
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
-            last_execution_at: None,
-            stats: AgentStats::default(),
-            memory: AgentMemory::default(),
-            conversation_history: vec![],
-            user_messages: vec![],
-            conversation_summary: None,
-            context_window_size: 10,
-            enable_tool_chaining: false,
-            max_chain_depth: 5,
-            tool_config: None,
-            execution_mode: ExecutionMode::Focused,
-            error_message: None,
-            system_prompt: None,
-            max_retries: 0,
-            consecutive_failures: 0,
-            output_schema: None,
-            operator_config: None,
-            memory_mode: None,
-            notify: None,
-            max_tokens_per_run: None,
-        };
-
-        // Save initial agent
-        store.save_agent(&agent).await.unwrap();
-
-        // Update memory
-        agent.memory.journal.records.push(ExecutionRecord {
+        let mut memory = AgentMemory::default();
+        memory.journal.records.push(ExecutionRecord {
             timestamp: 1000,
             execution_id: "exec-1".into(),
             outcome: "Temperature normal".into(),
@@ -2352,135 +1638,45 @@ mod tests {
         });
 
         store
-            .update_agent_memory("agent-1", agent.memory.clone())
+            .update_agent_memory("agent-1", memory.clone())
             .await
             .unwrap();
 
-        // Retrieve and verify
-        let retrieved = store.get_agent("agent-1").await.unwrap().unwrap();
-        assert_eq!(retrieved.memory.journal.records.len(), 1);
-        assert_eq!(
-            retrieved.memory.journal.records[0].outcome,
-            "Temperature normal"
-        );
+        let retrieved = record_store(&store).get_memory("agent-1").unwrap().unwrap();
+        assert_eq!(retrieved.journal.records.len(), 1);
+        assert_eq!(retrieved.journal.records[0].outcome, "Temperature normal");
     }
 
     #[tokio::test]
     async fn test_stats_tracking() {
         let store = test_store();
+        seed_agent(&store, "agent-1", "Stats Agent");
 
-        let agent = AiAgent {
-            id: "agent-1".to_string(),
-            name: "Stats Agent".to_string(),
-            description: None,
-            user_prompt: "Test stats".to_string(),
-            llm_backend_id: None,
-            parsed_intent: None,
-            resources: vec![],
-            schedule: AgentSchedule {
-                schedule_type: ScheduleType::Interval,
-                cron_expression: None,
-                interval_seconds: Some(300),
-                event_filter: None,
-                timezone: None,
-            },
-            status: AgentStatus::Active,
-            priority: 128,
-            created_at: chrono::Utc::now().timestamp(),
-            updated_at: chrono::Utc::now().timestamp(),
-            last_execution_at: None,
-            stats: AgentStats::default(),
-            memory: AgentMemory::default(),
-            conversation_history: vec![],
-            user_messages: vec![],
-            conversation_summary: None,
-            context_window_size: 10,
-            enable_tool_chaining: false,
-            max_chain_depth: 5,
-            tool_config: None,
-            execution_mode: ExecutionMode::Focused,
-            error_message: None,
-            system_prompt: None,
-            max_retries: 0,
-            consecutive_failures: 0,
-            output_schema: None,
-            operator_config: None,
-            memory_mode: None,
-            notify: None,
-            max_tokens_per_run: None,
-        };
-
-        store.save_agent(&agent).await.unwrap();
-
-        // Record successful execution
         store
             .update_agent_stats("agent-1", true, 200)
             .await
             .unwrap();
 
-        let retrieved = store.get_agent("agent-1").await.unwrap().unwrap();
-        assert_eq!(retrieved.stats.total_executions, 1);
-        assert_eq!(retrieved.stats.successful_executions, 1);
-        assert_eq!(retrieved.stats.avg_duration_ms, 200);
+        let rt = record_store(&store)
+            .get_runtime("agent-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(rt.stats.total_runs, 1);
+        assert_eq!(rt.stats.successful_runs, 1);
+        assert_eq!(rt.stats.avg_duration_ms, 200);
 
-        // Record failed execution
         store
             .update_agent_stats("agent-1", false, 100)
             .await
             .unwrap();
 
-        let retrieved = store.get_agent("agent-1").await.unwrap().unwrap();
-        assert_eq!(retrieved.stats.total_executions, 2);
-        assert_eq!(retrieved.stats.failed_executions, 1);
-        assert_eq!(retrieved.stats.avg_duration_ms, 150); // (200 + 100) / 2
-    }
-    // ===== Atomic-RMW regression tests (agent resurrection race, 2026-11-04) =====
-    // Root cause under test: update_agent_* did read-(drop)-then-write in two
-    // transactions; a concurrent delete_agent committing between the read and
-    // the blind re-insert resurrected the row (T4 552 trial
-    // full--agent-full-lifecycle--en--r1; repro scripts: /tmp/agent-repro/).
-
-    fn race_agent(id: &str) -> AiAgent {
-        AiAgent {
-            id: id.to_string(),
-            name: format!("race-{id}"),
-            description: None,
-            user_prompt: "check".to_string(),
-            llm_backend_id: None,
-            parsed_intent: None,
-            resources: vec![],
-            schedule: AgentSchedule {
-                schedule_type: ScheduleType::Interval,
-                cron_expression: None,
-                interval_seconds: Some(600),
-                event_filter: None,
-                timezone: None,
-            },
-            status: AgentStatus::Active,
-            priority: 128,
-            created_at: 1,
-            updated_at: 1,
-            last_execution_at: None,
-            stats: AgentStats::default(),
-            memory: AgentMemory::default(),
-            conversation_history: vec![],
-            user_messages: Default::default(),
-            conversation_summary: None,
-            context_window_size: 10,
-            enable_tool_chaining: false,
-            max_chain_depth: 3,
-            tool_config: None,
-            execution_mode: ExecutionMode::Focused,
-            error_message: None,
-            system_prompt: None,
-            max_retries: 0,
-            consecutive_failures: 0,
-            output_schema: None,
-            operator_config: None,
-            memory_mode: None,
-            notify: None,
-            max_tokens_per_run: None,
-        }
+        let rt = record_store(&store)
+            .get_runtime("agent-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(rt.stats.total_runs, 2);
+        assert_eq!(rt.stats.failed_runs, 1);
+        assert_eq!(rt.stats.avg_duration_ms, 150);
     }
 
     fn memory_row_present(store: &AgentStore, id: &str) -> bool {
@@ -2489,12 +1685,10 @@ mod tests {
         table.get(id).unwrap().is_some()
     }
 
-    /// Arm this store's hook (per-instance, isolated from other stores).
     fn arm_hook(store: &AgentStore) {
         *store.test_hook.lock().unwrap() = crate::agents::TestHookState::Armed;
     }
 
-    /// Block until the hook on this store has paused (deterministic sync).
     fn wait_hook_paused(store: &AgentStore) {
         loop {
             if *store.test_hook.lock().unwrap() == crate::agents::TestHookState::Paused {
@@ -2504,17 +1698,15 @@ mod tests {
         }
     }
 
-    /// Release the paused hook on this store.
     fn release_hook(store: &AgentStore) {
         *store.test_hook.lock().unwrap() = crate::agents::TestHookState::Disarmed;
     }
 
-    /// Concurrent stats ticks must both land (single-write txn serializes).
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn v2_stats_concurrent_counts_both_kept() {
+    async fn stats_concurrent_counts_both_kept() {
         let store = test_store();
         let id = "stats-concurrent";
-        store.save_agent(&race_agent(id)).await.unwrap();
+        seed_agent(&store, id, id);
         let (sa, sb) = (store.clone(), store.clone());
         let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
         let (b1, b2) = (barrier.clone(), barrier.clone());
@@ -2527,18 +1719,19 @@ mod tests {
             sb.update_agent_stats(id, true, 20).await.unwrap();
         });
         let _ = tokio::join!(ta, tb);
-        let v2 = crate::agents_v2::AgentStoreV2::from_arc(store.db()).unwrap();
-        let rt = v2.get_runtime(id).unwrap().expect("runtime");
+        let rt = record_store(&store)
+            .get_runtime(id)
+            .unwrap()
+            .expect("runtime");
         assert_eq!(rt.stats.total_runs, 2, "both stats ticks must apply");
         assert_eq!(rt.stats.successful_runs, 2);
     }
 
-    /// A stats settle must not revive a concurrent pause (field-conditional update).
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn v2_stats_settle_does_not_revive_pause() {
+    async fn stats_settle_does_not_revive_pause() {
         let store = test_store();
         let id = "stats-no-revive";
-        store.save_agent(&race_agent(id)).await.unwrap();
+        seed_agent(&store, id, id);
 
         arm_hook(&store);
         let s_stats = store.clone();
@@ -2553,8 +1746,10 @@ mod tests {
         release_hook(&store);
         stats_task.await.unwrap();
 
-        let v2 = crate::agents_v2::AgentStoreV2::from_arc(store.db()).unwrap();
-        let rt = v2.get_runtime(id).unwrap().expect("runtime");
+        let rt = record_store(&store)
+            .get_runtime(id)
+            .unwrap()
+            .expect("runtime");
         assert_eq!(
             rt.status,
             AgentStatus::Paused,
@@ -2564,16 +1759,14 @@ mod tests {
         assert_eq!(rt.stats.successful_runs, 1);
     }
 
-    /// Barrier-started delete-vs-update race on the SAME id, N iterations.
-    /// Synchronization is the barrier plus redb's own write-lock contention —
-    /// no sleeps. Any resurrection is a failure.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn agent_rmw_race_delete_vs_status_no_resurrection() {
         let store = test_store();
+        let rs = record_store(&store);
         let mut resurrections = 0u32;
         for i in 0..300 {
             let id = format!("race-status-{i}");
-            store.save_agent(&race_agent(&id)).await.unwrap();
+            seed_agent(&store, &id, &id);
             let (sa, sb) = (store.clone(), store.clone());
             let (ida, idb) = (id.clone(), id.clone());
             let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
@@ -2589,7 +1782,7 @@ mod tests {
                 sb.delete_agent(&idb).await.unwrap();
             });
             let _ = tokio::join!(ta, tb);
-            if store.get_agent(&id).await.unwrap().is_some() {
+            if rs.get_spec(&id).unwrap().is_some() {
                 resurrections += 1;
             }
         }
@@ -2602,10 +1795,11 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn agent_rmw_race_delete_vs_stats_no_resurrection() {
         let store = test_store();
+        let rs = record_store(&store);
         let mut resurrections = 0u32;
         for i in 0..200 {
             let id = format!("race-stats-{i}");
-            store.save_agent(&race_agent(&id)).await.unwrap();
+            seed_agent(&store, &id, &id);
             let (sa, sb) = (store.clone(), store.clone());
             let (ida, idb) = (id.clone(), id.clone());
             let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(2));
@@ -2619,7 +1813,7 @@ mod tests {
                 sb.delete_agent(&idb).await.unwrap();
             });
             let _ = tokio::join!(ta, tb);
-            if store.get_agent(&id).await.unwrap().is_some() {
+            if rs.get_spec(&id).unwrap().is_some() {
                 resurrections += 1;
             }
         }
@@ -2632,11 +1826,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn agent_rmw_race_delete_vs_memory_no_resurrection_and_no_orphan() {
         let store = test_store();
+        let rs = record_store(&store);
         let mut resurrections = 0u32;
         let mut orphans = 0u32;
         for i in 0..200 {
             let id = format!("race-mem-{i}");
-            store.save_agent(&race_agent(&id)).await.unwrap();
+            seed_agent(&store, &id, &id);
             let mem = AgentMemory {
                 updated_at: 42,
                 ..AgentMemory::default()
@@ -2654,12 +1849,10 @@ mod tests {
                 sb.delete_agent(&idb).await.unwrap();
             });
             let _ = tokio::join!(ta, tb);
-            let exists = store.get_agent(&id).await.unwrap().is_some();
+            let exists = rs.get_spec(&id).unwrap().is_some();
             if exists {
                 resurrections += 1;
             }
-            // Whatever the interleaving, a deleted agent must not leave an
-            // orphan memory row behind either (related-table consistency).
             if !exists && memory_row_present(&store, &id) {
                 orphans += 1;
             }
@@ -2674,55 +1867,19 @@ mod tests {
         );
     }
 
-    /// Documents the exact mechanism at the primitive level (always green;
-    /// uses raw table writes, not the fixed functions): a stale-snapshot
-    /// re-insert after a completed delete resurrects the row. This is the
-    /// shape the old update_agent_* functions had.
     #[tokio::test]
     async fn agent_rmw_mechanism_documented_stale_reinsert_resurrects() {
         let store = test_store();
+        let rs = record_store(&store);
         let id = "mech-1";
-        store.save_agent(&race_agent(id)).await.unwrap();
+        seed_agent(&store, id, id);
 
-        if crate::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            // Schema v2 equivalent: reading a stale spec snapshot before a
-            // concurrent delete and blindly re-inserting it resurrects the row.
-            let v2 = crate::agents_v2::AgentStoreV2::from_arc(store.db()).unwrap();
-            let stale = v2.get_spec(id).unwrap().unwrap();
-            store.delete_agent(id).await.unwrap();
-            assert!(store.get_agent(id).await.unwrap().is_none());
-            v2.save_spec(&stale).unwrap();
-            assert!(
-                store.get_agent(id).await.unwrap().is_some(),
-                "stale-snapshot re-insert resurrects — the fixed functions must never do this"
-            );
-            return;
-        }
-
-        // Old algorithm, step 1: read a snapshot (row exists).
-        let stale = {
-            let txn = store.db.begin_read().unwrap();
-            let table = txn.open_table(AGENTS_TABLE).unwrap();
-            let mut ag: AiAgent =
-                serde_json::from_slice(table.get(id).unwrap().unwrap().value()).unwrap();
-            ag.status = AgentStatus::Executing;
-            serde_json::to_vec(&ag).unwrap()
-        };
-
-        // Concurrent delete completes fully.
+        let stale = rs.get_spec(id).unwrap().unwrap();
         store.delete_agent(id).await.unwrap();
-        assert!(store.get_agent(id).await.unwrap().is_none());
-
-        // Old algorithm, step 2: blind re-insert of the stale snapshot.
-        let txn = store.db.begin_write().unwrap();
-        {
-            let mut table = txn.open_table(AGENTS_TABLE).unwrap();
-            table.insert(id, stale.as_slice()).unwrap();
-        }
-        txn.commit().unwrap();
-
+        assert!(rs.get_spec(id).unwrap().is_none());
+        rs.save_spec(&stale).unwrap();
         assert!(
-            store.get_agent(id).await.unwrap().is_some(),
+            rs.get_spec(id).unwrap().is_some(),
             "stale-snapshot re-insert resurrects — the fixed functions must never do this"
         );
     }
@@ -2730,90 +1887,77 @@ mod tests {
     #[tokio::test]
     async fn agent_rmw_status_normal_and_missing() {
         let store = test_store();
-        store.save_agent(&race_agent("s-1")).await.unwrap();
+        let rs = record_store(&store);
+        seed_agent(&store, "s-1", "s-1");
         store
             .update_agent_status("s-1", AgentStatus::Paused, Some("boom".into()))
             .await
             .unwrap();
-        let ag = store.get_agent("s-1").await.unwrap().unwrap();
-        assert_eq!(ag.status, AgentStatus::Paused);
-        assert_eq!(ag.error_message.as_deref(), Some("boom"));
+        let rt = rs.get_runtime("s-1").unwrap().unwrap();
+        assert_eq!(rt.status, AgentStatus::Paused);
+        assert_eq!(rt.error_message.as_deref(), Some("boom"));
 
-        // Missing record: no re-create.
         store
             .update_agent_status("ghost", AgentStatus::Active, None)
             .await
             .unwrap();
-        assert!(store.get_agent("ghost").await.unwrap().is_none());
+        assert!(rs.get_spec("ghost").unwrap().is_none());
+        assert!(rs.get_runtime("ghost").unwrap().is_none());
     }
 
     #[tokio::test]
     async fn agent_rmw_stats_normal_and_missing() {
         let store = test_store();
-        store.save_agent(&race_agent("st-1")).await.unwrap();
+        let rs = record_store(&store);
+        seed_agent(&store, "st-1", "st-1");
         for _ in 0..3 {
             store.update_agent_stats("st-1", true, 10).await.unwrap();
         }
-        let ag = store.get_agent("st-1").await.unwrap().unwrap();
-        assert_eq!(ag.stats.total_executions, 3);
-        assert_eq!(ag.stats.successful_executions, 3);
-        assert_eq!(ag.stats.last_duration_ms, Some(10));
+        let rt = rs.get_runtime("st-1").unwrap().unwrap();
+        assert_eq!(rt.stats.total_runs, 3);
+        assert_eq!(rt.stats.successful_runs, 3);
+        assert_eq!(rt.stats.last_duration_ms, Some(10));
 
         store.update_agent_stats("ghost", true, 5).await.unwrap();
-        assert!(store.get_agent("ghost").await.unwrap().is_none());
+        assert!(rs.get_spec("ghost").unwrap().is_none());
+        assert!(rs.get_runtime("ghost").unwrap().is_none());
     }
 
     #[tokio::test]
     async fn agent_rmw_memory_normal_missing_and_consistency() {
         let store = test_store();
-        store.save_agent(&race_agent("m-1")).await.unwrap();
+        let rs = record_store(&store);
+        seed_agent(&store, "m-1", "m-1");
         let mem = AgentMemory {
             updated_at: 42,
             ..AgentMemory::default()
         };
         store.update_agent_memory("m-1", mem).await.unwrap();
-        assert_eq!(
-            store
-                .get_agent("m-1")
-                .await
-                .unwrap()
-                .unwrap()
-                .memory
-                .updated_at,
-            42
-        );
+        assert_eq!(rs.get_memory("m-1").unwrap().unwrap().updated_at, 42);
         assert!(memory_row_present(&store, "m-1"));
 
-        // Missing record: neither the agent row nor an orphan memory row may
-        // be created.
         store
             .update_agent_memory("ghost", AgentMemory::default())
             .await
             .unwrap();
-        assert!(store.get_agent("ghost").await.unwrap().is_none());
+        assert!(rs.get_spec("ghost").unwrap().is_none());
         assert!(!memory_row_present(&store, "ghost"));
 
-        // Deleted record: the memory row is gone with the agent, and a late
-        // memory update must not resurrect either table.
         store.delete_agent("m-1").await.unwrap();
         assert!(!memory_row_present(&store, "m-1"));
         store
             .update_agent_memory("m-1", AgentMemory::default())
             .await
             .unwrap();
-        assert!(store.get_agent("m-1").await.unwrap().is_none());
+        assert!(rs.get_spec("m-1").unwrap().is_none());
         assert!(!memory_row_present(&store, "m-1"));
     }
 
-    /// Deterministic order 1 (status path): the REAL update function is
-    /// parked while it HOLDS the write transaction (rmw_test_hooks), the
-    /// REAL delete is started against it (queues on the write lock), then
-    /// the update is released. The delete must take effect afterwards.
-    /// No timing race: the interleaving is driven by the hook.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn agent_rmw_deterministic_update_holds_txn_then_delete_wins_status() {
         let store = test_store();
-        store.save_agent(&race_agent("d-st")).await.unwrap();
+        let rs = record_store(&store);
+        seed_agent(&store, "d-st", "d-st");
         arm_hook(&store);
         let su = store.clone();
         let up = tokio::spawn(async move {
@@ -2835,18 +1979,16 @@ mod tests {
         up.await.unwrap();
         del.await.unwrap();
         assert!(
-            store.get_agent("d-st").await.unwrap().is_none(),
+            rs.get_spec("d-st").unwrap().is_none(),
             "delete queued behind the update transaction must still win"
         );
     }
 
-    /// Deterministic order 1 (memory path, with the related table): update
-    /// parked while holding the txn, delete queued behind it. Afterwards
-    /// neither the agent row nor the memory row may exist.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn agent_rmw_deterministic_update_holds_txn_then_delete_wins_memory() {
         let store = test_store();
-        store.save_agent(&race_agent("d-mem")).await.unwrap();
+        let rs = record_store(&store);
+        seed_agent(&store, "d-mem", "d-mem");
         arm_hook(&store);
         let su = store.clone();
         let up = tokio::spawn(async move {
@@ -2873,22 +2015,20 @@ mod tests {
         release_hook(&store);
         up.await.unwrap();
         del.await.unwrap();
-        assert!(store.get_agent("d-mem").await.unwrap().is_none());
+        assert!(rs.get_spec("d-mem").unwrap().is_none());
         assert!(
             !memory_row_present(&store, "d-mem"),
             "related memory table must be empty after the delete wins"
         );
     }
 
-    /// Deterministic order 2: the delete has fully committed BEFORE any
-    /// update runs. None of the three update paths may re-create the agent
-    /// row or the related memory row.
     #[tokio::test]
     async fn agent_rmw_deterministic_delete_committed_first_no_recreate() {
         let store = test_store();
-        store.save_agent(&race_agent("d-first")).await.unwrap();
+        let rs = record_store(&store);
+        seed_agent(&store, "d-first", "d-first");
         store.delete_agent("d-first").await.unwrap();
-        assert!(store.get_agent("d-first").await.unwrap().is_none());
+        assert!(rs.get_spec("d-first").unwrap().is_none());
 
         store
             .update_agent_status("d-first", AgentStatus::Executing, None)
@@ -2907,7 +2047,7 @@ mod tests {
             .unwrap();
 
         assert!(
-            store.get_agent("d-first").await.unwrap().is_none(),
+            rs.get_spec("d-first").unwrap().is_none(),
             "no update path may re-create the agent row after a committed delete"
         );
         assert!(
@@ -2916,12 +2056,11 @@ mod tests {
         );
     }
 
-    /// Concurrent updates across the three paths must not lose each other's
-    /// fields (each atomic RMW applies against the latest committed row).
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn agent_rmw_concurrent_updates_no_field_loss() {
         let store = test_store();
-        store.save_agent(&race_agent("c-1")).await.unwrap();
+        let rs = record_store(&store);
+        seed_agent(&store, "c-1", "c-1");
         let mut handles = vec![];
         for i in 0..10u64 {
             let s = store.clone();
@@ -2956,16 +2095,15 @@ mod tests {
         for h in handles {
             h.await.unwrap();
         }
-        let ag = store.get_agent("c-1").await.unwrap().unwrap();
-        assert_eq!(ag.stats.total_executions, 10, "no stats update may be lost");
-        assert_eq!(ag.stats.successful_executions, 5);
-        assert_eq!(ag.status, AgentStatus::Paused);
-        // Concurrent writers commit in arbitrary order; the guarantee is that
-        // exactly one of the written values survives (no lost/merged fields).
+        let rt = rs.get_runtime("c-1").unwrap().unwrap();
+        let mem = rs.get_memory("c-1").unwrap().unwrap();
+        assert_eq!(rt.stats.total_runs, 10, "no stats update may be lost");
+        assert_eq!(rt.stats.successful_runs, 5);
+        assert_eq!(rt.status, AgentStatus::Paused);
         assert!(
-            [101i64, 102, 103].contains(&ag.memory.updated_at),
+            [101i64, 102, 103].contains(&mem.updated_at),
             "memory must hold exactly one of the written values, got {}",
-            ag.memory.updated_at
+            mem.updated_at
         );
     }
 }

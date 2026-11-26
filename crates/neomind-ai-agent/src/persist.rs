@@ -1,13 +1,12 @@
 //! Optional redb persistence for [`crate::store::InMemoryAgentStore`].
 //!
-//! M1 tests stay in-memory. M2 host assembly attaches an [`AgentStoreV2`] so
-//! create/update/invoke survive process restarts while schema version is still 1
-//! (soft-copy) or 2 (migrated).
+//! Host assembly attaches an [`AgentRecordStore`] so create/update/invoke
+//! survive process restarts.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use neomind_storage::agents_v2::{AgentExecutionRecordV2, AgentStoreV2, ExecutionStatusV2};
+use neomind_storage::agent_store::{AgentExecutionRow, AgentExecutionStatus, AgentRecordStore};
 
 use crate::error::{AgentError, Result};
 use crate::model::{
@@ -18,9 +17,13 @@ use crate::storage_bridge::{
 };
 use crate::store::InMemoryAgentStore;
 
-/// Load every v2 spec (+ runtime) into an in-memory working set.
-pub fn load_from_v2(v2: &AgentStoreV2, mem: &InMemoryAgentStore, now_ms: i64) -> Result<usize> {
-    let specs = v2
+/// Load every spec (+ runtime) from durable storage into an in-memory working set.
+pub fn load_from_store(
+    store: &AgentRecordStore,
+    mem: &InMemoryAgentStore,
+    now_ms: i64,
+) -> Result<usize> {
+    let specs = store
         .list_specs()
         .map_err(|e| AgentError::Other(e.to_string()))?;
     let mut n = 0;
@@ -28,7 +31,7 @@ pub fn load_from_v2(v2: &AgentStoreV2, mem: &InMemoryAgentStore, now_ms: i64) ->
         let spec = record_to_spec(&rec).map_err(AgentError::Other)?;
         let id = spec.id.clone();
         mem.save_spec(spec, now_ms)?;
-        if let Ok(Some(rt)) = v2.get_runtime(&id) {
+        if let Ok(Some(rt)) = store.get_runtime(&id) {
             let mapped = AgentRuntimeRecord {
                 agent_id: rt.agent_id,
                 status: status_from_storage(rt.status),
@@ -60,33 +63,35 @@ pub fn load_from_v2(v2: &AgentStoreV2, mem: &InMemoryAgentStore, now_ms: i64) ->
 
 /// Persist a spec + runtime snapshot to the five-table store.
 pub fn persist_spec(
-    v2: &AgentStoreV2,
+    store: &AgentRecordStore,
     spec: &AgentSpec,
     runtime: &AgentRuntimeRecord,
 ) -> Result<()> {
-    v2.save_spec(&spec_to_record(spec))
+    store
+        .save_spec(&spec_to_record(spec))
         .map_err(|e| AgentError::Other(e.to_string()))?;
-    v2.set_runtime(&runtime_to_storage(runtime))
+    store
+        .set_runtime(&runtime_to_storage(runtime))
         .map_err(|e| AgentError::Other(e.to_string()))?;
     Ok(())
 }
 
-fn exec_status_to_v2(s: &ExecutionStatus) -> ExecutionStatusV2 {
+fn exec_status_to_storage(s: &ExecutionStatus) -> AgentExecutionStatus {
     match s {
-        ExecutionStatus::Completed => ExecutionStatusV2::Completed,
-        ExecutionStatus::Partial => ExecutionStatusV2::Partial,
-        ExecutionStatus::Skipped => ExecutionStatusV2::Skipped,
-        ExecutionStatus::Failed => ExecutionStatusV2::Failed,
+        ExecutionStatus::Completed => AgentExecutionStatus::Completed,
+        ExecutionStatus::Partial => AgentExecutionStatus::Partial,
+        ExecutionStatus::Skipped => AgentExecutionStatus::Skipped,
+        ExecutionStatus::Failed => AgentExecutionStatus::Failed,
     }
 }
 
-/// Persist an execution row (formal or dry-run) into agent_executions.
-pub fn persist_execution(v2: &AgentStoreV2, exec: &AgentExecutionRecord) -> Result<()> {
-    let row = AgentExecutionRecordV2 {
+/// Persist an execution row (formal or dry-run) into `agent_executions`.
+pub fn persist_execution(store: &AgentRecordStore, exec: &AgentExecutionRecord) -> Result<()> {
+    let row = AgentExecutionRow {
         id: exec.id.clone(),
         agent_id: exec.agent_id.clone(),
         config_version: exec.config_version,
-        status: exec_status_to_v2(&exec.status),
+        status: exec_status_to_storage(&exec.status),
         started_at: exec.started_at,
         finished_at: exec.finished_at,
         is_probe: exec.is_probe,
@@ -106,7 +111,8 @@ pub fn persist_execution(v2: &AgentStoreV2, exec: &AgentExecutionRecord) -> Resu
         error: exec.error.clone(),
         alert_verdict: exec.alert_verdict.as_ref().map(|v| format!("{v:?}")),
     };
-    v2.save_execution(&row)
+    store
+        .save_execution(&row)
         .map_err(|e| AgentError::Other(e.to_string()))?;
     Ok(())
 }
@@ -115,23 +121,23 @@ pub fn persist_execution(v2: &AgentStoreV2, exec: &AgentExecutionRecord) -> Resu
 #[derive(Clone)]
 pub struct DurableAgentStore {
     pub mem: InMemoryAgentStore,
-    pub v2: Option<Arc<AgentStoreV2>>,
+    pub store: Option<Arc<AgentRecordStore>>,
     /// When set, the next durable delete fails once (tests inject store failure).
-    pub fail_next_v2_delete: Arc<AtomicBool>,
+    pub fail_next_store_delete: Arc<AtomicBool>,
 }
 
 impl DurableAgentStore {
     pub fn memory_only() -> Self {
         Self {
             mem: InMemoryAgentStore::new(),
-            v2: None,
-            fail_next_v2_delete: Arc::new(AtomicBool::new(false)),
+            store: None,
+            fail_next_store_delete: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    pub fn with_v2(v2: Arc<AgentStoreV2>, now_ms: i64) -> Result<Self> {
+    pub fn with_store(store: Arc<AgentRecordStore>, now_ms: i64) -> Result<Self> {
         // Restart recovery: IntentPending → OutcomeUnknown (never auto-resend).
-        match v2.recover_stale_intents() {
+        match store.recover_stale_intents() {
             Ok(recovered) if !recovered.is_empty() => {
                 tracing::warn!(
                     count = recovered.len(),
@@ -142,25 +148,26 @@ impl DurableAgentStore {
             _ => {}
         }
         let mem = InMemoryAgentStore::new();
-        load_from_v2(&v2, &mem, now_ms)?;
+        load_from_store(&store, &mem, now_ms)?;
         // Production hot path (`HostedAiAgentRuntime`) injects `durable.mem` into
         // SideEffectBoundary / AgentApplicationService. Wire save_execution so
-        // pre-send IntentPending is flushed to the same redb restart reopens —
-        // not mem-only until mirror_after_run.
-        let v2_persist = v2.clone();
-        mem.set_execution_persist(Arc::new(move |exec| persist_execution(&v2_persist, exec)));
+        // pre-send IntentPending is flushed to the same redb restart reopens.
+        let store_persist = store.clone();
+        mem.set_execution_persist(Arc::new(move |exec| {
+            persist_execution(&store_persist, exec)
+        }));
         Ok(Self {
             mem,
-            v2: Some(v2),
-            fail_next_v2_delete: Arc::new(AtomicBool::new(false)),
+            store: Some(store),
+            fail_next_store_delete: Arc::new(AtomicBool::new(false)),
         })
     }
 
     pub fn save_spec(&self, spec: AgentSpec, now_ms: i64) -> Result<AgentSpec> {
         let saved = self.mem.save_spec(spec, now_ms)?;
-        if let Some(v2) = &self.v2 {
+        if let Some(store) = &self.store {
             let rt = self.mem.get_runtime(&saved.id)?;
-            persist_spec(v2, &saved, &rt)?;
+            persist_spec(store, &saved, &rt)?;
         }
         Ok(saved)
     }
@@ -171,14 +178,14 @@ impl DurableAgentStore {
         let runtime = self.mem.get_runtime(id).ok();
         self.mem.delete_spec(id)?;
 
-        if let Some(v2) = &self.v2 {
-            if self.fail_next_v2_delete.swap(false, Ordering::SeqCst) {
+        if let Some(store) = &self.store {
+            if self.fail_next_store_delete.swap(false, Ordering::SeqCst) {
                 self.restore_mem(&spec, runtime.as_ref())?;
                 return Err(AgentError::Storage(
                     "injected durable delete failure".into(),
                 ));
             }
-            if let Err(e) = v2.delete_agent_rows(id) {
+            if let Err(e) = store.delete_agent_rows(id) {
                 self.restore_mem(&spec, runtime.as_ref())?;
                 return Err(AgentError::Storage(e.to_string()));
             }
@@ -197,33 +204,34 @@ impl DurableAgentStore {
 
     pub fn mirror_runtime(&self, runtime: &AgentRuntimeRecord) -> Result<()> {
         self.mem.set_runtime(runtime.clone())?;
-        if let Some(v2) = &self.v2 {
-            v2.set_runtime(&runtime_to_storage(runtime))
+        if let Some(store) = &self.store {
+            store
+                .set_runtime(&runtime_to_storage(runtime))
                 .map_err(|e| AgentError::Other(e.to_string()))?;
         }
         Ok(())
     }
 
-    /// Load `id` from durable V2 into the hot set if missing (no AiAgent map).
+    /// Load `id` from durable store into the hot set if missing.
     pub fn ensure_loaded(&self, id: &str, now_ms: i64) -> Result<()> {
         if self.mem.get_spec(id).is_ok() {
             return Ok(());
         }
-        self.reload_from_v2(id, now_ms)
+        self.reload_from_store(id, now_ms)
     }
 
-    /// Always refresh hot-set spec+runtime from durable V2 (after legacy save/update).
-    pub fn reload_from_v2(&self, id: &str, now_ms: i64) -> Result<()> {
-        let Some(v2) = &self.v2 else {
+    /// Always refresh hot-set spec+runtime from durable storage.
+    pub fn reload_from_store(&self, id: &str, now_ms: i64) -> Result<()> {
+        let Some(store) = &self.store else {
             return Err(AgentError::NotFound(id.into()));
         };
-        let rec = v2
+        let rec = store
             .get_spec(id)
             .map_err(|e| AgentError::Other(e.to_string()))?
             .ok_or_else(|| AgentError::NotFound(id.into()))?;
         let spec = record_to_spec(&rec).map_err(AgentError::Other)?;
         self.mem.save_spec(spec, now_ms)?;
-        if let Ok(Some(rt)) = v2.get_runtime(id) {
+        if let Ok(Some(rt)) = store.get_runtime(id) {
             let mapped = AgentRuntimeRecord {
                 agent_id: rt.agent_id,
                 status: status_from_storage(rt.status),
@@ -253,8 +261,8 @@ impl DurableAgentStore {
 
     pub fn mirror_execution(&self, exec: &AgentExecutionRecord) -> Result<()> {
         self.mem.save_execution(exec.clone())?;
-        if let Some(v2) = &self.v2 {
-            persist_execution(v2, exec)?;
+        if let Some(store) = &self.store {
+            persist_execution(store, exec)?;
         }
         Ok(())
     }
@@ -307,18 +315,18 @@ mod tests {
     #[test]
     fn delete_spec_surfaces_injected_disk_failure_and_reconciles_mem() {
         let agent_store = AgentStore::memory().unwrap();
-        let v2 = AgentStoreV2::from_arc(agent_store.db()).unwrap();
-        let durable = DurableAgentStore::with_v2(v2, 1000).unwrap();
+        let record_store = AgentRecordStore::from_arc(agent_store.db()).unwrap();
+        let durable = DurableAgentStore::with_store(record_store, 1000).unwrap();
         durable.save_spec(sample_spec("del-1"), 1000).unwrap();
         assert!(durable.mem.get_spec("del-1").is_ok());
 
-        durable.fail_next_v2_delete.store(true, Ordering::SeqCst);
+        durable.fail_next_store_delete.store(true, Ordering::SeqCst);
         let err = durable.delete_spec("del-1").unwrap_err();
         assert!(matches!(err, AgentError::Storage(_)));
         // Mem reconciled — still present after failed durable delete.
         assert!(durable.mem.get_spec("del-1").is_ok());
         assert!(durable
-            .v2
+            .store
             .as_ref()
             .unwrap()
             .get_spec("del-1")
@@ -331,16 +339,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("agents.redb");
         let agent_store = AgentStore::open(&path).unwrap();
-        let v2 = AgentStoreV2::from_arc(agent_store.db()).unwrap();
-        let durable = DurableAgentStore::with_v2(v2, 2000).unwrap();
+        let record_store = AgentRecordStore::from_arc(agent_store.db()).unwrap();
+        let durable = DurableAgentStore::with_store(record_store, 2000).unwrap();
         durable.save_spec(sample_spec("gone"), 2000).unwrap();
         durable.delete_spec("gone").unwrap();
         drop(durable);
         drop(agent_store);
 
         let reopened = AgentStore::open(&path).unwrap();
-        let v2b = AgentStoreV2::from_arc(reopened.db()).unwrap();
-        assert!(v2b.get_spec("gone").unwrap().is_none());
-        assert!(v2b.get_runtime("gone").unwrap().is_none());
+        let record_store_b = AgentRecordStore::from_arc(reopened.db()).unwrap();
+        assert!(record_store_b.get_spec("gone").unwrap().is_none());
+        assert!(record_store_b.get_runtime("gone").unwrap().is_none());
     }
 }

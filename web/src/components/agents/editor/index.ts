@@ -1,10 +1,8 @@
-export { isAgentEditorV2Enabled, AGENT_EDITOR_V2_STORAGE_KEY } from './featureFlag'
 export {
   defaultDailyBriefDraft,
   emptyDraft,
   specToDraft,
   draftToUpdatePatch,
-  detailToV2Draft,
 } from './defaults'
 export { TriggerSection } from './TriggerSection'
 export type { TriggerSectionProps } from './TriggerSection'
@@ -22,5 +20,5 @@ export { LiveSummaryPanel } from './LiveSummaryPanel'
 export type { LiveSummaryPanelProps } from './LiveSummaryPanel'
 export { TASK_TEMPLATES, seedDailyBrief, inferTemplateId } from './templates'
 export type { TaskTemplateId, TaskTemplate } from './templates'
-export { AgentEditorV2 } from './AgentEditorV2'
-export type { AgentEditorV2Props } from './AgentEditorV2'
+export { AgentEditor } from './AgentEditor'
+export type { AgentEditorProps } from './AgentEditor'

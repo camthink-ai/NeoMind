@@ -1,23 +1,16 @@
 /**
- * Seed drafts for the v2 editor — empty create canvas + V2 spec projection.
+ * Seed drafts for the agent editor — empty create canvas + spec projection.
  * Task templates live in templates.ts (user mental model).
  *
- * Edit load MUST use GET /agents/v2/:id → specToDraft. Never seed save from
- * detailToV2Draft (legacy detail lacks requirements / controlled_actions /
- * output.depends_on and would wipe them on PUT).
+ * Edit load uses GET /agents/:id → specToDraft, preserving input.requirements,
+ * controlled_actions, and output.depends_on cleanly across saves.
  */
 import type {
   AgentSpec,
   AgentSpecDraft,
   AgentSpecPatch,
-  AiAgentDetail,
   NotifyPolicy,
 } from '@/types'
-import {
-  scheduleToTrigger,
-  toolConfigToPolicy,
-  legacyNotifyToPolicy,
-} from '@/lib/api/agentV2Adapter'
 
 const QUIET_NOTIFY: NotifyPolicy = {
   channels: [],
@@ -112,18 +105,25 @@ export function defaultDailyBriefDraft(): AgentSpecDraft {
 }
 
 /**
- * Strip persistence metadata so a loaded AgentSpec seeds the editor draft.
- * Preserves input.requirements, output deps, controlled_actions, notify, …
+ * Project a loaded AgentSpec (from GET /agents/:id) into a clean AgentSpecDraft.
+ * Explicitly picks only draft fields so runtime fields (status, stats,
+ * effective_plan, etc.) never leak into the edit state.
  */
 export function specToDraft(spec: AgentSpec): AgentSpecDraft {
-  const {
-    id: _id,
-    config_version: _configVersion,
-    created_at: _createdAt,
-    updated_at: _updatedAt,
-    ...draft
-  } = spec
-  return draft
+  return {
+    name: spec.name,
+    description: spec.description,
+    user_prompt: spec.user_prompt,
+    llm_backend_id: spec.llm_backend_id,
+    preset: spec.preset,
+    trigger: spec.trigger,
+    pacing: spec.pacing,
+    input: spec.input ?? { requirements: [] },
+    tool_policy: spec.tool_policy,
+    output: spec.output,
+    notify: spec.notify,
+    controlled_actions: spec.controlled_actions ?? [],
+  }
 }
 
 function sameJson(a: unknown, b: unknown): boolean {
@@ -131,10 +131,10 @@ function sameJson(a: unknown, b: unknown): boolean {
 }
 
 /**
- * AgentSpecPatch for PUT /agents/v2/:id (omit id / config_version).
+ * AgentSpecPatch for PUT /agents/:id (omit id / config_version).
  * With `previous` (loaded seed), only changed fields are sent — rename-only
  * becomes `{ name }` so a full old snapshot cannot clobber the contract.
- * Without `previous`, sends the full draft (legacy / create-adjacent callers).
+ * Without `previous`, sends the full draft.
  */
 export function draftToUpdatePatch(
   draft: AgentSpecDraft,
@@ -193,32 +193,4 @@ export function draftToUpdatePatch(
     patch.controlled_actions = draft.controlled_actions
   }
   return patch
-}
-
-/**
- * @deprecated Legacy detail → draft. Empties requirements / controlled_actions
- * and clears output.depends_on. Do not use for edit→save; use getAgentV2 + specToDraft.
- */
-export function detailToV2Draft(detail: AiAgentDetail): AgentSpecDraft {
-  return {
-    name: detail.name,
-    description: detail.description,
-    user_prompt: detail.user_prompt,
-    llm_backend_id: detail.llm_backend_id,
-    trigger: scheduleToTrigger(detail.schedule),
-    input: { requirements: [] },
-    tool_policy: toolConfigToPolicy(detail.tool_config),
-    notify: legacyNotifyToPolicy(detail.notify),
-    output: detail.output_schema?.length
-      ? {
-          fields: detail.output_schema.map((f) => ({
-            name: f.name,
-            depends_on: [],
-            description: f.description,
-          })),
-          publish: false,
-        }
-      : { fields: [], publish: false },
-    controlled_actions: [],
-  }
 }

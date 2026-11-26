@@ -1,5 +1,5 @@
 /**
- * Race-safe AgentSpec v2 edit session for AgentsPage.
+ * Race-safe AgentSpec edit session for AgentsPage.
  *
  * Open edit clears any stale editingAgent and bumps a per-open sequence so
  * only the current open's GET may seed / close / clear loading. Same-id
@@ -9,20 +9,20 @@
  */
 import { useCallback, useRef, useState } from 'react'
 import type { AgentSpec, AgentSpecDraft, AgentSpecPatch } from '@/types'
-import { draftToUpdatePatch, specToDraft } from '@/components/agents/editor-v2/defaults'
+import { draftToUpdatePatch, specToDraft } from '@/components/agents/editor/defaults'
 
-export interface AgentV2EditSessionApis {
-  getAgentV2: (id: string) => Promise<{ agent: AgentSpec }>
-  updateAgentV2: (id: string, patch: AgentSpecPatch) => Promise<unknown>
-  createAgentV2: (draft: AgentSpecDraft) => Promise<unknown>
+export interface AgentEditSessionApis {
+  getAgent: (id: string) => Promise<AgentSpec>
+  updateAgent: (id: string, patch: AgentSpecPatch) => Promise<unknown>
+  createAgent: (draft: AgentSpecDraft) => Promise<unknown>
 }
 
-export interface UseAgentV2EditSessionOptions extends AgentV2EditSessionApis {
+export interface UseAgentEditSessionOptions extends AgentEditSessionApis {
   onSaved?: () => void | Promise<void>
   onLoadError?: (error: unknown) => void
 }
 
-export interface AgentV2EditSession {
+export interface AgentEditSession {
   open: boolean
   loading: boolean
   editingAgent: AgentSpec | undefined
@@ -33,9 +33,9 @@ export interface AgentV2EditSession {
   save: (draft: AgentSpecDraft) => Promise<void>
 }
 
-export function useAgentV2EditSession(
-  options: UseAgentV2EditSessionOptions,
-): AgentV2EditSession {
+export function useAgentEditSession(
+  options: UseAgentEditSessionOptions,
+): AgentEditSession {
   const optionsRef = useRef(options)
   optionsRef.current = options
 
@@ -75,7 +75,7 @@ export function useAgentV2EditSession(
     setLoading(true)
     setOpen(true)
     try {
-      const { agent } = await optionsRef.current.getAgentV2(id)
+      const agent = await optionsRef.current.getAgent(id)
       if (loadSeqRef.current !== seq) return
       setEditingAgent(agent)
     } catch (error) {
@@ -103,13 +103,13 @@ export function useAgentV2EditSession(
     if (loading) {
       throw new Error('Agent edit still loading')
     }
-    const { updateAgentV2, createAgentV2, onSaved } = optionsRef.current
+    const { updateAgent, createAgent, onSaved } = optionsRef.current
     if (editingAgent) {
       if (pendingIdRef.current !== editingAgent.id) {
         throw new Error('Stale agent edit target')
       }
       const previous = specToDraft(editingAgent)
-      await updateAgentV2(
+      await updateAgent(
         editingAgent.id,
         draftToUpdatePatch(draft, previous),
       )
@@ -117,7 +117,7 @@ export function useAgentV2EditSession(
       if (pendingIdRef.current) {
         throw new Error('Agent edit still pending')
       }
-      await createAgentV2(draft)
+      await createAgent(draft)
     }
     invalidateInFlight()
     pendingIdRef.current = null

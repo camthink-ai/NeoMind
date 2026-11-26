@@ -1,5 +1,5 @@
 /**
- * Shared section shell for AgentEditorV2.
+ * Shared section shell for AgentEditor.
  * Divider-based hierarchy inside one form surface — not stacked shadow cards.
  */
 import type { ReactNode } from 'react'

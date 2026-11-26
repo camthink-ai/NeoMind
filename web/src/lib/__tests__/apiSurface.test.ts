@@ -82,11 +82,12 @@ describe('api surface (post-split composition)', () => {
   // (POST /api/agents/v2/plan-preview).
   // 287 -> 289 when V1 purge tip1 added `createAgentV2` + `updateAgentV2`
   // (POST/PUT /api/agents/v2).
-  // 289 -> 290 when edit load switched to `getAgentV2` (GET /api/agents/v2/:id)
-  // so rename/save cannot wipe requirements via legacy detailToV2Draft.
-  it('member count grows only by deliberate additions (290)', () => {
+  // 289 -> 290 when edit load switched to `getAgentV2` (GET /api/agents/v2/:id).
+  // 290 -> 287 when V1 agent remnants were removed and `/api/agents/*` unified
+  // (`getAgent`/`createAgent`/`updateAgent`/`planPreview` replace `*V2`).
+  it('member count grows only by deliberate additions (287)', () => {
     const keys = Object.keys(api)
-    expect(keys.length).toBe(290)
+    expect(keys.length).toBe(287)
   })
 })
 

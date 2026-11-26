@@ -5,8 +5,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import type { AgentSpec, AgentSpecDraft } from '@/types'
-import { AgentEditorV2 } from '@/components/agents/editor-v2'
-import { useAgentV2EditSession } from '../useAgentV2EditSession'
+import { AgentEditor } from '@/components/agents/editor'
+import { useAgentEditSession } from '../useAgentEditSession'
 
 vi.mock('react-i18next', async (importOriginal) => {
   const actual = await importOriginal<typeof import('react-i18next')>()
@@ -66,18 +66,18 @@ function makeSpec(id: string, name: string): AgentSpec {
 }
 
 function Harness({
-  getAgentV2,
-  updateAgentV2,
-  createAgentV2,
+  getAgent,
+  updateAgent,
+  createAgent,
 }: {
-  getAgentV2: (id: string) => Promise<{ agent: AgentSpec }>
-  updateAgentV2: (id: string, patch: unknown) => Promise<unknown>
-  createAgentV2: (draft: AgentSpecDraft) => Promise<unknown>
+  getAgent: (id: string) => Promise<AgentSpec>
+  updateAgent: (id: string, patch: unknown) => Promise<unknown>
+  createAgent: (draft: AgentSpecDraft) => Promise<unknown>
 }) {
-  const session = useAgentV2EditSession({
-    getAgentV2,
-    updateAgentV2,
-    createAgentV2,
+  const session = useAgentEditSession({
+    getAgent,
+    updateAgent,
+    createAgent,
   })
 
   return (
@@ -97,7 +97,7 @@ function Harness({
       <span data-testid="edit-session-loading">
         {session.loading ? '1' : '0'}
       </span>
-      <AgentEditorV2
+      <AgentEditor
         open={session.open}
         onOpenChange={session.onOpenChange}
         agent={session.editingAgent}
@@ -108,7 +108,7 @@ function Harness({
   )
 }
 
-describe('useAgentV2EditSession race with AgentEditorV2', () => {
+describe('useAgentEditSession race with AgentEditor', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
@@ -117,21 +117,21 @@ describe('useAgentV2EditSession race with AgentEditorV2', () => {
     const specA = makeSpec('A', 'agent-a')
     const specB = makeSpec('B', 'agent-b')
 
-    let resolveB!: (value: { agent: AgentSpec }) => void
-    const getAgentV2 = vi.fn(async (id: string) => {
-      if (id === 'A') return { agent: specA }
-      return new Promise<{ agent: AgentSpec }>((resolve) => {
+    let resolveB!: (value: AgentSpec) => void
+    const getAgent = vi.fn(async (id: string) => {
+      if (id === 'A') return specA
+      return new Promise<AgentSpec>((resolve) => {
         resolveB = resolve
       })
     })
-    const updateAgentV2 = vi.fn(async () => ({ ok: true }))
-    const createAgentV2 = vi.fn(async () => ({ ok: true }))
+    const updateAgent = vi.fn(async () => ({ ok: true }))
+    const createAgent = vi.fn(async () => ({ ok: true }))
 
     render(
       <Harness
-        getAgentV2={getAgentV2}
-        updateAgentV2={updateAgentV2}
-        createAgentV2={createAgentV2}
+        getAgent={getAgent}
+        updateAgent={updateAgent}
+        createAgent={createAgent}
       />,
     )
 
@@ -141,12 +141,11 @@ describe('useAgentV2EditSession race with AgentEditorV2', () => {
     fireEvent.click(screen.getByRole('button', { name: 'edit-A' }))
     await waitFor(() => {
       expect(dialog()).not.toHaveClass('hidden')
-      expect(screen.getByTestId('agent-editor-v2-save')).not.toBeDisabled()
+      expect(screen.getByTestId('agent-editor-save')).not.toBeDisabled()
     })
-    expect(getAgentV2).toHaveBeenCalledWith('A')
+    expect(getAgent).toHaveBeenCalledWith('A')
 
     // Cancel — must clear editingAgent so a later save cannot PUT A.
-    // FullScreenDialog keeps children mounted with `hidden` when closed.
     fireEvent.click(screen.getByRole('button', { name: 'common:cancel' }))
     await waitFor(() => {
       expect(dialog()).toHaveClass('hidden')
@@ -156,52 +155,52 @@ describe('useAgentV2EditSession race with AgentEditorV2', () => {
     fireEvent.click(screen.getByRole('button', { name: 'edit-B' }))
     await waitFor(() => {
       expect(dialog()).not.toHaveClass('hidden')
-      expect(screen.getByTestId('agent-editor-v2-loading')).toBeInTheDocument()
+      expect(screen.getByTestId('agent-editor-loading')).toBeInTheDocument()
     })
-    const saveWhileLoading = screen.getByTestId('agent-editor-v2-save')
+    const saveWhileLoading = screen.getByTestId('agent-editor-save')
     expect(saveWhileLoading).toBeDisabled()
     fireEvent.click(saveWhileLoading)
-    expect(updateAgentV2).not.toHaveBeenCalled()
+    expect(updateAgent).not.toHaveBeenCalled()
 
     // B arrives — editor opens for B only.
     await act(async () => {
-      resolveB({ agent: specB })
+      resolveB(specB)
     })
     await waitFor(() => {
-      expect(screen.queryByTestId('agent-editor-v2-loading')).toBeNull()
-      expect(screen.getByTestId('agent-editor-v2-save')).not.toBeDisabled()
+      expect(screen.queryByTestId('agent-editor-loading')).toBeNull()
+      expect(screen.getByTestId('agent-editor-save')).not.toBeDisabled()
     })
-    expect(updateAgentV2).not.toHaveBeenCalled()
+    expect(updateAgent).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByTestId('agent-editor-v2-save'))
+    fireEvent.click(screen.getByTestId('agent-editor-save'))
     await waitFor(() => {
-      expect(updateAgentV2).toHaveBeenCalledTimes(1)
+      expect(updateAgent).toHaveBeenCalledTimes(1)
     })
-    expect(updateAgentV2).toHaveBeenCalledWith('B', expect.any(Object))
-    const putIds = (updateAgentV2.mock.calls as unknown as [string, unknown][]).map(
+    expect(updateAgent).toHaveBeenCalledWith('B', expect.any(Object))
+    const putIds = (updateAgent.mock.calls as unknown as [string, unknown][]).map(
       ([id]) => id,
     )
     expect(putIds).toEqual(['B'])
-    expect(createAgentV2).not.toHaveBeenCalled()
+    expect(createAgent).not.toHaveBeenCalled()
   })
 
   it('ignores late GET after cancel during B load', async () => {
     const specB = makeSpec('B', 'agent-b')
-    let resolveB!: (value: { agent: AgentSpec }) => void
-    const getAgentV2 = vi.fn(async (id: string) => {
+    let resolveB!: (value: AgentSpec) => void
+    const getAgent = vi.fn(async (id: string) => {
       if (id !== 'B') throw new Error(`unexpected id ${id}`)
-      return new Promise<{ agent: AgentSpec }>((resolve) => {
+      return new Promise<AgentSpec>((resolve) => {
         resolveB = resolve
       })
     })
-    const updateAgentV2 = vi.fn(async () => ({ ok: true }))
-    const createAgentV2 = vi.fn(async () => ({ ok: true }))
+    const updateAgent = vi.fn(async () => ({ ok: true }))
+    const createAgent = vi.fn(async () => ({ ok: true }))
 
     render(
       <Harness
-        getAgentV2={getAgentV2}
-        updateAgentV2={updateAgentV2}
-        createAgentV2={createAgentV2}
+        getAgent={getAgent}
+        updateAgent={updateAgent}
+        createAgent={createAgent}
       />,
     )
 
@@ -209,7 +208,7 @@ describe('useAgentV2EditSession race with AgentEditorV2', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'edit-B' }))
     await waitFor(() => {
-      expect(screen.getByTestId('agent-editor-v2-loading')).toBeInTheDocument()
+      expect(screen.getByTestId('agent-editor-loading')).toBeInTheDocument()
       expect(dialog()).not.toHaveClass('hidden')
     })
 
@@ -219,35 +218,35 @@ describe('useAgentV2EditSession race with AgentEditorV2', () => {
     })
 
     await act(async () => {
-      resolveB({ agent: specB })
+      resolveB(specB)
     })
 
     // Late response must not reopen the editor.
     expect(dialog()).toHaveClass('hidden')
-    expect(updateAgentV2).not.toHaveBeenCalled()
+    expect(updateAgent).not.toHaveBeenCalled()
   })
 
   it('same-id reopen: stale GET₁ failure must not close while GET₂ pending', async () => {
     const specB = makeSpec('B', 'agent-b-fresh')
     const pending: Array<{
-      resolve: (v: { agent: AgentSpec }) => void
+      resolve: (v: AgentSpec) => void
       reject: (e: unknown) => void
     }> = []
-    const getAgentV2 = vi.fn(async (id: string) => {
+    const getAgent = vi.fn(async (id: string) => {
       if (id !== 'B') throw new Error(`unexpected id ${id}`)
-      return new Promise<{ agent: AgentSpec }>((resolve, reject) => {
+      return new Promise<AgentSpec>((resolve, reject) => {
         pending.push({ resolve, reject })
       })
     })
-    const updateAgentV2 = vi.fn(async () => ({ ok: true }))
-    const createAgentV2 = vi.fn(async () => ({ ok: true }))
+    const updateAgent = vi.fn(async () => ({ ok: true }))
+    const createAgent = vi.fn(async () => ({ ok: true }))
     const onLoadError = vi.fn()
 
     function HarnessWithError() {
-      const session = useAgentV2EditSession({
-        getAgentV2,
-        updateAgentV2,
-        createAgentV2,
+      const session = useAgentEditSession({
+        getAgent,
+        updateAgent,
+        createAgent,
         onLoadError,
       })
       return (
@@ -261,7 +260,7 @@ describe('useAgentV2EditSession race with AgentEditorV2', () => {
           <span data-testid="edit-session-loading">
             {session.loading ? '1' : '0'}
           </span>
-          <AgentEditorV2
+          <AgentEditor
             open={session.open}
             onOpenChange={session.onOpenChange}
             agent={session.editingAgent}
@@ -302,11 +301,11 @@ describe('useAgentV2EditSession race with AgentEditorV2', () => {
 
     // GET₂ succeeds — editor loads B.
     await act(async () => {
-      pending[1]!.resolve({ agent: specB })
+      pending[1]!.resolve(specB)
     })
     await waitFor(() => {
       expect(screen.getByTestId('edit-session-loading')).toHaveTextContent('0')
-      expect(screen.getByTestId('agent-editor-v2-save')).not.toBeDisabled()
+      expect(screen.getByTestId('agent-editor-save')).not.toBeDisabled()
     })
     expect(dialog()).not.toHaveClass('hidden')
   })
@@ -317,21 +316,21 @@ describe('useAgentV2EditSession race with AgentEditorV2', () => {
     fresh.config_version = 2
     fresh.user_prompt = 'fresh prompt from GET₂'
     const pending: Array<{
-      resolve: (v: { agent: AgentSpec }) => void
+      resolve: (v: AgentSpec) => void
       reject: (e: unknown) => void
     }> = []
-    const getAgentV2 = vi.fn(async (id: string) => {
+    const getAgent = vi.fn(async (id: string) => {
       if (id !== 'B') throw new Error(`unexpected id ${id}`)
-      return new Promise<{ agent: AgentSpec }>((resolve, reject) => {
+      return new Promise<AgentSpec>((resolve, reject) => {
         pending.push({ resolve, reject })
       })
     })
 
     render(
       <Harness
-        getAgentV2={getAgentV2}
-        updateAgentV2={vi.fn(async () => ({ ok: true }))}
-        createAgentV2={vi.fn(async () => ({ ok: true }))}
+        getAgent={getAgent}
+        updateAgent={vi.fn(async () => ({ ok: true }))}
+        createAgent={vi.fn(async () => ({ ok: true }))}
       />,
     )
     const dialog = () => screen.getByRole('dialog', { hidden: true })
@@ -349,7 +348,7 @@ describe('useAgentV2EditSession race with AgentEditorV2', () => {
 
     // Stale GET₁ success must not seed the editor.
     await act(async () => {
-      pending[0]!.resolve({ agent: stale })
+      pending[0]!.resolve(stale)
     })
     expect(screen.getByTestId('edit-session-agent-name')).toHaveTextContent('')
     expect(screen.getByTestId('edit-session-loading')).toHaveTextContent('1')
@@ -357,7 +356,7 @@ describe('useAgentV2EditSession race with AgentEditorV2', () => {
 
     // GET₂ seeds the fresh draft only.
     await act(async () => {
-      pending[1]!.resolve({ agent: fresh })
+      pending[1]!.resolve(fresh)
     })
     await waitFor(() => {
       expect(screen.getByTestId('edit-session-agent-name')).toHaveTextContent(

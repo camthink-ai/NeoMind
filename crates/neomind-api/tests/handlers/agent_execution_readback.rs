@@ -13,12 +13,11 @@ use neomind_ai_agent::model::{
     AgentSpecDraft, InputContract, OutputContract, ToolPolicy, TriggerSpec,
 };
 use neomind_api::handlers::agents::{
-    batch_get_executions, get_agent_executions, get_execution, BatchExecutionIds,
+    batch_get_executions, create_agent, get_agent_executions, get_execution, BatchExecutionIds,
 };
-use neomind_api::handlers::agents_v2::create_agent_v2;
 use neomind_api::handlers::ServerState;
-use neomind_storage::agents_v2::{AgentExecutionRecordV2, ExecutionStatusV2};
-use neomind_storage::AgentStoreV2;
+use neomind_storage::agent_store::{AgentExecutionRow, AgentExecutionStatus};
+use neomind_storage::AgentRecordStore;
 use serde_json::json;
 
 fn vision_evidence() -> serde_json::Value {
@@ -57,7 +56,7 @@ async fn seed_executed_agent(state: &ServerState) -> (String, String) {
         notify: Default::default(),
         controlled_actions: vec![],
     };
-    let created = create_agent_v2(State(state.clone()), Json(draft))
+    let created = create_agent(State(state.clone()), Json(draft))
         .await
         .expect("create agent")
         .0
@@ -67,11 +66,11 @@ async fn seed_executed_agent(state: &ServerState) -> (String, String) {
 
     let now_ms = chrono::Utc::now().timestamp_millis();
     let exec_id = "exec-readback-1".to_string();
-    let execution = AgentExecutionRecordV2 {
+    let execution = AgentExecutionRow {
         id: exec_id.clone(),
         agent_id: agent_id.clone(),
         config_version: created.agent.config_version,
-        status: ExecutionStatusV2::Completed,
+        status: AgentExecutionStatus::Completed,
         started_at: now_ms - 1500,
         finished_at: now_ms,
         is_probe: false,
@@ -86,8 +85,11 @@ async fn seed_executed_agent(state: &ServerState) -> (String, String) {
         error: None,
         alert_verdict: None,
     };
-    let v2 = AgentStoreV2::from_arc(state.agents.agent_store.db()).expect("open AgentStoreV2");
-    v2.save_execution(&execution).expect("seed V2 execution");
+    let record_store =
+        AgentRecordStore::from_arc(state.agents.agent_store.db()).expect("open AgentRecordStore");
+    record_store
+        .save_execution(&execution)
+        .expect("seed execution");
     (agent_id, exec_id)
 }
 
@@ -214,7 +216,7 @@ async fn v2_list_falls_back_to_agent_trigger_when_source_missing() {
         notify: Default::default(),
         controlled_actions: vec![],
     };
-    let created = create_agent_v2(State(state.clone()), Json(draft))
+    let created = create_agent(State(state.clone()), Json(draft))
         .await
         .expect("create")
         .0
@@ -222,11 +224,11 @@ async fn v2_list_falls_back_to_agent_trigger_when_source_missing() {
         .expect("data");
     let agent_id = created.agent.id;
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let execution = AgentExecutionRecordV2 {
+    let execution = AgentExecutionRow {
         id: "exec-legacy-source".into(),
         agent_id: agent_id.clone(),
         config_version: created.agent.config_version,
-        status: ExecutionStatusV2::Completed,
+        status: AgentExecutionStatus::Completed,
         started_at: now_ms - 100,
         finished_at: now_ms,
         is_probe: false,
@@ -241,8 +243,9 @@ async fn v2_list_falls_back_to_agent_trigger_when_source_missing() {
         error: None,
         alert_verdict: None,
     };
-    let v2 = AgentStoreV2::from_arc(state.agents.agent_store.db()).expect("v2");
-    v2.save_execution(&execution).expect("seed");
+    let record_store =
+        AgentRecordStore::from_arc(state.agents.agent_store.db()).expect("record store");
+    record_store.save_execution(&execution).expect("seed");
 
     let resp = get_agent_executions(State(state), Path(agent_id))
         .await
@@ -282,7 +285,7 @@ async fn v2_user_messages_and_memory_endpoints_work_under_schema_v2() {
         notify: Default::default(),
         controlled_actions: vec![],
     };
-    let created = create_agent_v2(State(state.clone()), Json(draft))
+    let created = create_agent(State(state.clone()), Json(draft))
         .await
         .expect("create")
         .0

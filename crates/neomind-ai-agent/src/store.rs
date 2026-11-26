@@ -14,7 +14,7 @@ use crate::model::{
 
 /// Optional durable sink invoked after a successful in-memory `save_execution`.
 ///
-/// Production installs this via [`crate::persist::DurableAgentStore::with_v2`] so
+/// Production installs this via [`crate::persist::DurableAgentStore::with_store`] so
 /// pre-send `IntentPending` rows land in the same redb the next process opens.
 pub type ExecutionPersistFn = Arc<dyn Fn(&AgentExecutionRecord) -> Result<()> + Send + Sync>;
 

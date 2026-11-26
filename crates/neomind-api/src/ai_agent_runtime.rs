@@ -1,6 +1,6 @@
-//! Host assembly for the clean-slate [`neomind_ai_agent`] runtime (M2).
+//! Host assembly for the [`neomind_ai_agent`] runtime.
 //!
-//! Opens the shared agents.redb via [`AgentStoreV2`], loads a
+//! Opens the shared `agents.redb` via [`AgentRecordStore`], loads a
 //! [`DurableAgentStore`], and builds [`AgentApplicationService`] +
 //! [`ExecutionCoordinator`] with production host ports (LLM / sources /
 //! notify / side-effects).
@@ -24,8 +24,8 @@ use neomind_ai_agent::service::{AgentApplicationService, RunOptions};
 use neomind_ai_agent::side_effects::{deps_fresh, Notifier, SideEffectBoundary};
 use neomind_core::eventbus::EventBus;
 use neomind_core::NeoMindEvent;
+use neomind_storage::agent_store::AgentRecordStore;
 use neomind_storage::agents::ExecutionRecord as JournalExecutionRecord;
-use neomind_storage::agents_v2::AgentStoreV2;
 use neomind_storage::AgentStore;
 
 use crate::agent_ports::{
@@ -62,21 +62,13 @@ impl AgentSubmitPort for HostedSubmit {
 }
 
 impl HostedAiAgentRuntime {
-    /// Open AgentStoreV2 on the shared agents.redb and build service with real host ports.
+    /// Open [`AgentRecordStore`] on the shared `agents.redb` and build service with real host ports.
     pub fn build(agent_store: Arc<AgentStore>, deps: HostAgentDeps) -> AgentResult<Self> {
-        let v2 = AgentStoreV2::from_arc(agent_store.db())
+        let record_store = AgentRecordStore::from_arc(agent_store.db())
             .map_err(|e| AgentError::Storage(e.to_string()))?;
         let clock: Arc<dyn ClockPort> = Arc::new(SystemClock);
         let now = clock.now_ms();
-        let durable = if neomind_storage::schema::CURRENT_SCHEMA_VERSION >= 2 {
-            DurableAgentStore::with_v2(v2, now)?
-        } else {
-            DurableAgentStore {
-                mem: neomind_ai_agent::store::InMemoryAgentStore::new(),
-                v2: Some(v2),
-                fail_next_v2_delete: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            }
-        };
+        let durable = DurableAgentStore::with_store(record_store, now)?;
 
         let event_bus = deps.event_bus.clone();
         let metric_publisher = deps.metric_publisher.clone();
@@ -90,8 +82,8 @@ impl HostedAiAgentRuntime {
 
         let input = InputPipeline::new(sources.clone() as Arc<dyn SourceReadPort>, clock.clone());
         let runner = Arc::new(SinglePassRunner::new(llm.clone()));
-        // `durable.mem` carries the V2 execution persist sink (installed in
-        // DurableAgentStore::with_v2). Pre-send IntentPending save_execution
+        // `durable.mem` carries the execution persist sink (installed in
+        // DurableAgentStore::with_store). Pre-send IntentPending save_execution
         // therefore hits the same agents.redb restart recovery opens — do not
         // replace with a bare InMemoryAgentStore::new().
         let side_effects = SideEffectBoundary {
@@ -134,16 +126,7 @@ impl HostedAiAgentRuntime {
     }
 
     /// Start the Cron/Interval scheduler (1s tick). Idempotent.
-    ///
-    /// No-op while schema version stays at 1 (migrate not yet activated).
     pub fn start(self: &Arc<Self>) {
-        if neomind_storage::schema::CURRENT_SCHEMA_VERSION < 2 {
-            tracing::info!(
-                "Clean-slate scheduler deferred until schema v2 (CURRENT_SCHEMA_VERSION={})",
-                neomind_storage::schema::CURRENT_SCHEMA_VERSION
-            );
-            return;
-        }
         if self.started.swap(true, std::sync::atomic::Ordering::SeqCst) {
             return;
         }
@@ -155,22 +138,22 @@ impl HostedAiAgentRuntime {
         ));
         *self.scheduler.lock().expect("scheduler") = Some(scheduler.clone());
         scheduler.start();
-        tracing::info!("Clean-slate AgentScheduler started (schema v2)");
+        tracing::info!("AgentScheduler started");
     }
 
     pub fn has_agent(&self, id: &str) -> bool {
         self.durable.mem.get_spec(id).is_ok()
     }
 
-    /// Ensure `id` is in the hot set by loading from durable V2 (no AiAgent map).
+    /// Ensure `id` is in the hot set by loading from durable storage.
     pub fn ensure_loaded(&self, id: &str) -> AgentResult<()> {
         self.durable.ensure_loaded(id, self.clock.now_ms())
     }
 
-    /// Force-refresh hot set from durable V2 after a store write that bypassed
+    /// Force-refresh hot set from durable storage after a store write that bypassed
     /// [`Self::create`] / [`Self::update`].
-    pub fn reload_from_v2(&self, id: &str) -> AgentResult<()> {
-        self.durable.reload_from_v2(id, self.clock.now_ms())
+    pub fn reload_from_store(&self, id: &str) -> AgentResult<()> {
+        self.durable.reload_from_store(id, self.clock.now_ms())
     }
 
     /// Update hot-set + durable runtime status (Active/Paused/…).
@@ -340,10 +323,10 @@ impl HostedAiAgentRuntime {
     }
 
     fn load_operator_notes(&self, id: &str) -> Vec<String> {
-        let Some(v2) = &self.durable.v2 else {
+        let Some(store) = &self.durable.store else {
             return Vec::new();
         };
-        let Ok(Some(msgs)) = v2.get_user_messages(id) else {
+        let Ok(Some(msgs)) = store.get_user_messages(id) else {
             return Vec::new();
         };
         if msgs.is_empty() {
@@ -377,9 +360,9 @@ impl HostedAiAgentRuntime {
     }
 
     fn mirror_spec(&self, spec: &AgentSpec) -> AgentResult<()> {
-        if let Some(v2) = &self.durable.v2 {
+        if let Some(store) = &self.durable.store {
             let rt = self.durable.mem.get_runtime(&spec.id)?;
-            persist_spec(v2, spec, &rt)?;
+            persist_spec(store, spec, &rt)?;
         }
         Ok(())
     }
@@ -419,7 +402,7 @@ impl HostedAiAgentRuntime {
     }
 
     fn append_journal(&self, exec: &AgentExecutionRecord) {
-        let Some(v2) = &self.durable.v2 else {
+        let Some(store) = &self.durable.store else {
             return;
         };
         let success = matches!(
@@ -470,7 +453,7 @@ impl HostedAiAgentRuntime {
             success,
             stop_reason,
         };
-        if let Err(e) = v2.append_journal_entry(&exec.agent_id, record) {
+        if let Err(e) = store.append_journal_entry(&exec.agent_id, record) {
             tracing::warn!(
                 agent_id = %exec.agent_id,
                 execution_id = %exec.id,
@@ -1139,8 +1122,8 @@ mod tests {
         drop(store);
 
         let reopened = AgentStore::open(&path).unwrap();
-        let v2 = AgentStoreV2::from_arc(reopened.db()).unwrap();
-        let formal = v2.list_formal_executions(&spec.id).unwrap();
+        let record_store = AgentRecordStore::from_arc(reopened.db()).unwrap();
+        let formal = record_store.list_formal_executions(&spec.id).unwrap();
         assert!(!formal.is_empty());
         assert_eq!(formal.last().unwrap().id, exec_id);
     }
@@ -1156,7 +1139,7 @@ mod tests {
 
         runtime
             .durable
-            .fail_next_v2_delete
+            .fail_next_store_delete
             .store(true, Ordering::SeqCst);
         let err = runtime.delete(&spec.id).unwrap_err();
         assert!(matches!(err, AgentError::Storage(_)));
@@ -1168,8 +1151,8 @@ mod tests {
         drop(store);
 
         let reopened = AgentStore::open(&path).unwrap();
-        let v2 = AgentStoreV2::from_arc(reopened.db()).unwrap();
-        assert!(v2.get_spec(&spec.id).unwrap().is_none());
+        let record_store = AgentRecordStore::from_arc(reopened.db()).unwrap();
+        assert!(record_store.get_spec(&spec.id).unwrap().is_none());
     }
 
     #[tokio::test]
@@ -1407,27 +1390,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_v2_only_db_boots_hosted_runtime_without_v1() {
+    async fn fresh_db_boots_hosted_runtime_without_legacy_agents_table() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("agents.redb");
-        let report = neomind_storage::purge_agents_to_v2_only(&path).unwrap();
-        assert_eq!(report.v2_specs_after, 0);
-        assert!(!report.had_v1_table);
 
         let store = AgentStore::open(&path).unwrap();
         {
             let db = store.db();
-            assert!(neomind_storage::is_v2_only(&db).unwrap());
             assert!(
-                !neomind_storage::agents_v2::table_exists_agents_v1(&db).unwrap_or(true),
-                "v1 agents table must be absent on empty v2_only DB"
+                !neomind_storage::has_legacy_agents_table(&db).unwrap_or(true),
+                "legacy agents table must be absent on fresh DB"
             );
         }
 
         let (deps, _, _) = test_deps().await;
         let runtime = HostedAiAgentRuntime::build(store, deps).unwrap();
         assert!(runtime.list().is_empty());
-        // create → ensure_loaded path (no ingest): draft round-trip
         let (spec, _) = runtime.create(local_brief_draft("gate-empty")).unwrap();
         runtime.ensure_loaded(&spec.id).unwrap();
         assert!(runtime.has_agent(&spec.id));
@@ -1581,13 +1559,19 @@ mod tests {
         let fail_exec = fail_resp.execution.expect("fail exec");
         assert_eq!(fail_exec.status, ExecutionStatus::Failed);
 
-        let v2 = AgentStoreV2::from_arc(store.db()).unwrap();
-        let ok_mem = v2.get_memory(&spec.id).unwrap().expect("ok memory");
+        let record_store = AgentRecordStore::from_arc(store.db()).unwrap();
+        let ok_mem = record_store
+            .get_memory(&spec.id)
+            .unwrap()
+            .expect("ok memory");
         assert_eq!(ok_mem.journal.records.len(), 1);
         assert_eq!(ok_mem.journal.records[0].execution_id, ok_exec.id);
         assert!(ok_mem.journal.records[0].success);
 
-        let fail_mem = v2.get_memory(&fail_spec.id).unwrap().expect("fail memory");
+        let fail_mem = record_store
+            .get_memory(&fail_spec.id)
+            .unwrap()
+            .expect("fail memory");
         assert_eq!(fail_mem.journal.records.len(), 1);
         assert_eq!(fail_mem.journal.records[0].execution_id, fail_exec.id);
         assert!(!fail_mem.journal.records[0].success);
