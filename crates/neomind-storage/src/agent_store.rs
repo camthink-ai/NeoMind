@@ -215,6 +215,22 @@ pub struct ActionDeliveryRecord {
 }
 
 /// Execution row written to `agent_executions`.
+/// One recorded tool invocation inside an agent execution's multi-round loop.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallRecord {
+    pub round: u32,
+    pub name: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+    pub success: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub result_preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub duration_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentExecutionRow {
     pub id: String,
@@ -237,6 +253,9 @@ pub struct AgentExecutionRow {
     /// Deliveries stored on the execution row (unique claim via transactional RMW).
     #[serde(default)]
     pub deliveries: Vec<ActionDeliveryRecord>,
+    /// Multi-round tool invocations executed during this run (absent on older rows).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCallRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brief_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1291,6 +1310,7 @@ mod tests {
             stale_config: None,
             evidence: serde_json::json!({}),
             deliveries: Vec::new(),
+            tool_calls: Vec::new(),
             brief_text: Some("ok".into()),
             conclusion: None,
             structured_result: None,

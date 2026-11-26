@@ -190,6 +190,9 @@ fn print_exec(label: &str, resp: &neomind_ai_agent::model::RunResponse, explain:
         println!("alert       : {:?}", exec.alert_verdict);
         println!("error       : {:?}", exec.error);
         println!("structured  : {:?}", exec.structured_result);
+        if !exec.tool_calls.is_empty() {
+            println!("tool_calls  : {:?}", exec.tool_calls);
+        }
         println!("conclusion  : {}", exec.conclusion.as_deref().unwrap_or("<none>"));
     } else {
         println!("(no execution record)");
@@ -1025,12 +1028,82 @@ async fn live_business_scenarios_stress_matrix() {
     print_exec("B5b: qwen3.5 multi-step file_read + file_write", &resp_b5b, &exp_b5b);
     let exec_b5b = resp_b5b.execution.as_ref().unwrap();
     check(exec_b5b.status == ExecutionStatus::Completed, format!("B5b Completed (got {:?})", exec_b5b.status));
+    check(
+        exec_b5b.tool_calls.len() >= 2,
+        format!("B5b recorded >=2 tool_calls traces (got {:?})", exec_b5b.tool_calls.iter().map(|t| &t.name).collect::<Vec<_>>()),
+    );
     let report_exists = dir.path().join("daily_report.md").exists();
     check(report_exists, format!("B5b daily_report.md created on disk ({report_exists})"));
     if let Some(sr) = &exec_b5b.structured_result {
         check(sr.get("failed_count").and_then(|v| v.as_i64()) == Some(3), format!("B5b failed_count == 3 (got {:?})", sr.get("failed_count")));
     } else {
         check(false, "B5b structured_result was None".into());
+    }
+
+    // ── B8: Chat-style Multi-Turn Task Continuity across 3 consecutive runs (qwen3.5:4b) ──
+    telemetry
+        .write("device:boiler-01", "temp", DataPoint::new(now - 600, MetricValue::Float(52.0)))
+        .await
+        .unwrap();
+    let (spec_b8, _) = rt
+        .create(AgentSpecDraft {
+            name: "B8 Multi-Turn Boiler Trend".into(),
+            description: None,
+            user_prompt: "持续跟踪锅炉温度(boiler_temp)。结合你前面历次执行的对话记录，判断当前温度相比前几次是持续上升、持续下降还是平稳，在 JSON 中输出 current_temp、trend（rising/falling/stable）和 summary。".into(),
+            llm_backend_id: Some("ollama-qwen35".into()),
+            preset: None,
+            trigger: TriggerSpec::Manual,
+            pacing: PacingPolicy::default(),
+            input: InputContract {
+                requirements: vec![InputRequirement {
+                    key: "boiler_temp".into(),
+                    source: InputSourceRef::DeviceMetric { device_id: "boiler-01".into(), field: "temp".into() },
+                    operation: None,
+                    params: serde_json::json!({}),
+                    result_type: InputModality::Metric,
+                    freshness: FreshnessPolicy::Any,
+                    on_missing: MissingPolicy::ReportStale,
+                    timeout_secs: 15,
+                    auth_scope: None,
+                }],
+            },
+            tool_policy: ToolPolicy::Disabled,
+            output: OutputContract {
+                publish: false,
+                fields: vec![
+                    OutputField { name: "current_temp".into(), depends_on: vec!["boiler_temp".into()], description: Some("Current boiler temperature number".into()) },
+                    OutputField { name: "trend".into(), depends_on: vec!["boiler_temp".into()], description: Some("rising, falling, or stable based on prior runs".into()) },
+                    OutputField { name: "summary".into(), depends_on: vec!["boiler_temp".into()], description: Some("Chinese trend summary referencing previous runs".into()) },
+                ],
+            },
+            notify: NotifyPolicy::default(),
+            controlled_actions: vec![],
+        })
+        .expect("create b8");
+
+    // Run 1: 52.0°C
+    let _ = rt.invoke(&spec_b8.id).await.expect("b8 run 1");
+    // Run 2: 64.5°C
+    telemetry
+        .write("device:boiler-01", "temp", DataPoint::new(now - 300, MetricValue::Float(64.5)))
+        .await
+        .unwrap();
+    let _ = rt.invoke(&spec_b8.id).await.expect("b8 run 2");
+    // Run 3: 78.2°C -> multi-turn history has Run 1 (52.0) + Run 2 (64.5); current is 78.2 -> rising!
+    telemetry
+        .write("device:boiler-01", "temp", DataPoint::new(now, MetricValue::Float(78.2)))
+        .await
+        .unwrap();
+    let resp_b8_r3 = rt.invoke(&spec_b8.id).await.expect("b8 run 3");
+    let exp_b8_r3 = rt.explain_last(&spec_b8.id).unwrap_or_default();
+    print_exec("B8-Run3: Multi-Turn Task Continuity (52.0 -> 64.5 -> 78.2°C)", &resp_b8_r3, &exp_b8_r3);
+    let exec_b8_r3 = resp_b8_r3.execution.as_ref().unwrap();
+    check(exec_b8_r3.status == ExecutionStatus::Completed, format!("B8-Run3 Completed (got {:?})", exec_b8_r3.status));
+    if let Some(sr) = &exec_b8_r3.structured_result {
+        let trend = sr.get("trend").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
+        check(trend.contains("rising") || trend.contains("上升"), format!("B8-Run3 recognized multi-turn rising trend (got trend={trend:?}, sr={sr})"));
+    } else {
+        check(false, "B8-Run3 structured_result was None".into());
     }
 
     // ── B6b: Interactive CallerInput ask on existing agent B1a (with prior execution journal) ──

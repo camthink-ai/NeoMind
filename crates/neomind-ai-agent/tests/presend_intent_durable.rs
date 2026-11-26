@@ -249,6 +249,7 @@ fn with_store_save_execution_mirrors_without_mirror_after_run() {
             idempotent: false,
             state: DeliveryState::IntentPending,
         }],
+        tool_calls: vec![],
         brief_text: None,
         conclusion: None,
         structured_result: None,

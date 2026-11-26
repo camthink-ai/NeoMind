@@ -40,6 +40,13 @@ pub struct LlmImage {
     pub label: Option<String>,
 }
 
+/// One prior execution turn passed as chat-style multi-turn context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConversationTurn {
+    pub user: String,
+    pub assistant: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LlmRequest {
     pub backend_id: Option<String>,
@@ -56,6 +63,9 @@ pub struct LlmRequest {
     /// When true, request grammar-constrained JSON object output on tool-less synthesis turns.
     #[serde(default)]
     pub expect_json: bool,
+    /// Sliding multi-turn task history from recent formal runs (oldest → newest).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history_turns: Vec<ConversationTurn>,
     /// Multimodal image attachments extracted from evidence / caller input.
     /// Kept out of the text prompt so base64 payloads never tokenize into
     /// hundreds of thousands of text tokens.
@@ -68,6 +78,9 @@ pub struct LlmResponse {
     pub text: String,
     #[serde(default)]
     pub alert_criteria_met: bool,
+    /// Tool calls executed inside the LLM port's multi-round loop.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<crate::model::ToolCallTrace>,
 }
 
 #[async_trait]
@@ -297,6 +310,7 @@ impl LlmPort for LocalBriefLlm {
         Ok(LlmResponse {
             text: request.user,
             alert_criteria_met: alert,
+            tool_calls: Vec::new(),
         })
     }
 }

@@ -105,6 +105,19 @@ pub fn persist_execution(store: &AgentRecordStore, exec: &AgentExecutionRecord) 
             .filter_map(|d| serde_json::to_value(d).ok())
             .filter_map(|v| serde_json::from_value(v).ok())
             .collect(),
+        tool_calls: exec
+            .tool_calls
+            .iter()
+            .map(|t| neomind_storage::agent_store::ToolCallRecord {
+                round: t.round,
+                name: t.name.clone(),
+                arguments: t.arguments.clone(),
+                success: t.success,
+                result_preview: t.result_preview.clone(),
+                error: t.error.clone(),
+                duration_ms: t.duration_ms,
+            })
+            .collect(),
         brief_text: exec.brief_text.clone(),
         conclusion: exec.conclusion.clone(),
         structured_result: exec.structured_result.clone(),

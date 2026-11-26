@@ -45,6 +45,7 @@ impl LlmPort for CapturingLlm {
         Ok(LlmResponse {
             text: "ok\nVerdict: criteria not met\n".into(),
             alert_criteria_met: false,
+            tool_calls: Vec::new(),
         })
     }
 }

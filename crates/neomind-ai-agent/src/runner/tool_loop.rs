@@ -75,6 +75,7 @@ impl AgentRunner for ToolLoopRunner {
                         allowed_tools,
                         allowed_commands,
                         expect_json: !spec.output.fields.is_empty(),
+                        history_turns: Vec::new(),
                         images: images.clone(),
                     },
                     cancel.clone(),
@@ -125,6 +126,7 @@ impl AgentRunner for ToolLoopRunner {
             structured_result,
             alert_criteria_met: alert,
             status_hint: None,
+            tool_calls: Vec::new(),
         })
     }
 }

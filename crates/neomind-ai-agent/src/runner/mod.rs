@@ -37,6 +37,18 @@ pub trait AgentRunner: Send + Sync {
         execution_id: &str,
         cancel: CancellationToken,
     ) -> Result<RunOutcome>;
+
+    /// Run with sliding multi-turn task history (defaults to [`Self::run`]).
+    async fn run_with_history(
+        &self,
+        spec: &AgentSpec,
+        evidence: &EvidenceReport,
+        execution_id: &str,
+        _prior_turns: &[crate::ports::ConversationTurn],
+        cancel: CancellationToken,
+    ) -> Result<RunOutcome> {
+        self.run(spec, evidence, execution_id, cancel).await
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +59,8 @@ pub struct RunOutcome {
     pub structured_result: Option<serde_json::Value>,
     pub alert_criteria_met: bool,
     pub status_hint: Option<crate::model::ExecutionStatus>,
+    /// Tool invocations recorded during this run.
+    pub tool_calls: Vec<crate::model::ToolCallTrace>,
 }
 
 /// Apply runner outcome onto an execution record skeleton.
@@ -54,6 +68,7 @@ pub fn apply_outcome(mut exec: AgentExecutionRecord, outcome: RunOutcome) -> Age
     exec.brief_text = outcome.brief_text;
     exec.conclusion = outcome.conclusion.clone();
     exec.structured_result = outcome.structured_result;
+    exec.tool_calls = outcome.tool_calls;
     // Alert verdict is independent of Partial: on_alert uses alert_depends_on,
     // so CriteriaMet is valid even when unrelated sources are missing.
     if outcome.alert_criteria_met {

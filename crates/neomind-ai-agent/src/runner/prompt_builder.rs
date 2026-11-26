@@ -65,11 +65,15 @@ pub fn prompt_with_caller_input(user_prompt: &str, caller: &CallerInput) -> Stri
     format!("{user_prompt}\n{section}")
 }
 
-/// Run-local agent memory injected from durable journal & knowledge files.
+/// Run-local agent memory injected from durable journal, prior runs & knowledge files.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemoryContext {
     /// Recent execution journal summaries (oldest → newest).
+    /// Used as text fallback when `prior_turns` is empty.
     pub journal_entries: Vec<String>,
+    /// Sliding multi-turn task history (oldest → newest) sent as structured
+    /// `user`/`assistant` chat turns for Chat-like task continuity.
+    pub prior_turns: Vec<crate::ports::ConversationTurn>,
     /// Agent knowledge files as `(name, description, content)`.
     pub knowledge_files: Vec<(String, String, String)>,
 }
@@ -77,6 +81,7 @@ pub struct MemoryContext {
 impl MemoryContext {
     pub fn is_empty(&self) -> bool {
         self.journal_entries.iter().all(|s| s.trim().is_empty())
+            && self.prior_turns.is_empty()
             && self
                 .knowledge_files
                 .iter()
@@ -89,26 +94,29 @@ impl MemoryContext {
 ///
 /// Explicitly frames memory as historical context so the model uses it for
 /// trend comparison and standing criteria without fabricating missing current
-/// readings.
+/// readings. When `prior_turns` is populated, journal entries are omitted from
+/// the text prompt to avoid duplicating the same history twice.
 pub fn prompt_with_memory_context(user_prompt: &str, memory: &MemoryContext) -> String {
     if memory.is_empty() {
         return user_prompt.to_string();
     }
 
     let mut sections: Vec<String> = Vec::new();
-    let journal: Vec<&str> = memory
-        .journal_entries
-        .iter()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-    if !journal.is_empty() {
-        let lines = journal
-            .into_iter()
-            .map(|e| format!("- {e}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        sections.push(format!("## Recent Execution Journal\n{lines}"));
+    if memory.prior_turns.is_empty() {
+        let journal: Vec<&str> = memory
+            .journal_entries
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !journal.is_empty() {
+            let lines = journal
+                .into_iter()
+                .map(|e| format!("- {e}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            sections.push(format!("## Recent Execution Journal\n{lines}"));
+        }
     }
 
     let files: Vec<(&str, &str, &str)> = memory
@@ -686,6 +694,7 @@ mod tests {
                 "[2026-11-26 08:00 UTC] [OK] Temp 22.1C normal".into(),
                 "[2026-11-26 09:00 UTC] [OK] Temp 28.4C rising".into(),
             ],
+            prior_turns: vec![],
             knowledge_files: vec![(
                 "thresholds.md".into(),
                 "Cold room limits".into(),

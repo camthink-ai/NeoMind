@@ -4,13 +4,14 @@
 //! clean-slate kernel reads real telemetry/extensions, calls the instance
 //! manager LLM, and delivers via MessageManager / DeviceService.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use neomind_ai_agent::error::{AgentError, Result as AgentResult};
+use neomind_ai_agent::model::ToolCallTrace;
 use neomind_ai_agent::ports::{
     LlmBackendCapabilities, LlmImage, LlmPort, LlmRequest, LlmResponse, NotifyPort, SideEffectPort,
     SideEffectReceipt, SourceReadPort, SourceReadResult,
@@ -228,6 +229,11 @@ impl HostLlmPort {
         };
 
         let mut system_text = request.system.clone();
+        if !request.history_turns.is_empty() {
+            system_text.push_str(
+                "\n\nPrior user/assistant turns show recent executions of this agent for trend and task continuity. Always ground your current conclusions in the latest `[Current Run]` message and live tool outputs.",
+            );
+        }
         if !tool_defs.is_empty() {
             system_text.push_str("\n\n## Available Tools\n");
             for def in &tool_defs {
@@ -243,26 +249,42 @@ impl HostLlmPort {
 
         let image_parts = resolve_llm_image_parts(&request.images);
         let max_ctx = runtime.max_context_length();
+        let history_chars: usize = request
+            .history_turns
+            .iter()
+            .map(|t| t.user.len() + t.assistant.len())
+            .sum();
         let user_text = fit_user_prompt_to_context(
             &request.user,
-            system_text.len(),
+            system_text.len().saturating_add(history_chars),
             image_parts.len(),
             max_ctx,
             2048,
         );
+        let current_user_text = if request.history_turns.is_empty() {
+            user_text
+        } else {
+            format!("[Current Run]\n{user_text}")
+        };
 
         let initial_user_msg = if image_parts.is_empty() {
-            Message::user(user_text)
+            Message::user(current_user_text)
         } else {
             let mut parts = Vec::with_capacity(1 + image_parts.len());
-            parts.push(ContentPart::text(user_text));
+            parts.push(ContentPart::text(current_user_text));
             parts.extend(image_parts.clone());
             Message::new(MessageRole::User, Content::Parts(parts))
         };
 
-        let mut messages = vec![Message::system(system_text.clone()), initial_user_msg];
+        let mut messages = Vec::with_capacity(2 + request.history_turns.len() * 2);
+        messages.push(Message::system(system_text.clone()));
+        for turn in &request.history_turns {
+            messages.push(Message::user(turn.user.clone()));
+            messages.push(Message::assistant(turn.assistant.clone()));
+        }
+        messages.push(initial_user_msg);
 
-        const MAX_TOOL_ROUNDS: usize = 6;
+        const MAX_TOOL_ROUNDS: usize = 12;
         let max_rounds = if tool_defs.is_empty() {
             1
         } else {
@@ -270,8 +292,13 @@ impl HostLlmPort {
         };
 
         let mut final_text = String::new();
+        let mut recorded_tool_calls: Vec<ToolCallTrace> = Vec::new();
+        let mut seen_tool_calls: HashSet<String> = HashSet::new();
 
         for round in 0..max_rounds {
+            if round >= 2 {
+                compact_tool_loop_messages(&mut messages, max_ctx);
+            }
             let round_tools = if !tool_defs.is_empty() && round + 1 < max_rounds {
                 Some(tool_defs.clone())
             } else {
@@ -326,7 +353,7 @@ impl HostLlmPort {
                         max_context,
                         round,
                         images = image_parts.len(),
-                        "Agent LLM context overflow; retrying with compacted prompt"
+                        "Agent LLM context overflow; retrying with compacted prompt (dropping prior history)"
                     );
                     let retry_imgs = if max_context < 8192 {
                         Vec::new()
@@ -421,8 +448,28 @@ impl HostLlmPort {
             let mut tool_results = Vec::with_capacity(calls.len());
 
             for (orig_name, args) in calls {
-                tracing::info!(tool = %orig_name, round, "Agent executing authorized tool");
+                let call_key = format!("{orig_name}:{args}");
                 call_summaries.push(format!("{orig_name}({args})"));
+
+                // Guard against stuck duplicate tool-call loops.
+                if !seen_tool_calls.insert(call_key) {
+                    let msg = format!(
+                        "Duplicate call `{orig_name}` with identical arguments skipped; reuse the earlier result and proceed to the next step or give your final answer."
+                    );
+                    recorded_tool_calls.push(ToolCallTrace {
+                        round: round as u32,
+                        name: orig_name.clone(),
+                        arguments: args,
+                        success: false,
+                        result_preview: String::new(),
+                        error: Some(msg.clone()),
+                        duration_ms: 0,
+                    });
+                    tool_results.push(format!("### Tool `{orig_name}` skipped\n{msg}"));
+                    continue;
+                }
+
+                tracing::info!(tool = %orig_name, round, "Agent executing authorized tool");
 
                 // Optional command allowlist check for shell tool.
                 if orig_name == "shell" && !request.allowed_commands.is_empty() {
@@ -437,21 +484,33 @@ impl HostLlmPort {
                         .iter()
                         .any(|allowed| allowed == first_tok || cmd_str.starts_with(allowed.as_str()));
                     if !permitted {
-                        tool_results.push(format!(
-                            "### Tool `{orig_name}` rejected\nCommand `{first_tok}` is not in allowed_commands (allowed: {}). Proceed with allowed commands or finish.",
+                        let reason = format!(
+                            "Command `{first_tok}` is not in allowed_commands (allowed: {}). Proceed with allowed commands or finish.",
                             request.allowed_commands.join(", ")
-                        ));
+                        );
+                        recorded_tool_calls.push(ToolCallTrace {
+                            round: round as u32,
+                            name: orig_name.clone(),
+                            arguments: args,
+                            success: false,
+                            result_preview: String::new(),
+                            error: Some(reason.clone()),
+                            duration_ms: 0,
+                        });
+                        tool_results.push(format!("### Tool `{orig_name}` rejected\n{reason}"));
                         continue;
                     }
                 }
 
+                let started = Instant::now();
                 let exec_res = tokio::select! {
                     _ = cancel.cancelled() => return Err(AgentError::Cancelled),
                     res = tokio::time::timeout(
                         Duration::from_secs(30),
-                        registry.execute(&orig_name, args),
+                        registry.execute(&orig_name, args.clone()),
                     ) => res,
                 };
+                let elapsed_ms = started.elapsed().as_millis() as u64;
 
                 let formatted = match exec_res {
                     Ok(Ok(out)) => {
@@ -465,13 +524,46 @@ impl HostLlmPort {
                             })
                             .to_string()
                         };
+                        recorded_tool_calls.push(ToolCallTrace {
+                            round: round as u32,
+                            name: orig_name.clone(),
+                            arguments: args,
+                            success: out.success,
+                            result_preview: truncate_tool_output(&raw_val, 1_500),
+                            error: if out.success { None } else { out.error.clone() },
+                            duration_ms: elapsed_ms,
+                        });
                         format!(
                             "### Tool `{orig_name}` result\n{}",
                             truncate_tool_output(&raw_val, 6_000)
                         )
                     }
-                    Ok(Err(e)) => format!("### Tool `{orig_name}` error\n{e}"),
-                    Err(_) => format!("### Tool `{orig_name}` error\nTimed out after 30s"),
+                    Ok(Err(e)) => {
+                        let err_str = e.to_string();
+                        recorded_tool_calls.push(ToolCallTrace {
+                            round: round as u32,
+                            name: orig_name.clone(),
+                            arguments: args,
+                            success: false,
+                            result_preview: String::new(),
+                            error: Some(err_str.clone()),
+                            duration_ms: elapsed_ms,
+                        });
+                        format!("### Tool `{orig_name}` error\n{err_str}")
+                    }
+                    Err(_) => {
+                        let err_str = "Timed out after 30s".to_string();
+                        recorded_tool_calls.push(ToolCallTrace {
+                            round: round as u32,
+                            name: orig_name.clone(),
+                            arguments: args,
+                            success: false,
+                            result_preview: String::new(),
+                            error: Some(err_str.clone()),
+                            duration_ms: elapsed_ms,
+                        });
+                        format!("### Tool `{orig_name}` error\n{err_str}")
+                    }
                 };
                 tool_results.push(formatted);
             }
@@ -498,7 +590,49 @@ impl HostLlmPort {
         Ok(LlmResponse {
             text: final_text.clone(),
             alert_criteria_met: alert_from_model_text(&final_text),
+            tool_calls: recorded_tool_calls,
         })
+    }
+}
+
+/// Compact older tool-result messages mid-loop so multi-round agent runs never
+/// blow through the model's context window (keeps the 2 most recent tool rounds verbatim).
+fn compact_tool_loop_messages(messages: &mut Vec<Message>, max_ctx_tokens: usize) {
+    let budget_chars = if max_ctx_tokens > 0 {
+        // ~65% of conservative 2-chars/token budget
+        (max_ctx_tokens.saturating_mul(13)) / 10
+    } else {
+        24_000
+    };
+    let total_chars: usize = messages.iter().map(|m| m.text().len()).sum();
+    if total_chars <= budget_chars {
+        return;
+    }
+
+    let tool_msg_indices: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, m)| {
+            if m.role == MessageRole::User && m.text().starts_with("## Tool Results") {
+                Some(idx)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Compact all tool-result turns except the 2 most recent.
+    let keep_recent = 2;
+    if tool_msg_indices.len() > keep_recent {
+        for &idx in &tool_msg_indices[..tool_msg_indices.len() - keep_recent] {
+            let text = messages[idx].text();
+            if text.chars().count() > 450 {
+                messages[idx] = Message::user(format!(
+                    "{}\n[earlier tool output compacted]",
+                    truncate_tool_output(&text, 400)
+                ));
+            }
+        }
     }
 }
 

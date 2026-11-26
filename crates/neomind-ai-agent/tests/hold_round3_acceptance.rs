@@ -51,6 +51,7 @@ impl LlmPort for ScriptedLlm {
         Ok(LlmResponse {
             text,
             alert_criteria_met: false,
+            tool_calls: Vec::new(),
         })
     }
 }

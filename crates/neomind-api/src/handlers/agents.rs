@@ -628,6 +628,32 @@ fn detail_dto_from_execution_row(
         .map(|f| f as f32);
     let input_summary = input_summary_from_evidence(&record.evidence);
     let data_collected = data_collected_from_evidence(&record.evidence);
+    let reasoning_steps: Vec<ReasoningStepDto> = record
+        .tool_calls
+        .iter()
+        .enumerate()
+        .map(|(idx, tc)| ReasoningStepDto {
+            step_number: (idx + 1) as u32,
+            description: format!(
+                "Round {}: call tool '{}' ({}ms)",
+                tc.round + 1,
+                tc.name,
+                tc.duration_ms
+            ),
+            step_type: if tc.success {
+                "tool_call".into()
+            } else {
+                "error".into()
+            },
+            input: Some(tc.arguments.to_string()),
+            output: tc
+                .error
+                .clone()
+                .filter(|e| !e.is_empty())
+                .unwrap_or_else(|| tc.result_preview.clone()),
+            confidence: None,
+        })
+        .collect();
     let trigger_type = execution_row_trigger_type(&record, agent_trigger);
     AgentExecutionDetailDto {
         id: record.id,
@@ -641,7 +667,7 @@ fn detail_dto_from_execution_row(
         decision_process: Some(DecisionProcessDto {
             situation_analysis: String::new(),
             data_collected,
-            reasoning_steps: Vec::new(),
+            reasoning_steps,
             decisions: Vec::new(),
             conclusion,
             confidence,
@@ -1650,6 +1676,7 @@ pub async fn get_execution(
                 .map(|s| s.trigger);
             let structured = row.structured_result.clone();
             let deliveries = row.deliveries.clone();
+            let tool_calls = row.tool_calls.clone();
             let alert_verdict = row.alert_verdict.clone();
             let config_version = row.config_version;
             let dry_run = row.dry_run;
@@ -1658,7 +1685,7 @@ pub async fn get_execution(
             let list = dto_from_execution_row(row.clone(), agent_trigger.as_ref());
             let detail = detail_dto_from_execution_row(row, agent_trigger.as_ref());
             // AgentExecutionDetail extends list fields; keep conclusion, structured_result,
-            // deliveries, and alert_verdict at the top level for CLI and modal consumers.
+            // deliveries, tool_calls, and alert_verdict at the top level for CLI and modal consumers.
             let mut payload = json!({
                 "id": detail.id,
                 "agent_id": detail.agent_id,
@@ -1673,6 +1700,7 @@ pub async fn get_execution(
                 "structured_result": structured,
                 "alert_verdict": alert_verdict,
                 "deliveries": deliveries,
+                "tool_calls": tool_calls,
                 "confidence": list.confidence,
                 "error": detail.error,
                 "input_summary": detail.input_summary,

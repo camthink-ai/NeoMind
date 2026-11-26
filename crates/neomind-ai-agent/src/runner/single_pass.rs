@@ -40,7 +40,19 @@ impl AgentRunner for SinglePassRunner {
         &self,
         spec: &AgentSpec,
         evidence: &EvidenceReport,
+        execution_id: &str,
+        cancel: CancellationToken,
+    ) -> Result<RunOutcome> {
+        self.run_with_history(spec, evidence, execution_id, &[], cancel)
+            .await
+    }
+
+    async fn run_with_history(
+        &self,
+        spec: &AgentSpec,
+        evidence: &EvidenceReport,
         _execution_id: &str,
+        prior_turns: &[crate::ports::ConversationTurn],
         cancel: CancellationToken,
     ) -> Result<RunOutcome> {
         let (tools_enabled, allowed_tools, allowed_commands) = match &spec.tool_policy {
@@ -68,6 +80,7 @@ impl AgentRunner for SinglePassRunner {
                 structured_result,
                 alert_criteria_met: alert,
                 status_hint: None,
+                tool_calls: Vec::new(),
             });
         }
 
@@ -104,6 +117,7 @@ impl AgentRunner for SinglePassRunner {
                     allowed_tools,
                     allowed_commands,
                     expect_json: !spec.output.fields.is_empty(),
+                    history_turns: prior_turns.to_vec(),
                     images,
                 },
                 cancel,
@@ -130,6 +144,7 @@ impl AgentRunner for SinglePassRunner {
             structured_result,
             alert_criteria_met: alert,
             status_hint: None,
+            tool_calls: resp.tool_calls,
         })
     }
 }

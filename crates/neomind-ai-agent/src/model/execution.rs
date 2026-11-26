@@ -90,6 +90,22 @@ pub struct ActionDeliveryRecord {
     pub state: DeliveryState,
 }
 
+/// One tool call executed during an agent run's multi-round loop.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallTrace {
+    pub round: u32,
+    pub name: String,
+    #[serde(default)]
+    pub arguments: serde_json::Value,
+    pub success: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub result_preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub duration_ms: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentExecutionRecord {
     pub id: String,
@@ -108,6 +124,9 @@ pub struct AgentExecutionRecord {
     pub evidence: EvidenceReport,
     #[serde(default)]
     pub deliveries: Vec<ActionDeliveryRecord>,
+    /// Multi-round tool calls executed during this run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCallTrace>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brief_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

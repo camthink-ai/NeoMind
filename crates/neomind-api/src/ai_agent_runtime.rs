@@ -384,17 +384,23 @@ impl HostedAiAgentRuntime {
             .collect()
     }
 
-    /// Load recent execution journal entries and agent knowledge files from
-    /// durable storage into a token-bounded [`MemoryContext`] for the next run.
+    /// Load recent execution journal entries, sliding multi-turn task history, and
+    /// agent knowledge files from durable storage into a token-bounded [`MemoryContext`].
     pub(crate) fn load_memory_context(&self, id: &str) -> MemoryContext {
         const MAX_JOURNAL_ENTRIES: usize = 5;
         const MAX_ENTRY_CHARS: usize = 240;
         const MAX_FILE_CHARS: usize = 1200;
         const MAX_TOTAL_KNOWLEDGE_CHARS: usize = 3000;
+        const MAX_HISTORY_TURNS: usize = 6;
+        const MAX_HISTORY_CHARS: usize = 4800;
 
         let mut ctx = MemoryContext::default();
         let mut seen_files = std::collections::HashSet::new();
         let mut remaining_budget = MAX_TOTAL_KNOWLEDGE_CHARS;
+
+        // Build structured Chat-style multi-turn history from recent formal executions
+        // (oldest -> newest, bounded by MAX_HISTORY_TURNS and MAX_HISTORY_CHARS).
+        ctx.prior_turns = self.load_recent_conversation_turns(id, MAX_HISTORY_TURNS, MAX_HISTORY_CHARS);
 
         if let Some(store) = &self.durable.store {
             if let Ok(Some(memory)) = store.get_memory(id) {
@@ -476,6 +482,53 @@ impl HostedAiAgentRuntime {
         }
 
         ctx
+    }
+
+    /// Build bounded multi-turn `(user, assistant)` history from recent formal runs
+    /// so the agent carries true Chat-style task continuity across executions.
+    fn load_recent_conversation_turns(
+        &self,
+        id: &str,
+        max_turns: usize,
+        max_total_chars: usize,
+    ) -> Vec<neomind_ai_agent::ports::ConversationTurn> {
+        let mut raw_turns: Vec<neomind_ai_agent::ports::ConversationTurn> = Vec::new();
+
+        // Prefer in-memory formal history (populated during this process lifetime),
+        // falling back to durable redb rows after a server restart.
+        let mem_hist = self.durable.mem.formal_history(id);
+        if !mem_hist.is_empty() {
+            let start = mem_hist.len().saturating_sub(max_turns);
+            for exec in &mem_hist[start..] {
+                if let Some(turn) = turn_from_exec_record(exec) {
+                    raw_turns.push(turn);
+                }
+            }
+        } else if let Some(store) = &self.durable.store {
+            if let Ok(mut rows) = store.list_formal_executions(id) {
+                rows.sort_by_key(|r| r.finished_at);
+                let start = rows.len().saturating_sub(max_turns);
+                for row in &rows[start..] {
+                    if let Some(turn) = turn_from_storage_row(row) {
+                        raw_turns.push(turn);
+                    }
+                }
+            }
+        }
+
+        // Enforce total char budget by keeping the newest turns first.
+        let mut kept: Vec<neomind_ai_agent::ports::ConversationTurn> = Vec::new();
+        let mut used = 0usize;
+        for turn in raw_turns.into_iter().rev() {
+            let sz = turn.user.chars().count() + turn.assistant.chars().count();
+            if used + sz > max_total_chars && !kept.is_empty() {
+                break;
+            }
+            used += sz;
+            kept.push(turn);
+        }
+        kept.reverse();
+        kept
     }
 
     pub fn explain_last(&self, id: &str) -> AgentResult<String> {
@@ -654,6 +707,154 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     } else {
         s.to_string()
     }
+}
+
+fn turn_from_exec_record(
+    exec: &AgentExecutionRecord,
+) -> Option<neomind_ai_agent::ports::ConversationTurn> {
+    if exec.dry_run || matches!(exec.status, ExecutionStatus::Skipped) {
+        return None;
+    }
+    let ts_secs = if exec.finished_at >= 1_000_000_000_000 {
+        exec.finished_at / 1000
+    } else {
+        exec.finished_at
+    };
+    let ts = chrono::DateTime::from_timestamp(ts_secs, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| ts_secs.to_string());
+
+    let mut input_parts: Vec<String> = Vec::new();
+    for item in &exec.evidence.items {
+        let brief = match &item.detail {
+            Some(neomind_ai_agent::model::EvidenceDetail::Structured { value }) => {
+                // Reuse prompt_builder sanitization indirectly via compact summary (no base64).
+                let ev = neomind_ai_agent::model::EvidenceReport {
+                    items: vec![item.clone()],
+                    missing_keys: vec![],
+                    skip_reason: None,
+                };
+                let sanitized = neomind_ai_agent::runner::build_evidence_prompt("", &ev);
+                sanitized
+                    .lines()
+                    .find(|l| l.starts_with("- "))
+                    .map(|l| truncate_chars(l.trim_start_matches("- "), 180))
+                    .unwrap_or_else(|| truncate_chars(&value.to_string(), 120))
+            }
+            Some(neomind_ai_agent::model::EvidenceDetail::Text { text }) => {
+                format!("{}: {}", item.key, truncate_chars(text, 120))
+            }
+            Some(neomind_ai_agent::model::EvidenceDetail::TimeSeries { points, .. }) => {
+                format!("{}: {points} points", item.key)
+            }
+            Some(neomind_ai_agent::model::EvidenceDetail::Vision {
+                image_source_field, ..
+            }) => format!("{}: vision({image_source_field})", item.key),
+            None => format!("{}: missing", item.key),
+        };
+        input_parts.push(brief);
+    }
+
+    let user = if input_parts.is_empty() {
+        format!("[Prior run {ts} ({})]", exec.id)
+    } else {
+        format!(
+            "[Prior run {ts} ({})]\nInputs: {}",
+            exec.id,
+            truncate_chars(&input_parts.join("; "), 360)
+        )
+    };
+
+    let mut asst_parts: Vec<String> = Vec::new();
+    if !exec.tool_calls.is_empty() {
+        let tool_list: Vec<String> = exec
+            .tool_calls
+            .iter()
+            .take(6)
+            .map(|t| format!("{}({})", t.name, if t.success { "ok" } else { "err" }))
+            .collect();
+        asst_parts.push(format!("Tools used: {}", tool_list.join(", ")));
+    }
+    if let Some(sr) = &exec.structured_result {
+        if !sr.as_object().is_some_and(|m| m.is_empty()) {
+            asst_parts.push(format!("Output: {}", truncate_chars(&sr.to_string(), 240)));
+        }
+    }
+    if let Some(c) = exec
+        .conclusion
+        .as_deref()
+        .or(exec.brief_text.as_deref())
+        .or(exec.error.as_deref())
+    {
+        let trimmed = c.trim();
+        if !trimmed.is_empty() {
+            asst_parts.push(format!("Result: {}", truncate_chars(trimmed, 260)));
+        }
+    }
+    if asst_parts.is_empty() {
+        return None;
+    }
+
+    Some(neomind_ai_agent::ports::ConversationTurn {
+        user,
+        assistant: asst_parts.join("\n"),
+    })
+}
+
+fn turn_from_storage_row(
+    row: &neomind_storage::agent_store::AgentExecutionRow,
+) -> Option<neomind_ai_agent::ports::ConversationTurn> {
+    if row.dry_run
+        || matches!(
+            row.status,
+            neomind_storage::agent_store::AgentExecutionStatus::Skipped
+        )
+    {
+        return None;
+    }
+    let ts_secs = if row.finished_at >= 1_000_000_000_000 {
+        row.finished_at / 1000
+    } else {
+        row.finished_at
+    };
+    let ts = chrono::DateTime::from_timestamp(ts_secs, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| ts_secs.to_string());
+
+    let user = format!("[Prior run {ts} ({})]", row.id);
+    let mut asst_parts: Vec<String> = Vec::new();
+    if !row.tool_calls.is_empty() {
+        let tool_list: Vec<String> = row
+            .tool_calls
+            .iter()
+            .take(6)
+            .map(|t| format!("{}({})", t.name, if t.success { "ok" } else { "err" }))
+            .collect();
+        asst_parts.push(format!("Tools used: {}", tool_list.join(", ")));
+    }
+    if let Some(sr) = &row.structured_result {
+        if !sr.as_object().is_some_and(|m| m.is_empty()) {
+            asst_parts.push(format!("Output: {}", truncate_chars(&sr.to_string(), 240)));
+        }
+    }
+    if let Some(c) = row
+        .conclusion
+        .as_deref()
+        .or(row.brief_text.as_deref())
+        .or(row.error.as_deref())
+    {
+        let trimmed = c.trim();
+        if !trimmed.is_empty() {
+            asst_parts.push(format!("Result: {}", truncate_chars(trimmed, 260)));
+        }
+    }
+    if asst_parts.is_empty() {
+        return None;
+    }
+    Some(neomind_ai_agent::ports::ConversationTurn {
+        user,
+        assistant: asst_parts.join("\n"),
+    })
 }
 
 /// Convenience wrapper used by ServerState construction.

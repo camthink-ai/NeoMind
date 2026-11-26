@@ -45,6 +45,7 @@ impl LlmPort for CountingLlm {
         Ok(LlmResponse {
             text: format!("Brief.\n{}", request.user),
             alert_criteria_met: false,
+            tool_calls: Vec::new(),
         })
     }
 }

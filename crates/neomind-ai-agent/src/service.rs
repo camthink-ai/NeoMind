@@ -273,10 +273,11 @@ impl AgentApplicationService {
 
         let run_result = self
             .runner
-            .run(
+            .run_with_history(
                 &run_spec,
                 &evidence,
                 &execution_id,
+                &options.memory_context.prior_turns,
                 CancellationToken::new(),
             )
             .await;
@@ -294,6 +295,7 @@ impl AgentApplicationService {
             stale_config: None,
             evidence,
             deliveries: vec![],
+            tool_calls: vec![],
             brief_text: None,
             conclusion: None,
             structured_result: None,
@@ -433,6 +435,15 @@ impl AgentApplicationService {
         }
         if !exec.evidence.missing_keys.is_empty() {
             lines.push(format!("Missing: {}", exec.evidence.missing_keys.join(", ")));
+        }
+        if !exec.tool_calls.is_empty() {
+            let names: Vec<&str> = exec.tool_calls.iter().map(|t| t.name.as_str()).collect();
+            lines.push(format!(
+                "Tools: {} ({} call{})",
+                names.join(" -> "),
+                exec.tool_calls.len(),
+                if exec.tool_calls.len() == 1 { "" } else { "s" }
+            ));
         }
         if let Some(err) = &exec.error {
             lines.push(format!("Error: {err}"));
