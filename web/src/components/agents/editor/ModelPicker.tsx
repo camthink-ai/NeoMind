@@ -4,7 +4,7 @@
  * (Vision / Tools / Thinking).
  */
 import { useTranslation } from 'react-i18next'
-import { Label } from '@/components/ui/label'
+import { Field, FieldLabel } from '@/components/ui/field'
 import {
   Select,
   SelectContent,
@@ -12,6 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { cn } from '@/lib/utils'
+import { textNano } from '@/design-system/tokens/typography'
 import type { LlmBackendInstance } from '@/types'
 
 const ACTIVE_VALUE = '__active__'
@@ -28,15 +30,13 @@ export function ModelPicker({ value, onChange, backends }: ModelPickerProps) {
   const activeBackend = backends.find((b) => b.is_active)
 
   return (
-    <div className="space-y-1.5" data-section="model-picker">
-      <Label className="text-xs font-medium text-muted-foreground">
-        {t('editorV2.model.label')}
-      </Label>
+    <Field data-section="model-picker">
+      <FieldLabel>{t('editorV2.model.label')}</FieldLabel>
       <Select
         value={selectValue}
         onValueChange={(v) => onChange(v === ACTIVE_VALUE ? undefined : v)}
       >
-        <SelectTrigger className="h-9 text-sm">
+        <SelectTrigger>
           <SelectValue placeholder={t('editorV2.model.useActive')} />
         </SelectTrigger>
         <SelectContent>
@@ -54,17 +54,17 @@ export function ModelPicker({ value, onChange, backends }: ModelPickerProps) {
                 )}
                 <span className="ml-auto flex shrink-0 items-center gap-1">
                   {b.capabilities?.supports_multimodal && (
-                    <span className="rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+                    <span className={cn('rounded bg-muted px-1.5 py-0.5 text-muted-foreground', textNano)}>
                       {t('editorV2.capability.vision')}
                     </span>
                   )}
                   {b.capabilities?.supports_tools && (
-                    <span className="rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+                    <span className={cn('rounded bg-muted px-1.5 py-0.5 text-muted-foreground', textNano)}>
                       {t('editorV2.capability.tools')}
                     </span>
                   )}
                   {b.capabilities?.supports_thinking && (
-                    <span className="rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+                    <span className={cn('rounded bg-muted px-1.5 py-0.5 text-muted-foreground', textNano)}>
                       {t('editorV2.capability.thinking')}
                     </span>
                   )}
@@ -74,6 +74,6 @@ export function ModelPicker({ value, onChange, backends }: ModelPickerProps) {
           ))}
         </SelectContent>
       </Select>
-    </div>
+    </Field>
   )
 }

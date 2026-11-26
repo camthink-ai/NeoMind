@@ -19,10 +19,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertCircle, CheckCircle2, Loader2, Play, Sparkles, X } from 'lucide-react'
 import { BuilderShell } from '@/components/automation/dialog/BuilderShell'
-import { Button } from '@/components/ui/button'
+import { Button, IconButton } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Field, FieldLabel, FieldMessage } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { AgentExecutionEvidencePanel } from '@/components/agents/AgentExecutionEvidencePanel'
 import { useToast } from '@/hooks/use-toast'
@@ -94,11 +94,11 @@ function FlowCard({
       className="overflow-hidden rounded-xl border border-border bg-card"
       data-section={dataSection}
     >
-      <header className="border-b border-border bg-muted-20 px-4 py-3">
+      <header className="border-b border-border bg-muted-20 px-5 py-3.5">
         <h3 className="text-sm font-semibold tracking-tight text-foreground">{title}</h3>
         {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
       </header>
-      <div className="space-y-4 p-4">{children}</div>
+      <div className="space-y-5 p-5">{children}</div>
     </section>
   )
 }
@@ -348,12 +348,11 @@ export function AgentEditor({
 
   // Left Config Rail (identity + model)
   const configRail = (
-    <div className="space-y-5">
-      {/* Name */}
-      <div className="space-y-1.5">
-        <Label htmlFor="agent-editor-name" className="text-xs font-medium text-muted-foreground">
+    <div className="space-y-4">
+      <Field>
+        <FieldLabel htmlFor="agent-editor-name">
           {t('agents:editorV2.name')} <span className="text-error">*</span>
-        </Label>
+        </FieldLabel>
         <Input
           id="agent-editor-name"
           value={draft.name}
@@ -364,10 +363,10 @@ export function AgentEditor({
           onBlur={() => setFieldErrors((prev) => ({ ...prev, name: validateName(draft.name ?? '') }))}
           placeholder={t('agents:editorV2.namePlaceholder')}
           autoFocus={isCreate}
-          className={cn('h-9 text-sm', fieldErrors.name && 'border-error')}
+          aria-invalid={!!fieldErrors.name}
         />
-        {fieldErrors.name && <p className="text-xs text-error">{fieldErrors.name}</p>}
-      </div>
+        {fieldErrors.name && <FieldMessage>{fieldErrors.name}</FieldMessage>}
+      </Field>
 
       {/* Model picker with capability badges */}
       <ModelPicker
@@ -380,7 +379,7 @@ export function AgentEditor({
 
   // Rightmost column: live static EffectivePlan preview
   const planAside = !loading ? (
-    <EffectivePlanPreview draft={draft} debounceMs={500} className="bg-card" />
+    <EffectivePlanPreview draft={draft} debounceMs={500} />
   ) : undefined
 
   // Center Main Workspace — Templates + 3-step logical flow
@@ -435,8 +434,8 @@ export function AgentEditor({
           className={cn(
             'rounded-xl border p-4 space-y-2',
             dryRunError || dryRunResult?.error
-              ? 'border-error/40 bg-error-light/40'
-              : 'border-primary/30 bg-primary-light/30',
+              ? 'border-error-light bg-error-light'
+              : 'border-primary bg-primary-light',
           )}
           data-testid="agent-dry-run-result"
         >
@@ -461,19 +460,17 @@ export function AgentEditor({
                 </span>
               )}
             </div>
-            <Button
+            <IconButton
               type="button"
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 text-muted-foreground"
+              size="sm"
               onClick={() => {
                 setDryRunResult(null)
                 setDryRunError(null)
               }}
               aria-label={t('agents:editorV2.dryRun.dismiss')}
             >
-              <X className="h-3.5 w-3.5" />
-            </Button>
+              <X className="h-4 w-4" />
+            </IconButton>
           </div>
           {dryRunError && <p className="text-xs text-error break-words">{dryRunError}</p>}
           {dryRunResult?.error && (
@@ -486,7 +483,7 @@ export function AgentEditor({
               </p>
               {dryRunResult.structuredResult &&
                 Object.keys(dryRunResult.structuredResult).length > 0 && (
-                  <pre className="rounded-md border border-border bg-card p-2 font-mono text-xs overflow-auto max-h-36">
+                  <pre className="rounded-md border border-border bg-card p-2.5 font-mono text-xs overflow-auto max-h-36">
                     {JSON.stringify(dryRunResult.structuredResult, null, 2)}
                   </pre>
                 )}
@@ -501,10 +498,10 @@ export function AgentEditor({
         hint={t('agents:editorV2.flow.stepWhatHint')}
         data-section="basics"
       >
-        <div className="space-y-1.5">
-          <Label htmlFor="agent-editor-prompt" className="text-sm font-medium">
+        <Field>
+          <FieldLabel htmlFor="agent-editor-prompt">
             {t('agents:editorV2.prompt')} <span className="text-error">*</span>
-          </Label>
+          </FieldLabel>
           <Textarea
             id="agent-editor-prompt"
             value={draft.user_prompt}
@@ -517,10 +514,11 @@ export function AgentEditor({
             }
             placeholder={t('agents:editorV2.promptPlaceholder')}
             rows={5}
-            className={cn('min-h-[7.5rem] resize-y text-sm leading-relaxed', fieldErrors.prompt && 'border-error')}
+            aria-invalid={!!fieldErrors.prompt}
+            className="min-h-[7.5rem] resize-y text-sm leading-relaxed"
           />
-          {fieldErrors.prompt && <p className="text-xs text-error">{fieldErrors.prompt}</p>}
-        </div>
+          {fieldErrors.prompt && <FieldMessage>{fieldErrors.prompt}</FieldMessage>}
+        </Field>
 
         <UnifiedInputsSection
           value={draft.input}

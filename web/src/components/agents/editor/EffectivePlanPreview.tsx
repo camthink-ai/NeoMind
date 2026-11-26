@@ -89,13 +89,13 @@ export function EffectivePlanPreview({
   return (
     <aside
       className={cn(
-        'rounded-lg border border-dashed border-border bg-muted-20 p-4 space-y-3',
+        'rounded-xl border border-border bg-card p-4 space-y-3.5',
         className,
       )}
       data-section="plan-preview"
       data-loading={loading ? 'true' : 'false'}
     >
-      <header className="flex items-center justify-between gap-2">
+      <header className="flex items-center justify-between gap-2 border-b border-border pb-2.5">
         <div className="min-w-0">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {t('editorV2.planPreview.title')}
@@ -104,7 +104,7 @@ export function EffectivePlanPreview({
         <Button
           type="button"
           variant="ghost"
-          size="sm"
+          size="xs"
           className="shrink-0 text-muted-foreground"
           onClick={() => {
             if (debounceMs <= 0) void runPreview()

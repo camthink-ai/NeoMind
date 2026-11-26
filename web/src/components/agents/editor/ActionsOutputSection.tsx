@@ -9,7 +9,7 @@
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Plus, Trash2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Button, IconButton } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -283,16 +283,15 @@ export function ActionsOutputSection({
                       placeholder={t('editorV2.actions.destinationPlaceholder')}
                       className="h-8 flex-1 font-mono text-xs"
                     />
-                    <Button
+                    <IconButton
                       type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-error"
+                      size="sm"
+                      className="shrink-0 text-muted-foreground hover:text-error"
                       onClick={() => removeAction(idx)}
                       aria-label={t('editorV2.actions.remove')}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                      <Trash2 className="h-4 w-4" />
+                    </IconButton>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
@@ -404,11 +403,10 @@ export function ActionsOutputSection({
                       placeholder={t('editorV2.output.descPlaceholder')}
                       className="h-8 flex-1 text-xs"
                     />
-                    <Button
+                    <IconButton
                       type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-error"
+                      size="sm"
+                      className="shrink-0 text-muted-foreground hover:text-error"
                       onClick={() =>
                         onOutputChange({
                           ...outputContract,
@@ -417,8 +415,8 @@ export function ActionsOutputSection({
                       }
                       aria-label={t('editorV2.output.remove')}
                     >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                      <Trash2 className="h-4 w-4" />
+                    </IconButton>
                   </div>
                   {inputKeys.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1.5 text-xs">

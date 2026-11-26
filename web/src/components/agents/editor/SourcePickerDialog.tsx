@@ -25,7 +25,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Button, IconButton } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
@@ -188,18 +188,17 @@ export function UnifiedInputsSection({
                     value={req.key}
                     onChange={(e) => updateAt(index, { key: e.target.value })}
                     aria-label={t('editorV2.input.key')}
-                    className="h-7 w-36 shrink-0 font-mono text-xs"
+                    className="h-9 w-36 shrink-0 font-mono text-xs"
                   />
-                  <Button
+                  <IconButton
                     type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0 text-muted-foreground hover:text-error"
+                    size="sm"
+                    className="shrink-0 text-muted-foreground hover:text-error"
                     onClick={() => removeAt(index)}
                     aria-label={t('editorV2.input.remove')}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                    <Trash2 className="h-4 w-4" />
+                  </IconButton>
                 </div>
 
                 {/* Inline freshness, on_missing & optional extension operation */}
@@ -210,7 +209,7 @@ export function UnifiedInputsSection({
                       value={req.freshness?.kind ?? 'any'}
                       onValueChange={(v) => setFreshnessKind(index, v as FreshnessPolicy['kind'])}
                     >
-                      <SelectTrigger className="h-7 w-36 text-xs">
+                      <SelectTrigger className="h-9 w-36 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -287,7 +286,7 @@ export function UnifiedInputsSection({
                       value={req.on_missing ?? 'report_stale'}
                       onValueChange={(v) => updateAt(index, { on_missing: v as MissingPolicy })}
                     >
-                      <SelectTrigger className="h-7 w-32 text-xs">
+                      <SelectTrigger className="h-9 w-32 text-xs">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -309,7 +308,7 @@ export function UnifiedInputsSection({
                             updateAt(index, { operation: v === '__default__' ? undefined : v })
                           }
                         >
-                          <SelectTrigger className="h-7 w-36 font-mono text-xs">
+                          <SelectTrigger className="h-9 w-36 font-mono text-xs">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>

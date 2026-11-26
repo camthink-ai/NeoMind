@@ -661,12 +661,12 @@ export function ScheduleNotifySection({
               return (
                 <Button
                   type="button"
-                  size="sm"
+                  size="xs"
                   variant="outline"
                   onClick={() => toggleChannel('IM')}
                   title={t('editorV2.notifyUnified.imHint')}
                   className={cn(
-                    'h-7 gap-1 text-xs',
+                    'gap-1',
                     imOn ? 'border-primary bg-primary-light text-primary' : 'text-muted-foreground',
                   )}
                 >
@@ -683,11 +683,11 @@ export function ScheduleNotifySection({
                   <Button
                     key={ch.name}
                     type="button"
-                    size="sm"
+                    size="xs"
                     variant="outline"
                     onClick={() => toggleChannel(ch.name)}
                     className={cn(
-                      'h-7 gap-1 text-xs',
+                      'gap-1',
                       on ? 'border-primary bg-primary-light text-primary' : 'text-muted-foreground',
                       !ch.enabled && 'opacity-50',
                     )}
