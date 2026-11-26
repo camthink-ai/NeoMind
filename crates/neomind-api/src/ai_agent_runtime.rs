@@ -81,6 +81,10 @@ impl HostedAiAgentRuntime {
 
         let input = InputPipeline::new(sources.clone() as Arc<dyn SourceReadPort>, clock.clone());
         let runner = Arc::new(SinglePassRunner::new(llm.clone()));
+        // `durable.mem` carries the V2 execution persist sink (installed in
+        // DurableAgentStore::with_v2). Pre-send IntentPending save_execution
+        // therefore hits the same agents.redb restart recovery opens — do not
+        // replace with a bare InMemoryAgentStore::new().
         let side_effects = SideEffectBoundary {
             store: durable.mem.clone(),
             notifier: Notifier::new(notify.clone() as Arc<dyn NotifyPort>),

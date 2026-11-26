@@ -30,6 +30,7 @@ Post-`v1.3.3`: whole-device event snapshots + vision `Partial`, Chat agent creat
 - Frontend first-paint bundle budgets, cold-start measure, and route-pass `smoke-chunks.mjs`.
 
 ### Fixed — agent / runtime / notify
+- **Pre-send IntentPending is durable on the production path** (NM-403): `DurableAgentStore::with_v2` installs an execution persist sink on `durable.mem`, so non-idempotent `save_execution` before side-effect invoke lands in the same `agents.redb` restart recovery opens — crash after device accept no longer loses intent and must not re-send (`OutcomeUnknown`, receiver count stays 1).
 - **Legacy Free-mode host deleted**: `crates/neomind-agent/src/ai_agent/` and `get_or_init_agent_manager` call sites are gone; EventBus triggers / rules / SDK / invoke/test use `HostedAiAgentRuntime` only (eight legacy executor integration tests removed).
 - **ViaVisionTool cannot Complete without a successful vision call** (NM-388): zero calls or only non-vision tools + a "未发现人员" conclusion settle as Partial / undetermined; multimodal inline path still Completes.
 - **Whole-device snapshot binds the triggering report** (NM-389): collection prefers trigger field value / report timestamp over absolute latest; when the event carries a usable frame that frame wins (same-second overwrite); timeseries frames require image-point ownership via structured ID **exact** equality or `_raw` envelope with exact report_id + normalized image-ref / identical bytes (no URL substring — `cam-12` ≠ `cam-123`); multimodal send prefers fixture bytes over relative `/api/images/…`; `_frame_unconfirmed` demotes settle only on create-time vision contract (explicit `vision` allowlist / image metric binding / image event field) — not prompt keywords.
@@ -51,6 +52,7 @@ Post-`v1.3.3`: whole-device event snapshots + vision `Partial`, Chat agent creat
 - README AI Chat and Mobile Web screenshots refreshed.
 
 ### Test
+- NM-403: `presend_intent_durable` — kill after device accept, reopen same `agents.redb`, receiver count=1 + `OutcomeUnknown`.
 - Clean-slate: T12 zero-device daily brief four-step, T13 partial meter, T1 SameReport vision, T11 dry-run/throttle, behavior_matrix (Busy / Pause CAS / OutcomeUnknown); storage soft-copy + migrate idempotency; Gate G6 three scenarios in `verify-upgrade.sh`.
 - Judgment gate: mid-loop vision-failed deny, same-batch / blind ViaVisionTool blocks, invent-block after web filter, invoke Partial status string.
 - ViaVisionTool zero-call / non-vision-only "未发现人员" → Partial; multimodal inline still Completes; whole-device A-then-B / same-second overwrite keep A's frame; `cam-12` does not own `cam-123` image; multimodal request carries exact fixture bytes; "判断入口是否有人"+vision allowlist Partial vs "只读取摄像头温度，不分析图片" Completes on same orphan-B input.
