@@ -214,7 +214,7 @@ export function ScheduleNotifySection({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* 1. Trigger Strategy */}
       <div className="space-y-3" data-section="when">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -503,7 +503,7 @@ export function ScheduleNotifySection({
       </div>
 
       {/* 2. Pacing & Guardrails */}
-      <div className="space-y-2.5 border-t border-border pt-4" data-section="pacing">
+      <div className="space-y-2.5" data-section="pacing">
         <Label className="text-sm font-medium">{t('editorV2.pacing.title')}</Label>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="space-y-1">
@@ -569,7 +569,7 @@ export function ScheduleNotifySection({
       </div>
 
       {/* 3. Three-Way Notification Policy & Channels */}
-      <div className="space-y-3 border-t border-border pt-4" data-section="notify">
+      <div className="space-y-3" data-section="notify">
         <Label className="text-sm font-medium">{t('editorV2.notify.title')}</Label>
         <div className="grid gap-2 sm:grid-cols-2">
           {([

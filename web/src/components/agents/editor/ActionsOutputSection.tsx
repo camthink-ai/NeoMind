@@ -47,7 +47,7 @@ function AdvancedDependsOn({
   if (inputKeys.length === 0) return null
 
   return (
-    <div className="border-t border-border/60 pt-2">
+    <div className="pt-1">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -235,7 +235,7 @@ export function ActionsOutputSection({
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {/* 1. Tool Policy */}
       <div className="space-y-2.5" data-section="tool-policy">
         <Label className="text-sm font-medium">{t('editorV2.toolPolicy.title')}</Label>
@@ -311,7 +311,7 @@ export function ActionsOutputSection({
       </div>
 
       {/* 2. Controlled Actions */}
-      <div className="space-y-2.5 border-t border-border pt-4" data-section="controlled-actions">
+      <div className="space-y-2.5" data-section="controlled-actions">
         <div className="flex items-center justify-between gap-2">
           <Label className="text-sm font-medium">{t('editorV2.actions.title')}</Label>
           <Button type="button" variant="outline" size="sm" onClick={addControlledAction}>
@@ -397,7 +397,7 @@ export function ActionsOutputSection({
       </div>
 
       {/* 3. Structured Output Contract */}
-      <div className="space-y-3 border-t border-border pt-4" data-section="output">
+      <div className="space-y-3" data-section="output">
         <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted-20 px-3 py-2.5">
           <Label htmlFor="unified-output-enabled" className="text-sm font-medium">
             {t('editorV2.output.enabled')}

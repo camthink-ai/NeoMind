@@ -94,11 +94,11 @@ function FlowCard({
       className="overflow-hidden rounded-xl border border-border bg-card"
       data-section={dataSection}
     >
-      <header className="border-b border-border bg-muted-20 px-5 py-3.5">
+      <header className="px-5 pt-4 pb-1">
         <h3 className="text-sm font-semibold tracking-tight text-foreground">{title}</h3>
         {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
       </header>
-      <div className="space-y-5 p-5">{children}</div>
+      <div className="space-y-5 p-5 pt-3">{children}</div>
     </section>
   )
 }

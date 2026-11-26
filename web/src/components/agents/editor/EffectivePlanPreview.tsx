@@ -95,7 +95,7 @@ export function EffectivePlanPreview({
       data-section="plan-preview"
       data-loading={loading ? 'true' : 'false'}
     >
-      <header className="flex items-center justify-between gap-2 border-b border-border pb-2.5">
+      <header className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {t('editorV2.planPreview.title')}
