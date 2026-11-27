@@ -583,7 +583,6 @@ export function DataExplorerPage() {
           iconBg="bg-info-light"
           iconColor="text-info"
           title={selectedSource?.field_display_name || ''}
-          subtitle={`${selectedSource?.source_display_name || ''} · ${selectedSource?.source_type || ''}`}
           onClose={() => setSelectedSource(null)}
         />
         <FullScreenDialogContent>
@@ -671,80 +670,143 @@ export function DataExplorerPage() {
               })()
             )
             const renderMeta = (compact: boolean) => (
-              <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground', compact ? 'text-xs' : 'text-xs mt-1')}>
-                {selectedSource.data_type && <span className="font-mono">{selectedSource.data_type}</span>}
-                {selectedSource.data_type && <span aria-hidden>·</span>}
-                <Clock className="h-3.5 w-3.5" />
-                <span>{t('data:lastUpdate', 'Last Update')} · {formatTime(selectedSource.last_update)}</span>
+              <div className={cn('flex flex-wrap items-center gap-x-2.5 gap-y-1 text-muted-foreground', compact ? 'text-xs mt-2' : 'text-xs')}>
+                {selectedSource.data_type && (
+                  <span className="rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[11px] text-foreground">
+                    {selectedSource.data_type}
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1 tabular-nums">
+                  <Clock className="h-3.5 w-3.5 shrink-0" />
+                  {formatTime(selectedSource.last_update)}
+                </span>
                 {selectedSource.description && (
-                  <span className="basis-full text-muted-foreground/90 truncate" title={selectedSource.description}>
+                  <span className="basis-full text-muted-foreground truncate" title={selectedSource.description}>
                     {selectedSource.description}
                   </span>
                 )}
               </div>
             )
+            const renderRangeStats = () => {
+              if (!rangeStats || (rangeStats.min === null && rangeStats.max === null && rangeStats.avg === null)) {
+                return null
+              }
+              const fmt = (v: number | null) => {
+                if (v === null) return '—'
+                const r = Math.round(v * 100) / 100
+                return `${r}${selectedSource.unit ? ' ' + selectedSource.unit : ''}`
+              }
+              const cell = (label: string, v: number | null) => (
+                <div key={label} className="min-w-0 rounded-xl border border-border bg-card px-3 py-2.5">
+                  <p className="text-[11px] text-muted-foreground">{label}</p>
+                  <p className="mt-0.5 truncate font-mono text-sm font-semibold tabular-nums text-foreground" title={fmt(v)}>
+                    {fmt(v)}
+                  </p>
+                </div>
+              )
+              return (
+                <div className="grid grid-cols-3 gap-2">
+                  {cell(t('data:stats.min', 'Min'), rangeStats.min)}
+                  {cell(t('data:stats.max', 'Max'), rangeStats.max)}
+                  {cell(t('data:stats.avg', 'Avg'), rangeStats.avg)}
+                </div>
+              )
+            }
+            const rangeButtons: Array<{ value: string; label: string }> = [
+              { value: '1h', label: t('data:range.1h', '1h') },
+              { value: '6h', label: t('data:range.6h', '6h') },
+              { value: '24h', label: t('data:range.24h', '24h') },
+              { value: '7d', label: t('data:range.7d', '7d') },
+            ]
             return (
               <>
-                {/* Desktop side pane — current state. The fullscreen shell
-                    makes room for it beside a much wider history chart. */}
-                <aside className="hidden md:flex w-80 shrink-0 flex-col gap-4 border-r p-6">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {/* Desktop side pane — subtle tinted rail anchoring current state & stats */}
+                <aside className="hidden md:flex w-80 shrink-0 flex-col gap-4 border-r border-border bg-muted-20 p-5 overflow-y-auto">
+                  {/* Source Identity Card */}
+                  <div className="rounded-xl border border-border bg-card p-3.5 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium text-foreground" title={selectedSource.source_display_name}>
+                        {selectedSource.source_display_name}
+                      </span>
+                      <span className="shrink-0 rounded-md border border-border bg-muted-20 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                        {selectedSource.source_type}
+                      </span>
+                    </div>
+                    {selectedSource.field && (
+                      <code className="block truncate font-mono text-xs text-muted-foreground" title={selectedSource.field}>
+                        {selectedSource.field}
+                      </code>
+                    )}
+                  </div>
+
+                  {/* Current Value Card */}
+                  <div className="rounded-xl border border-border bg-card p-4 space-y-2.5">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       {t('data:currentValue', 'Current Value')}
                     </p>
-                    <div className="mt-2 min-w-0">{renderValue()}</div>
+                    <div className="min-w-0">{renderValue()}</div>
+                    <div className="border-t border-glass-border pt-2.5">
+                      {renderMeta(false)}
+                    </div>
                   </div>
-                  {rangeStats && (rangeStats.min !== null || rangeStats.max !== null || rangeStats.avg !== null) && (() => {
-                    const fmt = (v: number | null) => {
-                      if (v === null) return '—'
-                      const r = Math.round(v * 100) / 100
-                      return `${r}${selectedSource.unit ? ' ' + selectedSource.unit : ''}`
-                    }
-                    const cell = (label: string, v: number | null) => (
-                      <div key={label} className="rounded-lg bg-muted-30 px-3 py-2">
-                        <p className="text-nano text-muted-foreground">{label}</p>
-                        <p className="mt-0.5 font-mono text-sm font-medium truncate">{fmt(v)}</p>
-                      </div>
-                    )
-                    return (
-                      <div className="grid grid-cols-3 gap-2">
-                        {cell(t('data:stats.min', 'Min'), rangeStats.min)}
-                        {cell(t('data:stats.max', 'Max'), rangeStats.max)}
-                        {cell(t('data:stats.avg', 'Avg'), rangeStats.avg)}
-                      </div>
-                    )
-                  })()}
-                  {renderMeta(false)}
+
+                  {renderRangeStats()}
                 </aside>
 
-                <FullScreenDialogMain className="p-4 md:p-6">
-                  {/* Mobile: value strip above history (side pane is hidden) */}
-                  <div className="md:hidden mb-4 rounded-xl border p-4">
-                    {renderValue()}
-                    {renderMeta(true)}
+                <FullScreenDialogMain className="bg-background p-4 md:p-6">
+                  {/* Mobile: value + stats strip above history */}
+                  <div className="md:hidden mb-4 space-y-3">
+                    <div className="rounded-xl border border-border bg-card p-4">
+                      <div className="mb-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span className="truncate font-medium text-foreground">{selectedSource.source_display_name}</span>
+                        <span className="shrink-0 rounded border border-border bg-muted-20 px-1.5 py-0.5 font-mono text-[11px]">
+                          {selectedSource.source_type}
+                        </span>
+                      </div>
+                      {renderValue()}
+                      {renderMeta(true)}
+                    </div>
+                    {renderRangeStats()}
                   </div>
                   <div className="max-w-5xl mx-auto">
                 {/* Tier 2: History (main body) */}
                 <div>
-                  <div className="flex items-center justify-between gap-2 mb-3">
-                    <div className="flex items-center gap-2 text-sm font-medium">
-                      <History className="h-4 w-4" />
-                      {t('data:history', 'History')}
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3.5">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                      <History className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
+                      <span>{t('data:history', 'History')}</span>
                       {tableTotal > 0 && (
-                        <Badge variant="secondary" className={cn(textNano, "ml-1")}>{tableTotal}</Badge>
+                        <span className="rounded-full border border-border bg-muted-20 px-2 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+                          {tableTotal}
+                        </span>
                       )}
                     </div>
-                    <Select value={historyRange} onValueChange={setHistoryRange}>
-                      <SelectTrigger className="w-[140px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="1h">{t('data:range.1h', '1 Hour')}</SelectItem>
-                        <SelectItem value="6h">{t('data:range.6h', '6 Hours')}</SelectItem>
-                        <SelectItem value="24h">{t('data:range.24h', '24 Hours')}</SelectItem>
-                        <SelectItem value="7d">{t('data:range.7d', '7 Days')}</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div
+                      role="tablist"
+                      aria-label={t('data:history', 'History')}
+                      className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted-20 p-0.5"
+                    >
+                      {rangeButtons.map((btn) => {
+                        const active = historyRange === btn.value
+                        return (
+                          <button
+                            key={btn.value}
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            onClick={() => setHistoryRange(btn.value)}
+                            className={cn(
+                              "h-7 min-h-0 rounded-md px-2.5 text-xs font-medium transition-colors",
+                              active
+                                ? "border border-border bg-card text-foreground shadow-xs"
+                                : "border border-transparent text-muted-foreground hover:text-foreground"
+                            )}
+                          >
+                            {btn.label}
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
 
                   {(() => {
@@ -771,7 +833,7 @@ export function DataExplorerPage() {
                           : hm
                       }
                       return (
-                        <div className="rounded-xl border p-4 mb-4">
+                        <div className="rounded-xl border border-border bg-card p-4 mb-4">
                           {chartTruncated && (
                             <p className="text-xs text-muted-foreground mb-2">
                               {t('data:chartTruncated', 'Showing the latest {{count}} points', { count: chartData.length })}

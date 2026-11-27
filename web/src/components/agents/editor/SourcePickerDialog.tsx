@@ -972,7 +972,7 @@ export function SourcePickerDialog({
                     if (isMobile) setMobileDetailOpen(true)
                   }}
                   className={cn(
-                    'flex w-full items-center gap-2.5 border-b border-border/50 px-3 py-2.5 text-left transition-colors',
+                    'flex w-full items-center gap-2.5 border-b border-border px-3 py-2.5 text-left transition-colors',
                     isActive ? 'bg-muted' : 'hover:bg-muted-30',
                   )}
                 >
@@ -1020,7 +1020,7 @@ export function SourcePickerDialog({
                     if (isMobile) setMobileDetailOpen(true)
                   }}
                   className={cn(
-                    'flex w-full items-center gap-2.5 border-b border-border/50 px-3 py-2.5 text-left transition-colors',
+                    'flex w-full items-center gap-2.5 border-b border-border px-3 py-2.5 text-left transition-colors',
                     isActive ? 'bg-muted' : 'hover:bg-muted-30',
                   )}
                 >
@@ -1063,7 +1063,7 @@ export function SourcePickerDialog({
                     if (isMobile) setMobileDetailOpen(true)
                   }}
                   className={cn(
-                    'flex w-full items-center gap-2.5 border-b border-border/50 px-3 py-2.5 text-left transition-colors',
+                    'flex w-full items-center gap-2.5 border-b border-border px-3 py-2.5 text-left transition-colors',
                     isActive ? 'bg-muted' : 'hover:bg-muted-30',
                   )}
                 >

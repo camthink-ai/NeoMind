@@ -183,7 +183,7 @@ Full spec in [`web/DESIGN_SPEC.md`](web/DESIGN_SPEC.md). Non-negotiable rules:
 - **No `/` opacity on CSS-variable colors** (`bg-primary/10` silently fails). Use predefined tokens (`bg-muted-30`) or inline style.
 - **Icons**: `lucide-react` only, mapped via `@/design-system/icons`. NEVER emoji.
 - **Page loading**: skeleton screens (`LoadingState variant="page"`). `Loader2` spinner only for inline/button/dialog.
-- **Dialogs**: `UnifiedFormDialog` (forms), `FullScreenDialog` (builders). Nested dialog inside FullScreenDialog MUST use `className="z-[110]"`. Never raw `Dialog`.
+- **Dialogs**: `UnifiedFormDialog` (forms), `FullScreenDialog` (builders). Nested dialog inside FullScreenDialog MUST use `className="z-[110]"`. Never raw `Dialog`. Dialog headers render `title` only — no subtitle/description line below the title.
 - **Layout**: `PageLayout` + `PageTabsBar`/`PageTabsContent`. Pagination default **10**; mobile infinite scroll via `hideOnMobile`.
 - **Form inputs**: only `@/components/ui/` + `Field` component (auto a11y). No raw HTML form elements.
 - **Fetch dedup**: store-level `fetchCache` (TTL 10s). Pattern: `shouldFetch` → `markFetching` → API → `markFetched`. Invalidate on mutations.
@@ -209,4 +209,5 @@ Full spec in [`web/DESIGN_SPEC.md`](web/DESIGN_SPEC.md). Non-negotiable rules:
 ## In-Tree References
 
 - [`web/DESIGN_SPEC.md`](web/DESIGN_SPEC.md) — frontend design system (33 sections), read before UI work
+- [`web/src/components/chat/attachments/README.md`](web/src/components/chat/attachments/README.md) — chat reply attachments & side-inspector standard + checklist for adding new card kinds
 - [`CHANGELOG.md`](CHANGELOG.md) — version history

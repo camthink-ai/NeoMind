@@ -458,7 +458,6 @@ export function ComponentConfigDialog({
         iconBg="bg-muted"
         iconColor="text-primary"
         title={t('componentConfig.editComponent')}
-        subtitle={componentType.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
         onClose={onClose}
       />
 

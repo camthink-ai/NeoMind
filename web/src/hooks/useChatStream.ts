@@ -128,6 +128,8 @@ export interface StreamEndResult {
   goalStatus?: import('@/types').SystemGoalStatus
   /** Stream end reason (normal / interrupted / …). */
   endReason?: import('@/types').StreamEndReason
+  /** Server-extracted reply attachments (media / cards / chips). */
+  attachments?: import('@/types').ChatAttachment[]
 }
 
 export interface UseChatStreamOptions {
@@ -580,6 +582,9 @@ export function useChatStream(options: UseChatStreamOptions) {
           // Pass through system status — never rewrite model content from it.
           goalStatus: data.goalStatus,
           endReason: data.endReason,
+          attachments: Array.isArray(data.attachments) && data.attachments.length > 0
+            ? data.attachments
+            : undefined,
         }
         hardReset()
         // An interrupted turn finalizes even with an empty accumulator —
@@ -592,7 +597,8 @@ export function useChatStream(options: UseChatStreamOptions) {
           result.thinking ||
           result.toolCalls.length > 0 ||
           result.goalStatus != null ||
-          result.endReason != null
+          result.endReason != null ||
+          (result.attachments && result.attachments.length > 0)
         ) {
           optionsRef.current.onEnd(result)
         }

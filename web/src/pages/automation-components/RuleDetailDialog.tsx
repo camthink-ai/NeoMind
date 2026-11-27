@@ -1,109 +1,54 @@
+/**
+ * Rule Detail Dialog — reuses RuleInspectorView so the Automation page and
+ * Chat side-inspector share one high-craft detail presentation (Hero + Copy ID
+ * + When→If→Then logic tree + Trigger History tab).
+ */
+
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  Zap, Clock, Hand, Activity, Bell, Code2, Bot,
-  Edit3, Calendar, Timer, Gauge, Tag,
-} from 'lucide-react'
+import { Edit3, Zap } from 'lucide-react'
 import { UnifiedFormDialog } from '@/components/dialog/UnifiedFormDialog'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { RuleWhyNotTriggeredPanel, type ExplainLoadStatus } from '@/components/automation/RuleWhyNotTriggeredPanel'
-import type { Rule, RuleExplanation } from '@/types/rule'
+import { type ExplainLoadStatus } from '@/components/automation/RuleWhyNotTriggeredPanel'
+import { RuleInspectorView } from '@/components/chat/attachments/inspector/RuleInspectorView'
 import { api } from '@/lib/api'
-import { cn } from '@/lib/utils'
-import { textMini, textNano } from '@/design-system/tokens/typography'
+import type { Rule, RuleExecutionResult, RuleExplanation } from '@/types'
 
-interface Props {
+interface RuleDetailDialogProps {
   rule: Rule | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onEdit: (rule: Rule) => void
 }
 
-/** Format a trigger for human-readable display */
-function formatTrigger(trigger: Rule['trigger'], t: (k: string, o?: any) => string): { icon: any; label: string; detail: string } {
-  switch (trigger.trigger_type) {
-    case 'data_change':
-      return {
-        icon: Activity,
-        label: t('triggers.dataChange', { defaultValue: 'Data Change' }),
-        detail: trigger.sources?.length
-          ? `${trigger.sources.length} ${t('sources', { defaultValue: 'sources' })}`
-          : t('triggers.dataChangeDesc', { defaultValue: 'Triggers on data updates' }),
-      }
-    case 'schedule':
-      return {
-        icon: Clock,
-        label: t('triggers.schedule', { defaultValue: 'Schedule' }),
-        detail: trigger.cron || '—',
-      }
-    case 'manual':
-      return {
-        icon: Hand,
-        label: t('triggers.manual', { defaultValue: 'Manual' }),
-        detail: t('triggers.manualDesc', { defaultValue: 'Execute on demand' }),
-      }
-  }
-}
+export function RuleDetailDialog({
+  rule,
+  open,
+  onOpenChange,
+  onEdit,
+}: RuleDetailDialogProps) {
+  const { t, i18n } = useTranslation(['automation', 'common'])
+  const isZh = i18n.language?.toLowerCase().startsWith('zh')
 
-/** Format a condition for human-readable display */
-function formatCondition(rule: Rule): string {
-  if (!rule.condition) return '—'
-  const c = rule.condition
-  switch (c.condition_type) {
-    case 'comparison':
-      return `${c.source || '?'} ${c.operator || '?'} ${c.threshold ?? c.threshold_value ?? '?'}`
-    case 'range':
-      return `${c.source || '?'} ∈ [${c.min ?? '?'}, ${c.max ?? '?'}]`
-    case 'logical':
-      return `${(c.operator || 'and').toUpperCase()} (${c.conditions?.length ?? 0} sub-conditions)`
-    default:
-      return JSON.stringify(c).slice(0, 80)
-  }
-}
-
-/** Get icon + label for an action */
-function getActionInfo(action: Rule['actions'][number], t: (k: string, o?: any) => string): { icon: any; label: string; detail: string } {
-  switch (action.type) {
-    case 'notify':
-      return { icon: Bell, label: t('actions.notify', { defaultValue: 'Notify' }), detail: action.message.slice(0, 80) }
-    case 'execute':
-      return { icon: Code2, label: t('actions.execute', { defaultValue: 'Execute' }), detail: `${action.target_type}: ${action.target} → ${action.command}` }
-    case 'trigger_agent':
-      return { icon: Bot, label: t('actions.triggerAgent', { defaultValue: 'Trigger Agent' }), detail: action.agent_id }
-    case 'run_operator':
-      // Keyed off ruleBuilder.actionType — the `actions.*` keys the sibling
-      // cases reference do not exist in the locale files, so those always
-      // render their English defaultValue.
-      return {
-        icon: Bot,
-        label: t('ruleBuilder.actionType.runOperator', { defaultValue: 'Run Operator' }),
-        detail: action.agent_id,
-      }
-    default:
-      return { icon: Zap, label: String((action as any).type), detail: '' }
-  }
-}
-
-export function RuleDetailDialog({ rule, open, onOpenChange, onEdit }: Props) {
-  const { t } = useTranslation(['automation', 'common'])
   const [explain, setExplain] = useState<RuleExplanation | null>(null)
   const [explainStatus, setExplainStatus] = useState<ExplainLoadStatus>('idle')
+  const [history, setHistory] = useState<RuleExecutionResult[]>([])
   const [fetchNonce, setFetchNonce] = useState(0)
 
   useEffect(() => {
-    if (!open || !rule?.id) {
+    if (!open || !rule) {
       setExplain(null)
       setExplainStatus('idle')
+      setHistory([])
       return
     }
     let cancelled = false
     setExplainStatus('loading')
     api
-      .getRuleExplain(rule.id)
-      .then((data) => {
+      .getRuleExplain(rule.id, { skipErrorToast: true })
+      .then((res) => {
         if (cancelled) return
-        setExplain(data)
+        setExplain(res)
         setExplainStatus('ready')
       })
       .catch(() => {
@@ -111,15 +56,22 @@ export function RuleDetailDialog({ rule, open, onOpenChange, onEdit }: Props) {
         setExplain(null)
         setExplainStatus('error')
       })
+    api
+      .getRuleHistory(rule.id, { skipErrorToast: true })
+      .then((res) => {
+        if (cancelled) return
+        setHistory(res?.executions ?? [])
+      })
+      .catch(() => {
+        if (cancelled) return
+        setHistory([])
+      })
     return () => {
       cancelled = true
     }
   }, [open, rule?.id, fetchNonce])
 
   if (!rule) return null
-
-  const triggerInfo = formatTrigger(rule.trigger, t)
-  const TriggerIcon = triggerInfo.icon
 
   const handleEdit = () => {
     onOpenChange(false)
@@ -131,9 +83,8 @@ export function RuleDetailDialog({ rule, open, onOpenChange, onEdit }: Props) {
       open={open}
       onOpenChange={onOpenChange}
       title={rule.name}
-      description={rule.description || undefined}
-      icon={<Zap className="h-4 w-4 text-primary shrink-0" />}
-      width="md"
+      icon={<Zap className="h-4 w-4 text-foreground shrink-0" strokeWidth={1.75} />}
+      width="lg"
       footer={
         <Button onClick={handleEdit} className="gap-1.5">
           <Edit3 className="h-4 w-4" />
@@ -141,110 +92,16 @@ export function RuleDetailDialog({ rule, open, onOpenChange, onEdit }: Props) {
         </Button>
       }
     >
-      <div className="space-y-4">
-        {/* Rule ID (mono, for debugging/API reference) */}
-        <div className={cn(textMini, 'text-muted-foreground flex items-center gap-1.5')}>
-          <span className="uppercase tracking-wide">ID</span>
-          <code className="font-mono bg-muted-30 px-1.5 py-0.5 rounded break-all">{rule.id}</code>
-        </div>
-
-        {/* Status row */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant={rule.enabled ? 'default' : 'secondary'} className="gap-1">
-            <span className={cn('w-1.5 h-1.5 rounded-full', rule.enabled ? 'bg-success' : 'bg-muted-foreground')} />
-            {rule.enabled ? t('enabled') : t('disabled', { defaultValue: 'Disabled' })}
-          </Badge>
-          <span className={cn(textMini, 'text-muted-foreground flex items-center gap-1')}>
-            <Gauge className="h-3 w-3" />
-            {t('triggeredTimes', { count: rule.trigger_count })}
-          </span>
-          {rule.last_triggered && (
-            <span className={cn(textMini, 'text-muted-foreground flex items-center gap-1')}>
-              <Calendar className="h-3 w-3" />
-              {new Date(rule.last_triggered).toLocaleString()}
-            </span>
-          )}
-          {rule.cooldown && rule.cooldown > 0 && (
-            <span className={cn(textMini, 'text-muted-foreground flex items-center gap-1')}>
-              <Timer className="h-3 w-3" />
-              {(rule.cooldown / 1000).toFixed(0)}s {t('cooldown', { defaultValue: 'cooldown' })}
-            </span>
-          )}
-        </div>
-
-        {/* Tags */}
-        {rule.tags && rule.tags.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <Tag className="h-3 w-3 text-muted-foreground shrink-0" />
-            {rule.tags.map(tag => (
-              <Badge key={tag} variant="outline" className={cn(textNano)}>{tag}</Badge>
-            ))}
-          </div>
-        )}
-
-        {/* Why not triggered — live explain snapshot */}
-        <RuleWhyNotTriggeredPanel
-          explanation={explain}
-          status={explainStatus}
-          onRetry={() => setFetchNonce((n) => n + 1)}
-        />
-
-        {/* Trigger */}
-        <div>
-          <h4 className={cn(textMini, 'font-medium uppercase tracking-wide text-muted-foreground mb-2')}>
-            {t('trigger')}
-          </h4>
-          <div className="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-light text-primary shrink-0">
-              <TriggerIcon className="h-4 w-4" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-medium">{triggerInfo.label}</p>
-              <p className={cn(textMini, 'text-muted-foreground truncate font-mono')} title={triggerInfo.detail}>
-                {triggerInfo.detail}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Condition */}
-        {rule.condition && (
-          <div>
-            <h4 className={cn(textMini, 'font-medium uppercase tracking-wide text-muted-foreground mb-2')}>
-              {t('conditions')}
-            </h4>
-            <div className="rounded-lg border border-border bg-card p-3">
-              <p className="text-sm font-mono break-all">{formatCondition(rule)}</p>
-            </div>
-          </div>
-        )}
-
-        {/* Actions */}
-        <div>
-          <h4 className={cn(textMini, 'font-medium uppercase tracking-wide text-muted-foreground mb-2')}>
-            {t('actions')} ({rule.actions.length})
-          </h4>
-          <div className="space-y-2">
-            {rule.actions.map((action, i) => {
-              const info = getActionInfo(action, t)
-              const ActionIcon = info.icon
-              return (
-                <div key={i} className="flex items-center gap-3 rounded-lg border border-border bg-card p-3">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted-30 text-muted-foreground shrink-0">
-                    <ActionIcon className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium">{info.label}</p>
-                    <p className={cn(textMini, 'text-muted-foreground truncate')} title={info.detail}>
-                      {info.detail}
-                    </p>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      </div>
+      <RuleInspectorView
+        key={rule.id}
+        rule={rule}
+        ruleExplain={explain}
+        explainStatus={explainStatus}
+        history={history}
+        entityId={rule.id}
+        isZh={isZh}
+        onRefresh={() => setFetchNonce((n) => n + 1)}
+      />
     </UnifiedFormDialog>
   )
 }

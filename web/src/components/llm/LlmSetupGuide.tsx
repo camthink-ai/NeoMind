@@ -35,48 +35,48 @@ export function LlmSetupGuide() {
     <div className="touch-scroll h-full overflow-y-auto bg-background">
       <div className="flex min-h-full items-center justify-center">
       <div className="text-center max-w-2xl px-6 py-6">
-        <div className="mx-auto mb-5 flex size-14 items-center justify-center rounded-xl bg-primary-light text-primary">
-          <BrainCircuit className="size-7" />
+        <div className="mx-auto mb-4 flex size-12 items-center justify-center rounded-xl border border-border bg-muted-30 text-foreground">
+          <BrainCircuit className="size-6" strokeWidth={1.75} />
         </div>
         <h2 className="mb-2 text-lg font-semibold tracking-tight">{t('common:llmGuide.title')}</h2>
         <p className="text-sm text-muted-foreground mb-6 leading-relaxed">
           {t('common:llmGuide.desc')}
         </p>
-        {/* Two choice cards side by side — recommended path visually distinct */}
+        {/* Two choice cards side by side — recommended path subtly elevated */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
           <button
             onClick={() => setWizardOpen(true)}
-            className="group relative flex flex-col rounded-xl border border-primary bg-primary-light p-4 transition-all hover:shadow-md text-left"
+            className="group relative flex flex-col rounded-xl border border-foreground bg-card p-4 shadow-xs transition-all hover:shadow-md text-left"
           >
-            <span className="absolute right-3 top-3 rounded-full bg-primary text-primary-foreground px-2 py-0.5 text-nano font-medium">
+            <span className="absolute right-3.5 top-3.5 rounded-full bg-primary text-primary-foreground px-2 py-0.5 text-nano font-medium">
               {t('common:llmGuide.recommended')}
             </span>
-            <div className="flex size-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <Download className="size-5" />
+            <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+              <Download className="size-4" strokeWidth={1.75} />
             </div>
             <div className="mt-3 text-sm font-semibold">{t('common:llmGuide.builtinTitleShort')}</div>
             <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
               {t('common:llmGuide.builtinDesc')}
             </p>
-            <div className="mt-auto pt-3 flex items-center gap-1 text-xs font-medium text-primary">
+            <div className="mt-auto pt-3 flex items-center gap-1 text-xs font-medium text-foreground">
               {t('common:llmGuide.builtinCta')}
-              <ChevronRight className="size-3 transition-transform group-hover:translate-x-0.5" />
+              <ChevronRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
             </div>
           </button>
           <button
             onClick={() => openSettings('llm')}
-            className="group flex flex-col rounded-xl border border-border p-4 transition-all hover:border-primary hover:shadow-md text-left"
+            className="group flex flex-col rounded-xl border border-border bg-card p-4 transition-all hover:border-border-hover hover:shadow-sm text-left"
           >
-            <div className="flex size-10 items-center justify-center rounded-lg bg-muted text-primary">
-              <Server className="size-5" />
+            <div className="flex size-9 items-center justify-center rounded-lg border border-border bg-muted-30 text-foreground">
+              <Server className="size-4" strokeWidth={1.75} />
             </div>
             <div className="mt-3 text-sm font-semibold">{t('common:llmGuide.ownTitleShort')}</div>
             <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
               {t('common:llmGuide.ownDesc')}
             </p>
-            <div className="mt-auto pt-3 flex items-center gap-1 text-xs font-medium text-primary">
+            <div className="mt-auto pt-3 flex items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-foreground transition-colors">
               {t('common:llmGuide.ownCta')}
-              <ChevronRight className="size-3 transition-transform group-hover:translate-x-0.5" />
+              <ChevronRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
             </div>
           </button>
         </div>

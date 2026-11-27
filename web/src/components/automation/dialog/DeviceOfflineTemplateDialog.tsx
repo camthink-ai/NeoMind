@@ -72,7 +72,6 @@ export function DeviceOfflineTemplateDialog({ open, onOpenChange, onCreated }: P
       open={open}
       onOpenChange={onOpenChange}
       title={t('rules.templates.deviceOffline.label')}
-      description={t('rules.templates.deviceOffline.description')}
       onSubmit={handleSubmit}
       isSubmitting={submitting}
     >

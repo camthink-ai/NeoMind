@@ -308,7 +308,7 @@ describe('ChatComposer TipTap @-mentions', () => {
     await screen.findAllByRole('option')
     expect(listbox).toHaveAttribute('aria-activedescendant', 'chat-mention-opt-0')
     expect(screen.getByRole('tablist')).toBeTruthy()
-    expect(screen.getAllByRole('tab').length).toBe(5)
+    expect(screen.getAllByRole('tab').length).toBe(6)
   })
 
   it('invalidRefs mark inline mention atoms with data-invalid', async () => {

@@ -143,7 +143,6 @@ export function ShareManagerDialog({
         iconBg="bg-success-light"
         iconColor="text-success"
         title={t('visualDashboard.share.title')}
-        subtitle={dashboardName}
         onClose={() => onOpenChange(false)}
       />
       <FullScreenDialogMain className="p-4 md:p-6 lg:p-8">

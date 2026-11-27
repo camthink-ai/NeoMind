@@ -215,7 +215,6 @@ export function InstanceManagerDialog({ open, onOpenChange }: InstanceManagerDia
         <FullScreenDialogHeader
           icon={<Server className="h-5 w-5" />}
           title={t('title')}
-          subtitle={t('description')}
           onClose={() => onOpenChange(false)}
         />
         <FullScreenDialogContent>

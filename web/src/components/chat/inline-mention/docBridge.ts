@@ -14,7 +14,7 @@ import {
 } from "@/lib/chat/inlineDoc"
 import { inlineDocToContentNodes } from "@/lib/chat/contentProtocol"
 
-const ENTITY_TYPES: EntityType[] = ["device", "rule", "transform", "agent"]
+const ENTITY_TYPES: EntityType[] = ["device", "rule", "transform", "agent", "dashboard"]
 
 /** Valid entity-type guard shared with the paste parser (entityMention). */
 export function isEntityType(v: unknown): v is EntityType {

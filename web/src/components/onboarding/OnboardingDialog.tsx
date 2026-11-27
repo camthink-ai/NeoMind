@@ -419,16 +419,16 @@ function StepHeader({
   const { t } = useTranslation("common")
 
   return (
-    <div className="flex items-center gap-4 sm:gap-5 mb-5 sm:mb-6">
-      <div className={cn("w-14 h-14 rounded-2xl flex items-center justify-center shrink-0", tint)}>
+    <div className="flex items-center gap-4 mb-5 sm:mb-6">
+      <div className={cn("w-11 h-11 rounded-xl flex items-center justify-center shrink-0", tint)}>
         {icon}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-xs text-muted-foreground mb-1">
+        <p className="text-xs text-muted-foreground mb-0.5">
           {t("onboarding.stepIndicator", { current: step, total: STEPS.length })}
         </p>
         <div className="flex items-center flex-wrap gap-x-3 gap-y-1 mb-1">
-          <h2 className="text-2xl font-semibold text-foreground">{title}</h2>
+          <h2 className="text-xl font-semibold tracking-tight text-foreground">{title}</h2>
           {badge}
         </div>
         <p className="text-sm text-muted-foreground leading-relaxed max-w-2xl">{subtitle}</p>
@@ -453,8 +453,8 @@ function WelcomeStep() {
   return (
     <div>
       <StepHeader
-        icon={<Rocket className="w-7 h-7 text-accent-indigo" />}
-        tint="bg-accent-indigo-light"
+        icon={<Rocket className="w-6 h-6 text-foreground" strokeWidth={1.75} />}
+        tint="border border-border bg-muted-30"
         step={1}
         title={t("onboarding.setup.title")}
         subtitle={t("onboarding.setup.heroSubtitle")}
@@ -525,9 +525,9 @@ function SetupStep({
   const item: SetupItem =
     which === "llm"
       ? {
-          icon: <Sparkles className="w-7 h-7" />,
-          tint: "bg-accent-indigo-light text-accent-indigo",
-          accent: "bg-accent-indigo",
+          icon: <Sparkles className="w-6 h-6" strokeWidth={1.75} />,
+          tint: "border border-border bg-muted-30 text-foreground",
+          accent: "bg-foreground",
           title: t("onboarding.setup.llm.title"),
           features: LLM_FEATURE_KEYS.map((k) => ({
             title: t(`onboarding.setup.llm.features.${k}.title`),
@@ -544,12 +544,9 @@ function SetupStep({
             : undefined,
         }
       : {
-          icon: <Cpu className="w-7 h-7" />,
-          // Same identity hue as the LLM step — the wizard is ONE story, so
-          // every step wears the accent; per-step hues made the flow read
-          // as a category dashboard.
-          tint: "bg-accent-indigo-light text-accent-indigo",
-          accent: "bg-accent-indigo",
+          icon: <Cpu className="w-6 h-6" strokeWidth={1.75} />,
+          tint: "border border-border bg-muted-30 text-foreground",
+          accent: "bg-foreground",
           title: t("onboarding.setup.device.title"),
           features: DEVICE_FEATURE_KEYS.map((k) => ({
             title: t(`onboarding.setup.device.features.${k}.title`),
@@ -654,19 +651,19 @@ function ReadyStep({
 
   const cards = [
     {
-      icon: <LayoutDashboard className="w-5 h-5" />,
+      icon: <LayoutDashboard className="w-4 h-4" strokeWidth={1.75} />,
       key: "monitoring",
-      tint: "bg-accent-purple-light text-accent-purple",
+      tint: "border border-border bg-muted-30 text-foreground",
     },
     {
-      icon: <Zap className="w-5 h-5" />,
+      icon: <Zap className="w-4 h-4" strokeWidth={1.75} />,
       key: "automation",
-      tint: "bg-accent-orange-light text-accent-orange",
+      tint: "border border-border bg-muted-30 text-foreground",
     },
     {
-      icon: <Puzzle className="w-5 h-5" />,
+      icon: <Puzzle className="w-4 h-4" strokeWidth={1.75} />,
       key: "extensions",
-      tint: "bg-accent-cyan-light text-accent-cyan",
+      tint: "border border-border bg-muted-30 text-foreground",
     },
   ]
 
@@ -675,12 +672,10 @@ function ReadyStep({
       {/* Step header — celebration or partial-state title, matching the
           other steps' hero block */}
       <StepHeader
-        icon={allComplete ? <Check className="w-7 h-7" /> : <Sparkles className="w-7 h-7" />}
-        // Completion celebration is a SOFT green tint (same language as the
-        // Done pill) — a solid saturated tile shouted over the whole step.
+        icon={allComplete ? <Check className="w-5 h-5" strokeWidth={1.75} /> : <Sparkles className="w-5 h-5" strokeWidth={1.75} />}
         tint={allComplete
           ? "bg-success-light text-success"
-          : "bg-accent-indigo-light text-accent-indigo"}
+          : "border border-border bg-muted-30 text-foreground"}
         step={4}
         title={allComplete ? t("onboarding.ready.allSetTitle") : t("onboarding.ready.partialTitle")}
         subtitle={allComplete ? t("onboarding.ready.allSetSubtitle") : t("onboarding.ready.partialSubtitle")}

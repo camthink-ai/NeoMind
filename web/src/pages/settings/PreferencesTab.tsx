@@ -309,11 +309,6 @@ export function PreferencesTab() {
 
       {/* Diagnostic Data — log archive download */}
       <DiagnosticDataSection />
-
-      {/* Info */}
-      <div className="text-xs leading-relaxed text-muted-foreground">
-        <p>{t("settings:preferencesInfo")}</p>
-      </div>
     </div>
   )
 }

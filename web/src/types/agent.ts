@@ -558,6 +558,19 @@ export interface ActionDeliveryRecord {
 }
 
 /**
+ * One tool invocation recorded during a multi-round agent run — mirrors backend `ToolCallTrace`.
+ */
+export interface ToolCallTrace {
+  round: number
+  name: string
+  arguments?: unknown
+  success: boolean
+  result_preview?: string
+  error?: string
+  duration_ms?: number
+}
+
+/**
  * Response from GET /api/agents/:id/explain-last.
  */
 export interface ExplainLastResponse {
@@ -567,7 +580,7 @@ export interface ExplainLastResponse {
 
 /**
  * Agent execution detail with full decision process
- * Extends AgentExecution with decision_process, result, structured_result, deliveries, alert_verdict
+ * Extends AgentExecution with decision_process, result, structured_result, deliveries, tool_calls, alert_verdict
  */
 export interface AgentExecutionDetail extends AgentExecution {
   decision_process?: DecisionProcess
@@ -580,6 +593,8 @@ export interface AgentExecutionDetail extends AgentExecution {
   alert_verdict?: string | null
   /** Side-effect / notification delivery receipts recorded for this run. */
   deliveries?: ActionDeliveryRecord[]
+  /** Multi-round tool invocations recorded during this run. */
+  tool_calls?: ToolCallTrace[]
   /** AgentSpec config_version active when this execution ran. */
   config_version?: number
   /** Whether this run was a dry-run trial. */

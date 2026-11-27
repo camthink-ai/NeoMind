@@ -122,6 +122,7 @@ export function InlineMentionEditor({
   const onKeyDownRef = useRef(onKeyDown)
   const onCompositionChangeRef = useRef(onCompositionChange)
   const skipEmit = useRef(false)
+  const suppressSuggestion = useRef(false)
   const isComposing = useRef(false)
   /** Plain text at compositionstart — used to detect a real IME commit. */
   const composeStartPlainRef = useRef("")
@@ -173,9 +174,11 @@ export function InlineMentionEditor({
             [{ id: "__host__", label: "", entityType: "device" as const }],
           render: () => ({
             onStart: (props) => {
+              if (skipEmit.current || suppressSuggestion.current) return
               onSuggestionStartRef.current(toSuggestionApi(props))
             },
             onUpdate: (props) => {
+              if (skipEmit.current || suppressSuggestion.current) return
               onSuggestionUpdateRef.current(toSuggestionApi(props))
             },
             onExit: (props) => {
@@ -349,10 +352,14 @@ export function InlineMentionEditor({
         const fromNodes = contentNodesToInlineDoc(contentNodes)
         const fromPayload = inlineDocToChatPayload(fromNodes)
         skipEmit.current = true
+        suppressSuggestion.current = true
         editor.commands.setContent(inlineDocToTipTapJson(fromNodes), {
           emitUpdate: false,
         })
         skipEmit.current = false
+        window.setTimeout(() => {
+          suppressSuggestion.current = false
+        }, 0)
         lastPlain.current = fromPayload.message
         lastNodesKey.current = nodesKey
         return
@@ -361,6 +368,7 @@ export function InlineMentionEditor({
         const current = inlineDocToChatPayload(tipTapJsonToInlineDoc(editor.getJSON()))
         if (value !== current.message) {
           skipEmit.current = true
+          suppressSuggestion.current = true
           if (!value.trim()) {
             editor.commands.clearContent(true)
           } else {
@@ -372,6 +380,9 @@ export function InlineMentionEditor({
             )
           }
           skipEmit.current = false
+          window.setTimeout(() => {
+            suppressSuggestion.current = false
+          }, 0)
         }
         lastPlain.current = value
         if (!value) lastNodesKey.current = ""

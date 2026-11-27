@@ -263,7 +263,6 @@ export function ExportDataDialog({ open, onOpenChange, source }: ExportDataDialo
       open={open}
       onOpenChange={handleOpenChange}
       title={t('export.title')}
-      description={source?.id}
       icon={<Download className="h-5 w-5" />}
       width="md"
       submitLabel={exporting ? t('export.exporting') : t('export.button')}

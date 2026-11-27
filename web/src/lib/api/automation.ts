@@ -17,7 +17,8 @@ export const automationApi = {
         }, {} as Record<string, string>)
       )}` : ''}`
     ),
-  getRule: (id: string) => fetchAPI<{ rule: Rule }>(`/rules/${id}`),
+  getRule: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<{ rule: Rule }>(`/rules/${id}`, options),
   createRule: (rule: Omit<Rule, 'id' | 'created_at' | 'updated_at'>) =>
     fetchAPI<{ rule: Rule; message?: string }>('/rules', {
       method: 'POST',
@@ -72,7 +73,7 @@ export const automationApi = {
       method: 'POST',
       body: JSON.stringify({ rules }),
     }),
-  getRuleHistory: (id: string) =>
+  getRuleHistory: (id: string, options?: { skipErrorToast?: boolean }) =>
     fetchAPI<{ rule_id: string; executions: Array<{
       rule_id: string
       rule_name: string
@@ -81,10 +82,10 @@ export const automationApi = {
       error: string | null
       duration_ms: number
       triggered_at: string
-    }> }>(`/rules/${id}/history`),
+    }> }>(`/rules/${id}/history`, options),
   /** Read-only "why not triggered" snapshot (no side effects). */
-  getRuleExplain: (id: string) =>
-    fetchAPI<RuleExplanation>(`/rules/${id}/explain`),
+  getRuleExplain: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<RuleExplanation>(`/rules/${id}/explain`, options),
 
   // ========== Unified Automations API ==========
   // Matches backend: crates/api/src/handlers/automations.rs
@@ -101,8 +102,11 @@ export const automationApi = {
         }, {} as Record<string, string>)
       )}` : ''}`
     ),
-  getAutomation: (id: string) =>
-    fetchAPI<{ automation: import('@/types').Automation; definition: unknown }>(`/automations/${id}`),
+  getAutomation: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<{ automation: import('@/types').Automation; definition: unknown }>(
+      `/automations/${id}`,
+      options
+    ),
   createAutomation: (req: {
     name: string
     description?: string

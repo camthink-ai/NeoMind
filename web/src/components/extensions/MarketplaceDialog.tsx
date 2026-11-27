@@ -315,7 +315,6 @@ export function MarketplaceDialog({
         <FullScreenDialogHeader
           icon={<Globe className="h-5 w-5" />}
           title={t("extensions:market.title", "Extension Marketplace")}
-          subtitle={marketVersion ? `v${marketVersion}` : undefined}
           onClose={handleClose}
         />
       )}

@@ -52,7 +52,7 @@ function DependsOnToggleButton({
       className={cn(
         'inline-flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-nano transition-colors',
         open || count > 0
-          ? 'border-primary/30 bg-primary-light text-primary font-medium'
+          ? 'border-primary bg-primary-light text-primary font-medium'
           : 'border-transparent text-muted-foreground hover:bg-muted-30 hover:text-foreground',
       )}
     >

@@ -251,25 +251,6 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
     }
   }
 
-  const getDescription = () => {
-    switch (stage) {
-      case 'upgrading':
-        // Sub-step detail (download / verify / staged) the title can't carry.
-        return phaseMessage()
-      case 'done':
-        // Explains the imminent reload the title doesn't mention.
-        return t('settings:serverUpgradeCompleteDesc')
-      default:
-        // Checking/restarting/error/idle: the title plus the body cards
-        // already say everything — a header description only repeated them.
-        // The restart warning shows under the progress bar when it happens.
-        if (stage === 'idle' && check && !check.available) {
-          return t('settings:alreadyUpToDate')
-        }
-        return undefined
-    }
-  }
-
   const getStatusIcon = () => {
     switch (stage) {
       case 'done':
@@ -367,7 +348,6 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
         onClose()
       }}
       title={getTitle()}
-      description={getDescription()}
       icon={dialogIcon}
       width="sm"
       // Above SettingsDialog (z-[100]): this dialog opens FROM the About
@@ -419,10 +399,17 @@ export function ServerUpgradeDialog({ open, onClose }: ServerUpgradeDialogProps)
           </div>
         )}
 
-        {/* Progress bar — the header description already names the phase,
-            so only the byte counter sits under the bar. */}
+        {/* Up-to-date note */}
+        {stage === 'idle' && check && !check.available && (
+          <p className="text-xs text-muted-foreground">{t('settings:alreadyUpToDate')}</p>
+        )}
+
+        {/* Progress bar */}
         {(stage === 'upgrading' || stage === 'restarting') && (
           <div className="space-y-2">
+            {stage === 'upgrading' && (
+              <p className="text-xs text-muted-foreground">{phaseMessage()}</p>
+            )}
             <Progress value={getProgressPercent()} className="h-1.5" />
             {stage === 'upgrading' && total > 0 && (
               <div className="flex justify-end text-xs tabular-nums text-muted-foreground">

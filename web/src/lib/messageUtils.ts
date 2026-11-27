@@ -86,6 +86,7 @@ export function mergeMessagesForDisplay(rawMessages: Message[]): Message[] {
     let roundContents: Record<number, string> = {}
     let roundThinking: Record<number, string> = {}
     let systemNotes: string[] = []
+    const attachmentMap = new Map<string, NonNullable<Message['attachments']>[number]>()
     let roundCounter = 1
     let finalContent = ''
     let thinking: string | undefined
@@ -139,6 +140,13 @@ export function mergeMessagesForDisplay(rawMessages: Message[]): Message[] {
         if (raw.system_notes) {
           systemNotes = [...systemNotes, ...raw.system_notes]
         }
+        if (Array.isArray(cur.attachments)) {
+          for (const att of cur.attachments) {
+            if (att && typeof att === 'object' && typeof att.id === 'string') {
+              attachmentMap.set(att.id, att)
+            }
+          }
+        }
       }
 
       if (hasTools) {
@@ -168,8 +176,9 @@ export function mergeMessagesForDisplay(rawMessages: Message[]): Message[] {
     merged.systemNotes = systemNotes.length > 0 ? systemNotes : undefined
     merged.goalStatus = goalStatus
     merged.endReason = endReason
+    merged.attachments = attachmentMap.size > 0 ? [...attachmentMap.values()] : undefined
 
-    if (merged.content || merged.thinking || merged.tool_calls) {
+    if (merged.content || merged.thinking || merged.tool_calls || merged.attachments) {
       result.push(merged)
     }
 

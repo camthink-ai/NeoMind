@@ -33,8 +33,6 @@ export interface UnifiedFormDialogProps {
   onOpenChange: (open: boolean) => void
   /** Dialog title */
   title: string
-  /** Optional description below title */
-  description?: string
   /** Optional icon displayed next to title */
   icon?: ReactNode
   /** Dialog width on desktop */
@@ -87,7 +85,6 @@ export function UnifiedFormDialog({
   open,
   onOpenChange,
   title,
-  description,
   icon,
   width = 'md',
   fullScreenOnMobile = true,
@@ -208,6 +205,7 @@ export function UnifiedFormDialog({
       {showCancelButton && (
         <Button
           variant="outline"
+          size="sm"
           onClick={handleClose}
           disabled={isSubmitting && preventCloseOnSubmit}
           className="min-w-[80px]"
@@ -218,6 +216,7 @@ export function UnifiedFormDialog({
       {footerPrefix}
       {onSubmit && (
         <Button
+          size="sm"
           onClick={handleSubmit}
           disabled={isDisabled}
           className="min-w-[80px]"
@@ -286,9 +285,6 @@ export function UnifiedFormDialog({
               className={cn("flex-1 overflow-y-auto overflow-x-hidden", contentClassName)}
             >
               <div className="space-y-4 p-4">
-                {description && (
-                  <p className="text-sm leading-6 text-muted-foreground">{description}</p>
-                )}
                 {loading ? (
                   <div className="flex items-center justify-center py-8">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -373,24 +369,19 @@ export function UnifiedFormDialog({
           // such as a table row's onRowClick.
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Header */}
-          <div className="flex items-center justify-between gap-2 px-6 py-4 border-b shrink-0">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
+          {/* Header — matched h-14 (56px) with footer for visual balance */}
+          <div className="flex h-14 items-center justify-between gap-2 border-b border-border px-6 shrink-0">
+            <div className="flex items-center gap-2.5 flex-1 min-w-0">
               {icon && <span className="text-muted-foreground shrink-0">{icon}</span>}
               <div className="min-w-0 flex-1">
-                <h2 id={titleId} className="text-lg font-semibold leading-none truncate">{title}</h2>
-                {/* Desktop used to drop the description entirely (only the
-                    mobile branch rendered it) — confirm dialogs that put
-                    their whole message here showed an empty body. */}
-                {description && (
-                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{description}</p>
-                )}
+                <h2 id={titleId} className="text-base font-semibold leading-none truncate">{title}</h2>
               </div>
             </div>
             <button
+              type="button"
               onClick={handleClose}
               disabled={isSubmitting && preventCloseOnSubmit}
-              className="inline-flex items-center justify-center rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none shrink-0"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:pointer-events-none shrink-0"
             >
               <X className="h-4 w-4" />
               <span className="sr-only">{t('close', 'Close')}</span>
@@ -426,7 +417,7 @@ export function UnifiedFormDialog({
               different from the white body. border-t alone separates
               content from actions (same approach as the mobile footer). */}
           {footerContent && (
-            <div className="flex items-center justify-end gap-2 px-6 py-4 border-t shrink-0">
+            <div className="flex h-14 items-center justify-end gap-2 border-t border-border px-6 shrink-0">
               {footerContent}
             </div>
           )}

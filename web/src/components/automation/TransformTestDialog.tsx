@@ -132,7 +132,6 @@ export function TransformTestDialog({ open, onOpenChange, transformId, devices }
       open={open}
       onOpenChange={onOpenChange}
       title={t('automation:testTransform', { defaultValue: 'Test Transform' })}
-      description={t('automation:testTransformDesc', { defaultValue: 'Test your transform with sample data to verify it produces the expected virtual metrics.' })}
       icon={<Play className="h-5 w-5 text-primary" />}
       width="2xl"
       preventCloseOnSubmit={false}

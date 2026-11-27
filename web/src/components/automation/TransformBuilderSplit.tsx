@@ -1366,7 +1366,6 @@ export function TransformBuilder({
       onOpenChange={onOpenChange}
       accent="emerald"
       title={isEditMode ? tBuilder('editTitle') : tBuilder('title')}
-      subtitle={tBuilder('desc')}
       icon={<Code className="h-5 w-5" />}
       statusIndicator={statusIndicator}
       config={config}

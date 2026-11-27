@@ -14,7 +14,9 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { useTranslation } from "react-i18next"
 import { Loader2, Info, Pencil } from "lucide-react"
 import type {
+  ChatAttachment,
   ChatImage,
+  ChatReference,
   GoalEvidenceLevel,
   Message,
   StreamEndReason,
@@ -33,6 +35,7 @@ import { UserMessageContent } from "./UserMessageContent"
 import { ThinkingBlock } from "./ThinkingBlock"
 import { TurnTimeline } from "./TurnTimeline"
 import { CopyMessageButton } from "./CopyMessageButton"
+import { MessageAttachments } from "./attachments"
 import { ZoomableImage } from "@/components/shared/ZoomableImage"
 
 interface ChatMessagesProps {
@@ -65,6 +68,18 @@ interface ChatMessagesProps {
    */
   onReuseUserMessage?: (message: Message) => void
   /**
+   * Append an entity reference into the active composer as an inline @-chip
+   * (triggered from reply attachment cards/chips or detail dialog).
+   */
+  onAttachReference?: (ref: ChatReference) => void
+  /**
+   * Optional desktop in-flow split inspector handler (used on /chat desktop).
+   * When omitted (mobile or PanelChatView), clicks open EntityDetailDialog.
+   */
+  onInspectAttachment?: (attachment: ChatAttachment) => void
+  /** Currently inspected attachment ID for subtle active highlighting. */
+  activeAttachmentId?: string | null
+  /**
    * In-thread context compaction status (manual or auto). Prefer this over
    * toast popups so the chat itself shows waiting / done.
    */
@@ -93,7 +108,7 @@ function MessageImages({ images }: { images: ChatImage[] }) {
             src={src}
             alt={t("chat:image.alt", { index: idx + 1 })}
             className={images.length === 1 ? "my-0" : "my-0 block w-full"}
-            imgClassName={images.length === 1 ? "max-h-64" : "max-h-48 w-full object-cover"}
+            imgClassName={images.length === 1 ? "max-h-72" : "h-40 w-full object-cover"}
           />
         )
       })}
@@ -117,6 +132,9 @@ export function ChatMessages({
   loadingEarlier,
   onLoadEarlier,
   onReuseUserMessage,
+  onAttachReference,
+  onInspectAttachment,
+  activeAttachmentId,
   contextAction = null,
 }: ChatMessagesProps) {
   const { t } = useTranslation("chat")
@@ -378,6 +396,20 @@ export function ChatMessages({
                       </>
                     )
                   })()}
+                  {/* Server-extracted structured attachments (fallback media /
+                      compact result cards / lightweight entity chips).
+                      Only dedupe images against final markdown `message.content`
+                      because `round_contents` renders as plain text inside a
+                      collapsible timeline (never as <img>). */}
+                  {message.role === 'assistant' && !isCurrentlyStreaming && message.attachments && message.attachments.length > 0 && (
+                    <MessageAttachments
+                      attachments={message.attachments}
+                      content={message.content}
+                      onAttachReference={onAttachReference}
+                      onInspectAttachment={onInspectAttachment}
+                      activeAttachmentId={activeAttachmentId}
+                    />
+                  )}
                   {/* Runtime guard notes (incomplete action, guard budget
                       spent): system callouts, clearly not model speech —
                       single-language, styled apart from the content. */}

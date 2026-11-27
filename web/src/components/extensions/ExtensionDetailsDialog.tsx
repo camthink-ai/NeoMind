@@ -1130,7 +1130,6 @@ export function ExtensionDetailsDialog({
       <FullScreenDialogHeader
         icon={<Zap className="h-5 w-5" />}
         title={extension.name}
-        subtitle={`v${extension.version}`}
         onClose={handleClose}
       />
 

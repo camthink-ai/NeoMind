@@ -65,7 +65,7 @@ function cloudAiCardType(t: (k: string) => string): UnifiedPluginType {
     name: t('plugins:llm.protocol.cloudai.name'),
     description: t('plugins:llm.protocol.cloudai.desc'),
     icon: <Cloud className="h-6 w-6" />,
-    color: 'bg-accent-indigo-light text-accent-indigo',
+    color: 'bg-muted-30 border border-border text-foreground',
     config_schema: { type: 'object', properties: {} },
     can_add_multiple: true,
     builtin: false,
@@ -84,53 +84,55 @@ interface UnifiedLLMBackendsTabProps {
 }
 
 // LLM Provider icon and color config (names are internationalized via getLlmProviderInfo)
+const NEUTRAL_PROVIDER_ICON_BG = 'bg-muted-30 border border-border text-foreground'
+
 const LLM_PROVIDER_CONFIG: Record<string, {
   icon: React.ReactNode
   iconBg: string
 }> = {
   ollama: {
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-success-light text-success dark:bg-success-light dark:text-success',
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
   openai: {
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-accent-emerald-light text-accent-emerald',
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
   anthropic: {
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-muted text-foreground',
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
   google: {
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-info-light text-info',
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
   xai: {
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-muted text-foreground',
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
   qwen: {
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-accent-indigo-light text-accent-indigo',
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
   deepseek: {
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-accent-cyan-light text-accent-cyan',
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
   glm: {
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-accent-purple-light text-accent-purple',
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
   minimax: {
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-accent-indigo-light text-accent-indigo',
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
   llamacpp: {
-    icon: <Server className="h-6 w-6" />,
-    iconBg: 'bg-accent-indigo-light text-accent-indigo',
+    icon: <Server className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
   cloudai: {
-    icon: <Cloud className="h-6 w-6" />,
-    iconBg: 'bg-accent-indigo-light text-accent-indigo',
+    icon: <Cloud className="h-5 w-5" strokeWidth={1.75} />,
+    iconBg: NEUTRAL_PROVIDER_ICON_BG,
   },
 }
 
@@ -685,71 +687,159 @@ export function UnifiedLLMBackendsTab({
         : null
     const builtinInfo = builtinStatus ? getBuiltinStatusInfo(builtinStatus, t) : null
     const builtinCard = builtinStatus && builtinInfo ? (
-      <Card
-        className={cn(
-          'mb-4 transition-all duration-normal',
-          builtinIsActive && 'border-success'
-        )}
-      >
-        {/* ── Zone 1 · identity: ONE status voice (the engine pill), the
-            model NAME as the title, category demoted to the subline. */}
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2.5">
-            {/* Identity tile — accent-indigo like every sibling backend card.
-                Warning-yellow misused the "attention" semantic on a healthy
-                engine's identity icon. */}
-            <div className="flex items-center justify-center h-8 w-8 rounded-lg shrink-0 bg-accent-indigo-light text-accent-indigo">
-              <BrainCircuit className="h-4 w-4" />
+      <Card className="mb-4 rounded-xl border border-border transition-colors">
+        <CardContent className="p-4 space-y-3">
+          {/* ── Top Row: Identity + Primary Actions (eliminates heavy bottom toolbar) */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted-30 text-foreground">
+                <BrainCircuit className="h-4 w-4" strokeWidth={1.75} />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="truncate text-sm font-semibold text-foreground">
+                    {installedModelName ?? t('plugins:llm.builtinTitle')}
+                  </h3>
+                  {builtinStatus.installed && builtinStatus.server_state !== 'downloading' ? (
+                    <span
+                      className={cn(
+                        'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
+                        builtinStatus.server_state === 'running'
+                          ? 'bg-success-light text-success'
+                          : builtinStatus.deliberately_stopped
+                            ? 'bg-warning-light text-warning'
+                            : 'bg-muted-30 text-muted-foreground',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'h-1.5 w-1.5 rounded-full',
+                          builtinStatus.server_state === 'running'
+                            ? 'bg-success'
+                            : builtinStatus.deliberately_stopped
+                              ? 'bg-warning'
+                              : 'bg-muted-foreground',
+                        )}
+                      />
+                      {builtinStatus.server_state === 'running'
+                        ? (builtinIsActive ? t('plugins:llm.active') : t('plugins:llm.companionRunning'))
+                        : builtinStatus.deliberately_stopped
+                          ? t('plugins:llm.builtinStopped')
+                          : t('plugins:llm.companionStopped')}
+                    </span>
+                  ) : (
+                    <span
+                      className={cn(
+                        'inline-flex h-5 shrink-0 items-center gap-1 rounded-full px-2 text-[11px] font-medium',
+                        builtinInfo.pillClass,
+                      )}
+                    >
+                      {builtinInfo.text}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {t('plugins:llm.builtinDesc')}
+                </p>
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 min-w-0">
-                <CardTitle className="text-sm font-medium truncate min-w-0">
-                  {installedModelName ?? t('plugins:llm.builtinTitle')}
-                </CardTitle>
-                {builtinIsActive && (
-                  <Badge variant="default" className={cn(badgeSize.small, 'shrink-0')}>
-                    {t('plugins:llm.active')}
-                  </Badge>
+
+            {/* Inline Actions */}
+            {builtinStatus.server_state !== 'downloading' && (
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                {!builtinStatus.installed ? (
+                  <Button size="sm" onClick={() => handleBuiltinAction('download')} disabled={!!builtinBusyAction}>
+                    {builtinBusyAction === 'download'
+                      ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                      : <Download className="mr-1.5 h-3.5 w-3.5" />}
+                    {t('plugins:llm.builtinDownload')}
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setWizardStartInPicker(true)
+                        setWizardOpen(true)
+                      }}
+                      disabled={!!builtinBusyAction}
+                    >
+                      {t('plugins:llm.switchModel')}
+                    </Button>
+                    {builtinStatus.deliberately_stopped ? (
+                      <Button
+                        size="sm"
+                        onClick={() => handleBuiltinAction('restart')}
+                        disabled={!!builtinBusyAction}
+                      >
+                        {builtinBusyAction === 'restart'
+                          ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          : <Play className="mr-1.5 h-3.5 w-3.5" />}
+                        {t('plugins:llm.builtinStart')}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleBuiltinAction('stop')}
+                        disabled={!!builtinBusyAction || builtinStatus.server_state !== 'running'}
+                      >
+                        {builtinBusyAction === 'stop'
+                          ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          : <Power className="mr-1.5 h-3.5 w-3.5" />}
+                        {t('plugins:llm.builtinStop')}
+                      </Button>
+                    )}
+                    {!builtinIsActive && (
+                      <Button
+                        size="sm"
+                        onClick={() => handleBuiltinAction('activate')}
+                        disabled={!!builtinBusyAction || builtinStatus.server_state !== 'running'}
+                      >
+                        {builtinBusyAction === 'activate'
+                          ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          : <Zap className="mr-1.5 h-3.5 w-3.5" />}
+                        {t('plugins:llm.builtinActivate')}
+                      </Button>
+                    )}
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      title={t('plugins:llm.builtinDelete')}
+                      aria-label={t('plugins:llm.builtinDelete')}
+                      className="text-muted-foreground hover:bg-error-light hover:text-error"
+                      onClick={() => handleBuiltinAction('delete')}
+                      disabled={!!builtinBusyAction}
+                    >
+                      {builtinBusyAction === 'delete'
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <Trash2 className="h-3.5 w-3.5" />}
+                    </Button>
+                  </>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground truncate">
-                {t('plugins:llm.builtinDesc')}
-              </p>
-            </div>
-            {/* Card-level pill speaks only for states without an engine row
-                (downloading / not configured); once the engine zone renders,
-                the per-row pills are the single voice. */}
-            {!(builtinStatus.installed && builtinStatus.server_state !== 'downloading') && (
-              <span
-                className={cn(
-                  'inline-flex h-5 items-center gap-1 px-2 rounded-md text-xs font-medium shrink-0',
-                  builtinInfo.pillClass,
-                )}
-              >
-                {builtinInfo.text}
-              </span>
             )}
           </div>
-        </CardHeader>
 
-        <CardContent className="pb-3 space-y-3">
+          {/* Alerts / Download Progress */}
           {builtinStatus.server_state === 'downloading' && (
-            <div className="space-y-1">
-              <Progress value={builtinInfo.percent ?? 0} />
+            <div className="space-y-1.5 rounded-lg border border-border bg-muted-20 p-3">
+              <Progress value={builtinInfo.percent ?? 0} className="h-1.5" />
               <p className="text-xs text-muted-foreground">{builtinInfo.text}</p>
             </div>
           )}
           {builtinStatus.server_state === 'error' && builtinStatus.error && (
-            <div className="flex items-start gap-2 rounded-md bg-error-light px-3 py-2 text-error">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2 rounded-lg border border-error bg-error-light px-3 py-2 text-error">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span className="text-xs leading-snug break-all" title={builtinStatus.error}>
                 {t('plugins:llm.builtinEngineError', { message: builtinStatus.error })}
               </span>
             </div>
           )}
           {builtinStatus.installed && builtinStatus.memory_ok === false && (
-            <div className="flex items-start gap-2 rounded-md bg-warning-light px-3 py-2 text-warning">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2 rounded-lg border border-warning bg-warning-light px-3 py-2 text-warning">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span className="text-xs leading-snug">
                 {t('plugins:llm.builtinMemLowInstalled', {
                   min: ((builtinStatus.min_ram_mb ?? 0) / 1024).toFixed(0),
@@ -759,58 +849,21 @@ export function UnifiedLLMBackendsTab({
             </div>
           )}
 
-          {/* ── Zone 2 · engines: main + companion as the SAME row template
-              inside one bordered list — siblings by structure, not by prose. */}
-          {builtinStatus.installed && builtinStatus.server_state !== 'downloading' && (
-            <div className="rounded-md border border-border divide-y divide-border">
-              <div className="flex h-9 items-center gap-2 px-3">
-                {/* Identity icon — accent-indigo, matching the card tile above.
-                    State lives in the pill on the right, not the icon hue. */}
-                <BrainCircuit className="h-3.5 w-3.5 shrink-0 text-accent-indigo" />
-                <span className="w-28 shrink-0 truncate text-xs font-medium">
-                  {t('plugins:llm.builtinMainEngine')}
-                </span>
-                <span
-                  className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-                  title={gpuTitle(builtinStatus.gpu_offload)}
-                >
-                  {installedModelName ?? builtinStatus.model_id} · ctx {fmtCtx(builtinStatus.ctx ?? builtinStatus.default_ctx)}
-                  {builtinStatus.kv_cache && ` · KV ${builtinStatus.kv_cache}`}
-                  {builtinStatus.parallel != null && ` · ×${builtinStatus.parallel}`}
-                  {gpuSeg(builtinStatus.gpu_offload)}
-                </span>
-                {/* Same status pill template as the companion row below. */}
-                <span
-                  className={cn(
-                    badgeSize.small,
-                    'shrink-0 rounded font-medium',
-                    builtinStatus.server_state === 'running'
-                      ? 'bg-success-light text-success'
-                      : builtinStatus.deliberately_stopped
-                        ? 'bg-warning-light text-warning'
-                        : 'bg-muted text-muted-foreground',
-                  )}
-                >
-                  {builtinStatus.server_state === 'running'
-                    ? t('plugins:llm.companionRunning')
-                    : builtinStatus.deliberately_stopped
-                      ? t('plugins:llm.builtinStopped')
-                      : t('plugins:llm.companionStopped')}
-                </span>
+          {/* ── Compact Metadata Strip: subtle inline chips for Engine / Vision / Runtime */}
+          {((builtinStatus.installed && builtinStatus.server_state !== 'downloading') || builtinStatus.runtime) && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-glass-border pt-2.5 text-xs">
+              {builtinStatus.installed && builtinStatus.server_state !== 'downloading' && (
                 <button
-                  className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
-                  title={t('plugins:llm.builtinEngineSettings')}
+                  type="button"
                   disabled={!!builtinBusyAction}
+                  title={`${t('plugins:llm.builtinEngineSettings')} · ${gpuTitle(builtinStatus.gpu_offload) ?? ''}`}
                   onClick={() => {
                     const cur = builtinStatus.ctx_override ?? builtinStatus.ctx ?? builtinStatus.default_ctx ?? 32768
                     const presets = BUILTIN_CTX_PRESETS
-                    // Off-preset values (256K, 4096, env pins) open in custom
-                    // mode instead of silently snapping to the nearest tier.
                     const onPreset = presets.includes(cur)
                     setCtxCustomMode(!onPreset)
                     setCtxCustomText(onPreset ? '' : String(cur))
                     setCtxDialogInput(onPreset ? cur : null)
-                    // A pinned GPU layer shows as the pin; auto/planned stays auto.
                     const gpu = builtinStatus.gpu_offload
                     const gpuPinned = gpu?.ngl != null && (gpu.note ?? '').includes('pinned')
                     setNglMode(gpuPinned ? 'custom' : 'auto')
@@ -819,192 +872,75 @@ export function UnifiedLLMBackendsTab({
                     setKvInput(builtinStatus.kv_cache === 'f16' ? 'f16' : 'q8_0')
                     setCtxDialogOpen(true)
                   }}
+                  className="inline-flex h-7 min-h-0 max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted-20 px-2.5 text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground disabled:opacity-50"
                 >
-                  <Settings2 className="h-3 w-3" />
+                  <span className="font-medium text-foreground">{t('plugins:llm.builtinMainEngine')}</span>
+                  <span className="truncate font-mono text-[11px]">
+                    ctx {fmtCtx(builtinStatus.ctx ?? builtinStatus.default_ctx)}
+                    {builtinStatus.kv_cache && ` · ${builtinStatus.kv_cache}`}
+                    {gpuSeg(builtinStatus.gpu_offload)}
+                  </span>
+                  <Settings2 className="h-3 w-3 shrink-0 opacity-65" />
                 </button>
-              </div>
-              {builtinStatus.companion && (
-                <div className="flex h-9 items-center gap-2 px-3">
-                  <Eye className="h-3.5 w-3.5 shrink-0 text-accent-indigo" />
-                  <span className="w-28 shrink-0 truncate text-xs font-medium">
-                    {t('plugins:llm.companionLabel')}
-                  </span>
-                  <span
-                    className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-                    title={gpuTitle(builtinStatus.companion.gpu_offload)}
-                  >
-                    {builtinStatus.companion.name} · ctx {fmtCtx(builtinStatus.companion.ctx)}
-                    {builtinStatus.companion.kv_cache && ` · KV ${builtinStatus.companion.kv_cache}`}
-                    {builtinStatus.companion.parallel != null && ` · ×${builtinStatus.companion.parallel}`}
-                    {gpuSeg(builtinStatus.companion.gpu_offload)}
-                  </span>
+              )}
+
+              {builtinStatus.installed && builtinStatus.server_state !== 'downloading' && builtinStatus.companion && (
+                <button
+                  type="button"
+                  title={`${t('plugins:llm.companionSettings')} · ${builtinStatus.companion.name}`}
+                  onClick={() => {
+                    const cur = builtinStatus.companion?.ctx ?? 32768
+                    const onPreset = BUILTIN_CTX_PRESETS.includes(cur)
+                    setVlmCustomMode(!onPreset)
+                    setVlmCustomText(onPreset ? '' : String(cur))
+                    setVlmDialogInput(onPreset ? cur : null)
+                    const gpu = builtinStatus.companion?.gpu_offload
+                    const gpuPinned = gpu?.ngl != null && (gpu.note ?? '').includes('pinned')
+                    setVlmNglMode(gpuPinned ? 'custom' : 'auto')
+                    setVlmNglText(gpuPinned ? String(gpu!.ngl) : '')
+                    setVlmKvInput('q8_0')
+                    setVlmDialogOpen(true)
+                  }}
+                  className="inline-flex h-7 min-h-0 max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted-20 px-2.5 text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground"
+                >
                   <span
                     className={cn(
-                      badgeSize.small,
-                      'shrink-0 rounded font-medium',
-                      builtinStatus.companion.running
-                        ? 'bg-success-light text-success'
-                        : 'bg-muted text-muted-foreground',
+                      'h-1.5 w-1.5 shrink-0 rounded-full',
+                      builtinStatus.companion.running ? 'bg-success' : 'bg-muted-foreground',
                     )}
-                  >
-                    {builtinStatus.companion.running
-                      ? t('plugins:llm.companionRunning')
-                      : t('plugins:llm.companionStopped')}
+                  />
+                  <span className="font-medium text-foreground">{t('plugins:llm.companionLabel')}</span>
+                  <span className="max-w-[140px] truncate font-mono text-[11px]">
+                    {builtinStatus.companion.name}
                   </span>
-                  <button
-                    className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-                    title={t('plugins:llm.companionSettings')}
-                    onClick={() => {
-                      const cur = builtinStatus.companion?.ctx ?? 32768
-                      const onPreset = BUILTIN_CTX_PRESETS.includes(cur)
-                      setVlmCustomMode(!onPreset)
-                      setVlmCustomText(onPreset ? '' : String(cur))
-                      setVlmDialogInput(onPreset ? cur : null)
-                      const gpu = builtinStatus.companion?.gpu_offload
-                      const gpuPinned = gpu?.ngl != null && (gpu.note ?? '').includes('pinned')
-                      setVlmNglMode(gpuPinned ? 'custom' : 'auto')
-                      setVlmNglText(gpuPinned ? String(gpu!.ngl) : '')
-                      setVlmKvInput('q8_0')
-                      setVlmDialogOpen(true)
-                    }}
-                  >
-                    <Settings2 className="h-3 w-3" />
-                  </button>
-                </div>
+                  <Settings2 className="h-3 w-3 shrink-0 opacity-65" />
+                </button>
+              )}
+
+              {builtinStatus.runtime && (
+                <button
+                  type="button"
+                  title={builtinStatus.runtime.active.path ?? t('plugins:llm.runtimeSettings')}
+                  onClick={() => setRuntimeDialogOpen(true)}
+                  className="inline-flex h-7 min-h-0 max-w-full items-center gap-1.5 rounded-lg border border-border bg-muted-20 px-2.5 text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground"
+                >
+                  <span className="font-medium text-foreground">{t('plugins:llm.runtimeLabel')}</span>
+                  <span className="truncate font-mono text-[11px]">
+                    {(builtinStatus.runtime.override_variant ?? builtinStatus.runtime.detected_variant).toUpperCase()} · {builtinStatus.runtime.active.tag}
+                  </span>
+                  {builtinStatus.runtime.upgrading ? (
+                    <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                  ) : builtinStatus.runtime.update_available ? (
+                    <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-medium leading-none text-primary-foreground">
+                      {t('plugins:llm.runtimeUpdateBadge')}
+                    </span>
+                  ) : (
+                    <Settings2 className="h-3 w-3 shrink-0 opacity-65" />
+                  )}
+                </button>
               )}
             </div>
           )}
-
-          {/* ── Zone 2b · llama.cpp runtime row (newer backends; absent on
-              old servers — the row simply doesn't render). Same row template
-              as the engines list above. */}
-          {builtinStatus.runtime && (
-            <div className="rounded-md border border-border divide-y divide-border">
-              <div className="flex h-9 items-center gap-2 px-3">
-                <Cpu className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span className="w-28 shrink-0 truncate text-xs font-medium">
-                  {t('plugins:llm.runtimeLabel')}
-                </span>
-                <span
-                  className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
-                  title={builtinStatus.runtime.active.path ?? undefined}
-                >
-                  {(builtinStatus.runtime.override_variant ?? builtinStatus.runtime.detected_variant).toUpperCase()}
-                  {' · '}
-                  <span className="font-mono">{builtinStatus.runtime.active.tag}</span>
-                  {builtinStatus.runtime.channel === 'unreachable' && ` · ${t('plugins:llm.runtimeChannelUnreachableShort')}`}
-                </span>
-                {builtinStatus.runtime.upgrading ? (
-                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-                ) : builtinStatus.runtime.update_available ? (
-                  <button
-                    // h-5 is load-bearing: the global 44px touch-target rule
-                    // inflates any <button> without an h-* class (h-4/h-5 are
-                    // in its exemption list) and overflows the h-9 row.
-                    className={cn(
-                      badgeSize.small,
-                      'flex h-5 shrink-0 items-center gap-1 rounded bg-primary px-1.5 font-medium text-primary-foreground hover:opacity-90',
-                    )}
-                    onClick={() => setRuntimeDialogOpen(true)}
-                  >
-                    <Download className="h-3 w-3" />
-                    {t('plugins:llm.runtimeUpdateBadge')}
-                  </button>
-                ) : null}
-                <button
-                  className="grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-                  title={t('plugins:llm.runtimeSettings')}
-                  onClick={() => setRuntimeDialogOpen(true)}
-                >
-                  <Settings2 className="h-3 w-3" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ── Zone 3 · actions: navigation left, state + destructive right. */}
-          <div className="flex flex-wrap items-center gap-2">
-            {builtinStatus.server_state === 'downloading' ? (
-              null
-            ) : !builtinStatus.installed ? (
-              <Button size="sm" onClick={() => handleBuiltinAction('download')} disabled={!!builtinBusyAction}>
-                {builtinBusyAction === 'download'
-                  ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  : <Download className="mr-1.5 h-3.5 w-3.5" />}
-                {t('plugins:llm.builtinDownload')}
-              </Button>
-            ) : (
-              <>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setWizardStartInPicker(true)
-                    setWizardOpen(true)
-                  }}
-                  disabled={!!builtinBusyAction}
-                >
-                  <Download className="mr-1.5 h-3.5 w-3.5" />
-                  {t('plugins:llm.switchModel')}
-                </Button>
-                <div className="ml-auto flex items-center gap-2">
-                  {builtinStatus.deliberately_stopped ? (
-                    // Start = restart with no params: it clears the persisted
-                    // stop flag and spawns (main + companion).
-                    <Button
-                      size="sm"
-                      onClick={() => handleBuiltinAction('restart')}
-                      disabled={!!builtinBusyAction}
-                    >
-                      {builtinBusyAction === 'restart'
-                        ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                        : <Play className="mr-1.5 h-3.5 w-3.5" />}
-                      {t('plugins:llm.builtinStart')}
-                    </Button>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleBuiltinAction('stop')}
-                      disabled={!!builtinBusyAction || builtinStatus.server_state !== 'running'}
-                    >
-                      {builtinBusyAction === 'stop'
-                        ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                        : <Power className="mr-1.5 h-3.5 w-3.5" />}
-                      {t('plugins:llm.builtinStop')}
-                    </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    onClick={() => handleBuiltinAction('activate')}
-                    // Activate only makes sense while the bundled server is
-                    // healthy — activating a stopped server would point chat
-                    // at a dead endpoint.
-                    disabled={!!builtinBusyAction || builtinIsActive || builtinStatus.server_state !== 'running'}
-                    variant={builtinIsActive ? 'secondary' : 'default'}
-                  >
-                    {builtinBusyAction === 'activate'
-                      ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                      : builtinIsActive
-                        ? <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-                        : <Zap className="mr-1.5 h-3.5 w-3.5" />}
-                    {builtinIsActive ? t('plugins:llm.builtinActive') : t('plugins:llm.builtinActivate')}
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => handleBuiltinAction('delete')}
-                    disabled={!!builtinBusyAction}
-                    variant="destructive"
-                  >
-                    {builtinBusyAction === 'delete'
-                      ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                      : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
-                    {t('plugins:llm.builtinDelete')}
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
         </CardContent>
       </Card>
     ) : null
@@ -1162,10 +1098,7 @@ export function UnifiedLLMBackendsTab({
             return (
               <Card
                 key={pid}
-                className={cn(
-                  "cursor-pointer transition-all duration-normal hover:shadow-md",
-                  hasActive && "border-success border-2"
-                )}
+                className="cursor-pointer transition-all duration-normal hover:border-border-hover hover:shadow-sm"
                 onClick={() => {
                   setSelectedType(toUnifiedPluginType(type, t))
                   setView('detail')
@@ -1179,7 +1112,8 @@ export function UnifiedLLMBackendsTab({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <CardTitle className="text-base truncate min-w-0">{protocolName}</CardTitle>
-                        <span className={cn("text-xs font-medium shrink-0", statusClass)}>
+                        <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium shrink-0", statusClass)}>
+                          {hasActive && <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />}
                           {statusLabel}
                         </span>
                       </div>
@@ -1219,10 +1153,7 @@ export function UnifiedLLMBackendsTab({
                 : 'text-muted-foreground'
             return (
               <Card
-                className={cn(
-                  "cursor-pointer transition-all duration-normal hover:shadow-md",
-                  hasActive && "border-success border-2"
-                )}
+                className="cursor-pointer transition-all duration-normal hover:border-border-hover hover:shadow-sm"
                 onClick={() => {
                   setSelectedType(cloudAiCardType(t))
                   setView('detail')
@@ -1230,13 +1161,14 @@ export function UnifiedLLMBackendsTab({
               >
                 <CardContent className="p-4">
                   <div className="flex items-start gap-3">
-                    <div className="flex items-center justify-center h-10 w-10 rounded-lg shrink-0 bg-accent-indigo-light text-accent-indigo">
-                      <Cloud className="h-5 w-5" />
+                    <div className="flex items-center justify-center h-10 w-10 rounded-lg shrink-0 border border-border bg-muted-30 text-foreground">
+                      <Cloud className="h-5 w-5" strokeWidth={1.75} />
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
                         <CardTitle className="text-base truncate min-w-0">{t('plugins:llm.protocol.cloudai.name')}</CardTitle>
-                        <span className={cn("text-xs font-medium shrink-0", statusClass)}>
+                        <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium shrink-0", statusClass)}>
+                          {hasActive && <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden="true" />}
                           {statusLabel}
                         </span>
                       </div>
@@ -1603,7 +1535,7 @@ export function UnifiedLLMBackendsTab({
     // card the user clicked, not from the per-vendor i18n key.
     const displayName = isCloudAi ? selectedType.name : info.name
     const displayIcon = isCloudAi ? selectedType.icon : info.icon
-    const displayIconBg = isCloudAi ? 'bg-accent-indigo-light text-accent-indigo' : info.iconBg
+    const displayIconBg = isCloudAi ? NEUTRAL_PROVIDER_ICON_BG : info.iconBg
     // Editing inside Cloud AI needs the concrete protocol type (its config
     // schema + per-type dialog behavior) — the synthetic 'cloudai' type has
     // no schema. Resolve from the instance's backend_type; also covers

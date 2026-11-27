@@ -113,12 +113,9 @@ export function AlertsMenu({
         </>
       )}
       {compact && unreadCount > 0 && (
-        <Badge
-          variant="destructive"
-          className="absolute -top-0.5 -right-0.5 h-5 min-w-5 px-1 flex items-center justify-center text-xs"
-        >
+        <span className="absolute right-0.5 top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-error px-1 text-[10px] font-semibold leading-none tabular-nums text-white ring-2 ring-background">
           {unreadCount > 99 ? "99+" : unreadCount}
-        </Badge>
+        </span>
       )}
     </Button>
   )
@@ -171,8 +168,8 @@ export function AlertsMenu({
         {/* Body */}
         {alerts.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary-light text-primary mb-3">
-              <Bell className="h-6 w-6" />
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-muted-30 text-muted-foreground">
+              <Bell className="h-5 w-5" strokeWidth={1.75} />
             </div>
             <p className="text-sm font-medium">{t("alerts.noAlerts")}</p>
             <p className="text-xs text-muted-foreground mt-1">

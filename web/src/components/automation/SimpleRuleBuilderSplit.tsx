@@ -1647,7 +1647,6 @@ export function SimpleRuleBuilderSplit({
       accent="indigo"
       mobileConfigLabel={t('automation:ruleBuilder.config')}
       title={rule ? t('automation:ruleBuilder.editRule') : t('automation:newRule')}
-      subtitle={t('automation:ruleBuilder.subtitle')}
       icon={<Zap className="h-5 w-5" />}
       statusIndicator={
         <span className="flex items-center gap-1.5 text-xs text-muted-foreground">

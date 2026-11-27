@@ -8,6 +8,7 @@
 export interface DashboardResponse {
   id: string
   name: string
+  description?: string
   layout: {
     columns: number
     rows: number | 'auto'

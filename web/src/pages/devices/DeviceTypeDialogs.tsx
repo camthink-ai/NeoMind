@@ -903,7 +903,6 @@ function DataDefinitionStep({
         open={showImportDialog}
         onOpenChange={setShowImportDialog}
         title={t('devices:metricEditor.jsonDialogTitle')}
-        description={t('devices:metricEditor.jsonDialogDesc')}
         width="md"
         className="z-[110]"
         contentClassName="space-y-4"
@@ -1963,7 +1962,6 @@ export function ViewDeviceTypeDialog({ open, onOpenChange, deviceType }: ViewDev
       open={open}
       onOpenChange={onOpenChange}
       title={deviceType.name}
-      description={t('devices:types.viewDescription')}
       width="3xl"
       contentClassName="flex-1 overflow-y-auto"
       footer={
@@ -2364,7 +2362,6 @@ export function CloudImportDialog({ open, onOpenChange, onImportComplete }: Clou
       <FullScreenDialogHeader
         icon={<Download className="h-5 w-5" />}
         title={t('devices:cloud.importTitle', "从云端导入设备类型")}
-        subtitle={t('devices:cloud.importDescription', "选择需要的设备类型快速添加到系统")}
         onClose={() => onOpenChange(false)}
       />
       <FullScreenDialogContent>

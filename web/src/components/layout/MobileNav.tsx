@@ -21,10 +21,10 @@ import { useNavigate, useLocation } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import {
   Bell,
+  Box,
   MessageSquare,
-  Bot,
-  Cpu,
-  LayoutDashboard,
+  Sparkles,
+  LayoutGrid,
   Workflow,
   Database,
   Puzzle,
@@ -71,9 +71,9 @@ interface NavEntry {
 
 const BASE_PRIMARY: NavEntry[] = [
   { id: "chat", path: "/chat", icon: MessageSquare, labelKey: "nav.dashboard" },
-  { id: "agents", path: "/agents", icon: Bot, labelKey: "nav.agents" },
-  { id: "devices", path: "/devices", icon: Cpu, labelKey: "nav.devices" },
-  { id: "dashboard", path: "/visual-dashboard", icon: LayoutDashboard, labelKey: "nav.visual-dashboard" },
+  { id: "agents", path: "/agents", icon: Sparkles, labelKey: "nav.agents" },
+  { id: "devices", path: "/devices", icon: Box, labelKey: "nav.devices" },
+  { id: "dashboard", path: "/visual-dashboard", icon: LayoutGrid, labelKey: "nav.visual-dashboard" },
 ]
 
 const SYSTEM_ENTRIES: NavEntry[] = [

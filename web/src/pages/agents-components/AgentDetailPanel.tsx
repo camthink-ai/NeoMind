@@ -532,17 +532,17 @@ export function AgentDetailPanel({
             </div>
           </div>
         ) : (
-        <ScrollArea className="h-0 min-h-0 flex-1 bg-muted-20">
+        <ScrollArea className="h-0 min-h-0 flex-1 bg-muted-20 [&>[data-radix-scroll-area-viewport]>div]:!block">
           <div className={cn(
-            "space-y-5",
+            "min-w-0 max-w-full space-y-5 overflow-x-hidden",
             isMobile ? "px-3 py-3" : "px-5 py-4"
           )}>
             {section === 'overview' && (
-              <div className="space-y-6">
+              <div className="min-w-0 space-y-6">
                 {/* ═══════════════════════════════════════════════════════════
                     ZONE 1: Runtime Posture (status, stats, explain-last, output)
                     ═══════════════════════════════════════════════════════════ */}
-                <section className="space-y-3" data-zone="runtime-posture">
+                <section className="min-w-0 space-y-3" data-zone="runtime-posture">
                   <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                     <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       {t('agents:detailZones.runtimePosture')}
@@ -574,7 +574,7 @@ export function AgentDetailPanel({
                   </div>
 
                   {/* Compact 4-column runtime stats */}
-                  <div className="rounded-xl border border-border bg-card p-3.5">
+                  <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-3.5">
                     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                       <div>
                         <div className="text-base font-semibold tabular-nums leading-tight">{formatCount(totalRuns)}</div>
@@ -658,24 +658,24 @@ export function AgentDetailPanel({
                                   {isLongValue ? (
                                     <div className="min-w-0 space-y-1">
                                       <div className="flex min-w-0 items-baseline gap-2">
-                                        <span className="shrink-0 font-mono text-xs font-medium text-foreground">{f.name}</span>
+                                        <span className="max-w-full truncate font-mono text-xs font-medium text-foreground">{f.name}</span>
                                         {f.description && (
-                                          <span className="truncate text-xs text-muted-foreground">{f.description}</span>
+                                          <span className="min-w-0 truncate text-xs text-muted-foreground">{f.description}</span>
                                         )}
                                       </div>
-                                      <div className="whitespace-pre-wrap break-words text-xs font-medium leading-relaxed text-foreground">
+                                      <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-xs font-medium leading-relaxed text-foreground">
                                         {latestText}
                                       </div>
                                     </div>
                                   ) : (
                                     <div className="flex min-w-0 items-start justify-between gap-3">
                                       <div className="flex min-w-0 items-baseline gap-2">
-                                        <span className="shrink-0 font-mono text-xs font-medium text-foreground">{f.name}</span>
+                                        <span className="truncate font-mono text-xs font-medium text-foreground">{f.name}</span>
                                         {f.description && (
-                                          <span className="truncate text-xs text-muted-foreground">{f.description}</span>
+                                          <span className="min-w-0 truncate text-xs text-muted-foreground">{f.description}</span>
                                         )}
                                       </div>
-                                      <span className="min-w-0 break-words text-right text-xs font-semibold tabular-nums text-foreground">
+                                      <span className="min-w-0 break-words [overflow-wrap:anywhere] text-right text-xs font-semibold tabular-nums text-foreground">
                                         {latestText}
                                       </span>
                                     </div>
@@ -714,26 +714,26 @@ export function AgentDetailPanel({
                 {/* ═══════════════════════════════════════════════════════════
                     ZONE 2: Active Contract (prompt, 2-col config grid, inputs, collapsible plan)
                     ═══════════════════════════════════════════════════════════ */}
-                <section className="space-y-3" data-zone="active-contract">
+                <section className="min-w-0 space-y-3" data-zone="active-contract">
                   <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     {t('agents:detailZones.activeContract')}
                   </div>
 
                   {/* Mission Prompt */}
-                  <div className="rounded-xl border border-border bg-card p-3.5">
+                  <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-3.5">
                     <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      <FileText className="h-3.5 w-3.5" />
+                      <FileText className="h-3.5 w-3.5 shrink-0" />
                       {t('agents:userPrompt')}
                     </h4>
-                    <div className="text-sm leading-relaxed whitespace-pre-wrap break-words text-foreground">
+                    <div className="text-sm leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-foreground">
                       {agent.user_prompt || t('agents:card.noDescription')}
                     </div>
                   </div>
 
                   {/* Compact 2-column Contract Grid */}
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <div className="grid min-w-0 gap-3 md:grid-cols-2">
                     {/* Card 1: Trigger & Pacing */}
-                    <div className="rounded-xl border border-border bg-card p-3.5 space-y-2">
+                    <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-3.5 space-y-2">
                       <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         <Gauge className="h-3.5 w-3.5" />
                         {t('agents:detailZones.triggerAndPacing')}
@@ -783,7 +783,7 @@ export function AgentDetailPanel({
                     </div>
 
                     {/* Card 2: Model & Tool Policy */}
-                    <div className="rounded-xl border border-border bg-card p-3.5 space-y-2">
+                    <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-3.5 space-y-2">
                       <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         <Shield className="h-3.5 w-3.5" />
                         {t('agents:detailZones.modelAndTools')}
@@ -832,7 +832,7 @@ export function AgentDetailPanel({
                     </div>
 
                     {/* Card 3: Notification Policy */}
-                    <div className="rounded-xl border border-border bg-card p-3.5 space-y-2">
+                    <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-3.5 space-y-2">
                       <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         <Bell className="h-3.5 w-3.5" />
                         {t('agents:detail.notifyPolicy')}
@@ -855,7 +855,7 @@ export function AgentDetailPanel({
                     </div>
 
                     {/* Card 4: Controlled Actions */}
-                    <div className="rounded-xl border border-border bg-card p-3.5 space-y-2">
+                    <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-3.5 space-y-2">
                       <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                         <Workflow className="h-3.5 w-3.5" />
                         {t('agents:detail.controlledActions')} ({controlledActions.length})
@@ -883,24 +883,24 @@ export function AgentDetailPanel({
                   </div>
 
                   {/* Input Requirements (compact 2-col grid) */}
-                  <div className="rounded-xl border border-border bg-card p-3.5 space-y-2.5">
+                  <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card p-3.5 space-y-2.5">
                     <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      <Zap className="h-3.5 w-3.5" />
+                      <Zap className="h-3.5 w-3.5 shrink-0" />
                       {t('agents:detail.inputRequirements')} ({inputRequirements.length})
                     </h4>
                     {inputRequirements.length === 0 ? (
                       <p className="text-xs text-muted-foreground">{t('agents:detail.noInputs')}</p>
                     ) : (
-                      <div className="grid gap-2 md:grid-cols-2">
+                      <div className="grid min-w-0 gap-2 md:grid-cols-2">
                         {inputRequirements.map((req) => (
-                          <div key={req.key} className="rounded-lg border border-border bg-muted-20 px-3 py-2">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="font-mono text-xs font-medium text-foreground">{req.key}</span>
+                          <div key={req.key} className="min-w-0 overflow-hidden rounded-lg border border-border bg-muted-20 px-3 py-2">
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                              <span className="max-w-full truncate font-mono text-xs font-medium text-foreground">{req.key}</span>
                               <span className="min-w-0 truncate font-mono text-xs text-muted-foreground">
                                 {formatInputSource(req.source)}
                                 {req.operation ? ` / ${req.operation}` : ''}
                               </span>
-                              <Badge variant="outline" className="ml-auto h-4 px-1 text-[10px]">
+                              <Badge variant="outline" className="ml-auto h-4 shrink-0 px-1 text-[10px]">
                                 {req.result_type}
                               </Badge>
                             </div>
@@ -921,39 +921,39 @@ export function AgentDetailPanel({
                   {/* Collapsible Effective Plan (auto-open when warnings exist) */}
                   {effectivePlan && (
                     <Collapsible open={planOpen} onOpenChange={setPlanOpen}>
-                      <div className="rounded-xl border border-dashed border-border bg-muted-20">
+                      <div className="min-w-0 overflow-hidden rounded-xl border border-dashed border-border bg-muted-20">
                         <CollapsibleTrigger asChild>
                           <button
                             type="button"
-                            className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left"
+                            className="flex w-full min-w-0 items-center justify-between gap-2 px-3.5 py-2.5 text-left"
                           >
-                            <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              <Sparkles className="h-3.5 w-3.5" />
-                              {t('agents:detail.effectivePlan')}
+                            <span className="flex min-w-0 items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                              <span className="truncate">{t('agents:detail.effectivePlan')}</span>
                               {effectivePlan.warnings && effectivePlan.warnings.length > 0 && (
-                                <Badge variant="outline" className="ml-1 h-4 border-warning/40 px-1 text-[10px] text-warning">
+                                <Badge variant="outline" className="ml-1 h-4 shrink-0 border-warning px-1 text-[10px] text-warning">
                                   {effectivePlan.warnings.length}
                                 </Badge>
                               )}
                             </span>
                             <ChevronDown
                               className={cn(
-                                'h-4 w-4 text-muted-foreground transition-transform',
+                                'h-4 w-4 shrink-0 text-muted-foreground transition-transform',
                                 planOpen && 'rotate-180',
                               )}
                             />
                           </button>
                         </CollapsibleTrigger>
-                        <CollapsibleContent className="space-y-2.5 border-t border-border px-3.5 pb-3.5 pt-2.5">
+                        <CollapsibleContent className="min-w-0 space-y-2.5 border-t border-border px-3.5 pb-3.5 pt-2.5">
                           <InfoRow label={t('agents:detail.trigger')} value={effectivePlan.trigger_summary} mono />
                           {effectivePlan.authorized_reads.length > 0 && (
-                            <div className="space-y-1">
+                            <div className="min-w-0 space-y-1">
                               <div className="text-xs text-muted-foreground">
                                 {t('agents:detail.authorizedReads')} ({effectivePlan.authorized_reads.length})
                               </div>
-                              <ul className="space-y-0.5">
+                              <ul className="min-w-0 space-y-0.5">
                                 {effectivePlan.authorized_reads.map((read) => (
-                                  <li key={read.key} className="font-mono text-xs text-muted-foreground">
+                                  <li key={read.key} className="break-all font-mono text-xs text-muted-foreground">
                                     {read.key} → {read.source_id}
                                     {read.operation ? ` / ${read.operation}` : ''}
                                   </li>
@@ -962,12 +962,12 @@ export function AgentDetailPanel({
                             </div>
                           )}
                           {effectivePlan.warnings && effectivePlan.warnings.length > 0 && (
-                            <div className="space-y-1 rounded-md border border-warning/40 bg-warning/5 px-3 py-2">
+                            <div className="min-w-0 space-y-1 rounded-md border border-warning bg-warning-light px-3 py-2">
                               <div className="flex items-center gap-1.5 text-xs font-medium text-warning">
                                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                                 {t('agents:detail.planWarnings')}
                               </div>
-                              <ul className="space-y-0.5 text-xs text-warning">
+                              <ul className="space-y-0.5 break-words text-xs text-warning">
                                 {effectivePlan.warnings.map((w, idx) => (
                                   <li key={idx}>{w}</li>
                                 ))}
@@ -1055,9 +1055,14 @@ interface InfoRowProps {
 
 function InfoRow({ label, value, mono }: InfoRowProps) {
   return (
-    <div className="flex items-baseline justify-between gap-3 py-1">
+    <div className="flex min-w-0 items-baseline justify-between gap-3 py-1">
       <span className="shrink-0 text-xs text-muted-foreground">{label}</span>
-      <span className={cn("truncate text-sm font-medium", mono && "font-mono")}>{value}</span>
+      <span
+        className={cn("min-w-0 truncate text-right text-sm font-medium", mono && "font-mono")}
+        title={String(value)}
+      >
+        {value}
+      </span>
     </div>
   )
 }
@@ -1079,7 +1084,7 @@ function KnowledgeFileCard({
   const hasContent = file.content && file.content.trim().length > 0
 
   return (
-    <div className="rounded-lg bg-card border border-border hover:border-foreground/30 transition-colors overflow-hidden">
+    <div className="rounded-lg bg-card border border-border hover:border-border-hover transition-colors overflow-hidden">
       <button
         type="button"
         className="w-full p-3 text-left flex items-center justify-between gap-2"
@@ -1221,7 +1226,7 @@ function MemoryContent({ memory, loading }: MemoryContentProps) {
         >
           <div className="space-y-2">
             {journalRecords.map((record: JournalExecutionRecord, idx: number) => (
-              <div key={idx} className="group rounded-lg border border-border bg-card hover:border-foreground/25 transition-colors">
+              <div key={idx} className="group rounded-lg border border-border bg-card hover:border-border-hover transition-colors">
                 <div className="pl-4 pr-3 py-3">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">

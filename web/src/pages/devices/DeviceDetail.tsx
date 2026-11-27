@@ -678,11 +678,11 @@ export function DeviceDetail({
                         key={metricDef.name}
                         onClick={() => handleMetricCardClick(metricDef.name)}
                         className={cn(
-                          "group rounded-lg text-left shadow-sm transition-all duration-normal hover:shadow-md",
-                          isMobile ? "p-3 active:scale-[0.99]" : "p-6 hover:scale-[1.02]",
+                          "group rounded-xl border text-left transition-all duration-normal hover:border-border-hover hover:shadow-sm",
+                          isMobile ? "p-3.5 active:scale-[0.99]" : "p-5",
                           isVirtual
-                            ? "bg-muted border-border hover:border-border"
-                            : "bg-card border-border hover:border-border"
+                            ? "border-dashed border-border bg-muted-20"
+                            : "border-border bg-card"
                         )}
                       >
                         <div className="flex items-start justify-between">
@@ -692,9 +692,9 @@ export function DeviceDetail({
                                 {metricDef.display_name || metricDef.name}
                               </p>
                               {isVirtual && (
-                                <Badge variant="outline" className="text-xs px-1.5 py-0 shrink-0">
+                                <span className="inline-flex shrink-0 items-center rounded-md border border-border bg-card px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                                   {t('devices:detailPage.virtual')}
-                                </Badge>
+                                </span>
                               )}
                             </div>
                             <div className="text-sm break-all leading-relaxed overflow-hidden line-clamp-3" title={typeof value === 'string' ? value : JSON.stringify(value)}>
@@ -705,11 +705,11 @@ export function DeviceDetail({
                             </div>
                           </div>
                           {isVirtual ? (
-                            <Zap className="h-5 w-5 text-muted-foreground group-hover:text-accent-purple transition-colors shrink-0 ml-2" />
+                            <Zap className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors shrink-0 ml-2" strokeWidth={1.75} />
                           ) : hasImage ? (
-                            <ImageIcon className="h-5 w-5 text-muted-foreground group-hover:text-muted-foreground transition-colors shrink-0 ml-2" />
+                            <ImageIcon className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors shrink-0 ml-2" strokeWidth={1.75} />
                           ) : (
-                            <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-muted-foreground transition-colors shrink-0 ml-2" />
+                            <ChevronRight className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors shrink-0 ml-2" strokeWidth={1.75} />
                           )}
                         </div>
                       </button>
@@ -770,38 +770,83 @@ export function DeviceDetail({
         </div>
       </div>
 
-      {/* Metric History Dialog */}
-      <FullScreenDialog open={metricHistoryOpen} onOpenChange={(open) => {
-        setMetricHistoryOpen(open)
-        if (!open) onMetricBack()
-      }}>
-        <FullScreenDialogHeader
-          icon={<Clock className="h-5 w-5" />}
-          iconBg="bg-accent-indigo-light"
-          iconColor="text-accent-indigo"
-          title={selectedMetric ? getMetricDisplayName(selectedMetric) : t('devices:detailPage.metricHistory')}
-          onClose={() => { setMetricHistoryOpen(false); onMetricBack() }}
-        />
-        <FullScreenDialogContent>
-          <FullScreenDialogMain className="overflow-hidden">
-            <div className="h-full flex flex-col">
-              <div className="flex-1 overflow-y-auto px-4 py-4">
-                <ResponsiveTable
-                  columns={metricHistoryColumns}
-                  data={currentMetricData as unknown as Record<string, unknown>[]}
-                  renderCell={renderMetricHistoryCell}
-                  rowKey={(row) => String((row as { timestamp: number }).timestamp)}
-                  loading={telemetryLoading}
-                  flexHeight={false}
-                  emptyState={
-                    <EmptyState
-                      title={t('devices:detailPage.noHistoryData')}
-                    />
-                  }
-                />
-              </div>
+      {/* Metric History Dialog — compact centered modal with summary stats */}
+      <UnifiedFormDialog
+        open={metricHistoryOpen}
+        onOpenChange={(open) => {
+          setMetricHistoryOpen(open)
+          if (!open) onMetricBack()
+        }}
+        title={selectedMetric ? getMetricDisplayName(selectedMetric) : t('devices:detailPage.metricHistory')}
+        icon={<Clock className="h-4 w-4 text-foreground shrink-0" strokeWidth={1.75} />}
+        width="xl"
+        hideFooter
+      >
+        {(() => {
+          const numericValues = currentMetricData
+            .map((row) => (typeof row.value === 'number' ? row.value : Number(row.value)))
+            .filter((n) => Number.isFinite(n))
+          const latestVal = currentMetricData[0]?.value
+          const hasStats = numericValues.length > 0
+          const minVal = hasStats ? Math.min(...numericValues) : null
+          const maxVal = hasStats ? Math.max(...numericValues) : null
+          const avgVal = hasStats
+            ? numericValues.reduce((a, b) => a + b, 0) / numericValues.length
+            : null
+          const fmtNum = (n: number | null) =>
+            n === null ? '—' : Number.isInteger(n) ? String(n) : Number(n.toFixed(2)).toString()
+
+          return (
+            <div className="space-y-4">
+              {currentMetricData.length > 0 && (
+                <div className={cn("grid gap-2.5", hasStats ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-2")}>
+                  <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
+                    <div className="text-xs text-muted-foreground">{t('common:latest', { defaultValue: 'Latest' })}</div>
+                    <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">
+                      {latestVal === undefined || latestVal === null ? '—' : String(latestVal)}
+                    </div>
+                  </div>
+                  {hasStats && (
+                    <>
+                      <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
+                        <div className="text-xs text-muted-foreground">{t('common:average', { defaultValue: 'Avg' })}</div>
+                        <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{fmtNum(avgVal)}</div>
+                      </div>
+                      <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
+                        <div className="text-xs text-muted-foreground">{t('common:min', { defaultValue: 'Min' })}</div>
+                        <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{fmtNum(minVal)}</div>
+                      </div>
+                      <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
+                        <div className="text-xs text-muted-foreground">{t('common:max', { defaultValue: 'Max' })}</div>
+                        <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{fmtNum(maxVal)}</div>
+                      </div>
+                    </>
+                  )}
+                  {!hasStats && (
+                    <div className="rounded-xl border border-border bg-muted-20 px-3.5 py-2.5">
+                      <div className="text-xs text-muted-foreground">{t('common:total', { defaultValue: 'Records' })}</div>
+                      <div className="mt-0.5 truncate text-sm font-semibold tabular-nums text-foreground">{totalCount}</div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <ResponsiveTable
+                columns={metricHistoryColumns}
+                data={currentMetricData as unknown as Record<string, unknown>[]}
+                renderCell={renderMetricHistoryCell}
+                rowKey={(row) => String((row as { timestamp: number }).timestamp)}
+                loading={telemetryLoading}
+                flexHeight={false}
+                emptyState={
+                  <EmptyState
+                    title={t('devices:detailPage.noHistoryData')}
+                  />
+                }
+              />
+
               {totalCount > PAGE_SIZE && (
-                <div className="border-t px-4 py-3">
+                <div className="border-t border-glass-border pt-3">
                   <Pagination
                     total={totalCount}
                     pageSize={PAGE_SIZE}
@@ -812,9 +857,9 @@ export function DeviceDetail({
                 </div>
               )}
             </div>
-          </FullScreenDialogMain>
-        </FullScreenDialogContent>
-      </FullScreenDialog>
+          )
+        })()}
+      </UnifiedFormDialog>
 
       {/* Image Preview Dialog */}
       <Dialog open={imagePreviewOpen} onOpenChange={setImagePreviewOpen}>

@@ -5,12 +5,37 @@ export type ChatContentNode =
   | { kind: 'text'; text: string }
   | {
       kind: 'reference'
-      type: 'device' | 'rule' | 'transform' | 'agent'
+      type: 'device' | 'rule' | 'transform' | 'agent' | 'dashboard'
       id: string
       labelSnapshot: string
     }
 
 export const CHAT_CONTENT_VERSION_V1 = 1 as const
+
+export type ChatAttachmentKind = 'image' | 'device' | 'rule' | 'transform' | 'agent' | 'dashboard'
+export type ChatAttachmentAction = 'queried' | 'created' | 'updated' | 'executed' | 'deleted'
+export type ChatAttachmentDisplay = 'media' | 'card' | 'chip'
+
+export interface ChatAttachmentStatus {
+  label: string
+  tone: 'ok' | 'warn' | 'error' | 'muted' | 'running'
+}
+
+/** Server-extracted structured reply attachment (v1). Never parsed from LLM prose. */
+export interface ChatAttachment {
+  id: string
+  version: number
+  kind: ChatAttachmentKind
+  action: ChatAttachmentAction
+  display: ChatAttachmentDisplay
+  entityId?: string
+  title: string
+  subtitle?: string
+  status?: ChatAttachmentStatus
+  imageUrl?: string
+  deepLink?: string
+  snapshot: Record<string, unknown>
+}
 
 export interface Message {
   id: string
@@ -38,6 +63,8 @@ export interface Message {
   endReason?: StreamEndReason
   /** Inline-@ nodes for history display (client optimistic + future server). */
   contentNodes?: ChatContentNode[]
+  /** Server-extracted structured reply attachments (media / cards / chips). */
+  attachments?: ChatAttachment[]
 }
 
 /** Evidence ladder from the backend (snake_case wire tags). */
@@ -238,6 +265,8 @@ export type ServerMessage =
       /** System-judged goal status — `not_applicable` ≠ verified success. */
       goalStatus?: SystemGoalStatus
       endReason?: StreamEndReason
+      /** Server-extracted structured reply attachments finalized on End. */
+      attachments?: ChatAttachment[]
     }
   // Cancel acknowledged (server-side reply to __CANCEL__); no trailing
   // 'end' is guaranteed on this path, so stream state must reset HERE.
@@ -274,7 +303,7 @@ export interface ChatImage {
 /// A structured object reference attached by the composer (@-mention).
 /// The id is authoritative; the label is display-only and may go stale.
 export interface ChatReference {
-  type: 'device' | 'rule' | 'transform' | 'agent'
+  type: 'device' | 'rule' | 'transform' | 'agent' | 'dashboard'
   id: string
   label?: string
 }

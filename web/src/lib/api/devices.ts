@@ -5,8 +5,10 @@ import { fetchAPI } from "./client"
 export const devicesApi = {
   // Devices
   getDevices: () => fetchAPI<{ devices: Device[]; count: number }>('/devices'),
-  getDevice: (id: string) => fetchAPI<Device>(`/devices/${id}`),
-  getDeviceCurrent: (id: string) => fetchAPI<DeviceCurrentStateResponse>(`/devices/${id}/current`),
+  getDevice: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<Device>(`/devices/${id}`, options),
+  getDeviceCurrent: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<DeviceCurrentStateResponse>(`/devices/${id}/current`, options),
   getDevicesCurrentBatch: (deviceIds: string[], signal?: AbortSignal) =>
     fetchAPI<BatchCurrentValuesResponse>('/devices/current-batch', {
       method: 'POST',

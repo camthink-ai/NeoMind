@@ -1141,16 +1141,17 @@ export default function MessagesPage() {
                 />
               ) : (
                 channels.map((channel) => {
+                  const neutralChannelIcon = 'border border-border bg-muted-30 text-foreground'
                   const config: Record<string, { icon: typeof Bell; color: string }> = {
-                    console: { icon: Bell, color: 'bg-muted text-muted-foreground' },
-                    memory: { icon: RefreshCw, color: 'bg-info-light text-info' },
-                    webhook: { icon: Megaphone, color: 'bg-success-light text-success' },
-                    email: { icon: Bell, color: 'bg-accent-purple-light text-accent-purple' },
-                    telegram: { icon: Send, color: 'bg-accent-blue-light text-accent-blue' },
-                    wecom: { icon: MessageSquare, color: 'bg-success-light text-success' },
-                    dingtalk: { icon: MessageCircle, color: 'bg-accent-blue-light text-accent-blue' },
-                    slack: { icon: Hash, color: 'bg-accent-orange-light text-accent-orange' },
-                    feishu: { icon: MessagesSquare, color: 'bg-accent-purple-light text-accent-purple' },
+                    console: { icon: Bell, color: neutralChannelIcon },
+                    memory: { icon: RefreshCw, color: neutralChannelIcon },
+                    webhook: { icon: Megaphone, color: neutralChannelIcon },
+                    email: { icon: Bell, color: neutralChannelIcon },
+                    telegram: { icon: Send, color: neutralChannelIcon },
+                    wecom: { icon: MessageSquare, color: neutralChannelIcon },
+                    dingtalk: { icon: MessageCircle, color: neutralChannelIcon },
+                    slack: { icon: Hash, color: neutralChannelIcon },
+                    feishu: { icon: MessagesSquare, color: neutralChannelIcon },
                   }
                   const channelConfig = config[channel.channel_type] || config.console
                   const ChannelIcon = channelConfig.icon
@@ -1171,7 +1172,7 @@ export default function MessagesPage() {
                             <div className="flex min-w-0 items-center gap-2">
                               <span className="min-w-0 flex-1 truncate text-sm font-medium">{channel.name}</span>
                               <span className={cn(textNano, "inline-flex shrink-0 items-center gap-1 text-muted-foreground")}>
-                                <span className={cn("h-1.5 w-1.5 rounded-full", channel.enabled ? "bg-success" : "bg-muted-foreground/50")} />
+                                <span className={cn("h-1.5 w-1.5 rounded-full", channel.enabled ? "bg-success" : "bg-muted-foreground")} />
                                 {channel.enabled ? t('enabled') : t('disabled')}
                               </span>
                             </div>
@@ -1219,16 +1220,17 @@ export default function MessagesPage() {
             onRowClick={(row: MessageChannel) => handleViewChannel(row.name)}
             renderCell={(columnKey, rowData) => {
               const channel = rowData
+              const neutralChannelIcon = 'border border-border bg-muted-30 text-foreground'
               const config: Record<string, { icon: typeof Bell; color: string }> = {
-                console: { icon: Bell, color: 'bg-muted text-muted-foreground' },
-                memory: { icon: RefreshCw, color: 'bg-info-light text-info' },
-                webhook: { icon: Megaphone, color: 'bg-success-light text-success' },
-                email: { icon: Bell, color: 'bg-accent-purple-light text-accent-purple' },
-                telegram: { icon: Send, color: 'bg-accent-blue-light text-accent-blue' },
-                wecom: { icon: MessageSquare, color: 'bg-success-light text-success' },
-                dingtalk: { icon: MessageCircle, color: 'bg-accent-blue-light text-accent-blue' },
-                slack: { icon: Hash, color: 'bg-accent-orange-light text-accent-orange' },
-                feishu: { icon: MessagesSquare, color: 'bg-accent-purple-light text-accent-purple' },
+                console: { icon: Bell, color: neutralChannelIcon },
+                memory: { icon: RefreshCw, color: neutralChannelIcon },
+                webhook: { icon: Megaphone, color: neutralChannelIcon },
+                email: { icon: Bell, color: neutralChannelIcon },
+                telegram: { icon: Send, color: neutralChannelIcon },
+                wecom: { icon: MessageSquare, color: neutralChannelIcon },
+                dingtalk: { icon: MessageCircle, color: neutralChannelIcon },
+                slack: { icon: Hash, color: neutralChannelIcon },
+                feishu: { icon: MessagesSquare, color: neutralChannelIcon },
               }
               const channelConfig = config[channel.channel_type] || config.console
               const ChannelIcon = channelConfig.icon
@@ -1685,7 +1687,6 @@ export default function MessagesPage() {
         open={!!viewChannel}
         onOpenChange={(open) => !open && setViewChannel(null)}
         title={t('messages.channels.channelDetails', 'Channel Details')}
-        description={viewChannel?.name || ''}
         icon={<Network className="h-5 w-5" />}
         width="md"
         showCancelButton={false}
@@ -1803,7 +1804,6 @@ export default function MessagesPage() {
           }
         }}
         title={t('messages.channels.manageRecipients', 'Manage Recipients')}
-        description={recipientsDialogChannel?.name || ''}
         icon={<Mail className="h-5 w-5" />}
         width="sm"
         loading={loadingRecipients}
@@ -1885,7 +1885,6 @@ export default function MessagesPage() {
         open={!!filterDialogChannel}
         onOpenChange={(open) => !open && setFilterDialogChannel(null)}
         title={t('messages.channels.filterConfig', 'Filter Configuration')}
-        description={t('messages.channels.filterConfigDesc', 'Configure which messages this channel should receive')}
         icon={<FilterIcon className="h-5 w-5" />}
         width="md"
         onSubmit={handleSaveFilter}

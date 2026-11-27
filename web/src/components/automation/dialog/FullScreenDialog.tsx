@@ -119,13 +119,10 @@ export interface FullScreenDialogHeaderProps {
   iconBg?: string
   /** @deprecated */
   iconColor?: string
-  /** Secondary line under the title. Omitted on the compact mobile header. */
-  subtitle?: string
 }
 
 export function FullScreenDialogHeader({
   title,
-  subtitle,
   onClose,
   actions,
 }: FullScreenDialogHeaderProps) {
@@ -153,14 +150,11 @@ export function FullScreenDialogHeader({
   }
 
   return (
-    <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2.5 md:px-6">
+    <header className="flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border px-4 md:px-6">
       <div className="min-w-0 flex-1">
         <h1 id={titleId} className="truncate text-base font-semibold text-foreground md:text-lg">
           {title}
         </h1>
-        {subtitle && (
-          <p className="truncate text-xs text-muted-foreground">{subtitle}</p>
-        )}
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {actions}
@@ -218,7 +212,7 @@ export function FullScreenDialogFooter({
     <footer
       className={cn(
         "shrink-0 flex items-center justify-end gap-2 md:gap-3",
-        "px-3 md:px-5 lg:px-6 py-3 md:py-4",
+        "px-3 py-3 md:h-14 md:px-6 md:py-0",
         "border-t border-border",
         "max-md:[&>button]:min-h-11 max-md:[&>button]:flex-1",
         "max-md:[&>button]:rounded-xl",

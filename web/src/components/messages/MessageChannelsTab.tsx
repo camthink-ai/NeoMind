@@ -408,7 +408,6 @@ export function MessageChannelsTab({
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         title={t('messages.channels.createTitle')}
-        description={t('messages.channels.createDescription')}
         width="sm"
         onSubmit={handleCreateChannel}
         submitDisabled={!newChannelName.trim()}

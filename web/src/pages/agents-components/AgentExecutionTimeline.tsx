@@ -269,7 +269,7 @@ export function AgentExecutionTimeline({
                           // Status color stays on the dot/badge; the card body
                           // is a neutral surface (large success-green fills read
                           // as "everything is fine" noise).
-                          isExpanded ? "border-foreground/20" : "border-border hover:bg-muted-30"
+                          isExpanded ? "border-border-hover" : "border-border hover:bg-muted-30"
                         )}
                       >
                         {/* Header - Always Visible. Status only — a failure

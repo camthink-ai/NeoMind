@@ -47,7 +47,7 @@ export function inlineDocToContentNodes(doc: InlineDoc): ChatContentNode[] {
   })
 }
 
-const REF_TYPES = new Set(["device", "rule", "transform", "agent"])
+const REF_TYPES = new Set(["device", "rule", "transform", "agent", "dashboard"])
 
 /**
  * Coerce API / optimistic / draft payloads into typed ChatContentNode[].
@@ -74,7 +74,7 @@ export function normalizeContentNodes(raw: unknown): ChatContentNode[] | undefin
       if (typeof type === "string" && REF_TYPES.has(type) && typeof id === "string" && id) {
         out.push({
           kind: "reference",
-          type: type as "device" | "rule" | "transform" | "agent",
+          type: type as "device" | "rule" | "transform" | "agent" | "dashboard",
           id,
           labelSnapshot: labelRaw.slice(0, MAX_LABEL_CHARS),
         })

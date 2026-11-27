@@ -13,6 +13,7 @@ import { MobilePageHeader } from "@/components/layout/MobilePageHeader"
 import { SessionSidebar } from "@/components/session/SessionSidebar"
 import { WelcomeArea } from "@/components/chat/WelcomeArea"
 import { ChatMessages } from "@/components/chat/ChatMessages"
+import { EntityInspectorPane } from "@/components/chat/attachments"
 import { ChatComposer } from "@/components/chat/ChatComposer"
 import { ChatScrollPill } from "@/components/chat/ChatScrollPill"
 import { ConnectionStatus } from "@/components/chat/ConnectionStatus"
@@ -21,12 +22,14 @@ import { api } from "@/lib/api"
 import { mentionKey, resolveMentions } from "@/lib/api/mentions"
 import type {
   AuthorizeNewOperationRequest,
+  ChatAttachment,
   ChatContentNode,
   ChatImage,
   ChatReference,
   Message,
 } from "@/types"
 import {
+  clearSessionDraft,
   contentNodesToComposerFields,
   loadSessionDraft,
   markDraftForRetry,
@@ -51,6 +54,7 @@ import { getSessionDisplayTitle } from "@/lib/utils/sessionTitle"
 import { normalizeTimestampMs } from "@/lib/utils/format"
 import { useErrorHandler } from "@/hooks/useErrorHandler"
 import { LoadingState } from "@/components/shared"
+import { ErrorBoundary } from "@/components/shared/ErrorBoundary"
 import { forceViewportReset } from "@/hooks/useVisualViewport"
 import { useToast } from "@/hooks/use-toast"
 import { LlmSetupGuide } from "@/components/llm/LlmSetupGuide"
@@ -200,6 +204,16 @@ export function ChatPage() {
   // Responsive
   const isDesktop = useIsDesktop()
 
+  // Desktop /chat in-flow split side inspector (cleared on session switch / mobile).
+  const [inspectedAttachment, setInspectedAttachment] = useState<ChatAttachment | null>(null)
+  useEffect(() => {
+    setInspectedAttachment(null)
+  }, [urlSessionId, isDesktop])
+
+  const handleInspectAttachment = useCallback((att: ChatAttachment) => {
+    setInspectedAttachment((prev) => (prev?.id === att.id ? null : att))
+  }, [])
+
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -308,6 +322,7 @@ export function ChatPage() {
         systemNotes: result.systemNotes,
         goalStatus: result.goalStatus,
         endReason: result.endReason,
+        attachments: result.attachments,
       }
       addMessage(completeMessage)
       setLastAssistantMessageId(result.id)
@@ -471,6 +486,7 @@ export function ChatPage() {
     } else {
       // Navigated to /chat (welcome mode) — clear stale messages from previous session
       clearMessages()
+      setInspectedAttachment(null)
       setLastTokenUsage(null)
     }
     // Restore the persisted per-session usage (falls back to estimate if absent)
@@ -508,8 +524,10 @@ export function ChatPage() {
     if (prev === target) return
     if (prev !== null) {
       // Switching conversations: park the old draft, never inherit it.
+      // Ignore a bare "@" left over from peeking at the mention menu.
       const cur = composerDraftRef.current
-      if (cur.input !== "" || cur.references.length > 0 || cur.nodes.length > 0) {
+      const isBareAtOnly = cur.input.trim() === "@" && cur.references.length === 0
+      if (!isBareAtOnly && (cur.input !== "" || cur.references.length > 0 || cur.nodes.length > 0)) {
         saveSessionDraft({
           sessionId: prev,
           message: cur.input,
@@ -517,6 +535,8 @@ export function ChatPage() {
           contentNodes: cur.nodes.length > 0 ? cur.nodes : undefined,
           updatedAt: Date.now(),
         })
+      } else if (isBareAtOnly) {
+        clearSessionDraft(prev)
       }
       setInput("")
       setChatReferences([])
@@ -525,7 +545,13 @@ export function ChatPage() {
     // ?q= onboarding prefill wins over a restored draft.
     if (searchParams.get("q")) return
     const draft = loadSessionDraft(target)
-    if (!draft || (!draft.message && draft.references.length === 0)) return
+    if (
+      !draft ||
+      (!draft.message && draft.references.length === 0) ||
+      (draft.message.trim() === "@" && draft.references.length === 0)
+    ) {
+      return
+    }
     if (prev !== null) {
       // Switch path: composer was just cleared — always restore.
       setInput(draft.message)
@@ -1365,12 +1391,54 @@ export function ChatPage() {
     })
   }, [sessionId])
 
+  // Append an entity reference from a reply attachment card/chip into the
+  // composer as an inline @-chip without overwriting existing draft text.
+  const handleAttachReference = useCallback((ref: ChatReference) => {
+    const cur = composerDraftRef.current
+    const existingNodes: ChatContentNode[] =
+      cur.nodes.length > 0
+        ? [...cur.nodes]
+        : cur.input
+          ? [{ kind: "text", text: cur.input }]
+          : []
+    const last = existingNodes[existingNodes.length - 1]
+    if (last && !(last.kind === "text" && /\s$/.test(last.text))) {
+      existingNodes.push({ kind: "text", text: " " })
+    }
+    existingNodes.push({
+      kind: "reference",
+      type: ref.type,
+      id: ref.id,
+      labelSnapshot: (ref.label || ref.id).slice(0, 128),
+    })
+    existingNodes.push({ kind: "text", text: " " })
+    const fields = contentNodesToComposerFields(existingNodes)
+    setInput(fields.message)
+    setChatReferences(fields.references)
+    setChatContentNodes(fields.contentNodes)
+    setInvalidRefs({})
+    const draftSession = sessionId || "new"
+    saveSessionDraft({
+      sessionId: draftSession,
+      message: fields.message,
+      references: fields.references,
+      contentNodes: fields.contentNodes,
+      updatedAt: Date.now(),
+    })
+    requestAnimationFrame(() => {
+      const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
+      if (pm) pm.focus()
+      else inputRef.current?.focus()
+    })
+  }, [sessionId])
+
   // Clear this session's history (server + local view), keep the session.
   const handleClearContext = async () => {
     if (!sessionId) return
     try {
       await api.clearSessionHistory(sessionId)
       clearMessages()
+      setInspectedAttachment(null)
       setLastTokenUsage(null)
       persistTokenUsage(sessionId, null)
       toast({ description: t('chat:context.clearDone') })
@@ -1434,7 +1502,7 @@ export function ChatPage() {
   return (
     <>
     <div className={cn(
-      "chat-mobile-shell fixed left-0 right-0 flex flex-row overflow-hidden bg-background",
+      "chat-mobile-shell fixed left-0 flex flex-row overflow-hidden bg-background transition-[right] duration-normal ease-out",
       // Desktop: shell owns the macOS titlebar inset. Mobile: the chat header
       // owns safe-top (same contract as MobilePageHeader) so the notch strip
       // is painted by the header token, not a second transparent pad.
@@ -1443,6 +1511,9 @@ export function ChatPage() {
       // Offset past BOTH the desktop AppSidebar and the page sidebar column
       // (sessions list, hoisted to the shell slot). Both are 0 on mobile.
       left: 'calc(var(--app-sidebar-width, 0px) + var(--page-sidebar-width, 0px))',
+      // Yield right edge to the desktop docked EntityInspectorPane via the
+      // same --dock-chat-width CSS variable used by <main> / GlobalChatFab.
+      right: isDesktop ? 'var(--dock-chat-width, 0px)' : '0px',
       // Anchor to the top of the VISIBLE area, not the layout viewport. iOS
       // PWA standalone doesn't honor `interactive-widget=resizes-content`, so
       // when the soft keyboard opens iOS scrolls the visualViewport
@@ -1687,6 +1758,9 @@ export function ChatPage() {
                 onLoadEarlier={handleLoadEarlier}
                 endRef={messagesEndRef}
                 onReuseUserMessage={handleReuseUserMessage}
+                onAttachReference={handleAttachReference}
+                onInspectAttachment={isDesktop ? handleInspectAttachment : undefined}
+                activeAttachmentId={isDesktop ? (inspectedAttachment?.id ?? null) : null}
                 contextAction={contextAction}
               />
             </div>
@@ -1775,7 +1849,38 @@ export function ChatPage() {
       </div>
     </div>
 
-    
+    {/* Desktop right-docked inspector column (same architecture as GlobalChatFab):
+        fixed inset-y-0 right-0 flush to the top & bottom edges; publishes
+        --dock-chat-width so both <main> (GlobalControlsFloating) and ChatPage
+        squeeze cleanly to the left with no backdrop overlay. */}
+    {isDesktop && !isWelcomeMode && inspectedAttachment && (
+      <ErrorBoundary
+        resetKey={inspectedAttachment.id}
+        fallback={
+          <aside className="fixed inset-y-0 right-0 z-[15] flex w-[360px] flex-col items-center justify-center gap-3 border-l border-border bg-background p-6 text-center">
+            <p className="text-sm text-muted-foreground">
+              {i18n.language?.toLowerCase().startsWith("zh")
+                ? "详情面板渲染失败"
+                : "Failed to render inspector"}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setInspectedAttachment(null)}
+            >
+              {t('common:close', 'Close')}
+            </Button>
+          </aside>
+        }
+      >
+        <EntityInspectorPane
+          attachment={inspectedAttachment}
+          onClose={() => setInspectedAttachment(null)}
+          onAttachReference={handleAttachReference}
+        />
+      </ErrorBoundary>
+    )}
     </>
   )
 }

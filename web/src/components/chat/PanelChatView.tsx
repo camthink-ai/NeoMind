@@ -193,6 +193,7 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         goalStatus: result.goalStatus,
         endReason: result.endReason,
         round_thinking: result.roundThinking,
+        attachments: result.attachments,
       })
       // Reconcile with the server's canonical history. The live assembly
       // above can diverge from what the server persisted (interleaved
@@ -602,8 +603,8 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
         if (!isStreamingRef.current) return
         hardReset()
         const content = state.errorMessage
-          ? `**${t("chat.connection.authFailed")}**\n\n${state.errorMessage}`
-          : `⚠️ ${t("chat.connection.interruptedSaved")}`
+          ? `**${t("chat:connection.authFailed")}**\n\n${state.errorMessage}`
+          : `⚠️ ${t("chat:connection.interruptedSaved")}`
         addPanelMessage({
           id: generateId(),
           role: "assistant",
@@ -1105,6 +1106,44 @@ export function PanelChatView({ onClose, onStreamingChange, showMinimize, onNavi
                 // never writes the shared welcome-mode "new" bucket (chat
                 // welcome restore reads it; a panel reuse draft surfacing
                 // there would be cross-context bleed). Skip when sessionless.
+                if (panelSessionIdRef.current) {
+                  saveSessionDraft({
+                    sessionId: panelSessionIdRef.current,
+                    message: fields.message,
+                    references: fields.references,
+                    contentNodes: fields.contentNodes,
+                    updatedAt: Date.now(),
+                  })
+                }
+                requestAnimationFrame(() => {
+                  const pm = editorHostRef.current?.querySelector<HTMLElement>(".ProseMirror")
+                  if (pm) pm.focus()
+                  else inputRef.current?.focus()
+                })
+              }}
+              onAttachReference={(ref) => {
+                const cur = panelComposerRef.current
+                const existingNodes: ChatContentNode[] =
+                  cur.nodes.length > 0
+                    ? [...cur.nodes]
+                    : cur.input
+                      ? [{ kind: "text", text: cur.input }]
+                      : []
+                const last = existingNodes[existingNodes.length - 1]
+                if (last && !(last.kind === "text" && /\s$/.test(last.text))) {
+                  existingNodes.push({ kind: "text", text: " " })
+                }
+                existingNodes.push({
+                  kind: "reference",
+                  type: ref.type,
+                  id: ref.id,
+                  labelSnapshot: (ref.label || ref.id).slice(0, 128),
+                })
+                existingNodes.push({ kind: "text", text: " " })
+                const fields = contentNodesToComposerFields(existingNodes)
+                setInput(fields.message)
+                setPanelReferences(fields.references)
+                setPanelContentNodes(fields.contentNodes)
                 if (panelSessionIdRef.current) {
                   saveSessionDraft({
                     sessionId: panelSessionIdRef.current,

@@ -5,7 +5,7 @@
  * prototype. Caps are explicit (never silent drop); same entity may repeat.
  */
 
-export type EntityType = "device" | "rule" | "transform" | "agent"
+export type EntityType = "device" | "rule" | "transform" | "agent" | "dashboard"
 
 export interface TextNode {
   kind: "text"

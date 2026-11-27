@@ -14,15 +14,15 @@ import {
   Archive,
   ArrowUp,
   AtSign,
-  Bot,
+  Box,
   Check,
-  Cpu,
-  GitBranch,
   Image as ImageIcon,
+  LayoutGrid,
   Loader2,
   Plus,
   Sparkles,
   Trash2,
+  Workflow,
   X,
   Zap,
 } from "lucide-react"
@@ -34,7 +34,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { useToast } from "@/hooks/use-toast"
 import { useIsMobile } from "@/hooks/useMobile"
@@ -55,12 +55,13 @@ import {
 
 const MENTION_TYPE_META: Record<
   MentionType,
-  { icon: typeof Cpu }
+  { icon: typeof Box }
 > = {
-  device: { icon: Cpu },
+  device: { icon: Box },
   rule: { icon: Zap },
-  transform: { icon: GitBranch },
-  agent: { icon: Bot },
+  transform: { icon: Workflow },
+  agent: { icon: Sparkles },
+  dashboard: { icon: LayoutGrid },
 }
 
 /** Shared model row for desktop dropdown + mobile sheet.
@@ -810,13 +811,13 @@ export function ChatComposer({
     <>
       <div
         className={cn(
-          "flex shrink-0 flex-wrap gap-1 border-b border-border",
-          isMobile ? "px-3 py-2" : "px-2.5 py-2",
+          "flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-muted-20",
+          isMobile ? "px-2.5 py-2" : "px-2 py-1.5",
         )}
         role="tablist"
         aria-label={t("chat:mention.filterTypes", "按类型筛选")}
       >
-        {(["all", "device", "rule", "transform", "agent"] as const).map((tab) => {
+        {(["all", "device", "rule", "transform", "agent", "dashboard"] as const).map((tab) => {
           const selected = mentionTypeFilter === tab
           return (
             <button
@@ -825,12 +826,10 @@ export function ChatComposer({
               role="tab"
               aria-selected={selected}
               className={cn(
-                // Text-only chips: tighter, uniform height; selected = muted
-                // block (no icon clutter). Filter behavior unchanged.
-                "inline-flex h-7 items-center rounded-md px-2 text-nano transition-colors",
+                "inline-flex h-6 shrink-0 items-center rounded-lg border px-2 text-xs transition-all",
                 selected
-                  ? "bg-muted font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-muted-30 hover:text-foreground",
+                  ? "border-border bg-card font-medium text-foreground shadow-xs"
+                  : "border-transparent text-muted-foreground hover:bg-muted-30 hover:text-foreground",
               )}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => setMentionTypeFilter(tab)}
@@ -851,26 +850,26 @@ export function ChatComposer({
       )}
       <div
         className={cn(
-          "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+          "min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5",
           isMobile ? "touch-pan-y" : "max-h-64",
         )}
         data-mention-scroll
       >
         {mentionLoading && mentionOptions.length === 0 ? (
-          <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground" role="status">
+          <div className="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground" role="status">
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
             {t("chat:mention.searching", "搜索中…")}
           </div>
         ) : mentionSearchFailed ? (
-          <div className="px-3 py-3 text-xs text-error" role="alert">
+          <div className="px-3 py-5 text-center text-xs text-error" role="alert">
             {t("chat:mention.searchFailed", "搜索失败，请重试")}
           </div>
         ) : mentionOptions.length === 0 ? (
-          <div className="px-3 py-3 text-xs text-muted-foreground" role="status">
+          <div className="px-3 py-6 text-center text-xs text-muted-foreground" role="status">
             {t("chat:mention.noResults", "没有匹配的对象")}
           </div>
         ) : (
-          <>
+          <div className="space-y-0.5">
             {mentionOptions.map((opt, i) => {
               const meta = MENTION_TYPE_META[opt.type]
               const TypeIcon = meta.icon
@@ -907,35 +906,50 @@ export function ChatComposer({
                     pickMentionOption(opt)
                   }}
                   className={cn(
-                    "flex w-full items-start gap-2.5 px-3 text-left text-sm transition-colors",
-                    isMobile ? "min-h-11 py-2.5" : "py-2",
+                    "flex w-full items-center gap-2.5 rounded-xl px-2.5 text-left transition-colors",
+                    isMobile ? "min-h-11 py-2" : "py-2",
                     active ? "bg-muted" : "hover:bg-muted-30",
                   )}
                 >
-                  <TypeIcon
-                    className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                  <span
+                    className={cn(
+                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                      active
+                        ? "border-border bg-card text-foreground shadow-xs"
+                        : "border-transparent bg-muted-30 text-muted-foreground",
+                    )}
                     aria-hidden="true"
-                  />
+                  >
+                    <TypeIcon className="h-3.5 w-3.5" />
+                  </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-foreground">
+                    <span className="block truncate text-[13px] font-medium leading-tight text-foreground">
                       {opt.label}
                     </span>
-                    <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-mini text-muted-foreground">
+                    <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] leading-tight text-muted-foreground">
                       <span className="shrink-0">{typeLabel}</span>
                       {disambiguation.length > 0 && (
-                        <span className="min-w-0 truncate">
+                        <span className="min-w-0 truncate font-mono opacity-80">
                           · {disambiguation.join(" · ")}
                         </span>
                       )}
                     </span>
                   </span>
+                  {!isMobile && active && (
+                    <span
+                      aria-hidden="true"
+                      className="shrink-0 rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground"
+                    >
+                      ↵
+                    </span>
+                  )}
                 </button>
               )
             })}
             {mentionHasMore && (
               <button
                 type="button"
-                className="flex w-full items-center justify-center gap-1 border-t border-border px-3 py-2.5 text-xs text-muted-foreground hover:bg-muted-30"
+                className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground transition-colors hover:bg-muted-30 hover:text-foreground"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => void loadMoreMentions()}
                 disabled={mentionLoading}
@@ -946,9 +960,15 @@ export function ChatComposer({
                 {t("chat:mention.loadMore", "加载更多")}
               </button>
             )}
-          </>
+          </div>
         )}
       </div>
+      {!isMobile && mentionOptions.length > 0 && (
+        <div className="flex shrink-0 items-center justify-between border-t border-border bg-muted-20 px-3 py-1.5 text-[11px] text-muted-foreground">
+          <span>↑↓ {t("chat:mention.navigateHint", "切换")}</span>
+          <span>↵ {t("chat:mention.selectHint", "选择")} · Esc</span>
+        </div>
+      )}
     </>
   )
 
@@ -1022,10 +1042,10 @@ export function ChatComposer({
             }
           }}
           className={cn(
-            // Keep ~3–4 option rows visible so the menu does not crowd the
-            // composer (esp. mobile + soft keyboard). Long lists still scroll.
-            "absolute bottom-full left-0 right-0 z-[200] mb-2 flex flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-lg",
-            isMobile ? "max-h-[min(34dvh,12rem)]" : "max-h-52",
+            "absolute bottom-full left-0 z-[200] mb-2 flex flex-col overflow-hidden rounded-2xl border border-border bg-popover shadow-xl",
+            isMobile
+              ? "right-0 max-h-[min(36dvh,15rem)]"
+              : "w-full max-w-[380px] max-h-72",
           )}
         >
           {isMobile && (
@@ -1263,9 +1283,6 @@ export function ChatComposer({
                     <SheetTitle className="text-left text-xl font-semibold">
                       {t("chat:input.selectLLMModel")}
                     </SheetTitle>
-                    <SheetDescription className="mt-1 text-left text-sm text-muted-foreground">
-                      {t("chat:model.forConversation", "本次对话使用的模型")}
-                    </SheetDescription>
                   </div>
                   <div className="space-y-1 overflow-y-auto px-3 pb-1">
                     {backends.map((backend) => {

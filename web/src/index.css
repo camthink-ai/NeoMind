@@ -434,37 +434,38 @@ html {
        scripts/check-contrast.mjs. Warning hue 85 (matching the dark theme)
        keeps the yellow clean; hue ~78 sat in mustard territory and read as
        mud. Washes (10%) stay light — they're carriers, not text. */
-    --color-success: oklch(0.50 0.17 155);
-    --color-success-bg: oklch(0.55 0.19 155 / 10%);
-    --color-warning: oklch(0.54 0.16 85);
-    --color-warning-bg: oklch(0.68 0.19 85 / 10%);
-    --color-error: oklch(0.52 0.24 25);
-    --color-error-bg: oklch(0.55 0.24 25 / 10%);
-    --color-info: oklch(0.52 0.17 250);
-    --color-info-bg: oklch(0.52 0.17 250 / 10%);
+    --color-success: oklch(0.47 0.13 155);
+    --color-success-bg: oklch(0.47 0.13 155 / 8%);
+    --color-warning: oklch(0.51 0.13 78);
+    --color-warning-bg: oklch(0.55 0.14 78 / 9%);
+    --color-error: oklch(0.50 0.18 25);
+    --color-error-bg: oklch(0.50 0.18 25 / 8%);
+    --color-info: oklch(0.48 0.12 248);
+    --color-info-bg: oklch(0.48 0.12 248 / 8%);
 
     /* Tint backgrounds for primary & destructive (mirror semantic *-bg pattern) */
     --primary-bg: oklch(0.18 0.02 270 / 8%);
     --primary-bg-hover: oklch(0.18 0.02 270 / 16%);
-    --destructive-bg: oklch(0.577 0.245 27 / 8%);
+    --destructive-bg: oklch(0.50 0.18 25 / 8%);
 
     /* Overlay (semi-transparent black masks) */
     --overlay-light: oklch(0 0 0 / 30%);
     --overlay-medium: oklch(0 0 0 / 50%);
     --overlay-heavy: oklch(0 0 0 / 80%);
 
-    /* Accent category colors (light) - chroma-boosted to match the dark
-       theme's vibrancy (L/hue unchanged); washes at 10% like dark. */
-    --accent-purple: oklch(0.52 0.20 300);
-    --accent-purple-bg: oklch(0.52 0.20 300 / 10%);
-    --accent-orange: oklch(0.55 0.24 37);
-    --accent-orange-bg: oklch(0.55 0.24 37 / 10%);
-    --accent-cyan: oklch(0.58 0.14 200);
-    --accent-cyan-bg: oklch(0.58 0.14 200 / 10%);
-    --accent-emerald: oklch(0.55 0.16 165);
-    --accent-emerald-bg: oklch(0.55 0.16 165 / 10%);
-    --accent-indigo: oklch(0.48 0.20 280);
-    --accent-indigo-bg: oklch(0.48 0.20 280 / 10%);
+    /* Accent category colors (light) — restrained slate/morandi chroma (0.09–0.12)
+       so category tints harmonize with the monochrome shell instead of clashing
+       like neon admin badges, while maintaining WCAG AA text contrast. */
+    --accent-purple: oklch(0.47 0.10 295);
+    --accent-purple-bg: oklch(0.47 0.10 295 / 7%);
+    --accent-orange: oklch(0.49 0.12 48);
+    --accent-orange-bg: oklch(0.49 0.12 48 / 7%);
+    --accent-cyan: oklch(0.46 0.09 210);
+    --accent-cyan-bg: oklch(0.46 0.09 210 / 7%);
+    --accent-emerald: oklch(0.46 0.10 162);
+    --accent-emerald-bg: oklch(0.46 0.10 162 / 7%);
+    --accent-indigo: oklch(0.46 0.10 265);
+    --accent-indigo-bg: oklch(0.46 0.10 265 / 7%);
 
     /* Shadow system — layered (contact + ambient) for soft, realistic
        elevation. Each step up adds a wider, fainter ambient layer rather than
@@ -619,36 +620,36 @@ html {
     /* Neutral focus ring (see light-mode --ring rationale). */
     --ring: color-mix(in oklch, var(--foreground) 35%, transparent);
 
-    --color-success: oklch(0.72 0.19 155);
-    --color-success-bg: oklch(0.72 0.19 155 / 10%);
-    --color-warning: oklch(0.72 0.16 85);
-    --color-warning-bg: oklch(0.72 0.16 85 / 10%);
-    --color-error: oklch(0.63 0.23 27);
-    --color-error-bg: oklch(0.62 0.23 27 / 10%);
-    --color-info: oklch(0.65 0.15 250);
-    --color-info-bg: oklch(0.65 0.15 250 / 10%);
+    --color-success: oklch(0.74 0.14 155);
+    --color-success-bg: oklch(0.74 0.14 155 / 10%);
+    --color-warning: oklch(0.76 0.13 80);
+    --color-warning-bg: oklch(0.76 0.13 80 / 10%);
+    --color-error: oklch(0.68 0.18 25);
+    --color-error-bg: oklch(0.68 0.18 25 / 10%);
+    --color-info: oklch(0.72 0.12 248);
+    --color-info-bg: oklch(0.72 0.12 248 / 10%);
 
     /* Tint backgrounds (dark: white-based for visibility on dark bg) */
     --primary-bg: oklch(0.96 0.003 270 / 12%);
     --primary-bg-hover: oklch(0.96 0.003 270 / 20%);
-    --destructive-bg: oklch(0.577 0.245 27 / 12%);
+    --destructive-bg: oklch(0.68 0.18 25 / 12%);
 
     /* Overlay (dark theme: slightly heavier masks) */
     --overlay-light: oklch(0 0 0 / 40%);
     --overlay-medium: oklch(0 0 0 / 60%);
     --overlay-heavy: oklch(0 0 0 / 85%);
 
-    /* Accent category colors (dark) - brighter for dark bg */
-    --accent-purple: oklch(0.72 0.16 300);
-    --accent-purple-bg: oklch(0.72 0.16 300 / 12%);
-    --accent-orange: oklch(0.68 0.20 40);
-    --accent-orange-bg: oklch(0.68 0.20 40 / 12%);
-    --accent-cyan: oklch(0.70 0.12 200);
-    --accent-cyan-bg: oklch(0.70 0.12 200 / 12%);
-    --accent-emerald: oklch(0.72 0.16 165);
-    --accent-emerald-bg: oklch(0.72 0.16 165 / 12%);
-    --accent-indigo: oklch(0.68 0.16 280);
-    --accent-indigo-bg: oklch(0.68 0.16 280 / 12%);
+    /* Accent category colors (dark) — restrained, luminous slate/morandi tones */
+    --accent-purple: oklch(0.75 0.10 295);
+    --accent-purple-bg: oklch(0.75 0.10 295 / 11%);
+    --accent-orange: oklch(0.75 0.12 52);
+    --accent-orange-bg: oklch(0.75 0.12 52 / 11%);
+    --accent-cyan: oklch(0.75 0.09 210);
+    --accent-cyan-bg: oklch(0.75 0.09 210 / 11%);
+    --accent-emerald: oklch(0.75 0.10 162);
+    --accent-emerald-bg: oklch(0.75 0.10 162 / 11%);
+    --accent-indigo: oklch(0.75 0.10 265);
+    --accent-indigo-bg: oklch(0.75 0.10 265 / 11%);
 
     /* Shadow system (dark) — deeper blacks than light (shadows barely read
        on dark surfaces), still layered. Real dark elevation comes from the
@@ -801,56 +802,17 @@ html {
 
 /* Custom scrollbar */
 @layer components {
-  /* ============================================================================
-   * MOBILE TOUCH TARGET OPTIMIZATIONS
-   * ============================================================================ */
-
-  /* Ensure minimum touch target size (44x44px per iOS/Android guidelines) */
+  /* Smooth hover/active transitions for interactive elements that don't
+     define their own (covers custom <div role="button"> cards/rows that
+     would otherwise snap instantly on hover). Touch target sizing lives on
+     the individual components (Button, dialogs, nav, inputs) rather than a
+     blanket 44px floor that inflates inline chips and text toggles. */
   button,
   .clickable,
   [role="button"] {
-    min-height: 44px;
-    min-width: 44px;
-    /* Smooth hover/active transitions for all interactive elements that don't
-       define their own. Covers custom <div role="button"> cards/rows that
-       would otherwise snap instantly on hover. Limited property set for perf. */
     transition-property: color, background-color, border-color, box-shadow, transform, opacity;
     transition-duration: var(--duration-fast, 150ms);
     transition-timing-function: var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
-  }
-
-  /* Exception: Small icon buttons - add padding instead of forcing size.
-     h-4/h-5 cover inline badge-sized buttons (explicit small height must
-     win over the 44px min — min-height otherwise overrides height). */
-  button:where([class*="h-4"], [class*="h-5"], [class*="h-6"], [class*="h-7"], [class*="h-8"], [class*="h-9"]) {
-    min-height: auto;
-    min-width: auto;
-  }
-
-  /* Exception: Color picker preset buttons - keep original size */
-  button[type="button"]:where([class*="w-6"][class*="h-6"]) {
-    min-height: auto !important;
-    min-width: auto !important;
-  }
-
-  /* Exception: Switch component - keep original size */
-  [role="switch"] {
-    min-height: auto !important;
-    min-width: auto !important;
-  }
-
-  /* Exception: Checkbox component - keep original size */
-  [role="checkbox"] {
-    min-height: auto !important;
-    min-width: auto !important;
-  }
-
-  /* Exception: Tabs component - keep original size */
-  [role="tablist"],
-  [role="tab"],
-  [role="tabpanel"] {
-    min-height: auto !important;
-    min-width: auto !important;
   }
 
   /* Pointer cursor for all interactive elements — native buttons, links,

@@ -329,8 +329,10 @@ export const agentsApi = {
    * Get a dashboard by ID
    * GET /api/dashboards/:id
    */
-  getDashboard: (id: string) =>
-    fetchAPI<DashboardResponse>(`/dashboards/${id}`),
+  getDashboard: (id: string, options?: { skipErrorToast?: boolean }) =>
+    fetchAPI<DashboardResponse>(`/dashboards/${encodeURIComponent(id)}`, {
+      skipErrorToast: options?.skipErrorToast,
+    }),
 
   /**
    * Create a new dashboard

@@ -27,9 +27,9 @@ interface SettingsRowProps {
  * drops its help text beneath it — fine in a narrow dialog, but the
  * label-left / control-right pattern reads better in a wide settings page.
  */
-export const settingsSectionTitle = 'mb-3 text-sm font-semibold text-foreground'
-export const settingsGroup = 'rounded-lg border border-border bg-card px-4 sm:px-5 [&>[data-settings-row]+[data-settings-row]]:border-t [&>[data-settings-row]]:border-border'
-export const settingsFooter = 'border-t border-border py-4'
+export const settingsSectionTitle = 'mb-2.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground'
+export const settingsGroup = 'rounded-xl border border-border bg-card px-4 sm:px-5 [&>[data-settings-row]+[data-settings-row]]:border-t [&>[data-settings-row]]:border-glass-border'
+export const settingsFooter = 'border-t border-glass-border py-3.5'
 
 export function SettingsRow({ label, description, leadingIcon, className, children, inlineControl = false, controlClassName }: SettingsRowProps) {
   return (

@@ -298,13 +298,6 @@ export function CommandButton({
         onSubmit={handleConfirmSend}
         submitLabel={sending ? t('commandButton.sending') : t('commandButton.send')}
         submitDisabled={loadingParams}
-        description={
-          isDeviceCommand
-            ? `${t('commandButton.deviceCommandDesc')}${deviceId ? ` (${deviceId})` : ''}`
-            : isExtensionCommand
-              ? `${t('commandButton.extensionCommandDesc')}${extensionCommand ? ` (${extensionCommand})` : ''}`
-              : undefined
-        }
       >
         <div className="space-y-4">
           {!loadingParams && (

@@ -100,7 +100,6 @@ export function CreateMessageDialog({ open, onOpenChange, onCreate }: CreateMess
       open={open}
       onOpenChange={onOpenChange}
       title={t('messages.createTitle')}
-      description={t('messages.createDescription')}
       icon={<MessageSquare className="h-5 w-5" />}
       width="md"
       onSubmit={handleFormSubmit}

@@ -242,7 +242,7 @@ export function ExecutionDetailDialog({
                 </Badge>
               )}
               {execution.stale_config && (
-                <Badge variant="outline" className="h-5 px-1.5 text-xs text-warning border-warning/40">
+                <Badge variant="outline" className="h-5 px-1.5 text-xs text-warning border-warning">
                   {t('agents:execution.staleConfig')}
                 </Badge>
               )}

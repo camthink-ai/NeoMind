@@ -319,7 +319,6 @@ export function ExtensionUploadDialog({
         }
       }}
       title={t('extensions:uploadExtension')}
-      description={t('extensions:dragDropDescription')}
       icon={<Package className="h-5 w-5 text-primary" />}
       width="sm"
       isSubmitting={uploading}

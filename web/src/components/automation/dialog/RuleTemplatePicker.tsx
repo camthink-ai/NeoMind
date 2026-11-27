@@ -32,7 +32,6 @@ export function RuleTemplatePicker({ open, onOpenChange, onSelectTemplate }: Pro
         iconBg="bg-primary-light"
         iconColor="text-primary"
         title={t('rules.templates.title')}
-        subtitle={t('rules.templates.subtitle')}
         onClose={() => onOpenChange(false)}
       />
       <FullScreenDialogMain>

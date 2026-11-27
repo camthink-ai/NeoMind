@@ -14,6 +14,7 @@ const TYPE_TEXT: Record<MentionType, string> = {
   rule: "text-accent-orange",
   transform: "text-accent-purple",
   agent: "text-accent-emerald",
+  dashboard: "text-accent-indigo",
 }
 
 /** Compact `@name` token — inherits body size, tinted by entity type. */
@@ -45,6 +46,7 @@ export const mentionChipHostSelectors = cn(
   "[&_.nm-mention--rule]:text-accent-orange",
   "[&_.nm-mention--transform]:text-accent-purple",
   "[&_.nm-mention--agent]:text-accent-emerald",
+  "[&_.nm-mention--dashboard]:text-accent-indigo",
   "[&_.nm-mention[data-invalid=true]]:text-error",
   "[&_.nm-mention[data-invalid=true]]:underline",
 )

@@ -6,8 +6,9 @@
 
 import {
   MessageSquare,
-  Bot,
-  LayoutDashboard,
+  Sparkles,
+  LayoutGrid,
+  Box,
   Cpu,
   Workflow,
   Database,
@@ -44,9 +45,9 @@ export interface NavItem {
 /** Route order = display order in the sidebar's PRIMARY group */
 export const navItems: NavItem[] = [
   { id: "dashboard", path: "/chat", icon: MessageSquare, labelKey: "nav.dashboard" },
-  { id: "agents", path: "/agents", icon: Bot, labelKey: "nav.agents" },
-  { id: "devices", path: "/devices", icon: Cpu, labelKey: "nav.devices" },
-  { id: "visual-dashboard", path: "/visual-dashboard", icon: LayoutDashboard, labelKey: "nav.visual-dashboard" },
+  { id: "agents", path: "/agents", icon: Sparkles, labelKey: "nav.agents" },
+  { id: "devices", path: "/devices", icon: Box, labelKey: "nav.devices" },
+  { id: "visual-dashboard", path: "/visual-dashboard", icon: LayoutGrid, labelKey: "nav.visual-dashboard" },
   { id: "automation", path: "/automation", icon: Workflow, labelKey: "nav.automation" },
   { id: "data", path: "/data", icon: Database, labelKey: "nav.data" },
   { id: "messages", path: "/messages", icon: Bell, labelKey: "nav.messages" },

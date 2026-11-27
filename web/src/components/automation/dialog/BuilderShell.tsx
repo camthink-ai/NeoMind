@@ -26,7 +26,6 @@ export interface BuilderShellProps {
   onOpenChange: (open: boolean) => void
   accent: BuilderAccent
   title: string
-  subtitle?: string
   /** Identity icon node (rendered in a rounded accent-bg badge). */
   icon: ReactNode
   /** Optional node rendered in the header actions slot (e.g. enable-status dot). */
@@ -48,7 +47,6 @@ export function BuilderShell({
   onOpenChange,
   accent,
   title,
-  subtitle,
   icon,
   statusIndicator,
   config,
@@ -66,7 +64,6 @@ export function BuilderShell({
         iconBg={a.bg}
         iconColor={a.text}
         title={title}
-        subtitle={subtitle}
         onClose={() => onOpenChange(false)}
         actions={statusIndicator}
       />

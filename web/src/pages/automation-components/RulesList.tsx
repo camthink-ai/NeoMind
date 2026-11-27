@@ -111,7 +111,7 @@ function RuleHistoryDialog({ rule, open, onOpenChange }: {
   }
 
   const columns = [
-    { key: 'time', label: t('automation:time', 'Time'), width: '35%' },
+    { key: 'time', label: t('automation:ruleMonitor.time', 'Time'), width: '35%' },
     { key: 'result', label: t('automation:result', 'Result'), width: '20%' },
     { key: 'detail', label: t('automation:detail', 'Detail'), width: '45%' },
   ]

@@ -252,6 +252,7 @@
     "rule": "rule",
     "transform": "transform",
     "agent": "agent",
+    "dashboard": "dashboard",
     "invalid": "Invalid reference",
     "invalidSend": "Some references are invalid — fix them and resend",
     "contentOverLimit": "Message exceeds the per-message limit (max 20 references, 8000 characters of text) — trim it and resend",

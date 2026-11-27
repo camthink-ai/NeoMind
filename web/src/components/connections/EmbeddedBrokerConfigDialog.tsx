@@ -251,7 +251,6 @@ export function EmbeddedBrokerConfigDialog({ open, onOpenChange, onConfigSaved }
       open={open}
       onOpenChange={onOpenChange}
       title={t('broker.settings')}
-      description={t('broker.settingsDescription')}
       icon={<Server className="h-5 w-5 text-muted-foreground" />}
       width="lg"
       /* Settings dialog is a z-[100] full-screen layer — a default z-50

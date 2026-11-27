@@ -799,11 +799,6 @@ export function UniversalPluginConfigDialog(props: UniversalPluginConfigDialogPr
           ? t("plugins:editInstance", { defaultValue: "Edit Instance" })
           : pluginType.name
       }
-      description={
-        isEditing
-          ? t("plugins:editInstanceDesc", { defaultValue: "Configure this instance" })
-          : pluginType.description
-      }
       icon={<span className={pluginType.color}>{pluginType.icon}</span>}
       width="xl"
       className="z-[110]"

@@ -33,6 +33,7 @@ export interface MentionSearchResult {
     rule?: string
     transform?: string
     agent?: string
+    dashboard?: string
   }
 }
 

@@ -171,40 +171,30 @@ export function AddDeviceGlobalDialog({
         iconBg="bg-info-light"
         iconColor="text-info"
         title={t('devices:addDevice')}
-        subtitle={t('devices:globalDialog.subtitle')}
         onClose={() => handleOpenChange(false)}
       />
 
       <FullScreenDialogContent>
-        {/* Sidebar: tab navigation (hidden on mobile) */}
+        {/* Sidebar: compact macOS/Linear-style tab navigation (hidden on mobile) */}
         <FullScreenDialogSidebar>
-          <nav className="flex flex-col py-2 gap-0.5 px-2">
+          <nav className="flex flex-col gap-0.5 px-2.5 py-3">
             {allTabs.map((tab) => {
               const Icon = tab.icon
               const isActive = activeTab === tab.value
               return (
                 <button
                   key={tab.value}
+                  type="button"
                   onClick={() => setActiveTab(tab.value)}
                   className={cn(
-                    'flex items-center gap-2.5 px-3 py-3 rounded-lg text-sm font-medium transition-all text-left',
+                    'flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors',
                     isActive
-                      ? 'bg-card shadow-sm border border-primary-light text-primary'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted-30 border border-transparent'
+                      ? 'bg-muted font-medium text-foreground'
+                      : 'text-muted-foreground hover:bg-muted-30 hover:text-foreground'
                   )}
                 >
-                  <div className={cn(
-                    'w-8 h-8 rounded-lg flex items-center justify-center shrink-0',
-                    isActive ? 'bg-primary text-primary-foreground' : 'bg-muted-30'
-                  )}>
-                    <Icon className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <span className="truncate block">{t(tab.labelKey)}</span>
-                    <span className={cn(textMini, 'leading-tight block mt-0.5 truncate text-muted-foreground')}>
-                      {t(tab.descKey)}
-                    </span>
-                  </div>
+                  <Icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                  <span className="truncate">{t(tab.labelKey)}</span>
                 </button>
               )
             })}
@@ -237,8 +227,8 @@ export function AddDeviceGlobalDialog({
             <div
               className={cn(
                 'flex w-full flex-1 flex-col',
-                isMobile ? 'px-3 py-4' : 'px-5 py-6 md:px-8',
-                (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 py-0 md:py-0',
+                isMobile ? 'px-3 py-4' : 'mx-auto max-w-2xl px-5 py-6 md:px-8',
+                (activeTab === 'ble' || activeTab === 'ap') && 'min-h-0 max-w-none py-0 md:py-0',
               )}
             >
 
@@ -737,8 +727,8 @@ function AutoDiscoveryTab({ renderFooter }: { renderFooter: (node: ReactNode) =>
 // ---------------------------------------------------------------------------
 
 const ADAPTER_TYPES = [
-  { value: 'mqtt' as const, icon: Radio, color: 'text-accent-orange', bg: 'bg-accent-orange-light' },
-  { value: 'webhook' as const, icon: Wifi, color: 'text-accent-purple', bg: 'bg-accent-purple-light' },
+  { value: 'mqtt' as const, icon: Radio, color: 'text-foreground', bg: 'border border-border bg-muted-30' },
+  { value: 'webhook' as const, icon: Wifi, color: 'text-foreground', bg: 'border border-border bg-muted-30' },
 ]
 
 export function ManualAddForm({
