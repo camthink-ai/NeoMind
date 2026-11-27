@@ -57,7 +57,7 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/typography": "^0.5.19",
     "@tanstack/react-virtual": "^3.13.19",
-    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/api": "^2.12.5",
     "@tiptap/extension-mention": "^3.34.0",
     "@tiptap/extension-placeholder": "^3.34.0",
     "@tiptap/react": "^3.34.0",
