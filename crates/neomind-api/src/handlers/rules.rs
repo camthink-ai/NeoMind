@@ -1561,8 +1561,8 @@ pub async fn import_rules_handler(
                     .map(str::to_string)
                     .unwrap_or_else(|| rule.name.clone());
 
-                if let Err(err) = validate_rule_cron(&rule)
-                    .and_then(|_| validate_virtual_metric_policy(&rule))
+                if let Err(err) =
+                    validate_rule_cron(&rule).and_then(|_| validate_virtual_metric_policy(&rule))
                 {
                     errors.push(format!("Rule {}: {}", name, err.message));
                     skipped += 1;
@@ -1974,12 +1974,14 @@ pub async fn validate_rule_handler(
     }
     probe.finalize();
     if let Err(msg) = RuleValidator::validate_virtual_metric_cooldown(&probe) {
-        result.errors.push(neomind_rules::validator::ValidationIssue {
-            code: "COOLDOWN_TOO_SHORT".to_string(),
-            message: msg,
-            field: Some("cooldown".to_string()),
-            severity: neomind_rules::validator::ValidationSeverity::Error,
-        });
+        result
+            .errors
+            .push(neomind_rules::validator::ValidationIssue {
+                code: "COOLDOWN_TOO_SHORT".to_string(),
+                message: msg,
+                field: Some("cooldown".to_string()),
+                severity: neomind_rules::validator::ValidationSeverity::Error,
+            });
         result.is_valid = false;
     }
 

@@ -2399,7 +2399,10 @@ mod tests {
         let out = get_device(&client, "dc7ec7d9", None, true).await.unwrap();
         assert!(out.success);
         let data = out.data.unwrap();
-        assert!(data.get("metrics").is_none(), "--commands must omit metrics");
+        assert!(
+            data.get("metrics").is_none(),
+            "--commands must omit metrics"
+        );
         assert_eq!(data["commands"][0]["name"], "render_text");
         assert!(data["commands"][0].get("shell_example").is_some());
         server.await.unwrap();

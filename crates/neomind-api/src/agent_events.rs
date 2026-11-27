@@ -246,7 +246,9 @@ fn fallback_filter_from_inputs(spec: &AgentSpec) -> EventFilter {
                 if field == "*" {
                     any.push(serde_json::json!({ "type": "device", "id": device_id }));
                 } else {
-                    any.push(serde_json::json!({ "type": "device", "id": device_id, "field": field }));
+                    any.push(
+                        serde_json::json!({ "type": "device", "id": device_id, "field": field }),
+                    );
                 }
             }
             InputSourceRef::ExtensionInstance { id } => {

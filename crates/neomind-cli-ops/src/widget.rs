@@ -477,11 +477,7 @@ fn sample_value_from_schema(prop: &serde_json::Value, key: &str) -> serde_json::
 /// payload for ANY widget (built-in, extension-provided, marketplace, or
 /// custom). Gives AI agents the exact JSON structure (`id`, `type`, `title`,
 /// `position`, `data_source`, `display`, `config`) without guessing.
-fn build_usage_example(
-    id: &str,
-    component: &serde_json::Value,
-    source: &str,
-) -> serde_json::Value {
+fn build_usage_example(id: &str, component: &serde_json::Value, source: &str) -> serde_json::Value {
     let title = component
         .get("name")
         .map(display_i18n_name)
@@ -492,12 +488,20 @@ fn build_usage_example(
     let sc = component.get("size_constraints");
     let ds_size = component.get("default_size");
     let w = sc
-        .and_then(|s| s.get("default_w").or_else(|| s.get("min_w")).or_else(|| s.get("min_width")))
+        .and_then(|s| {
+            s.get("default_w")
+                .or_else(|| s.get("min_w"))
+                .or_else(|| s.get("min_width"))
+        })
         .or_else(|| ds_size.and_then(|s| s.get("w").or_else(|| s.get("width"))))
         .and_then(|v| v.as_u64())
         .unwrap_or(4);
     let h = sc
-        .and_then(|s| s.get("default_h").or_else(|| s.get("min_h")).or_else(|| s.get("min_height")))
+        .and_then(|s| {
+            s.get("default_h")
+                .or_else(|| s.get("min_h"))
+                .or_else(|| s.get("min_height"))
+        })
         .or_else(|| ds_size.and_then(|s| s.get("h").or_else(|| s.get("height"))))
         .and_then(|v| v.as_u64())
         .unwrap_or(3);
@@ -1121,7 +1125,10 @@ mod tests {
         assert_eq!(summary[1]["name"], "YOLO Overlay");
 
         let found = find_extension_widget(&payload, "weather-forecast-card").unwrap();
-        assert_eq!(found["config_schema"]["properties"]["city"]["type"], "string");
+        assert_eq!(
+            found["config_schema"]["properties"]["city"]["type"],
+            "string"
+        );
         assert!(find_extension_widget(&payload, "missing-widget").is_none());
     }
 

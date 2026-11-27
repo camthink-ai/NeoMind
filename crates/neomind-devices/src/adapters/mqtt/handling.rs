@@ -739,7 +739,7 @@ impl MqttAdapter {
                                     {
                                         payload = light_bytes;
                                     }
-                                    reassembled_image = Some(img);
+                                    reassembled_image = Some(*img);
                                 }
                             }
                         }

@@ -62,11 +62,7 @@ impl AgentRunner for SinglePassRunner {
             ToolPolicy::Scoped {
                 allowed_tools,
                 allowed_commands,
-            } => (
-                true,
-                Some(allowed_tools.clone()),
-                allowed_commands.clone(),
-            ),
+            } => (true, Some(allowed_tools.clone()), allowed_commands.clone()),
             ToolPolicy::Unrestricted => (true, None, Vec::new()),
         };
 

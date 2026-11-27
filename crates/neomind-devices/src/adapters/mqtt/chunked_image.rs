@@ -110,7 +110,7 @@ pub(crate) enum ChunkIngestOutcome {
     /// Malformed packet or resource limit exceeded — log and drop.
     Rejected { reason: String },
     /// All chunks and header received and length-verified.
-    Completed(ReassembledImage),
+    Completed(Box<ReassembledImage>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -301,7 +301,11 @@ impl ChunkedImageReassembler {
         };
         if image_id.len() > MAX_IMAGE_ID_LEN {
             return ChunkIngestOutcome::Rejected {
-                reason: format!("image_id length {} exceeds limit {}", image_id.len(), MAX_IMAGE_ID_LEN),
+                reason: format!(
+                    "image_id length {} exceeds limit {}",
+                    image_id.len(),
+                    MAX_IMAGE_ID_LEN
+                ),
             };
         }
 
@@ -330,7 +334,10 @@ impl ChunkedImageReassembler {
         obj: &Map<String, Value>,
         now: Instant,
     ) -> ChunkIngestOutcome {
-        let Some(total_size) = obj.get("total_size").and_then(Value::as_u64).map(|v| v as usize)
+        let Some(total_size) = obj
+            .get("total_size")
+            .and_then(Value::as_u64)
+            .map(|v| v as usize)
         else {
             return ChunkIngestOutcome::Rejected {
                 reason: "header missing valid total_size".to_string(),
@@ -622,14 +629,17 @@ impl ChunkedImageReassembler {
         }
 
         let chunk_len = decoded.len();
-        let session = self.sessions.entry(key.clone()).or_insert_with(|| ChunkSession {
-            header: None,
-            expected_total_chunks: total_chunks,
-            chunks: HashMap::new(),
-            buffered_bytes: 0,
-            encoding: encoding.to_string(),
-            last_updated: now,
-        });
+        let session = self
+            .sessions
+            .entry(key.clone())
+            .or_insert_with(|| ChunkSession {
+                header: None,
+                expected_total_chunks: total_chunks,
+                chunks: HashMap::new(),
+                buffered_bytes: 0,
+                encoding: encoding.to_string(),
+                last_updated: now,
+            });
         session.chunks.insert(chunk_index, decoded);
         session.buffered_bytes += chunk_len;
         session.last_updated = now;
@@ -647,9 +657,11 @@ impl ChunkedImageReassembler {
                     false
                 }
             }
-            None => return ChunkIngestOutcome::Rejected {
-                reason: "session vanished unexpectedly".to_string(),
-            },
+            None => {
+                return ChunkIngestOutcome::Rejected {
+                    reason: "session vanished unexpectedly".to_string(),
+                }
+            }
         };
 
         if !ready {
@@ -669,7 +681,10 @@ impl ChunkedImageReassembler {
                 };
             }
         };
-        let header = session.header.take().expect("ready checked header.is_some()");
+        let header = session
+            .header
+            .take()
+            .expect("ready checked header.is_some()");
 
         let mut image_bytes = Vec::with_capacity(header.total_size);
         for idx in 0..header.total_chunks {
@@ -693,14 +708,14 @@ impl ChunkedImageReassembler {
 
         self.record_completed(key.clone(), now);
 
-        ChunkIngestOutcome::Completed(ReassembledImage {
+        ChunkIngestOutcome::Completed(Box::new(ReassembledImage {
             image_id: key.image_id.clone(),
             metadata: header.metadata,
             ai_result: header.ai_result,
             extra_fields: header.extra_fields,
             image_bytes,
             encoding: session.encoding,
-        })
+        }))
     }
 
     #[cfg(test)]
@@ -825,10 +840,7 @@ mod tests {
                 assert_eq!(img.image_id, "img_1");
                 assert_eq!(img.image_bytes, raw);
                 assert_eq!(img.encoding, "base64");
-                assert_eq!(
-                    img.metadata.as_ref().unwrap()["trigger_type"],
-                    json!("pir")
-                );
+                assert_eq!(img.metadata.as_ref().unwrap()["trigger_type"], json!("pir"));
                 assert_eq!(
                     img.ai_result.as_ref().unwrap()["model_name"],
                     json!("yolo_v8")
@@ -1022,8 +1034,8 @@ mod tests {
         let mut r = ChunkedImageReassembler::with_limits(
             1024,
             16,
-            2,                      // max 2 active sessions
-            16,                     // max 16 bytes global buffer
+            2,  // max 2 active sessions
+            16, // max 16 bytes global buffer
             Duration::from_secs(10),
             Duration::from_secs(10),
         );
@@ -1070,7 +1082,7 @@ mod tests {
         // Simulate firmware encoder that pads to 3-byte multiple with 0x00 (no '=').
         let encode_ne301_buggy = |src: &[u8]| -> String {
             let mut padded = src.to_vec();
-            while padded.len() % 3 != 0 {
+            while !padded.len().is_multiple_of(3) {
                 padded.push(0);
             }
             BASE64.encode(&padded)
@@ -1080,7 +1092,10 @@ mod tests {
         let header = make_header("img_ne301_pad", expected.len(), 102_400);
         assert!(matches!(
             r.ingest_json_at("embedded", "ne301/281991/upload/report", &header, now),
-            ChunkIngestOutcome::Pending { total_chunks: 2, .. }
+            ChunkIngestOutcome::Pending {
+                total_chunks: 2,
+                ..
+            }
         ));
 
         let c0 = json!({

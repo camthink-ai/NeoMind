@@ -2148,15 +2148,11 @@ mod tests {
         zw.write_all(b"empty").unwrap();
         let zip_bytes = zw.finish().unwrap().into_inner();
 
-        let target =
-            std::env::temp_dir().join(format!("neomind-test-utf8-{}", unique_nonce()));
+        let target = std::env::temp_dir().join(format!("neomind-test-utf8-{}", unique_nonce()));
         std::fs::create_dir_all(&target).unwrap();
 
         let res = ExtensionPackage::install_sync(&zip_bytes, &target);
-        let sibling_extracted = target
-            .join("test-utf8-names")
-            .join(&utf8_sibling)
-            .exists();
+        let sibling_extracted = target.join("test-utf8-names").join(&utf8_sibling).exists();
         let _ = std::fs::remove_dir_all(&target);
 
         res.expect("install_sync must not panic on empty or multi-byte UTF-8 entry names");
@@ -2199,8 +2195,7 @@ mod tests {
             platform, binary_entry
         );
 
-        let tmp =
-            std::env::temp_dir().join(format!("neomind-test-zipslip-{}.nep", unique_nonce()));
+        let tmp = std::env::temp_dir().join(format!("neomind-test-zipslip-{}.nep", unique_nonce()));
         {
             let file = std::fs::File::create(&tmp).unwrap();
             let mut zw = zip::ZipWriter::new(file);

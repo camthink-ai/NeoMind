@@ -42,7 +42,10 @@ impl SideEffectBoundary {
         dry_run: bool,
         cancel: &tokio_util::sync::CancellationToken,
     ) -> Result<AgentExecutionRecord> {
-        if dry_run || exec.is_probe || cancel.is_cancelled() || self.store.get_spec(&spec.id).is_err()
+        if dry_run
+            || exec.is_probe
+            || cancel.is_cancelled()
+            || self.store.get_spec(&spec.id).is_err()
         {
             // Dry-run / probe / cancelled / deleted: zero external side effects.
             return Ok(exec);
@@ -123,9 +126,7 @@ impl SideEffectBoundary {
         // remediation controlled actions when alert criteria are actually met.
         // Routine non-alert agents (`on_alert == false`) still execute whenever
         // execution status and `depends_on` freshness pass.
-        if spec.notify.on_alert
-            && !matches!(exec.alert_verdict, Some(AlertVerdict::CriteriaMet))
-        {
+        if spec.notify.on_alert && !matches!(exec.alert_verdict, Some(AlertVerdict::CriteriaMet)) {
             for action in &spec.controlled_actions {
                 exec.deliveries.push(ActionDeliveryRecord {
                     execution_id: exec.id.clone(),

@@ -835,7 +835,8 @@ mod tests {
         // 1. User-uploaded chat photo referenced ONLY in msg.images
         let chat_photo = create_test_image_file(&images_dir, "chat-userupload99.png");
         let fh = File::open(&chat_photo).unwrap();
-        fh.set_times(fs::FileTimes::new().set_modified(old)).unwrap();
+        fh.set_times(fs::FileTimes::new().set_modified(old))
+            .unwrap();
         drop(fh);
 
         // 2. Expired 3-segment device snapshot referenced ONLY in msg.round_contents
@@ -843,7 +844,8 @@ mod tests {
         let protected_snap = create_test_image_file(&cam_metric_dir, &protected_snap_name);
 
         // 3. Unreferenced expired 3-segment device snapshot — MUST be deleted
-        let orphan_snap = create_test_image_file(&cam_metric_dir, &format!("{}.jpg", expired_ts - 10));
+        let orphan_snap =
+            create_test_image_file(&cam_metric_dir, &format!("{}.jpg", expired_ts - 10));
 
         // Populate a real SessionStore + AgentStore
         let session_db_path = temp_dir.path().join("sessions.redb");

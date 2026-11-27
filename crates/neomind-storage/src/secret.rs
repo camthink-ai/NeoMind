@@ -70,10 +70,7 @@ pub(crate) fn try_seal(
 /// Fails closed (`None`) on encryption error so secrets are never silently
 /// persisted in cleartext.
 pub(crate) fn seal(crypto: &CryptoService, secret: &Option<String>) -> Option<String> {
-    match try_seal(crypto, secret) {
-        Ok(val) => val,
-        Err(_) => None,
-    }
+    try_seal(crypto, secret).unwrap_or_default()
 }
 
 /// Unseal a secret loaded from storage. Values without the marker are
@@ -159,12 +156,18 @@ mod tests {
     fn try_seal_roundtrip_and_passthrough() {
         let c = crypto();
         assert_eq!(try_seal(&c, &None).unwrap(), None);
-        assert_eq!(try_seal(&c, &Some(String::new())).unwrap(), Some(String::new()));
+        assert_eq!(
+            try_seal(&c, &Some(String::new())).unwrap(),
+            Some(String::new())
+        );
         let sealed = try_seal(&c, &Some("sk-secret".to_string()))
             .unwrap()
             .unwrap();
         assert!(sealed.starts_with(SEALED_PREFIX));
-        assert_eq!(unseal(&c, Some(sealed.clone())), Some("sk-secret".to_string()));
+        assert_eq!(
+            unseal(&c, Some(sealed.clone())),
+            Some("sk-secret".to_string())
+        );
         // Already-sealed value passes through unchanged.
         assert_eq!(try_seal(&c, &Some(sealed.clone())).unwrap(), Some(sealed));
     }

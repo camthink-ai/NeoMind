@@ -449,10 +449,9 @@ fn filter_series_to_window(
 ) -> Option<serde_json::Value> {
     let (wrapped, arr) = if let Some(a) = value.get("points").and_then(|p| p.as_array()) {
         (true, a)
-    } else if let Some(a) = value.as_array() {
-        (false, a)
     } else {
-        return None;
+        let a = value.as_array()?;
+        (false, a)
     };
     if arr.is_empty() {
         return None;

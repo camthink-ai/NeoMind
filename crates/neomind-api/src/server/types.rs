@@ -1229,7 +1229,9 @@ impl ServerState {
                 // `start_agent_manager()` runs in server startup after LLM,
                 // tools, extensions, broker, and `init_agent_events()` are ready.
                 *clean_slate_holder.write().await = Some(runtime);
-                tracing::info!("Clean-slate HostedAiAgentRuntime built (scheduler deferred until startup)");
+                tracing::info!(
+                    "Clean-slate HostedAiAgentRuntime built (scheduler deferred until startup)"
+                );
             }
             Err(e) => {
                 tracing::warn!(
@@ -2743,9 +2745,7 @@ impl ServerState {
             let clean_slate = self.agents.clean_slate.clone();
             let rule_engine = self.automation.rule_engine.clone();
             let callback: neomind_rules::AgentTriggerCallback = Arc::new(
-                move |agent_id: String,
-                      input: Option<String>,
-                      data: Option<serde_json::Value>| {
+                move |agent_id: String, input: Option<String>, data: Option<serde_json::Value>| {
                     let clean_slate = clean_slate.clone();
                     Box::pin(async move {
                         let guard = clean_slate.read().await;

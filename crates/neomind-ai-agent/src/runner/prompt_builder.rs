@@ -288,7 +288,11 @@ fn format_item(
     let observed = item
         .observed_at
         .and_then(|ts| {
-            let secs = if ts >= 1_000_000_000_000 { ts / 1000 } else { ts };
+            let secs = if ts >= 1_000_000_000_000 {
+                ts / 1000
+            } else {
+                ts
+            };
             chrono::DateTime::from_timestamp(secs, 0)
         })
         .map(|dt| format!(" observed={}", dt.format("%Y-%m-%dT%H:%M:%SZ")))

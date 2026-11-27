@@ -107,7 +107,9 @@ impl MqttTarget {
     }
 
     /// Ensure a connection and its background eventloop task exist.
-    async fn ensure_connected(&self) -> Result<(rumqttc::AsyncClient, broadcast::Receiver<MqttLoopEvent>)> {
+    async fn ensure_connected(
+        &self,
+    ) -> Result<(rumqttc::AsyncClient, broadcast::Receiver<MqttLoopEvent>)> {
         let mut conn_guard = self.conn.lock().await;
         if conn_guard.is_none() {
             let client_id = format!(

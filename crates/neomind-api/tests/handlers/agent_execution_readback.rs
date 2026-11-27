@@ -104,8 +104,8 @@ async fn latest_execution_conclusion_is_readable_via_cli_read_path() {
         Path(agent_id),
         axum::extract::Query(Default::default()),
     )
-        .await
-        .expect("executions readable");
+    .await
+    .expect("executions readable");
     let body = resp.0.data.expect("success payload carries data");
     let execs = body["executions"]
         .as_array()
@@ -133,8 +133,8 @@ async fn v2_list_card_modal_agree_on_trigger_and_input_summary() {
         Path(agent_id.clone()),
         axum::extract::Query(Default::default()),
     )
-        .await
-        .expect("list");
+    .await
+    .expect("list");
     let list_body = list_resp.0.data.expect("list data");
     let list_row = list_body["executions"]
         .as_array()
@@ -262,8 +262,8 @@ async fn v2_list_falls_back_to_agent_trigger_when_source_missing() {
         Path(agent_id),
         axum::extract::Query(Default::default()),
     )
-        .await
-        .expect("list");
+    .await
+    .expect("list");
     let body = resp.0.data.expect("data");
     let row = body["executions"]
         .as_array()
@@ -338,11 +338,11 @@ async fn v2_user_messages_and_memory_endpoints_work_under_schema_v2() {
         Path(agent_id.clone()),
         axum::extract::Query(Default::default()),
     )
-        .await
-        .expect("list msgs")
-        .0
-        .data
-        .expect("data");
+    .await
+    .expect("list msgs")
+    .0
+    .data
+    .expect("data");
     assert_eq!(list.as_array().unwrap().len(), 2);
 
     // Invoke the agent and verify V2 memory journal records the execution.

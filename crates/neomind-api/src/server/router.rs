@@ -924,10 +924,7 @@ pub fn create_router_with_state(state: ServerState) -> Router {
         .route("/api/memory/export", get(memory::export_all))
         .route("/api/memory/stats", get(memory::get_stats))
         .route("/api/memory/config", get(memory::get_config))
-        .route(
-            "/api/memory/category/:category",
-            get(memory::get_category),
-        )
+        .route("/api/memory/category/:category", get(memory::get_category))
         .route(
             "/api/memory/:source_type/:id",
             get(memory::get_memory_content),
@@ -1621,12 +1618,7 @@ mod rbac_tests {
     use axum::http::{Method, Request, StatusCode};
     use tower::ServiceExt;
 
-    async fn send_req(
-        app: &Router,
-        method: Method,
-        uri: &str,
-        bearer: Option<&str>,
-    ) -> StatusCode {
+    async fn send_req(app: &Router, method: Method, uri: &str, bearer: Option<&str>) -> StatusCode {
         let mut builder = Request::builder().method(method).uri(uri);
         if let Some(tok) = bearer {
             builder = builder.header("authorization", format!("Bearer {tok}"));

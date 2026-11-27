@@ -239,9 +239,9 @@ impl RuleEngine {
 
             let should_eval = {
                 let rules = engine.rules.read();
-                rules.get(&timer_rule_id).is_some_and(|r| {
-                    r.enabled && r.state.condition_since == Some(expected_since)
-                })
+                rules
+                    .get(&timer_rule_id)
+                    .is_some_and(|r| r.enabled && r.state.condition_since == Some(expected_since))
             };
             if should_eval {
                 if let Err(e) = engine.evaluate_and_fire(&timer_rule_id).await {
@@ -730,11 +730,7 @@ impl RuleEngine {
                             .unwrap_or(Duration::ZERO);
                         if elapsed < dur {
                             if newly_started {
-                                self.schedule_for_duration_timer(
-                                    rule_id.clone(),
-                                    since_time,
-                                    dur,
-                                );
+                                self.schedule_for_duration_timer(rule_id.clone(), since_time, dur);
                             } else if !self.for_duration_timers.read().contains_key(rule_id) {
                                 self.schedule_for_duration_timer(
                                     rule_id.clone(),
@@ -894,11 +890,7 @@ impl RuleEngine {
 
     /// Annotate a single failed spawned action on an existing execution history
     /// row while preserving all other actions and the original `duration_ms`.
-    fn apply_spawned_failure(
-        entry: &mut RuleExecutionResult,
-        action_label: &str,
-        failure: &str,
-    ) {
+    fn apply_spawned_failure(entry: &mut RuleExecutionResult, action_label: &str, failure: &str) {
         entry.success = false;
         let spawned_tag = format!("{action_label} (spawned)");
         let failed_tag = format!("{action_label} (failed: {failure})");
@@ -942,9 +934,12 @@ impl RuleEngine {
         // after its store save, so presence here means the optimistic row is
         // durable and safe to update.
         for _ in 0..40 {
-            if history.read().await.iter().any(|r| {
-                r.rule_id == execution.rule_id && r.triggered_at == execution.triggered_at
-            }) {
+            if history
+                .read()
+                .await
+                .iter()
+                .any(|r| r.rule_id == execution.rule_id && r.triggered_at == execution.triggered_at)
+            {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1306,7 +1301,9 @@ impl RuleEngine {
                 label,
                 MAX_CONCURRENT_RULE_ACTIONS
             );
-            return Err(format!("{action_label}: max concurrent rule actions reached"));
+            return Err(format!(
+                "{action_label}: max concurrent rule actions reached"
+            ));
         };
 
         let (spawn_id, log_id, spawn_label) = (
@@ -1477,7 +1474,10 @@ impl RuleEngine {
                     tracing::warn!("Failed to persist rule history: {}", e);
                 }
                 Err(e) => {
-                    tracing::warn!("spawn_blocking join error while persisting rule history: {}", e);
+                    tracing::warn!(
+                        "spawn_blocking join error while persisting rule history: {}",
+                        e
+                    );
                 }
             }
         }

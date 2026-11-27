@@ -156,7 +156,9 @@ pub fn validate_single_filename(name: &str) -> Result<&str> {
     let mut comps = p.components();
     match (comps.next(), comps.next()) {
         (Some(Component::Normal(_)), None) => Ok(name),
-        _ => Err(anyhow!("staged filename must be a single component: {name:?}")),
+        _ => Err(anyhow!(
+            "staged filename must be a single component: {name:?}"
+        )),
     }
 }
 
@@ -401,7 +403,9 @@ pub async fn fetch_release_checksums_optional(
 pub fn verify_file_sha256(path: &Path, expected_hex: &str) -> Result<()> {
     let expected = expected_hex.trim().to_ascii_lowercase();
     if expected.len() != 64 || !expected.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(anyhow!("invalid expected SHA-256 hex digest: {expected_hex:?}"));
+        return Err(anyhow!(
+            "invalid expected SHA-256 hex digest: {expected_hex:?}"
+        ));
     }
     let mut file = std::fs::File::open(path)
         .with_context(|| format!("cannot open {} for SHA-256 verification", path.display()))?;
@@ -585,8 +589,8 @@ pub fn extract_tar_gz(tarball: &Path, dest_dir: &Path) -> Result<()> {
             ));
         }
 
-        let mut entry = entry_res
-            .with_context(|| format!("corrupt tar entry in {}", tarball.display()))?;
+        let mut entry =
+            entry_res.with_context(|| format!("corrupt tar entry in {}", tarball.display()))?;
         let entry_type = entry.header().entry_type();
 
         match entry_type {
@@ -1092,7 +1096,16 @@ mod tests {
             validate_single_filename("neomind-web.tar.gz").unwrap(),
             "neomind-web.tar.gz"
         );
-        for bad in ["", ".", "..", "../neomind", "a/b", "a\\b", "/etc/passwd", "a\0b"] {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../neomind",
+            "a/b",
+            "a\\b",
+            "/etc/passwd",
+            "a\0b",
+        ] {
             assert!(
                 validate_single_filename(bad).is_err(),
                 "expected filename to be rejected: {bad:?}"
@@ -1135,7 +1148,9 @@ mod tests {
         );
         let parsed = parse_checksums_txt(&txt);
         assert_eq!(
-            parsed.get("neomind-server-linux-amd64.tar.gz").map(String::as_str),
+            parsed
+                .get("neomind-server-linux-amd64.tar.gz")
+                .map(String::as_str),
             Some(digest.as_str())
         );
         assert_eq!(
@@ -1168,12 +1183,17 @@ mod tests {
             header.set_size(data.len() as u64);
             header.set_mode(0o755);
             header.set_cksum();
-            builder.append_data(&mut header, "./neomind", &data[..]).unwrap();
+            builder
+                .append_data(&mut header, "./neomind", &data[..])
+                .unwrap();
             builder.into_inner().unwrap().finish().unwrap();
         }
         let dest = tmp.path().join("out-good");
         extract_tar_gz(&good_tgz, &dest).unwrap();
-        assert_eq!(std::fs::read(dest.join("neomind")).unwrap(), b"#!/bin/sh\necho ok\n");
+        assert_eq!(
+            std::fs::read(dest.join("neomind")).unwrap(),
+            b"#!/bin/sh\necho ok\n"
+        );
 
         // 2. Symlink entry must be rejected
         let sym_tgz = tmp.path().join("sym.tar.gz");
@@ -1263,13 +1283,7 @@ mod tests {
         std::fs::write(&cur_runner, b"old-runner-v1").unwrap();
         std::fs::write(&new_bin, b"new-main-v2").unwrap();
 
-        let err = apply_binaries(
-            None,
-            &install_dir,
-            &new_bin,
-            Some(&missing_runner),
-            "1.3.0",
-        );
+        let err = apply_binaries(None, &install_dir, &new_bin, Some(&missing_runner), "1.3.0");
         assert!(err.is_err(), "expected runner install failure");
         assert_eq!(
             std::fs::read(&cur_bin).unwrap(),

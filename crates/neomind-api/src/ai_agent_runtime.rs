@@ -252,7 +252,8 @@ impl HostedAiAgentRuntime {
         id: &str,
         caller: Option<CallerInput>,
     ) -> AgentResult<RunResponse> {
-        self.run_formal(id, SubmitSource::Manual, caller, None).await
+        self.run_formal(id, SubmitSource::Manual, caller, None)
+            .await
     }
 
     pub async fn dry_run(&self, id: &str) -> AgentResult<RunResponse> {
@@ -433,7 +434,8 @@ impl HostedAiAgentRuntime {
 
         // Build structured Chat-style multi-turn history from recent formal executions
         // (oldest -> newest, bounded by MAX_HISTORY_TURNS and MAX_HISTORY_CHARS).
-        ctx.prior_turns = self.load_recent_conversation_turns(id, MAX_HISTORY_TURNS, MAX_HISTORY_CHARS);
+        ctx.prior_turns =
+            self.load_recent_conversation_turns(id, MAX_HISTORY_TURNS, MAX_HISTORY_CHARS);
 
         if let Some(store) = &self.durable.store {
             if let Ok(Some(memory)) = store.get_memory(id) {

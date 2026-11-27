@@ -114,12 +114,7 @@ pub async fn cleanup_resources(state: &ServerState) {
     crate::builtin_llm::server::stop_all_llama_servers();
 
     // 1b. Stop isolated extension runner processes (with timeout).
-    match tokio::time::timeout(
-        Duration::from_secs(10),
-        state.extensions.runtime.stop_all(),
-    )
-    .await
-    {
+    match tokio::time::timeout(Duration::from_secs(10), state.extensions.runtime.stop_all()).await {
         Ok(()) => tracing::info!("Stopped isolated extensions at shutdown"),
         Err(_) => tracing::warn!("Stopping isolated extensions timed out after 10s"),
     }

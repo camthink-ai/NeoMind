@@ -496,7 +496,10 @@ fn is_timeseries_widget(component_type: &str) -> bool {
 /// Normalize a single DataSource JSON object so common LLM key spellings
 /// (`deviceId`/`device_id`/`metric`/`metric_id`/`field`) always resolve cleanly
 /// to the canonical frontend `DataSource` contract (`sourceId`, `property`, `metricId`).
-fn normalize_single_data_source(obj: &mut serde_json::Map<String, serde_json::Value>, component_type: &str) {
+fn normalize_single_data_source(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    component_type: &str,
+) {
     // 1. Normalize sourceId aliases: deviceId / device_id / source_id
     if !obj.contains_key("sourceId") {
         let alias = obj
@@ -626,7 +629,10 @@ fn normalize_single_data_source(obj: &mut serde_json::Map<String, serde_json::Va
                         } else {
                             "latest"
                         };
-                        obj.insert("mode".to_string(), serde_json::Value::String(mode.to_string()));
+                        obj.insert(
+                            "mode".to_string(),
+                            serde_json::Value::String(mode.to_string()),
+                        );
                     }
                 }
             }
@@ -666,7 +672,10 @@ fn normalize_component_json(val: &mut serde_json::Value) {
 
     // Hoist camelCase/lowercase dataSource keys at top level
     if !obj.contains_key("data_source") {
-        if let Some(ds) = obj.remove("dataSource").or_else(|| obj.remove("datasource")) {
+        if let Some(ds) = obj
+            .remove("dataSource")
+            .or_else(|| obj.remove("datasource"))
+        {
             if !ds.is_null() {
                 obj.insert("data_source".to_string(), ds);
             }
@@ -674,11 +683,14 @@ fn normalize_component_json(val: &mut serde_json::Value) {
     }
     // Hoist nested config.dataSource / config.data_source when top-level data_source is missing
     if !obj.contains_key("data_source") {
-        let nested = obj.get_mut("config").and_then(|c| c.as_object_mut()).and_then(|cfg| {
-            cfg.remove("dataSource")
-                .or_else(|| cfg.remove("data_source"))
-                .filter(|v| !v.is_null())
-        });
+        let nested = obj
+            .get_mut("config")
+            .and_then(|c| c.as_object_mut())
+            .and_then(|cfg| {
+                cfg.remove("dataSource")
+                    .or_else(|| cfg.remove("data_source"))
+                    .filter(|v| !v.is_null())
+            });
         if let Some(ds) = nested {
             obj.insert("data_source".to_string(), ds);
         }
@@ -2171,21 +2183,18 @@ pub async fn share_proxy_handler(
     //    Verifies that URL parsing/normalization did NOT alter the path
     //    (e.g. via backslashes, dot-segments, percent-encoding, or query/fragment
     //    smuggling) and that the target stays pinned to 127.0.0.1:<port>/api/<path_str>.
-    let target_url = match build_verified_share_proxy_url(
-        crate::server::http_bind_port(),
-        path_str,
-        &query,
-    ) {
-        Ok(url) => url,
-        Err(()) => {
-            return ErrorResponse::new(
-                "FORBIDDEN",
-                "This path is not accessible via share proxy",
-                StatusCode::FORBIDDEN,
-            )
-            .into_response();
-        }
-    };
+    let target_url =
+        match build_verified_share_proxy_url(crate::server::http_bind_port(), path_str, &query) {
+            Ok(url) => url,
+            Err(()) => {
+                return ErrorResponse::new(
+                    "FORBIDDEN",
+                    "This path is not accessible via share proxy",
+                    StatusCode::FORBIDDEN,
+                )
+                .into_response();
+            }
+        };
 
     // 6. Forward via reqwest (internal loopback, skips auth middleware).
     // One shared client — shared boards poll through here continuously and a
@@ -2243,8 +2252,9 @@ pub async fn share_proxy_handler(
                         }
                         if redact_shared_agent_execution {
                             strip_sensitive_execution_fields(data_obj);
-                            if let Some(exec_obj) =
-                                data_obj.get_mut("execution").and_then(|e| e.as_object_mut())
+                            if let Some(exec_obj) = data_obj
+                                .get_mut("execution")
+                                .and_then(|e| e.as_object_mut())
                             {
                                 strip_sensitive_execution_fields(exec_obj);
                             }
@@ -2291,6 +2301,7 @@ pub async fn share_proxy_handler(
 /// - Agent execution history (status widgets)
 /// - Data source values
 /// - Messages (alerts shown on dashboard)
+///
 /// Structurally extract all agent IDs explicitly bound to dashboard components.
 fn collect_bound_agent_ids(val: &serde_json::Value, out: &mut std::collections::HashSet<String>) {
     match val {
@@ -2819,7 +2830,10 @@ mod share_proxy_tests {
     #[test]
     fn verified_url_builder_preserves_exact_loopback_path() {
         let u = build_verified_share_proxy_url(9375, "devices/abc/current", "limit=10").unwrap();
-        assert_eq!(u.as_str(), "http://127.0.0.1:9375/api/devices/abc/current?limit=10");
+        assert_eq!(
+            u.as_str(),
+            "http://127.0.0.1:9375/api/devices/abc/current?limit=10"
+        );
         assert_eq!(u.path(), "/api/devices/abc/current");
     }
 }

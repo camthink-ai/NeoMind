@@ -292,9 +292,7 @@ impl TimeSeriesStorage {
             // them into the placeholder's storage and stop its background
             // 500ms flush task so the replaced in-memory store does not leak.
             let old_for_shutdown = Arc::clone(&old);
-            if let Err(e) =
-                tokio::task::spawn_blocking(move || old_for_shutdown.shutdown()).await
-            {
+            if let Err(e) = tokio::task::spawn_blocking(move || old_for_shutdown.shutdown()).await {
                 tracing::warn!(category = "storage", error = %e,
                     "shutdown of placeholder telemetry before drain failed — buffered points may be lost");
             }

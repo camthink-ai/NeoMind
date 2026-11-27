@@ -820,8 +820,8 @@ impl MqttAdapter {
             while *running_flag.read().await {
                 match eventloop_rx.recv().await {
                     Ok(notification) => {
-                        if let Err(panic) = std::panic::AssertUnwindSafe(
-                            Self::handle_mqtt_notification(
+                        if let Err(panic) =
+                            std::panic::AssertUnwindSafe(Self::handle_mqtt_notification(
                                 notification,
                                 &config,
                                 &event_tx_clone,
@@ -838,10 +838,9 @@ impl MqttAdapter {
                                 &uncollectable,
                                 data_dir_clone.read().await.as_ref(),
                                 &chunked_images,
-                            ),
-                        )
-                        .catch_unwind()
-                        .await
+                            ))
+                            .catch_unwind()
+                            .await
                         {
                             tracing::error!(
                                 broker = %broker_id_clone,

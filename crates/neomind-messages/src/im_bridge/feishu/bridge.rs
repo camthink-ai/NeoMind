@@ -497,7 +497,10 @@ mod tests {
         })
         .to_string()
         .into_bytes();
-        assert_eq!(process_event(&bot_payload, &bus).await, EventOutcome::Ignored);
+        assert_eq!(
+            process_event(&bot_payload, &bus).await,
+            EventOutcome::Ignored
+        );
 
         let wrong_type_payload = serde_json::json!({
             "schema": "2.0",

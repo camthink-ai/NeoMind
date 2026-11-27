@@ -3225,13 +3225,14 @@ mod history_pagination_tests {
         let bob_sid = manager.create_session().await.unwrap();
         manager.set_session_owner(&bob_sid, "user:bob");
 
-        let mk_user = |name: &str, role: crate::auth_users::UserRole| crate::auth_users::SessionInfo {
-            user_id: format!("uid-{name}"),
-            username: name.to_string(),
-            role,
-            created_at: 0,
-            expires_at: i64::MAX,
-        };
+        let mk_user =
+            |name: &str, role: crate::auth_users::UserRole| crate::auth_users::SessionInfo {
+                user_id: format!("uid-{name}"),
+                username: name.to_string(),
+                role,
+                created_at: 0,
+                expires_at: i64::MAX,
+            };
         let alice = mk_user("alice", crate::auth_users::UserRole::User);
         let bob = mk_user("bob", crate::auth_users::UserRole::User);
         let viewer = mk_user("view", crate::auth_users::UserRole::Viewer);
@@ -3240,7 +3241,10 @@ mod history_pagination_tests {
         // List filtering: Bob sees only Bob's session; Admin sees both.
         let bob_list = list_sessions_handler(
             State(state.clone()),
-            Query(ListSessionsQuery { page: 1, page_size: 50 }),
+            Query(ListSessionsQuery {
+                page: 1,
+                page_size: 50,
+            }),
             Some(Extension(bob.clone())),
         )
         .await
@@ -3257,7 +3261,10 @@ mod history_pagination_tests {
 
         let admin_list = list_sessions_handler(
             State(state.clone()),
-            Query(ListSessionsQuery { page: 1, page_size: 50 }),
+            Query(ListSessionsQuery {
+                page: 1,
+                page_size: 50,
+            }),
             Some(Extension(admin.clone())),
         )
         .await
@@ -3372,9 +3379,11 @@ mod history_pagination_tests {
                 .status,
             axum::http::StatusCode::FORBIDDEN
         );
-        assert!(cleanup_sessions_handler(State(state), Some(Extension(admin)))
-            .await
-            .is_ok());
+        assert!(
+            cleanup_sessions_handler(State(state), Some(Extension(admin)))
+                .await
+                .is_ok()
+        );
     }
 
     fn msg(role: &str, content: &str) -> AgentMessage {

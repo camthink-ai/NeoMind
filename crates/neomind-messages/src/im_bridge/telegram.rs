@@ -94,7 +94,9 @@ impl TelegramBridge {
             .map_err(|e| anyhow::anyhow!("{}", crate::manager::scrub_credentials(&e.to_string())))?
             .json()
             .await
-            .map_err(|e| anyhow::anyhow!("{}", crate::manager::scrub_credentials(&e.to_string())))?;
+            .map_err(|e| {
+                anyhow::anyhow!("{}", crate::manager::scrub_credentials(&e.to_string()))
+            })?;
         Ok(v.get("result")
             .and_then(|r| r.get("username"))
             .and_then(|x| x.as_str())

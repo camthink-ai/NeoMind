@@ -116,13 +116,9 @@ pub enum Operation {
         height: u32,
     },
     #[serde(rename = "rotate")]
-    Rotate {
-        angle: i32,
-    },
+    Rotate { angle: i32 },
     #[serde(rename = "flip")]
-    Flip {
-        direction: FlipDirection,
-    },
+    Flip { direction: FlipDirection },
     #[serde(rename = "resize")]
     Resize {
         #[serde(default)]
@@ -1207,7 +1203,9 @@ fn apply_resize(
     use image::imageops::FilterType;
     let (iw, ih) = (img.width(), img.height());
     if iw == 0 || ih == 0 {
-        return Err(OpError::InvalidResizeDims("source image has zero size".into()));
+        return Err(OpError::InvalidResizeDims(
+            "source image has zero size".into(),
+        ));
     }
 
     let validate_dim = |label: &str, v: u32| -> std::result::Result<u32, OpError> {
@@ -1829,7 +1827,8 @@ fn apply_draw_rect(
     // Top and bottom horizontal edges
     draw_filled_rect_blended(&mut rgba, x, y, w, top_h, color);
     if bot_h > 0 {
-        let bot_y = (y as i64 + h as i64 - bot_h as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+        let bot_y =
+            (y as i64 + h as i64 - bot_h as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
         draw_filled_rect_blended(&mut rgba, x, bot_y, w, bot_h, color);
     }
     // Left and right vertical edges (between top and bottom bands — no corner double-blend)
@@ -1840,7 +1839,8 @@ fn apply_draw_rect(
         let right_w = t.min(w.saturating_sub(left_w));
         draw_filled_rect_blended(&mut rgba, x, mid_y, left_w, mid_h, color);
         if right_w > 0 {
-            let right_x = (x as i64 + w as i64 - right_w as i64).clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            let right_x = (x as i64 + w as i64 - right_w as i64)
+                .clamp(i32::MIN as i64, i32::MAX as i64) as i32;
             draw_filled_rect_blended(&mut rgba, right_x, mid_y, right_w, mid_h, color);
         }
     }
@@ -1954,8 +1954,24 @@ fn apply_draw_arrow(
     let hx2 = x2 as f32 - hl * head_angle2.cos();
     let hy2 = y2 as f32 - hl * head_angle2.sin();
 
-    draw_thick_segment(&mut rgba, x2 as f32, y2 as f32, hx1, hy1, color, stroke_width);
-    draw_thick_segment(&mut rgba, x2 as f32, y2 as f32, hx2, hy2, color, stroke_width);
+    draw_thick_segment(
+        &mut rgba,
+        x2 as f32,
+        y2 as f32,
+        hx1,
+        hy1,
+        color,
+        stroke_width,
+    );
+    draw_thick_segment(
+        &mut rgba,
+        x2 as f32,
+        y2 as f32,
+        hx2,
+        hy2,
+        color,
+        stroke_width,
+    );
     *img = image::DynamicImage::ImageRgba8(rgba);
 }
 

@@ -942,10 +942,11 @@ pub async fn install_marketplace_extension_handler(
                 .with_hint("Retry later or verify the marketplace registry metadata.")
             })?,
             Ok(r) if r.status() == reqwest::StatusCode::NOT_FOUND => {
-                return Err(
-                    ErrorResponse::not_found(format!("Marketplace extension '{}'", req.id))
-                        .with_hint("Run `neomind extension market-list` to see available extensions."),
-                );
+                return Err(ErrorResponse::not_found(format!(
+                    "Marketplace extension '{}'",
+                    req.id
+                ))
+                .with_hint("Run `neomind extension market-list` to see available extensions."));
             }
             Ok(r) => {
                 return Err(ErrorResponse::service_unavailable(format!(
@@ -1007,12 +1008,11 @@ pub async fn install_marketplace_extension_handler(
         );
 
         // Download the .nep package (with SSRF validation on initial URL + redirects)
-        let package_response =
-            validated_get(package_url, std::time::Duration::from_secs(60), &[])
-                .await
-                .map_err(|e| {
-                    e.into_error_response(&format!("Failed to download package for '{}'", req.id))
-                })?;
+        let package_response = validated_get(package_url, std::time::Duration::from_secs(60), &[])
+            .await
+            .map_err(|e| {
+                e.into_error_response(&format!("Failed to download package for '{}'", req.id))
+            })?;
 
         if !package_response.status().is_success() {
             return Err(ErrorResponse::service_unavailable(format!(
@@ -1122,15 +1122,11 @@ pub async fn install_marketplace_extension_handler(
         // any running extension. Reject packages whose manifest.id does not
         // match the requested extension id (prevents a compromised mirror or
         // mislabeled artifact from overwriting an unrelated extension).
-        let precheck_pkg =
-            neomind_core::extension::package::ExtensionPackage::load(&tmp_path)
-                .await
-                .map_err(|e| {
-                    ErrorResponse::bad_request(format!(
-                        "Invalid .nep package for '{}': {}",
-                        req.id, e
-                    ))
-                })?;
+        let precheck_pkg = neomind_core::extension::package::ExtensionPackage::load(&tmp_path)
+            .await
+            .map_err(|e| {
+                ErrorResponse::bad_request(format!("Invalid .nep package for '{}': {}", req.id, e))
+            })?;
         if precheck_pkg.manifest.id != req.id {
             return Err(ErrorResponse::bad_request(format!(
                 "Package manifest id '{}' does not match requested extension id '{}' — refusing to install",
@@ -1304,10 +1300,9 @@ pub async fn install_marketplace_extension_handler(
         // Download the extension binary (with SSRF validation + validated redirects)
         tracing::info!("Downloading extension {} from {}", req.id, build.url);
 
-        let download_response =
-            validated_get(&build.url, std::time::Duration::from_secs(60), &[])
-                .await
-                .map_err(|e| e.into_error_response("Download failed"))?;
+        let download_response = validated_get(&build.url, std::time::Duration::from_secs(60), &[])
+            .await
+            .map_err(|e| e.into_error_response("Download failed"))?;
 
         if !download_response.status().is_success() {
             return Err(ErrorResponse::service_unavailable(format!(

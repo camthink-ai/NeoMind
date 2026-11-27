@@ -277,6 +277,9 @@ mod tests {
             "https://hooks.slack.com/services/T123/B456/SECRETTOKEN".to_string(),
         );
         let dbg = format!("{:?}", ch);
-        assert!(!dbg.contains("SECRETTOKEN"), "slack webhook_url leaked: {dbg}");
+        assert!(
+            !dbg.contains("SECRETTOKEN"),
+            "slack webhook_url leaked: {dbg}"
+        );
     }
 }

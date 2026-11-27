@@ -827,7 +827,11 @@ fn is_duplicate_virtual(
     // Cross-namespace dedup only bridges `transform:` → `device:` for the same
     // `(metric, value, ts)` so distinct devices never collide with each other.
     if let Some((ns, metric)) = split_canonical_source(source_id) {
-        let alias_key = (format!("__transform_alias__:{metric}"), value_str.to_string(), ts);
+        let alias_key = (
+            format!("__transform_alias__:{metric}"),
+            value_str.to_string(),
+            ts,
+        );
         if ns == "device" {
             if let Some(seen) = recent.get(&alias_key) {
                 if now.duration_since(*seen) < window {

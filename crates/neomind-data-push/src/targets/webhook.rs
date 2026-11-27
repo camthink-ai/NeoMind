@@ -31,7 +31,10 @@ impl std::fmt::Debug for WebhookConfig {
             .field("url", &crate::scheduler::scrub_credentials(&self.url))
             .field("method", &self.method)
             .field("headers_count", &self.headers.len())
-            .field("auth_token", &self.auth_token.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "auth_token",
+                &self.auth_token.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("auth_basic", &self.auth_basic)
             .field("timeout_secs", &self.timeout_secs)
             .finish()
@@ -119,8 +122,7 @@ fn validate_webhook_url_with_policy(url_str: &str, allow_loopback: bool) -> Resu
     if url_str.is_empty() {
         return Err(anyhow!("Webhook URL is required"));
     }
-    let parsed = reqwest::Url::parse(url_str)
-        .map_err(|e| anyhow!("Invalid webhook URL: {}", e))?;
+    let parsed = reqwest::Url::parse(url_str).map_err(|e| anyhow!("Invalid webhook URL: {}", e))?;
 
     match parsed.scheme() {
         "http" | "https" => {}
@@ -366,6 +368,8 @@ mod tests {
         }
 
         // Public webhook accepted
-        assert!(validate_webhook_url_with_policy("https://hooks.example.com/ingest", false).is_ok());
+        assert!(
+            validate_webhook_url_with_policy("https://hooks.example.com/ingest", false).is_ok()
+        );
     }
 }

@@ -1571,7 +1571,9 @@ pub async fn test_agent_preview(
                         .strip_prefix("extension:")
                         .unwrap_or(&r.resource_id);
                     let (id, op) = match clean.split_once(':') {
-                        Some((ext, op)) if !op.is_empty() => (ext.to_string(), Some(op.to_string())),
+                        Some((ext, op)) if !op.is_empty() => {
+                            (ext.to_string(), Some(op.to_string()))
+                        }
                         _ => (clean.to_string(), None),
                     };
                     (InputSourceRef::ExtensionInstance { id }, op)
@@ -1643,7 +1645,10 @@ pub async fn test_agent_preview(
 
     let rt = state.require_clean_slate().await?;
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let preview_id = format!("preview_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+    let preview_id = format!(
+        "preview_{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..8]
+    );
     let preview_spec = neomind_ai_agent::AgentSpec {
         id: preview_id.clone(),
         name: draft.name,

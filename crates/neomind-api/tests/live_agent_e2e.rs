@@ -33,6 +33,7 @@ use neomind_messages::MessageManager;
 use neomind_storage::llm_backends::{BackendCapabilities, LlmBackendInstance, LlmBackendStore};
 use neomind_storage::{AgentStore, LlmBackendType, MarkdownMemoryStore, MemoryConfig};
 
+#[allow(clippy::too_many_arguments)]
 fn make_instance(
     id: &str,
     backend_type: LlmBackendType,
@@ -71,7 +72,11 @@ fn make_instance(
     }
 }
 
-async fn setup_live_runtime() -> (tempfile::TempDir, Arc<HostedAiAgentRuntime>, Arc<TimeSeriesStorage>) {
+async fn setup_live_runtime() -> (
+    tempfile::TempDir,
+    Arc<HostedAiAgentRuntime>,
+    Arc<TimeSeriesStorage>,
+) {
     let dir = tempfile::tempdir().expect("tempdir");
     let llm_store = LlmBackendStore::open(dir.path().join("llm_backends.redb")).expect("llm store");
     let mgr = Arc::new(LlmBackendInstanceManager::new(llm_store));
@@ -133,9 +138,13 @@ async fn setup_live_runtime() -> (tempfile::TempDir, Arc<HostedAiAgentRuntime>, 
     let bus = Arc::new(EventBus::new());
     let dev_reg = Arc::new(DeviceRegistry::new());
     let device_service = Arc::new(DeviceService::new(dev_reg, (*bus).clone()));
-    device_service.set_telemetry_storage(telemetry.clone()).await;
+    device_service
+        .set_telemetry_storage(telemetry.clone())
+        .await;
     let ext_reg = Arc::new(ExtensionRegistry::new());
-    let ext_metrics = Arc::new(ExtensionMetricsStorage::with_shared_storage(telemetry.clone()));
+    let ext_metrics = Arc::new(ExtensionMetricsStorage::with_shared_storage(
+        telemetry.clone(),
+    ));
 
     let value_provider = Arc::new(neomind_rules::UnifiedValueProvider::new());
     let rule_engine = Arc::new(neomind_rules::RuleEngine::new(value_provider.clone()));
@@ -193,7 +202,10 @@ fn print_exec(label: &str, resp: &neomind_ai_agent::model::RunResponse, explain:
         if !exec.tool_calls.is_empty() {
             println!("tool_calls  : {:?}", exec.tool_calls);
         }
-        println!("conclusion  : {}", exec.conclusion.as_deref().unwrap_or("<none>"));
+        println!(
+            "conclusion  : {}",
+            exec.conclusion.as_deref().unwrap_or("<none>")
+        );
     } else {
         println!("(no execution record)");
     }
@@ -208,11 +220,19 @@ async fn live_multi_model_agent_matrix() {
 
     // Seed sensor telemetry
     telemetry
-        .write("device:sensor-01", "temperature", DataPoint::new(now, MetricValue::Float(36.8)))
+        .write(
+            "device:sensor-01",
+            "temperature",
+            DataPoint::new(now, MetricValue::Float(36.8)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:sensor-01", "humidity", DataPoint::new(now, MetricValue::Float(72.0)))
+        .write(
+            "device:sensor-01",
+            "humidity",
+            DataPoint::new(now, MetricValue::Float(72.0)),
+        )
         .await
         .unwrap();
 
@@ -225,15 +245,27 @@ async fn live_multi_model_agent_matrix() {
     })
     .to_string();
     telemetry
-        .write("device:cam-9999", "values.battery", DataPoint::new(now, MetricValue::Integer(84)))
+        .write(
+            "device:cam-9999",
+            "values.battery",
+            DataPoint::new(now, MetricValue::Integer(84)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:cam-9999", "values.image", DataPoint::new(now, MetricValue::String(data_url)))
+        .write(
+            "device:cam-9999",
+            "values.image",
+            DataPoint::new(now, MetricValue::String(data_url)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:cam-9999", "_raw", DataPoint::new(now, MetricValue::String(raw_payload)))
+        .write(
+            "device:cam-9999",
+            "_raw",
+            DataPoint::new(now, MetricValue::String(raw_payload)),
+        )
         .await
         .unwrap();
 
@@ -346,7 +378,11 @@ async fn live_multi_model_agent_matrix() {
         .expect("create 2a");
     let resp_2a = rt.invoke(&spec_2a.id).await.expect("invoke 2a");
     let exp_2a = rt.explain_last(&spec_2a.id).unwrap_or_default();
-    print_exec("2A: minicpm-v-4.7-1b (camera vision + large base64)", &resp_2a, &exp_2a);
+    print_exec(
+        "2A: minicpm-v-4.7-1b (camera vision + large base64)",
+        &resp_2a,
+        &exp_2a,
+    );
 
     // 3A. ollama qwen3.5:4b — tool whitelist (shell) + structured JSON
     let (spec_3a, _) = rt
@@ -383,7 +419,8 @@ async fn live_multi_model_agent_matrix() {
         .create(AgentSpecDraft {
             name: "E2E-3B Qwen3.5 Vision".into(),
             description: None,
-            user_prompt: "请描述摄像头画面中的场景，判断是否正常，输出 JSON 字段 status 和 summary。".into(),
+            user_prompt:
+                "请描述摄像头画面中的场景，判断是否正常，输出 JSON 字段 status 和 summary。".into(),
             llm_backend_id: Some("ollama-qwen35".into()),
             preset: None,
             trigger: TriggerSpec::Manual,
@@ -391,7 +428,9 @@ async fn live_multi_model_agent_matrix() {
             input: InputContract {
                 requirements: vec![InputRequirement {
                     key: "cam_9999".into(),
-                    source: InputSourceRef::WholeDevice { device_id: "cam-9999".into() },
+                    source: InputSourceRef::WholeDevice {
+                        device_id: "cam-9999".into(),
+                    },
                     operation: None,
                     params: serde_json::json!({}),
                     result_type: InputModality::StructuredJson,
@@ -405,8 +444,16 @@ async fn live_multi_model_agent_matrix() {
             output: OutputContract {
                 publish: false,
                 fields: vec![
-                    OutputField { name: "status".into(), depends_on: vec![], description: Some("Normal or abnormal".into()) },
-                    OutputField { name: "summary".into(), depends_on: vec![], description: Some("Visual observation in Chinese".into()) },
+                    OutputField {
+                        name: "status".into(),
+                        depends_on: vec![],
+                        description: Some("Normal or abnormal".into()),
+                    },
+                    OutputField {
+                        name: "summary".into(),
+                        depends_on: vec![],
+                        description: Some("Visual observation in Chinese".into()),
+                    },
                 ],
             },
             notify: NotifyPolicy::default(),
@@ -472,28 +519,44 @@ async fn live_multi_model_agent_matrix() {
         let concl = exec.conclusion.as_deref().unwrap_or("");
         assert!(!concl.is_empty(), "{name} conclusion must be non-empty");
         assert!(
-            !concl.contains("<tool_call>") && !concl.contains("<json>") && !concl.contains("```json"),
+            !concl.contains("<tool_call>")
+                && !concl.contains("<json>")
+                && !concl.contains("```json"),
             "{name} conclusion leaked raw protocol tags: {concl}"
         );
     }
 
     // Verify tool outputs actually came from real shell execution:
     assert_eq!(
-        resp_1a.execution.as_ref().unwrap().structured_result.as_ref().unwrap()["os"],
+        resp_1a
+            .execution
+            .as_ref()
+            .unwrap()
+            .structured_result
+            .as_ref()
+            .unwrap()["os"],
         "Darwin"
     );
-    assert!(
-        resp_3a.execution.as_ref().unwrap().structured_result.as_ref().unwrap()["result"]
-            .as_str()
-            .unwrap_or("")
-            .contains("NEOMIND_QWEN_OK")
-    );
-    assert!(
-        resp_4a.execution.as_ref().unwrap().structured_result.as_ref().unwrap()["result"]
-            .as_str()
-            .unwrap_or("")
-            .contains("NEOMIND_LFM_OK")
-    );
+    assert!(resp_3a
+        .execution
+        .as_ref()
+        .unwrap()
+        .structured_result
+        .as_ref()
+        .unwrap()["result"]
+        .as_str()
+        .unwrap_or("")
+        .contains("NEOMIND_QWEN_OK"));
+    assert!(resp_4a
+        .execution
+        .as_ref()
+        .unwrap()
+        .structured_result
+        .as_ref()
+        .unwrap()["result"]
+        .as_str()
+        .unwrap_or("")
+        .contains("NEOMIND_LFM_OK"));
     // Verify alert precision (1B alert = CriteriaMet; 3B & 4A normal = CriteriaNotMet):
     assert_eq!(
         resp_1b.execution.as_ref().unwrap().alert_verdict,
@@ -521,62 +584,112 @@ async fn live_business_scenarios_stress_matrix() {
     // ── Seed realistic multi-device telemetry ─────────────────────────────
     // B1: Cold room abnormal (8.4°C, door open) & normal (2.1°C, door closed)
     telemetry
-        .write("device:cold-room-hot", "temperature", DataPoint::new(now, MetricValue::Float(8.4)))
+        .write(
+            "device:cold-room-hot",
+            "temperature",
+            DataPoint::new(now, MetricValue::Float(8.4)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:cold-room-hot", "humidity", DataPoint::new(now, MetricValue::Float(82.0)))
+        .write(
+            "device:cold-room-hot",
+            "humidity",
+            DataPoint::new(now, MetricValue::Float(82.0)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:cold-room-hot", "door_open", DataPoint::new(now, MetricValue::Boolean(true)))
+        .write(
+            "device:cold-room-hot",
+            "door_open",
+            DataPoint::new(now, MetricValue::Boolean(true)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:cold-room-ok", "temperature", DataPoint::new(now, MetricValue::Float(2.1)))
+        .write(
+            "device:cold-room-ok",
+            "temperature",
+            DataPoint::new(now, MetricValue::Float(2.1)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:cold-room-ok", "door_open", DataPoint::new(now, MetricValue::Boolean(false)))
+        .write(
+            "device:cold-room-ok",
+            "door_open",
+            DataPoint::new(now, MetricValue::Boolean(false)),
+        )
         .await
         .unwrap();
 
     // B2: Factory meter 12-point lookback series ramping 42.5 -> 98.6 kW over last 30m
-    let series_vals = [42.5, 46.0, 51.2, 58.0, 64.5, 71.0, 77.3, 82.1, 86.4, 91.2, 95.8, 98.6];
+    let series_vals = [
+        42.5, 46.0, 51.2, 58.0, 64.5, 71.0, 77.3, 82.1, 86.4, 91.2, 95.8, 98.6,
+    ];
     for (idx, kw) in series_vals.iter().enumerate() {
         let ts = now - ((series_vals.len() - 1 - idx) as i64) * 150;
         telemetry
-            .write("device:factory-meter-01", "power_kw", DataPoint::new(ts, MetricValue::Float(*kw)))
+            .write(
+                "device:factory-meter-01",
+                "power_kw",
+                DataPoint::new(ts, MetricValue::Float(*kw)),
+            )
             .await
             .unwrap();
     }
 
     // B3: Greenhouse — fresh temp (34.2°C) + STALE soil moisture (2 hours ago)
     telemetry
-        .write("device:gh-sensor-1", "temperature", DataPoint::new(now - 30, MetricValue::Float(34.2)))
+        .write(
+            "device:gh-sensor-1",
+            "temperature",
+            DataPoint::new(now - 30, MetricValue::Float(34.2)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:gh-sensor-2", "moisture", DataPoint::new(now - 7200, MetricValue::Float(18.0)))
+        .write(
+            "device:gh-sensor-2",
+            "moisture",
+            DataPoint::new(now - 7200, MetricValue::Float(18.0)),
+        )
         .await
         .unwrap();
 
     // B4: Plaza camera (176KB base64) + environment sensor for upstream -> downstream chaining
     let data_url = load_camera_data_url();
     telemetry
-        .write("device:plaza-cam-01", "values.image", DataPoint::new(now, MetricValue::String(data_url)))
+        .write(
+            "device:plaza-cam-01",
+            "values.image",
+            DataPoint::new(now, MetricValue::String(data_url)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:plaza-cam-01", "values.battery", DataPoint::new(now, MetricValue::Integer(84)))
+        .write(
+            "device:plaza-cam-01",
+            "values.battery",
+            DataPoint::new(now, MetricValue::Integer(84)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:plaza-env-01", "pm25", DataPoint::new(now, MetricValue::Float(28.0)))
+        .write(
+            "device:plaza-env-01",
+            "pm25",
+            DataPoint::new(now, MetricValue::Float(28.0)),
+        )
         .await
         .unwrap();
     telemetry
-        .write("device:plaza-env-01", "noise_db", DataPoint::new(now, MetricValue::Float(54.0)))
+        .write(
+            "device:plaza-env-01",
+            "noise_db",
+            DataPoint::new(now, MetricValue::Float(54.0)),
+        )
         .await
         .unwrap();
 
@@ -651,21 +764,56 @@ async fn live_business_scenarios_stress_matrix() {
     let notify_before = rt.notify.deliveries();
     let writes_before = rt.side_effects.invokes();
     let dry_resp = rt.dry_run(&spec_b1a.id).await.expect("dry_run b1a");
-    print_exec("B6a: dry_run cold room over-temp (must be zero side effects)", &dry_resp, "");
+    print_exec(
+        "B6a: dry_run cold room over-temp (must be zero side effects)",
+        &dry_resp,
+        "",
+    );
     check(dry_resp.dry_run, "B6a dry_run flag is true".into());
-    check(rt.notify.deliveries() == notify_before, "B6a dry_run sent 0 notifications".into());
-    check(rt.side_effects.invokes() == writes_before, "B6a dry_run executed 0 device writes".into());
-    check(rt.service.formal_history_len(&spec_b1a.id) == 0, "B6a dry_run wrote 0 formal history rows".into());
+    check(
+        rt.notify.deliveries() == notify_before,
+        "B6a dry_run sent 0 notifications".into(),
+    );
+    check(
+        rt.side_effects.invokes() == writes_before,
+        "B6a dry_run executed 0 device writes".into(),
+    );
+    check(
+        rt.service.formal_history_len(&spec_b1a.id) == 0,
+        "B6a dry_run wrote 0 formal history rows".into(),
+    );
 
     // Now formal invoke B1a
     let resp_b1a = rt.invoke(&spec_b1a.id).await.expect("invoke b1a");
     let exp_b1a = rt.explain_last(&spec_b1a.id).unwrap_or_default();
-    print_exec("B1a: Cold room 8.4°C over-temp (formal)", &resp_b1a, &exp_b1a);
+    print_exec(
+        "B1a: Cold room 8.4°C over-temp (formal)",
+        &resp_b1a,
+        &exp_b1a,
+    );
     let exec_b1a = resp_b1a.execution.as_ref().unwrap();
-    check(exec_b1a.status == ExecutionStatus::Completed, format!("B1a status=Completed (got {:?})", exec_b1a.status));
-    check(exec_b1a.alert_verdict == Some(AlertVerdict::CriteriaMet), format!("B1a alert=CriteriaMet (got {:?})", exec_b1a.alert_verdict));
-    check(rt.notify.deliveries() > notify_before, format!("B1a delivered alert notify (count={})", rt.notify.deliveries() - notify_before));
-    check(!exec_b1a.deliveries.is_empty(), format!("B1a recorded delivery receipts (len={})", exec_b1a.deliveries.len()));
+    check(
+        exec_b1a.status == ExecutionStatus::Completed,
+        format!("B1a status=Completed (got {:?})", exec_b1a.status),
+    );
+    check(
+        exec_b1a.alert_verdict == Some(AlertVerdict::CriteriaMet),
+        format!("B1a alert=CriteriaMet (got {:?})", exec_b1a.alert_verdict),
+    );
+    check(
+        rt.notify.deliveries() > notify_before,
+        format!(
+            "B1a delivered alert notify (count={})",
+            rt.notify.deliveries() - notify_before
+        ),
+    );
+    check(
+        !exec_b1a.deliveries.is_empty(),
+        format!(
+            "B1a recorded delivery receipts (len={})",
+            exec_b1a.deliveries.len()
+        ),
+    );
 
     // ── B1b: Cold room normal (2.1°C, door closed) -> NO alert, NO notify, NO action ──
     let notify_before_b1b = rt.notify.deliveries();
@@ -721,9 +869,21 @@ async fn live_business_scenarios_stress_matrix() {
     let exp_b1b = rt.explain_last(&spec_b1b.id).unwrap_or_default();
     print_exec("B1b: Cold room 2.1°C normal", &resp_b1b, &exp_b1b);
     let exec_b1b = resp_b1b.execution.as_ref().unwrap();
-    check(exec_b1b.alert_verdict == Some(AlertVerdict::CriteriaNotMet), format!("B1b normal must NOT alert (got {:?})", exec_b1b.alert_verdict));
-    check(rt.notify.deliveries() == notify_before_b1b, "B1b normal sent 0 notifications".into());
-    check(rt.side_effects.invokes() == writes_before_b1b, "B1b normal executed 0 device actions".into());
+    check(
+        exec_b1b.alert_verdict == Some(AlertVerdict::CriteriaNotMet),
+        format!(
+            "B1b normal must NOT alert (got {:?})",
+            exec_b1b.alert_verdict
+        ),
+    );
+    check(
+        rt.notify.deliveries() == notify_before_b1b,
+        "B1b normal sent 0 notifications".into(),
+    );
+    check(
+        rt.side_effects.invokes() == writes_before_b1b,
+        "B1b normal executed 0 device actions".into(),
+    );
 
     // ── B2: Factory meter LookbackWindow time-series peak analysis ──
     let (spec_b2, _) = rt
@@ -767,11 +927,31 @@ async fn live_business_scenarios_stress_matrix() {
         .expect("create b2");
     let resp_b2 = rt.invoke(&spec_b2.id).await.expect("invoke b2");
     let exp_b2 = rt.explain_last(&spec_b2.id).unwrap_or_default();
-    print_exec("B2: Factory meter LookbackWindow (12 pts, peak 98.6kW)", &resp_b2, &exp_b2);
+    print_exec(
+        "B2: Factory meter LookbackWindow (12 pts, peak 98.6kW)",
+        &resp_b2,
+        &exp_b2,
+    );
     let exec_b2 = resp_b2.execution.as_ref().unwrap();
-    check(exec_b2.status == ExecutionStatus::Completed, format!("B2 LookbackWindow Completed (got {:?})", exec_b2.status));
-    check(exec_b2.alert_verdict == Some(AlertVerdict::CriteriaMet), format!("B2 peak 98.6 > 90 triggers alert (got {:?})", exec_b2.alert_verdict));
-    check(exec_b2.structured_result.as_ref().and_then(|v| v.get("peak_kw")).is_some(), format!("B2 extracted peak_kw ({:?})", exec_b2.structured_result));
+    check(
+        exec_b2.status == ExecutionStatus::Completed,
+        format!("B2 LookbackWindow Completed (got {:?})", exec_b2.status),
+    );
+    check(
+        exec_b2.alert_verdict == Some(AlertVerdict::CriteriaMet),
+        format!(
+            "B2 peak 98.6 > 90 triggers alert (got {:?})",
+            exec_b2.alert_verdict
+        ),
+    );
+    check(
+        exec_b2
+            .structured_result
+            .as_ref()
+            .and_then(|v| v.get("peak_kw"))
+            .is_some(),
+        format!("B2 extracted peak_kw ({:?})", exec_b2.structured_result),
+    );
 
     // ── B3: Greenhouse Partial source (fresh temp + stale soil) + depends_on gating ──
     let (spec_b3, _) = rt
@@ -843,13 +1023,26 @@ async fn live_business_scenarios_stress_matrix() {
         .expect("create b3");
     let resp_b3 = rt.invoke(&spec_b3.id).await.expect("invoke b3");
     let exp_b3 = rt.explain_last(&spec_b3.id).unwrap_or_default();
-    print_exec("B3: Greenhouse Partial (fresh temp + stale soil + depends_on gate)", &resp_b3, &exp_b3);
+    print_exec(
+        "B3: Greenhouse Partial (fresh temp + stale soil + depends_on gate)",
+        &resp_b3,
+        &exp_b3,
+    );
     let exec_b3 = resp_b3.execution.as_ref().unwrap();
-    check(exec_b3.status == ExecutionStatus::Partial, format!("B3 status=Partial (got {:?})", exec_b3.status));
+    check(
+        exec_b3.status == ExecutionStatus::Partial,
+        format!("B3 status=Partial (got {:?})", exec_b3.status),
+    );
     let irrigation_rejected = exec_b3.deliveries.iter().any(|d| {
         d.destination == "device:gh-pump" && matches!(d.state, DeliveryState::Rejected { .. })
     });
-    check(irrigation_rejected, format!("B3 stale-dependent start_irrigation was REJECTED (deliveries={:?})", exec_b3.deliveries));
+    check(
+        irrigation_rejected,
+        format!(
+            "B3 stale-dependent start_irrigation was REJECTED (deliveries={:?})",
+            exec_b3.deliveries
+        ),
+    );
 
     // ── B4: Upstream Vision Agent (minicpm-v) -> Downstream Shift Brief (sparkx2.6) ──
     let (spec_b4_up, _) = rt
@@ -901,14 +1094,19 @@ async fn live_business_scenarios_stress_matrix() {
         .expect("create b4_up");
     let resp_b4_up = rt.invoke(&spec_b4_up.id).await.expect("invoke b4_up");
     let exp_b4_up = rt.explain_last(&spec_b4_up.id).unwrap_or_default();
-    print_exec("B4-Up: minicpm-v Vision + Env publisher", &resp_b4_up, &exp_b4_up);
+    print_exec(
+        "B4-Up: minicpm-v Vision + Env publisher",
+        &resp_b4_up,
+        &exp_b4_up,
+    );
 
     let _ = telemetry.flush();
     let (spec_b4_down, _) = rt
         .create(AgentSpecDraft {
             name: "B4-Down Shift Handover Brief".into(),
             description: None,
-            user_prompt: "基于上游巡检 AI 发布的广场状态与摘要，生成一份简洁的中文交班简报。".into(),
+            user_prompt: "基于上游巡检 AI 发布的广场状态与摘要，生成一份简洁的中文交班简报。"
+                .into(),
             llm_backend_id: Some("llamacpp-spark".into()),
             preset: None,
             trigger: TriggerSpec::Manual,
@@ -917,7 +1115,10 @@ async fn live_business_scenarios_stress_matrix() {
                 requirements: vec![
                     InputRequirement {
                         key: "upstream_status".into(),
-                        source: InputSourceRef::UpstreamAi { agent_id: spec_b4_up.id.clone(), field: "status".into() },
+                        source: InputSourceRef::UpstreamAi {
+                            agent_id: spec_b4_up.id.clone(),
+                            field: "status".into(),
+                        },
                         operation: None,
                         params: serde_json::json!({}),
                         result_type: InputModality::Metric,
@@ -928,7 +1129,10 @@ async fn live_business_scenarios_stress_matrix() {
                     },
                     InputRequirement {
                         key: "upstream_summary".into(),
-                        source: InputSourceRef::UpstreamAi { agent_id: spec_b4_up.id.clone(), field: "summary".into() },
+                        source: InputSourceRef::UpstreamAi {
+                            agent_id: spec_b4_up.id.clone(),
+                            field: "summary".into(),
+                        },
                         operation: None,
                         params: serde_json::json!({}),
                         result_type: InputModality::Metric,
@@ -943,8 +1147,16 @@ async fn live_business_scenarios_stress_matrix() {
             output: OutputContract {
                 publish: false,
                 fields: vec![
-                    OutputField { name: "handover_status".into(), depends_on: vec!["upstream_status".into()], description: Some("ok or attention".into()) },
-                    OutputField { name: "brief".into(), depends_on: vec!["upstream_summary".into()], description: Some("Concise Chinese shift handover brief".into()) },
+                    OutputField {
+                        name: "handover_status".into(),
+                        depends_on: vec!["upstream_status".into()],
+                        description: Some("ok or attention".into()),
+                    },
+                    OutputField {
+                        name: "brief".into(),
+                        depends_on: vec!["upstream_summary".into()],
+                        description: Some("Concise Chinese shift handover brief".into()),
+                    },
                 ],
             },
             notify: NotifyPolicy::default(),
@@ -953,10 +1165,26 @@ async fn live_business_scenarios_stress_matrix() {
         .expect("create b4_down");
     let resp_b4_down = rt.invoke(&spec_b4_down.id).await.expect("invoke b4_down");
     let exp_b4_down = rt.explain_last(&spec_b4_down.id).unwrap_or_default();
-    print_exec("B4-Down: sparkx2.6 Downstream reading UpstreamAi", &resp_b4_down, &exp_b4_down);
+    print_exec(
+        "B4-Down: sparkx2.6 Downstream reading UpstreamAi",
+        &resp_b4_down,
+        &exp_b4_down,
+    );
     let exec_b4_down = resp_b4_down.execution.as_ref().unwrap();
-    check(exec_b4_down.status == ExecutionStatus::Completed, format!("B4-Down UpstreamAi Completed (got {:?}, missing={:?})", exec_b4_down.status, exec_b4_down.evidence.missing_keys));
-    check(exec_b4_down.evidence.missing_keys.is_empty(), format!("B4-Down read both upstream AI metrics cleanly (missing={:?})", exec_b4_down.evidence.missing_keys));
+    check(
+        exec_b4_down.status == ExecutionStatus::Completed,
+        format!(
+            "B4-Down UpstreamAi Completed (got {:?}, missing={:?})",
+            exec_b4_down.status, exec_b4_down.evidence.missing_keys
+        ),
+    );
+    check(
+        exec_b4_down.evidence.missing_keys.is_empty(),
+        format!(
+            "B4-Down read both upstream AI metrics cleanly (missing={:?})",
+            exec_b4_down.evidence.missing_keys
+        ),
+    );
 
     // ── B5a: Shell allowed_commands security boundary (qwen3.5:4b) ──
     let (spec_b5a, _) = rt
@@ -987,12 +1215,27 @@ async fn live_business_scenarios_stress_matrix() {
         .expect("create b5a");
     let resp_b5a = rt.invoke(&spec_b5a.id).await.expect("invoke b5a");
     let exp_b5a = rt.explain_last(&spec_b5a.id).unwrap_or_default();
-    print_exec("B5a: qwen3.5 allowed_commands guard (ls rejected, uname allowed)", &resp_b5a, &exp_b5a);
+    print_exec(
+        "B5a: qwen3.5 allowed_commands guard (ls rejected, uname allowed)",
+        &resp_b5a,
+        &exp_b5a,
+    );
     let exec_b5a = resp_b5a.execution.as_ref().unwrap();
-    check(exec_b5a.status == ExecutionStatus::Completed, format!("B5a Completed (got {:?})", exec_b5a.status));
+    check(
+        exec_b5a.status == ExecutionStatus::Completed,
+        format!("B5a Completed (got {:?})", exec_b5a.status),
+    );
     if let Some(sr) = &exec_b5a.structured_result {
-        check(sr.get("ls_allowed").and_then(|v| v.as_bool()) == Some(false), format!("B5a ls_allowed=false (got {:?})", sr.get("ls_allowed")));
-        check(sr.get("arch").and_then(|v| v.as_str()).is_some_and(|s| s.contains("arm64") || s.contains("x86")), format!("B5a arch populated (got {:?})", sr.get("arch")));
+        check(
+            sr.get("ls_allowed").and_then(|v| v.as_bool()) == Some(false),
+            format!("B5a ls_allowed=false (got {:?})", sr.get("ls_allowed")),
+        );
+        check(
+            sr.get("arch")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("arm64") || s.contains("x86")),
+            format!("B5a arch populated (got {:?})", sr.get("arch")),
+        );
     } else {
         check(false, "B5a structured_result was None".into());
     }
@@ -1025,24 +1268,48 @@ async fn live_business_scenarios_stress_matrix() {
         .expect("create b5b");
     let resp_b5b = rt.invoke(&spec_b5b.id).await.expect("invoke b5b");
     let exp_b5b = rt.explain_last(&spec_b5b.id).unwrap_or_default();
-    print_exec("B5b: qwen3.5 multi-step file_read + file_write", &resp_b5b, &exp_b5b);
+    print_exec(
+        "B5b: qwen3.5 multi-step file_read + file_write",
+        &resp_b5b,
+        &exp_b5b,
+    );
     let exec_b5b = resp_b5b.execution.as_ref().unwrap();
-    check(exec_b5b.status == ExecutionStatus::Completed, format!("B5b Completed (got {:?})", exec_b5b.status));
+    check(
+        exec_b5b.status == ExecutionStatus::Completed,
+        format!("B5b Completed (got {:?})", exec_b5b.status),
+    );
     check(
         exec_b5b.tool_calls.len() >= 2,
-        format!("B5b recorded >=2 tool_calls traces (got {:?})", exec_b5b.tool_calls.iter().map(|t| &t.name).collect::<Vec<_>>()),
+        format!(
+            "B5b recorded >=2 tool_calls traces (got {:?})",
+            exec_b5b
+                .tool_calls
+                .iter()
+                .map(|t| &t.name)
+                .collect::<Vec<_>>()
+        ),
     );
     let report_exists = dir.path().join("daily_report.md").exists();
-    check(report_exists, format!("B5b daily_report.md created on disk ({report_exists})"));
+    check(
+        report_exists,
+        format!("B5b daily_report.md created on disk ({report_exists})"),
+    );
     if let Some(sr) = &exec_b5b.structured_result {
-        check(sr.get("failed_count").and_then(|v| v.as_i64()) == Some(3), format!("B5b failed_count == 3 (got {:?})", sr.get("failed_count")));
+        check(
+            sr.get("failed_count").and_then(|v| v.as_i64()) == Some(3),
+            format!("B5b failed_count == 3 (got {:?})", sr.get("failed_count")),
+        );
     } else {
         check(false, "B5b structured_result was None".into());
     }
 
     // ── B8: Chat-style Multi-Turn Task Continuity across 3 consecutive runs (qwen3.5:4b) ──
     telemetry
-        .write("device:boiler-01", "temp", DataPoint::new(now - 600, MetricValue::Float(52.0)))
+        .write(
+            "device:boiler-01",
+            "temp",
+            DataPoint::new(now - 600, MetricValue::Float(52.0)),
+        )
         .await
         .unwrap();
     let (spec_b8, _) = rt
@@ -1085,23 +1352,45 @@ async fn live_business_scenarios_stress_matrix() {
     let _ = rt.invoke(&spec_b8.id).await.expect("b8 run 1");
     // Run 2: 64.5°C
     telemetry
-        .write("device:boiler-01", "temp", DataPoint::new(now - 300, MetricValue::Float(64.5)))
+        .write(
+            "device:boiler-01",
+            "temp",
+            DataPoint::new(now - 300, MetricValue::Float(64.5)),
+        )
         .await
         .unwrap();
     let _ = rt.invoke(&spec_b8.id).await.expect("b8 run 2");
     // Run 3: 78.2°C -> multi-turn history has Run 1 (52.0) + Run 2 (64.5); current is 78.2 -> rising!
     telemetry
-        .write("device:boiler-01", "temp", DataPoint::new(now, MetricValue::Float(78.2)))
+        .write(
+            "device:boiler-01",
+            "temp",
+            DataPoint::new(now, MetricValue::Float(78.2)),
+        )
         .await
         .unwrap();
     let resp_b8_r3 = rt.invoke(&spec_b8.id).await.expect("b8 run 3");
     let exp_b8_r3 = rt.explain_last(&spec_b8.id).unwrap_or_default();
-    print_exec("B8-Run3: Multi-Turn Task Continuity (52.0 -> 64.5 -> 78.2°C)", &resp_b8_r3, &exp_b8_r3);
+    print_exec(
+        "B8-Run3: Multi-Turn Task Continuity (52.0 -> 64.5 -> 78.2°C)",
+        &resp_b8_r3,
+        &exp_b8_r3,
+    );
     let exec_b8_r3 = resp_b8_r3.execution.as_ref().unwrap();
-    check(exec_b8_r3.status == ExecutionStatus::Completed, format!("B8-Run3 Completed (got {:?})", exec_b8_r3.status));
+    check(
+        exec_b8_r3.status == ExecutionStatus::Completed,
+        format!("B8-Run3 Completed (got {:?})", exec_b8_r3.status),
+    );
     if let Some(sr) = &exec_b8_r3.structured_result {
-        let trend = sr.get("trend").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
-        check(trend.contains("rising") || trend.contains("上升"), format!("B8-Run3 recognized multi-turn rising trend (got trend={trend:?}, sr={sr})"));
+        let trend = sr
+            .get("trend")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        check(
+            trend.contains("rising") || trend.contains("上升"),
+            format!("B8-Run3 recognized multi-turn rising trend (got trend={trend:?}, sr={sr})"),
+        );
     } else {
         check(false, "B8-Run3 structured_result was None".into());
     }
@@ -1119,17 +1408,25 @@ async fn live_business_scenarios_stress_matrix() {
         .await
         .expect("invoke b6b");
     let exp_b6b = rt.explain_last(&spec_b1a.id).unwrap_or_default();
-    print_exec("B6b: CallerInput interactive ask on B1a", &resp_b6b, &exp_b6b);
+    print_exec(
+        "B6b: CallerInput interactive ask on B1a",
+        &resp_b6b,
+        &exp_b6b,
+    );
     let exec_b6b = resp_b6b.execution.as_ref().unwrap();
     let concl_b6b = exec_b6b.conclusion.as_deref().unwrap_or("");
-    check(concl_b6b.contains("8.4"), format!("B6b answered with real temperature 8.4 (got: {concl_b6b})"));
+    check(
+        concl_b6b.contains("8.4"),
+        format!("B6b answered with real temperature 8.4 (got: {concl_b6b})"),
+    );
 
     // ── B7a: Free-form Chinese analysis (output.fields = []) ──
     let (spec_b7a, _) = rt
         .create(AgentSpecDraft {
             name: "B7a Free-Form Chinese Analysis".into(),
             description: None,
-            user_prompt: "请基于冷库数据用自然中文写一段运维分析，不要输出 JSON，给出具体排查步骤。".into(),
+            user_prompt:
+                "请基于冷库数据用自然中文写一段运维分析，不要输出 JSON，给出具体排查步骤。".into(),
             llm_backend_id: Some("ollama-lfm25".into()),
             preset: None,
             trigger: TriggerSpec::Manual,
@@ -1137,7 +1434,9 @@ async fn live_business_scenarios_stress_matrix() {
             input: InputContract {
                 requirements: vec![InputRequirement {
                     key: "cold_room".into(),
-                    source: InputSourceRef::WholeDevice { device_id: "cold-room-hot".into() },
+                    source: InputSourceRef::WholeDevice {
+                        device_id: "cold-room-hot".into(),
+                    },
                     operation: None,
                     params: serde_json::json!({}),
                     result_type: InputModality::StructuredJson,
@@ -1148,18 +1447,34 @@ async fn live_business_scenarios_stress_matrix() {
                 }],
             },
             tool_policy: ToolPolicy::Disabled,
-            output: OutputContract { publish: false, fields: vec![] },
+            output: OutputContract {
+                publish: false,
+                fields: vec![],
+            },
             notify: NotifyPolicy::default(),
             controlled_actions: vec![],
         })
         .expect("create b7a");
     let resp_b7a = rt.invoke(&spec_b7a.id).await.expect("invoke b7a");
     let exp_b7a = rt.explain_last(&spec_b7a.id).unwrap_or_default();
-    print_exec("B7a: lfm2.5 Free-form Chinese report (no output fields)", &resp_b7a, &exp_b7a);
+    print_exec(
+        "B7a: lfm2.5 Free-form Chinese report (no output fields)",
+        &resp_b7a,
+        &exp_b7a,
+    );
     let exec_b7a = resp_b7a.execution.as_ref().unwrap();
-    check(exec_b7a.status == ExecutionStatus::Completed, format!("B7a Completed (got {:?})", exec_b7a.status));
-    check(exec_b7a.structured_result.is_none(), "B7a structured_result is None when output.fields empty".into());
-    check(exec_b7a.conclusion.as_deref().unwrap_or("").chars().count() >= 30, "B7a produced rich Chinese prose".into());
+    check(
+        exec_b7a.status == ExecutionStatus::Completed,
+        format!("B7a Completed (got {:?})", exec_b7a.status),
+    );
+    check(
+        exec_b7a.structured_result.is_none(),
+        "B7a structured_result is None when output.fields empty".into(),
+    );
+    check(
+        exec_b7a.conclusion.as_deref().unwrap_or("").chars().count() >= 30,
+        "B7a produced rich Chinese prose".into(),
+    );
 
     // ── B7b: All sources missing diagnostic check ──
     let (spec_b7b, _) = rt
@@ -1174,7 +1489,10 @@ async fn live_business_scenarios_stress_matrix() {
             input: InputContract {
                 requirements: vec![InputRequirement {
                     key: "ghost_dev".into(),
-                    source: InputSourceRef::DeviceMetric { device_id: "nonexistent-999".into(), field: "temp".into() },
+                    source: InputSourceRef::DeviceMetric {
+                        device_id: "nonexistent-999".into(),
+                        field: "temp".into(),
+                    },
                     operation: None,
                     params: serde_json::json!({}),
                     result_type: InputModality::Metric,
@@ -1194,8 +1512,21 @@ async fn live_business_scenarios_stress_matrix() {
     let exp_b7b = rt.explain_last(&spec_b7b.id).unwrap_or_default();
     print_exec("B7b: All sources missing diagnostic", &resp_b7b, &exp_b7b);
     let exec_b7b = resp_b7b.execution.as_ref().unwrap();
-    check(exec_b7b.status == ExecutionStatus::Failed, format!("B7b status=Failed (got {:?})", exec_b7b.status));
-    check(exec_b7b.error.as_deref().unwrap_or("").contains("ghost_dev"), format!("B7b error names missing key ghost_dev ({:?})", exec_b7b.error));
+    check(
+        exec_b7b.status == ExecutionStatus::Failed,
+        format!("B7b status=Failed (got {:?})", exec_b7b.status),
+    );
+    check(
+        exec_b7b
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("ghost_dev"),
+        format!(
+            "B7b error names missing key ghost_dev ({:?})",
+            exec_b7b.error
+        ),
+    );
 
     println!("\n================ STRESS SUMMARY ================");
     if failures.is_empty() {

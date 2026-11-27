@@ -778,7 +778,10 @@ mod asset_security_tests {
                 .and_then(|v| v.to_str().ok()),
             Some("nosniff")
         );
-        assert!(resp.headers().get(header::CONTENT_SECURITY_POLICY).is_none());
+        assert!(resp
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .is_none());
 
         // Legitimate relative-to-frontend path (matches manifest bundle_path: "dist/bundle.js")
         let resp_rel = serve_extension_asset_from_dir(ext_dir, "dist/bundle.js")

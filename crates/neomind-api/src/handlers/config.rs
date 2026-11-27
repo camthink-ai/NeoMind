@@ -319,9 +319,7 @@ pub async fn import_config_handler(
                 match import_rule(&state, rule, options.overwrite).await {
                     Ok(true) => imported_rules.push(rule.clone()),
                     Ok(false) => {
-                        result
-                            .skipped
-                            .push(format!("Rule {}: skipped", rule.id));
+                        result.skipped.push(format!("Rule {}: skipped", rule.id));
                     }
                     Err(e) => {
                         result.errors.push(format!("Rule {}: {}", rule.id, e));

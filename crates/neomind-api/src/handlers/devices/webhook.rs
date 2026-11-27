@@ -504,7 +504,7 @@ fn parse_multipart_parts(body: &[u8], boundary: &str) -> Result<Vec<MultipartPar
         let mut content_end = next_delim;
         if content_end >= content_start + 2 && &body[content_end - 2..content_end] == b"\r\n" {
             content_end -= 2;
-        } else if content_end >= content_start + 1 && &body[content_end - 1..content_end] == b"\n" {
+        } else if content_end > content_start && &body[content_end - 1..content_end] == b"\n" {
             content_end -= 1;
         }
         let content = &body[content_start..content_end];

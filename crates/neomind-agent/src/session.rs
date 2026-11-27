@@ -3297,13 +3297,8 @@ Assistant: {ar}\n"
     /// stream are skipped.
     pub async fn cleanup_inactive(&self, max_age_seconds: i64) -> usize {
         let now = chrono::Utc::now().timestamp();
-        let active_streams: std::collections::HashSet<String> = self
-            .cancel_senders
-            .read()
-            .await
-            .keys()
-            .cloned()
-            .collect();
+        let active_streams: std::collections::HashSet<String> =
+            self.cancel_senders.read().await.keys().cloned().collect();
         let mut sessions = self.sessions.write().await;
         let mut to_remove = Vec::new();
 

@@ -172,8 +172,7 @@ impl TimeSeriesStore {
 
         // Update automatic flush backoff state: back off when any points
         // failed to persist, clear backoff once a flush succeeds cleanly.
-        self.write_buffer
-            .record_flush_outcome(requeued_count > 0);
+        self.write_buffer.record_flush_outcome(requeued_count > 0);
 
         // Record stats — count only points that actually landed. Counting the
         // full drained set would double-count re-queued points on every retry.

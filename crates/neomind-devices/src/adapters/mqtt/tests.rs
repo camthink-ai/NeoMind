@@ -3524,10 +3524,10 @@ async fn uplink_is_stored_before_any_metric_is_announced() {
 
 #[tokio::test]
 async fn chunked_image_reassembly_registered_ne301_saves_binary_and_extracts_metrics() {
-    use base64::engine::general_purpose::STANDARD as BASE64;
     use crate::mdl::MetricDataType;
     use crate::mdl_format::MetricDefinition;
     use crate::registry::{ConnectionConfig, DeviceConfig, DeviceTypeTemplate};
+    use base64::engine::general_purpose::STANDARD as BASE64;
 
     let tmp_dir = tempfile::tempdir().expect("tempdir");
     let adapter = MqttAdapter::new(MqttAdapterConfig::new("test", "localhost:1883"));
@@ -3753,7 +3753,10 @@ async fn chunked_image_reassembly_registered_ne301_saves_binary_and_extracts_met
     );
 
     let Some(MetricValue::String(image_url)) = received.get("image_data") else {
-        panic!("expected image_data URL metric, got {:?}", received.get("image_data"));
+        panic!(
+            "expected image_data URL metric, got {:?}",
+            received.get("image_data")
+        );
     };
     assert!(
         image_url.starts_with("/api/images/ne301-aabbcc/image_data/")

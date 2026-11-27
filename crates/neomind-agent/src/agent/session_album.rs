@@ -149,7 +149,9 @@ pub fn build_session_album(messages: &[AgentMessage]) -> Vec<SessionImageEntry> 
                     }
                     if let Some(res) = tc.result.as_ref() {
                         let parsed = match res {
-                            serde_json::Value::String(s) => serde_json::from_str::<serde_json::Value>(s).ok(),
+                            serde_json::Value::String(s) => {
+                                serde_json::from_str::<serde_json::Value>(s).ok()
+                            }
                             other => Some(other.clone()),
                         };
                         if let Some(val) = parsed {

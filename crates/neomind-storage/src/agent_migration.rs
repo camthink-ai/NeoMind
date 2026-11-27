@@ -223,8 +223,7 @@ fn map_resources(resources: &[AgentResource]) -> (InputContract, Vec<serde_json:
                         Some((a, _)) if !a.is_empty() => (a, "*"),
                         _ => (stripped, "*"),
                     };
-                    let key =
-                        sanitize_input_key(&format!("ai_{agent_id}_{field}"), &mut used_keys);
+                    let key = sanitize_input_key(&format!("ai_{agent_id}_{field}"), &mut used_keys);
                     requirements.push(serde_json::json!({
                         "key": key,
                         "source": {
@@ -700,7 +699,11 @@ mod tests {
     #[test]
     fn migrates_multipart_v133_datasource_ids_losslessly() {
         let agent = base_agent(vec![
-            res(ResourceType::ExtensionMetric, "extension:weather:temp", "Temp"),
+            res(
+                ResourceType::ExtensionMetric,
+                "extension:weather:temp",
+                "Temp",
+            ),
             res(
                 ResourceType::ExtensionMetric,
                 "extension:extension:tariff:price",
@@ -711,8 +714,16 @@ mod tests {
             res(ResourceType::Metric, "extension:solar:kw", "Solar kW"),
             res(ResourceType::Device, "device:cam1", "Camera 1"),
             res(ResourceType::Command, "device:relay1:on", "Relay On"),
-            res(ResourceType::ExtensionTool, "extension:weather:refresh", "Refresh"),
-            res(ResourceType::ExtensionTool, "extension:notifier", "Notifier"),
+            res(
+                ResourceType::ExtensionTool,
+                "extension:weather:refresh",
+                "Refresh",
+            ),
+            res(
+                ResourceType::ExtensionTool,
+                "extension:notifier",
+                "Notifier",
+            ),
         ]);
 
         let (spec, _, _, _) = map_legacy_agent_record(&agent);
@@ -726,20 +737,29 @@ mod tests {
             serde_json::json!({ "kind": "extension_instance", "id": "weather" })
         );
         assert_eq!(reqs[0]["operation"], serde_json::json!("temp"));
-        assert_eq!(reqs[0]["auth_scope"], serde_json::json!("extension:weather:read"));
+        assert_eq!(
+            reqs[0]["auth_scope"],
+            serde_json::json!("extension:weather:read")
+        );
 
         assert_eq!(
             reqs[1]["source"],
             serde_json::json!({ "kind": "extension_instance", "id": "tariff" })
         );
         assert_eq!(reqs[1]["operation"], serde_json::json!("price"));
-        assert_eq!(reqs[1]["auth_scope"], serde_json::json!("extension:tariff:read"));
+        assert_eq!(
+            reqs[1]["auth_scope"],
+            serde_json::json!("extension:tariff:read")
+        );
 
         assert_eq!(
             reqs[2]["source"],
             serde_json::json!({ "kind": "device_metric", "device_id": "sensor1", "field": "temp" })
         );
-        assert_eq!(reqs[2]["auth_scope"], serde_json::json!("device:sensor1:read"));
+        assert_eq!(
+            reqs[2]["auth_scope"],
+            serde_json::json!("device:sensor1:read")
+        );
 
         assert_eq!(
             reqs[3]["source"],
@@ -751,7 +771,10 @@ mod tests {
             serde_json::json!({ "kind": "extension_instance", "id": "solar" })
         );
         assert_eq!(reqs[4]["operation"], serde_json::json!("kw"));
-        assert_eq!(reqs[4]["auth_scope"], serde_json::json!("extension:solar:read"));
+        assert_eq!(
+            reqs[4]["auth_scope"],
+            serde_json::json!("extension:solar:read")
+        );
 
         assert_eq!(
             reqs[5]["source"],
@@ -764,10 +787,16 @@ mod tests {
         assert_eq!(spec.controlled_actions[0]["destination"], "device:relay1");
         assert_eq!(spec.controlled_actions[0]["name"], "on");
 
-        assert_eq!(spec.controlled_actions[1]["destination"], "extension:weather");
+        assert_eq!(
+            spec.controlled_actions[1]["destination"],
+            "extension:weather"
+        );
         assert_eq!(spec.controlled_actions[1]["name"], "refresh");
 
-        assert_eq!(spec.controlled_actions[2]["destination"], "extension:notifier");
+        assert_eq!(
+            spec.controlled_actions[2]["destination"],
+            "extension:notifier"
+        );
         assert_eq!(spec.controlled_actions[2]["name"], "invoke");
 
         // Verify Scoped.allowed_commands stays empty even with ResourceType::Command present
@@ -835,8 +864,10 @@ mod tests {
                     .insert("keep-newer", serde_json::to_vec(&a1).unwrap().as_slice())
                     .unwrap();
 
-                let mut newer_mem = AgentMemory::default();
-                newer_mem.updated_at = 2000;
+                let mut newer_mem = AgentMemory {
+                    updated_at: 2000,
+                    ..Default::default()
+                };
                 newer_mem.journal.records.push(ExecutionRecord {
                     timestamp: 2000,
                     execution_id: "fresh".into(),
@@ -846,7 +877,10 @@ mod tests {
                     stop_reason: String::new(),
                 });
                 mem_table
-                    .insert("keep-newer", serde_json::to_vec(&newer_mem).unwrap().as_slice())
+                    .insert(
+                        "keep-newer",
+                        serde_json::to_vec(&newer_mem).unwrap().as_slice(),
+                    )
                     .unwrap();
 
                 // Agent 2: legacy agent.memory is NEWER than AGENT_MEMORY_TABLE
@@ -857,8 +891,10 @@ mod tests {
                     .insert("upgrade-older", serde_json::to_vec(&a2).unwrap().as_slice())
                     .unwrap();
 
-                let mut older_mem = AgentMemory::default();
-                older_mem.updated_at = 1500;
+                let older_mem = AgentMemory {
+                    updated_at: 1500,
+                    ..Default::default()
+                };
                 mem_table
                     .insert(
                         "upgrade-older",
@@ -874,17 +910,14 @@ mod tests {
         let read = db.begin_read().unwrap();
         let mem_table = read.open_table(AGENT_MEMORY_TABLE).unwrap();
 
-        let kept: AgentMemory = serde_json::from_slice(
-            mem_table.get("keep-newer").unwrap().unwrap().value(),
-        )
-        .unwrap();
+        let kept: AgentMemory =
+            serde_json::from_slice(mem_table.get("keep-newer").unwrap().unwrap().value()).unwrap();
         assert_eq!(kept.updated_at, 2000);
         assert_eq!(kept.journal.records[0].execution_id, "fresh");
 
-        let upgraded: AgentMemory = serde_json::from_slice(
-            mem_table.get("upgrade-older").unwrap().unwrap().value(),
-        )
-        .unwrap();
+        let upgraded: AgentMemory =
+            serde_json::from_slice(mem_table.get("upgrade-older").unwrap().unwrap().value())
+                .unwrap();
         assert_eq!(upgraded.updated_at, 3000);
     }
 }

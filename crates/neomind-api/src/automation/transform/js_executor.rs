@@ -324,14 +324,12 @@ impl JsTransformExecutor {
         extension_registry: Option<Arc<ExtensionRegistry>>,
         mode: crate::automation::transform::TransformExecutionMode,
     ) -> Result<JsTransformOutput> {
-        let _permit = boa_semaphore()
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| AutomationError::TransformError {
+        let _permit = boa_semaphore().clone().acquire_owned().await.map_err(|_| {
+            AutomationError::TransformError {
                 operation: "JsTransform".to_string(),
                 message: "JS executor semaphore closed".to_string(),
-            })?;
+            }
+        })?;
 
         tokio::task::spawn_blocking(move || {
             Self::execute_sync(
@@ -618,13 +616,15 @@ impl JsTransformExecutor {
                             {
                                 Ok(Ok(result)) => {
                                     tracing::debug!("Extension call result: {:?}", result);
-                                    results_map.insert(
-                                        format!("{}::{}", ext_id, cmd_str),
-                                        result,
-                                    );
+                                    results_map.insert(format!("{}::{}", ext_id, cmd_str), result);
                                 }
                                 Ok(Err(e)) => {
-                                    tracing::warn!("Extension call failed: {}::{} - {:?}", ext_id, cmd_str, e);
+                                    tracing::warn!(
+                                        "Extension call failed: {}::{} - {:?}",
+                                        ext_id,
+                                        cmd_str,
+                                        e
+                                    );
                                     results_map.insert(
                                         format!("{}::{}", ext_id, cmd_str),
                                         serde_json::json!({ "error": e.to_string() }),
@@ -804,7 +804,8 @@ impl JsTransformExecutor {
         );
 
         // Convert result to metrics
-        let metrics = executor.json_to_metrics(&result_value, output_prefix, device_id, timestamp)?;
+        let metrics =
+            executor.json_to_metrics(&result_value, output_prefix, device_id, timestamp)?;
         tracing::info!(
             device_id = %device_id,
             metric_count = metrics.len(),

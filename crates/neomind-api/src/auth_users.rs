@@ -1233,56 +1233,58 @@ impl AuthUserState {
 
         // Verify password BEFORE checking `user.active` so disabled accounts do
         // not act as an unauthenticated account-existence/status oracle.
-        let (user_id, user_role, user_created_at, needs_bcrypt_upgrade) =
-            if Self::verify_password(password, &user.password_hash) {
-                if !user.active {
-                    return Err(AuthError::UserDisabled);
-                }
-                let needs_upgrade = !user.password_hash.starts_with("$2");
-                (
-                    user.id.clone(),
-                    user.role.clone(),
-                    user.created_at,
-                    needs_upgrade,
-                )
-            } else {
-                // Cache-staleness rescue: the offline CLI (`neomind user
-                // reset-password`) rewrites the DB hash directly — the
-                // in-memory cache keeps serving the OLD hash until restart
-                // (observed: reset confirmed, login still 401). On a failed
-                // verify, re-read the DB once; if the stored hash differs
-                // and verifies, swap the cache and proceed. Costs nothing
-                // on the happy path.
-                let db_user = Self::load_users_from_db(self.db_path)
-                    .ok()
-                    .and_then(|db| db.get(username).cloned());
-                match db_user {
-                    Some(dbu)
-                        if dbu.password_hash != user.password_hash
-                            && Self::verify_password(password, &dbu.password_hash) =>
-                    {
-                        if !dbu.active {
-                            return Err(AuthError::UserDisabled);
-                        }
-                        let id = dbu.id.clone();
-                        let role = dbu.role.clone();
-                        let created = dbu.created_at;
-                        let needs_upgrade = !dbu.password_hash.starts_with("$2");
-                        let new_hash = dbu.password_hash;
-                        let mut users = self.users.write().await;
-                        if let Some(u) = users.get_mut(username) {
-                            u.password_hash = new_hash;
-                        }
-                        info!(
-                            category = "auth",
-                            username = %username,
-                            "Login cache rescued from DB — offline password reset applied without restart"
-                        );
-                        (id, role, created, needs_upgrade)
+        let (user_id, user_role, user_created_at, needs_bcrypt_upgrade) = if Self::verify_password(
+            password,
+            &user.password_hash,
+        ) {
+            if !user.active {
+                return Err(AuthError::UserDisabled);
+            }
+            let needs_upgrade = !user.password_hash.starts_with("$2");
+            (
+                user.id.clone(),
+                user.role.clone(),
+                user.created_at,
+                needs_upgrade,
+            )
+        } else {
+            // Cache-staleness rescue: the offline CLI (`neomind user
+            // reset-password`) rewrites the DB hash directly — the
+            // in-memory cache keeps serving the OLD hash until restart
+            // (observed: reset confirmed, login still 401). On a failed
+            // verify, re-read the DB once; if the stored hash differs
+            // and verifies, swap the cache and proceed. Costs nothing
+            // on the happy path.
+            let db_user = Self::load_users_from_db(self.db_path)
+                .ok()
+                .and_then(|db| db.get(username).cloned());
+            match db_user {
+                Some(dbu)
+                    if dbu.password_hash != user.password_hash
+                        && Self::verify_password(password, &dbu.password_hash) =>
+                {
+                    if !dbu.active {
+                        return Err(AuthError::UserDisabled);
                     }
-                    _ => return Err(AuthError::InvalidCredentials),
+                    let id = dbu.id.clone();
+                    let role = dbu.role.clone();
+                    let created = dbu.created_at;
+                    let needs_upgrade = !dbu.password_hash.starts_with("$2");
+                    let new_hash = dbu.password_hash;
+                    let mut users = self.users.write().await;
+                    if let Some(u) = users.get_mut(username) {
+                        u.password_hash = new_hash;
+                    }
+                    info!(
+                        category = "auth",
+                        username = %username,
+                        "Login cache rescued from DB — offline password reset applied without restart"
+                    );
+                    (id, role, created, needs_upgrade)
                 }
-            };
+                _ => return Err(AuthError::InvalidCredentials),
+            }
+        };
 
         // Automatically upgrade verified legacy SHA-256 hashes to bcrypt.
         let upgraded_hash = if needs_bcrypt_upgrade {
@@ -2168,8 +2170,14 @@ mod revocation_persistence_tests {
         let a1 = auth.clone();
         let a2 = auth.clone();
         let (r1, r2) = tokio::join!(
-            tokio::spawn(async move { a1.register("race_user", "Password123", UserRole::User).await }),
-            tokio::spawn(async move { a2.register("race_user", "Password456", UserRole::Admin).await }),
+            tokio::spawn(async move {
+                a1.register("race_user", "Password123", UserRole::User)
+                    .await
+            }),
+            tokio::spawn(async move {
+                a2.register("race_user", "Password456", UserRole::Admin)
+                    .await
+            }),
         );
         let r1 = r1.unwrap();
         let r2 = r2.unwrap();
@@ -2177,7 +2185,10 @@ mod revocation_persistence_tests {
         let exists_count = usize::from(matches!(r1, Err(AuthError::UserExists)))
             + usize::from(matches!(r2, Err(AuthError::UserExists)));
         assert_eq!(ok_count, 1, "exactly one registration must succeed");
-        assert_eq!(exists_count, 1, "the losing registration must return UserExists");
+        assert_eq!(
+            exists_count, 1,
+            "the losing registration must return UserExists"
+        );
     }
 
     #[test]

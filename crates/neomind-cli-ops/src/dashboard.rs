@@ -51,7 +51,9 @@ fn unbound_component_ids(components: &[serde_json::Value]) -> Vec<String> {
             let has_ds = c
                 .get("data_source")
                 .or_else(|| c.get("dataSource"))
-                .is_some_and(|v| !v.is_null() && v.as_object().map(|o| !o.is_empty()).unwrap_or(true));
+                .is_some_and(|v| {
+                    !v.is_null() && v.as_object().map(|o| !o.is_empty()).unwrap_or(true)
+                });
             if has_ds {
                 return None;
             }
@@ -341,7 +343,9 @@ pub async fn update_dashboard(
     }
 
     let enc_id = encode_path_segment(id);
-    let data = client.put(&format!("/dashboards/{}", enc_id), &body).await?;
+    let data = client
+        .put(&format!("/dashboards/{}", enc_id), &body)
+        .await?;
     Ok(CliResponse::success(data, "Dashboard updated"))
 }
 

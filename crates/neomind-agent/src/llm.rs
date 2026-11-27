@@ -3160,9 +3160,9 @@ impl LlmInterface {
         // contains images, and dynamically expose `_new_operation` only on tools
         // that have a terminal write operation in TaskState.
         let has_session_images = has_user_images
-            || messages.iter().any(|m| {
-                m.has_images() || m.content.as_text().contains("/api/images/")
-            });
+            || messages
+                .iter()
+                .any(|m| m.has_images() || m.content.as_text().contains("/api/images/"));
         let tools_input = self
             .build_request_tools_input(attach_tools, false, has_user_images, has_session_images)
             .await;
@@ -3534,9 +3534,9 @@ impl LlmInterface {
 
         // Get tool definitions, dynamically exposing `_new_operation` only on
         // tools that have a terminal write operation in TaskState.
-        let has_session_images = messages.iter().any(|m| {
-            m.has_images() || m.content.as_text().contains("/api/images/")
-        });
+        let has_session_images = messages
+            .iter()
+            .any(|m| m.has_images() || m.content.as_text().contains("/api/images/"));
         let tools_input = self
             .build_request_tools_input(attach_tools, exclude_skill, false, has_session_images)
             .await;

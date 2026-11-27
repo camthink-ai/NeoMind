@@ -1518,7 +1518,9 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
                 }
             }
         })),
-        default_config: Some(json!({"config": {"fit": "cover", "zoomable": true, "rounded": true}})),
+        default_config: Some(
+            json!({"config": {"fit": "cover", "zoomable": true, "rounded": true}}),
+        ),
         variants: None,
         global_name: "image_display".into(),
         export_name: None,
@@ -1557,7 +1559,9 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
                 }
             }
         })),
-        default_config: Some(json!({"display": {"fit": "contain", "showTimestamp": true}, "config": {"limit": 50}})),
+        default_config: Some(
+            json!({"display": {"fit": "contain", "showTimestamp": true}, "config": {"limit": 50}}),
+        ),
         variants: None,
         global_name: "image_history".into(),
         export_name: None,
@@ -1860,7 +1864,9 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
     let ai_analyst = ComponentManifest {
         id: "ai-analyst".into(),
         name: json!("AI Analyst"),
-        description: json!("Interactive AI analyst chat grounded in bound telemetry and extension metrics"),
+        description: json!(
+            "Interactive AI analyst chat grounded in bound telemetry and extension metrics"
+        ),
         icon: "box".into(),
         category: "business".into(),
         version: "1.0.0".into(),
@@ -2140,7 +2146,9 @@ mod bundle_validation_tests {
         assert!(verify_optional_bundle_sha256("demo", None, bytes).is_ok());
         assert!(verify_optional_bundle_sha256("demo", Some(&digest), bytes).is_ok());
         assert!(verify_optional_bundle_sha256("demo", Some(&digest.to_uppercase()), bytes).is_ok());
-        assert!(verify_optional_bundle_sha256("demo", Some("0".repeat(64).as_str()), bytes).is_err());
+        assert!(
+            verify_optional_bundle_sha256("demo", Some("0".repeat(64).as_str()), bytes).is_err()
+        );
     }
 
     #[test]
@@ -2174,17 +2182,19 @@ mod bundle_validation_tests {
             core_ids, handler_ids,
             "BUILTIN_WIDGET_TYPES in neomind-core and builtin_component_list() in neomind-api must stay 1-to-1"
         );
-        assert_eq!(list.len(), core_ids.len(), "duplicate built-in component IDs");
+        assert_eq!(
+            list.len(),
+            core_ids.len(),
+            "duplicate built-in component IDs"
+        );
 
         // Spot-check critical complex widget schemas match frontend keys
         let by_id = |id: &str| list.iter().find(|c| c.id == id).unwrap();
-        assert!(
-            by_id("agent-monitor-widget")
-                .config_schema
-                .as_ref()
-                .unwrap()["data_source"]["properties"]["agentId"]
-                .is_object()
-        );
+        assert!(by_id("agent-monitor-widget")
+            .config_schema
+            .as_ref()
+            .unwrap()["data_source"]["properties"]["agentId"]
+            .is_object());
         assert!(
             by_id("ai-analyst").config_schema.as_ref().unwrap()["config"]["properties"]
                 ["contextWindowSize"]
@@ -2199,7 +2209,8 @@ mod bundle_validation_tests {
                 .is_object()
         );
         assert!(
-            by_id("map-display").config_schema.as_ref().unwrap()["config"]["properties"]["bindings"]
+            by_id("map-display").config_schema.as_ref().unwrap()["config"]["properties"]
+                ["bindings"]
                 .is_object()
         );
         assert!(

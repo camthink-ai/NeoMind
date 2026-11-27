@@ -581,10 +581,16 @@ mod tests {
         let tx = store.db.begin_write().unwrap();
         {
             let mut t = tx.open_table(IM_INVITES_TABLE).unwrap();
-            t.insert("expired-1", serde_json::to_string(&old_rec).unwrap().as_str())
-                .unwrap();
-            t.insert("expired-2", serde_json::to_string(&old_rec).unwrap().as_str())
-                .unwrap();
+            t.insert(
+                "expired-1",
+                serde_json::to_string(&old_rec).unwrap().as_str(),
+            )
+            .unwrap();
+            t.insert(
+                "expired-2",
+                serde_json::to_string(&old_rec).unwrap().as_str(),
+            )
+            .unwrap();
         }
         tx.commit().unwrap();
 
@@ -599,7 +605,9 @@ mod tests {
             .any(|(t, _)| t == "expired-1"));
 
         // Pruning removes remaining expired unused invites while keeping fresh ones.
-        let pruned = store.prune_expired_invites(DEFAULT_INVITE_TTL_SECS).unwrap();
+        let pruned = store
+            .prune_expired_invites(DEFAULT_INVITE_TTL_SECS)
+            .unwrap();
         assert_eq!(pruned, 1);
         assert!(store.consume_invite(&fresh_tok, "chat-2").unwrap());
     }

@@ -2403,6 +2403,7 @@ pub enum WidgetCommand {
     ///   - `builtin_types`: built-in frontend widgets (charts, indicators, spatial, AI)
     ///   - `widgets`: installed custom & marketplace widgets
     ///   - `extension_widgets`: dashboard components bundled by installed extensions
+    ///
     /// Use `neomind widget market-list` to browse installable marketplace widgets,
     /// and `neomind widget get <id>` for `config_schema` + copy-ready `usage_example`.
     /// Example: `neomind widget list`

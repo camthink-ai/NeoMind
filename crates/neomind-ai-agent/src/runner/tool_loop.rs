@@ -44,7 +44,8 @@ impl AgentRunner for ToolLoopRunner {
             ));
         }
 
-        let (mut transcript, images) = build_evidence_prompt_with_media(&spec.user_prompt, evidence);
+        let (mut transcript, images) =
+            build_evidence_prompt_with_media(&spec.user_prompt, evidence);
         let mut alert = false;
         let mut last_text = String::new();
 

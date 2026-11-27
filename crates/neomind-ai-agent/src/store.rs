@@ -173,8 +173,7 @@ impl InMemoryAgentStore {
                     Vec::new()
                 };
                 if !evicted.is_empty() {
-                    let evicted_set: HashSet<&str> =
-                        evicted.iter().map(String::as_str).collect();
+                    let evicted_set: HashSet<&str> = evicted.iter().map(String::as_str).collect();
                     g.deliveries
                         .retain(|_, rec| !evicted_set.contains(rec.execution_id.as_str()));
                     for old_id in evicted {
@@ -300,7 +299,10 @@ impl InMemoryAgentStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{EvidenceReport, ExecutionStatus, InputContract, NotifyPolicy, OutputContract, PacingPolicy, ToolPolicy, TriggerSpec};
+    use crate::model::{
+        EvidenceReport, ExecutionStatus, InputContract, NotifyPolicy, OutputContract, PacingPolicy,
+        ToolPolicy, TriggerSpec,
+    };
 
     fn sample_spec(id: &str) -> AgentSpec {
         AgentSpec {
@@ -363,15 +365,25 @@ mod tests {
                     state: DeliveryState::Accepted,
                 })
                 .unwrap();
-            store.save_execution(sample_exec(&exec_id, "agt_1")).unwrap();
+            store
+                .save_execution(sample_exec(&exec_id, "agt_1"))
+                .unwrap();
         }
 
         // First 5 executions were evicted (cap = 50), so their deliveries must be pruned.
-        assert!(store.get_delivery("exec_0", "ops", "on_complete:exec_0").is_none());
-        assert!(store.get_delivery("exec_4", "ops", "on_complete:exec_4").is_none());
-        assert!(store.get_delivery("exec_54", "ops", "on_complete:exec_54").is_some());
+        assert!(store
+            .get_delivery("exec_0", "ops", "on_complete:exec_0")
+            .is_none());
+        assert!(store
+            .get_delivery("exec_4", "ops", "on_complete:exec_4")
+            .is_none());
+        assert!(store
+            .get_delivery("exec_54", "ops", "on_complete:exec_54")
+            .is_some());
 
         store.delete_spec("agt_1").unwrap();
-        assert!(store.get_delivery("exec_54", "ops", "on_complete:exec_54").is_none());
+        assert!(store
+            .get_delivery("exec_54", "ops", "on_complete:exec_54")
+            .is_none());
     }
 }

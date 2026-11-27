@@ -354,14 +354,20 @@ mod tests {
         let png_resp = serve_image_request(dir.path(), "photo.png").await;
         assert_eq!(png_resp.status(), StatusCode::OK);
         assert_eq!(
-            png_resp.headers().get(header::X_CONTENT_TYPE_OPTIONS).unwrap(),
+            png_resp
+                .headers()
+                .get(header::X_CONTENT_TYPE_OPTIONS)
+                .unwrap(),
             "nosniff"
         );
         assert_eq!(
             png_resp.headers().get(header::CACHE_CONTROL).unwrap(),
             "private, max-age=2592000, immutable"
         );
-        assert!(png_resp.headers().get(header::CONTENT_DISPOSITION).is_none());
+        assert!(png_resp
+            .headers()
+            .get(header::CONTENT_DISPOSITION)
+            .is_none());
 
         let bin_resp = serve_image_request(dir.path(), "raw.bin").await;
         assert_eq!(bin_resp.status(), StatusCode::OK);
@@ -374,7 +380,10 @@ mod tests {
             "attachment"
         );
         assert_eq!(
-            bin_resp.headers().get(header::X_CONTENT_TYPE_OPTIONS).unwrap(),
+            bin_resp
+                .headers()
+                .get(header::X_CONTENT_TYPE_OPTIONS)
+                .unwrap(),
             "nosniff"
         );
         assert_eq!(

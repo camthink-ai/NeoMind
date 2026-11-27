@@ -17,12 +17,6 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog"
-import {
-  FullScreenDialog,
-  FullScreenDialogHeader,
-  FullScreenDialogContent,
-  FullScreenDialogMain,
-} from "@/components/automation/dialog"
 import { ResponsiveTable, type TableColumn, EmptyState, Pagination } from "@/components/shared"
 import { DeviceStatusBadge } from "@/components/shared/DeviceStatusBadge"
 import { ChevronLeft, Send, Clock, Zap, Settings, Info, ChevronRight, X, Image as ImageIcon, Database, Download } from "lucide-react"

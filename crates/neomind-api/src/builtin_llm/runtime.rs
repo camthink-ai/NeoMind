@@ -618,7 +618,10 @@ fn validate_tar_link_target(
     target: &Path,
 ) -> anyhow::Result<()> {
     if target.is_absolute() {
-        anyhow::bail!("unsafe absolute link target in tar archive: {}", target.display());
+        anyhow::bail!(
+            "unsafe absolute link target in tar archive: {}",
+            target.display()
+        );
     }
     let mut resolved = dest_parent.to_path_buf();
     for comp in target.components() {
@@ -681,7 +684,10 @@ fn extract_archive_reader<R: std::io::Read + std::io::Seek>(
                     .unix_mode()
                     .is_some_and(|mode| (mode & 0o170000) == 0o120000);
             if is_symlink {
-                anyhow::bail!("unsafe symlink entry in zip archive: {}", enclosed.display());
+                anyhow::bail!(
+                    "unsafe symlink entry in zip archive: {}",
+                    enclosed.display()
+                );
             }
             let clean = clean_relative_archive_path(&enclosed)?;
             if clean.as_os_str().is_empty() {
@@ -694,7 +700,10 @@ fn extract_archive_reader<R: std::io::Read + std::io::Seek>(
             if entry.is_dir() {
                 std::fs::create_dir_all(&dest)?;
                 if !dest.canonicalize()?.starts_with(&canonical_out) {
-                    anyhow::bail!("zip directory escapes output directory: {}", clean.display());
+                    anyhow::bail!(
+                        "zip directory escapes output directory: {}",
+                        clean.display()
+                    );
                 }
                 continue;
             }
@@ -717,10 +726,8 @@ fn extract_archive_reader<R: std::io::Read + std::io::Seek>(
             #[cfg(unix)]
             if let Some(mode) = entry.unix_mode() {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(
-                    &dest,
-                    std::fs::Permissions::from_mode(mode & 0o777),
-                );
+                let _ =
+                    std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(mode & 0o777));
             }
         }
         Ok(())
@@ -743,7 +750,10 @@ fn extract_archive_reader<R: std::io::Read + std::io::Seek>(
             if entry_type.is_dir() {
                 std::fs::create_dir_all(&dest)?;
                 if !dest.canonicalize()?.starts_with(&canonical_out) {
-                    anyhow::bail!("tar directory escapes output directory: {}", clean.display());
+                    anyhow::bail!(
+                        "tar directory escapes output directory: {}",
+                        clean.display()
+                    );
                 }
             } else if entry_type.is_file() {
                 if let Some(parent) = dest.parent() {

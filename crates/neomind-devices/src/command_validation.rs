@@ -956,8 +956,16 @@ mod tests {
             &params(json!({"text": "News", "color": "white", "bg": "white"})),
         )
         .expect_err("same color and bg must fail preflight");
-        assert!(err.message.contains("same color 'white'"), "{}", err.message);
-        assert!(err.message.contains("color='black', bg='white'"), "{}", err.message);
+        assert!(
+            err.message.contains("same color 'white'"),
+            "{}",
+            err.message
+        );
+        assert!(
+            err.message.contains("color='black', bg='white'"),
+            "{}",
+            err.message
+        );
 
         // Explicit color='white' colliding with default bg='white' must also be rejected
         let err2 = preflight(
@@ -966,25 +974,25 @@ mod tests {
             &params(json!({"text": "News", "color": "white"})),
         )
         .expect_err("explicit color colliding with default bg must fail preflight");
-        assert!(err2.message.contains("same color 'white'"), "{}", err2.message);
+        assert!(
+            err2.message.contains("same color 'white'"),
+            "{}",
+            err2.message
+        );
 
         // Contrasting explicit colors and default-only call both pass
-        assert!(
-            preflight(
-                std::slice::from_ref(&render_text),
-                "render_text",
-                &params(json!({"text": "News", "color": "white", "bg": "black"})),
-            )
-            .is_ok()
-        );
-        assert!(
-            preflight(
-                std::slice::from_ref(&render_text),
-                "render_text",
-                &params(json!({"text": "News"})),
-            )
-            .is_ok()
-        );
+        assert!(preflight(
+            std::slice::from_ref(&render_text),
+            "render_text",
+            &params(json!({"text": "News", "color": "white", "bg": "black"})),
+        )
+        .is_ok());
+        assert!(preflight(
+            std::slice::from_ref(&render_text),
+            "render_text",
+            &params(json!({"text": "News"})),
+        )
+        .is_ok());
         // Generated params_example (color=black, bg=white) remains valid
         assert!(validated_params_example(&render_text).is_some());
     }

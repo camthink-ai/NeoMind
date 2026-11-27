@@ -206,10 +206,7 @@ fn target_to_masked_json<T: serde::Serialize>(target: &T) -> serde_json::Value {
 
 /// Restore any fields still carrying `SECRET_MASK` from the previously stored
 /// config so a UI GET -> edit -> PUT round-trip preserves untouched secrets.
-fn restore_masked_secrets(
-    new_config: &mut serde_json::Value,
-    existing_config: &serde_json::Value,
-) {
+fn restore_masked_secrets(new_config: &mut serde_json::Value, existing_config: &serde_json::Value) {
     let (Some(new_obj), Some(old_obj)) = (new_config.as_object_mut(), existing_config.as_object())
     else {
         return;

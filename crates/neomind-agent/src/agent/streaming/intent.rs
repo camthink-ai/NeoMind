@@ -566,7 +566,9 @@ fn looks_like_non_device_numeric_token(t: &str) -> bool {
         }
     }
     // Unit-suffixed measurements like "5000ms", "100kb", "10mb", "3600s", "50hz"
-    for suffix in ["ms", "sec", "min", "kb", "mb", "gb", "tb", "hz", "khz", "mhz", "kw", "mw"] {
+    for suffix in [
+        "ms", "sec", "min", "kb", "mb", "gb", "tb", "hz", "khz", "mhz", "kw", "mw",
+    ] {
         if let Some(num) = lower.strip_suffix(suffix) {
             if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
                 return true;

@@ -744,7 +744,7 @@ impl AgentRecordStore {
                 out.push(exec);
             }
         }
-        out.sort_by(|a, b| b.finished_at.cmp(&a.finished_at));
+        out.sort_by_key(|a| std::cmp::Reverse(a.finished_at));
         Ok(out)
     }
 
@@ -1647,8 +1647,10 @@ mod tests {
             let write = store.db().begin_write().unwrap();
             {
                 let mut table = write.open_table(AGENT_EXECUTIONS_TABLE).unwrap();
-                let b1 = serde_json::to_vec(&mk_legacy("leg-1", "agt-legacy", 1_700_000_010)).unwrap();
-                let b2 = serde_json::to_vec(&mk_legacy("leg-2", "agt-other", 1_700_000_020)).unwrap();
+                let b1 =
+                    serde_json::to_vec(&mk_legacy("leg-1", "agt-legacy", 1_700_000_010)).unwrap();
+                let b2 =
+                    serde_json::to_vec(&mk_legacy("leg-2", "agt-other", 1_700_000_020)).unwrap();
                 table.insert("leg-1", b1.as_slice()).unwrap();
                 table.insert("leg-2", b2.as_slice()).unwrap();
             }
@@ -1689,7 +1691,10 @@ mod tests {
         assert_eq!(listed[1].trigger_source.as_deref(), Some("event"));
         assert_eq!(listed[1].conclusion.as_deref(), Some("Turned fan on"));
 
-        let got = store.get_execution("leg-1").unwrap().expect("legacy get_execution");
+        let got = store
+            .get_execution("leg-1")
+            .unwrap()
+            .expect("legacy get_execution");
         assert_eq!(got.conclusion.as_deref(), Some("Turned fan on"));
 
         // recover_stale_intents quietly ignores legacy rows without touching them.
@@ -1697,7 +1702,10 @@ mod tests {
 
         // Deleting agt-legacy must remove both v2-1 and leg-1 while leaving leg-2 intact.
         assert!(store.delete_agent_rows("agt-legacy").unwrap());
-        assert!(store.list_formal_executions("agt-legacy").unwrap().is_empty());
+        assert!(store
+            .list_formal_executions("agt-legacy")
+            .unwrap()
+            .is_empty());
         assert!(store.get_execution("leg-1").unwrap().is_none());
         assert!(store.get_execution("v2-1").unwrap().is_none());
         assert!(store.get_execution("leg-2").unwrap().is_some());

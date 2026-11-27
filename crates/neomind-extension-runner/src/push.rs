@@ -195,7 +195,11 @@ pub(crate) unsafe extern "C" fn push_output_writer(data: *const u8, len: usize) 
             return -1;
         }
         if len > MAX_PUSH_JSON_LEN {
-            warn!(len, max = MAX_PUSH_JSON_LEN, "PushOutputWriter: payload exceeds cap");
+            warn!(
+                len,
+                max = MAX_PUSH_JSON_LEN,
+                "PushOutputWriter: payload exceeds cap"
+            );
             return -4;
         }
 

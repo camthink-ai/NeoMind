@@ -176,9 +176,7 @@ impl AgentScheduler {
             }
         }
 
-        let last = in_mem_last
-            .or(runtime.stats.last_execution_at)
-            .unwrap_or(0);
+        let last = in_mem_last.or(runtime.stats.last_execution_at).unwrap_or(0);
         now.saturating_sub(last) >= period_ms
     }
 

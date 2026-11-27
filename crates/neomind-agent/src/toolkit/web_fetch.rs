@@ -143,9 +143,9 @@ impl WebFetchTool {
                 else {
                     return Ok(response);
                 };
-                let next_url = current_url
-                    .join(location)
-                    .map_err(|e| ToolError::InvalidArguments(format!("Invalid redirect URL: {e}")))?;
+                let next_url = current_url.join(location).map_err(|e| {
+                    ToolError::InvalidArguments(format!("Invalid redirect URL: {e}"))
+                })?;
                 current_url = next_url;
                 continue;
             }

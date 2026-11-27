@@ -227,16 +227,12 @@ impl MessageChannel for WebhookChannel {
             request = request.header(key, value);
         }
 
-        let response = request
-            .json(message)
-            .send()
-            .await
-            .map_err(|e| {
-                Error::SendFailed(format!(
-                    "Webhook request failed: {}",
-                    crate::manager::scrub_credentials(&e.to_string())
-                ))
-            })?;
+        let response = request.json(message).send().await.map_err(|e| {
+            Error::SendFailed(format!(
+                "Webhook request failed: {}",
+                crate::manager::scrub_credentials(&e.to_string())
+            ))
+        })?;
 
         if !response.status().is_success() {
             return Err(Error::SendFailed(format!(
@@ -320,11 +316,16 @@ mod tests {
     #[test]
     fn webhook_url_blocks_metadata_and_bad_schemes() {
         assert!(validate_webhook_url_with_policy("file:///etc/passwd", false).is_err());
-        assert!(validate_webhook_url_with_policy("http://169.254.169.254/latest/meta-data", true).is_err());
+        assert!(
+            validate_webhook_url_with_policy("http://169.254.169.254/latest/meta-data", true)
+                .is_err()
+        );
         assert!(validate_webhook_url_with_policy("http://[fe80::1]/", true).is_err());
         assert!(validate_webhook_url_with_policy("http://127.0.0.1:8080/hook", false).is_err());
         assert!(validate_webhook_url_with_policy("http://127.0.0.1:8080/hook", true).is_ok());
-        assert!(validate_webhook_url_with_policy("https://hooks.example.com/notify", false).is_ok());
+        assert!(
+            validate_webhook_url_with_policy("https://hooks.example.com/notify", false).is_ok()
+        );
     }
 
     #[test]
@@ -333,7 +334,10 @@ mod tests {
             "wh".to_string(),
             "https://hooks.example.com/notify?token=supersecret123".to_string(),
         )
-        .with_header("Authorization".to_string(), "Bearer topsecret456".to_string());
+        .with_header(
+            "Authorization".to_string(),
+            "Bearer topsecret456".to_string(),
+        );
         let dbg = format!("{:?}", ch);
         assert!(!dbg.contains("supersecret123"), "url token leaked: {dbg}");
         assert!(!dbg.contains("topsecret456"), "header value leaked: {dbg}");

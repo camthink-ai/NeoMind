@@ -35,7 +35,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { useStore } from "@/store"
 import { useIsMobile } from "@/hooks/useMobile"
-import { categoryIcon } from "./ExtensionCard"
+import { categoryIcon } from "./categoryIcon"
 
 // ============================================================================
 // TYPES
@@ -145,7 +145,6 @@ export function MarketplaceDialog({
   const [showDetail, setShowDetail] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
-  const [marketVersion, setMarketVersion] = useState<string>("")
 
   // Load extensions when dialog opens
   useEffect(() => {
@@ -182,7 +181,6 @@ export function MarketplaceDialog({
     try {
       const res = await api.get<MarketplaceListResponse>("/extensions/market/list")
       setExtensionsList(res.extensions || [])
-      setMarketVersion(res.market_version || "")
       setFilteredExtensions(res.extensions || [])
 
       if (res.error && (res.extensions?.length === 0)) {
@@ -593,7 +591,13 @@ function ExtensionDetailView({
 
   // Strip ASCII control characters and whitespace before protocol inspection.
   const normalizeRawUrl = (raw: string | undefined | null): string =>
-    (raw ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim()
+    Array.from(raw ?? "")
+      .filter((ch) => {
+        const code = ch.charCodeAt(0)
+        return code >= 0x20 && code !== 0x7f
+      })
+      .join("")
+      .trim()
 
   // Strictly validate external link URLs: allow ONLY https:, http:, mailto:, or # anchors.
   // Explicitly rejects javascript:, data:, vbscript:, file:, etc.

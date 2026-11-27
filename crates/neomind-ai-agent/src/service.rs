@@ -182,7 +182,11 @@ impl AgentApplicationService {
 
     /// Ephemeral read-only dry-run directly on an `AgentSpec` without persisting
     /// anything to `InMemoryAgentStore` or `agents.redb`.
-    pub async fn dry_run_spec(&self, mut spec: AgentSpec, options: RunOptions) -> Result<RunResponse> {
+    pub async fn dry_run_spec(
+        &self,
+        mut spec: AgentSpec,
+        options: RunOptions,
+    ) -> Result<RunResponse> {
         if spec.id.trim().is_empty() {
             spec.id = format!("ephemeral_{}", &Uuid::new_v4().to_string()[..8]);
         }
@@ -598,7 +602,8 @@ impl AgentApplicationService {
             let rt_now = self.store.get_runtime(id)?;
             self.store.save_execution(exec.clone())?;
             let mut rt = rt_now;
-            let keep_operator_halt = matches!(rt.status, AgentStatus::Paused | AgentStatus::Stopped);
+            let keep_operator_halt =
+                matches!(rt.status, AgentStatus::Paused | AgentStatus::Stopped);
             let tz = crate::coordinator::quota::quota_timezone(&spec.pacing, &spec.trigger);
             crate::coordinator::quota::roll_quota_day(&mut rt.stats, self.clock.now_ms(), &tz);
             rt.stats.total_runs += 1;
@@ -636,7 +641,11 @@ impl AgentApplicationService {
                 let threshold = spec.pacing.failure_threshold.max(1);
                 if rt.stats.consecutive_failures >= threshold && !keep_operator_halt {
                     rt.status = AgentStatus::Error;
-                    let over = rt.stats.consecutive_failures.saturating_sub(threshold).min(4);
+                    let over = rt
+                        .stats
+                        .consecutive_failures
+                        .saturating_sub(threshold)
+                        .min(4);
                     let backoff_ms = (300_000i64 << over).min(3_600_000);
                     rt.next_probe_at = Some(self.clock.now_ms().saturating_add(backoff_ms));
                 }
@@ -715,7 +724,10 @@ impl AgentApplicationService {
             lines.push(format!("Inputs: {}", sources.join(", ")));
         }
         if !exec.evidence.missing_keys.is_empty() {
-            lines.push(format!("Missing: {}", exec.evidence.missing_keys.join(", ")));
+            lines.push(format!(
+                "Missing: {}",
+                exec.evidence.missing_keys.join(", ")
+            ));
         }
         if !exec.tool_calls.is_empty() {
             let names: Vec<&str> = exec.tool_calls.iter().map(|t| t.name.as_str()).collect();

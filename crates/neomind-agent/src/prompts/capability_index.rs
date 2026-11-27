@@ -335,7 +335,7 @@ mod tests {
                     arg.get_long() == Some(expected)
                         || arg
                             .get_all_aliases()
-                            .is_some_and(|al| al.iter().any(|a| *a == expected))
+                            .is_some_and(|al| al.contains(&expected))
                 });
                 if !has_flag {
                     problems.push(format!(

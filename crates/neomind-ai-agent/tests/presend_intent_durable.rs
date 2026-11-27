@@ -229,6 +229,27 @@ fn with_store_save_execution_mirrors_without_mirror_after_run() {
     let record_store = AgentRecordStore::from_arc(store.db()).unwrap();
     let durable = DurableAgentStore::with_store(record_store.clone(), 1000).unwrap();
 
+    let draft = daily_brief_draft("weather_cn", "tariff_tou", "test-channel");
+    let spec = neomind_ai_agent::model::AgentSpec {
+        id: "agent-x".into(),
+        name: draft.name,
+        description: draft.description,
+        user_prompt: draft.user_prompt,
+        llm_backend_id: draft.llm_backend_id,
+        preset: draft.preset,
+        trigger: draft.trigger,
+        pacing: draft.pacing,
+        input: draft.input,
+        tool_policy: draft.tool_policy,
+        output: draft.output,
+        notify: draft.notify,
+        controlled_actions: draft.controlled_actions,
+        config_version: 1,
+        created_at: 1000,
+        updated_at: 1000,
+    };
+    durable.save_spec(spec, 1000).unwrap();
+
     let exec = neomind_ai_agent::model::AgentExecutionRecord {
         id: "exec-pre".into(),
         agent_id: "agent-x".into(),

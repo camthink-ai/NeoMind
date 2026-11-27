@@ -151,10 +151,8 @@ pub(crate) async fn resolve_input_mapping(
                                                     let b64 =
                                                         base64::engine::general_purpose::STANDARD
                                                             .encode(&bytes);
-                                                    resolved.insert(
-                                                        key.clone(),
-                                                        Value::String(b64),
-                                                    );
+                                                    resolved
+                                                        .insert(key.clone(), Value::String(b64));
 
                                                     // Try to get image dimensions for normalization
                                                     if let Ok(reader) = ::image::ImageReader::new(

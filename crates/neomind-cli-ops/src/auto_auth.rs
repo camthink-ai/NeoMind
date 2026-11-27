@@ -449,7 +449,9 @@ mod tests {
                 let mut hashes_tbl = write_txn.open_table(API_KEY_HASHES_TABLE).unwrap();
 
                 let revoked_enc = encrypt_key(&cipher, "nmk_revoked_admin", 1);
-                keys_tbl.insert("01_revoked", revoked_enc.as_bytes()).unwrap();
+                keys_tbl
+                    .insert("01_revoked", revoked_enc.as_bytes())
+                    .unwrap();
                 let revoked_info = bincode::serialize(&TestApiKeyInfo {
                     id: "k1".into(),
                     name: "Revoked Admin".into(),

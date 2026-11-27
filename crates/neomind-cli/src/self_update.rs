@@ -307,7 +307,10 @@ pub fn run_apply_staged() -> Result<()> {
             // Verify the staged tarball against GitHub's checksums.txt and extract
             // into a root-owned 0700 directory so an unprivileged `neomind` user
             // cannot tamper with extracted binaries (TOCTOU protection).
-            let tarball_name = manifest.server_tarball.as_deref().unwrap_or("neomind.tar.gz");
+            let tarball_name = manifest
+                .server_tarball
+                .as_deref()
+                .unwrap_or("neomind.tar.gz");
             let staged_tarball = up::resolve_staged_file(&staging, tarball_name)?;
             up::verify_file_sha256(&staged_tarball, expected_tarball_sha)?;
             println!("Verified SHA-256 checksum for {server_asset}");
@@ -403,8 +406,7 @@ pub fn run_apply_staged() -> Result<()> {
 /// Stale/junk staging dirs can never hijack a named apply.
 fn find_staged_manifest(root: &std::path::Path, wanted: Option<&str>) -> Result<PathBuf> {
     if let Some(v) = wanted {
-        up::validate_semver_version(v)
-            .map_err(|e| anyhow!("invalid requested version: {e}"))?;
+        up::validate_semver_version(v).map_err(|e| anyhow!("invalid requested version: {e}"))?;
     }
     let entries = std::fs::read_dir(root)
         .with_context(|| format!("no staging dir at {} — nothing to apply", root.display()))?;

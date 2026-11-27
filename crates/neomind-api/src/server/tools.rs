@@ -534,9 +534,7 @@ impl TransformTool {
                     crate::automation::transform::TransformExecutionMode::DryRun,
                 )
                 .await
-                .map_err(|e| {
-                    ToolError::Execution(format!("Transform execution failed: {}", e))
-                })?;
+                .map_err(|e| ToolError::Execution(format!("Transform execution failed: {}", e)))?;
 
                 Ok(ToolOutput::success(serde_json::json!({
                     "input": input_data,

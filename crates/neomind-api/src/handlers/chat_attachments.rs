@@ -375,11 +375,13 @@ async fn hydrate_entity(state: &ServerState, cand: EntityCandidate) -> Option<Ch
                 .await
             {
                 Ok((config, _template)) => {
-                    let status = state.devices.service.get_device_status(&cand.entity_id).await;
-                    let is_online = matches!(
-                        status.status,
-                        neomind_devices::ConnectionStatus::Connected
-                    );
+                    let status = state
+                        .devices
+                        .service
+                        .get_device_status(&cand.entity_id)
+                        .await;
+                    let is_online =
+                        matches!(status.status, neomind_devices::ConnectionStatus::Connected);
                     let title = if config.name.trim().is_empty() {
                         cand.entity_id.clone()
                     } else {
@@ -432,11 +434,9 @@ async fn hydrate_entity(state: &ServerState, cand: EntityCandidate) -> Option<Ch
                         }),
                     })
                 }
-                Err(_) if cand.action == ChatAttachmentAction::Deleted => Some(deleted_attachment(
-                    id,
-                    cand,
-                    Some("/devices".to_string()),
-                )),
+                Err(_) if cand.action == ChatAttachmentAction::Deleted => {
+                    Some(deleted_attachment(id, cand, Some("/devices".to_string())))
+                }
                 Err(_) => None,
             }
         }
@@ -618,11 +618,9 @@ async fn hydrate_entity(state: &ServerState, cand: EntityCandidate) -> Option<Ch
                         }),
                     })
                 }
-                _ if cand.action == ChatAttachmentAction::Deleted => Some(deleted_attachment(
-                    id,
-                    cand,
-                    Some("/agents".to_string()),
-                )),
+                _ if cand.action == ChatAttachmentAction::Deleted => {
+                    Some(deleted_attachment(id, cand, Some("/agents".to_string())))
+                }
                 _ => None,
             }
         }
@@ -829,19 +827,18 @@ fn derive_image_source_label(tool: &str, args: &Value) -> Option<String> {
     None
 }
 
-/// Extract a single entity candidate from a `neomind <domain> <verb> ...` shell
-/// invocation. Skips pipelines (`|`), chained commands (`&&`, `;`), and `list`
-/// commands so exploratory or ambiguous invocations never spam cards.
-fn extract_from_shell_command(
-    cmd: &str,
-    result: &str,
-) -> Option<(
+type ShellAttachmentCandidate = (
     ChatAttachmentKind,
     ChatAttachmentAction,
     String,
     Option<String>,
     Option<String>,
-)> {
+);
+
+/// Extract a single entity candidate from a `neomind <domain> <verb> ...` shell
+/// invocation. Skips pipelines (`|`), chained commands (`&&`, `;`), and `list`
+/// commands so exploratory or ambiguous invocations never spam cards.
+fn extract_from_shell_command(cmd: &str, result: &str) -> Option<ShellAttachmentCandidate> {
     let trimmed = cmd.trim();
     // Conservative guard: skip compound shell pipelines/chains (only outside quotes).
     if has_unquoted_shell_operator(trimmed) {
@@ -911,9 +908,7 @@ fn extract_from_shell_command(
         _ => id_from_json.or(id_from_args).or(id_from_human)?,
     };
 
-    let fallback_title = parsed_json
-        .as_ref()
-        .and_then(extract_name_from_json);
+    let fallback_title = parsed_json.as_ref().and_then(extract_name_from_json);
 
     let extra_subtitle = if kind == ChatAttachmentKind::Device
         && matches!(verb, "control" | "send-command" | "command")
@@ -931,7 +926,12 @@ fn extract_from_domain_tool(
     tool: &str,
     args: &Value,
     result: &str,
-) -> Option<(ChatAttachmentKind, ChatAttachmentAction, String, Option<String>)> {
+) -> Option<(
+    ChatAttachmentKind,
+    ChatAttachmentAction,
+    String,
+    Option<String>,
+)> {
     let kind = match tool {
         "device" => ChatAttachmentKind::Device,
         "rule" => ChatAttachmentKind::Rule,
@@ -1157,22 +1157,13 @@ fn nth_positional_after(tokens: &[String], start: usize, target_idx: usize) -> O
         let tok = &tokens[i];
         if tok.starts_with("--") {
             // Flags with separate value vs boolean flags.
-            let next_looks_like_json = tokens
-                .get(i + 1)
-                .is_some_and(|n| n.trim_start().starts_with('{') || n.trim_start().starts_with('['));
+            let next_looks_like_json = tokens.get(i + 1).is_some_and(|n| {
+                n.trim_start().starts_with('{') || n.trim_start().starts_with('[')
+            });
             let is_bool = match tok.as_str() {
                 "--json" => !next_looks_like_json,
-                "--yes"
-                | "--force"
-                | "--human"
-                | "--enabled"
-                | "--disabled"
-                | "--all"
-                | "--dry-run"
-                | "--no-tools"
-                | "--no-auto-tools"
-                | "--verbose"
-                | "--quiet" => true,
+                "--yes" | "--force" | "--human" | "--enabled" | "--disabled" | "--all"
+                | "--dry-run" | "--no-tools" | "--no-auto-tools" | "--verbose" | "--quiet" => true,
                 _ => false,
             };
             if !tok.contains('=') && !is_bool {
@@ -1213,7 +1204,21 @@ pub fn extract_image_urls(raw: &str) -> Vec<String> {
                     || c.is_control()
                     || matches!(
                         c,
-                        '"' | '\'' | '`' | ')' | '(' | ']' | '[' | '}' | '{' | '<' | '>' | ',' | ';' | '\\' | '?' | '#'
+                        '"' | '\''
+                            | '`'
+                            | ')'
+                            | '('
+                            | ']'
+                            | '['
+                            | '}'
+                            | '{'
+                            | '<'
+                            | '>'
+                            | ','
+                            | ';'
+                            | '\\'
+                            | '?'
+                            | '#'
                     )
             })
             .unwrap_or(rest.len());
@@ -1310,7 +1315,8 @@ mod tests {
         );
         c.record_tool_end(
             "shell",
-            &json!({"exit_code": 0, "stdout": "{\"success\":true,\"data\":{\"sent\":true}}"}).to_string(),
+            &json!({"exit_code": 0, "stdout": "{\"success\":true,\"data\":{\"sent\":true}}"})
+                .to_string(),
             true,
         );
 
@@ -1350,7 +1356,11 @@ mod tests {
             "shell",
             &json!({"command": "neomind device get dev-01 | jq ."}),
         );
-        c.record_tool_end("shell", &json!({"exit_code": 0, "stdout": "{}"}).to_string(), true);
+        c.record_tool_end(
+            "shell",
+            &json!({"exit_code": 0, "stdout": "{}"}).to_string(),
+            true,
+        );
 
         assert!(c.is_empty());
     }
@@ -1358,7 +1368,10 @@ mod tests {
     #[test]
     fn create_extracts_id_from_json_and_human_stdout() {
         let mut c = TurnAttachmentCollector::new();
-        c.record_tool_start("shell", &json!({"command": "neomind rule create --json '{}'"}));
+        c.record_tool_start(
+            "shell",
+            &json!({"command": "neomind rule create --json '{}'"}),
+        );
         c.record_tool_end(
             "shell",
             &json!({
@@ -1427,16 +1440,14 @@ mod tests {
         );
         c.record_tool_end(
             "shell",
-            &json!({"exit_code": 0, "stdout": "{\"success\":true,\"data\":{\"sent\":false}}"}).to_string(),
+            &json!({"exit_code": 0, "stdout": "{\"success\":true,\"data\":{\"sent\":false}}"})
+                .to_string(),
             true,
         );
         assert!(!c.entities.contains_key("device:dev-08"));
 
         // Unsafe traversal IDs are rejected.
-        c.record_tool_start(
-            "shell",
-            &json!({"command": "neomind device get ../secret"}),
-        );
+        c.record_tool_start("shell", &json!({"command": "neomind device get ../secret"}));
         c.record_tool_end(
             "shell",
             &json!({"exit_code": 0, "stdout": "{\"success\":true}"}).to_string(),

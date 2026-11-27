@@ -19,7 +19,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use neomind_core::{EventBus, MetricValue, NeoMindEvent};
-use neomind_devices::{ConnectionStatus, DeviceRegistry, DeviceService};
+use neomind_devices::{
+    ConnectionConfig, ConnectionStatus, DeviceConfig, DeviceRegistry, DeviceService,
+    DeviceTypeTemplate,
+};
 
 /// Give the service's spawned event listener a moment to subscribe before
 /// publishing, then a moment to process what we publish.
@@ -27,10 +30,25 @@ async fn listener_settle() {
     tokio::time::sleep(Duration::from_millis(150)).await;
 }
 
-fn service() -> (Arc<DeviceService>, EventBus) {
+async fn service_with_devices(device_ids: &[&str]) -> (Arc<DeviceService>, EventBus) {
     let registry = Arc::new(DeviceRegistry::new());
     let event_bus = EventBus::new();
     let service = Arc::new(DeviceService::new(registry, event_bus.clone()));
+    let template = DeviceTypeTemplate::new("test_device", "Test Device");
+    service.register_template(template).await.unwrap();
+    for device_id in device_ids {
+        let config = DeviceConfig {
+            device_id: (*device_id).to_string(),
+            name: (*device_id).to_string(),
+            device_type: "test_device".to_string(),
+            adapter_type: "test".to_string(),
+            connection_config: ConnectionConfig::default(),
+            adapter_id: None,
+            last_seen: 0,
+            offline_timeout_secs: None,
+        };
+        service.register_device(config).await.unwrap();
+    }
     (service, event_bus)
 }
 
@@ -40,7 +58,7 @@ fn service() -> (Arc<DeviceService>, EventBus) {
 /// permanently "offline" on the dashboard.
 #[tokio::test]
 async fn extension_relayed_metric_marks_device_connected() {
-    let (service, event_bus) = service();
+    let (service, event_bus) = service_with_devices(&["router-rk-wifi-dev"]).await;
     service.start().await;
     listener_settle().await;
 
@@ -76,7 +94,7 @@ async fn extension_relayed_metric_marks_device_connected() {
 /// synthetic namespaces (`transform.*` metric, `transform:` device).
 #[tokio::test]
 async fn transform_metrics_do_not_mark_devices_connected() {
-    let (service, event_bus) = service();
+    let (service, event_bus) = service_with_devices(&["sensor-1"]).await;
     service.start().await;
     listener_settle().await;
 
@@ -113,7 +131,7 @@ async fn transform_metrics_do_not_mark_devices_connected() {
 /// behavior — they mark the device connected.
 #[tokio::test]
 async fn adapter_metric_still_marks_device_connected() {
-    let (service, event_bus) = service();
+    let (service, event_bus) = service_with_devices(&["mqtt-sensor-9"]).await;
     service.start().await;
     listener_settle().await;
 

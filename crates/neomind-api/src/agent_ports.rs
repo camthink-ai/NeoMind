@@ -259,7 +259,11 @@ impl HostLlmPort {
             .unwrap_or(0.2);
         let params = GenerationParams {
             temperature: Some(agent_temp),
-            thinking_enabled: if thinking_is_integral { None } else { Some(false) },
+            thinking_enabled: if thinking_is_integral {
+                None
+            } else {
+                Some(false)
+            },
             max_tokens: Some(2048),
             ..Default::default()
         };
@@ -373,13 +377,14 @@ impl HostLlmPort {
             if round >= 2 {
                 compact_tool_loop_messages(&mut messages, max_ctx);
             }
-            let round_tools =
-                if !tool_defs.is_empty() && round + 1 < max_rounds && consecutive_rejected_rounds < 2
-                {
-                    Some(tool_defs.clone())
-                } else {
-                    None
-                };
+            let round_tools = if !tool_defs.is_empty()
+                && round + 1 < max_rounds
+                && consecutive_rejected_rounds < 2
+            {
+                Some(tool_defs.clone())
+            } else {
+                None
+            };
 
             let mut round_params = params.clone();
             if request.expect_json && round_tools.is_none() {
@@ -435,7 +440,9 @@ impl HostLlmPort {
                         .saturating_duration_since(Instant::now())
                         .min(PER_ROUND_LLM_TIMEOUT);
                     if retry_timeout.is_zero() {
-                        return Err(AgentError::Llm("LLM execution exceeded total budget".into()));
+                        return Err(AgentError::Llm(
+                            "LLM execution exceeded total budget".into(),
+                        ));
                     }
                     tokio::select! {
                         _ = cancel.cancelled() => return Err(AgentError::Cancelled),
@@ -492,7 +499,9 @@ impl HostLlmPort {
                         .saturating_duration_since(Instant::now())
                         .min(PER_ROUND_LLM_TIMEOUT);
                     if retry_timeout.is_zero() {
-                        return Err(AgentError::Llm("LLM execution exceeded total budget".into()));
+                        return Err(AgentError::Llm(
+                            "LLM execution exceeded total budget".into(),
+                        ));
                     }
                     tokio::select! {
                         _ = cancel.cancelled() => return Err(AgentError::Cancelled),
@@ -949,7 +958,7 @@ pub(crate) fn sanitize_trace_arguments(args: &serde_json::Value) -> serde_json::
 
 /// Compact older tool-result messages mid-loop so multi-round agent runs never
 /// blow through the model's context window (keeps the 2 most recent tool rounds verbatim).
-fn compact_tool_loop_messages(messages: &mut Vec<Message>, max_ctx_tokens: usize) {
+fn compact_tool_loop_messages(messages: &mut [Message], max_ctx_tokens: usize) {
     let budget_chars = if max_ctx_tokens > 0 {
         // ~65% of conservative 2-chars/token budget
         (max_ctx_tokens.saturating_mul(13)) / 10
@@ -1559,12 +1568,15 @@ impl SourceReadPort for HostSourceReadPort {
         }
 
         // Command path — must be declared ReadOnly (blocks dry_run writes).
-        tokio::time::timeout_at(deadline, self.ensure_readonly_command(extension_id, operation))
-            .await
-            .map_err(|_| AgentError::Source {
-                key: extension_id.into(),
-                reason: "extension command capability check timed out".into(),
-            })??;
+        tokio::time::timeout_at(
+            deadline,
+            self.ensure_readonly_command(extension_id, operation),
+        )
+        .await
+        .map_err(|_| AgentError::Source {
+            key: extension_id.into(),
+            reason: "extension command capability check timed out".into(),
+        })??;
 
         let result = tokio::time::timeout_at(
             deadline,
@@ -1711,18 +1723,16 @@ impl HostSourceReadPort {
                 now_ms,
             );
             let _ = self.deps.telemetry.flush();
-            let sample_ts = tokio::time::timeout_at(
-                deadline,
-                self.deps.telemetry.latest(source_key, field),
-            )
-            .await
-            .map_err(|_| AgentError::Source {
-                key: err_key.into(),
-                reason: "latest peek timed out".into(),
-            })?
-            .ok()
-            .flatten()
-            .map(|p| p.timestamp);
+            let sample_ts =
+                tokio::time::timeout_at(deadline, self.deps.telemetry.latest(source_key, field))
+                    .await
+                    .map_err(|_| AgentError::Source {
+                        key: err_key.into(),
+                        reason: "latest peek timed out".into(),
+                    })?
+                    .ok()
+                    .flatten()
+                    .map(|p| p.timestamp);
             let (start_q, end_q) = storage_range_for_series(lookback_secs, now_ms, sample_ts);
             let points = tokio::time::timeout_at(
                 deadline,
@@ -1999,12 +2009,10 @@ impl SideEffectPort for HostSideEffectPort {
             return Ok(receipt_from_command_delivery(delivery));
         }
 
-        let ext_info = tokio::time::timeout_at(
-            deadline,
-            self.extension_registry.get_info(destination),
-        )
-        .await
-        .map_err(|_| AgentError::Other("extension lookup timed out after 30s".into()))?;
+        let ext_info =
+            tokio::time::timeout_at(deadline, self.extension_registry.get_info(destination))
+                .await
+                .map_err(|_| AgentError::Other("extension lookup timed out after 30s".into()))?;
         if ext_info.is_some() {
             tokio::time::timeout_at(
                 deadline,
@@ -2121,7 +2129,10 @@ mod tests {
     #[test]
     fn extension_tool_with_read_prefix_is_not_classified_readonly() {
         let cap = classify_host_tool_capability("query_plc:write_coil");
-        assert_eq!(cap.class, neomind_ai_agent::ports::CapabilityClass::SideEffect);
+        assert_eq!(
+            cap.class,
+            neomind_ai_agent::ports::CapabilityClass::SideEffect
+        );
     }
 
     #[test]
@@ -2257,11 +2268,11 @@ mod tests {
         )));
         let mut reg = neomind_agent::toolkit::ToolRegistry::new();
         reg.register(shared_mem.clone());
-        reg.register(Arc::new(neomind_agent::toolkit::skill_tool::SkillTool::new(
-            Arc::new(tokio::sync::RwLock::new(
+        reg.register(Arc::new(
+            neomind_agent::toolkit::skill_tool::SkillTool::new(Arc::new(tokio::sync::RwLock::new(
                 neomind_agent::skills::SkillRegistry::new(),
-            )),
-        )));
+            ))),
+        ));
 
         // Unrestricted (None) excludes `skill`, keeps `memory`.
         let (defs_unres, map_unres) = select_authorized_tools(&reg, None);
@@ -2277,10 +2288,12 @@ mod tests {
 
         // Per-agent MemoryTool isolation: agent A and agent B write to isolated custom files
         // and leave the shared Chat MemoryTool in global scope (agent_id = None).
-        let tool_a = build_isolated_agent_memory_tool(Some("agt_alpha"), Some(&reg), Some(&mem_store))
-            .expect("isolated tool A");
-        let tool_b = build_isolated_agent_memory_tool(Some("agt_beta"), Some(&reg), Some(&mem_store))
-            .expect("isolated tool B");
+        let tool_a =
+            build_isolated_agent_memory_tool(Some("agt_alpha"), Some(&reg), Some(&mem_store))
+                .expect("isolated tool A");
+        let tool_b =
+            build_isolated_agent_memory_tool(Some("agt_beta"), Some(&reg), Some(&mem_store))
+                .expect("isolated tool B");
 
         tool_a
             .execute(serde_json::json!({

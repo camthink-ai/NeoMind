@@ -451,19 +451,18 @@ impl IsolatedExtensionManager {
                                     let within_limit =
                                         budget_count < config.max_restart_attempts as u64;
 
-                                    let cooldown_wait_secs = if let Some(last_restart) =
-                                        info.runtime.last_restart_at
-                                    {
-                                        let elapsed = now.saturating_sub(last_restart);
-                                        let cooldown = config.restart_cooldown_secs as i64;
-                                        if elapsed < cooldown {
-                                            (cooldown - elapsed) as u64
+                                    let cooldown_wait_secs =
+                                        if let Some(last_restart) = info.runtime.last_restart_at {
+                                            let elapsed = now.saturating_sub(last_restart);
+                                            let cooldown = config.restart_cooldown_secs as i64;
+                                            if elapsed < cooldown {
+                                                (cooldown - elapsed) as u64
+                                            } else {
+                                                0
+                                            }
                                         } else {
                                             0
-                                        }
-                                    } else {
-                                        0
-                                    };
+                                        };
 
                                     (can_restart && within_limit, cooldown_wait_secs)
                                 })

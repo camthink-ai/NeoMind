@@ -116,11 +116,7 @@ pub async fn download_with_resume(
     }
 
     if !status.is_success() {
-        anyhow::bail!(
-            "download failed with HTTP {} for {}",
-            status,
-            url
-        );
+        anyhow::bail!("download failed with HTTP {} for {}", status, url);
     }
     if existing > 0
         && status != reqwest::StatusCode::PARTIAL_CONTENT

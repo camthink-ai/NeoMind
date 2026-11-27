@@ -152,7 +152,11 @@ pub fn parse_notify_arg(raw: &str) -> Result<serde_json::Value, CliResponse> {
                 "on_failure": false,
             }));
         }
-        if lower == "complete" || lower == "always" || lower == "on_complete" || lower == "on_complete=true" {
+        if lower == "complete"
+            || lower == "always"
+            || lower == "on_complete"
+            || lower == "on_complete=true"
+        {
             return Ok(json!({
                 "channels": ["IM"],
                 "on_complete": true,
@@ -527,12 +531,7 @@ pub async fn create_agent(
     tool_policy: Option<&str>,
     input: Option<&str>,
 ) -> Result<CliResponse> {
-    let _ = (
-        memory_mode,
-        max_chain_depth,
-        priority,
-        context_window_size,
-    );
+    let _ = (memory_mode, max_chain_depth, priority, context_window_size);
 
     let schedule_type_val = schedule_type.unwrap_or("event");
     let trigger = match schedule_type_val {
@@ -922,6 +921,7 @@ pub async fn create_agent(
 /// Parse `--commands` JSON (V1 `{device_id, command_name}`, V2 `{name, destination}`,
 /// or shorthand `"device:<id>:<cmd>"` / `"<id>:<cmd>"`, comma-separated or JSON array)
 /// into V2 `ControlledAction` JSON entries.
+#[allow(clippy::result_large_err)]
 fn parse_commands_to_controlled_actions(
     raw: &str,
 ) -> std::result::Result<Vec<serde_json::Value>, CliResponse> {
@@ -1030,7 +1030,11 @@ fn normalize_notify_channels(val: Option<&serde_json::Value>) -> serde_json::Val
             if let Some(s) = item.as_str() {
                 let t = s.trim();
                 if !t.is_empty() {
-                    return Some(json!(if t.eq_ignore_ascii_case("im") { "IM" } else { t }));
+                    return Some(json!(if t.eq_ignore_ascii_case("im") {
+                        "IM"
+                    } else {
+                        t
+                    }));
                 }
             } else if let Some(obj) = item.as_object() {
                 let raw = obj
@@ -1041,7 +1045,11 @@ fn normalize_notify_channels(val: Option<&serde_json::Value>) -> serde_json::Val
                     .map(str::trim)
                     .unwrap_or("");
                 if !raw.is_empty() {
-                    return Some(json!(if raw.eq_ignore_ascii_case("im") { "IM" } else { raw }));
+                    return Some(json!(if raw.eq_ignore_ascii_case("im") {
+                        "IM"
+                    } else {
+                        raw
+                    }));
                 }
             }
             None
@@ -1167,12 +1175,7 @@ pub async fn update_agent(
     // V1-only knobs — AgentSpecPatch has no home for these (create already
     // discards the same set). Keep the CLI flags for help/compat, do not put
     // them on the wire (deny_unknown_fields is off; they would vanish silently).
-    let _ = (
-        memory_mode,
-        max_chain_depth,
-        priority,
-        context_window_size,
-    );
+    let _ = (memory_mode, max_chain_depth, priority, context_window_size);
 
     let id = resolve_agent_id(client, id).await?;
     let mut body = json!({});

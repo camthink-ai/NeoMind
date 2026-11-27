@@ -229,7 +229,10 @@ mod tests {
         std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644)).unwrap();
         write_private_key_file(&existing, b"new-secret-key").unwrap();
         let mode = std::fs::metadata(&existing).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "overwritten private key must be tightened to 0600");
+        assert_eq!(
+            mode, 0o600,
+            "overwritten private key must be tightened to 0600"
+        );
         assert_eq!(std::fs::read(&existing).unwrap(), b"new-secret-key");
     }
 }

@@ -193,8 +193,7 @@ fn count_matching_fields(val: &Value, fields: &[OutputField]) -> usize {
     fields
         .iter()
         .filter(|f| {
-            obj.contains_key(&f.name)
-                || obj.keys().any(|k| k.eq_ignore_ascii_case(&f.name))
+            obj.contains_key(&f.name) || obj.keys().any(|k| k.eq_ignore_ascii_case(&f.name))
         })
         .count()
 }

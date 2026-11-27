@@ -64,7 +64,8 @@ pub fn alert_from_structured_result(value: &serde_json::Value) -> Option<bool> {
             let norm = raw.trim().to_ascii_lowercase();
             match norm.as_str() {
                 "alert" | "abnormal" | "critical" | "warning" | "alarm" | "anomaly" | "error"
-                | "danger" | "high" | "异常" | "告警" | "警告" | "危险" | "超标" | "过载" => {
+                | "danger" | "high" | "异常" | "告警" | "警告" | "危险" | "超标" | "过载" =>
+                {
                     return Some(true);
                 }
                 "normal" | "ok" | "healthy" | "pass" | "safe" | "none" | "正常" | "无异常"

@@ -203,9 +203,7 @@ impl DataCache {
             }
         }
 
-        self.timestamps
-            .entry(message_id.to_string())
-            .or_insert(now);
+        self.timestamps.entry(message_id.to_string()).or_insert(now);
         self.sums.insert(message_id.to_string(), sum);
         let entry = self.shards.entry(message_id.to_string()).or_default();
         // Last-write-wins per seq; Feishu shouldn't resend differing bytes for

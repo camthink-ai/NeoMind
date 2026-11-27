@@ -404,7 +404,9 @@ pub(crate) fn start_stdin_reader() -> std::thread::JoinHandle<()> {
                     break 'read_loop;
                 }
                 Err(e) => {
-                    error!("Fatal stdin error reading length prefix: {e}; signaling runner shutdown");
+                    error!(
+                        "Fatal stdin error reading length prefix: {e}; signaling runner shutdown"
+                    );
                     break 'read_loop;
                 }
             }

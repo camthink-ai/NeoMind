@@ -503,7 +503,9 @@ async fn prepare_from_content_nodes(
 /// Surfacing command names directly inside `@device` references lets models
 /// immediately see supported actions (e.g. `render_text`, `clear`, `reboot`)
 /// without wasting rounds guessing extensions or `message send`.
-fn format_device_commands_summary(template: &neomind_devices::DeviceTypeTemplate) -> Option<String> {
+fn format_device_commands_summary(
+    template: &neomind_devices::DeviceTypeTemplate,
+) -> Option<String> {
     const MAX_CMD_NAMES: usize = 16;
     if template.commands.is_empty() {
         return None;
@@ -520,7 +522,10 @@ fn format_device_commands_summary(template: &neomind_devices::DeviceTypeTemplate
     }
     let mut joined = names.join(", ");
     if template.commands.len() > MAX_CMD_NAMES {
-        joined.push_str(&format!(" (+{} more)", template.commands.len() - MAX_CMD_NAMES));
+        joined.push_str(&format!(
+            " (+{} more)",
+            template.commands.len() - MAX_CMD_NAMES
+        ));
     }
     Some(joined)
 }
