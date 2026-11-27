@@ -35,21 +35,12 @@ fn market_base_url() -> String {
 }
 const MARKET_BRANCH: &str = "main";
 
-/// Component IDs reserved for built-in components — cannot be overwritten.
 /// Component IDs reserved for built-in components — cannot be overwritten
-/// by installs. Derived from `BUILTIN_WIDGET_TYPES` (the single source of
-/// truth shared with the frontend's Renderers builtInTypes) so a new builtin
-/// can never be forgotten here — `counter` and `metric-card` were missing
-/// from the old hand-maintained list, i.e. installable over their builtins.
-/// LEGACY ids stay reserved for downgrade safety.
+/// by installs. Derived directly from `BUILTIN_WIDGET_TYPES` (the single
+/// source of truth shared with `builtin_component_list()` and the frontend
+/// registry) so a new built-in can never be forgotten here.
 fn reserved_component_ids() -> Vec<&'static str> {
-    const LEGACY_RESERVED: &[&str] = &["agent-monitor-widget", "ai-analyst"];
-    let mut ids: Vec<&'static str> = neomind_core::dashboard::BUILTIN_WIDGET_TYPES
-        .iter()
-        .map(|t| t.type_id)
-        .collect();
-    ids.extend_from_slice(LEGACY_RESERVED);
-    ids
+    neomind_core::dashboard::builtin_type_ids()
 }
 
 // ---------------------------------------------------------------------------
@@ -1058,10 +1049,26 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
         source: None,
     };
 
+    let counter = ComponentManifest {
+        id: "counter".into(),
+        name: json!("Counter"),
+        description: json!("Single numeric counter card (Value Card alias)"),
+        global_name: "counter".into(),
+        ..value_card.clone()
+    };
+
+    let metric_card = ComponentManifest {
+        id: "metric-card".into(),
+        name: json!("Metric Card"),
+        description: json!("Single telemetry metric card (Value Card alias)"),
+        global_name: "metric_card".into(),
+        ..value_card.clone()
+    };
+
     let led_indicator = ComponentManifest {
         id: "led-indicator".into(),
         name: json!("LED Indicator"),
-        description: json!("Binary status indicator with color states"),
+        description: json!("Status indicator with threshold/value/pattern state rules"),
         icon: "box".into(),
         category: "indicators".into(),
         version: "1.0.0".into(),
@@ -1077,14 +1084,52 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
             "display": {
                 "type": "object",
                 "properties": {
-                    "color": {"type": "string", "description": "Primary color"},
-                    "valueMap": {"type": "object", "description": "Map data values to display states"},
-                    "defaultState": {"type": "string", "description": "Default display state"}
+                    "color": {"type": "string", "description": "Optional override color"}
                 }
             },
-            "config": {"type": "object", "properties": {}}
+            "config": {
+                "type": "object",
+                "properties": {
+                    "rules": {
+                        "type": "array",
+                        "description": "Ordered state-mapping rules (first match wins)",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "threshold": {
+                                    "type": "object",
+                                    "properties": {
+                                        "operator": {"type": "string", "enum": [">", "<", ">=", "<=", "==", "!="]},
+                                        "value": {"type": "number"}
+                                    },
+                                    "required": ["operator", "value"]
+                                },
+                                "values": {"type": "string", "description": "Comma-separated string values to match (e.g. 'on,true,1')"},
+                                "pattern": {"type": "string", "description": "Regex pattern to match string values"},
+                                "state": {"type": "string", "enum": ["on", "off", "error", "warning", "unknown"]},
+                                "label": {"type": "string", "description": "Optional status label"},
+                                "color": {"type": "string", "description": "Optional custom hex/CSS color"}
+                            },
+                            "required": ["state"]
+                        }
+                    },
+                    "defaultState": {"type": "string", "enum": ["on", "off", "error", "warning", "unknown"], "default": "unknown"},
+                    "size": {"type": "string", "enum": ["sm", "md", "lg"], "default": "md"},
+                    "showCard": {"type": "boolean", "default": true},
+                    "showGlow": {"type": "boolean", "default": true},
+                    "showAnimation": {"type": "boolean", "default": true}
+                }
+            }
         })),
-        default_config: None,
+        default_config: Some(json!({
+            "config": {
+                "defaultState": "unknown",
+                "size": "md",
+                "showCard": true,
+                "showGlow": true,
+                "showAnimation": true
+            }
+        })),
         variants: None,
         global_name: "led_indicator".into(),
         export_name: None,
@@ -1285,13 +1330,22 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
                     "unit": {"type": "string", "description": "Axis unit label"},
                     "showLegend": {"type": "boolean", "description": "Show legend"},
                     "showGrid": {"type": "boolean", "description": "Show grid lines"},
-                    "showTooltip": {"type": "boolean", "description": "Show tooltip on hover"},
-                    "horizontal": {"type": "boolean", "description": "Horizontal bar orientation"}
+                    "showTooltip": {"type": "boolean", "description": "Show tooltip on hover"}
                 }
             },
-            "config": {"type": "object", "properties": {}}
+            "config": {
+                "type": "object",
+                "properties": {
+                    "layout": {"type": "string", "enum": ["vertical", "horizontal"], "default": "vertical", "description": "Bar orientation"},
+                    "stacked": {"type": "boolean", "default": false, "description": "Stack multiple series"},
+                    "color": {"type": "string", "description": "Primary series color"}
+                }
+            }
         })),
-        default_config: Some(json!({"display": {"showLegend": true, "showGrid": true}})),
+        default_config: Some(json!({
+            "display": {"showLegend": true, "showGrid": true},
+            "config": {"layout": "vertical", "stacked": false}
+        })),
         variants: None,
         global_name: "bar_chart".into(),
         export_name: None,
@@ -1302,14 +1356,14 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
     let pie_chart = ComponentManifest {
         id: "pie-chart".into(),
         name: json!("Pie Chart"),
-        description: json!("Pie chart for distribution/proportion data"),
+        description: json!("Pie/donut chart for distribution/proportion data"),
         icon: "box".into(),
         category: "charts".into(),
         version: "1.0.0".into(),
         author: Some("NeoMind".into()),
         size_constraints: sc(2, 2, 4, 4, 8, 8),
         has_data_source: true,
-        max_data_sources: Some(1),
+        max_data_sources: Some(5),
         has_display_config: true,
         has_actions: false,
         has_device_binding: false,
@@ -1320,48 +1374,24 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
                 "properties": {
                     "showLabels": {"type": "boolean", "description": "Show labels on slices"},
                     "showLegend": {"type": "boolean", "description": "Show legend"},
-                    "showTooltip": {"type": "boolean", "description": "Show tooltip on hover"},
-                    "innerRadius": {"type": "number", "description": "Inner radius for donut (0-1)"}
-                }
-            },
-            "config": {"type": "object", "properties": {}}
-        })),
-        default_config: Some(json!({"display": {"showLabels": true, "showLegend": true}})),
-        variants: None,
-        global_name: "pie_chart".into(),
-        export_name: None,
-        installed_at: 0,
-        source: None,
-    };
-
-    let radar_chart = ComponentManifest {
-        id: "radar-chart".into(),
-        name: json!("Radar Chart"),
-        description: json!("Radar chart for multi-dimensional data"),
-        icon: "box".into(),
-        category: "charts".into(),
-        version: "1.0.0".into(),
-        author: Some("NeoMind".into()),
-        size_constraints: sc(3, 3, 4, 4, 8, 8),
-        has_data_source: true,
-        max_data_sources: Some(1),
-        has_display_config: true,
-        has_actions: false,
-        has_device_binding: false,
-        device_type_filter: vec![],
-        config_schema: Some(json!({
-            "display": {
-                "type": "object",
-                "properties": {
-                    "showLegend": {"type": "boolean", "description": "Show legend"},
                     "showTooltip": {"type": "boolean", "description": "Show tooltip on hover"}
                 }
             },
-            "config": {"type": "object", "properties": {}}
+            "config": {
+                "type": "object",
+                "properties": {
+                    "innerRadius": {"type": "number", "description": "Inner radius in px (0 = pie, >0 = donut)"},
+                    "outerRadius": {"type": "number", "description": "Outer radius in px"},
+                    "variant": {"type": "string", "enum": ["pie", "donut"], "default": "pie"}
+                }
+            }
         })),
-        default_config: None,
+        default_config: Some(json!({
+            "display": {"showLabels": true, "showLegend": true},
+            "config": {"variant": "pie"}
+        })),
         variants: None,
-        global_name: "radar_chart".into(),
+        global_name: "pie_chart".into(),
         export_name: None,
         installed_at: 0,
         source: None,
@@ -1371,7 +1401,7 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
     let toggle_switch = ComponentManifest {
         id: "toggle-switch".into(),
         name: json!("Toggle Switch"),
-        description: json!("On/off switch for device control"),
+        description: json!("Command button / switch for executing device or extension commands"),
         icon: "box".into(),
         category: "controls".into(),
         version: "1.0.0".into(),
@@ -1384,15 +1414,33 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
         has_device_binding: false,
         device_type_filter: vec![],
         config_schema: Some(json!({
+            "data_source": {
+                "type": "object",
+                "description": "Bind a device or extension command (type='command')",
+                "properties": {
+                    "type": {"type": "string", "enum": ["command", "extension-command"]},
+                    "source": {"type": "string", "enum": ["device", "extension"]},
+                    "id": {"type": "string", "description": "Device ID or extension ID"},
+                    "field": {"type": "string", "description": "Command name"},
+                    "deviceId": {"type": "string", "description": "Device ID (for device commands)"},
+                    "command": {"type": "string", "description": "Command name"}
+                },
+                "required": ["type", "id", "field"]
+            },
             "display": {
                 "type": "object",
                 "properties": {
-                    "label": {"type": "string", "description": "Switch label text"}
+                    "label": {"type": "string", "description": "Button/switch label text"}
                 }
             },
-            "config": {"type": "object", "properties": {}}
+            "config": {
+                "type": "object",
+                "properties": {
+                    "size": {"type": "string", "enum": ["sm", "md", "lg"], "default": "md"}
+                }
+            }
         })),
-        default_config: None,
+        default_config: Some(json!({"config": {"size": "md"}})),
         variants: None,
         global_name: "toggle_switch".into(),
         export_name: None,
@@ -1421,8 +1469,10 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
             "config": {
                 "type": "object",
                 "properties": {
-                    "content": {"type": "string", "description": "Markdown content to render"}
-                }
+                    "content": {"type": "string", "description": "Markdown content to render"},
+                    "variant": {"type": "string", "enum": ["default", "compact", "card"], "default": "default"}
+                },
+                "required": ["content"]
             }
         })),
         default_config: Some(json!({"config": {"content": "# Title\n\nContent here"}})),
@@ -1436,7 +1486,7 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
     let image_display = ComponentManifest {
         id: "image-display".into(),
         name: json!("Image Display"),
-        description: json!("Display images from URL or data source"),
+        description: json!("Display static image URL or live image telemetry"),
         icon: "box".into(),
         category: "display".into(),
         version: "1.0.0".into(),
@@ -1452,18 +1502,23 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
             "display": {
                 "type": "object",
                 "properties": {
-                    "fit": {"type": "string", "description": "Image fit mode (cover, contain, fill)"},
+                    "fit": {"type": "string", "enum": ["cover", "contain", "fill"], "default": "cover"},
                     "caption": {"type": "string", "description": "Image caption text"}
                 }
             },
             "config": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "Static image URL"}
+                    "src": {"type": "string", "description": "Static image URL (optional if data_source provides image telemetry)"},
+                    "fit": {"type": "string", "enum": ["cover", "contain", "fill"], "default": "cover"},
+                    "alt": {"type": "string", "description": "Image alt text"},
+                    "caption": {"type": "string", "description": "Optional caption text"},
+                    "zoomable": {"type": "boolean", "default": true},
+                    "rounded": {"type": "boolean", "default": true}
                 }
             }
         })),
-        default_config: None,
+        default_config: Some(json!({"config": {"fit": "cover", "zoomable": true, "rounded": true}})),
         variants: None,
         global_name: "image_display".into(),
         export_name: None,
@@ -1490,19 +1545,19 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
             "display": {
                 "type": "object",
                 "properties": {
-                    "fit": {"type": "string", "description": "Image fit mode"},
-                    "showTimestamp": {"type": "boolean", "description": "Show timestamp on images"}
+                    "fit": {"type": "string", "enum": ["cover", "contain", "fill"], "default": "contain"},
+                    "showTimestamp": {"type": "boolean", "description": "Show timestamp on images", "default": true}
                 }
             },
             "config": {
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "number", "description": "Max images to display"},
+                    "limit": {"type": "number", "description": "Max images to display", "default": 50},
                     "timeRange": {"type": "string", "description": "Time range for history"}
                 }
             }
         })),
-        default_config: None,
+        default_config: Some(json!({"display": {"fit": "contain", "showTimestamp": true}, "config": {"limit": 50}})),
         variants: None,
         global_name: "image_history".into(),
         export_name: None,
@@ -1513,14 +1568,14 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
     let web_display = ComponentManifest {
         id: "web-display".into(),
         name: json!("Web Display"),
-        description: json!("Embed external web pages in dashboard"),
+        description: json!("Embed external web pages via iframe in dashboard"),
         icon: "box".into(),
         category: "display".into(),
         version: "1.0.0".into(),
         author: Some("NeoMind".into()),
         size_constraints: sc(3, 2, 6, 4, 12, 8),
-        has_data_source: true,
-        max_data_sources: Some(1),
+        has_data_source: false,
+        max_data_sources: Some(0),
         has_display_config: true,
         has_actions: false,
         has_device_binding: false,
@@ -1529,18 +1584,22 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
             "display": {
                 "type": "object",
                 "properties": {
-                    "sandbox": {"type": "string", "description": "Sandbox restrictions for iframe"},
-                    "allowFullscreen": {"type": "boolean", "description": "Allow fullscreen mode"}
+                    "sandbox": {"type": "string", "description": "Sandbox attributes for iframe"},
+                    "allowFullscreen": {"type": "boolean", "description": "Allow fullscreen mode", "default": true}
                 }
             },
             "config": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "URL to embed"}
-                }
+                    "src": {"type": "string", "description": "URL of web page to embed"},
+                    "allowFullscreen": {"type": "boolean", "default": true},
+                    "sandbox": {"type": "string", "description": "Optional iframe sandbox policy"},
+                    "showHeader": {"type": "boolean", "default": true}
+                },
+                "required": ["src"]
             }
         })),
-        default_config: None,
+        default_config: Some(json!({"config": {"allowFullscreen": true, "showHeader": true}})),
         variants: None,
         global_name: "web_display".into(),
         export_name: None,
@@ -1552,13 +1611,13 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
     let map_display = ComponentManifest {
         id: "map-display".into(),
         name: json!("Map Display"),
-        description: json!("Display locations on an interactive map"),
+        description: json!("Interactive map with geo-positioned device/metric/command markers"),
         icon: "box".into(),
         category: "spatial".into(),
         version: "1.0.0".into(),
         author: Some("NeoMind".into()),
         size_constraints: sc(3, 3, 6, 4, 12, 8),
-        has_data_source: true,
+        has_data_source: false,
         max_data_sources: Some(10),
         has_display_config: true,
         has_actions: false,
@@ -1568,14 +1627,66 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
             "display": {
                 "type": "object",
                 "properties": {
-                    "center": {"type": "object", "description": "Map center {lat, lng}"},
-                    "zoom": {"type": "number", "description": "Initial zoom level"},
                     "markerColor": {"type": "string", "description": "Default marker color"}
                 }
             },
-            "config": {"type": "object", "properties": {}}
+            "config": {
+                "type": "object",
+                "properties": {
+                    "center": {
+                        "type": "object",
+                        "description": "Map center coordinates",
+                        "properties": {
+                            "lat": {"type": "number"},
+                            "lng": {"type": "number"}
+                        },
+                        "required": ["lat", "lng"]
+                    },
+                    "zoom": {"type": "number", "default": 12, "description": "Initial zoom level (1-18)"},
+                    "minZoom": {"type": "number", "default": 3},
+                    "maxZoom": {"type": "number", "default": 18},
+                    "tileLayer": {"type": "string", "enum": ["osm", "satellite", "dark"], "default": "osm"},
+                    "markerColor": {"type": "string", "description": "Default marker color"},
+                    "showControls": {"type": "boolean", "default": true},
+                    "showFullscreen": {"type": "boolean", "default": true},
+                    "interactive": {"type": "boolean", "default": true},
+                    "bindings": {
+                        "type": "array",
+                        "description": "Markers pinned to the map",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "type": {"type": "string", "enum": ["device", "metric", "command", "marker"]},
+                                "name": {"type": "string"},
+                                "dataSource": {"type": "object", "description": "Unified DataSource object (type='device'|'telemetry'|'command')"},
+                                "position": {
+                                    "description": "{lat, lng} object or 'auto'",
+                                    "type": "object",
+                                    "properties": {
+                                        "lat": {"type": "number"},
+                                        "lng": {"type": "number"}
+                                    }
+                                },
+                                "icon": {"type": "string", "enum": ["device", "metric", "command", "marker"]}
+                            },
+                            "required": ["id", "type", "name", "dataSource"]
+                        }
+                    }
+                }
+            }
         })),
-        default_config: None,
+        default_config: Some(json!({
+            "config": {
+                "center": {"lat": 39.9042, "lng": 116.4074},
+                "zoom": 12,
+                "tileLayer": "osm",
+                "showControls": true,
+                "showFullscreen": true,
+                "interactive": true,
+                "bindings": []
+            }
+        })),
         variants: None,
         global_name: "map_display".into(),
         export_name: None,
@@ -1586,13 +1697,13 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
     let video_display = ComponentManifest {
         id: "video-display".into(),
         name: json!("Video Display"),
-        description: json!("Display live video or RTSP stream"),
+        description: json!("Display live video stream (RTSP/HLS/WebRTC/MP4)"),
         icon: "box".into(),
         category: "spatial".into(),
         version: "1.0.0".into(),
         author: Some("NeoMind".into()),
         size_constraints: sc(3, 2, 6, 4, 12, 8),
-        has_data_source: true,
+        has_data_source: false,
         max_data_sources: Some(1),
         has_display_config: true,
         has_actions: false,
@@ -1602,20 +1713,35 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
             "display": {
                 "type": "object",
                 "properties": {
-                    "type": {"type": "string", "description": "Video source type (rtsp, hls, webrtc)"},
-                    "autoplay": {"type": "boolean", "description": "Auto-play video"},
-                    "muted": {"type": "boolean", "description": "Mute audio"},
-                    "controls": {"type": "boolean", "description": "Show video controls"}
+                    "fit": {"type": "string", "enum": ["contain", "cover"], "default": "contain"}
                 }
             },
             "config": {
                 "type": "object",
                 "properties": {
-                    "url": {"type": "string", "description": "Video stream URL"}
-                }
+                    "src": {"type": "string", "description": "Video stream URL (rtsp://, https://.../index.m3u8, mp4, etc.)"},
+                    "type": {"type": "string", "enum": ["rtsp", "hls", "webrtc", "mp4"], "default": "hls"},
+                    "autoplay": {"type": "boolean", "default": true},
+                    "muted": {"type": "boolean", "default": true},
+                    "controls": {"type": "boolean", "default": true},
+                    "loop": {"type": "boolean", "default": false},
+                    "poster": {"type": "string", "description": "Poster thumbnail URL"},
+                    "fit": {"type": "string", "enum": ["contain", "cover"], "default": "contain"},
+                    "showFullscreen": {"type": "boolean", "default": true}
+                },
+                "required": ["src"]
             }
         })),
-        default_config: None,
+        default_config: Some(json!({
+            "config": {
+                "type": "hls",
+                "autoplay": true,
+                "muted": true,
+                "controls": true,
+                "fit": "contain",
+                "showFullscreen": true
+            }
+        })),
         variants: None,
         global_name: "video_display".into(),
         export_name: None,
@@ -1626,29 +1752,67 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
     let custom_layer = ComponentManifest {
         id: "custom-layer".into(),
         name: json!("Custom Layer"),
-        description: json!("Custom overlay layer with icons and text"),
+        description: json!("Floorplan / canvas overlay with positioned device, metric, command, text, and icon bindings"),
         icon: "box".into(),
         category: "spatial".into(),
         version: "1.0.0".into(),
         author: Some("NeoMind".into()),
         size_constraints: sc(3, 3, 6, 4, 12, 8),
-        has_data_source: true,
+        has_data_source: false,
         max_data_sources: Some(20),
         has_display_config: true,
         has_actions: false,
         has_device_binding: false,
         device_type_filter: vec![],
         config_schema: Some(json!({
-            "display": {
+            "display": {"type": "object", "properties": {}},
+            "config": {
                 "type": "object",
                 "properties": {
-                    "backgroundType": {"type": "string", "description": "Background type (image, color, map)"},
-                    "gridSize": {"type": "number", "description": "Grid cell size in pixels"}
+                    "backgroundType": {"type": "string", "enum": ["color", "image", "transparent"], "default": "color"},
+                    "backgroundColor": {"type": "string", "default": "#1e293b", "description": "Canvas background color"},
+                    "backgroundImage": {"type": "string", "description": "Floorplan / background image URL (when backgroundType='image')"},
+                    "gridSize": {"type": "number", "default": 20, "description": "Snap grid size in pixels"},
+                    "showControls": {"type": "boolean", "default": true},
+                    "showFullscreen": {"type": "boolean", "default": true},
+                    "bindings": {
+                        "type": "array",
+                        "description": "Positioned items rendered on the canvas (x/y are 0-100 percentage coordinates)",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "type": {"type": "string", "enum": ["device", "metric", "command", "text", "icon"]},
+                                "name": {"type": "string"},
+                                "dataSource": {"type": "object", "description": "Unified DataSource object"},
+                                "position": {
+                                    "description": "{x, y} percentage coordinates (0-100) or 'auto'",
+                                    "type": "object",
+                                    "properties": {
+                                        "x": {"type": "number"},
+                                        "y": {"type": "number"}
+                                    }
+                                },
+                                "color": {"type": "string"},
+                                "backgroundColor": {"type": "string"},
+                                "fontSize": {"type": "string", "enum": ["xs", "sm", "md", "lg"], "default": "sm"}
+                            },
+                            "required": ["id", "type", "name", "dataSource"]
+                        }
+                    }
                 }
-            },
-            "config": {"type": "object", "properties": {}}
+            }
         })),
-        default_config: None,
+        default_config: Some(json!({
+            "config": {
+                "backgroundType": "color",
+                "backgroundColor": "#1e293b",
+                "gridSize": 20,
+                "showControls": true,
+                "showFullscreen": true,
+                "bindings": []
+            }
+        })),
         variants: None,
         global_name: "custom_layer".into(),
         export_name: None,
@@ -1660,7 +1824,7 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
     let agent_monitor_widget = ComponentManifest {
         id: "agent-monitor-widget".into(),
         name: json!("Agent Monitor"),
-        description: json!("AI agent activity monitor with conversation view"),
+        description: json!("Live AI Agent status, execution flow, and detail inspector"),
         icon: "box".into(),
         category: "business".into(),
         version: "1.0.0".into(),
@@ -1673,6 +1837,15 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
         has_device_binding: false,
         device_type_filter: vec![],
         config_schema: Some(json!({
+            "data_source": {
+                "type": "object",
+                "description": "Bind target AI Agent via data_source (NOT config). Discover agent IDs with `neomind agent list`.",
+                "properties": {
+                    "type": {"type": "string", "enum": ["agent"]},
+                    "agentId": {"type": "string", "description": "ID of the AI Agent to monitor"}
+                },
+                "required": ["type", "agentId"]
+            },
             "display": {"type": "object", "properties": {}},
             "config": {"type": "object", "properties": {}}
         })),
@@ -1687,23 +1860,38 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
     let ai_analyst = ComponentManifest {
         id: "ai-analyst".into(),
         name: json!("AI Analyst"),
-        description: json!("AI-powered data analysis and insights"),
+        description: json!("Interactive AI analyst chat grounded in bound telemetry and extension metrics"),
         icon: "box".into(),
         category: "business".into(),
         version: "1.0.0".into(),
         author: Some("NeoMind".into()),
         size_constraints: sc(3, 3, 4, 5, 12, 8),
         has_data_source: true,
-        max_data_sources: Some(1),
-        has_display_config: true,
+        max_data_sources: Some(10),
+        has_display_config: false,
         has_actions: false,
         has_device_binding: false,
         device_type_filter: vec![],
         config_schema: Some(json!({
+            "data_source": {
+                "type": "array",
+                "description": "Optional telemetry / extension-metric DataSource(s) injected as analysis context"
+            },
             "display": {"type": "object", "properties": {}},
-            "config": {"type": "object", "properties": {}}
+            "config": {
+                "type": "object",
+                "properties": {
+                    "modelId": {"type": "string", "description": "Optional LLM backend/model ID (defaults to active backend)"},
+                    "systemPrompt": {"type": "string", "description": "Custom analysis instructions for this analyst widget"},
+                    "contextWindowSize": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10, "description": "Number of recent chat turns kept in context"}
+                }
+            }
         })),
-        default_config: None,
+        default_config: Some(json!({
+            "config": {
+                "contextWindowSize": 10
+            }
+        })),
         variants: None,
         global_name: "ai_analyst".into(),
         export_name: None,
@@ -1713,6 +1901,8 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
 
     vec![
         value_card,
+        counter,
+        metric_card,
         led_indicator,
         sparkline,
         progress_bar,
@@ -1720,7 +1910,6 @@ fn builtin_component_list() -> Vec<ComponentManifest> {
         area_chart,
         bar_chart,
         pie_chart,
-        radar_chart,
         toggle_switch,
         markdown_display,
         image_display,
@@ -1969,5 +2158,54 @@ mod bundle_validation_tests {
         let err = extract_zip_contents(cursor.get_ref())
             .expect_err("ZIP with > MAX_ZIP_ENTRIES must be rejected");
         assert!(err.message.contains("too many entries"), "{err:?}");
+    }
+
+    #[test]
+    fn builtin_component_list_matches_core_catalog_one_to_one() {
+        use std::collections::HashSet;
+
+        let core_ids: HashSet<&str> = neomind_core::dashboard::builtin_type_ids()
+            .into_iter()
+            .collect();
+        let list = builtin_component_list();
+        let handler_ids: HashSet<&str> = list.iter().map(|c| c.id.as_str()).collect();
+
+        assert_eq!(
+            core_ids, handler_ids,
+            "BUILTIN_WIDGET_TYPES in neomind-core and builtin_component_list() in neomind-api must stay 1-to-1"
+        );
+        assert_eq!(list.len(), core_ids.len(), "duplicate built-in component IDs");
+
+        // Spot-check critical complex widget schemas match frontend keys
+        let by_id = |id: &str| list.iter().find(|c| c.id == id).unwrap();
+        assert!(
+            by_id("agent-monitor-widget")
+                .config_schema
+                .as_ref()
+                .unwrap()["data_source"]["properties"]["agentId"]
+                .is_object()
+        );
+        assert!(
+            by_id("ai-analyst").config_schema.as_ref().unwrap()["config"]["properties"]
+                ["contextWindowSize"]
+                .is_object()
+        );
+        assert!(
+            by_id("led-indicator").config_schema.as_ref().unwrap()["config"]["properties"]["rules"]
+                .is_object()
+        );
+        assert!(
+            by_id("video-display").config_schema.as_ref().unwrap()["config"]["properties"]["src"]
+                .is_object()
+        );
+        assert!(
+            by_id("map-display").config_schema.as_ref().unwrap()["config"]["properties"]["bindings"]
+                .is_object()
+        );
+        assert!(
+            by_id("custom-layer").config_schema.as_ref().unwrap()["config"]["properties"]
+                ["bindings"]
+                .is_object()
+        );
     }
 }

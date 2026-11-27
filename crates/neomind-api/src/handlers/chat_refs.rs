@@ -499,19 +499,45 @@ async fn prepare_from_content_nodes(
     })
 }
 
+/// Compact, sanitized command-name summary for a resolved device template.
+/// Surfacing command names directly inside `@device` references lets models
+/// immediately see supported actions (e.g. `render_text`, `clear`, `reboot`)
+/// without wasting rounds guessing extensions or `message send`.
+fn format_device_commands_summary(template: &neomind_devices::DeviceTypeTemplate) -> Option<String> {
+    const MAX_CMD_NAMES: usize = 16;
+    if template.commands.is_empty() {
+        return None;
+    }
+    let names: Vec<String> = template
+        .commands
+        .iter()
+        .take(MAX_CMD_NAMES)
+        .map(|c| sanitize_id(&c.name))
+        .filter(|n| n != "<empty>")
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    let mut joined = names.join(", ");
+    if template.commands.len() > MAX_CMD_NAMES {
+        joined.push_str(&format!(" (+{} more)", template.commands.len() - MAX_CMD_NAMES));
+    }
+    Some(joined)
+}
+
 /// Inline token: `【type `id` "name"】` or NOT FOUND form. Labels never used.
 async fn resolve_one_inline(state: &ServerState, r: &ChatReference) -> (bool, String, String) {
     let safe_type = sanitize_type(&r.r#type);
     let safe_id = sanitize_id(&r.id);
     match r.r#type.as_str() {
         "device" => match state.devices.service.get_device_with_template(&r.id).await {
-            Ok((config, _)) => {
+            Ok((config, template)) => {
                 let name = sanitize_text(&config.name, 60);
-                (
-                    true,
-                    name.clone(),
-                    format!("【device `{safe_id}` \"{name}\"】"),
-                )
+                let token = match format_device_commands_summary(&template) {
+                    Some(cmds) => format!("【device `{safe_id}` \"{name}\" | commands: {cmds}】"),
+                    None => format!("【device `{safe_id}` \"{name}\"】"),
+                };
+                (true, name, token)
             }
             Err(_) => (
                 false,
@@ -639,16 +665,20 @@ async fn resolve_one_inline(state: &ServerState, r: &ChatReference) -> (bool, St
 async fn resolve_one(state: &ServerState, r: &ChatReference) -> String {
     match r.r#type.as_str() {
         "device" => match state.devices.service.get_device_with_template(&r.id).await {
-            Ok((config, _template)) => {
+            Ok((config, template)) => {
                 let now = chrono::Utc::now().timestamp();
                 let age = (now - config.last_seen).max(0);
+                let cmds_suffix = format_device_commands_summary(&template)
+                    .map(|cmds| format!(", commands: [{cmds}]"))
+                    .unwrap_or_default();
                 format!(
-                    "- device `{}` \"{}\": type {}, adapter {}, last data {}s ago",
+                    "- device `{}` \"{}\": type {}, adapter {}, last data {}s ago{}",
                     sanitize_id(&r.id),
                     sanitize_text(&config.name, 60),
                     sanitize_text(&config.device_type, 48),
                     sanitize_text(&config.adapter_type, 32),
-                    age
+                    age,
+                    cmds_suffix
                 )
             }
             Err(_) => not_found(r, "no device with this id"),
@@ -882,5 +912,44 @@ mod tests {
         assert_eq!(v["code"], "content_nodes_cap");
         assert_eq!(v["limit"], 64);
         assert_eq!(v["actual"], 99);
+    }
+
+    #[test]
+    fn format_device_commands_summary_extracts_sanitized_names_with_cap() {
+        use neomind_devices::{CommandDefinition, DeviceTypeTemplate};
+
+        let mut tpl = DeviceTypeTemplate::new("ek410_Eink", "EK410");
+        assert!(format_device_commands_summary(&tpl).is_none());
+
+        for name in ["ping", "clear", "render_text", "bad`cmd\n"] {
+            tpl.commands.push(CommandDefinition {
+                name: name.into(),
+                display_name: name.into(),
+                description: String::new(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: Default::default(),
+                samples: vec![],
+                parameter_groups: vec![],
+            });
+        }
+        let summary = format_device_commands_summary(&tpl).expect("non-empty summary");
+        assert_eq!(summary, "ping, clear, render_text, badcmd");
+
+        // Cap at 16 names with `(+N more)` suffix
+        for i in 0..15 {
+            tpl.commands.push(CommandDefinition {
+                name: format!("cmd_{i}"),
+                display_name: format!("Cmd {i}"),
+                description: String::new(),
+                payload_template: String::new(),
+                parameters: vec![],
+                fixed_values: Default::default(),
+                samples: vec![],
+                parameter_groups: vec![],
+            });
+        }
+        let capped = format_device_commands_summary(&tpl).expect("capped summary");
+        assert!(capped.ends_with("(+3 more)"), "got: {capped}");
     }
 }

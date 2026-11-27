@@ -312,9 +312,9 @@ fn device_current_root_mut(val: &mut serde_json::Value) -> Option<&mut serde_jso
 }
 
 /// Sanitize the full /devices/{id}/current response to truncate binary metric values.
-/// Converts inline `data:image/...;base64,...` data URLs to `/api/images/` file URLs
-/// so the agent can pass them directly to `vision(image="/api/images/...")` without
-/// needing $cached or python extraction.
+/// Converts inline `data:image/...;base64,...` data URLs AND bare base64 image blobs
+/// (e.g. EK410's 161KB `frame_preview_b64` BMP) to `/api/images/` file URLs so the
+/// agent gets a short URL and never floods tool output before `commands`.
 fn sanitize_device_current(data: &serde_json::Value, device_id: &str) -> serde_json::Value {
     let mut result = data.clone();
     // Navigate to metrics and sanitize each metric's value
@@ -326,11 +326,13 @@ fn sanitize_device_current(data: &serde_json::Value, device_id: &str) -> serde_j
             if let Some(obj) = info.as_object_mut() {
                 if let Some(val) = obj.get_mut("value") {
                     *val = sanitize_metric_value(val);
-                    // If the value is a data URL, try to materialize it as a file
-                    // so the agent gets a clean /api/images/ URL instead of 60KB
-                    // of base64 it can't pass between tools.
+                    // Materialize both `data:image/...;base64,...` and bare base64
+                    // image blobs (BMP/PNG/JPEG/GIF/WebP) as `/api/images/...` files
+                    // so the agent gets a compact URL instead of 160KB of base64.
                     if let Some(s) = val.as_str() {
-                        if let Some(url) = materialize_data_url(s, device_id, name) {
+                        if let Some(url) = materialize_data_url(s, device_id, name)
+                            .or_else(|| materialize_bare_base64_image(s, device_id, name))
+                        {
                             *val = json!(url);
                         }
                     }
@@ -344,7 +346,34 @@ fn sanitize_device_current(data: &serde_json::Value, device_id: &str) -> serde_j
     // description / param defs + params_example, plus a structured
     // `shell_example` `{command, params}` matching `extension commands --search`.
     project_commands_for_cli(&mut result, device_id);
+    // Ensure key order is always `device` -> `commands` -> `metrics` (preserve_order
+    // is enabled workspace-wide) so command definitions are never buried behind large
+    // metric lists or truncated by `head`/byte-budget slices.
+    reorder_device_current_keys(&mut result);
     result
+}
+
+/// Reorder top-level keys of a `/devices/{id}/current` payload so `device` and
+/// `commands` always appear BEFORE `metrics`.
+fn reorder_device_current_keys(data: &mut serde_json::Value) {
+    let Some(obj) = device_current_root_mut(data).and_then(|r| r.as_object_mut()) else {
+        return;
+    };
+    let mut ordered = serde_json::Map::with_capacity(obj.len());
+    for priority_key in ["device", "commands"] {
+        if let Some(v) = obj.shift_remove(priority_key) {
+            ordered.insert(priority_key.to_string(), v);
+        }
+    }
+    // Preserve any remaining non-metrics metadata keys before metrics
+    let metrics_val = obj.shift_remove("metrics");
+    for (k, v) in std::mem::take(obj) {
+        ordered.insert(k, v);
+    }
+    if let Some(m) = metrics_val {
+        ordered.insert("metrics".to_string(), m);
+    }
+    *obj = ordered;
 }
 
 /// Project `commands` to the invoke input contract for CLI/agent use.
@@ -570,6 +599,51 @@ fn materialize_data_url(s: &str, device_id: &str, metric_name: &str) -> Option<S
     Some(url)
 }
 
+/// Detect image file extension from decoded binary magic bytes.
+fn detect_image_ext_from_bytes(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 2 && &bytes[..2] == b"BM" {
+        return Some("bmp");
+    }
+    if bytes.len() >= 8 && &bytes[..8] == b"\x89PNG\r\n\x1a\n" {
+        return Some("png");
+    }
+    if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+        return Some("jpg");
+    }
+    if bytes.len() >= 6 && (&bytes[..6] == b"GIF87a" || &bytes[..6] == b"GIF89a") {
+        return Some("gif");
+    }
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("webp");
+    }
+    None
+}
+
+/// Materialize a bare base64 image string (without `data:image/...;base64,` prefix,
+/// e.g. EK410's `frame_preview_b64` 400×300 BMP) into `/api/images/...`.
+/// Only triggers when `looks_like_base64_blob(s)` holds AND the decoded bytes start
+/// with a recognized image magic header, so non-image strings are never altered.
+fn materialize_bare_base64_image(s: &str, device_id: &str, metric_name: &str) -> Option<String> {
+    if !looks_like_base64_blob(s) {
+        return None;
+    }
+    if !is_safe_image_path_segment(device_id) || !is_safe_image_path_segment(metric_name) {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(s).ok()?;
+    let ext = detect_image_ext_from_bytes(&bytes)?;
+    let mime = match ext {
+        "bmp" => "image/bmp",
+        "png" => "image/png",
+        "jpg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => return None,
+    };
+    let synthetic = format!("data:{};base64,{}", mime, s);
+    materialize_data_url(&synthetic, device_id, metric_name)
+}
+
 /// Extract device array from API response (handles unwrapped and legacy shapes).
 fn extract_device_array(data: &serde_json::Value) -> Vec<serde_json::Value> {
     data.get("devices")
@@ -645,15 +719,32 @@ fn build_device_list(devs: &[serde_json::Value]) -> serde_json::Value {
     result
 }
 
-/// Get device details (metadata + metrics + commands) via /current endpoint.
-pub async fn get_device(client: &ApiClient, id: &str, metric: Option<&str>) -> Result<CliResponse> {
+/// Get device details (metadata + commands + metrics) via /current endpoint.
+/// When `commands_only` is true, omits `metrics` so callers inspecting supported
+/// commands get a compact payload with metadata + projected commands only.
+pub async fn get_device(
+    client: &ApiClient,
+    id: &str,
+    metric: Option<&str>,
+    commands_only: bool,
+) -> Result<CliResponse> {
     let data = client.get(&format!("/devices/{}/current", id)).await?;
     let mut sanitized = sanitize_device_current(&data, id);
-    if let Some(field) = metric {
+    if commands_only {
+        omit_metrics_for_commands_view(&mut sanitized);
+    } else if let Some(field) = metric {
         filter_single_metric(&mut sanitized, field);
     }
     // RO success: facts only — no follow-up write/read tutorial in suggestion.
     Ok(CliResponse::success(sanitized, "Device details retrieved"))
+}
+
+/// Remove `metrics` when `--commands` was requested so the response stays compact
+/// and focused on device metadata + available control commands.
+fn omit_metrics_for_commands_view(data: &mut serde_json::Value) {
+    if let Some(obj) = device_current_root_mut(data).and_then(|r| r.as_object_mut()) {
+        obj.shift_remove("metrics");
+    }
 }
 
 /// Reduce a /devices/{id}/current response to a single metric field.
@@ -1111,7 +1202,17 @@ pub async fn control_device(
     let data = client
         .post(&format!("/devices/{}/command/{}", id, command), &body)
         .await?;
-    Ok(CliResponse::success(data, "Command sent"))
+    let dispatched = data
+        .get("sent")
+        .or_else(|| data.pointer("/data/sent"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let msg = if dispatched {
+        "Command dispatched to device transport (do not retry or send clear unless the user asks)"
+    } else {
+        "Command sent"
+    };
+    Ok(CliResponse::success(data, msg))
 }
 
 /// List device types
@@ -2193,12 +2294,160 @@ mod tests {
         });
 
         let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
-        let out = get_device(&client, "d1", None).await.unwrap();
+        let out = get_device(&client, "d1", None, false).await.unwrap();
         assert!(out.success);
         assert!(
             out.suggestion.is_none(),
             "RO device get must not carry a follow-up suggestion: {:?}",
             out.suggestion
+        );
+        server.await.unwrap();
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn sanitize_orders_commands_before_metrics_and_materializes_bare_base64_bmp() {
+        let _lock = crate::auto_auth::DATA_DIR_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("NEOMIND_DATA_DIR");
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("NEOMIND_DATA_DIR", tmp.path());
+
+        // Construct a >512-byte bare base64 BMP (EK410 frame_preview_b64 shape)
+        let mut bmp_bytes = vec![0u8; 600];
+        bmp_bytes[0] = b'B';
+        bmp_bytes[1] = b'M';
+        let bare_b64 = base64::engine::general_purpose::STANDARD.encode(&bmp_bytes);
+        assert!(looks_like_base64_blob(&bare_b64));
+
+        // Intentionally put `metrics` BEFORE `commands` in input to verify reordering
+        let raw = json!({
+            "device": {"id": "dc7ec7d9", "name": "EK410-dc7ec7d9"},
+            "metrics": {
+                "frame_preview_b64": {"value": bare_b64},
+                "battery_percent": {"value": 98}
+            },
+            "commands": [{
+                "name": "render_text",
+                "display_name": "Render Text",
+                "description": "Display text",
+                "parameters": [{"name": "text", "data_type": "String", "required": true}]
+            }]
+        });
+
+        let out = sanitize_device_current(&raw, "dc7ec7d9");
+
+        // 1. Key order must be device -> commands -> metrics
+        let keys: Vec<&String> = out.as_object().unwrap().keys().collect();
+        let cmd_idx = keys.iter().position(|k| k.as_str() == "commands").unwrap();
+        let metrics_idx = keys.iter().position(|k| k.as_str() == "metrics").unwrap();
+        assert!(
+            cmd_idx < metrics_idx,
+            "commands must precede metrics in serialized output, got keys: {keys:?}"
+        );
+
+        // 2. Bare base64 BMP must be materialized to /api/images/.../*.bmp
+        let preview_val = out["metrics"]["frame_preview_b64"]["value"]
+            .as_str()
+            .expect("materialized preview URL");
+        assert!(
+            preview_val.starts_with("/api/images/dc7ec7d9/frame_preview_b64/")
+                && preview_val.ends_with(".bmp"),
+            "expected materialized .bmp URL, got {preview_val}"
+        );
+
+        match prev {
+            Some(v) => std::env::set_var("NEOMIND_DATA_DIR", v),
+            None => std::env::remove_var("NEOMIND_DATA_DIR"),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_device_commands_only_omits_metrics_and_keeps_commands() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let body = json!({
+                "success": true,
+                "data": {
+                    "device": {"id": "dc7ec7d9", "name": "EK410"},
+                    "metrics": {"battery_percent": {"value": 100}, "heap_free": {"value": 12345}},
+                    "commands": [{
+                        "name": "render_text",
+                        "display_name": "Render Text",
+                        "description": "Display text",
+                        "parameters": [{"name": "text", "data_type": "String", "required": true}]
+                    }]
+                }
+            })
+            .to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(resp.as_bytes()).await.unwrap();
+        });
+
+        let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
+        let out = get_device(&client, "dc7ec7d9", None, true).await.unwrap();
+        assert!(out.success);
+        let data = out.data.unwrap();
+        assert!(data.get("metrics").is_none(), "--commands must omit metrics");
+        assert_eq!(data["commands"][0]["name"], "render_text");
+        assert!(data["commands"][0].get("shell_example").is_some());
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn control_device_dispatched_message_discourages_retry() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await;
+            let body = json!({
+                "success": true,
+                "data": {
+                    "sent": true,
+                    "delivery_note": "delivered to 1 adapter(s) (broker publish); device acknowledgment: none; physical effect unverified"
+                }
+            })
+            .to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            socket.write_all(resp.as_bytes()).await.unwrap();
+        });
+
+        let client = crate::ApiClient::with_base_url(&format!("http://{addr}/api"));
+        let out = control_device(
+            &client,
+            "dc7ec7d9",
+            "render_text",
+            json!({"text": "Hello", "color": "black", "bg": "white"}),
+        )
+        .await
+        .unwrap();
+        assert!(out.success);
+        assert!(
+            out.message
+                .as_deref()
+                .unwrap_or("")
+                .contains("do not retry"),
+            "dispatched message should discourage redundant retry/clear: {:?}",
+            out.message
         );
         server.await.unwrap();
     }

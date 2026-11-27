@@ -400,15 +400,377 @@ fn display_i18n_name(name: &serde_json::Value) -> String {
     "(unnamed)".to_string()
 }
 
-/// List all installed widgets with compact summary.
+/// Extract compact summary items for extension-contributed dashboard components.
+fn summarize_extension_widgets(ext_data: &serde_json::Value) -> Vec<serde_json::Value> {
+    let Some(items) = extract_list_array(ext_data, "components") else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .map(|w| {
+            let id = w
+                .get("type")
+                .or_else(|| w.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let mut entry = json!({
+                "id": id,
+                "name": w.get("name").map(display_i18n_name).unwrap_or_else(|| "(unnamed)".to_string()),
+                "category": w.get("category").and_then(|v| v.as_str()).unwrap_or("extension"),
+                "source": "extension",
+                "has_data_source": w.get("has_data_source").and_then(|v| v.as_bool()).unwrap_or(false),
+            });
+            if let Some(ext_id) = w.get("extension_id").and_then(|v| v.as_str()) {
+                entry["extension_id"] = json!(ext_id);
+            }
+            if let Some(desc) = w.get("description").and_then(|v| v.as_str()) {
+                if !desc.is_empty() {
+                    entry["description"] = json!(desc);
+                }
+            }
+            entry
+        })
+        .collect()
+}
+
+/// Find a single extension-contributed dashboard component by its `type` (or `id`).
+fn find_extension_widget(ext_data: &serde_json::Value, id: &str) -> Option<serde_json::Value> {
+    let items = extract_list_array(ext_data, "components")?;
+    items.into_iter().find(|w| {
+        w.get("type").and_then(|v| v.as_str()) == Some(id)
+            || w.get("id").and_then(|v| v.as_str()) == Some(id)
+    })
+}
+
+/// Produce a placeholder JSON value from a JSON Schema property definition.
+fn sample_value_from_schema(prop: &serde_json::Value, key: &str) -> serde_json::Value {
+    if let Some(default) = prop.get("default") {
+        if !default.is_null() {
+            return default.clone();
+        }
+    }
+    if let Some(first_enum) = prop
+        .get("enum")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+    {
+        return first_enum.clone();
+    }
+    match prop.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+        "boolean" => json!(false),
+        "integer" | "number" => json!(0),
+        "array" => json!([]),
+        "object" => {
+            let mut obj = serde_json::Map::new();
+            if let Some(sub) = prop.get("properties").and_then(|v| v.as_object()) {
+                for (k, v) in sub {
+                    obj.insert(k.clone(), sample_value_from_schema(v, k));
+                }
+            }
+            serde_json::Value::Object(obj)
+        }
+        _ => json!(format!("<{}>", key)),
+    }
+}
+
+/// Synthesize a ready-to-copy `neomind dashboard add-components` example
+/// payload for ANY widget (built-in, extension-provided, marketplace, or
+/// custom). Gives AI agents the exact JSON structure (`id`, `type`, `title`,
+/// `position`, `data_source`, `display`, `config`) without guessing.
+fn build_usage_example(
+    id: &str,
+    component: &serde_json::Value,
+    source: &str,
+) -> serde_json::Value {
+    let title = component
+        .get("name")
+        .map(display_i18n_name)
+        .filter(|s| s != "(unnamed)")
+        .unwrap_or_else(|| id.to_string());
+
+    // Size from size_constraints (built-in / community) or default_size (extension)
+    let sc = component.get("size_constraints");
+    let ds_size = component.get("default_size");
+    let w = sc
+        .and_then(|s| s.get("default_w").or_else(|| s.get("min_w")).or_else(|| s.get("min_width")))
+        .or_else(|| ds_size.and_then(|s| s.get("w").or_else(|| s.get("width"))))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4);
+    let h = sc
+        .and_then(|s| s.get("default_h").or_else(|| s.get("min_h")).or_else(|| s.get("min_height")))
+        .or_else(|| ds_size.and_then(|s| s.get("h").or_else(|| s.get("height"))))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3);
+
+    let has_data_source = component
+        .get("has_data_source")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let has_device_binding = component
+        .get("has_device_binding")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let mut item = json!({
+        "id": format!("{}-1", id),
+        "type": id,
+        "title": title,
+        "position": { "x": 0, "y": 0, "w": w, "h": h }
+    });
+
+    // 1. data_source tailored by widget type & source
+    let mut notes: Vec<String> = Vec::new();
+    match id {
+        "agent-monitor-widget" => {
+            item["data_source"] = json!({
+                "type": "agent",
+                "agentId": "<agent-id>"
+            });
+            notes.push(
+                "Bind the target agent in `data_source` (`type: \"agent\"`, `agentId`), NOT inside `config`. Run `neomind agent list` to get valid agent IDs.".to_string(),
+            );
+        }
+        "ai-analyst" => {
+            item["data_source"] = json!([{
+                "type": "telemetry",
+                "source": "device",
+                "id": "<device-id>",
+                "field": "<metric-name>",
+                "mode": "timeseries",
+                "sourceId": "<device-id>",
+                "metricId": "<metric-name>",
+                "timeRange": 1,
+                "limit": 50,
+                "timeWindow": { "type": "last_24hours" }
+            }]);
+            notes.push(
+                "`data_source` is optional context telemetry; customize `config.systemPrompt`, `config.modelId`, or `config.contextWindowSize` (1-100).".to_string(),
+            );
+        }
+        "toggle-switch" => {
+            item["data_source"] = json!({
+                "type": "command",
+                "source": "device",
+                "id": "<device-id>",
+                "field": "<command-name>",
+                "deviceId": "<device-id>",
+                "command": "<command-name>"
+            });
+            notes.push(
+                "Use `type: \"command\"` with a real device command from `neomind device get <device-id>` (or `type: \"extension-command\"` for extension commands).".to_string(),
+            );
+        }
+        "line-chart" | "area-chart" | "bar-chart" | "sparkline" | "image-history" => {
+            item["data_source"] = json!({
+                "type": "telemetry",
+                "source": "device",
+                "id": "<device-id>",
+                "field": "<metric-name>",
+                "mode": "timeseries",
+                "sourceId": "<device-id>",
+                "metricId": "<metric-name>",
+                "timeRange": 1,
+                "limit": 50,
+                "timeWindow": { "type": "last_24hours" }
+            });
+        }
+        "map-display" | "custom-layer" | "video-display" | "web-display" | "markdown-display" => {
+            // Configured primarily via `config` (bindings / src / content)
+        }
+        _ if source == "extension" && has_data_source => {
+            let ext_id = component
+                .get("extension_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("<extension-id>");
+            item["data_source"] = json!({
+                "type": "extension-metric",
+                "source": "extension",
+                "id": ext_id,
+                "field": "<COMMAND>:<FIELD>",
+                "mode": "timeseries",
+                "extensionId": ext_id,
+                "extensionMetric": "<COMMAND>:<FIELD>"
+            });
+            notes.push(format!(
+                "Discover `<COMMAND>:<FIELD>` via `neomind extension get {}`.",
+                ext_id
+            ));
+        }
+        _ if has_data_source => {
+            item["data_source"] = json!({
+                "type": "telemetry",
+                "source": "device",
+                "id": "<device-id>",
+                "field": "<metric-name>",
+                "mode": "latest",
+                "sourceId": "<device-id>",
+                "metricId": "<metric-name>",
+                "timeRange": 1,
+                "limit": 50
+            });
+        }
+        _ => {}
+    }
+
+    // 2. display & config seeded from default_config + config_schema + complex built-in templates
+    let mut display_obj = serde_json::Map::new();
+    let mut config_obj = serde_json::Map::new();
+
+    if let Some(def_cfg) = component.get("default_config").and_then(|v| v.as_object()) {
+        // Built-in manifests wrap defaults as {"display": {...}, "config": {...}};
+        // community & extension manifests store flat config keys directly.
+        let is_enveloped = def_cfg.contains_key("display") || def_cfg.contains_key("config");
+        if is_enveloped {
+            if let Some(d) = def_cfg.get("display").and_then(|v| v.as_object()) {
+                for (k, v) in d {
+                    display_obj.insert(k.clone(), v.clone());
+                }
+            }
+            if let Some(c) = def_cfg.get("config").and_then(|v| v.as_object()) {
+                for (k, v) in c {
+                    config_obj.insert(k.clone(), v.clone());
+                }
+            }
+        } else {
+            for (k, v) in def_cfg {
+                config_obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
+    // Fill concrete examples for complex built-in widgets so AI sees exact nested shapes
+    match id {
+        "led-indicator" => {
+            config_obj.entry("rules".to_string()).or_insert_with(|| {
+                json!([
+                    { "threshold": { "operator": ">", "value": 80 }, "state": "error", "label": "High" },
+                    { "threshold": { "operator": ">=", "value": 0 }, "state": "on", "label": "Normal" }
+                ])
+            });
+        }
+        "map-display" => {
+            config_obj.insert(
+                "bindings".to_string(),
+                json!([{
+                    "id": "m1",
+                    "type": "metric",
+                    "name": "Sensor 1",
+                    "dataSource": {
+                        "type": "telemetry",
+                        "source": "device",
+                        "id": "<device-id>",
+                        "field": "<metric-name>",
+                        "mode": "latest",
+                        "sourceId": "<device-id>",
+                        "metricId": "<metric-name>"
+                    },
+                    "position": { "lat": 39.9042, "lng": 116.4074 }
+                }]),
+            );
+            notes.push(
+                "Add map markers inside `config.bindings` with `{lat, lng}` coordinates and a `dataSource` object.".to_string(),
+            );
+        }
+        "custom-layer" => {
+            config_obj.insert(
+                "bindings".to_string(),
+                json!([{
+                    "id": "b1",
+                    "type": "metric",
+                    "name": "Temp",
+                    "dataSource": {
+                        "type": "telemetry",
+                        "source": "device",
+                        "id": "<device-id>",
+                        "field": "<metric-name>",
+                        "mode": "latest",
+                        "sourceId": "<device-id>",
+                        "metricId": "<metric-name>"
+                    },
+                    "position": { "x": 30, "y": 40 },
+                    "fontSize": "sm"
+                }]),
+            );
+            notes.push(
+                "Add overlay elements in `config.bindings`; `position.x/y` are 0-100 percentage coordinates on the canvas.".to_string(),
+            );
+        }
+        "video-display" => {
+            config_obj
+                .entry("src".to_string())
+                .or_insert_with(|| json!("https://example.com/stream/index.m3u8"));
+        }
+        "web-display" => {
+            config_obj
+                .entry("src".to_string())
+                .or_insert_with(|| json!("https://example.com"));
+        }
+        "image-display" => {
+            config_obj
+                .entry("src".to_string())
+                .or_insert_with(|| json!("https://example.com/snapshot.jpg"));
+        }
+        _ => {
+            // For custom / marketplace / extension widgets with a flat JSON Schema,
+            // populate missing schema properties with defaults or typed placeholders.
+            if source != "builtin" {
+                if let Some(props) = component
+                    .get("config_schema")
+                    .and_then(|s| s.get("properties"))
+                    .and_then(|p| p.as_object())
+                {
+                    for (k, prop_schema) in props {
+                        config_obj
+                            .entry(k.clone())
+                            .or_insert_with(|| sample_value_from_schema(prop_schema, k));
+                    }
+                }
+            }
+        }
+    }
+
+    if has_device_binding {
+        config_obj
+            .entry("deviceBinding".to_string())
+            .or_insert_with(|| json!({ "deviceId": "<device-id>" }));
+        notes.push(
+            "This component uses device binding (`config.deviceBinding.deviceId`). Run `neomind device list` for valid device IDs.".to_string(),
+        );
+    }
+
+    if !display_obj.is_empty() {
+        item["display"] = serde_json::Value::Object(display_obj);
+    }
+    if !config_obj.is_empty() {
+        item["config"] = serde_json::Value::Object(config_obj);
+    }
+
+    let mut usage = json!({
+        "command": "neomind dashboard add-components <DASHBOARD_ID>",
+        "params": [item]
+    });
+    if !notes.is_empty() {
+        usage["notes"] = json!(notes.join(" "));
+    }
+    usage
+}
+
+/// List all available widgets with compact summary across every source:
+/// 1) installed community / marketplace / custom widgets (`/frontend-components`)
+/// 2) extension-provided dashboard widgets (`/extensions/dashboard-components`)
+/// 3) built-in widget types (`builtin_types` from `neomind_core::dashboard::BUILTIN_WIDGET_TYPES`)
 ///
-/// Returns id, name, type, and version per installed widget, plus the
-/// catalogue of built-in widget types (sourced from the backend's
-/// `neomind_core::dashboard::BUILTIN_WIDGET_TYPES`, mirrored from
-/// `Renderers.tsx::builtInTypes`). Full manifest for an installed widget
-/// is available via `neomind widget get <id>`.
+/// Full manifest & `config_schema` for any widget (built-in, custom/market, or
+/// extension-provided) is available via `neomind widget get <id>`.
 pub async fn list_widgets(client: &ApiClient) -> Result<CliResponse> {
     let data = client.get("/frontend-components").await?;
+    // Best-effort fetch of extension-provided dashboard components so CLI/AI
+    // sees all 4 widget sources in a single discovery call.
+    let ext_widgets = match client.get("/extensions/dashboard-components").await {
+        Ok(ext_data) => summarize_extension_widgets(&ext_data),
+        Err(_) => Vec::new(),
+    };
+    let ext_count = ext_widgets.len();
 
     let widgets = extract_list_array(&data, "components");
 
@@ -420,12 +782,16 @@ pub async fn list_widgets(client: &ApiClient) -> Result<CliResponse> {
     let summary: Vec<serde_json::Value> = widgets
         .iter()
         .map(|w| {
-            json!({
+            let mut entry = json!({
                 "id": w.get("id").and_then(|v| v.as_str()).unwrap_or("?"),
                 "name": w.get("name").map(display_i18n_name).unwrap_or_else(|| "(unnamed)".to_string()),
                 "category": w.get("category").and_then(|v| v.as_str()).unwrap_or("unknown"),
                 "version": w.get("version").and_then(|v| v.as_str()).unwrap_or("?"),
-            })
+            });
+            if let Some(src) = w.get("source").and_then(|v| v.as_str()) {
+                entry["source"] = json!(src);
+            }
+            entry
         })
         .collect();
 
@@ -451,12 +817,14 @@ pub async fn list_widgets(client: &ApiClient) -> Result<CliResponse> {
         json!({
             "total": total,
             "widgets": summary,
+            "extension_widgets": ext_widgets,
+            "extension_count": ext_count,
             "builtin_types": builtin_raw,
             "builtin_count": builtin_count,
         }),
         format!(
-            "{} widget(s) listed (plus {} built-in types)",
-            total, builtin_count,
+            "{} custom/market widget(s), {} extension widget(s), and {} built-in types (use `neomind widget get <id>` for config_schema & usage_example, or `neomind widget market-list` to browse installable marketplace widgets)",
+            total, ext_count, builtin_count,
         ),
     ))
 }
@@ -475,9 +843,47 @@ fn extract_list_array(data: &serde_json::Value, key: &str) -> Option<Vec<serde_j
         })
 }
 
-/// Get widget by ID
+/// Get widget details (manifest, config_schema, data_binding, size_constraints) by ID.
+/// Checks built-in + installed custom/marketplace widgets first, then falls back
+/// to extension-provided dashboard components (`/extensions/dashboard-components`).
 pub async fn get_widget(client: &ApiClient, id: &str) -> Result<CliResponse> {
-    let data = client.get(&format!("/frontend-components/{}", id)).await?;
+    let mut data = match client.get(&format!("/frontend-components/{}", id)).await {
+        Ok(d) => d,
+        Err(primary_err) => {
+            if let Ok(ext_data) = client.get("/extensions/dashboard-components").await {
+                if let Some(ext_widget) = find_extension_widget(&ext_data, id) {
+                    let usage_example = build_usage_example(id, &ext_widget, "extension");
+                    return Ok(CliResponse::success(
+                        json!({
+                            "component": ext_widget,
+                            "source": "extension",
+                            "registered": true,
+                            "usage_example": usage_example,
+                        }),
+                        "Widget retrieved (extension-provided component, ready to use)",
+                    ));
+                }
+            }
+            return Err(primary_err);
+        }
+    };
+
+    // Attach a copy-ready `usage_example` payload for `neomind dashboard add-components`
+    if let Some(component) = data.get("component").cloned() {
+        let source = if data.get("builtin").and_then(|v| v.as_bool()) == Some(true) {
+            "builtin"
+        } else {
+            component
+                .get("source")
+                .and_then(|v| v.as_str())
+                .unwrap_or("custom")
+        };
+        let usage_example = build_usage_example(id, &component, source);
+        if let Some(obj) = data.as_object_mut() {
+            obj.insert("usage_example".to_string(), usage_example);
+        }
+    }
+
     // Scaffolds land in the same directory the store serves, so a bare
     // `widget create` output answers `get` BEFORE registration — surface
     // the difference instead of letting "get succeeded" read as
@@ -677,4 +1083,123 @@ pub async fn install_widget_market(
         data,
         "Widget installed from marketplace",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summarizes_and_finds_extension_widgets() {
+        let payload = json!({
+            "data": [
+                {
+                    "type": "weather-forecast-card",
+                    "name": "Weather Card",
+                    "description": "5-day weather forecast widget",
+                    "category": "extension",
+                    "extension_id": "weather-forecast",
+                    "has_data_source": true,
+                    "config_schema": { "type": "object", "properties": { "city": { "type": "string" } } }
+                },
+                {
+                    "type": "yolo-stream-overlay",
+                    "name": { "en": "YOLO Overlay", "zh": "YOLO 叠加" },
+                    "category": "media",
+                    "extension_id": "yolo-video",
+                    "has_data_source": true
+                }
+            ]
+        });
+
+        let summary = summarize_extension_widgets(&payload);
+        assert_eq!(summary.len(), 2);
+        assert_eq!(summary[0]["id"], "weather-forecast-card");
+        assert_eq!(summary[0]["extension_id"], "weather-forecast");
+        assert_eq!(summary[0]["source"], "extension");
+        assert_eq!(summary[1]["id"], "yolo-stream-overlay");
+        assert_eq!(summary[1]["name"], "YOLO Overlay");
+
+        let found = find_extension_widget(&payload, "weather-forecast-card").unwrap();
+        assert_eq!(found["config_schema"]["properties"]["city"]["type"], "string");
+        assert!(find_extension_widget(&payload, "missing-widget").is_none());
+    }
+
+    #[test]
+    fn builds_usage_examples_for_complex_and_all_source_widgets() {
+        // 1. agent-monitor-widget binds via data_source.type = "agent"
+        let agent_mon = json!({
+            "id": "agent-monitor-widget",
+            "name": "Agent Monitor",
+            "has_data_source": true,
+            "size_constraints": { "default_w": 6, "default_h": 5 }
+        });
+        let ex = build_usage_example("agent-monitor-widget", &agent_mon, "builtin");
+        let item = &ex["params"][0];
+        assert_eq!(item["type"], "agent-monitor-widget");
+        assert_eq!(item["position"]["w"], 6);
+        assert_eq!(item["data_source"]["type"], "agent");
+        assert_eq!(item["data_source"]["agentId"], "<agent-id>");
+
+        // 2. led-indicator gets concrete threshold rules
+        let led = json!({
+            "id": "led-indicator",
+            "name": "LED Indicator",
+            "has_data_source": true,
+            "default_config": { "config": { "defaultState": "unknown", "size": "md" } }
+        });
+        let ex_led = build_usage_example("led-indicator", &led, "builtin");
+        assert!(ex_led["params"][0]["config"]["rules"].is_array());
+        assert_eq!(ex_led["params"][0]["data_source"]["type"], "telemetry");
+
+        // 3. custom-layer & map-display get bindings inside config
+        let layer = json!({
+            "id": "custom-layer",
+            "name": "Custom Layer",
+            "has_data_source": false,
+            "default_config": { "config": { "backgroundType": "color", "gridSize": 20 } }
+        });
+        let ex_layer = build_usage_example("custom-layer", &layer, "builtin");
+        assert!(ex_layer["params"][0]["config"]["bindings"].is_array());
+        assert!(ex_layer["params"][0].get("data_source").is_none());
+
+        // 4. extension widget gets extension-metric data_source + schema props in config
+        let ext = json!({
+            "type": "weather-forecast-card",
+            "name": "Weather Card",
+            "extension_id": "weather-forecast",
+            "has_data_source": true,
+            "default_size": { "w": 6, "h": 4 },
+            "config_schema": {
+                "type": "object",
+                "properties": {
+                    "city": { "type": "string", "default": "Beijing" },
+                    "units": { "type": "string", "enum": ["metric", "imperial"] }
+                }
+            }
+        });
+        let ex_ext = build_usage_example("weather-forecast-card", &ext, "extension");
+        let ext_item = &ex_ext["params"][0];
+        assert_eq!(ext_item["position"]["w"], 6);
+        assert_eq!(ext_item["data_source"]["type"], "extension-metric");
+        assert_eq!(ext_item["data_source"]["id"], "weather-forecast");
+        assert_eq!(ext_item["config"]["city"], "Beijing");
+        assert_eq!(ext_item["config"]["units"], "metric");
+
+        // 5. device-bound community/marketplace widget gets config.deviceBinding
+        let market = json!({
+            "id": "smart-thermostat-card",
+            "name": { "en": "Smart Thermostat", "zh": "智能温控" },
+            "has_data_source": false,
+            "has_device_binding": true,
+            "default_config": { "targetTemp": 22 }
+        });
+        let ex_market = build_usage_example("smart-thermostat-card", &market, "market");
+        assert_eq!(ex_market["params"][0]["title"], "Smart Thermostat");
+        assert_eq!(ex_market["params"][0]["config"]["targetTemp"], 22);
+        assert_eq!(
+            ex_market["params"][0]["config"]["deviceBinding"]["deviceId"],
+            "<device-id>"
+        );
+    }
 }

@@ -441,6 +441,42 @@ fn check_command_params(spec: &CommandSpec, params: &HashMap<String, Value>) -> 
             }
         }
     }
+
+    // Display-safety guard: if a command declares both `color` and `bg` (e.g.
+    // e-ink `render_text`) and the caller explicitly set at least one of them,
+    // reject invisible same-color foreground/background combinations (like
+    // color='white', bg='white' or color='white' against default bg='white').
+    if let (Some(color_spec), Some(bg_spec)) = (
+        spec.parameters.iter().find(|p| p.name == "color"),
+        spec.parameters.iter().find(|p| p.name == "bg"),
+    ) {
+        if params.contains_key("color") || params.contains_key("bg") {
+            let eff_color = params
+                .get("color")
+                .or(color_spec.default.as_ref())
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_ascii_lowercase());
+            let eff_bg = params
+                .get("bg")
+                .or(bg_spec.default.as_ref())
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_ascii_lowercase());
+            if let (Some(c), Some(b)) = (eff_color, eff_bg) {
+                if !c.is_empty() && c == b {
+                    let suggestion = if b == "white" {
+                        "color='black', bg='white'"
+                    } else {
+                        "color='white', bg='black'"
+                    };
+                    return Err(format!(
+                        "param 'color' and 'bg' resolve to the same color '{}' (text would be invisible on the display); use contrasting colors such as {}",
+                        c, suggestion
+                    ));
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -865,5 +901,91 @@ mod tests {
         assert!(validated_params_example(&neg).is_none());
         let hint2 = command_schema_json(&neg);
         assert!(hint2.get("params_example").is_none(), "{hint2}");
+    }
+
+    #[test]
+    fn preflight_rejects_same_text_color_and_bg_including_default_collision() {
+        let render_text = CommandSpec {
+            name: "render_text".into(),
+            display_name: "Render Text".into(),
+            description: "Display text on e-ink".into(),
+            parameters: vec![
+                ParamSpec {
+                    name: "text".into(),
+                    display_name: "Text".into(),
+                    data_type: "string".into(),
+                    required: true,
+                    description: String::new(),
+                    allowed_values: None,
+                    min: None,
+                    max: None,
+                    default: None,
+                    unit: None,
+                },
+                ParamSpec {
+                    name: "color".into(),
+                    display_name: "Text Color".into(),
+                    data_type: "enum".into(),
+                    required: false,
+                    description: String::new(),
+                    allowed_values: Some(vec![json!("black"), json!("white"), json!("red")]),
+                    min: None,
+                    max: None,
+                    default: Some(json!("black")),
+                    unit: None,
+                },
+                ParamSpec {
+                    name: "bg".into(),
+                    display_name: "Background".into(),
+                    data_type: "enum".into(),
+                    required: false,
+                    description: String::new(),
+                    allowed_values: Some(vec![json!("white"), json!("black"), json!("red")]),
+                    min: None,
+                    max: None,
+                    default: Some(json!("white")),
+                    unit: None,
+                },
+            ],
+        };
+
+        // Explicit white-on-white must be rejected
+        let err = preflight(
+            std::slice::from_ref(&render_text),
+            "render_text",
+            &params(json!({"text": "News", "color": "white", "bg": "white"})),
+        )
+        .expect_err("same color and bg must fail preflight");
+        assert!(err.message.contains("same color 'white'"), "{}", err.message);
+        assert!(err.message.contains("color='black', bg='white'"), "{}", err.message);
+
+        // Explicit color='white' colliding with default bg='white' must also be rejected
+        let err2 = preflight(
+            std::slice::from_ref(&render_text),
+            "render_text",
+            &params(json!({"text": "News", "color": "white"})),
+        )
+        .expect_err("explicit color colliding with default bg must fail preflight");
+        assert!(err2.message.contains("same color 'white'"), "{}", err2.message);
+
+        // Contrasting explicit colors and default-only call both pass
+        assert!(
+            preflight(
+                std::slice::from_ref(&render_text),
+                "render_text",
+                &params(json!({"text": "News", "color": "white", "bg": "black"})),
+            )
+            .is_ok()
+        );
+        assert!(
+            preflight(
+                std::slice::from_ref(&render_text),
+                "render_text",
+                &params(json!({"text": "News"})),
+            )
+            .is_ok()
+        );
+        // Generated params_example (color=black, bg=white) remains valid
+        assert!(validated_params_example(&render_text).is_some());
     }
 }

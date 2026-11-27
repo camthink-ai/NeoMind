@@ -125,6 +125,17 @@ pub const BUILTIN_WIDGET_TYPES: &[BuiltinWidgetType] = &[
         display_name: "Custom Layer",
         category: "layout",
     },
+    // Business / AI
+    BuiltinWidgetType {
+        type_id: "agent-monitor-widget",
+        display_name: "Agent Monitor",
+        category: "business",
+    },
+    BuiltinWidgetType {
+        type_id: "ai-analyst",
+        display_name: "AI Analyst",
+        category: "business",
+    },
 ];
 
 /// Return the list of built-in widget type identifiers (in catalogue order).

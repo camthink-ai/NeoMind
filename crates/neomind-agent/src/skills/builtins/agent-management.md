@@ -259,7 +259,7 @@ neomind agent create \
   [--event-filter '<json>'] [--timezone '<IANA>'] [--every <dur>] \
   [--execution-mode <focused|free|structured>] [--output-schema '<json>'] \
   [--notify '{"channels":["name"],"on":"failure|always|judgment"}'] \
-  [--no-tools | --allowed-tools <list|all>] \
+  [--no-tools] [--allowed-tools <list|all>] \
   [--llm-backend '<backend_id>'] \
   [--device-ids 'id1,id2'] [--metrics '<json>'] [--commands '<json>'] [--resources '<json>']
 ```

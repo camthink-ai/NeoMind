@@ -688,10 +688,12 @@ pub async fn get_device_current_handler(
             "plugin_name": plugin_name,
             "adapter_id": config.adapter_id,
         },
-        "metrics": metrics_data,
+        // Emit commands BEFORE metrics (preserve_order is enabled) so CLI/LLM
+        // callers never lose command definitions behind large metric maps.
         // Pass full command defs (payload_template, description, samples, …)
         // so the detail UI can render enums / defaults / help_text correctly.
         "commands": template.commands,
+        "metrics": metrics_data,
     }))
 }
 

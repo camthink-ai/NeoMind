@@ -752,16 +752,20 @@ pub enum DeviceCommand {
         #[arg(long)]
         summary: bool,
     },
-    /// Get device details (metadata + metrics + commands).
+    /// Get device details (metadata + commands + metrics).
     ///
-    /// Returns full device info: metadata, connection config, current metric
-    /// values, and available commands. Pass `--metric` to return only that one
-    /// metric's current value — avoids pulling all metrics (e.g. AI-camera
-    /// inference fields) when you want a single reading like battery level.
+    /// Returns full device info: metadata, available commands (with `params_example`
+    /// and `shell_example`), and current metric values. Pass `--commands` to return
+    /// ONLY metadata and available commands (omitting metrics) for fast command
+    /// discovery. Pass `--metric` to return only that one metric's current value —
+    /// avoids pulling all metrics (e.g. AI-camera inference fields) when you want a
+    /// single reading like battery level.
     ///
-    /// Workflow: Use `device list` for overview, then `device get <ID>` for detail.
+    /// Workflow: Use `device list` for overview, `device get <ID> --commands` before
+    /// `device control`, or `device get <ID>` for full detail.
     ///
     /// Example: `neomind device get device-001`
+    /// Example: `neomind device get device-001 --commands`
     /// Example: `neomind device get device-001 --metric values.battery`
     Get {
         /// Device ID.
@@ -771,6 +775,9 @@ pub enum DeviceCommand {
         /// Omit to get all metrics.
         #[arg(long)]
         metric: Option<String>,
+        /// Return only device metadata and supported commands (omit metrics).
+        #[arg(long)]
+        commands: bool,
     },
     /// Create a new device.
     ///
@@ -1111,8 +1118,9 @@ pub enum DashboardCommand {
     ///
     /// Workflow:
     ///   1. `neomind dashboard create --name "My Dashboard"` (optionally `--components '[...]'`)
-    ///   2. `neomind widget list` — see available widget types
-    ///   3. `neomind dashboard add-components <ID> --components '[...]'` — add widgets later
+    ///   2. `neomind widget list` — see all built-in, extension, and installed custom/market widgets
+    ///   3. `neomind widget get <type>` — get `config_schema` and a copy-ready `usage_example`
+    ///   4. `neomind dashboard add-components <ID> --components '[...]'` — add widgets later
     Create {
         /// Dashboard name.
         #[arg(short, long)]
@@ -1192,6 +1200,9 @@ pub enum DashboardCommand {
     /// Position is optional — omitted or overlapping positions are auto-arranged
     /// on the 12-column grid (KPI tiles balanced on top, charts/media below).
     /// Data widgets should include `data_source` (the CLI warns if left unbound).
+    /// For unfamiliar or complex widgets (e.g. `agent-monitor-widget`, `ai-analyst`,
+    /// `led-indicator`, `map-display`, `custom-layer`, or extension/market widgets),
+    /// run `neomind widget get <type>` first for `config_schema` and a copy-ready `usage_example`.
     ///
     /// Chat/shell (preferred):
     ///   `{ "command": "neomind dashboard add-components <ID>", "params": [ { "id":"c1", "type":"value-card", "title":"Temp", "data_source":{...} } ] }`
@@ -2386,15 +2397,23 @@ pub enum PushCommand {
 /// Widget subcommands.
 #[derive(Subcommand, Debug)]
 pub enum WidgetCommand {
-    /// List installed widgets.
+    /// List installed widgets, extension widgets, and built-in widget types.
     ///
-    /// Shows widget ID, name, type, and version.
+    /// Aggregates all ready-to-use dashboard widgets across every source:
+    ///   - `builtin_types`: built-in frontend widgets (charts, indicators, spatial, AI)
+    ///   - `widgets`: installed custom & marketplace widgets
+    ///   - `extension_widgets`: dashboard components bundled by installed extensions
+    /// Use `neomind widget market-list` to browse installable marketplace widgets,
+    /// and `neomind widget get <id>` for `config_schema` + copy-ready `usage_example`.
     /// Example: `neomind widget list`
     List {},
-    /// Get widget details.
+    /// Get widget details, config_schema, and a copy-ready usage_example.
     ///
-    /// Shows widget manifest, config schema, and supported data sources.
-    /// Example: `neomind widget get line-chart`
+    /// Works for ANY widget source: built-in types, installed custom/marketplace
+    /// widgets, and extension-provided dashboard components.
+    /// Returns manifest, `config_schema`, `default_config`, `size_constraints`,
+    /// and `usage_example` (exact `neomind dashboard add-components` command + params).
+    /// Example: `neomind widget get agent-monitor-widget`
     Get {
         /// Widget ID.
         #[arg(required = true)]

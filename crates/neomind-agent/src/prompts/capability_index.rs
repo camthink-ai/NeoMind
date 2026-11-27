@@ -96,12 +96,12 @@ impl CapabilityIndex {
         r###"
 ### Data Conventions
 - Run `neomind device list` first for the overview — read `summary`, `types[].type`, `types[].metric_fields` (field names per type), and `types[].devices.list` (id/name/status). Filter with `--device-type <type>` (not `--type`) or `--status`. Fetch a device's current values with `device get <id>`, history with `device history <id> --metric <field> --time-range 7d`.
-- Boolean flags take a value with `=`: `--enabled=true`, `--tls=false`, `--compress=true`, `--public=false` (NOT bare `--enabled`). Applies across rule/agent/transform/push/connector/device enable·tls·compress·public·auto_approve.
+- Boolean flags take a value with `=`: `--enabled=true`, `--tls=false`, `--compress=true`, `--public=false` (NOT bare `--enabled`). Applies across rule/agent/transform/push/connector/device enable·tls·compress·public.
 - device history: `neomind device history <ID> --metric <field> --time-range <range> [--compress=true]`
   - `--time-range`: `1h`, `24h`, `7d`, `30d` (there is no --start/--end)
   - `--metric`: a field name from device list `metric_fields` (e.g. `values.battery`, `temperature`)
   - `--compress=true` for an AI-friendly compact series; image metrics are auto-summarized regardless
-- device get <id> [--metric <field>] — returns current metrics for one device (data.metrics.{name}.{value,unit,timestamp}). Pass `--metric values.battery` to get only that field's current value (avoids pulling all metrics, e.g. AI-camera inference fields); omit for all. For a metric's time series use `device history <id> --metric <field>`. For webhook devices, get the ingest URL with `device webhook-url <id>` (only for webhook adapter devices).
+- device get <id> [--metric <field>] [--commands] — returns device metadata, available commands (`data.commands` with `params_example`/`shell_example`), and current metrics (`data.metrics.{name}.{value,unit,timestamp}`). Pass `--commands` before `device control` for a compact commands-only view (omits metrics). Pass `--metric values.battery` to get only that field's current value (avoids pulling all metrics, e.g. AI-camera inference fields); omit for all. For a metric's time series use `device history <id> --metric <field>`. For webhook devices, get the ingest URL with `device webhook-url <id>` (only for webhook adapter devices).
 - Image metrics (e.g. ne101 `values.image`, ne301 `image_data`): `device get <id>` returns image values as `/api/images/...` URLs. Pass the URL directly to `vision(image="/api/images/...", prompt=...)`. Do NOT pipe to python or save-to-file — the URL works as-is.
 - Output is structured JSON (NEOMIND_JSON=1); errors carry a `suggestion` field with recovery hints
 - `neomind` commands run in-process with no shell pipes/redirects (`|`, `>`, `2>&1`) — filter/limit with built-in flags (`--device-type`, `--status`, `--limit`) instead of `| grep/jq`. Only native host commands support shell pipes and redirections.
@@ -184,6 +184,10 @@ mod tests {
         assert!(
             c.contains("device get <id> [--metric"),
             "must document device get optional --metric filter"
+        );
+        assert!(
+            c.contains("--commands"),
+            "must document device get --commands option"
         );
     }
 
@@ -299,6 +303,148 @@ mod tests {
             out.len() <= 6000,
             "capability index too large: {} bytes",
             out.len()
+        );
+    }
+
+    /// Anti-drift guard 1: every entry in `CORE_CONTRACTS` must reference a real
+    /// clap `(domain, action)` subcommand, and its `primary_json.flag` (if any)
+    /// must be an actual long flag declared on that subcommand.
+    #[test]
+    fn core_contracts_match_clap_cli_tree() {
+        let root = Args::command();
+        let mut problems = Vec::new();
+
+        for contract in neomind_core::command_contract::CORE_DOMAIN_CONTRACTS {
+            let Some(dom) = root.find_subcommand(contract.domain) else {
+                problems.push(format!(
+                    "contract ({}, {}): domain '{}' not found in clap Args",
+                    contract.domain, contract.action, contract.domain
+                ));
+                continue;
+            };
+            let Some(act) = dom.find_subcommand(contract.action) else {
+                problems.push(format!(
+                    "contract ({}, {}): action '{}' not found under '{}'",
+                    contract.domain, contract.action, contract.action, contract.domain
+                ));
+                continue;
+            };
+            if let Some(spec) = &contract.primary_json {
+                let expected = spec.flag.trim_start_matches("--");
+                let has_flag = act.get_arguments().any(|arg| {
+                    arg.get_long() == Some(expected)
+                        || arg
+                            .get_all_aliases()
+                            .is_some_and(|al| al.iter().any(|a| *a == expected))
+                });
+                if !has_flag {
+                    problems.push(format!(
+                        "contract ({}, {}): primary_json flag '{}' not declared on clap subcommand",
+                        contract.domain, contract.action, spec.flag
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            problems.is_empty(),
+            "CORE_CONTRACTS drifted from clap CLI:\n  {}",
+            problems.join("\n  ")
+        );
+    }
+
+    /// Anti-drift guard 2: every `neomind <domain> <action>` command cited in the
+    /// 15 builtin skills (excluding explicit negation examples like "NOT" / "do NOT exist")
+    /// must resolve to a real clap subcommand or alias.
+    #[test]
+    fn builtin_skills_cli_commands_match_clap_cli_tree() {
+        let root = Args::command();
+        let mut valid_actions: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        for dom in root.get_subcommands() {
+            if !dom.has_subcommands() {
+                continue;
+            }
+            let mut set = std::collections::HashSet::new();
+            for sub in dom.get_subcommands() {
+                set.insert(sub.get_name().to_string());
+                for alias in sub.get_all_aliases() {
+                    set.insert(alias.to_string());
+                }
+            }
+            valid_actions.insert(dom.get_name().to_string(), set);
+        }
+
+        let registry = crate::skills::SkillRegistry::load_all(None);
+
+        let mut problems = Vec::new();
+        for skill in registry.list() {
+            let mut in_fence = false;
+            for (line_idx, line) in skill.body.lines().enumerate() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("```") {
+                    in_fence = !in_fence;
+                    continue;
+                }
+                // Skip lines explicitly illustrating non-existent commands
+                if line.contains("do NOT exist")
+                    || line.contains("NOT ")
+                    || line.contains("wrong")
+                    || line.contains("Wrong")
+                {
+                    continue;
+                }
+                // Collect CLI command snippets: either full lines inside fenced
+                // code blocks, or inline backtick spans (`neomind ...`).
+                let mut snippets: Vec<&str> = Vec::new();
+                if in_fence {
+                    if let Some(rest) = trimmed.strip_prefix("neomind ") {
+                        snippets.push(rest);
+                    }
+                } else {
+                    let mut rest = line;
+                    while let Some(start) = rest.find('`') {
+                        let after = &rest[start + 1..];
+                        let Some(end) = after.find('`') else { break };
+                        let span = after[..end].trim();
+                        if let Some(cmd) = span.strip_prefix("neomind ") {
+                            snippets.push(cmd);
+                        }
+                        rest = &after[end + 1..];
+                    }
+                }
+                for snippet in snippets {
+                    let parts: Vec<&str> = snippet.split_whitespace().collect();
+                    if parts.len() < 2 {
+                        continue;
+                    }
+                    let (dom, act) = (parts[0], parts[1]);
+                    if act.starts_with('-')
+                        || act.starts_with('<')
+                        || act.starts_with('[')
+                        || act.contains('{')
+                        || act.contains('|')
+                    {
+                        continue;
+                    }
+                    if let Some(allowed) = valid_actions.get(dom) {
+                        if !allowed.contains(act) {
+                            problems.push(format!(
+                                "skill '{}' L{}: unknown CLI command `neomind {} {}`",
+                                skill.metadata.id,
+                                line_idx + 1,
+                                dom,
+                                act
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            problems.is_empty(),
+            "builtin skills cite non-existent CLI subcommands:\n  {}",
+            problems.join("\n  ")
         );
     }
 }

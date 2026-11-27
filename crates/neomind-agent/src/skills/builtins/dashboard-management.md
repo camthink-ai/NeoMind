@@ -47,6 +47,9 @@ Load widget/layout/binding reference sections before constructing complex config
 | `neomind dashboard remove-components <id>` (with shell `params: ["<cid>"]`) | Remove components by ID |
 | `neomind dashboard delete <id>` | Delete a dashboard |
 | `neomind dashboard share <id>` | Share a dashboard |
+| `neomind widget list` | List all ready-to-use widgets (built-in, custom/market, extension) |
+| `neomind widget get <type-or-id>` | Inspect `config_schema` & copy-ready `usage_example` for any widget |
+| `neomind widget market-list` | Browse installable marketplace widgets |
 
 ## Detailed reference
 Use skill(action="load", id="dashboard-management", section="<exact returned title>") only for the needed detail. Section titles are returned with this overview.
@@ -71,6 +74,9 @@ Ask → answer from this guide with examples (**zero shell writes**). Inspect �
 | `neomind dashboard remove-components <id>` (with shell `params: ["<cid>"]`) | Remove components by ID |
 | `neomind dashboard delete <id>` | Delete a dashboard |
 | `neomind dashboard share <id>` | Share a dashboard |
+| `neomind widget list` | List all ready-to-use widgets (built-in, custom/market, extension) |
+| `neomind widget get <type-or-id>` | Inspect `config_schema` & copy-ready `usage_example` for any widget |
+| `neomind widget market-list` | Browse installable marketplace widgets |
 
 Creating dashboards with data-bound components is the most complex CLI operation. Follow the workflows below exactly.
 
@@ -86,7 +92,7 @@ Creating dashboards with data-bound components is the most complex CLI operation
 8. **Batch 1–2 components per call** — verify with `dashboard get`, then append the next row. Never first-turn a 5+ chart mega-array.
 9. **NEVER put ephemeral `"data"` or `"label"` on value-card/charts** — those keys are rejected / not persisted. Live values require `data_source` (telemetry or extension-metric). Static prose → `markdown-display` + `config.content` only.
 10. **Weather / extension metrics** — `extension invoke … refresh` or `get_weather` first (shell `params` object), then bind `data_source` with `type:"extension-metric"`, `field:"COMMAND:FIELD"` (e.g. `get_weather:temperature_c`).
-11. **Use `widget get <type>` to inspect config_schema** before configuring unfamiliar widgets
+11. **Use `widget get <type>` to inspect `config_schema` & `usage_example`** before configuring unfamiliar/complex widgets — `usage_example` gives a ready-to-copy `dashboard add-components` payload (`data_source`, `display`, `config`)
 12. **NEVER use emoji in component titles or descriptions** — plain text labels only ("Temperature" / "温度", not "🌡 Temperature")
 13. **Charts MUST use `mode: "timeseries"`** with `timeWindow`. Value-cards use `mode: "latest"`.
 
@@ -135,10 +141,18 @@ neomind extension get weather-forecast
 
 ```bash
 neomind widget list
-# Returns all installed widget types with size constraints
+# Returns ALL ready-to-use widgets across every source:
+#   - builtin_types (built-in charts, value-card, image-display, etc.)
+#   - widgets (installed marketplace & custom widgets)
+#   - extension_widgets (dashboard components bundled by installed extensions)
 
-neomind widget get value-card
-# Returns config_schema describing accepted display and config fields
+neomind widget get <type-or-id>
+# Returns config_schema, default_config, size_constraints, AND a copy-ready
+# `usage_example` (exact `dashboard add-components` command + params) for ANY
+# built-in, custom/marketplace, or extension-provided widget
+
+neomind widget market-list
+# Browse installable marketplace widgets (install via `neomind widget market-install <id>`)
 ```
 
 ### Step 3: Create Dashboard
@@ -386,7 +400,6 @@ Charts accept `data_source` as **array** for multiple series.
 | Charts | `area-chart` | 6x3 | 12x4 |
 | Charts | `bar-chart` | 6x3 | 12x4 |
 | Charts | `pie-chart` | 4x4 | 4x4 |
-| Charts | `radar-chart` | 4x4 | 6x4 |
 | Controls | `toggle-switch` | 2x2 | 2x2 |
 | Display | `markdown-display` | 12x2 | 12x4 |
 | Display | `image-display` | 4x3 | 6x4 |
@@ -394,6 +407,7 @@ Charts accept `data_source` as **array** for multiple series.
 | Display | `web-display` | 6x4 | 12x4 |
 | Spatial | `map-display` | 6x4 | 12x6 |
 | Spatial | `video-display` | 6x4 | 12x6 |
+| Layout | `custom-layer` | 6x4 | 12x6 |
 | Business | `agent-monitor-widget` | 6x4 | 12x6 |
 | Business | `ai-analyst` | 12x4 | 12x6 |
 

@@ -33,7 +33,7 @@ Verify incoming telemetry after connection. If offline, report configuration and
 | Command | Purpose |
 |---|---|
 | `neomind device list` | List all devices (grouped by type) |
-| `neomind device get <id>` | Details: metadata + metrics + commands |
+| `neomind device get <id> [--commands] [--metric <f>]` | Details: metadata + commands + metrics (`--commands` omits metrics for fast command discovery) |
 | `neomind device create --name <N> --device-type <TYPE> [--id <id>] [--adapter-type <a>]` | Create a device |
 | `neomind device update <id>` | Update a device |
 | `neomind device delete <id>` | Delete a device |
@@ -57,7 +57,7 @@ Use skill(action="load", id="device-onboarding", section="<exact returned title>
 | Command | Purpose |
 |---|---|
 | `neomind device list` | List all devices (grouped by type) |
-| `neomind device get <id>` | Details: metadata + metrics + commands |
+| `neomind device get <id> [--commands] [--metric <f>]` | Details: metadata + commands + metrics (`--commands` omits metrics for fast command discovery) |
 | `neomind device create --name <N> --device-type <TYPE> [--id <id>] [--adapter-type <a>]` | Create a device |
 | `neomind device update <id>` | Update a device |
 | `neomind device delete <id>` | Delete a device |
@@ -74,12 +74,10 @@ Use skill(action="load", id="device-onboarding", section="<exact returned title>
 
 To send a command to a device (stop, set speed, alarm, reboot, ...):
 
-1. **Always inspect first**: `neomind device get <id>` — its output lists the device's supported commands. Do NOT guess a command name.
+1. **Always inspect first**: `neomind device get <id> --commands` (compact, omits metrics) or `neomind device get <id>` — its output lists the device's supported commands with `params_example` and `shell_example`. Do NOT guess a command name.
 2. **Send with the correct argument order**: `neomind device control <id> <COMMAND>` — the device ID comes FIRST, the command name SECOND. (Common mistake: writing the command before the ID, or `device <command> <id>`. The subcommand is `control`, not the command name.)
-3. Optional params — prefer the repeatable flag form (no JSON quoting):
-   `neomind device control <id> <COMMAND> --param key=value --param key2=value2`.
-   Numbers/booleans are auto-detected (`--param state=true --param speed=2`).
-   The JSON form also works: `--params '{"key":"value"}'`.
+3. Optional params — prefer shell `params: {…}` (or repeatable `--param key=value` / quoted `--params JSON` in terminal CLI). Numbers/booleans are auto-detected (`--param state=true --param speed=2`).
+4. **Do NOT retry or call `clear` after `sent: true`**: MQTT broker dispatch returns `sent: true` with `device acknowledgment: none; physical effect unverified` — that is normal dispatched status, NOT a failure. Report dispatched once and stop unless the user explicitly asks to verify or resend.
 
 Example:
 ```bash
@@ -464,7 +462,7 @@ These typically require a **gateway** that translates the protocol to MQTT or HT
 | `neomind device create --name <NAME> [--device-type <T>] [--adapter-type <A>]` | Create device |
 | `neomind device update <ID> [--name <N>] [--config '<JSON>']` | Update device |
 | `neomind device delete <ID>` | Delete device |
-| `neomind device get <ID>` | Get device details (metrics + commands) |
+| `neomind device get <ID> [--commands] [--metric <M>]` | Get device details (commands + metrics; `--commands` omits metrics) |
 | `neomind device history <ID> [--metric <M>] [--time-range <R>]` | Telemetry history |
 | `neomind device control <ID> <CMD> [--param k=v]... [--params '<JSON>']` | Send command |
 | `neomind device types list` | List device types |
@@ -475,7 +473,7 @@ These typically require a **gateway** that translates the protocol to MQTT or HT
 | `neomind device drafts get <ID>` | View draft details and sample data |
 | `neomind device drafts approve <ID> --name <N> --type <T>` | Approve and register draft |
 | `neomind device drafts reject <ID>` | Reject and discard draft |
-| `neomind device drafts config [--enabled] [--auto-approve] [--max-samples]` | View/configure auto-discovery |
+| `neomind device drafts config [--enabled=true\|false] [--max-samples <N>]` | View/configure auto-discovery |
 
 ## Connector Management
 

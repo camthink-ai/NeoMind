@@ -228,8 +228,12 @@ pub async fn run_device_cmd_with_context(
             list_devices(&client, device_type.as_deref(), status.as_deref(), summary).await?,
             base_format,
         ),
-        DeviceCommand::Get { id, metric } => (
-            get_device(&client, &id, metric.as_deref()).await?,
+        DeviceCommand::Get {
+            id,
+            metric,
+            commands,
+        } => (
+            get_device(&client, &id, metric.as_deref(), commands).await?,
             base_format,
         ),
         DeviceCommand::Create {
@@ -269,7 +273,7 @@ pub async fn run_device_cmd_with_context(
             )
         }
         DeviceCommand::Delete { id } => (delete_device(&client, &id).await?, base_format),
-        DeviceCommand::Latest { id } => (get_device(&client, &id, None).await?, base_format),
+        DeviceCommand::Latest { id } => (get_device(&client, &id, None, false).await?, base_format),
         DeviceCommand::History {
             id,
             metric,

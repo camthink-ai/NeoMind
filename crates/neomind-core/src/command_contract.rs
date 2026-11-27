@@ -239,7 +239,7 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
             DomainParamSummary {
                 name: "<command>",
                 required: true,
-                summary: "Command name defined by the device type template (`device get <ID>`)",
+                summary: "Command name defined by the device type template (`device get <ID> --commands`)",
             },
             DomainParamSummary {
                 name: "--params",
@@ -256,7 +256,7 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
             command: "neomind device control device-001 toggle",
             params_json: Some(r#"{"state":true}"#),
         },
-        guidance: "Pass the command's parameter object from `device get <ID>` via shell `params` (do not wrap in a protocol envelope).",
+        guidance: "Pass the command's parameter object from `device get <ID> --commands` via shell `params` (do not wrap in a protocol envelope).",
     },
     // === Rule ===
     DomainCommandContract {
@@ -452,7 +452,7 @@ pub const CORE_DOMAIN_CONTRACTS: &[DomainCommandContract] = &[
                 r#"[{"id":"c2","type":"value-card","title":"Humidity","position":{"x":0,"y":2,"w":4,"h":2}}]"#,
             ),
         },
-        guidance: "Append widgets via shell `params: […]` (maps to `--components`); add only 1–2 components per call; never invent CLI `--params`; bind live values with `data_source` (not ephemeral `data`/`label`).",
+        guidance: "Append widgets via shell `params: […]` (maps to `--components`); add only 1–2 components per call; never invent CLI `--params`; run `neomind widget get <type>` for `config_schema` and a copy-ready `usage_example` on complex widgets; bind live values with `data_source` (not ephemeral `data`/`label`).",
     },
     DomainCommandContract {
         domain: "dashboard",

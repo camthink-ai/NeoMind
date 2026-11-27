@@ -28,8 +28,8 @@ Load package, installation, or troubleshooting reference sections for details.
 ## Commands
 | Command | Purpose |
 |---|---|
-| `neomind widget list` | List installed widgets |
-| `neomind widget get <id>` | Show widget details |
+| `neomind widget list` | List all ready-to-use widgets across built-in types, installed custom/market widgets, and extension-provided components |
+| `neomind widget get <id>` | Get manifest, `config_schema`, `default_config`, and a copy-ready `usage_example` (for built-in, custom/market, or extension widgets) |
 | `neomind widget bundle <id>` | Get a widget's bundle (JS/CSS) |
 | `neomind widget install <path>` | Install from a scaffolded dir or `.zip`. Use DATA-RELATIVE paths (`frontend-components/<id>`) — absolute macOS paths contain a space ("Application Support") and must be quoted; relative sidesteps it. A BARE widget id (`widget install gauge-3832`) also resolves into the store dir |
 | `neomind widget uninstall <id>` | Uninstall a widget |
@@ -51,15 +51,16 @@ Manage dashboard widgets and the widget marketplace. (For *developing* a widget 
 
 1. **Install from a local scaffold/zip** → `neomind widget install <path>`. **Install from the marketplace** → `neomind widget market-install <id>` — different commands.
 2. **`neomind widget bundle <id>`** returns the widget's JS/CSS bundle (for inspection/embedding) — NOT `file_write`/`file_read`/`web_fetch`.
-3. **`neomind widget market-list`** lists marketplace widgets; **`neomind widget list`** lists already-installed ones.
-4. RUN the command yourself and report the output — don't narrate.
+3. **`neomind widget market-list`** lists installable marketplace widgets; **`neomind widget list`** lists all ready-to-use widgets (`builtin_types`, installed custom/market `widgets`, and `extension_widgets`).
+4. **`neomind widget get <id>`** works for ANY source (built-in, custom/market, or extension) and includes a copy-ready `usage_example` payload for `neomind dashboard add-components`.
+5. RUN the command yourself and report the output — don't narrate.
 
 ## Command Cheat-Sheet
 
 | Command | Purpose |
 |---|---|
-| `neomind widget list` | List installed widgets |
-| `neomind widget get <id>` | Show widget details |
+| `neomind widget list` | List all ready-to-use widgets (built-in, installed custom/market, extension) |
+| `neomind widget get <id>` | Show manifest, `config_schema`, `default_config`, and copy-ready `usage_example` |
 | `neomind widget bundle <id>` | Get a widget's bundle (JS/CSS) |
 | `neomind widget install <path>` | Install from a scaffolded dir or `.zip`. Use DATA-RELATIVE paths (`frontend-components/<id>`) — absolute macOS paths contain a space ("Application Support") and must be quoted; relative sidesteps it. A BARE widget id (`widget install gauge-3832`) also resolves into the store dir |
 | `neomind widget uninstall <id>` | Uninstall a widget |
