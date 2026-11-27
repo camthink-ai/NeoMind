@@ -1595,7 +1595,7 @@ pub async fn invoke_agent(
     Path(id): Path<String>,
     Json(request): Json<ExecuteAgentRequest>,
 ) -> HandlerResult<Value> {
-    // Validate input payload size to prevent resource exhaustion
+    // Validate input & structured data payload sizes to prevent resource exhaustion
     const MAX_INPUT_SIZE: usize = 100_000; // 100KB
     if let Some(ref input) = request.input {
         if input.len() > MAX_INPUT_SIZE {
@@ -1603,6 +1603,15 @@ pub async fn invoke_agent(
                 "Input too large: {} bytes (max {})",
                 input.len(),
                 MAX_INPUT_SIZE
+            )));
+        }
+    }
+    if let Some(ref data) = request.data {
+        let serialized_len = serde_json::to_vec(data).map(|v| v.len()).unwrap_or(0);
+        if serialized_len > MAX_INPUT_SIZE {
+            return Err(ErrorResponse::bad_request(format!(
+                "Data payload too large: {} bytes (max {})",
+                serialized_len, MAX_INPUT_SIZE
             )));
         }
     }

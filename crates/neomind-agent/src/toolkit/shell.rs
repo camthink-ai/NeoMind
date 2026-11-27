@@ -1900,7 +1900,7 @@ pub(crate) fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<S
         for c in input.chars() {
             match c {
                 '\'' if !in_double => in_single = !in_single,
-                '"' if !in_single => in_double = !in_double,
+                '"' if !in_single && prev != '\\' => in_double = !in_double,
                 '|' | '<' | '>' | '`' if !in_single && !in_double => {
                     return Err("shell construct outside quotes".to_string())
                 }
@@ -1972,7 +1972,19 @@ pub(crate) fn tokenize_neomind_command(input: &str) -> std::result::Result<Vec<S
 fn is_primary_json_cli_flag(tok: &str) -> bool {
     matches!(
         tok,
-        "--params" | "--set" | "--body" | "--components" | "--ids" | "--config" | "--input"
+        "--params"
+            | "--set"
+            | "--body"
+            | "--components"
+            | "--ids"
+            | "--config"
+            | "--input"
+            | "--data"
+            | "--metrics"
+            | "--commands"
+            | "--notify"
+            | "--output-schema"
+            | "--event-filter"
     )
 }
 

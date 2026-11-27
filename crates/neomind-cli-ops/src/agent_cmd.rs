@@ -678,32 +678,37 @@ pub async fn create_agent(
                         ));
                     }
                 };
-                if let Some(arr) = parsed.as_array() {
-                    for m in arr {
-                        let device_id = m
-                            .get("device_id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        let field = m
-                            .get("metric_name")
-                            .or_else(|| m.get("field"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("value");
-                        let key = m
-                            .get("display_name")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| format!("{device_id}:{field}"));
-                        requirements.push(json!({
-                            "key": key,
-                            "source": { "kind": "device_metric", "device_id": device_id, "field": field },
-                            "params": {},
-                            "timeout_secs": 10,
-                            "result_type": "metric",
-                            "freshness": { "kind": "any" },
-                            "on_missing": "report_stale",
-                        }));
-                    }
+                let metric_items: Vec<&serde_json::Value> = if let Some(arr) = parsed.as_array() {
+                    arr.iter().collect()
+                } else if parsed.is_object() {
+                    vec![&parsed]
+                } else {
+                    vec![]
+                };
+                for m in metric_items {
+                    let device_id = m
+                        .get("device_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let field = m
+                        .get("metric_name")
+                        .or_else(|| m.get("field"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("value");
+                    let key = m
+                        .get("display_name")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("{device_id}:{field}"));
+                    requirements.push(json!({
+                        "key": key,
+                        "source": { "kind": "device_metric", "device_id": device_id, "field": field },
+                        "params": {},
+                        "timeout_secs": 10,
+                        "result_type": "metric",
+                        "freshness": { "kind": "any" },
+                        "on_missing": "report_stale",
+                    }));
                 }
             } else {
                 // Shorthand: "sensor_temp:temperature,sensor_hum:humidity", "sensor_temp.temperature", or "sensor_temp/temperature"
@@ -812,20 +817,26 @@ pub async fn create_agent(
                         e
                     )
                 })?;
-            if let Some(arr) = parsed.as_array() {
-                arr.iter()
-                    .filter_map(|f| {
-                        let name = f.get("name")?.as_str()?;
-                        Some(json!({
-                            "name": name,
-                            "depends_on": [],
-                            "description": f.get("description").cloned().unwrap_or(json!(null)),
-                        }))
-                    })
-                    .collect::<Vec<_>>()
+            let field_items: Vec<&serde_json::Value> = if let Some(arr) = parsed.as_array() {
+                arr.iter().collect()
+            } else if let Some(arr) = parsed.get("fields").and_then(|v| v.as_array()) {
+                arr.iter().collect()
+            } else if parsed.get("name").is_some() {
+                vec![&parsed]
             } else {
                 vec![]
-            }
+            };
+            field_items
+                .iter()
+                .filter_map(|f| {
+                    let name = f.get("name")?.as_str()?;
+                    Some(json!({
+                        "name": name,
+                        "depends_on": f.get("depends_on").cloned().unwrap_or_else(|| json!([])),
+                        "description": f.get("description").cloned().unwrap_or(json!(null)),
+                    }))
+                })
+                .collect::<Vec<_>>()
         } else {
             trimmed
                 .split(',')
@@ -893,30 +904,52 @@ pub async fn create_agent(
 }
 
 /// Parse `--commands` JSON (V1 `{device_id, command_name}`, V2 `{name, destination}`,
-/// or shorthand `"device:<id>:<cmd>"`) into V2 `ControlledAction` JSON entries.
+/// or shorthand `"device:<id>:<cmd>"` / `"<id>:<cmd>"`, comma-separated or JSON array)
+/// into V2 `ControlledAction` JSON entries.
 fn parse_commands_to_controlled_actions(
     raw: &str,
 ) -> std::result::Result<Vec<serde_json::Value>, CliResponse> {
-    let parsed: serde_json::Value = crate::json_arg::parse_json_arg(raw).map_err(|e| {
-        CliResponse::error_with_suggestion(
-            format!("Invalid JSON in --commands: {e}"),
-            "INVALID_JSON",
-            "Pass a JSON array, e.g. --commands '[{\"device_id\":\"d1\",\"command_name\":\"boost_cooling\"}]'",
-        )
-    })?;
-    let items = if let Some(arr) = parsed.as_array() {
-        arr.clone()
-    } else if parsed.is_object() || parsed.is_string() {
-        vec![parsed]
+    let trimmed_raw = raw.trim();
+    let items: Vec<serde_json::Value> = if trimmed_raw.starts_with('[')
+        || trimmed_raw.starts_with('{')
+        || trimmed_raw.starts_with('"')
+    {
+        let parsed: serde_json::Value = crate::json_arg::parse_json_arg(trimmed_raw).map_err(|e| {
+            CliResponse::error_with_suggestion(
+                format!("Invalid JSON in --commands: {e}"),
+                "INVALID_JSON",
+                "Pass a JSON array or shorthand `device:<id>:<cmd>`, e.g. --commands '[{\"device_id\":\"d1\",\"command_name\":\"boost_cooling\"}]'",
+            )
+        })?;
+        if let Some(arr) = parsed.as_array() {
+            arr.clone()
+        } else if parsed.is_object() || parsed.is_string() {
+            vec![parsed]
+        } else {
+            return Ok(vec![]);
+        }
     } else {
-        return Ok(vec![]);
+        // Bare shorthand: "device:fan_02:boost" or "d1:turn_on,d2:boost"
+        trimmed_raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| json!(s))
+            .collect()
     };
     let mut actions = Vec::new();
     for item in items {
         if let Some(s) = item.as_str() {
             let trimmed = s.trim();
-            if let Some(rest) = trimmed.strip_prefix("device:") {
-                if let Some((dev, cmd)) = rest.split_once(':') {
+            let parsed_pair = if let Some(rest) = trimmed.strip_prefix("device:") {
+                rest.split_once(':')
+            } else {
+                trimmed.split_once(':')
+            };
+            if let Some((dev, cmd)) = parsed_pair {
+                let dev = dev.trim();
+                let cmd = cmd.trim();
+                if !dev.is_empty() && !cmd.is_empty() {
                     actions.push(json!({
                         "name": cmd,
                         "destination": format!("device:{dev}"),
@@ -924,17 +957,7 @@ fn parse_commands_to_controlled_actions(
                         "depends_on": [],
                         "idempotent": true,
                     }));
-                    continue;
                 }
-            }
-            if let Some((dev, cmd)) = trimmed.split_once(':') {
-                actions.push(json!({
-                    "name": cmd,
-                    "destination": format!("device:{dev}"),
-                    "params": {},
-                    "depends_on": [],
-                    "idempotent": true,
-                }));
             }
             continue;
         }
@@ -1253,18 +1276,43 @@ pub async fn update_agent(
     }
     if let Some(schema_json) = output_schema {
         let trimmed = schema_json.trim();
-        body["output_schema"] = if trimmed.starts_with('[') || trimmed.starts_with('{') {
-            crate::json_arg::parse_json_arg(trimmed)
-                .map_err(|e| anyhow::anyhow!("--output-schema is not valid JSON: {}", e))?
+        let fields: Vec<serde_json::Value> = if trimmed.starts_with('[') || trimmed.starts_with('{')
+        {
+            let parsed = crate::json_arg::parse_json_arg(trimmed)
+                .map_err(|e| anyhow::anyhow!("--output-schema is not valid JSON: {}", e))?;
+            let items: Vec<&serde_json::Value> = if let Some(arr) = parsed.as_array() {
+                arr.iter().collect()
+            } else if let Some(arr) = parsed.get("fields").and_then(|v| v.as_array()) {
+                arr.iter().collect()
+            } else if parsed.get("name").is_some() {
+                vec![&parsed]
+            } else {
+                vec![]
+            };
+            items
+                .iter()
+                .filter_map(|f| {
+                    let name = f.get("name")?.as_str()?;
+                    Some(json!({
+                        "name": name,
+                        "depends_on": f.get("depends_on").cloned().unwrap_or_else(|| json!([])),
+                        "description": f.get("description").cloned().unwrap_or(json!(null)),
+                    }))
+                })
+                .collect()
         } else {
-            let fields: Vec<serde_json::Value> = trimmed
+            trimmed
                 .split(',')
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(|name| json!({ "name": name, "depends_on": [], "description": null }))
-                .collect();
-            json!(fields)
+                .collect()
         };
+        // V2 AgentSpecPatch expects `output: { fields, publish }`.
+        body["output"] = json!({
+            "fields": fields,
+            "publish": false,
+        });
     }
     if let Some(notify_json) = notify {
         match parse_notify_arg(notify_json) {
