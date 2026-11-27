@@ -1964,12 +1964,14 @@ pub async fn validate_rule_handler(
     let mut result = RuleValidator::validate_rule(&condition, &actions, &context);
 
     // Mirror create/update/import cooldown policy (virtual metrics + AI feedback loops)
-    // so `/api/rules/validate` does not report `valid: true` for rules `POST /api/rules` rejects.
-    let cooldown_ms = req.get("cooldown").and_then(|v| v.as_u64()).unwrap_or(0);
+    // so `/api/rules/validate` matches `POST /api/rules`. Preserve `CompiledRule`'s
+    // 60s default when `cooldown` is omitted (matching serde deserialization).
     let mut probe = CompiledRule::new("_validate");
     probe.condition = condition;
     probe.actions = actions;
-    probe.cooldown = std::time::Duration::from_millis(cooldown_ms);
+    if let Some(cooldown_ms) = req.get("cooldown").and_then(|v| v.as_u64()) {
+        probe.cooldown = std::time::Duration::from_millis(cooldown_ms);
+    }
     probe.finalize();
     if let Err(msg) = RuleValidator::validate_virtual_metric_cooldown(&probe) {
         result.errors.push(neomind_rules::validator::ValidationIssue {

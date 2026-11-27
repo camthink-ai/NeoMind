@@ -2535,8 +2535,9 @@ impl ServerState {
                 } = event
                 {
                     // Skip pre-namespaced / transform-derived events — VirtualMetricPublisher
-                    // already writes `ai:*` / `transform:*` (and its `device:*` alias) to
-                    // UnifiedValueProvider and triggers the rule engine directly.
+                    // already updates UnifiedValueProvider and triggers the rule engine for
+                    // canonical `ai:*` / `transform:*` sources directly, while its `device:*`
+                    // alias is only for telemetry/DataPush discovery.
                     // Note: do NOT skip `is_virtual: Some(true)` on plain device IDs because
                     // extension-managed devices (`device_metrics_write` capability) set
                     // `is_virtual: Some(true)` solely to stop extension feedback loops and
